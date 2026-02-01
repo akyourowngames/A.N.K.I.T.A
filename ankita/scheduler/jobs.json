@@ -1,0 +1,9 @@
+[
+  {
+    "id": "test_job",
+    "type": "once",
+    "time": "21:34",
+    "intent": "notepad.write_note",
+    "entities": { "content": "Hello! This note was created by Ankita scheduler at 21:34!" }
+  }
+]

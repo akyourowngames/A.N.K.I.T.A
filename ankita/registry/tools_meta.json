@@ -1,0 +1,14 @@
+{
+  "notepad.write_note": {
+    "steps": [
+      { "tool": "notepad.write_file", "args_from": "content" },
+      { "tool": "notepad.open_file" }
+    ]
+  },
+  "youtube.play": {
+    "steps": [
+      { "tool": "youtube.open" },
+      { "tool": "youtube.play", "args_from": "query" }
+    ]
+  }
+}

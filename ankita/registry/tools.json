@@ -1,0 +1,10 @@
+{
+  "notepad.open": "tools.notepad.open",
+  "notepad.open_file": "tools.notepad.open_file",
+  "notepad.focus": "tools.notepad.focus",
+  "notepad.write": "tools.notepad.write",
+  "notepad.write_file": "tools.notepad.write_file",
+  "notepad.save": "tools.notepad.save",
+  "youtube.open": "tools.youtube.open",
+  "youtube.play": "tools.youtube.play"
+}

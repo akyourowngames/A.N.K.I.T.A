@@ -1,0 +1,29 @@
+{
+  "notepad.write_note": {
+    "entities": ["content"],
+    "examples": [
+      "write a note",
+      "take a note in notepad",
+      "write this down",
+      "make a note"
+    ]
+  },
+  "notepad.continue_note": {
+    "entities": ["content"],
+    "examples": [
+      "continue my note",
+      "add this to the note",
+      "keep writing",
+      "add to it",
+      "continue writing"
+    ]
+  },
+  "youtube.play": {
+    "entities": ["query"],
+    "examples": [
+      "play a video on youtube",
+      "open youtube and play something",
+      "play song on youtube"
+    ]
+  }
+}
