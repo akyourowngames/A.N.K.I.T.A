@@ -18,7 +18,9 @@ import argparse
 from brain.intent_model import classify
 from brain.planner import plan
 from executor.executor import execute
-from llm.llm_client import generate_response
+from llm.llm_client import generate_response, ask_llm, is_question
+from memory.memory_manager import add_conversation, add_episode
+from memory.recall import resolve_pronouns
 
 
 # ============== CORE HANDLERS ==============
@@ -31,6 +33,13 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     execution_plan = plan(intent_result)
     result = execute(execution_plan)
     
+    # Record episode in memory
+    add_episode(
+        intent_result["intent"],
+        intent_result.get("entities", {}),
+        result
+    )
+    
     # Generate natural response using LLM
     context = {
         "intent": intent_result["intent"],
@@ -40,6 +49,9 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     }
     response = generate_response(context)
     
+    # Record Ankita's response
+    add_conversation("ankita", response)
+    
     return response
 
 
@@ -48,7 +60,27 @@ def handle_text(text: str) -> str:
     Process raw text input - classify intent, execute, and respond.
     Returns natural language response.
     """
+    # Record user input
+    add_conversation("user", text)
+    
+    # Check for pronoun references ("do it again", "continue that")
+    recalled = resolve_pronouns(text)
+    if recalled:
+        response = handle_intent(recalled, user_text=text)
+        print(f"Ankita: {response}")
+        return response
+    
+    # Normal intent classification
     intent_result = classify(text)
+    
+    # Route to LLM for unknown intents or questions
+    if intent_result["intent"] == "unknown" or is_question(text):
+        response = ask_llm(text)
+        add_conversation("ankita", response)
+        print(f"Ankita: {response}")
+        return response
+    
+    # Known intent → execute action
     response = handle_intent(intent_result, user_text=text)
     print(f"Ankita: {response}")
     return response

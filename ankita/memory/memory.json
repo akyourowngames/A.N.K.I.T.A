@@ -1,19 +1,123 @@
 {
-  "notes": [
+  "conversation": [
     {
-      "file": "note.txt"
+      "role": "user",
+      "text": "hi",
+      "time": "2026-02-01T22:19:22.718023"
     },
     {
-      "file": "note.txt"
+      "role": "ankita",
+      "text": "It sounds like you're starting your day and ready to tackle new things. Would you like to brainstorm ideas or make a to-do list to help you stay organized?",
+      "time": "2026-02-01T22:19:25.676096"
     },
     {
-      "file": "note_1.txt"
+      "role": "user",
+      "text": "nah",
+      "time": "2026-02-01T22:19:31.331905"
     },
     {
-      "file": "note_2.txt"
+      "role": "ankita",
+      "text": "You're not feeling like making lists or brainstorming ideas just yet. Would you like to relax and chat about something instead, or should I suggest a fun activity for you to do?",
+      "time": "2026-02-01T22:19:34.416288"
     },
     {
-      "file": "note.txt"
+      "role": "user",
+      "text": "what's your name?",
+      "time": "2026-02-01T22:19:41.497360"
+    },
+    {
+      "role": "ankita",
+      "text": "My name's Ankita, nice to meet you - I'm happy to chat with you and help with anything you need.",
+      "time": "2026-02-01T22:19:44.477956"
+    },
+    {
+      "role": "user",
+      "text": "open notepad",
+      "time": "2026-02-01T22:19:51.934615"
+    },
+    {
+      "role": "ankita",
+      "text": "Notepad is now open! \ud83d\udcdd",
+      "time": "2026-02-01T22:19:55.962497"
+    },
+    {
+      "role": "user",
+      "text": "what didyu do now?",
+      "time": "2026-02-01T22:20:01.817250"
+    },
+    {
+      "role": "ankita",
+      "text": "Nothing much, I just opened Notepad for you when you asked.",
+      "time": "2026-02-01T22:20:04.617811"
     }
-  ]
+  ],
+  "episodes": [
+    {
+      "intent": "notepad.open",
+      "entities": {},
+      "result": {
+        "status": "success",
+        "results": [
+          {
+            "status": "success"
+          }
+        ]
+      },
+      "time": "2026-02-01T22:10:27.318777"
+    },
+    {
+      "intent": "notepad.open",
+      "entities": {},
+      "result": {
+        "status": "success",
+        "results": [
+          {
+            "status": "success"
+          }
+        ]
+      },
+      "time": "2026-02-01T22:10:33.992168"
+    },
+    {
+      "intent": "notepad.open",
+      "entities": {},
+      "result": {
+        "status": "success",
+        "results": [
+          {
+            "status": "success"
+          }
+        ]
+      },
+      "time": "2026-02-01T22:10:39.436285"
+    },
+    {
+      "intent": "notepad.open",
+      "entities": {},
+      "result": {
+        "status": "success",
+        "results": [
+          {
+            "status": "success"
+          }
+        ]
+      },
+      "time": "2026-02-01T22:10:45.728375"
+    },
+    {
+      "intent": "notepad.open",
+      "entities": {},
+      "result": {
+        "status": "success",
+        "results": [
+          {
+            "status": "success"
+          }
+        ]
+      },
+      "time": "2026-02-01T22:19:55.011971"
+    }
+  ],
+  "preferences": {},
+  "notes": []
 }
