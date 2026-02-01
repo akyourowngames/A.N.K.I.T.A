@@ -10,6 +10,10 @@ def plan(intent_result):
     intent = intent_result["intent"]
     entities = intent_result.get("entities", {})
 
+    # Handle unknown intent gracefully
+    if intent == "unknown":
+        return {"steps": [], "message": "I didn't understand that. Try: 'write a note' or 'play something on youtube'"}
+
     # Special handling for continue_note (context-aware)
     if intent == "notepad.continue_note":
         note = last_note()

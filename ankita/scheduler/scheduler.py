@@ -7,8 +7,7 @@ from datetime import datetime
 import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from brain.planner import plan
-from executor.executor import execute
+from ankita_core import handle_event
 
 JOBS_PATH = os.path.join(os.path.dirname(__file__), "jobs.json")
 
@@ -42,12 +41,7 @@ def run():
                 print(f"[Scheduler] Triggering: {job['id']} at {now.strftime('%H:%M')}")
                 
                 try:
-                    intent_result = {
-                        "intent": job["intent"],
-                        "entities": job.get("entities", {})
-                    }
-                    execution_plan = plan(intent_result)
-                    execute(execution_plan)
+                    handle_event(job["intent"], job.get("entities"))
                     print(f"[Scheduler] Completed: {job['id']}")
                 except Exception as e:
                     print(f"[Scheduler] Failed: {job['id']} - {e}")

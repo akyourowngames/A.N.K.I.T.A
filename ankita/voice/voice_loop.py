@@ -5,9 +5,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from voice.mic import record_audio
 from voice.stt import transcribe
 from voice.tts import speak
-from brain.intent_model import classify
-from brain.planner import plan
-from executor.executor import execute
+from ankita_core import handle_text
 
 def run():
     print("[Ankita Voice] Ready. Press Enter to speak...")
@@ -31,10 +29,8 @@ def run():
                 print("[Ankita] Goodbye!")
                 break
             
-            # Process through brain
-            intent_result = classify(text)
-            execution_plan = plan(intent_result)
-            execute(execution_plan)
+            # Process through Ankita Core
+            handle_text(text)
             
             # Speak confirmation
             speak("Done!")

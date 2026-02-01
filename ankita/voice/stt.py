@@ -1,14 +1,14 @@
-from faster_whisper import WhisperModel
+import speech_recognition as sr
 
-model = None
-
-def get_model():
-    global model
-    if model is None:
-        model = WhisperModel("small", device="cpu")
-    return model
+recognizer = sr.Recognizer()
 
 def transcribe(audio_path):
-    m = get_model()
-    segments, _ = m.transcribe(audio_path)
-    return " ".join(seg.text for seg in segments)
+    with sr.AudioFile(audio_path) as source:
+        audio = recognizer.record(source)
+    try:
+        return recognizer.recognize_google(audio)
+    except sr.UnknownValueError:
+        return ""
+    except sr.RequestError as e:
+        print(f"[STT] Error: {e}")
+        return ""

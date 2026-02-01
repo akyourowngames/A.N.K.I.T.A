@@ -6,6 +6,18 @@ with open("registry/tools.json") as f:
     TOOL_REGISTRY = json.load(f)
 
 def execute(plan):
+    """
+    Execute a plan and return the result.
+    
+    Returns:
+        dict with 'status' and optional 'message'
+    """
+    # Handle message-only plans (no steps) - return silently, let LLM respond
+    if "message" in plan:
+        return {"status": "message", "message": plan["message"]}
+    
+    results = []
+    
     for step in plan["steps"]:
         tool_name = step["tool"]
         args = step.get("args", {})
@@ -16,6 +28,7 @@ def execute(plan):
         module = importlib.import_module(tool_path)
 
         attempt = 0
+        result = None
         while attempt < retries:
             start = time.time()
             try:
@@ -27,8 +40,10 @@ def execute(plan):
                     continue
 
                 if result.get("status") == "success":
+                    results.append(result)
                     break
-            except Exception:
+            except Exception as e:
+                result = {"status": "error", "error": str(e)}
                 if timeout is not None and (time.time() - start) > timeout:
                     attempt += 1
                     time.sleep(0.3)
@@ -37,4 +52,6 @@ def execute(plan):
             attempt += 1
             time.sleep(0.3)
         else:
-            raise RuntimeError(f"Tool failed: {tool_name}")
+            return {"status": "fail", "tool": tool_name, "last_result": result}
+    
+    return {"status": "success", "results": results}

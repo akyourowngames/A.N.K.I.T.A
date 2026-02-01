@@ -24,16 +24,32 @@ def _extract_intent(response_text, user_text):
         if intent in response_text:
             return intent
     
-    # Fallback: keyword matching from user text
-    user_lower = user_text.lower()
+    # Fallback: action-level keyword matching (verb + object)
+    t = user_text.lower()
     
-    # Check for continue/append intent first (more specific)
-    if any(word in user_lower for word in ["continue", "add to", "keep writing", "append"]):
-        return "notepad.continue_note"
+    # --- YouTube intents ---
+    if "youtube" in t or "yt" in t:
+        # Action verbs that imply playing
+        if any(w in t for w in ["play", "song", "video", "music", "watch", "search"]):
+            return "youtube.play"
+        else:
+            # Just "open youtube" without action
+            return "youtube.open"
     
-    if any(word in user_lower for word in ["note", "notepad", "write", "jot"]):
-        return "notepad.write_note"
-    if any(word in user_lower for word in ["youtube", "video", "play", "watch"]):
+    # --- Notepad intents ---
+    if "notepad" in t or "note" in t:
+        # Continue/append is most specific
+        if any(w in t for w in ["continue", "add to", "append", "keep writing"]):
+            return "notepad.continue_note"
+        # Write/create action
+        elif any(w in t for w in ["write", "make", "create", "jot", "take"]):
+            return "notepad.write_note"
+        else:
+            # Just "open notepad" without action
+            return "notepad.open"
+    
+    # --- Standalone play (no youtube mentioned) ---
+    if any(w in t for w in ["play", "song", "video", "music"]):
         return "youtube.play"
     
     return "unknown"
@@ -50,7 +66,7 @@ def classify(text):
                 "prompt": prompt,
                 "stream": False
             },
-            timeout=10
+            timeout=3  # Fast timeout - fallback to keywords if Ollama is slow/down
         )
         result = response.json().get("response", "")
     except Exception:
