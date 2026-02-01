@@ -1,31 +1,6 @@
 {
   "conversation": [
     {
-      "role": "user",
-      "text": "nah ",
-      "time": "2026-02-01T22:31:04.935955"
-    },
-    {
-      "role": "ankita",
-      "text": "It seems like you were just reminding yourself to get some groceries. Do you want some help with a grocery list or would you like some recipe suggestions for a specific meal?",
-      "time": "2026-02-01T22:31:09.163468"
-    },
-    {
-      "role": "user",
-      "text": "hi",
-      "time": "2026-02-01T22:31:36.844195"
-    },
-    {
-      "role": "ankita",
-      "text": "You're welcome, buddy, I'm glad you're back - did the reminder about groceries help you remember what you needed to pick up?",
-      "time": "2026-02-01T22:31:40.482676"
-    },
-    {
-      "role": "user",
-      "text": "yes ",
-      "time": "2026-02-01T22:31:46.370179"
-    },
-    {
       "role": "ankita",
       "text": "I'm glad the reminder came in handy, so what else is on your mind today, is there something specific you'd like to talk about or work on?",
       "time": "2026-02-01T22:31:49.970638"
@@ -49,6 +24,31 @@
       "role": "ankita",
       "text": "You're welcome, I've got some great tunes going on, would you like me to change the playlist or is everything sounding just right?",
       "time": "2026-02-01T22:32:31.999467"
+    },
+    {
+      "role": "ankita",
+      "text": "I'm doing great, thanks for asking! \ud83d\ude0a",
+      "time": "2026-02-01T22:36:46.122742"
+    },
+    {
+      "role": "user",
+      "text": "what we have done so far",
+      "time": "2026-02-01T22:37:34.176855"
+    },
+    {
+      "role": "ankita",
+      "text": "We've been chatting about music and I've been sharing some great tunes with you, but it seems we lost track of our conversation - let's start fresh, would you like to continue?",
+      "time": "2026-02-01T22:37:37.053820"
+    },
+    {
+      "role": "user",
+      "text": "about groceries?",
+      "time": "2026-02-01T22:38:05.907684"
+    },
+    {
+      "role": "ankita",
+      "text": "You mentioned groceries, but we haven't discussed anything related to them yet - what would you like to know about groceries? \ud83c\udf4e",
+      "time": "2026-02-01T22:38:08.813107"
     }
   ],
   "episodes": [
@@ -152,6 +152,15 @@
         ]
       },
       "time": "2026-02-01T22:32:22.049751"
+    },
+    {
+      "intent": "unknown",
+      "entities": {},
+      "result": {
+        "status": "message",
+        "message": "I didn't understand that. Try: 'write a note' or 'play something on youtube'"
+      },
+      "time": "2026-02-01T22:36:45.312054"
     }
   ],
   "preferences": {},
