@@ -49,6 +49,26 @@
       "role": "ankita",
       "text": "I'm Ankita, your friendly AI assistant, ready to help with anything you need! \ud83d\ude0a",
       "time": "2026-02-01T22:43:36.502930"
+    },
+    {
+      "role": "user",
+      "text": "hi",
+      "time": "2026-02-01T22:55:53.955436"
+    },
+    {
+      "role": "ankita",
+      "text": "It looks like we've started again from scratch - how are you doing today?",
+      "time": "2026-02-01T22:55:57.726250"
+    },
+    {
+      "role": "user",
+      "text": "nah what we have done so far?",
+      "time": "2026-02-01T22:56:08.069577"
+    },
+    {
+      "role": "ankita",
+      "text": "We had a brief conversation, where you said 'hi', I asked how you're doing, and then you asked to recall what we've done so far.",
+      "time": "2026-02-01T22:56:11.264701"
     }
   ],
   "episodes": [

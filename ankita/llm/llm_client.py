@@ -58,13 +58,14 @@ def is_question(text: str) -> bool:
 
 def build_context(user_text: str) -> str:
     """Build conversation context for LLM from memory."""
-    from memory.recall import get_memory_context
+    from memory.recall import get_relevant_memories, format_memories_for_llm
     
     parts = []
     
-    # Memory context (if user is asking about past)
-    memory_ctx = get_memory_context(user_text)
-    if memory_ctx:
+    # ALWAYS search memory, conditionally inject (gated approach)
+    memories = get_relevant_memories(user_text, threshold=0.35)
+    if memories:
+        memory_ctx = format_memories_for_llm(memories)
         parts.append(memory_ctx)
     
     # Recent conversation

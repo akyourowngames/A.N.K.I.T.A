@@ -41,18 +41,80 @@ def resolve_pronouns(text: str) -> dict | None:
     return None
 
 
-def is_memory_query(text: str) -> bool:
-    """Check if the user is asking to recall/find something."""
+def get_relevant_memories(text: str, threshold: float = 0.35) -> list:
+    """
+    Always search memory, return only relevant results.
+    
+    This replaces keyword-based is_memory_query().
+    Memory is searched on EVERY input, but only injected if relevant.
+    
+    Args:
+        text: User input
+        threshold: Minimum relevance score (0-1)
+    
+    Returns:
+        List of relevant memories (empty if none match)
+    """
+    results = []
+    
+    # 1. Search semantic memory (meaning-based)
+    try:
+        from memory.semantic import search_semantic
+        semantic_results = search_semantic(text, limit=5)
+        for item in semantic_results:
+            if item.get("score", 0) >= threshold:
+                results.append({
+                    "type": "semantic",
+                    "text": item.get("text", ""),
+                    "source": item.get("source", ""),
+                    "ref": item.get("ref", ""),
+                    "score": item.get("score", 0)
+                })
+    except Exception:
+        pass
+    
+    # 2. Search episodic memory (action-based)
     t = text.lower()
     
-    memory_keywords = [
-        "find", "search", "show", "get", "open",
-        "what did i", "when did i", "where did i",
-        "my notes", "my last", "remember",
-        "that note", "that song", "that video"
-    ]
+    # Smart tag detection from query
+    tag = None
+    if any(w in t for w in ["note", "wrote", "write", "written"]):
+        tag = "notes"
+    elif any(w in t for w in ["play", "music", "song", "youtube", "video"]):
+        tag = "music"
+    elif any(w in t for w in ["study", "learn", "physics", "math", "chemistry"]):
+        tag = "study"
     
-    return any(kw in t for kw in memory_keywords)
+    episodes = find_episodes(tag=tag, limit=5) if tag else find_episodes(limit=3)
+    
+    for ep in episodes:
+        # Episode relevance = recency + tag match
+        score = 0.5 if tag else 0.3
+        results.append({
+            "type": "episodic",
+            "text": f"{ep.get('intent')}: {ep.get('entities')}",
+            "time": ep.get("time", "")[:10],
+            "score": score
+        })
+    
+    # Sort by score, return top results
+    results.sort(key=lambda x: x["score"], reverse=True)
+    return results[:5]
+
+
+def format_memories_for_llm(memories: list) -> str:
+    """Format relevant memories as context for LLM prompt."""
+    if not memories:
+        return ""
+    
+    lines = ["Relevant memories:"]
+    for m in memories:
+        if m["type"] == "semantic":
+            lines.append(f"- {m['text'][:100]} (from {m['source']})")
+        else:
+            lines.append(f"- {m['text']} on {m['time']}")
+    
+    return "\n".join(lines)
 
 
 def search_memory(query: str) -> dict | None:
