@@ -37,8 +37,8 @@ def run(
     else:
         path.write_text(data, encoding="utf-8")
 
-    # Remember this note
-    add_note(str(path))
+    # Remember this note (with content for semantic indexing)
+    add_note(str(path), content=data)
 
     # Open in Notepad if requested
     if open_after:

@@ -58,12 +58,19 @@ def is_question(text: str) -> bool:
 
 def build_context(user_text: str) -> str:
     """Build conversation context for LLM from memory."""
+    from memory.recall import get_memory_context
+    
     parts = []
+    
+    # Memory context (if user is asking about past)
+    memory_ctx = get_memory_context(user_text)
+    if memory_ctx:
+        parts.append(memory_ctx)
     
     # Recent conversation
     convo = get_conversation()
     if convo:
-        parts.append("Recent conversation:")
+        parts.append("\nRecent conversation:")
         for turn in convo[-5:]:
             role = "User" if turn["role"] == "user" else "Ankita"
             parts.append(f"  {role}: {turn['text']}")

@@ -1,0 +1,36 @@
+{
+  "items": [
+    {
+      "id": "sem_0",
+      "text": "Newton laws of motion physics notes",
+      "source": "note",
+      "ref": "physics.txt",
+      "tags": [
+        "study",
+        "physics"
+      ],
+      "time": "2026-02-01T22:53:07.595630"
+    },
+    {
+      "id": "sem_1",
+      "text": "Chemistry acids and bases notes",
+      "source": "note",
+      "ref": "chemistry.txt",
+      "tags": [
+        "study",
+        "chemistry"
+      ],
+      "time": "2026-02-01T22:53:09.746207"
+    },
+    {
+      "id": "sem_2",
+      "text": "Shopping list buy groceries milk eggs",
+      "source": "note",
+      "ref": "shopping.txt",
+      "tags": [
+        "task"
+      ],
+      "time": "2026-02-01T22:53:11.893839"
+    }
+  ]
+}
