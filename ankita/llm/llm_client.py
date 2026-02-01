@@ -30,17 +30,7 @@ _TEMPLATES = {
     "unknown": "I'm not sure what you meant. Try: 'write a note' or 'play something on youtube'."
 }
 
-SYSTEM_PROMPT = """You are Ankita, a helpful, friendly AI assistant.
-You are warm, concise, and natural in your responses.
-Do NOT mention internal tools, code, or technical details.
-Keep responses short (1-2 sentences) unless explaining something.
-
-IMPORTANT:
-- Always respond directly to what the user JUST said (the last message)
-- If they say "hi" or greet you, greet them back warmly
-- If they ask "how are you?", tell them how you're doing
-- Be conversational and natural, like a friend
-- Vary your responses - don't repeat the same thing"""
+SYSTEM_PROMPT = """You are Ankita, a friendly AI assistant. Be warm and concise (1 sentence max). Respond naturally to greetings and questions."""
 
 
 # ============== QUESTION DETECTION ==============
@@ -116,9 +106,10 @@ def _call_openai_api(messages: list) -> str:
         json={
             "model": LLM_MODEL,
             "messages": messages,
-            "max_tokens": 150
+            "max_tokens": 50,
+            "temperature": 0.7
         },
-        timeout=15
+        timeout=8
     )
     return response.json()["choices"][0]["message"]["content"].strip()
 

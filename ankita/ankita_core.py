@@ -12,13 +12,27 @@ Run modes:
   python ankita_core.py --both   → Hybrid mode
 
 Brain decides, tools act. Brain never touches OS.
+
+CLASSIFICATION STACK:
+1. Rules (keywords)  - instant, deterministic
+2. Gemma (local)     - fast, private  
+3. Cloud LLM (Groq)  - smart, reliable
+4. Conversation      - natural chat fallback
 """
 
+import os
 import argparse
+
+# Load .env file for API keys
+from dotenv import load_dotenv
+load_dotenv()
+
 from brain.intent_model import classify
+from brain.gemma_intent import gemma_classify
 from brain.planner import plan
 from executor.executor import execute
 from llm.llm_client import generate_response, ask_llm, is_question
+from llm.intent_fallback import llm_classify
 from memory.memory_manager import add_conversation, add_episode
 from memory.recall import resolve_pronouns
 
@@ -57,7 +71,14 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
 
 def handle_text(text: str) -> str:
     """
-    Process raw text input - classify intent, execute, and respond.
+    Process raw text input through the 3-layer brain stack.
+    
+    BRAIN STACK:
+    1. Rules     → instant keyword match
+    2. Gemma     → local LLM (fast, private)
+    3. Cloud LLM → Groq fallback (smart)
+    4. Chat      → natural conversation
+    
     Returns natural language response.
     """
     # Record user input
@@ -70,17 +91,30 @@ def handle_text(text: str) -> str:
         print(f"Ankita: {response}")
         return response
     
-    # Normal intent classification
+    # ===== THE 3-LAYER BRAIN STACK =====
+    intent_result = {"intent": "unknown", "entities": {}}
+    
+    # LAYER 1: Rules (instant, deterministic)
     intent_result = classify(text)
     
-    # Route to LLM for unknown intents or questions
+    # LAYER 2: Gemma LOCAL (fast, private)
+    if intent_result["intent"] == "unknown":
+        gemma_result = gemma_classify(text)
+        if gemma_result["intent"] != "unknown":
+            intent_result = gemma_result
+    
+    # LAYER 3: Cloud LLM fallback (smart, reliable)
+    if intent_result["intent"] == "unknown" and not is_question(text):
+        intent_result = llm_classify(text)
+    
+    # LAYER 4: Natural conversation (no action needed)
     if intent_result["intent"] == "unknown" or is_question(text):
         response = ask_llm(text)
         add_conversation("ankita", response)
         print(f"Ankita: {response}")
         return response
     
-    # Known intent → execute action
+    # ===== EXECUTE ACTION =====
     response = handle_intent(intent_result, user_text=text)
     print(f"Ankita: {response}")
     return response
