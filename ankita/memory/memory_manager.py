@@ -12,6 +12,7 @@ import os
 import uuid
 from datetime import datetime
 
+
 MEMORY_PATH = os.path.join(os.path.dirname(__file__), "memory.json")
 
 def load():
@@ -112,6 +113,20 @@ def last_episode():
 def get_episodes(limit: int = 10):
     """Get recent episodes."""
     return load()["episodes"][-limit:]
+
+
+def episodes_in_range(start: datetime, end: datetime) -> list:
+    """Return episodes whose timestamps fall within [start, end]."""
+    mem = load()
+    result = []
+    for ep in mem.get("episodes", []):
+        try:
+            t = datetime.fromisoformat(ep.get("time", ""))
+        except Exception:
+            continue
+        if start <= t <= end:
+            result.append(ep)
+    return result
 
 
 def find_episodes(tag: str = None, intent: str = None, limit: int = 10) -> list:

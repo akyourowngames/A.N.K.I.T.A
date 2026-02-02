@@ -30,7 +30,13 @@ _TEMPLATES = {
     "unknown": "I'm not sure what you meant. Try: 'write a note' or 'play something on youtube'."
 }
 
-SYSTEM_PROMPT = """You are Ankita, a friendly AI assistant. Be warm and concise (1 sentence max). Respond naturally to greetings and questions."""
+SYSTEM_PROMPT = """You are Ankita, a friendly AI assistant.
+
+IMPORTANT RULES:
+1. Be warm and concise (1-2 sentences max)
+2. When given "Relevant memories", USE THEM in your response - they are facts about what the user has done
+3. Never say "we didn't do much" if memories are provided - summarize them instead
+4. When user asks what they've done, list the actions from memories"""
 
 
 # ============== QUESTION DETECTION ==============
@@ -114,7 +120,7 @@ def _call_openai_api(messages: list) -> str:
         json={
             "model": LLM_MODEL,
             "messages": messages,
-            "max_tokens": 50,
+            "max_tokens": 150,
             "temperature": 0.7
         },
         timeout=8

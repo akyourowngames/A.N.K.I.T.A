@@ -12,6 +12,7 @@ Memory is searched BEFORE LLM to prevent hallucination.
 
 from memory.memory_manager import last_episode, get_conversation, find_episodes
 from memory.semantic import search_semantic, find_by_meaning
+import re
 
 
 def resolve_pronouns(text: str) -> dict | None:
@@ -24,13 +25,20 @@ def resolve_pronouns(text: str) -> dict | None:
     t = text.lower()
     
     # Pronoun/reference patterns
-    patterns = [
-        "it", "that", "again", "continue", 
-        "same", "repeat", "last", "previous",
-        "do it", "play it", "open it", "the same"
-    ]
-    
-    if any(p in t for p in patterns):
+    # Use regex to match whole words/phrases to avoid matching substrings
+    reference_pattern = r"\b(?:do it|play it|open it|open that|continue it|continue that|the same|same|again|repeat|last|previous)\b"
+
+    # Guard: avoid replaying last action when the user is issuing an explicit new command
+    # like "continue note ..." or "write in notepad ...".
+    # We only want recall when there's an actual reference target (it/that) or clear replay intent.
+    has_explicit_target = re.search(r"\b(?:notepad|note|youtube|yt)\b", t) is not None
+    has_true_reference = re.search(r"\b(?:it|that)\b", t) is not None
+    has_replay_keyword = re.search(r"\b(?:again|repeat|previous|last)\b", t) is not None
+
+    if has_explicit_target and not (has_true_reference or has_replay_keyword):
+        return None
+
+    if re.search(reference_pattern, t):
         last = last_episode()
         if last:
             return {
@@ -41,7 +49,7 @@ def resolve_pronouns(text: str) -> dict | None:
     return None
 
 
-def get_relevant_memories(text: str, threshold: float = 0.35) -> list:
+def get_relevant_memories(text: str, threshold: float = 0.5) -> list:
     """
     Always search memory, return only relevant results.
     
@@ -56,11 +64,19 @@ def get_relevant_memories(text: str, threshold: float = 0.35) -> list:
         List of relevant memories (empty if none match)
     """
     results = []
+    t = text.lower()
+    
+    # Check if user is explicitly asking about history/past
+    is_history_query = any(kw in t for kw in [
+        "what did", "what have", "so far", "history",
+        "remember", "recall", "last time", "yesterday",
+        "done before", "did i", "have i"
+    ])
     
     # 1. Search semantic memory (meaning-based)
     try:
         from memory.semantic import search_semantic
-        semantic_results = search_semantic(text, limit=5)
+        semantic_results = search_semantic(text, limit=3)
         for item in semantic_results:
             if item.get("score", 0) >= threshold:
                 results.append({
@@ -73,29 +89,29 @@ def get_relevant_memories(text: str, threshold: float = 0.35) -> list:
     except Exception:
         pass
     
-    # 2. Search episodic memory (action-based)
-    t = text.lower()
-    
-    # Smart tag detection from query
-    tag = None
-    if any(w in t for w in ["note", "wrote", "write", "written"]):
-        tag = "notes"
-    elif any(w in t for w in ["play", "music", "song", "youtube", "video"]):
-        tag = "music"
-    elif any(w in t for w in ["study", "learn", "physics", "math", "chemistry"]):
-        tag = "study"
-    
-    episodes = find_episodes(tag=tag, limit=5) if tag else find_episodes(limit=3)
-    
-    for ep in episodes:
-        # Episode relevance = recency + tag match
-        score = 0.5 if tag else 0.3
-        results.append({
-            "type": "episodic",
-            "text": f"{ep.get('intent')}: {ep.get('entities')}",
-            "time": ep.get("time", "")[:10],
-            "score": score
-        })
+    # 2. Only add episodic memory if user is asking about history
+    if is_history_query:
+        # Smart tag detection from query
+        tag = None
+        if any(w in t for w in ["note", "wrote", "write", "written"]):
+            tag = "notes"
+        elif any(w in t for w in ["play", "music", "song", "youtube", "video"]):
+            tag = "music"
+        elif any(w in t for w in ["study", "learn", "physics", "math", "chemistry"]):
+            tag = "study"
+        
+        episodes = find_episodes(tag=tag, limit=5) if tag else find_episodes(limit=5)
+        
+        for ep in episodes:
+            # Skip unknown intents
+            if ep.get("intent") == "unknown":
+                continue
+            results.append({
+                "type": "episodic",
+                "text": f"{ep.get('intent')}: {ep.get('entities')}",
+                "time": ep.get("time", "")[:10],
+                "score": 0.6  # History queries get higher score
+            })
     
     # Sort by score, return top results
     results.sort(key=lambda x: x["score"], reverse=True)

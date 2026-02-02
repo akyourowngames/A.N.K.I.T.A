@@ -12,11 +12,43 @@ def _cleanup():
 
 atexit.register(_cleanup)
 
+
+def reset():
+    global _page, _browser, _playwright
+
+    try:
+        if _page and not _page.is_closed():
+            _page.close()
+    except Exception:
+        pass
+
+    _page = None
+
+    try:
+        if _browser:
+            _browser.close()
+    except Exception:
+        pass
+
+    _browser = None
+
+    try:
+        if _playwright:
+            _playwright.stop()
+    except Exception:
+        pass
+
+    _playwright = None
+
 def get_page():
     global _playwright, _browser, _page
 
-    if _page and not _page.is_closed():
-        return _page
+    if _page:
+        try:
+            if not _page.is_closed():
+                return _page
+        except Exception:
+            reset()
 
     _playwright = sync_playwright().start()
     _browser = _playwright.chromium.launch(

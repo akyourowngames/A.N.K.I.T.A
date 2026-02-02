@@ -2,7 +2,12 @@ import importlib
 import json
 import time
 
-with open("registry/tools.json") as f:
+
+# Always resolve tools.json relative to this file's directory
+import os
+_dir = os.path.dirname(os.path.abspath(__file__))
+tools_path = os.path.join(_dir, "..", "registry", "tools.json")
+with open(tools_path, encoding="utf-8") as f:
     TOOL_REGISTRY = json.load(f)
 
 def execute(plan):
@@ -16,6 +21,7 @@ def execute(plan):
     if "message" in plan:
         return {"status": "message", "message": plan["message"]}
     
+    print(f"DEBUG: executor received plan -> {plan}")
     results = []
     
     for step in plan["steps"]:
@@ -25,6 +31,7 @@ def execute(plan):
         timeout = step.get("timeout", None)
 
         tool_path = TOOL_REGISTRY[tool_name]
+        print(f"DEBUG: executing tool {tool_name} -> module {tool_path} with args {args}")
         module = importlib.import_module(tool_path)
 
         attempt = 0

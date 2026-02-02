@@ -1,7 +1,16 @@
-import json
-from memory.memory_manager import last_note
 
-with open("registry/tools_meta.json") as f:
+import json
+import os
+from memory.memory_manager import last_note
+from datetime import datetime, timedelta
+from memory.memory_manager import episodes_in_range
+from memory.sessionize import sessionize
+from memory.timeline import summarize_sessions
+
+# Always resolve tools_meta.json relative to this file's directory
+_dir = os.path.dirname(os.path.abspath(__file__))
+meta_path = os.path.join(_dir, "..", "registry", "tools_meta.json")
+with open(meta_path, encoding="utf-8") as f:
     TOOL_META = json.load(f)
 
 DEFAULT_FILENAME = "note.txt"
@@ -9,6 +18,40 @@ DEFAULT_FILENAME = "note.txt"
 def plan(intent_result):
     intent = intent_result["intent"]
     entities = intent_result.get("entities", {})
+
+    print(f"DEBUG: planner received intent={intent}, entities={entities}")
+
+    if intent.startswith("system."):
+        return {
+            "steps": [
+                {
+                    "tool": intent,
+                    "args": entities,
+                }
+            ]
+        }
+
+    if intent == "scheduler.add_job":
+        return {
+            "steps": [
+                {
+                    "tool": "scheduler.add_job",
+                    "args": entities,
+                }
+            ]
+        }
+
+    if intent == "summary.today":
+        now = datetime.now()
+        start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+        eps = episodes_in_range(start, now)
+        return {"message": summarize_sessions(sessionize(eps))}
+
+    if intent == "summary.yesterday":
+        end = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        start = end - timedelta(days=1)
+        eps = episodes_in_range(start, end)
+        return {"message": summarize_sessions(sessionize(eps))}
 
     # Handle unknown intent gracefully
     if intent == "unknown":
@@ -78,4 +121,6 @@ def plan(intent_result):
             s["args"] = {key: entities.get(key, "")}
         steps.append(s)
 
-    return {"steps": steps}
+    plan_out = {"steps": steps}
+    print(f"DEBUG: planner output -> {plan_out}")
+    return plan_out

@@ -15,6 +15,3 @@ while True:
         break
     except Exception as e:
         print(f"Error: {e}")
-# User says: "do it again"
-recalled = resolve_pronouns(text)  # Returns last episode
-handle_intent(recalled)             # Replays the action

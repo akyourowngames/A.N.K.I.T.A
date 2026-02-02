@@ -15,6 +15,30 @@ ALLOWED_INTENTS = {
     "notepad.open": [],
     "notepad.write_note": ["content"],
     "notepad.continue_note": ["content"],
+
+    # Summaries (memory-only)
+    "summary.today": [],
+    "summary.yesterday": [],
+
+    # Scheduler (safe: writes into jobs.json, does not directly run tools)
+    "scheduler.add_job": ["text", "type", "after_seconds", "time"],
+
+    # System controls (Tier-1)
+    "system.volume.up": ["action", "step"],
+    "system.volume.down": ["action", "step"],
+    "system.volume.mute": ["action"],
+    "system.volume.unmute": ["action"],
+    "system.volume.set": ["action", "value"],
+    "system.volume.status": ["action"],
+
+    "system.brightness.up": ["action", "step"],
+    "system.brightness.down": ["action", "step"],
+    "system.brightness.set": ["action", "value"],
+    "system.brightness.status": ["action"],
+
+    "system.bluetooth.on": ["action"],
+    "system.bluetooth.off": ["action"],
+    "system.bluetooth.status": ["action"],
 }
 
 
