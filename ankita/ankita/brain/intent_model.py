@@ -70,6 +70,24 @@ def classify_rules(text: str) -> str:
     if (has_relative or has_absolute) and has_action:
         return "scheduler.add_job"
     
+    # --- Window control intents (high priority) ---
+    if any(w in t for w in ["window", "this", "current"]) and any(w in t for w in ["maximize", "full screen", "maximise"]):
+        return "window_control.maximize"
+    if any(w in t for w in ["window", "this", "current"]) and any(w in t for w in ["minimize", "hide", "minimise"]):
+        return "window_control.minimize"
+    if any(w in t for w in ["window", "this", "current"]) and any(w in t for w in ["restore", "unminimize", "show"]):
+        return "window_control.restore"
+    if any(w in t for w in ["show desktop", "desktop", "minimize all", "show all"]):
+        return "window_control.desktop"
+    if any(w in t for w in ["snap left", "move left", "left side", "left"]):
+        return "window_control.left"
+    if any(w in t for w in ["snap right", "move right", "right side", "right"]):
+        return "window_control.right"
+    if any(w in t for w in ["move up", "up", "top"]):
+        return "window_control.up"
+    if any(w in t for w in ["move down", "down", "bottom"]):
+        return "window_control.down"
+
     # --- Daily summary intents ---
     if any(w in t for w in ["what did i do", "what have i done", "what we have done", "what did we do", "summary", "summarize"]):
         if "yesterday" in t:

@@ -14,15 +14,19 @@ Run modes:
 Brain decides, tools act. Brain never touches OS.
 
 CLASSIFICATION STACK:
-1. Rules (keywords)  - instant, deterministic
-2. Gemma (local)     - fast, private  
-3. Cloud LLM (Groq)  - smart, reliable
-4. Conversation      - natural chat fallback
+1. Rules     → instant keyword match
+2. Gemma     → local LLM (fast, private)  
+3. Cloud LLM → Groq fallback (smart)
+4. Conversation      → natural chat fallback
 """
 
 import os
 import argparse
 import re
+import sys
+import json
+import socket
+import subprocess
 
 # Load .env file for API keys
 from dotenv import load_dotenv
@@ -30,6 +34,7 @@ load_dotenv()
 
 
 from brain.intent_model import classify
+from brain.semantic_intent import semantic_classify
 from brain.gemma_intent import gemma_classify
 from brain.planner import plan
 from executor.executor import execute
@@ -39,6 +44,82 @@ from memory.memory_manager import add_conversation, add_episode
 from memory.recall import resolve_pronouns
 from brain.entity_normalizer import normalize
 from brain.entity_extractor import extract
+from brain.text_normalizer import normalize_text
+
+
+_UI_STATE_ADDR = ("127.0.0.1", 50555)
+_UI_CMD_ADDR = ("127.0.0.1", 50556)
+_ui_state_sock: socket.socket | None = None
+_ui_cmd_sock: socket.socket | None = None
+_ui_sleeping: bool = False
+
+
+def _ensure_ui_state_sock() -> socket.socket:
+    global _ui_state_sock
+    if _ui_state_sock is None:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setblocking(False)
+        _ui_state_sock = s
+    return _ui_state_sock
+
+
+def publish_ui_state(state: str, extra: dict | None = None) -> None:
+    try:
+        payload = {"type": "state", "state": str(state)}
+        if extra:
+            payload["extra"] = extra
+        data = json.dumps(payload).encode("utf-8")
+        _ensure_ui_state_sock().sendto(data, _UI_STATE_ADDR)
+    except Exception:
+        return
+
+
+def _ensure_ui_cmd_sock() -> socket.socket:
+    global _ui_cmd_sock
+    if _ui_cmd_sock is None:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        try:
+            s.bind(_UI_CMD_ADDR)
+        except Exception:
+            pass
+        s.setblocking(False)
+        _ui_cmd_sock = s
+    return _ui_cmd_sock
+
+
+def poll_ui_commands() -> list[dict]:
+    cmds: list[dict] = []
+    try:
+        s = _ensure_ui_cmd_sock()
+        while True:
+            try:
+                data, _addr = s.recvfrom(65535)
+            except BlockingIOError:
+                break
+            except Exception:
+                break
+            try:
+                msg = json.loads((data or b"").decode("utf-8"))
+                if isinstance(msg, dict):
+                    cmds.append(msg)
+            except Exception:
+                continue
+    except Exception:
+        return cmds
+    return cmds
+
+
+def _maybe_start_bubble(args: argparse.Namespace) -> None:
+    if getattr(args, "no_bubble", False):
+        return
+    bubble_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ui", "floating_bubble.py")
+    if not os.path.exists(bubble_path):
+        return
+    try:
+        subprocess.Popen([sys.executable, bubble_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        return
 
 
 # ============== CORE HANDLERS ==============
@@ -48,6 +129,7 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     Process an intent result through planner and executor.
     Returns natural language response.
     """
+    publish_ui_state("EXECUTING")
     execution_plan = plan(intent_result)
 
     # Message-only plans are memory-only / internal responses.
@@ -55,6 +137,7 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     if isinstance(execution_plan, dict) and "message" in execution_plan:
         response = str(execution_plan.get("message", ""))
         add_conversation("ankita", response)
+        publish_ui_state("IDLE")
         return response
 
     result = execute(execution_plan)
@@ -75,9 +158,14 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
                 first = result["results"][0]
             if isinstance(first, dict):
                 if "message" in first:
-                    return str(first.get("message"))
+                    msg = str(first.get("message"))
+                    publish_ui_state("IDLE")
+                    return msg
                 if "value" in first:
-                    return f"{intent_result['intent']}: {first.get('value')}"
+                    val = f"{intent_result['intent']}: {first.get('value')}"
+                    publish_ui_state("IDLE")
+                    return val
+            publish_ui_state("IDLE")
             return "Done."
 
         # fail/error path
@@ -85,7 +173,9 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
         if isinstance(last, dict):
             reason = str(last.get("reason", "Failed"))
             err = str(last.get("error", "")).strip()
+            publish_ui_state("IDLE")
             return reason + (f" ({err})" if err else "")
+        publish_ui_state("IDLE")
         return "Failed."
     
     # Generate natural response using LLM
@@ -99,7 +189,7 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     
     # Record Ankita's response
     add_conversation("ankita", response)
-    
+    publish_ui_state("IDLE")
     return response
 
 
@@ -116,6 +206,11 @@ def handle_text(text: str, source: str = "user") -> str:
     Returns natural language response.
     """
     # Record user input
+    if _ui_sleeping:
+        publish_ui_state("SLEEP")
+        return ""
+
+    publish_ui_state("LISTENING")
     add_conversation(source, text)
     
     # Check for pronoun references ("do it again", "continue that")
@@ -123,6 +218,7 @@ def handle_text(text: str, source: str = "user") -> str:
     if recalled:
         response = handle_intent(recalled, user_text=text)
         print(f"Ankita: {response}")
+        publish_ui_state("IDLE")
         return response
     
     # ===== THE 3-LAYER BRAIN STACK =====
@@ -132,11 +228,18 @@ def handle_text(text: str, source: str = "user") -> str:
     intent_result = classify(text)
 
     # Early exit for conversational fillers (e.g., "anything else")
-    if intent_result["intent"] == "unknown" and any(p in text.lower() for p in ["anything else", "what about", "and then", "what else", "anything more"]):
+    if intent_result["intent"] == "unknown" and any(p in normalize_text(text) for p in ["anything else", "what about", "and then", "what else", "anything more"]):
         response = "Sure—let me know what you’d like to do next."
         add_conversation("ankita", response)
+        publish_ui_state("IDLE")
         print(f"Ankita: {response}")
         return response
+
+    # LAYER 2: Semantic intent match (embeddings; optional if deps installed)
+    if intent_result["intent"] == "unknown":
+        semantic_result = semantic_classify(text)
+        if semantic_result.get("intent") != "unknown":
+            intent_result = semantic_result
     
     # LAYER 2: Gemma LOCAL (fast, private)
     if intent_result["intent"] == "unknown":
@@ -155,6 +258,7 @@ def handle_text(text: str, source: str = "user") -> str:
     if intent_result["intent"] == "unknown":
         response = ask_llm(text)
         add_conversation("ankita", response)
+        publish_ui_state("IDLE")
         print(f"Ankita: {response}")
         return response
     
@@ -181,6 +285,7 @@ def handle_text(text: str, source: str = "user") -> str:
     # ===== EXECUTE ACTION =====
     response = handle_intent(intent_result, user_text=text)
     print(f"Ankita: {response}")
+    publish_ui_state("IDLE")
     return response
 
 
@@ -198,8 +303,14 @@ def run_text_mode():
     """Text input mode - type commands."""
     print("[Ankita] Text mode. Type command or 'exit' to quit.\n")
     
+    publish_ui_state("IDLE")
     while True:
         try:
+            for cmd in poll_ui_commands():
+                if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
+                    global _ui_sleeping
+                    _ui_sleeping = not _ui_sleeping
+                    publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
             text = input("You: ")
             if text.lower() in ["exit", "quit", "bye"]:
                 print("[Ankita] Goodbye!")
@@ -225,11 +336,8 @@ def run_voice_mode():
 
         tl = raw.lower().strip()
         has_devanagari = re.search(r"[\u0900-\u097F]", raw) is not None
-        # Hinglish trigger words that langdetect frequently mislabels as English
         likely_hinglish = any(w in tl for w in [" jao", " jaao", " kholo", " khol", " band", " chalao", " per ", " pe ", " par ", " krdo", " karo", " kar do"])
 
-        # Quick phrase normalization to produce commands your rule-intents understand
-        # Keep it small and deterministic.
         normalized = tl
         # Handle: "chrome per jao" -> "go to chrome"
         normalized = re.sub(r"^(.+?)\s+(?:per|pe|par)\s+jao$", r"go to \1", normalized)
@@ -241,11 +349,9 @@ def run_voice_mode():
         normalized = re.sub(r"\bband\b", "close", normalized)
         normalized = re.sub(r"\s+", " ", normalized).strip()
 
-        # If it already became a clean English command, return it.
         if normalized != tl and not has_devanagari:
             return normalized, {"raw": raw, "normalized": normalized, "translated": False}
 
-        # Translate when we see Devanagari or Hinglish patterns.
         should_translate = has_devanagari or likely_hinglish
 
         lang = None
@@ -272,10 +378,29 @@ def run_voice_mode():
 
         return raw, {"raw": raw, "lang": lang, "translated": False}
     
+    publish_ui_state("IDLE")
     print("[Ankita] Voice mode. Press Enter to speak, 'exit' to quit.\n")
     
     while True:
         try:
+            for cmd_msg in poll_ui_commands():
+                if cmd_msg.get("type") == "command" and cmd_msg.get("command") == "toggle_sleep":
+                    global _ui_sleeping
+                    _ui_sleeping = not _ui_sleeping
+                    publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
+                if cmd_msg.get("type") == "command" and cmd_msg.get("command") == "open_panel":
+                    print("[Ankita] UI panel requested")
+
+            if _ui_sleeping:
+                publish_ui_state("SLEEP")
+                try:
+                    from time import sleep
+
+                    sleep(0.2)
+                except Exception:
+                    pass
+                continue
+
             cmd = input("[Press Enter to speak] ")
             if cmd.lower() in ["exit", "quit", "bye"]:
                 speak("Goodbye!")
@@ -290,12 +415,12 @@ def run_voice_mode():
                 speak("I didn't hear anything.")
                 continue
             
+            # Get response and speak it
+            # IMPORTANT: Use the same pipeline as text mode (pronoun recall + normalization)
             text_en, meta = _voice_to_english(text)
             if meta.get("translated") and text_en:
                 print(f"[Translated->en]: {text_en}")
 
-            # Get response and speak it
-            # IMPORTANT: Use the same pipeline as text mode (pronoun recall + normalization)
             response = handle_text(text_en)
             print(f"Ankita: {response}")
             speak(response)
@@ -455,19 +580,40 @@ def run_continuous_voice_mode(
         return True
 
     state = "IDLE"
+    publish_ui_state(state)
     speak("Continuous mode enabled.")
     print("[Ankita] Continuous voice mode. Wake word: Jarvis. Stop words: stop/sleep/cancel. Ctrl+C to quit.\n")
 
     try:
         while True:
+            for cmd in poll_ui_commands():
+                if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
+                    global _ui_sleeping
+                    _ui_sleeping = not _ui_sleeping
+                    publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
+                if cmd.get("type") == "command" and cmd.get("command") == "open_panel":
+                    print("[Ankita] UI panel requested")
+            if _ui_sleeping:
+                state = "SLEEP"
+                publish_ui_state(state)
+                try:
+                    from time import sleep
+                    sleep(0.2)
+                except Exception:
+                    pass
+                continue
+
             if state == "IDLE":
+                publish_ui_state("WAKE_ACTIVE")
                 ok = _listen_for_wake()
                 if not ok:
                     speak("Goodbye!")
                     break
                 state = "LISTENING"
+                publish_ui_state(state)
 
             if state == "LISTENING":
+                publish_ui_state(state)
                 print("[Listening...]")
                 audio_path = record_audio(duration=command_seconds)
                 raw = transcribe(audio_path)
@@ -476,11 +622,13 @@ def run_continuous_voice_mode(
                 if not (raw or "").strip():
                     speak("I didn't hear anything.")
                     state = "IDLE"
+                    publish_ui_state(state)
                     continue
 
                 if _is_stop(raw):
                     speak("Okay, going idle.")
                     state = "IDLE"
+                    publish_ui_state(state)
                     continue
 
                 text_en, meta = _voice_to_english(raw)
@@ -488,10 +636,12 @@ def run_continuous_voice_mode(
                     print(f"[Translated->en]: {text_en}")
 
                 state = "EXECUTING"
+                publish_ui_state(state)
                 response = handle_text(text_en)
                 print(f"Ankita: {response}")
                 speak(response)
                 state = "IDLE"
+                publish_ui_state(state)
 
     except KeyboardInterrupt:
         try:
@@ -506,13 +656,31 @@ def run_hybrid_mode():
     from voice.stt import transcribe
     from voice.tts import speak
     
+    publish_ui_state("IDLE")
     print("[Ankita] Hybrid mode.")
     print("  Enter (empty) → Voice | Type text → Text | 'exit' → Quit\n")
     
     while True:
         try:
+            for cmd_msg in poll_ui_commands():
+                if cmd_msg.get("type") == "command" and cmd_msg.get("command") == "toggle_sleep":
+                    global _ui_sleeping
+                    _ui_sleeping = not _ui_sleeping
+                    publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
+                if cmd_msg.get("type") == "command" and cmd_msg.get("command") == "open_panel":
+                    print("[Ankita] UI panel requested")
+
+            if _ui_sleeping:
+                publish_ui_state("SLEEP")
+                try:
+                    from time import sleep
+
+                    sleep(0.2)
+                except Exception:
+                    pass
+                continue
+
             cmd = input("You: ")
-            
             if cmd.lower() in ["exit", "quit", "bye"]:
                 speak("Goodbye!")
                 break
@@ -530,7 +698,11 @@ def run_hybrid_mode():
                 
                 # Get response and speak it
                 # IMPORTANT: Use the same pipeline as text mode (pronoun recall + normalization)
-                response = handle_text(text)
+                text_en, meta = _voice_to_english(text)
+                if meta.get("translated") and text_en:
+                    print(f"[Translated->en]: {text_en}")
+
+                response = handle_text(text_en)
                 print(f"Ankita: {response}")
                 speak(response)
             else:
@@ -550,7 +722,10 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Voice mode")
     parser.add_argument("--both", action="store_true", help="Hybrid mode")
     parser.add_argument("--continuous", action="store_true", help="Continuous voice mode (wake word + stop word)")
+    parser.add_argument("--no-bubble", action="store_true", help="Disable floating bubble UI")
     args = parser.parse_args()
+
+    _maybe_start_bubble(args)
     
     print()
     print("  █████╗ ███╗   ██╗██╗  ██╗██╗████████╗ █████╗ ")

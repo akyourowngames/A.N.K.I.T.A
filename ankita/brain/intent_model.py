@@ -14,6 +14,7 @@ import json
 import os
 import re
 from brain.entity_extractor import extract
+from brain.text_normalizer import normalize_text
 
 _INTENTS_PATH = os.path.join(os.path.dirname(__file__), "intents.json")
 with open(_INTENTS_PATH, "r", encoding="utf-8") as f:
@@ -27,7 +28,7 @@ def classify_rules(text: str) -> str:
     Rule-based intent classification using keywords.
     Returns intent string or "unknown".
     """
-    t = text.lower()
+    t = normalize_text(text)
 
     # --- System controls (Tier-1) ---
     if "bluetooth" in t:

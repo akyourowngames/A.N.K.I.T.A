@@ -48,6 +48,13 @@ ALLOWED_INTENTS = {
     "system.app.force_close": ["action", "app", "force"],
     "system.app.close_active": ["action"],
     "system.app.focus": ["action", "app"],
+
+    # Notepad tool-level intents
+    "notepad.open_file": ["path"],
+    "notepad.focus": [],
+    "notepad.write": ["content"],
+    "notepad.write_file": ["content", "filename", "mode", "open_after"],
+    "notepad.save": [],
 }
 
 

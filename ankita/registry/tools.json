@@ -29,5 +29,13 @@
   "system.app.close": "tools.system.app",
   "system.app.force_close": "tools.system.app",
   "system.app.close_active": "tools.system.app",
-  "system.app.focus": "tools.system.app"
+  "system.app.focus": "tools.system.app",
+  "window_control.maximize": "tools.window_control",
+  "window_control.minimize": "tools.window_control",
+  "window_control.restore": "tools.window_control",
+  "window_control.desktop": "tools.window_control",
+  "window_control.left": "tools.window_control",
+  "window_control.right": "tools.window_control",
+  "window_control.up": "tools.window_control",
+  "window_control.down": "tools.window_control"
 }

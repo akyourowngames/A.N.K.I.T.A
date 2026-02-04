@@ -1,70 +1,5 @@
 [
   {
-    "id": "ep_d16d1287",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "gestures.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "stopped"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:28:16.121503"
-  },
-  {
-    "id": "ep_b0874506",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": "CV-based Window Switching"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:28:50.565173"
-  },
-  {
-    "id": "ep_4515628b",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "gestures.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:28:51.134435"
-  },
-  {
-    "id": "ep_81d056d9",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "chrome",
-      "matched": "30-S-1 MATHEMATICS STANDARD.pdf - Google Chrome"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:30:38.562934"
-  },
-  {
-    "id": "ep_948f781a",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": "CV-based Window Switching"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:30:44.728471"
-  },
-  {
     "id": "ep_f99d60a2",
     "intent": "system.window_switch",
     "entities": {
@@ -1400,5 +1335,102 @@
     },
     "tags": [],
     "time": "2026-02-04T21:30:25.176807"
+  },
+  {
+    "id": "ep_8a9908e4",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "window"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused window",
+          "window_title": "CV-based Window Switching"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-04T21:55:54.088626"
+  },
+  {
+    "id": "ep_1039e433",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "vs code"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened vs code"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-04T21:56:55.136649"
+  },
+  {
+    "id": "ep_114cabd2",
+    "intent": "system.app.force_close",
+    "entities": {
+      "action": "close",
+      "app": "vs code",
+      "force": true
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "force closed vs code"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-04T21:57:40.422630"
+  },
+  {
+    "id": "ep_bd7d8151",
+    "intent": "system.volume.down",
+    "entities": {
+      "action": "down",
+      "step": null
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Volume decreased by 10"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-04T22:17:14.360490"
+  },
+  {
+    "id": "ep_67322fb1",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-04T22:59:33.410012"
   }
 ]

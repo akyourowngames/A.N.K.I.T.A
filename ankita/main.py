@@ -1,17 +1,6 @@
-from ankita_core import handle_text
 
-print("[Ankita] Ready. Type your command or 'exit' to quit.")
+from ankita_core import main
 
-while True:
-    try:
-        text = input("You: ")
-        if text.lower() in ["exit", "quit", "bye"]:
-            print("[Ankita] Goodbye!")
-            break
-        
-        handle_text(text)
-    except KeyboardInterrupt:
-        print("\n[Ankita] Goodbye!")
-        break
-    except Exception as e:
-        print(f"Error: {e}")
+
+if __name__ == "__main__":
+    main()
