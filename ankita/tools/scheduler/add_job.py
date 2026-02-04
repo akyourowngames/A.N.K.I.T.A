@@ -1,6 +1,7 @@
 import json
 import os
 import uuid
+import re
 
 
 _ANKITA_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -25,6 +26,15 @@ def run(text: str = "", type: str = "once", after_seconds=None, time=None, **kwa
     text = (text or "").strip()
     if not text:
         return {"status": "fail", "reason": "Missing job text"}
+
+    if after_seconds is None and time is not None:
+        m = re.search(r"\b(\d+)\s*(seconds?|secs?|minutes?|mins?)\b", str(time).strip().lower())
+        if m:
+            n = int(m.group(1))
+            unit = m.group(2)
+            after_seconds = n * 60 if unit.startswith("min") else n
+            time = None
+            type = "once"
 
     job_type = (type or "").strip().lower() or "once"
     if job_type not in ("once", "daily"):

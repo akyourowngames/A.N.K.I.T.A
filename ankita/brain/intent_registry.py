@@ -39,6 +39,15 @@ ALLOWED_INTENTS = {
     "system.bluetooth.on": ["action"],
     "system.bluetooth.off": ["action"],
     "system.bluetooth.status": ["action"],
+    "system.window_switch": ["query"],
+    "system.window_switch.gesture": ["mode"],
+    "system.gesture_mode": ["mode"],
+
+    "system.app.open": ["action", "app"],
+    "system.app.close": ["action", "app"],
+    "system.app.force_close": ["action", "app", "force"],
+    "system.app.close_active": ["action"],
+    "system.app.focus": ["action", "app"],
 }
 
 

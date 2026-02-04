@@ -49,46 +49,43 @@ def resolve_pronouns(text: str) -> dict | None:
     return None
 
 
-def get_relevant_memories(text: str, threshold: float = 0.5) -> list:
+def get_relevant_memories(text: str, threshold: float = 0.6) -> list:
     """
-    Always search memory, return only relevant results.
-    
-    This replaces keyword-based is_memory_query().
-    Memory is searched on EVERY input, but only injected if relevant.
-    
-    Args:
-        text: User input
-        threshold: Minimum relevance score (0-1)
-    
-    Returns:
-        List of relevant memories (empty if none match)
+    Search memory but be conservative about what is returned for prompt injection.
+
+    - Default threshold raised to reduce noise
+    - Semantic hits are only included for explicit history queries or very high-confidence matches
+    - Episodic memory is only returned for history-like queries
     """
     results = []
     t = text.lower()
-    
+
     # Check if user is explicitly asking about history/past
     is_history_query = any(kw in t for kw in [
         "what did", "what have", "so far", "history",
         "remember", "recall", "last time", "yesterday",
         "done before", "did i", "have i"
     ])
-    
+
     # 1. Search semantic memory (meaning-based)
     try:
         from memory.semantic import search_semantic
         semantic_results = search_semantic(text, limit=3)
         for item in semantic_results:
-            if item.get("score", 0) >= threshold:
+            score = item.get("score", 0)
+            # Only include semantic items when query is explicitly about past/history
+            # OR when the match is very strong (reduce accidental injections)
+            if is_history_query or score >= max(threshold, 0.75):
                 results.append({
                     "type": "semantic",
                     "text": item.get("text", ""),
                     "source": item.get("source", ""),
                     "ref": item.get("ref", ""),
-                    "score": item.get("score", 0)
+                    "score": score
                 })
     except Exception:
         pass
-    
+
     # 2. Only add episodic memory if user is asking about history
     if is_history_query:
         # Smart tag detection from query
@@ -99,9 +96,9 @@ def get_relevant_memories(text: str, threshold: float = 0.5) -> list:
             tag = "music"
         elif any(w in t for w in ["study", "learn", "physics", "math", "chemistry"]):
             tag = "study"
-        
+
         episodes = find_episodes(tag=tag, limit=5) if tag else find_episodes(limit=5)
-        
+
         for ep in episodes:
             # Skip unknown intents
             if ep.get("intent") == "unknown":
@@ -112,7 +109,7 @@ def get_relevant_memories(text: str, threshold: float = 0.5) -> list:
                 "time": ep.get("time", "")[:10],
                 "score": 0.6  # History queries get higher score
             })
-    
+
     # Sort by score, return top results
     results.sort(key=lambda x: x["score"], reverse=True)
     return results[:5]

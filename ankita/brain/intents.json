@@ -43,5 +43,45 @@
       "play song on youtube",
       "watch something on youtube"
     ]
+  },
+  "system.app.open": {
+    "entities": ["app"],
+    "examples": [
+      "open chrome",
+      "launch notepad",
+      "start calculator",
+      "open vs code"
+    ]
+  },
+  "system.app.close": {
+    "entities": ["app"],
+    "examples": [
+      "close chrome",
+      "quit notepad"
+    ]
+  },
+  "system.app.force_close": {
+    "entities": ["app", "force"],
+    "examples": [
+      "force close chrome",
+      "kill chrome",
+      "end task code"
+    ]
+  },
+  "system.app.close_active": {
+    "entities": [],
+    "examples": [
+      "close this",
+      "close current app",
+      "close active window"
+    ]
+  },
+  "system.app.focus": {
+    "entities": ["app"],
+    "examples": [
+      "switch to chrome",
+      "go to vs code",
+      "focus notepad"
+    ]
   }
 }

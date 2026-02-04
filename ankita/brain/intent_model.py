@@ -37,6 +37,27 @@ def classify_rules(text: str) -> str:
             return "system.bluetooth.off"
         return "system.bluetooth.status"
 
+    if "gesture" in t or "head" in t or "wave" in t:
+        if any(w in t for w in ["window", "switch", "control"]):
+            return "system.window_switch.gesture"
+        return "system.gesture_mode"
+
+    # --- App control (Tier-1) ---
+    if any(w in t for w in ["switch to ", "switch ", "focus ", "go to "]):
+        return "system.app.focus"
+
+    if any(w in t for w in ["open ", "launch ", "start "]):
+        return "system.app.open"
+
+    if any(w in t for w in ["close this", "close current", "close active"]):
+        return "system.app.close_active"
+
+    if any(w in t for w in ["force close", "force quit", "kill ", "end task"]):
+        return "system.app.force_close"
+
+    if any(w in t for w in ["close ", "quit "]):
+        return "system.app.close"
+
     if "brightness" in t or "brigthness" in t:
         # If user gave a number (e.g. "brightness 80") treat as set.
         # If user said full/max, treat as set (entity extractor will map to 100).
@@ -77,8 +98,13 @@ def classify_rules(text: str) -> str:
         if "today" in t:
             return "summary.today"
 
+    # --- Common conversational phrases (avoid LLM misclassification) ---
+    conversational = ["anything else", "what about", "and then", "what else", "anything more"]
+    if any(phrase in t for phrase in conversational):
+        return "unknown"
+
     # --- YouTube intents ---
-    if "youtube" in t or "yt" in t:
+    if "youtube" in t or re.search(r"\byt\b", t):
         if any(w in t for w in ["play", "song", "video", "music", "watch", "search"]):
             return "youtube.play"
         else:
@@ -96,7 +122,7 @@ def classify_rules(text: str) -> str:
     # --- Standalone play ---
     if any(w in t for w in ["play", "song", "video", "music"]):
         return "youtube.play"
-    
+
     return "unknown"
 
 

@@ -1,0 +1,4 @@
+{
+  "features.window_switch.enabled": true,
+  "features.window_switch.gesture_enabled": false
+}
