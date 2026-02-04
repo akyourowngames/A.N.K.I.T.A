@@ -1,0 +1,20 @@
+[
+  {
+    "id": "job_1cad351d",
+    "type": "once",
+    "text": "write hello from scheduler in notepad",
+    "after_seconds": 10
+  },
+  {
+    "id": "job_6ab0ca84",
+    "type": "once",
+    "text": "write hello from scheduler in notepad",
+    "after_seconds": 10
+  },
+  {
+    "id": "job_4a762da0",
+    "type": "daily",
+    "text": "play lofi beats",
+    "time": "07:00"
+  }
+]

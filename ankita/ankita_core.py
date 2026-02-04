@@ -22,6 +22,7 @@ CLASSIFICATION STACK:
 
 import os
 import argparse
+import re
 
 # Load .env file for API keys
 from dotenv import load_dotenv
@@ -129,6 +130,13 @@ def handle_text(text: str, source: str = "user") -> str:
     
     # LAYER 1: Rules (instant, deterministic)
     intent_result = classify(text)
+
+    # Early exit for conversational fillers (e.g., "anything else")
+    if intent_result["intent"] == "unknown" and any(p in text.lower() for p in ["anything else", "what about", "and then", "what else", "anything more"]):
+        response = "Sure—let me know what you’d like to do next."
+        add_conversation("ankita", response)
+        print(f"Ankita: {response}")
+        return response
     
     # LAYER 2: Gemma LOCAL (fast, private)
     if intent_result["intent"] == "unknown":
@@ -154,6 +162,13 @@ def handle_text(text: str, source: str = "user") -> str:
     # If fallback classifiers returned an intent but no entities, extract deterministically
     if not intent_result.get("entities"):
         intent_result["entities"] = extract(intent_result["intent"], text)
+
+    if intent_result.get("intent") == "scheduler.add_job":
+        extracted = extract(intent_result["intent"], text)
+        if isinstance(extracted, dict):
+            merged = dict(extracted)
+            merged.update({k: v for k, v in (intent_result.get("entities") or {}).items() if v not in (None, "")})
+            intent_result["entities"] = merged
 
     # ===== ENTITY NORMALIZATION LAYER =====
     intent_result["entities"] = normalize(
@@ -202,6 +217,60 @@ def run_voice_mode():
     from voice.mic import record_audio
     from voice.stt import transcribe
     from voice.tts import speak
+
+    def _voice_to_english(text: str) -> tuple[str, dict]:
+        raw = (text or "").strip()
+        if not raw:
+            return "", {"raw": ""}
+
+        tl = raw.lower().strip()
+        has_devanagari = re.search(r"[\u0900-\u097F]", raw) is not None
+        # Hinglish trigger words that langdetect frequently mislabels as English
+        likely_hinglish = any(w in tl for w in [" jao", " jaao", " kholo", " khol", " band", " chalao", " per ", " pe ", " par ", " krdo", " karo", " kar do"])
+
+        # Quick phrase normalization to produce commands your rule-intents understand
+        # Keep it small and deterministic.
+        normalized = tl
+        # Handle: "chrome per jao" -> "go to chrome"
+        normalized = re.sub(r"^(.+?)\s+(?:per|pe|par)\s+jao$", r"go to \1", normalized)
+        normalized = re.sub(r"^(.+?)\s+(?:per|pe|par)\s+jaao$", r"go to \1", normalized)
+        normalized = re.sub(r"\b(per|pe|par)\s+jao\b", "go to", normalized)
+        normalized = re.sub(r"\b(per|pe|par)\s+jayo\b", "go to", normalized)
+        normalized = re.sub(r"\bkholo\b", "open", normalized)
+        normalized = re.sub(r"\bband\s+karo\b", "close", normalized)
+        normalized = re.sub(r"\bband\b", "close", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        # If it already became a clean English command, return it.
+        if normalized != tl and not has_devanagari:
+            return normalized, {"raw": raw, "normalized": normalized, "translated": False}
+
+        # Translate when we see Devanagari or Hinglish patterns.
+        should_translate = has_devanagari or likely_hinglish
+
+        lang = None
+        if not should_translate:
+            try:
+                from langdetect import detect
+
+                lang = detect(raw)
+            except Exception:
+                lang = None
+            should_translate = bool(lang and lang != "en")
+
+        if should_translate:
+            try:
+                from mtranslate import translate
+
+                out = translate(raw, "en")
+                out = (out or "").strip()
+                out = out if out else raw
+                out = re.sub(r"\s+", " ", out).strip()
+                return out, {"raw": raw, "lang": lang, "translated": True}
+            except Exception:
+                return normalized, {"raw": raw, "normalized": normalized, "translated": False}
+
+        return raw, {"raw": raw, "lang": lang, "translated": False}
     
     print("[Ankita] Voice mode. Press Enter to speak, 'exit' to quit.\n")
     
@@ -221,9 +290,13 @@ def run_voice_mode():
                 speak("I didn't hear anything.")
                 continue
             
+            text_en, meta = _voice_to_english(text)
+            if meta.get("translated") and text_en:
+                print(f"[Translated->en]: {text_en}")
+
             # Get response and speak it
             # IMPORTANT: Use the same pipeline as text mode (pronoun recall + normalization)
-            response = handle_text(text)
+            response = handle_text(text_en)
             print(f"Ankita: {response}")
             speak(response)
         except KeyboardInterrupt:
@@ -231,6 +304,200 @@ def run_voice_mode():
             break
         except Exception as e:
             print(f"Error: {e}")
+
+
+def run_continuous_voice_mode(
+    wake_words: list[str] | None = None,
+    stop_words: list[str] | None = None,
+    command_seconds: int = 5,
+):
+    from voice.mic import record_audio
+    from voice.stt import transcribe
+    from voice.tts import speak
+
+    wake_words = wake_words or ["jarvis", "hey jarvis"]
+    stop_words = stop_words or ["stop", "sleep", "go idle", "cancel"]
+
+    def _voice_to_english(text: str) -> tuple[str, dict]:
+        raw = (text or "").strip()
+        if not raw:
+            return "", {"raw": ""}
+
+        tl = raw.lower().strip()
+        has_devanagari = re.search(r"[\u0900-\u097F]", raw) is not None
+        likely_hinglish = any(w in tl for w in [" jao", " jaao", " kholo", " khol", " band", " chalao", " per ", " pe ", " par ", " krdo", " karo", " kar do"])
+
+        normalized = tl
+        # Handle: "chrome per jao" -> "go to chrome"
+        normalized = re.sub(r"^(.+?)\s+(?:per|pe|par)\s+jao$", r"go to \1", normalized)
+        normalized = re.sub(r"^(.+?)\s+(?:per|pe|par)\s+jaao$", r"go to \1", normalized)
+        normalized = re.sub(r"\b(per|pe|par)\s+jao\b", "go to", normalized)
+        normalized = re.sub(r"\b(per|pe|par)\s+jayo\b", "go to", normalized)
+        normalized = re.sub(r"\bkholo\b", "open", normalized)
+        normalized = re.sub(r"\bband\s+karo\b", "close", normalized)
+        normalized = re.sub(r"\bband\b", "close", normalized)
+        normalized = re.sub(r"\s+", " ", normalized).strip()
+
+        if normalized != tl and not has_devanagari:
+            return normalized, {"raw": raw, "normalized": normalized, "translated": False}
+
+        should_translate = has_devanagari or likely_hinglish
+        lang = None
+        if not should_translate:
+            try:
+                from langdetect import detect
+
+                lang = detect(raw)
+            except Exception:
+                lang = None
+            should_translate = bool(lang and lang != "en")
+
+        if should_translate:
+            try:
+                from mtranslate import translate
+
+                out = translate(raw, "en")
+                out = (out or "").strip()
+                out = out if out else raw
+                out = re.sub(r"\s+", " ", out).strip()
+                return out, {"raw": raw, "lang": lang, "translated": True}
+            except Exception:
+                return normalized, {"raw": raw, "normalized": normalized, "translated": False}
+
+        return raw, {"raw": raw, "lang": lang, "translated": False}
+
+    def _is_stop(text: str) -> bool:
+        tl = (text or "").strip().lower()
+        if not tl:
+            return False
+        return any(w in tl for w in stop_words)
+
+    def _listen_for_wake() -> bool:
+        access_key = os.getenv("PICOVOICE_ACCESS_KEY") or os.getenv("PV_ACCESS_KEY")
+        if access_key:
+            try:
+                import pvporcupine
+                import pyaudio
+                import struct
+
+                porcupine = pvporcupine.create(access_key=access_key, keywords=["ankita"])
+                pa = pyaudio.PyAudio()
+                stream = pa.open(
+                    rate=porcupine.sample_rate,
+                    channels=1,
+                    format=pyaudio.paInt16,
+                    input=True,
+                    frames_per_buffer=porcupine.frame_length,
+                )
+                try:
+                    while True:
+                        pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
+                        pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
+                        if porcupine.process(pcm) >= 0:
+                            return True
+                finally:
+                    try:
+                        stream.stop_stream()
+                        stream.close()
+                    except Exception:
+                        pass
+                    try:
+                        pa.terminate()
+                    except Exception:
+                        pass
+                    try:
+                        porcupine.delete()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        # Optional Vosk wake-word fallback (local/offline) for "hey ankita"
+        model_path = os.getenv("VOSK_MODEL_PATH")
+        if model_path:
+            try:
+                import json
+                import vosk
+                import sounddevice as sd
+
+                model = vosk.Model(model_path)
+                rec = vosk.KaldiRecognizer(model, 16000)
+
+                # Use sounddevice to avoid PyAudio build issues on Windows
+                with sd.RawInputStream(
+                    samplerate=16000,
+                    blocksize=8000,
+                    dtype="int16",
+                    channels=1,
+                ) as stream:
+                    while True:
+                        data_mv, _overflowed = stream.read(4000)
+                        data = bytes(data_mv)
+                        if not data:
+                            continue
+
+                        if rec.AcceptWaveform(data):
+                            res = json.loads(rec.Result() or "{}")
+                            text = (res.get("text") or "").strip().lower()
+                            if any(w in text for w in wake_words):
+                                return True
+                        else:
+                            pres = json.loads(rec.PartialResult() or "{}")
+                            p = (pres.get("partial") or "").strip().lower()
+                            if any(w in p for w in wake_words):
+                                return True
+            except Exception:
+                pass
+
+        cmd = input("[Idle] Say wake word or press Enter to speak (type 'exit' to quit): ")
+        if (cmd or "").strip().lower() in ["exit", "quit", "bye"]:
+            return False
+        return True
+
+    state = "IDLE"
+    speak("Continuous mode enabled.")
+    print("[Ankita] Continuous voice mode. Wake word: Jarvis. Stop words: stop/sleep/cancel. Ctrl+C to quit.\n")
+
+    try:
+        while True:
+            if state == "IDLE":
+                ok = _listen_for_wake()
+                if not ok:
+                    speak("Goodbye!")
+                    break
+                state = "LISTENING"
+
+            if state == "LISTENING":
+                print("[Listening...]")
+                audio_path = record_audio(duration=command_seconds)
+                raw = transcribe(audio_path)
+                print(f"[You said]: {raw}")
+
+                if not (raw or "").strip():
+                    speak("I didn't hear anything.")
+                    state = "IDLE"
+                    continue
+
+                if _is_stop(raw):
+                    speak("Okay, going idle.")
+                    state = "IDLE"
+                    continue
+
+                text_en, meta = _voice_to_english(raw)
+                if meta.get("translated") and text_en:
+                    print(f"[Translated->en]: {text_en}")
+
+                state = "EXECUTING"
+                response = handle_text(text_en)
+                print(f"Ankita: {response}")
+                speak(response)
+                state = "IDLE"
+
+    except KeyboardInterrupt:
+        try:
+            speak("Goodbye!")
+        except Exception:
+            pass
 
 
 def run_hybrid_mode():
@@ -282,6 +549,7 @@ def main():
     parser = argparse.ArgumentParser(description="Ankita AI Assistant")
     parser.add_argument("--voice", action="store_true", help="Voice mode")
     parser.add_argument("--both", action="store_true", help="Hybrid mode")
+    parser.add_argument("--continuous", action="store_true", help="Continuous voice mode (wake word + stop word)")
     args = parser.parse_args()
     
     print()
@@ -293,7 +561,9 @@ def main():
     print(" ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝")
     print()
     
-    if args.voice:
+    if args.continuous:
+        run_continuous_voice_mode()
+    elif args.voice:
         run_voice_mode()
     elif args.both:
         run_hybrid_mode()

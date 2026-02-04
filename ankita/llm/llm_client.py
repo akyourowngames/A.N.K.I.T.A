@@ -63,33 +63,60 @@ def is_question(text: str) -> bool:
 # ============== CONTEXT BUILDER ==============
 
 def build_context(user_text: str) -> str:
-    """Build conversation context for LLM from memory."""
+    """Build conversation context for LLM from memory.
+
+    Rules (stricter/default):
+      - Honor user preference `memory_verbosity` (off/concise/sparingly/verbose)
+      - Inject memories only when high-confidence or when user explicitly asks about history
+      - Keep recent conversation short (last 3 turns)
+      - Only include last action when directly referenced
+    """
     from memory.recall import get_relevant_memories, format_memories_for_llm
-    
+    from memory.memory_manager import get_pref
+    from memory.recall import resolve_pronouns
+
     parts = []
-    
-    # ALWAYS search memory, conditionally inject (gated approach)
-    memories = get_relevant_memories(user_text, threshold=0.35)
-    if memories:
-        memory_ctx = format_memories_for_llm(memories)
-        parts.append(memory_ctx)
-    
-    # Recent conversation
+
+    verbosity = get_pref("memory_verbosity", "concise")  # off | concise | sparingly | verbose
+
+    # Determine if user explicitly asks about past/history or it's a question
+    explicit_history = any(k in user_text.lower() for k in ("what did", "remember", "recall", "last time", "history", "have i", "did i"))
+    question = is_question(user_text)
+
+    # Search memory but only inject according to policy
+    memories = get_relevant_memories(user_text, threshold=0.6)
+    include_memories = False
+
+    if verbosity == "off":
+        include_memories = False
+    elif verbosity == "verbose":
+        include_memories = bool(memories)
+    elif verbosity == "sparingly":
+        include_memories = any(m.get("score", 0) >= 0.75 for m in memories) or explicit_history or question
+    else:  # concise (default)
+        include_memories = (explicit_history or question) and any(m.get("score", 0) >= 0.6 for m in memories)
+
+    if include_memories:
+        memory_ctx = format_memories_for_llm(memories[:3])
+        if memory_ctx:
+            parts.append(memory_ctx)
+
+    # Recent conversation (shorter)
     convo = get_conversation()
     if convo:
         parts.append("\nRecent conversation:")
-        for turn in convo[-5:]:
+        for turn in convo[-3:]:
             role = "User" if turn["role"] == "user" else "Ankita"
             parts.append(f"  {role}: {turn['text']}")
-    
-    # Last action
+
+    # Include last action only when referenced (pronouns / explicit replay) or verbose preference
     last = last_episode()
-    if last:
+    if last and (verbosity == "verbose" or resolve_pronouns(user_text) or explicit_history or question):
         parts.append(f"\nLast action: {last['intent']} with {last['entities']}")
-    
-    # Current question
+
+    # Current question / user text (always last)
     parts.append(f"\nUser now says: {user_text}")
-    
+
     return "\n".join(parts)
 
 

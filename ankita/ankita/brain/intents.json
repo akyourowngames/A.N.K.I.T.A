@@ -1,0 +1,47 @@
+{
+  "notepad.open": {
+    "entities": [],
+    "examples": [
+      "open notepad",
+      "launch notepad",
+      "start notepad"
+    ]
+  },
+  "notepad.write_note": {
+    "entities": ["content"],
+    "examples": [
+      "write a note",
+      "take a note in notepad",
+      "write this down",
+      "make a note",
+      "create a note"
+    ]
+  },
+  "notepad.continue_note": {
+    "entities": ["content"],
+    "examples": [
+      "continue my note",
+      "add this to the note",
+      "keep writing",
+      "add to it",
+      "append to note"
+    ]
+  },
+  "youtube.open": {
+    "entities": [],
+    "examples": [
+      "open youtube",
+      "launch youtube",
+      "go to youtube"
+    ]
+  },
+  "youtube.play": {
+    "entities": ["query"],
+    "examples": [
+      "play a video on youtube",
+      "play lofi on youtube",
+      "play song on youtube",
+      "watch something on youtube"
+    ]
+  }
+}

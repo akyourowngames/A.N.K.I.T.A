@@ -27,4 +27,35 @@
       { "tool": "youtube.play", "args_from": "query" }
     ]
   }
+  ,
+  "system.window_switch": {
+    "steps": [
+      { "tool": "system.window_switch", "args_from": "query" }
+    ]
+  },
+  "system.app.open": {
+    "steps": [
+      { "tool": "system.app.open", "args_from": "app", "args": { "action": "open" } }
+    ]
+  },
+  "system.app.close": {
+    "steps": [
+      { "tool": "system.app.close", "args_from": "app", "args": { "action": "close" } }
+    ]
+  },
+  "system.app.force_close": {
+    "steps": [
+      { "tool": "system.app.force_close", "args_from": "app", "args": { "action": "close", "force": true } }
+    ]
+  },
+  "system.app.close_active": {
+    "steps": [
+      { "tool": "system.app.close_active", "args": { "action": "close_active" } }
+    ]
+  },
+  "system.app.focus": {
+    "steps": [
+      { "tool": "system.app.focus", "args_from": "app", "args": { "action": "focus" } }
+    ]
+  }
 }

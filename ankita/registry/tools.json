@@ -21,4 +21,13 @@
   "system.bluetooth.on": "tools.system.bluetooth",
   "system.bluetooth.off": "tools.system.bluetooth",
   "system.bluetooth.status": "tools.system.bluetooth"
+  ,
+  "system.window_switch": "tools.system.window_switch",
+  "system.window_switch.gesture": "tools.system.window_switch_gesture",
+  "system.gesture_mode": "tools.system.window_switch_gesture",
+  "system.app.open": "tools.system.app",
+  "system.app.close": "tools.system.app",
+  "system.app.force_close": "tools.system.app",
+  "system.app.close_active": "tools.system.app",
+  "system.app.focus": "tools.system.app"
 }

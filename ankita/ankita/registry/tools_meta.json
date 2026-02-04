@@ -1,0 +1,30 @@
+{
+  "notepad.open": {
+    "steps": [
+      { "tool": "notepad.open" }
+    ]
+  },
+  "notepad.write_note": {
+    "steps": [
+      { "tool": "notepad.write_file", "args_from": "content" },
+      { "tool": "notepad.open_file" }
+    ]
+  },
+  "notepad.continue_note": {
+    "steps": [
+      { "tool": "notepad.write_file", "args_from": "content", "args": { "mode": "append" } },
+      { "tool": "notepad.open_file" }
+    ]
+  },
+  "youtube.open": {
+    "steps": [
+      { "tool": "youtube.open" }
+    ]
+  },
+  "youtube.play": {
+    "steps": [
+      { "tool": "youtube.open" },
+      { "tool": "youtube.play", "args_from": "query" }
+    ]
+  }
+}

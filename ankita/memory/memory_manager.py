@@ -1,10 +1,11 @@
 """
-Ankita Memory Manager - 4-layer memory system.
+Ankita Memory Manager - Split storage into separate files.
 
-1. Conversation: Last few turns (short-term)
-2. Episodes: What Ankita did (actions with tags)
-3. Semantic: Meaning-based recall (embeddings)
-4. Preferences: User habits (learnable)
+Files:
+- conversations.json: Last 15 conversation turns
+- episodes.json: Action memory with tags (last 100)
+- preferences.json: User habits/learned preferences
+- notes.json: Note file tracking
 """
 
 import json
@@ -13,17 +14,114 @@ import uuid
 from datetime import datetime
 
 
-MEMORY_PATH = os.path.join(os.path.dirname(__file__), "memory.json")
+_MEMORY_DIR = os.path.dirname(__file__)
 
-def load():
-    if not os.path.exists(MEMORY_PATH):
-        return {"conversation": [], "episodes": [], "preferences": {}, "notes": []}
-    with open(MEMORY_PATH, "r", encoding="utf-8") as f:
-        return json.load(f)
+CONVO_PATH = os.path.join(_MEMORY_DIR, "conversations.json")
+EPISODES_PATH = os.path.join(_MEMORY_DIR, "episodes.json")
+PREFS_PATH = os.path.join(_MEMORY_DIR, "preferences.json")
+NOTES_PATH = os.path.join(_MEMORY_DIR, "notes.json")
 
-def save(data):
-    with open(MEMORY_PATH, "w", encoding="utf-8") as f:
+# Legacy path for migration
+OLD_MEMORY_PATH = os.path.join(_MEMORY_DIR, "memory.json")
+
+
+def _load_json(path: str, default):
+    if not os.path.exists(path):
+        return default
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return default
+
+
+def _save_json(path: str, data):
+    with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2)
+
+
+def _ensure_files_exist():
+    """Create per-file stores with sensible defaults if missing."""
+    if not os.path.exists(CONVO_PATH):
+        _save_json(CONVO_PATH, [])
+    if not os.path.exists(EPISODES_PATH):
+        _save_json(EPISODES_PATH, [])
+    if not os.path.exists(PREFS_PATH):
+        _save_json(PREFS_PATH, {})
+    if not os.path.exists(NOTES_PATH):
+        _save_json(NOTES_PATH, [])
+
+
+def _migrate_if_needed():
+    """Migrate legacy combined `memory.json` → per-file stores and back up the old file.
+
+    Safe to call multiple times; idempotent.
+    """
+    # If the new files already exist, nothing to do
+    if os.path.exists(CONVO_PATH) and os.path.exists(EPISODES_PATH) and os.path.exists(PREFS_PATH):
+        return
+
+    if os.path.exists(OLD_MEMORY_PATH):
+        old = _load_json(OLD_MEMORY_PATH, {})
+        # Migrate sections (use defaults when missing)
+        _save_json(CONVO_PATH, old.get("conversation", []))
+        _save_json(EPISODES_PATH, old.get("episodes", []))
+        _save_json(PREFS_PATH, old.get("preferences", {}))
+        _save_json(NOTES_PATH, old.get("notes", []))
+        # Back up the legacy file so user can recover if needed
+        try:
+            bak = OLD_MEMORY_PATH + ".bak"
+            if not os.path.exists(bak):
+                os.rename(OLD_MEMORY_PATH, bak)
+        except Exception:
+            # Non-fatal: we already migrated the data
+            pass
+
+    # Ensure all files exist after migration
+    _ensure_files_exist()
+
+
+def load() -> dict:
+    """Load the combined memory view assembled from per-file stores.
+
+    Returns a dict with keys: conversation, episodes, preferences, notes
+    (keeps the same public shape so existing callers keep working).
+    """
+    convo = _load_json(CONVO_PATH, [])
+    episodes = _load_json(EPISODES_PATH, [])
+    prefs = _load_json(PREFS_PATH, {})
+    notes = _load_json(NOTES_PATH, [])
+
+    return {
+        "conversation": convo,
+        "episodes": episodes,
+        "preferences": prefs,
+        "notes": notes,
+    }
+
+
+def save(mem: dict):
+    """Persist a combined memory dict into the per-file stores (atomic per-file).
+
+    Callers may pass the full dict or partial; missing keys are preserved.
+    """
+    current = load()
+    # Merge to avoid clobbering unrelated sections
+    merged = {
+        "conversation": mem.get("conversation", current.get("conversation", [])),
+        "episodes": mem.get("episodes", current.get("episodes", [])),
+        "preferences": mem.get("preferences", current.get("preferences", {})),
+        "notes": mem.get("notes", current.get("notes", [])),
+    }
+
+    _save_json(CONVO_PATH, merged["conversation"])
+    _save_json(EPISODES_PATH, merged["episodes"])
+    _save_json(PREFS_PATH, merged["preferences"])
+    _save_json(NOTES_PATH, merged["notes"])
+
+
+# Run migration / ensure files on import
+_migrate_if_needed()
 
 
 # ============== CONVERSATION (short-term) ==============

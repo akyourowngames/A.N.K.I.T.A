@@ -31,6 +31,16 @@ def plan(intent_result):
             ]
         }
 
+    if intent == "system.window_switch.gesture" or intent == "system.gesture_mode":
+        return {
+            "steps": [
+                {
+                    "tool": "system.window_switch.gesture",
+                    "args": {"mode": entities.get("mode", "headless")},
+                }
+            ]
+        }
+
     if intent == "scheduler.add_job":
         return {
             "steps": [

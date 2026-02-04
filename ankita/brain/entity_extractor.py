@@ -42,6 +42,42 @@ def _parse_time_hhmm(t: str) -> tuple[str | None, str]:
 
 
 def extract(intent, text):
+    if intent.startswith("system.app."):
+        t = (text or "").strip()
+        tl = t.lower()
+
+        if intent == "system.app.close_active":
+            return {"action": "close_active"}
+
+        force = any(w in tl for w in ["force", "kill", "end task"]) or intent.endswith("force_close")
+
+        # naive app name extraction: remove leading verb phrases
+        cleaned = tl
+        for prefix in [
+            "switch to ", "switch ", "focus ", "go to ",
+            "open ", "launch ", "start ",
+            "close ", "quit ",
+            "force close ", "force quit ", "kill ", "end task ",
+        ]:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix):]
+                break
+
+        # strip filler words
+        cleaned = re.sub(r"\b(app|application|program|please|the)\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+        action = "open" if intent.endswith(".open") else "close"
+        if intent.endswith(".focus"):
+            action = "focus"
+        if intent.endswith("force_close"):
+            action = "close"
+
+        entities = {"action": action, "app": cleaned}
+        if force:
+            entities["force"] = True
+        return entities
+
     if intent.startswith("system.volume."):
         t = (text or "").lower()
         m = re.search(r"\b(\d{1,3})\b", t)
