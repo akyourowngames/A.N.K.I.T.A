@@ -26,6 +26,11 @@
       { "tool": "youtube.open" },
       { "tool": "youtube.play", "args_from": "query" }
     ]
+  },
+  "web.search": {
+    "steps": [
+      { "tool": "web.search", "args_from": "query" }
+    ]
   }
   ,
   "system.window_switch": {

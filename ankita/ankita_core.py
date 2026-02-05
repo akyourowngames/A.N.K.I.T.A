@@ -432,6 +432,30 @@ def handle_text(text: str, source: str = "user") -> str:
         )
         return any(k in t for k in action_keywords)
 
+    def _needs_realtime(t: str) -> bool:
+        if not t:
+            return False
+        keywords = (
+            "latest",
+            "today",
+            "now",
+            "current",
+            "news",
+            "price",
+            "rate",
+            "score",
+            "weather",
+            "update",
+            "trending",
+        )
+        if any(k in t for k in keywords):
+            return True
+        if t.startswith(("what's the", "whats the", "what is the", "who is", "when is", "where is")) and any(
+            k in t for k in ("price", "news", "score", "weather")
+        ):
+            return True
+        return False
+
     intent_result = classify(text)
 
     if intent_result["intent"].startswith("conversation."):
@@ -443,6 +467,12 @@ def handle_text(text: str, source: str = "user") -> str:
         return response
 
     if intent_result["intent"] == "unknown" and not _looks_like_action(tnorm):
+        if _needs_realtime(tnorm) and is_question(text):
+            response = handle_intent({"intent": "web.search", "entities": {"query": text, "max_results": 5}}, user_text=text)
+            publish_ui_state("IDLE")
+            _print_ankita_stream(response)
+            return response
+
         response = ask_llm(text)
         add_conversation("ankita", response)
         publish_ui_state("IDLE")
@@ -674,6 +704,8 @@ def run_continuous_voice_mode(
     wake_words = wake_words or ["jarvis", "hey jarvis"]
     stop_words = stop_words or ["stop", "sleep", "go idle", "cancel"]
 
+    _vosk_warned: dict[str, bool] = {}
+
     def _voice_to_english(text: str) -> tuple[str, dict]:
         raw = (text or "").strip()
         if not raw:
@@ -730,6 +762,7 @@ def run_continuous_voice_mode(
 
     def _listen_for_wake() -> bool:
         access_key = os.getenv("PICOVOICE_ACCESS_KEY") or os.getenv("PV_ACCESS_KEY")
+        vosk_enabled = (os.getenv("VOSK_WAKE_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
         if access_key:
             try:
                 import pvporcupine
@@ -770,11 +803,17 @@ def run_continuous_voice_mode(
 
         # Optional Vosk wake-word fallback (local/offline) for "hey ankita"
         model_path = os.getenv("VOSK_MODEL_PATH")
-        if model_path:
+        if model_path and (vosk_enabled or not access_key):
             try:
                 import json
                 import vosk
                 import sounddevice as sd
+
+                if not os.path.exists(model_path):
+                    if not _vosk_warned.get("missing_model"):
+                        _vosk_warned["missing_model"] = True
+                        print(f"[Wake/Vosk] VOSK_MODEL_PATH not found: {model_path}")
+                    return False
 
                 model = vosk.Model(model_path)
                 rec = vosk.KaldiRecognizer(model, 16000)
@@ -803,7 +842,10 @@ def run_continuous_voice_mode(
                             if any(w in p for w in wake_words):
                                 return True
             except Exception:
-                pass
+                if not _vosk_warned.get("vosk_error"):
+                    _vosk_warned["vosk_error"] = True
+                    print("[Wake/Vosk] Not active. Ensure deps installed: vosk, sounddevice, and a working microphone.")
+                return False
 
         cmd = input("[Idle] Say wake word or press Enter to speak (type 'exit' to quit): ")
         if (cmd or "").strip().lower() in ["exit", "quit", "bye"]:

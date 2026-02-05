@@ -273,6 +273,70 @@ def generate_response(context: dict) -> str:
     # For conversational intents, bypass LLM and use templates/pools
     if intent in CONVERSATIONAL_INTENTS:
         return _get_conversational_response(user_text)
+
+    if intent == "web.search":
+        results_block = ""
+        try:
+            tool_result = None
+
+            if isinstance(result, dict) and isinstance(result.get("results"), list) and result.get("results"):
+                # executor() returns: {status: success, results: [tool_result_dict, ...]}
+                tool_result = result["results"][0]
+            elif isinstance(result, dict) and result.get("status") in ("success", "fail", "error"):
+                # defensive: sometimes callers may pass tool result directly
+                tool_result = result
+
+            if isinstance(tool_result, dict) and tool_result.get("status") == "success":
+                items = tool_result.get("results")
+                if isinstance(items, list):
+                    lines = []
+                    for r in items[:5]:
+                        if not isinstance(r, dict):
+                            continue
+                        title = str(r.get("title", "")).strip()
+                        snippet = str(r.get("snippet", "")).strip()
+                        url = str(r.get("url", "")).strip()
+                        if snippet:
+                            lines.append(f"- {title}: {snippet} ({url})")
+                    results_block = "\n".join(lines)
+        except Exception:
+            results_block = ""
+
+        if not results_block:
+            if isinstance(result, dict) and isinstance(result.get("results"), list) and result.get("results"):
+                tr = result["results"][0]
+                if isinstance(tr, dict) and tr.get("status") in ("fail", "error"):
+                    err = tr.get("reason") or tr.get("error")
+                    if err:
+                        return f"Sir, I could not retrieve real-time results at the moment. ({err})"
+            return "Sir, I could not retrieve real-time results at the moment."
+
+        prompt = f"""{SYSTEM_PROMPT}
+
+User asked: "{user_text}"
+
+Use ONLY the following real-time search snippets to answer. Do not invent facts.
+If the snippets are insufficient, say you are not certain.
+
+Search snippets:
+{results_block}
+
+Return a concise answer (2-4 sentences) and then a short Sources line with up to 3 URLs.
+"""
+
+        try:
+            if LLM_PROVIDER in ("openai", "groq") and LLM_API_KEY:
+                messages = [
+                    {"role": "system", "content": SYSTEM_PROMPT},
+                    {"role": "user", "content": prompt},
+                ]
+                response = _call_openai_api(messages, max_tokens=160, timeout=6)
+                if response:
+                    return response
+        except Exception:
+            pass
+
+        return "Sir, I retrieved results, but I cannot summarize them right now."
     
     # Build action-specific prompt
     prompt = f"""{SYSTEM_PROMPT}

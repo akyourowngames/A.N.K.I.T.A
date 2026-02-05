@@ -37,5 +37,6 @@
   "window_control.left": "tools.window_control",
   "window_control.right": "tools.window_control",
   "window_control.up": "tools.window_control",
-  "window_control.down": "tools.window_control"
+  "window_control.down": "tools.window_control",
+  "web.search": "tools.web_search"
 }

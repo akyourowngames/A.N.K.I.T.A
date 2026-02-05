@@ -23,6 +23,8 @@ ALLOWED_INTENTS = {
     # Scheduler (safe: writes into jobs.json, does not directly run tools)
     "scheduler.add_job": ["text", "type", "after_seconds", "time"],
 
+    "web.search": ["query", "max_results"],
+
     # System controls (Tier-1)
     "system.volume.up": ["action", "step"],
     "system.volume.down": ["action", "step"],
