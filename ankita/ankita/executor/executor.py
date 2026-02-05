@@ -1,6 +1,7 @@
 import importlib
 import json
 import time
+import inspect
 
 
 # Always resolve tools.json relative to this file's directory
@@ -39,7 +40,20 @@ def execute(plan):
         while attempt < retries:
             start = time.time()
             try:
-                result = module.run(**args)
+                run_fn = getattr(module, "run")
+                sig = inspect.signature(run_fn)
+                params = list(sig.parameters.values())
+
+                # Support tools that define `run(args: dict)` (single positional arg)
+                if (
+                    len(params) == 1
+                    and params[0].kind
+                    in (inspect.Parameter.POSITIONAL_ONLY, inspect.Parameter.POSITIONAL_OR_KEYWORD)
+                    and params[0].name == "args"
+                ):
+                    result = run_fn(args)
+                else:
+                    result = run_fn(**args)
 
                 if timeout is not None and (time.time() - start) > timeout:
                     attempt += 1

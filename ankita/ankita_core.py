@@ -27,6 +27,8 @@ import sys
 import json
 import socket
 import subprocess
+import time
+from datetime import datetime
 
 # Load .env file for API keys
 from dotenv import load_dotenv
@@ -35,16 +37,26 @@ load_dotenv()
 
 from brain.intent_model import classify
 from brain.semantic_intent import semantic_classify
-from brain.gemma_intent import gemma_classify
 from brain.planner import plan
 from executor.executor import execute
 from llm.llm_client import generate_response, ask_llm, is_question
 from llm.intent_fallback import llm_classify
-from memory.memory_manager import add_conversation, add_episode
+from memory.memory_manager import add_conversation, add_episode, last_episode
 from memory.recall import resolve_pronouns
 from brain.entity_normalizer import normalize
 from brain.entity_extractor import extract
 from brain.text_normalizer import normalize_text
+from memory.ltm_manager import (
+    get_correction,
+    get_preference,
+    get_preference_confidence,
+    find_time_habits,
+    mark_suggested_today,
+    mark_suggestion_dismissed_today,
+    observe_success,
+    set_correction,
+    was_suggested_today,
+)
 
 
 _UI_STATE_ADDR = ("127.0.0.1", 50555)
@@ -52,6 +64,111 @@ _UI_CMD_ADDR = ("127.0.0.1", 50556)
 _ui_state_sock: socket.socket | None = None
 _ui_cmd_sock: socket.socket | None = None
 _ui_sleeping: bool = False
+_pending_followup: dict | None = None
+_pending_suggestion: dict | None = None
+_suggestion_shown_this_session: bool = False
+
+
+def _jarvis_clarify(text: str) -> str:
+    return f"Sir, kindly confirm: {text}"
+
+
+def _jarvis_ack(text: str) -> str:
+    t = (text or "").strip()
+    if not t:
+        return "Yes sir."
+    return f"Yes sir. {t}"
+
+
+def _jarvis_fail(text: str) -> str:
+    t = (text or "Failed").strip()
+    return f"{t}, sir." if not t.lower().endswith(", sir.") else t
+
+
+def _print_ankita_stream(text: str, chunk_chars: int = 6, delay_s: float = 0.015) -> None:
+    t = "" if text is None else str(text)
+    sys.stdout.write("Ankita: ")
+    sys.stdout.flush()
+    if not t:
+        sys.stdout.write("\n")
+        sys.stdout.flush()
+        return
+    for i in range(0, len(t), int(chunk_chars)):
+        sys.stdout.write(t[i : i + int(chunk_chars)])
+        sys.stdout.flush()
+        time.sleep(float(delay_s))
+    sys.stdout.write("\n")
+    sys.stdout.flush()
+
+
+def _is_affirmative(t: str) -> bool:
+    tl = (t or "").strip().lower()
+    return tl in ("yes", "y", "yeah", "yep", "ok", "okay", "sure", "do it")
+
+
+def _is_negative(t: str) -> bool:
+    tl = (t or "").strip().lower()
+    return tl in ("no", "n", "nope", "nah", "cancel", "stop")
+
+
+def _maybe_make_suggestion(intent_result: dict) -> str | None:
+    """Return a suggestion string or None. Suggest-only, never auto-act."""
+    global _pending_suggestion, _suggestion_shown_this_session
+    if _suggestion_shown_this_session:
+        return None
+
+    now = datetime.now()
+    habits = find_time_habits(now.hour)
+    if not habits:
+        return None
+
+    # Pick best habit by confidence then count
+    scored = []
+    for h in habits:
+        if not isinstance(h, dict):
+            continue
+        key = str(h.get("key", "")).strip()
+        if not key or was_suggested_today(key):
+            continue
+        try:
+            conf = float(h.get("confidence", 0.0) or 0.0)
+            cnt = int(h.get("count", 0) or 0)
+        except Exception:
+            continue
+        if conf < 0.75 or cnt < 3:
+            continue
+        scored.append((conf, cnt, h))
+
+    if not scored:
+        return None
+
+    scored.sort(key=lambda x: (x[0], x[1]), reverse=True)
+    h = scored[0][2]
+    key = str(h.get("key"))
+    action = str(h.get("action", "")).strip()
+    target = str(h.get("target", "")).strip()
+
+    if action == "open_app" and target:
+        _pending_suggestion = {
+            "key": key,
+            "intent": "system.app.open",
+            "entities": {"action": "open", "app": target},
+        }
+        _suggestion_shown_this_session = True
+        mark_suggested_today(key, {"type": "time_based", "target": target, "action": action})
+        return f"Sir, you usually open {target} around this time. Would you like me to open it?"
+
+    if action == "focus_app" and target:
+        _pending_suggestion = {
+            "key": key,
+            "intent": "system.app.focus",
+            "entities": {"action": "focus", "app": target},
+        }
+        _suggestion_shown_this_session = True
+        mark_suggested_today(key, {"type": "time_based", "target": target, "action": action})
+        return f"Sir, you typically switch to {target} around this time. Would you like me to focus it?"
+
+    return None
 
 
 def _ensure_ui_state_sock() -> socket.socket:
@@ -149,6 +266,7 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
             intent_result.get("entities", {}),
             result
         )
+        observe_success(intent_result["intent"], intent_result.get("entities", {}), result)
 
     # Deterministic responses for system tools (avoid LLM fluff; surface real errors)
     if str(intent_result.get("intent", "")).startswith("system."):
@@ -159,14 +277,16 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
             if isinstance(first, dict):
                 if "message" in first:
                     msg = str(first.get("message"))
+                    if intent_result.get("_soft_confirm"):
+                        msg = msg + " — say 'change' if you meant something else."
                     publish_ui_state("IDLE")
-                    return msg
+                    return _jarvis_ack(msg)
                 if "value" in first:
                     val = f"{intent_result['intent']}: {first.get('value')}"
                     publish_ui_state("IDLE")
-                    return val
+                    return _jarvis_ack(val)
             publish_ui_state("IDLE")
-            return "Done."
+            return _jarvis_ack("Task completed")
 
         # fail/error path
         last = result.get("last_result") if isinstance(result, dict) else None
@@ -174,9 +294,9 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
             reason = str(last.get("reason", "Failed"))
             err = str(last.get("error", "")).strip()
             publish_ui_state("IDLE")
-            return reason + (f" ({err})" if err else "")
+            return _jarvis_fail(reason + (f" ({err})" if err else ""))
         publish_ui_state("IDLE")
-        return "Failed."
+        return _jarvis_fail("Failed")
     
     # Generate natural response using LLM
     context = {
@@ -194,17 +314,7 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
 
 
 def handle_text(text: str, source: str = "user") -> str:
-    """
-    Process raw text input through the 3-layer brain stack.
-    
-    BRAIN STACK:
-    1. Rules     → instant keyword match
-    2. Gemma     → local LLM (fast, private)
-    3. Cloud LLM → Groq fallback (smart)
-    4. Chat      → natural conversation
-    
-    Returns natural language response.
-    """
+    """Process raw text input and return a natural language response."""
     # Record user input
     if _ui_sleeping:
         publish_ui_state("SLEEP")
@@ -212,60 +322,175 @@ def handle_text(text: str, source: str = "user") -> str:
 
     publish_ui_state("LISTENING")
     add_conversation(source, text)
+
+    global _pending_followup
+    global _pending_suggestion
+    tnorm = normalize_text(text)
+
+    # Handle suggestion accept/dismiss (text mode only; never interrupt voice)
+    if source == "user" and _pending_suggestion is not None:
+        if _is_affirmative(tnorm):
+            pending = _pending_suggestion
+            _pending_suggestion = None
+            intent_result = {"intent": pending.get("intent"), "entities": pending.get("entities", {})}
+            intent_result["entities"] = normalize(intent_result["intent"], intent_result.get("entities", {}), text)
+            print(f"DEBUG: normalized entities -> {intent_result['entities']}")
+            response = handle_intent(intent_result, user_text=text)
+            _print_ankita_stream(response)
+            publish_ui_state("IDLE")
+            return response
+
+        if _is_negative(tnorm):
+            key = str(_pending_suggestion.get("key", ""))
+            _pending_suggestion = None
+            if key:
+                mark_suggestion_dismissed_today(key)
+            publish_ui_state("IDLE")
+            response = _jarvis_ack("Understood")
+            add_conversation("ankita", response)
+            _print_ankita_stream(response)
+            return response
+    if _pending_followup is not None:
+        pending = _pending_followup
+        _pending_followup = None
+        if pending.get("type") == "choose_browser" and pending.get("intent") in ("system.app.open", "system.app.focus"):
+            if any(w in tnorm for w in ["chrome", "google chrome"]):
+                intent_result = {"intent": pending["intent"], "entities": {"action": pending.get("action"), "app": "chrome"}}
+                intent_result["entities"] = normalize(intent_result["intent"], intent_result.get("entities", {}), text)
+                print(f"DEBUG: normalized entities -> {intent_result['entities']}")
+                response = handle_intent(intent_result, user_text=text)
+                _print_ankita_stream(response)
+                publish_ui_state("IDLE")
+                return response
+            if any(w in tnorm for w in ["edge", "ms edge", "microsoft edge"]):
+                intent_result = {"intent": pending["intent"], "entities": {"action": pending.get("action"), "app": "edge"}}
+                intent_result["entities"] = normalize(intent_result["intent"], intent_result.get("entities", {}), text)
+                print(f"DEBUG: normalized entities -> {intent_result['entities']}")
+                response = handle_intent(intent_result, user_text=text)
+                _print_ankita_stream(response)
+                publish_ui_state("IDLE")
+                return response
+            publish_ui_state("IDLE")
+            return _jarvis_clarify("Chrome or Edge")
+
+    if tnorm.startswith("no") or tnorm.startswith("not"):
+        prev = last_episode()
+        if isinstance(prev, dict) and prev.get("intent") in ("system.app.open", "system.app.focus"):
+            if any(w in tnorm for w in ["chrome", "google chrome"]):
+                set_correction("preferred_browser", "chrome")
+            elif any(w in tnorm for w in ["edge", "ms edge", "microsoft edge"]):
+                set_correction("preferred_browser", "edge")
     
-    # Check for pronoun references ("do it again", "continue that")
+    
     recalled = resolve_pronouns(text)
     if recalled:
         response = handle_intent(recalled, user_text=text)
-        print(f"Ankita: {response}")
+        _print_ankita_stream(response)
         publish_ui_state("IDLE")
         return response
-    
-    # ===== THE 3-LAYER BRAIN STACK =====
-    intent_result = {"intent": "unknown", "entities": {}}
-    
-    # LAYER 1: Rules (instant, deterministic)
+
+    def _looks_like_action(t: str) -> bool:
+        if not t:
+            return False
+        action_prefixes = (
+            "open ",
+            "launch ",
+            "start ",
+            "close ",
+            "quit ",
+            "switch ",
+            "switch to ",
+            "focus ",
+            "go to ",
+            "play ",
+            "write ",
+            "note ",
+            "set ",
+            "turn ",
+            "enable ",
+            "disable ",
+            "mute",
+            "unmute",
+            "minimize",
+            "maximize",
+            "restore",
+            "show desktop",
+        )
+        if t.startswith(action_prefixes):
+            return True
+        action_keywords = (
+            "bluetooth",
+            "wifi",
+            "volume",
+            "brightness",
+            "screenshot",
+            "shutdown",
+            "restart",
+            "sleep",
+            "timer",
+            "remind",
+        )
+        return any(k in t for k in action_keywords)
+
     intent_result = classify(text)
 
-    # Early exit for conversational fillers (e.g., "anything else")
-    if intent_result["intent"] == "unknown" and any(p in normalize_text(text) for p in ["anything else", "what about", "and then", "what else", "anything more"]):
-        response = "Sure—let me know what you’d like to do next."
+    if intent_result["intent"].startswith("conversation."):
+        from llm.llm_client import _get_conversational_response
+        response = _get_conversational_response(text)
         add_conversation("ankita", response)
         publish_ui_state("IDLE")
-        print(f"Ankita: {response}")
+        _print_ankita_stream(response)
         return response
 
-    # LAYER 2: Semantic intent match (embeddings; optional if deps installed)
+    if intent_result["intent"] == "unknown" and not _looks_like_action(tnorm):
+        response = ask_llm(text)
+        add_conversation("ankita", response)
+        publish_ui_state("IDLE")
+        _print_ankita_stream(response)
+        return response
+
     if intent_result["intent"] == "unknown":
         semantic_result = semantic_classify(text)
         if semantic_result.get("intent") != "unknown":
             intent_result = semantic_result
-    
-    # LAYER 2: Gemma LOCAL (fast, private)
-    if intent_result["intent"] == "unknown":
-        gemma_result = gemma_classify(text)
-        if gemma_result["intent"] != "unknown":
-            intent_result = gemma_result
-    
-    # LAYER 3: Cloud LLM fallback (smart, reliable)
-    # Always attempt intent classification if rules+Gemma fail.
-    # This allows phrasing like "can you turn bluetooth off?" to still trigger tools.
+
     if intent_result["intent"] == "unknown":
         intent_result = llm_classify(text)
-    
-    # LAYER 4: Natural conversation (no action needed)
-    # Only chat if the intent is still unknown after LLM classification.
+
     if intent_result["intent"] == "unknown":
         response = ask_llm(text)
         add_conversation("ankita", response)
         publish_ui_state("IDLE")
-        print(f"Ankita: {response}")
+        _print_ankita_stream(response)
         return response
     
 
     # If fallback classifiers returned an intent but no entities, extract deterministically
     if not intent_result.get("entities"):
         intent_result["entities"] = extract(intent_result["intent"], text)
+
+    if intent_result.get("intent") in ("system.app.open", "system.app.focus"):
+        app = (intent_result.get("entities") or {}).get("app")
+        action = (intent_result.get("entities") or {}).get("action")
+        if isinstance(app, str) and app.strip().lower() in ("browser", "web browser"):
+            corr = get_correction("preferred_browser")
+            if corr in ("chrome", "edge"):
+                intent_result["entities"]["app"] = corr
+            else:
+                pref = get_preference("preferred_browser")
+                conf = get_preference_confidence("preferred_browser")
+                if pref in ("chrome", "edge") and conf >= 0.75:
+                    intent_result["entities"]["app"] = pref
+                elif pref in ("chrome", "edge") and conf >= 0.6:
+                    intent_result["entities"]["app"] = pref
+                    intent_result["_soft_confirm"] = True
+                else:
+                    _pending_followup = {"type": "choose_browser", "intent": intent_result.get("intent"), "action": action}
+                    publish_ui_state("IDLE")
+                    response = _jarvis_clarify("Chrome or Edge")
+                    add_conversation("ankita", response)
+                    _print_ankita_stream(response)
+                    return response
 
     if intent_result.get("intent") == "scheduler.add_job":
         extracted = extract(intent_result["intent"], text)
@@ -284,7 +509,14 @@ def handle_text(text: str, source: str = "user") -> str:
 
     # ===== EXECUTE ACTION =====
     response = handle_intent(intent_result, user_text=text)
-    print(f"Ankita: {response}")
+
+    # Proactive suggestions (text mode only): suggest, don't act
+    if source == "user":
+        suggestion = _maybe_make_suggestion(intent_result)
+        if suggestion:
+            response = f"{response}\n{suggestion}"
+
+    _print_ankita_stream(response)
     publish_ui_state("IDLE")
     return response
 
@@ -422,7 +654,6 @@ def run_voice_mode():
                 print(f"[Translated->en]: {text_en}")
 
             response = handle_text(text_en)
-            print(f"Ankita: {response}")
             speak(response)
         except KeyboardInterrupt:
             speak("Goodbye!")
@@ -638,7 +869,6 @@ def run_continuous_voice_mode(
                 state = "EXECUTING"
                 publish_ui_state(state)
                 response = handle_text(text_en)
-                print(f"Ankita: {response}")
                 speak(response)
                 state = "IDLE"
                 publish_ui_state(state)

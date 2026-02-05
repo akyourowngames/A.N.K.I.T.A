@@ -1,7 +1,7 @@
 import pyautogui
 import time
 
-def run(action):
+def run(action=None, **kwargs):
     """
     Control the current focused window using Windows-native shortcuts.
     
@@ -12,6 +12,9 @@ def run(action):
         dict: Status and message about the action performed
     """
     try:
+        if action is None:
+            action = kwargs.get("action")
+
         if action == "maximize":
             pyautogui.hotkey("win", "up")
             return {"status": "success", "message": "Window maximized"}

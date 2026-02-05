@@ -1,304 +1,5 @@
 [
   {
-    "id": "ep_f99d60a2",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Microsoft Text Input Application",
-      "matched": "Microsoft Text Input Application"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:11.775502"
-  },
-  {
-    "id": "ep_d995f933",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:12.336139"
-  },
-  {
-    "id": "ep_fb331f64",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:14.886252"
-  },
-  {
-    "id": "ep_1978e16f",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:15.428650"
-  },
-  {
-    "id": "ep_985e6063",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:16.609282"
-  },
-  {
-    "id": "ep_3d501507",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:17.193556"
-  },
-  {
-    "id": "ep_2733f5f1",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:17.292757"
-  },
-  {
-    "id": "ep_87299f44",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:17.830233"
-  },
-  {
-    "id": "ep_791a3487",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:18.723736"
-  },
-  {
-    "id": "ep_7c0a072a",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:31:19.263987"
-  },
-  {
-    "id": "ep_a1f70645",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "30-S-1 MATHEMATICS STANDARD.pdf - Google Chrome",
-      "matched": "30-S-1 MATHEMATICS STANDARD.pdf - Google Chrome"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:04.984054"
-  },
-  {
-    "id": "ep_8e537f84",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:23.436070"
-  },
-  {
-    "id": "ep_138c792c",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:23.973544"
-  },
-  {
-    "id": "ep_5ecf632d",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:25.924851"
-  },
-  {
-    "id": "ep_ebf09fbf",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:26.467693"
-  },
-  {
-    "id": "ep_e778bffe",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:28.251460"
-  },
-  {
-    "id": "ep_8f39e20c",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:28.795097"
-  },
-  {
-    "id": "ep_f5f60dc9",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": "CV-based Window Switching"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:28.952834"
-  },
-  {
-    "id": "ep_b3c842c3",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:32:29.545464"
-  },
-  {
-    "id": "ep_74006ed5",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:06.857366"
-  },
-  {
-    "id": "ep_f826afd1",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:07.401273"
-  },
-  {
-    "id": "ep_dbf0a80c",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:08.640826"
-  },
-  {
-    "id": "ep_48a929c1",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "Settings",
-      "matched": "Settings"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:09.183034"
-  },
-  {
     "id": "ep_96f924aa",
     "intent": "system.window_switch",
     "entities": {
@@ -1432,5 +1133,433 @@
     },
     "tags": [],
     "time": "2026-02-04T22:59:33.410012"
+  },
+  {
+    "id": "ep_5956b54d",
+    "intent": "system.gesture_mode",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T13:15:31.885299"
+  },
+  {
+    "id": "ep_68372943",
+    "intent": "system.gesture_mode",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T13:16:31.555001"
+  },
+  {
+    "id": "ep_a18ae614",
+    "intent": "system.gesture_mode",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T13:16:37.008286"
+  },
+  {
+    "id": "ep_de48359f",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "chatgpt"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused chatgpt",
+          "window_title": "ChatGPT"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:12:42.759577"
+  },
+  {
+    "id": "ep_d5c84c9a",
+    "intent": "system.gesture_mode",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:13:43.734755"
+  },
+  {
+    "id": "ep_7f940855",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "window"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused window",
+          "window_title": "CV-based Window Switching"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:18:13.996513"
+  },
+  {
+    "id": "ep_9e9530b8",
+    "intent": "system.volume.down",
+    "entities": {
+      "action": "down",
+      "step": null
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Volume decreased by 10"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:18:52.143579"
+  },
+  {
+    "id": "ep_d1e05f94",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:20:54.705145"
+  },
+  {
+    "id": "ep_95bd44bb",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:33:04.626787"
+  },
+  {
+    "id": "ep_0dbd9a94",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:34:12.694214"
+  },
+  {
+    "id": "ep_e86ae0cb",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:34:12.834821"
+  },
+  {
+    "id": "ep_963801e3",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:34:13.079462"
+  },
+  {
+    "id": "ep_238b1539",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T15:34:13.707468"
+  },
+  {
+    "id": "ep_4fb1ec53",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:26:40.024951"
+  },
+  {
+    "id": "ep_da21dcb5",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "vscode"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened vscode"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:26:40.246167"
+  },
+  {
+    "id": "ep_69a28e65",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:26:40.750735"
+  },
+  {
+    "id": "ep_f6ba269b",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:31:40.066345"
+  },
+  {
+    "id": "ep_6768ee0f",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome and open notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome and open notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:41:26.932329"
+  },
+  {
+    "id": "ep_ff223af3",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:42:42.599793"
+  },
+  {
+    "id": "ep_81039116",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T17:42:49.394180"
+  },
+  {
+    "id": "ep_aed5d95d",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T18:21:11.438197"
+  },
+  {
+    "id": "ep_0a15ef21",
+    "intent": "system.app.close",
+    "entities": {
+      "action": "close",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "closed notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T18:21:18.021236"
+  },
+  {
+    "id": "ep_d0077cbb",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused chrome",
+          "window_title": "(43) Print Culture and the Modern World One Shot: FULL CHAPTER | Warrior 2026 |Class 10 History Chapter 5 - YouTube - Google Chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-05T18:21:22.673107"
   }
 ]

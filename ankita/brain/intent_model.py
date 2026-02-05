@@ -30,6 +30,38 @@ def classify_rules(text: str) -> str:
     """
     t = normalize_text(text)
 
+    # --- Conversational intents (handle casually, no tool execution) ---
+    # Greetings - explicit patterns to bypass LLM for JARVIS-style responses
+    if t in ("hi", "hello", "hey", "good morning", "good afternoon", "good evening", "greetings"):
+        return "conversation.greeting"
+    # Status/small talk
+    if t in ("how are you", "hows it going", "what about you", "status", "you there"):
+        return "conversation.status"
+    # Farewells
+    if t in ("bye", "goodbye", "see you", "exit", "quit", "later"):
+        return "conversation.farewell"
+    # Acknowledgments/nothing specific
+    if t in ("nothing", "nevermind", "nm", "just saying hi", "ok", "okay"):
+        return "conversation.ack"
+
+    # --- Window control intents (high priority) ---
+    if any(w in t for w in ["show desktop", "desktop", "minimize all", "show all"]):
+        return "window_control.desktop"
+    if any(w in t for w in ["minimize", "minimise", "hide window", "hide this"]):
+        return "window_control.minimize"
+    if any(w in t for w in ["maximize", "maximise", "full screen"]):
+        return "window_control.maximize"
+    if any(w in t for w in ["restore", "unminimize", "un-minimize"]):
+        return "window_control.restore"
+    if any(w in t for w in ["snap left", "move left", "left side"]):
+        return "window_control.left"
+    if any(w in t for w in ["snap right", "move right", "right side"]):
+        return "window_control.right"
+    if any(w in t for w in ["move up"]):
+        return "window_control.up"
+    if any(w in t for w in ["move down"]):
+        return "window_control.down"
+
     # --- System controls (Tier-1) ---
     if "bluetooth" in t:
         if any(w in t for w in ["on", "enable", "start"]):

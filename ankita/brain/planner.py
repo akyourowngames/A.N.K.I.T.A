@@ -31,6 +31,17 @@ def plan(intent_result):
             ]
         }
 
+    if intent.startswith("window_control."):
+        action = intent.split(".", 1)[1]
+        return {
+            "steps": [
+                {
+                    "tool": intent,
+                    "args": {"action": action},
+                }
+            ]
+        }
+
     if intent == "system.window_switch.gesture" or intent == "system.gesture_mode":
         return {
             "steps": [

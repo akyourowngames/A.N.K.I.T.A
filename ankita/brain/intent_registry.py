@@ -49,6 +49,16 @@ ALLOWED_INTENTS = {
     "system.app.close_active": ["action"],
     "system.app.focus": ["action", "app"],
 
+    # Window control (safe: only OS window hotkeys)
+    "window_control.maximize": ["action"],
+    "window_control.minimize": ["action"],
+    "window_control.restore": ["action"],
+    "window_control.desktop": ["action"],
+    "window_control.left": ["action"],
+    "window_control.right": ["action"],
+    "window_control.up": ["action"],
+    "window_control.down": ["action"],
+
     # Notepad tool-level intents
     "notepad.open_file": ["path"],
     "notepad.focus": [],

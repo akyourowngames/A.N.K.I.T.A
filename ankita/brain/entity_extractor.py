@@ -42,6 +42,25 @@ def _parse_time_hhmm(t: str) -> tuple[str | None, str]:
 
 
 def extract(intent, text):
+    if intent == "system.window_switch":
+        t = (text or "").strip()
+        tl = t.lower().strip()
+        cleaned = tl
+        for prefix in [
+            "switch window to ",
+            "switch to ",
+            "switch ",
+            "focus ",
+            "go to ",
+        ]:
+            if cleaned.startswith(prefix):
+                cleaned = cleaned[len(prefix) :]
+                break
+
+        cleaned = re.sub(r"\b(window|app|application)\b", " ", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        return {"query": cleaned}
+
     if intent.startswith("system.app."):
         t = (text or "").strip()
         tl = t.lower()
