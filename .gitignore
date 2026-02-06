@@ -66,3 +66,28 @@ htmlcov/
 *.tmp
 *.temp
 *.bak
+# Runtime app data (local machine state)
+ankita/data/instagram/browser_data/
+ankita/data/instagram/session.json
+
+# Local memory artifacts
+ankita/memory/embeddings.npy
+ankita/memory/owner_voice.npy
+ankita/memory/conversations.json
+ankita/memory/episodes.json
+ankita/memory/ltm.json
+ankita/memory/notes.json
+ankita/memory/preferences.json
+ankita/memory/semantic.json
+ankita/memory/user_preferences.json
+
+# Nested package local memory artifacts
+ankita/ankita/memory/embeddings.npy
+ankita/ankita/memory/memory.json
+ankita/ankita/memory/semantic.json
+
+# Scheduler runtime state
+ankita/scheduler/jobs.json
+ankita/tools/scheduler/jobs.json
+ankita/ankita/scheduler/jobs.json
+ankita/ankita/tools/scheduler/jobs.json

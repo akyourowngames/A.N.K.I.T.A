@@ -67,6 +67,74 @@ ALLOWED_INTENTS = {
     "notepad.write": ["content"],
     "notepad.write_file": ["content", "filename", "mode", "open_after"],
     "notepad.save": [],
+
+    # YouTube control intents
+    "youtube.pause": ["action"],
+    "youtube.fullscreen": ["action"],
+    "youtube.skip_ad": ["action"],
+    "youtube.subscriptions": ["action"],
+    "youtube.history": ["action"],
+    "youtube.queue": ["action"],
+    "youtube.mute": ["action"],
+    "youtube.unmute": ["action"],
+    "youtube.next": ["action"],
+    "youtube.previous": ["action"],
+    "youtube.theater": ["action"],
+    "youtube.captions": ["action"],
+    "youtube.speed_up": ["action"],
+    "youtube.speed_down": ["action"],
+    "youtube.home": ["action"],
+    "youtube.trending": ["action"],
+    "youtube.shorts": ["action"],
+
+    # Hotspot
+    "system.hotspot.on": ["action"],
+    "system.hotspot.off": ["action"],
+    "system.hotspot.status": ["action"],
+
+    # Night Light
+    "system.nightlight.on": ["action"],
+    "system.nightlight.off": ["action"],
+    "system.nightlight.status": ["action"],
+
+    # Airplane Mode
+    "system.airplane_mode.on": ["action"],
+    "system.airplane_mode.off": ["action"],
+    "system.airplane_mode.status": ["action"],
+
+    # Display
+    "system.display.rotate": ["action", "direction"],
+    "system.display.extend": ["action"],
+    "system.display.duplicate": ["action"],
+    "system.display.settings": ["action"],
+
+    # Audio Device
+    "system.audio_device.switch": ["action", "device"],
+    "system.audio_device.list": ["action"],
+    "system.audio_device.status": ["action"],
+
+    # Printer
+    "system.printer.print": ["action", "file_path"],
+    "system.printer.queue": ["action"],
+    "system.printer.settings": ["action"],
+
+    # Trash/Recycle Bin
+    "system.trash.status": ["action"],
+    "system.trash.empty": ["action"],
+    "system.trash.open": ["action"],
+
+    # Disk/Storage
+    "system.disk.status": ["action", "drive"],
+    "system.disk.cleanup": ["action", "drive"],
+    "system.disk.settings": ["action"],
+
+    # Processes
+    "system.processes.status": ["action"],
+    "system.processes.cpu": ["action"],
+    "system.processes.memory": ["action"],
+    "system.processes.kill": ["action", "name"],
+    "system.processes.find": ["action", "name"],
+    "system.processes.manager": ["action"],
 }
 
 

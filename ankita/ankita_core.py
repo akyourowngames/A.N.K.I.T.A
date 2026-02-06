@@ -247,6 +247,13 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     Returns natural language response.
     """
     publish_ui_state("EXECUTING")
+
+    intent_str = str(intent_result.get("intent", ""))
+    if user_text and intent_str.startswith("instagram."):
+        entities = intent_result.setdefault("entities", {})
+        if isinstance(entities, dict) and "user_text" not in entities:
+            entities["user_text"] = user_text
+
     execution_plan = plan(intent_result)
 
     # Message-only plans are memory-only / internal responses.
@@ -268,8 +275,8 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
         )
         observe_success(intent_result["intent"], intent_result.get("entities", {}), result)
 
-    # Deterministic responses for system tools (avoid LLM fluff; surface real errors)
-    if str(intent_result.get("intent", "")).startswith("system."):
+    # Deterministic responses for system, datetime, and instagram tools (avoid LLM fluff; surface real errors)
+    if intent_str.startswith("system.") or intent_str.startswith("datetime.") or intent_str.startswith("instagram."):
         if isinstance(result, dict) and result.get("status") == "success":
             first = None
             if isinstance(result.get("results"), list) and result["results"]:
@@ -415,6 +422,13 @@ def handle_text(text: str, source: str = "user") -> str:
             "maximize",
             "restore",
             "show desktop",
+            "take ",
+            "capture ",
+            "lock ",
+            "check ",
+            "copy ",
+            "clear ",
+            "scan ",
         )
         if t.startswith(action_prefixes):
             return True
@@ -429,6 +443,16 @@ def handle_text(text: str, source: str = "user") -> str:
             "sleep",
             "timer",
             "remind",
+            "battery",
+            "clipboard",
+            "lock",
+            "hibernate",
+            "logoff",
+            "log off",
+            "reboot",
+            "what time",
+            "what date",
+            "what day",
         )
         return any(k in t for k in action_keywords)
 

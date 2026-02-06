@@ -76,6 +76,52 @@ def classify_rules(text: str) -> str:
         return "system.gesture_mode"
 
     # --- App control (Tier-1) ---
+    # IMPORTANT: Check for specific apps (Instagram, YouTube, etc.) BEFORE generic app.open
+    
+    # --- Instagram intents (check BEFORE generic app.open) ---
+    if "instagram" in t or "insta" in t or "ig " in t or t.endswith(" ig"):
+        # Login/Logout
+        if any(w in t for w in ["login", "log in", "sign in", "signin"]):
+            return "instagram.login"
+        if any(w in t for w in ["logout", "log out", "sign out", "signout"]):
+            return "instagram.logout"
+        
+        # Navigation
+        if any(w in t for w in ["explore", "discover"]):
+            return "instagram.explore"
+        if "reels" in t or "reel" in t:
+            return "instagram.reels"
+        if any(w in t for w in ["messages", "dm", "dms", "inbox", "direct"]):
+            return "instagram.dm"
+        if any(w in t for w in ["notifications", "notify", "alerts"]):
+            return "instagram.notifications"
+        if any(w in t for w in ["feed", "home", "scroll"]):
+            return "instagram.feed"
+        
+        # Actions
+        if any(w in t for w in ["like", "heart"]):
+            if "unlike" in t or "remove like" in t:
+                return "instagram.unlike"
+            return "instagram.like"
+        if "comment" in t:
+            return "instagram.comment"
+        if "follow" in t:
+            if "unfollow" in t:
+                return "instagram.unfollow"
+            return "instagram.follow"
+        if any(w in t for w in ["message", "dm", "send message", "text"]):
+            return "instagram.dm"
+        if any(w in t for w in ["search", "find", "look for"]):
+            return "instagram.search"
+        if any(w in t for w in ["profile", "check profile", "view profile"]):
+            return "instagram.profile"
+        if any(w in t for w in ["close", "quit", "exit"]):
+            return "instagram.close"
+        
+        # Default: open Instagram
+        return "instagram.open"
+    
+    # --- Generic app control (after specific app checks) ---
     if re.match(r"^(?:switch\s+to|switch|focus|go\s+to)\b", t):
         return "system.app.focus"
 
@@ -115,6 +161,114 @@ def classify_rules(text: str) -> str:
             return "system.volume.down"
         return "system.volume.status"
 
+    # --- Screenshot intents ---
+    screenshot_phrases = [
+        "screenshot", "screen shot", "screen capture", "capture screen", 
+        "screen grab", "take screenshot", "take a screenshot", "grab screen",
+        "capture the screen", "snap screen", "screen snap", "print screen",
+        "capture my screen", "take a screen", "screenshot please"
+    ]
+    if any(w in t for w in screenshot_phrases):
+        if any(w in t for w in ["window", "active", "current", "this window"]):
+            return "system.screenshot.window"
+        if any(w in t for w in ["clipboard", "copy", "to clipboard"]):
+            return "system.screenshot.clipboard"
+        return "system.screenshot"
+
+    # --- Clipboard intents ---
+    if "clipboard" in t:
+        if any(w in t for w in ["clear", "empty", "delete", "wipe"]):
+            return "system.clipboard.clear"
+        if any(w in t for w in ["copy", "write", "set", "put"]):
+            return "system.clipboard.write"
+        return "system.clipboard.read"
+    if any(w in t for w in ["what did i copy", "what is copied", "whats copied"]):
+        return "system.clipboard.read"
+
+    # --- Battery intents ---
+    if any(w in t for w in ["battery", "power level", "charge level"]):
+        if any(w in t for w in ["charging", "plugged", "charger"]):
+            return "system.battery.charging"
+        if any(w in t for w in ["percent", "percentage", "level"]):
+            return "system.battery.percent"
+        return "system.battery.status"
+
+    # --- WiFi intents ---
+    # Check status phrases FIRST (before checking for 'connect' which would match 'connected')
+    if any(w in t for w in ["am i connected", "connected to wifi", "internet status", "network status", "wifi status"]):
+        return "system.wifi.status"
+    if "wifi" in t or "wi-fi" in t or "wi fi" in t:
+        if any(w in t for w in ["scan", "networks", "available", "list", "find"]):
+            return "system.wifi.networks"
+        if any(w in t for w in ["off", "disable", "stop", "disconnect"]):
+            return "system.wifi.off"
+        if any(w in t for w in ["on", "enable", "start", "turn on"]):
+            return "system.wifi.on"
+        # Check for connection-related queries that should be status, not on
+        if any(w in t for w in ["connected", "connection", "status", "check"]):
+            return "system.wifi.status"
+        return "system.wifi.status"
+
+    # --- Power/Lock intents ---
+    if any(w in t for w in ["lock screen", "lock computer", "lock pc", "lock my", "lock the"]):
+        return "system.power.lock"
+    if t in ("lock", "lock it"):
+        return "system.power.lock"
+    if any(w in t for w in ["go to sleep", "sleep mode", "put to sleep", "enter sleep"]):
+        return "system.power.sleep"
+    if t == "sleep":
+        return "system.power.sleep"
+    if any(w in t for w in ["shutdown", "shut down", "power off", "turn off computer", "turn off pc", "turn off laptop"]):
+        return "system.power.shutdown"
+    if any(w in t for w in ["restart", "reboot"]):
+        return "system.power.restart"
+    if "hibernate" in t:
+        return "system.power.hibernate"
+    if any(w in t for w in ["log off", "logoff", "log out", "logout", "sign out", "signout"]):
+        return "system.power.logoff"
+    if any(w in t for w in ["cancel shutdown", "cancel restart", "abort shutdown", "stop shutdown"]):
+        return "system.power.cancel"
+
+    # --- DateTime intents ---
+    time_phrases = [
+        "what time", "whats the time", "current time", "tell me the time", 
+        "time now", "time please", "what is the time", "tell me time",
+        "what's the time", "the time", "clock", "gimme the time"
+    ]
+    if any(w in t for w in time_phrases):
+        return "datetime.now"
+    
+    date_phrases = [
+        "what date", "whats the date", "today date", "todays date", 
+        "current date", "what is the date", "what's the date", "the date",
+        "tell me date", "date today", "today's date"
+    ]
+    if any(w in t for w in date_phrases):
+        return "datetime.date"
+    
+    day_phrases = [
+        "what day", "which day", "day of the week", "day today",
+        "today what day", "what day is it", "what day is today",
+        "tell me the day", "which day is today"
+    ]
+    if any(w in t for w in day_phrases):
+        return "datetime.day"
+    
+    if any(w in t for w in ["what week", "week number", "which week", "what week is it"]):
+        return "datetime.week"
+    if any(w in t for w in ["what month", "current month", "which month", "what month is it"]):
+        return "datetime.month"
+    if any(w in t for w in ["what year", "current year", "which year", "the year"]):
+        return "datetime.year"
+    if any(w in t for w in ["tomorrow", "tomorrows date", "tomorrow's date", "date tomorrow"]):
+        return "datetime.tomorrow"
+    if any(w in t for w in ["yesterday", "yesterdays date", "yesterday's date", "date yesterday"]):
+        return "datetime.yesterday"
+    if any(w in t for w in ["timezone", "time zone", "what timezone", "my timezone", "what time zone"]):
+        return "datetime.timezone"
+
+
+
     # --- Scheduler: add job ---
     # Detect scheduling language before tool intents so we don't execute immediately.
     has_relative = re.search(r"\b(?:in|after)\s+\d+\s*(?:seconds?|secs?|minutes?|mins?)\b", t) is not None
@@ -136,12 +290,126 @@ def classify_rules(text: str) -> str:
     if any(phrase in t for phrase in conversational):
         return "unknown"
 
-    # --- YouTube intents ---
+    # --- YouTube intents (with extended controls) ---
     if "youtube" in t or re.search(r"\byt\b", t):
+        # YouTube control actions - check BEFORE generic play
+        if any(w in t for w in ["pause", "resume", "stop playing"]):
+            return "youtube.pause"
+        if any(w in t for w in ["fullscreen", "full screen"]):
+            return "youtube.fullscreen"
+        if any(w in t for w in ["skip ad", "skip advertisement", "skip the ad"]):
+            return "youtube.skip_ad"
+        if any(w in t for w in ["subscriptions", "subscription", "subs"]):
+            return "youtube.subscriptions"
+        if any(w in t for w in ["history", "watch history"]):
+            return "youtube.history"
+        if any(w in t for w in ["add to queue", "queue"]):
+            return "youtube.queue"
+        if any(w in t for w in ["next video", "play next", "skip"]):
+            return "youtube.next"
+        if any(w in t for w in ["previous", "go back", "last video"]):
+            return "youtube.previous"
+        if any(w in t for w in ["captions", "subtitles", "cc"]):
+            return "youtube.captions"
+        if any(w in t for w in ["theater", "theatre"]):
+            return "youtube.theater"
+        if any(w in t for w in ["speed up", "faster"]):
+            return "youtube.speed_up"
+        if any(w in t for w in ["speed down", "slower"]):
+            return "youtube.speed_down"
+        if any(w in t for w in ["trending"]):
+            return "youtube.trending"
+        if any(w in t for w in ["shorts"]):
+            return "youtube.shorts"
+        if any(w in t for w in ["home"]):
+            return "youtube.home"
+        if any(w in t for w in ["mute"]):
+            return "youtube.mute"
+        if any(w in t for w in ["unmute"]):
+            return "youtube.unmute"
+        # Default play/open
         if any(w in t for w in ["play", "song", "video", "music", "watch", "search"]):
             return "youtube.play"
         else:
             return "youtube.open"
+    
+    # --- Hotspot intents ---
+    if any(w in t for w in ["hotspot", "mobile hotspot", "tethering"]):
+        if any(w in t for w in ["off", "disable", "stop"]):
+            return "system.hotspot.off"
+        if any(w in t for w in ["on", "enable", "start", "turn on"]):
+            return "system.hotspot.on"
+        return "system.hotspot.status"
+    
+    # --- Night Light intents ---
+    if any(w in t for w in ["night light", "nightlight", "blue light", "night mode"]):
+        if any(w in t for w in ["off", "disable", "stop"]):
+            return "system.nightlight.off"
+        if any(w in t for w in ["on", "enable", "start", "turn on"]):
+            return "system.nightlight.on"
+        return "system.nightlight.status"
+    
+    # --- Airplane Mode intents ---
+    if any(w in t for w in ["airplane mode", "flight mode", "aeroplane mode"]):
+        if any(w in t for w in ["off", "disable"]):
+            return "system.airplane_mode.off"
+        if any(w in t for w in ["on", "enable"]):
+            return "system.airplane_mode.on"
+        return "system.airplane_mode.status"
+    
+    # --- Display intents ---
+    if any(w in t for w in ["extend display", "extend screen", "second monitor", "external monitor"]):
+        return "system.display.extend"
+    if any(w in t for w in ["duplicate display", "mirror screen", "mirror display", "duplicate screen"]):
+        return "system.display.duplicate"
+    if any(w in t for w in ["rotate screen", "rotate display"]):
+        return "system.display.rotate"
+    if any(w in t for w in ["display settings", "screen settings"]):
+        return "system.display.settings"
+    
+    # --- Audio Device intents ---
+    if any(w in t for w in ["switch to headphones", "use headphones", "switch to speakers", "use speakers", 
+                             "switch audio", "change audio", "switch to headset", "use headset",
+                             "switch to bluetooth", "audio output"]):
+        return "system.audio_device.switch"
+    if any(w in t for w in ["list audio devices", "audio devices", "sound devices"]):
+        return "system.audio_device.list"
+    
+    # --- Printer intents ---
+    if any(w in t for w in ["print this", "print document", "print file", "send to printer"]):
+        return "system.printer.print"
+    if any(w in t for w in ["print queue", "printing", "whats printing", "printer queue"]):
+        return "system.printer.queue"
+    if any(w in t for w in ["printer settings", "printers"]):
+        return "system.printer.settings"
+    
+    # --- Trash/Recycle Bin intents ---
+    if any(w in t for w in ["recycle bin", "trash", "rubbish bin"]):
+        if any(w in t for w in ["empty", "clear", "delete", "clean"]):
+            return "system.trash.empty"
+        if any(w in t for w in ["open", "show", "view"]):
+            return "system.trash.open"
+        return "system.trash.status"
+    
+    # --- Disk/Storage intents ---
+    if any(w in t for w in ["disk space", "storage space", "how much storage", "how much space", 
+                             "storage status", "drive space", "disk status", "free space"]):
+        return "system.disk.status"
+    if any(w in t for w in ["disk cleanup", "clean disk", "free up space", "clean storage"]):
+        return "system.disk.cleanup"
+    if any(w in t for w in ["storage settings"]):
+        return "system.disk.settings"
+    
+    # --- Process Management intents ---
+    if any(w in t for w in ["task manager", "open task manager", "show task manager", "process manager"]):
+        return "system.processes.manager"
+    if any(w in t for w in ["whats using cpu", "high cpu", "cpu usage", "top processes", "which app using cpu"]):
+        return "system.processes.cpu"
+    if any(w in t for w in ["whats using memory", "high memory", "ram usage", "memory usage", "which app using ram"]):
+        return "system.processes.memory"
+    if re.match(r"^(?:kill|end task|terminate)\b", t):
+        return "system.processes.kill"
+
     
     # --- Notepad intents ---
     if "notepad" in t or "note" in t:
@@ -152,6 +420,8 @@ def classify_rules(text: str) -> str:
         else:
             return "notepad.open"
     
+    
+
     # --- Standalone play ---
     if any(w in t for w in ["play", "song", "video", "music"]):
         return "youtube.play"

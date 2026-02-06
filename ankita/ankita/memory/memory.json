@@ -190,6 +190,19 @@
         "message": "I didn't understand that. Try: 'write a note' or 'play something on youtube'"
       },
       "time": "2026-02-01T22:43:35.741629"
+    },
+    {
+      "id": "ep_b1b1ad84",
+      "intent": "system.window_switch",
+      "entities": {
+        "query": "take a screenshot",
+        "matched": "CV-based Window Switching"
+      },
+      "result": {
+        "status": "success"
+      },
+      "tags": [],
+      "time": "2026-02-06T20:41:59.395938"
     }
   ],
   "preferences": {},

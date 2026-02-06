@@ -22,7 +22,9 @@
     ]
   },
   "notepad.open_file": {
-    "entities": ["path"],
+    "entities": [
+      "path"
+    ],
     "examples": [
       "open a text file in notepad",
       "open file in notepad",
@@ -52,7 +54,9 @@
     ]
   },
   "notepad.write": {
-    "entities": ["content"],
+    "entities": [
+      "content"
+    ],
     "examples": [
       "write in notepad",
       "type this in notepad",
@@ -67,7 +71,12 @@
     ]
   },
   "notepad.write_file": {
-    "entities": ["content", "filename", "mode", "open_after"],
+    "entities": [
+      "content",
+      "filename",
+      "mode",
+      "open_after"
+    ],
     "examples": [
       "save this into a file",
       "write this to a text file",
@@ -97,7 +106,9 @@
     ]
   },
   "notepad.write_note": {
-    "entities": ["content"],
+    "entities": [
+      "content"
+    ],
     "examples": [
       "write a note",
       "take a note in notepad",
@@ -122,7 +133,9 @@
     ]
   },
   "notepad.continue_note": {
-    "entities": ["content"],
+    "entities": [
+      "content"
+    ],
     "examples": [
       "continue my note",
       "add this to the note",
@@ -169,7 +182,9 @@
     ]
   },
   "youtube.play": {
-    "entities": ["query"],
+    "entities": [
+      "query"
+    ],
     "examples": [
       "play a video on youtube",
       "play lofi on youtube",
@@ -196,7 +211,10 @@
     ]
   },
   "system.app.open": {
-    "entities": ["action", "app"],
+    "entities": [
+      "action",
+      "app"
+    ],
     "examples": [
       "open chrome",
       "launch notepad",
@@ -228,7 +246,10 @@
     ]
   },
   "system.app.close": {
-    "entities": ["action", "app"],
+    "entities": [
+      "action",
+      "app"
+    ],
     "examples": [
       "close chrome",
       "quit notepad",
@@ -254,7 +275,11 @@
     ]
   },
   "system.app.force_close": {
-    "entities": ["action", "app", "force"],
+    "entities": [
+      "action",
+      "app",
+      "force"
+    ],
     "examples": [
       "force close chrome",
       "kill chrome",
@@ -279,7 +304,9 @@
     ]
   },
   "system.app.close_active": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "close this",
       "close current app",
@@ -299,7 +326,10 @@
     ]
   },
   "system.app.focus": {
-    "entities": ["action", "app"],
+    "entities": [
+      "action",
+      "app"
+    ],
     "examples": [
       "switch to chrome",
       "go to vs code",
@@ -325,7 +355,10 @@
     ]
   },
   "system.volume.up": {
-    "entities": ["action", "step"],
+    "entities": [
+      "action",
+      "step"
+    ],
     "examples": [
       "volume up",
       "increase volume",
@@ -345,7 +378,10 @@
     ]
   },
   "system.volume.down": {
-    "entities": ["action", "step"],
+    "entities": [
+      "action",
+      "step"
+    ],
     "examples": [
       "volume down",
       "decrease volume",
@@ -365,7 +401,9 @@
     ]
   },
   "system.volume.mute": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "mute",
       "mute volume",
@@ -385,7 +423,9 @@
     ]
   },
   "system.volume.unmute": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "unmute",
       "unmute volume",
@@ -405,7 +445,10 @@
     ]
   },
   "system.volume.set": {
-    "entities": ["action", "value"],
+    "entities": [
+      "action",
+      "value"
+    ],
     "examples": [
       "set volume to 50",
       "volume 50",
@@ -425,7 +468,9 @@
     ]
   },
   "system.volume.status": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "what is the volume",
       "volume status",
@@ -445,7 +490,10 @@
     ]
   },
   "system.brightness.up": {
-    "entities": ["action", "step"],
+    "entities": [
+      "action",
+      "step"
+    ],
     "examples": [
       "brightness up",
       "increase brightness",
@@ -465,7 +513,10 @@
     ]
   },
   "system.brightness.down": {
-    "entities": ["action", "step"],
+    "entities": [
+      "action",
+      "step"
+    ],
     "examples": [
       "brightness down",
       "decrease brightness",
@@ -485,7 +536,10 @@
     ]
   },
   "system.brightness.set": {
-    "entities": ["action", "value"],
+    "entities": [
+      "action",
+      "value"
+    ],
     "examples": [
       "set brightness to 50",
       "brightness 50",
@@ -505,7 +559,9 @@
     ]
   },
   "system.brightness.status": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "brightness status",
       "current brightness",
@@ -525,7 +581,9 @@
     ]
   },
   "system.bluetooth.on": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "turn bluetooth on",
       "bluetooth on",
@@ -545,7 +603,9 @@
     ]
   },
   "system.bluetooth.off": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "turn bluetooth off",
       "bluetooth off",
@@ -565,7 +625,9 @@
     ]
   },
   "system.bluetooth.status": {
-    "entities": ["action"],
+    "entities": [
+      "action"
+    ],
     "examples": [
       "bluetooth status",
       "is bluetooth on",
@@ -585,7 +647,9 @@
     ]
   },
   "system.window_switch": {
-    "entities": ["query"],
+    "entities": [
+      "query"
+    ],
     "examples": [
       "switch window",
       "switch windows",
@@ -605,7 +669,9 @@
     ]
   },
   "system.window_switch.gesture": {
-    "entities": ["mode"],
+    "entities": [
+      "mode"
+    ],
     "examples": [
       "enable gesture window switch",
       "turn on gesture control",
@@ -625,7 +691,9 @@
     ]
   },
   "system.gesture_mode": {
-    "entities": ["mode"],
+    "entities": [
+      "mode"
+    ],
     "examples": [
       "gesture mode",
       "enable gesture mode",
@@ -685,7 +753,12 @@
     ]
   },
   "scheduler.add_job": {
-    "entities": ["text", "type", "after_seconds", "time"],
+    "entities": [
+      "text",
+      "type",
+      "after_seconds",
+      "time"
+    ],
     "examples": [
       "remind me in 10 minutes to write a note",
       "after 30 seconds play lofi",
@@ -702,6 +775,992 @@
       "schedule a job at 10am open vscode",
       "remind me at 6 to continue my note",
       "after 5 minutes turn bluetooth off"
+    ]
+  },
+  "system.screenshot": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "take a screenshot",
+      "screenshot",
+      "capture screen",
+      "take a picture of my screen",
+      "screen capture",
+      "take screenshot",
+      "capture the screen",
+      "screenshot full",
+      "take a full screenshot",
+      "screenshot please",
+      "capture desktop",
+      "take a screen grab",
+      "snap the screen",
+      "save my screen"
+    ]
+  },
+  "system.screenshot.window": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "screenshot this window",
+      "capture this window",
+      "screenshot active window",
+      "capture the current window",
+      "take a window screenshot",
+      "screenshot the open window",
+      "capture window",
+      "screenshot current app"
+    ]
+  },
+  "system.screenshot.clipboard": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "screenshot to clipboard",
+      "copy screenshot",
+      "capture screen to clipboard",
+      "screenshot and copy",
+      "take screenshot and copy it"
+    ]
+  },
+  "system.clipboard.read": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what is in my clipboard",
+      "read clipboard",
+      "show clipboard",
+      "clipboard content",
+      "what did I copy",
+      "paste from clipboard",
+      "show me clipboard",
+      "what is copied",
+      "get clipboard",
+      "clipboard status",
+      "check clipboard",
+      "what's in clipboard"
+    ]
+  },
+  "system.clipboard.write": {
+    "entities": [
+      "action",
+      "content"
+    ],
+    "examples": [
+      "copy this to clipboard",
+      "copy text",
+      "put this in clipboard",
+      "copy to clipboard",
+      "save to clipboard",
+      "clipboard copy"
+    ]
+  },
+  "system.clipboard.clear": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "clear clipboard",
+      "empty clipboard",
+      "delete clipboard",
+      "remove clipboard content",
+      "wipe clipboard",
+      "clear my clipboard"
+    ]
+  },
+  "system.battery.status": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "battery status",
+      "how much battery",
+      "check battery",
+      "battery level",
+      "what is my battery",
+      "show battery",
+      "battery percentage",
+      "how much charge is left",
+      "battery info",
+      "is my laptop charging",
+      "check battery level",
+      "battery remaining",
+      "how much battery left",
+      "power status"
+    ]
+  },
+  "system.battery.charging": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "is my laptop charging",
+      "am I plugged in",
+      "is it charging",
+      "check if charging",
+      "power plugged",
+      "is the charger connected"
+    ]
+  },
+  "system.wifi.status": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "wifi status",
+      "am I connected to wifi",
+      "what wifi am I on",
+      "show wifi",
+      "check wifi",
+      "wifi connection status",
+      "which network am I connected to",
+      "wifi info",
+      "internet status",
+      "is wifi on",
+      "wifi connected",
+      "current wifi network"
+    ]
+  },
+  "system.wifi.on": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn on wifi",
+      "enable wifi",
+      "wifi on",
+      "start wifi",
+      "connect wifi",
+      "turn wifi on",
+      "enable wireless",
+      "activate wifi"
+    ]
+  },
+  "system.wifi.off": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn off wifi",
+      "disable wifi",
+      "wifi off",
+      "stop wifi",
+      "disconnect wifi",
+      "turn wifi off",
+      "disable wireless",
+      "deactivate wifi"
+    ]
+  },
+  "system.wifi.networks": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "scan for wifi",
+      "show available networks",
+      "list wifi networks",
+      "search for wifi",
+      "find nearby wifi",
+      "what networks are available",
+      "scan wifi",
+      "nearby wifi"
+    ]
+  },
+  "system.power.lock": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "lock screen",
+      "lock my computer",
+      "lock",
+      "lock the screen",
+      "lock pc",
+      "lock my laptop",
+      "lock workstation",
+      "screen lock",
+      "lock it"
+    ]
+  },
+  "system.power.sleep": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "put computer to sleep",
+      "sleep",
+      "go to sleep",
+      "sleep mode",
+      "suspend",
+      "standby",
+      "put laptop to sleep",
+      "enter sleep mode",
+      "sleep the computer"
+    ]
+  },
+  "system.power.shutdown": {
+    "entities": [
+      "action",
+      "force",
+      "delay"
+    ],
+    "examples": [
+      "shutdown",
+      "turn off computer",
+      "shut down",
+      "power off",
+      "shutdown the computer",
+      "turn off my laptop",
+      "shut down pc",
+      "shutdown in 5 minutes",
+      "turn off in 10 minutes"
+    ]
+  },
+  "system.power.restart": {
+    "entities": [
+      "action",
+      "force",
+      "delay"
+    ],
+    "examples": [
+      "restart",
+      "reboot",
+      "restart computer",
+      "reboot pc",
+      "restart my laptop",
+      "reboot the system",
+      "restart in 5 minutes"
+    ]
+  },
+  "system.power.hibernate": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "hibernate",
+      "hibernate computer",
+      "enter hibernation",
+      "hibernate mode",
+      "hibernate my laptop"
+    ]
+  },
+  "system.power.logoff": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "log off",
+      "sign out",
+      "logout",
+      "log me out",
+      "sign me out",
+      "logoff"
+    ]
+  },
+  "system.power.cancel": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "cancel shutdown",
+      "cancel restart",
+      "abort shutdown",
+      "stop shutdown",
+      "cancel the shutdown"
+    ]
+  },
+  "datetime.now": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what time is it",
+      "what is the time",
+      "current time",
+      "tell me the time",
+      "time please",
+      "what is the date and time",
+      "current date and time",
+      "time now",
+      "show time",
+      "what's the time"
+    ]
+  },
+  "datetime.date": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what is today's date",
+      "what date is it",
+      "current date",
+      "today's date",
+      "what is the date",
+      "date today",
+      "tell me the date",
+      "show date",
+      "what day is today"
+    ]
+  },
+  "datetime.time": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what time is it now",
+      "current time only",
+      "just the time",
+      "clock",
+      "tell me just the time"
+    ]
+  },
+  "datetime.day": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what day is it",
+      "what day of the week",
+      "which day is today",
+      "today is what day",
+      "tell me the day",
+      "day of the week"
+    ]
+  },
+  "datetime.week": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what week is it",
+      "current week number",
+      "week of the year",
+      "which week is this"
+    ]
+  },
+  "datetime.month": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what month is it",
+      "current month",
+      "which month",
+      "tell me the month"
+    ]
+  },
+  "datetime.tomorrow": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what is tomorrow's date",
+      "what day is tomorrow",
+      "tomorrow's date",
+      "tomorrow",
+      "when is tomorrow"
+    ]
+  },
+  "datetime.yesterday": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what was yesterday's date",
+      "what day was yesterday",
+      "yesterday's date",
+      "yesterday",
+      "when was yesterday"
+    ]
+  },
+  "datetime.timezone": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what timezone am I in",
+      "my timezone",
+      "current timezone",
+      "which timezone",
+      "show timezone",
+      "what time zone am I in",
+      "timezone info"
+    ]
+  },
+  "datetime.year": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what year is it",
+      "current year",
+      "which year",
+      "the year",
+      "tell me the year",
+      "what year is this"
+    ]
+  },
+  "datetime.countdown": {
+    "entities": [
+      "action",
+      "target"
+    ],
+    "examples": [
+      "how many days until christmas",
+      "days until new year",
+      "countdown to my birthday",
+      "how long until january 1",
+      "days remaining until december 25",
+      "how many days left until march 15"
+    ]
+  },
+  "instagram.open": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "open instagram",
+      "launch instagram",
+      "start instagram",
+      "open insta",
+      "go to instagram",
+      "open ig",
+      "instagram please",
+      "show instagram"
+    ]
+  },
+  "instagram.login": {
+    "entities": [
+      "action",
+      "username",
+      "password"
+    ],
+    "examples": [
+      "login to instagram",
+      "sign in to instagram",
+      "instagram login",
+      "log in to my instagram",
+      "sign into insta",
+      "log me into instagram"
+    ]
+  },
+  "instagram.logout": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "logout of instagram",
+      "sign out of instagram",
+      "instagram logout",
+      "log out of insta",
+      "sign out from ig"
+    ]
+  },
+  "instagram.feed": {
+    "entities": [
+      "action",
+      "count"
+    ],
+    "examples": [
+      "show instagram feed",
+      "scroll instagram",
+      "instagram home",
+      "go to instagram feed",
+      "show my insta feed",
+      "scroll through instagram"
+    ]
+  },
+  "instagram.explore": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "instagram explore",
+      "explore instagram",
+      "go to insta explore",
+      "open instagram explore page",
+      "show explore on instagram"
+    ]
+  },
+  "instagram.reels": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "instagram reels",
+      "show reels",
+      "go to reels",
+      "open insta reels",
+      "watch instagram reels",
+      "show me reels"
+    ]
+  },
+  "instagram.like": {
+    "entities": [
+      "action",
+      "post_url"
+    ],
+    "examples": [
+      "like this instagram post",
+      "instagram like",
+      "like the post",
+      "heart this post on instagram",
+      "like current post on insta"
+    ]
+  },
+  "instagram.unlike": {
+    "entities": [
+      "action",
+      "post_url"
+    ],
+    "examples": [
+      "unlike this instagram post",
+      "remove like on instagram",
+      "unlike the post",
+      "remove heart from this post"
+    ]
+  },
+  "instagram.comment": {
+    "entities": [
+      "action",
+      "text",
+      "post_url"
+    ],
+    "examples": [
+      "comment on instagram post",
+      "leave a comment on instagram",
+      "instagram comment",
+      "add a comment on this post",
+      "comment nice pic on instagram"
+    ]
+  },
+  "instagram.follow": {
+    "entities": [
+      "action",
+      "username"
+    ],
+    "examples": [
+      "follow user on instagram",
+      "instagram follow",
+      "follow this account",
+      "follow them on insta",
+      "follow instagram account"
+    ]
+  },
+  "instagram.unfollow": {
+    "entities": [
+      "action",
+      "username"
+    ],
+    "examples": [
+      "unfollow user on instagram",
+      "instagram unfollow",
+      "unfollow this account",
+      "stop following on insta",
+      "remove follower on instagram"
+    ]
+  },
+  "instagram.dm": {
+    "entities": [
+      "action",
+      "username",
+      "message"
+    ],
+    "examples": [
+      "send instagram dm",
+      "dm on instagram",
+      "message someone on insta",
+      "instagram direct message",
+      "send a message on instagram",
+      "open instagram messages",
+      "check instagram dms",
+      "go to instagram inbox"
+    ]
+  },
+  "instagram.search": {
+    "entities": [
+      "action",
+      "query"
+    ],
+    "examples": [
+      "search instagram",
+      "find user on instagram",
+      "instagram search",
+      "look for someone on insta",
+      "search for hashtag on instagram"
+    ]
+  },
+  "instagram.profile": {
+    "entities": [
+      "action",
+      "username"
+    ],
+    "examples": [
+      "view instagram profile",
+      "check their instagram",
+      "open instagram profile",
+      "go to instagram profile",
+      "show profile on insta"
+    ]
+  },
+  "instagram.notifications": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "instagram notifications",
+      "check instagram notifications",
+      "show insta notifications",
+      "what are my instagram alerts",
+      "open ig notifications"
+    ]
+  },
+  "instagram.close": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "close instagram",
+      "exit instagram",
+      "quit instagram",
+      "close insta browser"
+    ]
+  },
+  "youtube.pause": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "pause youtube",
+      "pause the video",
+      "stop youtube",
+      "pause playback",
+      "play pause youtube",
+      "resume youtube",
+      "resume video"
+    ]
+  },
+  "youtube.fullscreen": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "fullscreen youtube",
+      "youtube fullscreen",
+      "make youtube fullscreen",
+      "full screen video",
+      "exit fullscreen"
+    ]
+  },
+  "youtube.skip_ad": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "skip ad",
+      "skip youtube ad",
+      "skip this ad",
+      "skip advertisement",
+      "skip the ad on youtube"
+    ]
+  },
+  "youtube.subscriptions": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "youtube subscriptions",
+      "open youtube subscriptions",
+      "show my subscriptions",
+      "go to subscriptions"
+    ]
+  },
+  "youtube.history": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "youtube history",
+      "show watch history",
+      "youtube watch history",
+      "open my history"
+    ]
+  },
+  "youtube.queue": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "add to queue",
+      "add video to queue",
+      "queue this video",
+      "add to youtube queue"
+    ]
+  },
+  "youtube.next": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "next video",
+      "play next",
+      "skip video",
+      "next on youtube"
+    ]
+  },
+  "youtube.previous": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "previous video",
+      "go back",
+      "play previous",
+      "last video"
+    ]
+  },
+  "youtube.captions": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn on captions",
+      "enable subtitles",
+      "youtube captions",
+      "toggle captions"
+    ]
+  },
+  "system.hotspot.on": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn on hotspot",
+      "enable hotspot",
+      "start hotspot",
+      "mobile hotspot on",
+      "enable mobile hotspot"
+    ]
+  },
+  "system.hotspot.off": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn off hotspot",
+      "disable hotspot",
+      "stop hotspot",
+      "mobile hotspot off"
+    ]
+  },
+  "system.hotspot.status": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "hotspot status",
+      "is hotspot on",
+      "check hotspot"
+    ]
+  },
+  "system.nightlight.on": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn on night light",
+      "enable night light",
+      "enable blue light filter",
+      "night mode on",
+      "reduce blue light"
+    ]
+  },
+  "system.nightlight.off": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn off night light",
+      "disable night light",
+      "night mode off",
+      "disable blue light filter"
+    ]
+  },
+  "system.airplane_mode.on": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn on airplane mode",
+      "enable airplane mode",
+      "flight mode on",
+      "go offline"
+    ]
+  },
+  "system.airplane_mode.off": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "turn off airplane mode",
+      "disable airplane mode",
+      "flight mode off"
+    ]
+  },
+  "system.display.extend": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "extend display",
+      "extend screen",
+      "use second monitor",
+      "extend to projector"
+    ]
+  },
+  "system.display.duplicate": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "duplicate display",
+      "mirror screen",
+      "duplicate screen",
+      "mirror display"
+    ]
+  },
+  "system.audio_device.switch": {
+    "entities": [
+      "action",
+      "device"
+    ],
+    "examples": [
+      "switch to headphones",
+      "use speakers",
+      "change audio output",
+      "switch to bluetooth speaker",
+      "use headset"
+    ]
+  },
+  "system.printer.print": {
+    "entities": [
+      "action",
+      "file_path"
+    ],
+    "examples": [
+      "print this",
+      "print document",
+      "print file",
+      "send to printer"
+    ]
+  },
+  "system.printer.queue": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "show print queue",
+      "printer queue",
+      "what's printing",
+      "printing status"
+    ]
+  },
+  "system.trash.status": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "recycle bin status",
+      "how much in trash",
+      "check recycle bin",
+      "trash status"
+    ]
+  },
+  "system.trash.empty": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "empty recycle bin",
+      "empty trash",
+      "clear recycle bin",
+      "delete trash"
+    ]
+  },
+  "system.disk.status": {
+    "entities": [
+      "action",
+      "drive"
+    ],
+    "examples": [
+      "how much storage",
+      "disk space",
+      "check storage",
+      "how much space left",
+      "storage status",
+      "C drive space"
+    ]
+  },
+  "system.disk.cleanup": {
+    "entities": [
+      "action",
+      "drive"
+    ],
+    "examples": [
+      "disk cleanup",
+      "clean up disk",
+      "free up space",
+      "clean storage"
+    ]
+  },
+  "system.processes.cpu": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what's using CPU",
+      "high CPU",
+      "top processes",
+      "CPU usage",
+      "which app is using CPU"
+    ]
+  },
+  "system.processes.memory": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "what's using memory",
+      "high memory",
+      "RAM usage",
+      "memory status",
+      "which app is using RAM"
+    ]
+  },
+  "system.processes.kill": {
+    "entities": [
+      "action",
+      "name"
+    ],
+    "examples": [
+      "kill chrome",
+      "end task notepad",
+      "kill process",
+      "terminate app"
+    ]
+  },
+  "system.processes.manager": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "open task manager",
+      "show task manager",
+      "task manager",
+      "process manager"
     ]
   }
 }
