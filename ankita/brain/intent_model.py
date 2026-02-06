@@ -76,19 +76,19 @@ def classify_rules(text: str) -> str:
         return "system.gesture_mode"
 
     # --- App control (Tier-1) ---
-    if any(w in t for w in ["switch to ", "switch ", "focus ", "go to "]):
+    if re.match(r"^(?:switch\s+to|switch|focus|go\s+to)\b", t):
         return "system.app.focus"
 
-    if any(w in t for w in ["open ", "launch ", "start "]):
+    if re.match(r"^(?:open|launch|start)\b", t):
         return "system.app.open"
 
     if any(w in t for w in ["close this", "close current", "close active"]):
         return "system.app.close_active"
 
-    if any(w in t for w in ["force close", "force quit", "kill ", "end task"]):
+    if re.match(r"^(?:force\s+close|force\s+quit|kill|end\s+task)\b", t):
         return "system.app.force_close"
 
-    if any(w in t for w in ["close ", "quit "]):
+    if re.match(r"^(?:close|quit|exit)\b", t):
         return "system.app.close"
 
     if "brightness" in t or "brigthness" in t:

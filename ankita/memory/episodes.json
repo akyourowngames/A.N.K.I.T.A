@@ -1,70 +1,5 @@
 [
   {
-    "id": "ep_d80f9fa6",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": "__init__.py - A.N.K.I.T.A - Visual Studio Code"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:26.008283"
-  },
-  {
-    "id": "ep_98f2ea95",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "30-S-1 MATHEMATICS STANDARD.pdf - Google Chrome",
-      "matched": "30-S-1 MATHEMATICS STANDARD.pdf - Google Chrome"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:26.573466"
-  },
-  {
-    "id": "ep_906e6617",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:28.299315"
-  },
-  {
-    "id": "ep_efb19eaf",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "__init__.py - A.N.K.I.T.A - Visual Studio Code",
-      "matched": null
-    },
-    "result": {
-      "status": "fail"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:28.840307"
-  },
-  {
-    "id": "ep_785c97fb",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "CV-based Window Switching",
-      "matched": "CV-based Window Switching"
-    },
-    "result": {
-      "status": "success"
-    },
-    "tags": [],
-    "time": "2026-02-04T13:33:31.079635"
-  },
-  {
     "id": "ep_baa24179",
     "intent": "system.window_switch",
     "entities": {
@@ -1769,5 +1704,197 @@
     },
     "tags": [],
     "time": "2026-02-05T22:20:26.838917"
+  },
+  {
+    "id": "ep_65462e9c",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused chrome",
+          "window_title": "Tavily API Platform - Google Chrome"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T12:37:52.252600"
+  },
+  {
+    "id": "ep_c875df23",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "latest news about open ai and claude"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened latest news about open ai and claude"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T12:43:24.152121"
+  },
+  {
+    "id": "ep_f2702bfb",
+    "intent": "web.search",
+    "entities": {
+      "query": "latest news about OpenAI and Claude",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "latest news about OpenAI and Claude",
+          "results": [
+            {
+              "title": "OpenAI counters Anthropic Claude Opus 4.6 with GPT-5.3 Codex, its ...",
+              "snippet": "OpenAI counters Anthropic Claude Opus 4.6 with GPT-5.3 Codex, its most advanced coding agent \u00b7 OpenAI's latest Codex model combines faster",
+              "url": "https://indianexpress.com/article/technology/tech-news-technology/openai-counters-anthropic-claude-opus-4-6-with-gpt-5-3-codex-its-most-advanced-coding-agent-10516681/",
+              "source": "Tavily"
+            },
+            {
+              "title": "OpenAI's GPT-5.3-Codex drops as Anthropic upgrades Claude",
+              "snippet": "OpenAI launched GPT-5.3-Codex as Anthropic released Claude Opus 4.6 in a simultaneous drop that kicks off the AI coding wars, with benchmark",
+              "url": "https://venturebeat.com/technology/openais-gpt-5-3-codex-drops-as-anthropic-upgrades-claude-ai-coding-wars-heat",
+              "source": "Tavily"
+            },
+            {
+              "title": "New Claude & GPT Models Just Dropped (It's War!) - YouTube",
+              "snippet": "Matt hits the nail on the head at the end; competition is the only thing keeping these companies honest. If OpenAI didn't have Anthropic",
+              "url": "https://www.youtube.com/watch?v=9f2egsZZjnw",
+              "source": "Tavily"
+            },
+            {
+              "title": "Anthropic launches Claude Opus 4.6 as AI moves toward a 'vibe ...",
+              "snippet": "Anthropic launched its latest AI model, Claude Opus 4.6, which is better at coding, sustaining tasks for longer and creating higher-quality",
+              "url": "https://www.cnbc.com/2026/02/05/anthropic-claude-opus-4-6-vibe-working.html",
+              "source": "Tavily"
+            },
+            {
+              "title": "GPT-5.3 Codex & Claude Opus 4.6: 2 NEW Models ... - YouTube",
+              "snippet": "Anthropic and OpenAI just had the biggest AI release day in history - dropping Claude Opus 4.6 and GPT-5.3 Codex within 20 minutes of each",
+              "url": "https://www.youtube.com/watch?v=2ECcWs6n-UA",
+              "source": "Tavily"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T12:52:56.940957"
+  },
+  {
+    "id": "ep_516987ad",
+    "intent": "web.search",
+    "entities": {
+      "query": "search for price of bitcoin",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "search for price of bitcoin",
+          "results": [
+            {
+              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
+              "snippet": "The price of Bitcoin (BTC) is $64881.97 today as of Feb 6, 2026, 12:02 am EST, with a 24-hour trading volume of $81.26B.",
+              "url": "https://www.coindesk.com/price/bitcoin",
+              "source": "Tavily"
+            },
+            {
+              "title": "Bitcoin Price, BTC Price, Live Charts, and Marketcap - Coinbase",
+              "snippet": "Price of BTC is $76,180.00 right now. Looking at Bitcoin's historical prices, it's -11% down from the previous week's price of $88,349.67, and observed a 4",
+              "url": "https://www.coinbase.com/price/bitcoin",
+              "source": "Tavily"
+            },
+            {
+              "title": "Bitcoin (BTC) Price Today: BTC Live Price, Charts, News - Crypto.com",
+              "snippet": "Bitcoin's price today is $64,649.80, with a 24-hour trading volume of $143.44B. BTC is -9.36% in the last 24 hours. It is currently -23.60% from its 7-day",
+              "url": "https://crypto.com/en/price/bitcoin",
+              "source": "Tavily"
+            },
+            {
+              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
+              "snippet": "The live Bitcoin price today is $64912.68 USD with a 24-hour trading volume of $141423589438.69 USD. We update our BTC to USD price in real-time.",
+              "url": "https://coinmarketcap.com/currencies/bitcoin/",
+              "source": "Tavily"
+            },
+            {
+              "title": "BTC USD \u2014 Bitcoin Price and Chart - TradingView",
+              "snippet": "The current price of Bitcoin (BTC) is 64,797 USD \u2014 it has fallen \u22125.23% in the past 24 hours. Try placing this info into the context by checking out what coins",
+              "url": "https://www.tradingview.com/symbols/BTCUSD/",
+              "source": "Tavily"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T13:06:18.123282"
+  },
+  {
+    "id": "ep_3885f272",
+    "intent": "web.search",
+    "entities": {
+      "query": "latest news on ai impact summit 2026 india",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "latest news on ai impact summit 2026 india",
+          "results": [
+            {
+              "title": "India AI Impact Summit 2026 - Vertiv",
+              "snippet": "\"India looks forward to welcoming the world to the AI Impact Summit in February 2026. We have picked the theme of Sarvajana Hitaya, Sarvajana Sukhaya or welfare",
+              "url": "https://www.vertiv.com/en-us/about/news-and-insights/events/2026-temp/india-ai-impact-summit-2026/",
+              "source": "Tavily"
+            },
+            {
+              "title": "AI India Impact Summit 2026 is curated around three pillars - IBEF",
+              "snippet": "The summit will demonstrate how AI can transform major sectors such as healthcare, education, agriculture, climate solutions, and manufacturing,",
+              "url": "https://www.ibef.org/news/ai-india-impact-summit-2026-is-curated-around-three-pillars-people-planet-progress",
+              "source": "Tavily"
+            },
+            {
+              "title": "AI India Impact Summit 2026 is curated around three pillars",
+              "snippet": "The five-day India AI Impact Summit 2026 will commence from 16th of this month. Most Read. View All arrow-right.",
+              "url": "https://www.newsonair.gov.in/ai-india-impact-summit-2026-is-curated-around-three-pillars-people-planet-progress-additional-secretary-meity-abhishek-singh/",
+              "source": "Tavily"
+            },
+            {
+              "title": "India AI Impact Summit 2026",
+              "snippet": "The India AI Impact Expo 2026 for Responsible Intelligence will bring together 300+ exhibitors from India and 30+ countries across 10+ thematic pavilions. View",
+              "url": "https://impact.indiaai.gov.in/",
+              "source": "Tavily"
+            },
+            {
+              "title": "AI's Century-Long Journey in Focus as India Hosts AI Impact Summit ...",
+              "snippet": "As New Delhi prepares to host the India AI Impact Summit 2026, attention turns to the evolution of artificial intelligence\u2014from early 20th",
+              "url": "https://www.youtube.com/watch?v=64L_rZOobH8",
+              "source": "Tavily"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T13:06:57.421227"
   }
 ]

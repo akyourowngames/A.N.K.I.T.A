@@ -137,9 +137,22 @@ def plan(intent_result):
 
     for step in meta["steps"]:
         s = {"tool": step["tool"]}
+        args = {}
+        if isinstance(step.get("args"), dict):
+            args.update(step.get("args") or {})
+
         if "args_from" in step:
-            key = step["args_from"]
-            s["args"] = {key: entities.get(key, "")}
+            src = step["args_from"]
+            if isinstance(src, list):
+                for key in src:
+                    if not isinstance(key, str):
+                        continue
+                    args[key] = entities.get(key, "")
+            elif isinstance(src, str):
+                args[src] = entities.get(src, "")
+
+        if args:
+            s["args"] = args
         steps.append(s)
 
     plan_out = {"steps": steps}

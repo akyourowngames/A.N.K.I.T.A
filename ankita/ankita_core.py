@@ -467,7 +467,7 @@ def handle_text(text: str, source: str = "user") -> str:
         return response
 
     if intent_result["intent"] == "unknown" and not _looks_like_action(tnorm):
-        if _needs_realtime(tnorm) and is_question(text):
+        if _needs_realtime(tnorm):
             response = handle_intent({"intent": "web.search", "entities": {"query": text, "max_results": 5}}, user_text=text)
             publish_ui_state("IDLE")
             _print_ankita_stream(response)
@@ -987,6 +987,174 @@ def run_hybrid_mode():
             print(f"Error: {e}")
 
 
+# ============== SOCIAL ASSISTANT MODE ==============
+
+def run_voice_enrollment():
+    """Enroll owner voice for social assistant authentication."""
+    from voice.mic import record_audio
+    from voice.stt import transcribe
+    from voice.tts import speak
+    from context.owner_auth import get_owner_auth
+    import numpy as np
+    import wave
+    
+    print("\n" + "="*50)
+    print("  OWNER VOICE ENROLLMENT")
+    print("="*50)
+    print("\nThis will record your voice to enable owner-only commands.")
+    print("You'll speak 3 phrases to create your voice signature.\n")
+    
+    auth = get_owner_auth()
+    
+    if auth.is_enrolled:
+        speak("You already have a voice signature. Do you want to re-enroll?")
+        response = input("Re-enroll? (yes/no): ").strip().lower()
+        if response not in ("yes", "y"):
+            speak("Keeping existing voice signature.")
+            return
+        auth.delete_enrollment()
+    
+    phrases = [
+        "Hello Ankita, this is my voice",
+        "I am the owner of this assistant",
+        "Only I can control Ankita's responses",
+    ]
+    
+    samples = []
+    
+    for i, phrase in enumerate(phrases, 1):
+        print(f"\n[{i}/3] Please say: \"{phrase}\"")
+        speak(f"Phrase {i}. Please say: {phrase}")
+        
+        input("Press Enter when ready...")
+        print("[Recording...]")
+        
+        audio_path = record_audio(duration=5)
+        
+        # Load audio as numpy array
+        with wave.open(audio_path, 'rb') as wf:
+            frames = wf.readframes(wf.getnframes())
+            audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        
+        # Verify we got something
+        text = transcribe(audio_path)
+        if text:
+            print(f"[Heard]: {text}")
+            samples.append(audio)
+        else:
+            print("[Warning] Didn't hear anything, but continuing...")
+            samples.append(audio)
+    
+    print("\n[Processing voice signature...]")
+    success, message = auth.enroll(samples)
+    
+    if success:
+        speak("Voice enrollment successful! I will only respond to your commands.")
+        print(f"\n✓ {message}")
+        print("\nYou can now use --social mode with owner-only commands.")
+    else:
+        speak("Voice enrollment failed. Please try again.")
+        print(f"\n✗ {message}")
+
+
+def run_social_mode():
+    """
+    Social assistant mode - context-aware, owner-controlled.
+    
+    Features:
+    - Passive listening in group conversations
+    - Session context memory
+    - Owner-only command triggers
+    - Standby/active modes
+    """
+    from voice.tts import speak
+    from context import Mode, TriggerCommand, get_context_manager
+    
+    manager = get_context_manager()
+    
+    print("\n" + "="*50)
+    print("  SOCIAL ASSISTANT MODE")
+    print("="*50)
+    
+    # Check owner enrollment
+    if not manager.is_owner_enrolled:
+        print("\n⚠ Owner voice not enrolled!")
+        print("  Run: python ankita_core.py --enroll-voice")
+        print("  (Continuing without owner verification)\n")
+    else:
+        print("\n✓ Owner voice recognized")
+    
+    print("""
+Commands (OWNER ONLY):
+  "Ankita active"   → Start listening and recording context
+  "Ankita standby"  → Pause (stop recording)
+  "Ankita answer"   → Respond using context
+  "Ankita stop"     → Exit social mode
+
+Status: Starting in STANDBY mode...
+""")
+    
+    def on_answer(context: str):
+        """Handle "Ankita answer" command."""
+        print(f"\n[Context]: {context[:200]}...")
+        
+        # Get last question if available
+        question = manager.get_last_question()
+        if question:
+            prompt = f"Based on this conversation context:\n{context}\n\nAnswer this question: {question}"
+        else:
+            prompt = f"Based on this conversation context:\n{context}\n\nProvide a helpful response."
+        
+        # Use existing LLM to generate response
+        response = ask_llm(prompt)
+        
+        print(f"\n[Ankita]: {response}")
+        speak(response)
+        
+        # Add our response to context
+        manager.add_context("ankita", response, is_owner=False)
+    
+    def on_mode_change(mode: Mode):
+        """Handle mode changes."""
+        if mode == Mode.ACTIVE:
+            speak("Now listening and recording context.")
+        elif mode == Mode.STANDBY:
+            speak("Standby mode. Context cleared.")
+        elif mode == Mode.OFF:
+            speak("Social mode disabled.")
+    
+    manager.set_answer_callback(on_answer)
+    manager.set_mode_callback(on_mode_change)
+    
+    try:
+        manager.start()
+        speak("Social assistant ready. Say Ankita active to begin.")
+        
+        # Keep running until stopped
+        while manager.mode != Mode.OFF:
+            try:
+                time.sleep(0.5)
+                
+                # Check for UI commands
+                for cmd in poll_ui_commands():
+                    if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
+                        global _ui_sleeping
+                        _ui_sleeping = not _ui_sleeping
+                        if _ui_sleeping:
+                            manager.set_mode(Mode.STANDBY)
+                        else:
+                            manager.set_mode(Mode.ACTIVE)
+                            
+            except KeyboardInterrupt:
+                break
+                
+    except Exception as e:
+        print(f"[Social Mode Error]: {e}")
+    finally:
+        manager.stop()
+        speak("Social assistant stopped.")
+
+
 # ============== MAIN ==============
 
 def main():
@@ -994,6 +1162,8 @@ def main():
     parser.add_argument("--voice", action="store_true", help="Voice mode")
     parser.add_argument("--both", action="store_true", help="Hybrid mode")
     parser.add_argument("--continuous", action="store_true", help="Continuous voice mode (wake word + stop word)")
+    parser.add_argument("--social", action="store_true", help="Social assistant mode (group context, owner-controlled)")
+    parser.add_argument("--enroll-voice", action="store_true", help="Enroll owner voice for social mode")
     parser.add_argument("--no-bubble", action="store_true", help="Disable floating bubble UI")
     args = parser.parse_args()
 
@@ -1008,7 +1178,11 @@ def main():
     print(" ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝")
     print()
     
-    if args.continuous:
+    if args.enroll_voice:
+        run_voice_enrollment()
+    elif args.social:
+        run_social_mode()
+    elif args.continuous:
         run_continuous_voice_mode()
     elif args.voice:
         run_voice_mode()

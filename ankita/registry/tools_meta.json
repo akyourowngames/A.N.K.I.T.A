@@ -29,7 +29,7 @@
   },
   "web.search": {
     "steps": [
-      { "tool": "web.search", "args_from": "query" }
+      { "tool": "web.search", "args_from": ["query", "max_results"] }
     ]
   }
   ,
