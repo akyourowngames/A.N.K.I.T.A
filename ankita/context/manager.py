@@ -110,6 +110,13 @@ class ContextManager:
     def clear_context(self) -> None:
         """Clear session context."""
         self._session.clear()
+
+    def export_recent_audio_wav(self, seconds: float = 30.0) -> Optional[str]:
+        """Export recent microphone audio to a WAV file (for cloud diarization)."""
+        try:
+            return self._listener.export_recent_audio_wav(seconds=seconds)
+        except Exception:
+            return None
     
     def enroll_owner_voice(self, audio_samples: list) -> tuple:
         """

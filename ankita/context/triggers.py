@@ -11,6 +11,7 @@ Usage:
 """
 
 import re
+import time
 from typing import Optional, Tuple
 from . import TriggerCommand
 
@@ -18,38 +19,38 @@ from . import TriggerCommand
 # Trigger patterns (case-insensitive)
 TRIGGER_PATTERNS = {
     TriggerCommand.ANSWER: [
-        r"ankita[,]?\s+answer",
-        r"ankita[,]?\s+answer\s+them",
-        r"ankita[,]?\s+answer\s+that",
-        r"ankita[,]?\s+tell\s+them",
-        r"ankita[,]?\s+respond",
+        r"\bjarvis\b[,]?\s+answer\b",
+        r"\bjarvis\b[,]?\s+answer\s+them\b",
+        r"\bjarvis\b[,]?\s+answer\s+that\b",
+        r"\bjarvis\b[,]?\s+tell\s+them\b",
+        r"\bjarvis\b[,]?\s+respond\b",
     ],
     TriggerCommand.EXPLAIN: [
-        r"ankita[,]?\s+explain",
-        r"ankita[,]?\s+explain\s+that",
-        r"ankita[,]?\s+elaborate",
+        r"\bjarvis\b[,]?\s+explain\b",
+        r"\bjarvis\b[,]?\s+explain\s+that\b",
+        r"\bjarvis\b[,]?\s+elaborate\b",
     ],
     TriggerCommand.STANDBY: [
-        r"ankita[,]?\s+standby",
-        r"ankita[,]?\s+stand\s+by",
-        r"ankita[,]?\s+pause",
-        r"ankita[,]?\s+stop\s+listening",
-        r"ankita[,]?\s+go\s+quiet",
-        r"ankita[,]?\s+be\s+quiet",
+        r"\bjarvis\b[,]?\s+standby\b",
+        r"\bjarvis\b[,]?\s+stand\s+by\b",
+        r"\bjarvis\b[,]?\s+pause\b",
+        r"\bjarvis\b[,]?\s+stop\s+listening\b",
+        r"\bjarvis\b[,]?\s+go\s+quiet\b",
+        r"\bjarvis\b[,]?\s+be\s+quiet\b",
     ],
     TriggerCommand.ACTIVE: [
-        r"ankita[,]?\s+active",
-        r"ankita[,]?\s+start\s+listening",
-        r"ankita[,]?\s+wake\s+up",
-        r"ankita[,]?\s+listen",
-        r"ankita[,]?\s+resume",
+        r"\bjarvis\b[,]?\s+active\b",
+        r"\bjarvis\b[,]?\s+start\s+listening\b",
+        r"\bjarvis\b[,]?\s+wake\s+up\b",
+        r"\bjarvis\b[,]?\s+listen\b",
+        r"\bjarvis\b[,]?\s+resume\b",
     ],
     TriggerCommand.STOP: [
-        r"ankita[,]?\s+stop",
-        r"ankita[,]?\s+quit",
-        r"ankita[,]?\s+exit",
-        r"ankita[,]?\s+shutdown",
-        r"ankita[,]?\s+off",
+        r"\bjarvis\b[,]?\s+stop\b",
+        r"\bjarvis\b[,]?\s+quit\b",
+        r"\bjarvis\b[,]?\s+exit\b",
+        r"\bjarvis\b[,]?\s+shutdown\b",
+        r"\bjarvis\b[,]?\s+off\b",
     ],
 }
 
@@ -68,9 +69,9 @@ def parse_trigger(text: str) -> Optional[TriggerCommand]:
         return None
     
     text_lower = text.lower().strip()
-    
-    # Must start with "ankita" or contain "ankita" nearby
-    if "ankita" not in text_lower:
+
+    # Reduce false triggers: require the phrase to start with Jarvis (optionally preceded by hey/hi)
+    if not re.match(r"^(?:hey\s+|hi\s+)?jarvis\b", text_lower):
         return None
     
     for command, patterns in TRIGGER_PATTERNS.items():
@@ -105,6 +106,9 @@ class TriggerProcessor:
     def __init__(self):
         from .owner_auth import get_owner_auth
         self._owner_auth = get_owner_auth()
+        self._last_command: Optional[TriggerCommand] = None
+        self._last_command_ts: float = 0.0
+        self._cooldown_s: float = 1.5
     
     def process(self, text: str, audio: Optional[object] = None) -> Tuple[Optional[TriggerCommand], bool]:
         """
@@ -123,6 +127,12 @@ class TriggerProcessor:
         
         if command is None:
             return None, False
+
+        now = time.time()
+        if self._last_command == command and (now - self._last_command_ts) < self._cooldown_s:
+            return None, False
+        self._last_command = command
+        self._last_command_ts = now
         
         # If no audio provided, skip verification
         if audio is None:

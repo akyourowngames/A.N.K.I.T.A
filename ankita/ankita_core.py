@@ -1005,6 +1005,17 @@ def run_voice_enrollment():
     print("You'll speak 3 phrases to create your voice signature.\n")
     
     auth = get_owner_auth()
+
+    # Fail fast if voice embedding dependencies are missing
+    try:
+        if getattr(auth, "_get_encoder", None) and auth._get_encoder() is None:
+            speak("Voice enrollment is unavailable because the required dependencies are missing.")
+            print("\n✗ Voice enrollment unavailable (missing resemblyzer).")
+            return
+    except Exception:
+        speak("Voice enrollment is unavailable on this setup.")
+        print("\n✗ Voice enrollment unavailable.")
+        return
     
     if auth.is_enrolled:
         speak("You already have a voice signature. Do you want to re-enroll?")
@@ -1086,24 +1097,100 @@ def run_social_mode():
     
     print("""
 Commands (OWNER ONLY):
-  "Ankita active"   → Start listening and recording context
-  "Ankita standby"  → Pause (stop recording)
-  "Ankita answer"   → Respond using context
-  "Ankita stop"     → Exit social mode
+  "Jarvis active"   → Start listening and recording context
+  "Jarvis standby"  → Pause (stop recording)
+  "Jarvis answer"   → Respond using context
+  "Jarvis stop"     → Exit social mode
 
 Status: Starting in STANDBY mode...
 """)
     
     def on_answer(context: str):
-        """Handle "Ankita answer" command."""
-        print(f"\n[Context]: {context[:200]}...")
+        """Handle "Jarvis answer" command."""
+        def _translate_hi_to_en(text: str) -> str:
+            try:
+                from mtranslate import translate  # type: ignore
+            except Exception:
+                return text
+            try:
+                out = translate(text, "en", "hi")
+                return (out or "").strip() or text
+            except Exception:
+                return text
+
+        try:
+            use_assembly = bool((os.getenv("ASSEMBLYAI_API_KEY") or "").strip())
+        except Exception:
+            use_assembly = False
+
+        if use_assembly:
+            try:
+                seconds = float(os.getenv("ASSEMBLYAI_SECONDS", "30") or "30")
+            except Exception:
+                seconds = 30.0
+
+            try:
+                audio_path = manager.export_recent_audio_wav(seconds=seconds)
+                if audio_path:
+                    speak(f"Processing the last {int(seconds)} seconds of conversation for accuracy.")
+                    from context.assemblyai_client import upload_audio, request_transcription, poll_transcription
+
+                    upload_url = upload_audio(audio_path)
+                    tid = request_transcription(upload_url)
+                    result = poll_transcription(tid)
+
+                    if (result.get("status") or "").lower() == "completed":
+                        utts = result.get("utterances") or []
+                        if isinstance(utts, list) and utts:
+                            for u in utts:
+                                try:
+                                    spk = u.get("speaker")
+                                    txt = (u.get("text") or "").strip()
+                                    if not txt:
+                                        continue
+                                    manager.add_context(f"speaker_{spk}", txt, is_owner=False)
+                                except Exception:
+                                    continue
+
+                        context = manager.get_context()
+                    else:
+                        err = result.get("error")
+                        if err:
+                            print(f"[AssemblyAI] Error: {err}")
+            except Exception as e:
+                print(f"[AssemblyAI] Failed: {e}")
+
+        try:
+            entries = manager.get_context_entries(limit=15)
+        except Exception:
+            entries = []
+
+        context_lines: list[str] = []
+        if isinstance(entries, list) and entries:
+            for e in entries:
+                try:
+                    s = (e.get("speaker") or "someone") if isinstance(e, dict) else "someone"
+                    t = (e.get("summary") or "") if isinstance(e, dict) else ""
+                    lang = (e.get("lang") or "") if isinstance(e, dict) else ""
+                    if not t:
+                        continue
+                    if lang == "hi":
+                        t = _translate_hi_to_en(t)
+                    context_lines.append(f"{s}: {t}")
+                except Exception:
+                    continue
+            context_for_llm = "\n".join(context_lines) if context_lines else context
+        else:
+            context_for_llm = context
+
+        print(f"\n[Context]: {context_for_llm[:200]}...")
         
         # Get last question if available
         question = manager.get_last_question()
         if question:
-            prompt = f"Based on this conversation context:\n{context}\n\nAnswer this question: {question}"
+            prompt = f"Based on this conversation context:\n{context_for_llm}\n\nAnswer this question: {question}"
         else:
-            prompt = f"Based on this conversation context:\n{context}\n\nProvide a helpful response."
+            prompt = f"Based on this conversation context:\n{context_for_llm}\n\nProvide a helpful response."
         
         # Use existing LLM to generate response
         response = ask_llm(prompt)
@@ -1117,24 +1204,49 @@ Status: Starting in STANDBY mode...
     def on_mode_change(mode: Mode):
         """Handle mode changes."""
         if mode == Mode.ACTIVE:
-            speak("Now listening and recording context.")
+            try:
+                speak("Now listening and recording context.")
+            except KeyboardInterrupt:
+                pass
+            except Exception:
+                pass
         elif mode == Mode.STANDBY:
-            speak("Standby mode. Context cleared.")
+            try:
+                speak("Standby mode. Context cleared.")
+            except KeyboardInterrupt:
+                pass
+            except Exception:
+                pass
         elif mode == Mode.OFF:
-            speak("Social mode disabled.")
+            try:
+                speak("Social mode disabled.")
+            except KeyboardInterrupt:
+                pass
+            except Exception:
+                pass
     
     manager.set_answer_callback(on_answer)
     manager.set_mode_callback(on_mode_change)
-    
+
+    started = False
     try:
         manager.start()
-        speak("Social assistant ready. Say Ankita active to begin.")
-        
+        started = True
+        try:
+            speak("Social assistant ready. Say Ankita active to begin.")
+        except KeyboardInterrupt:
+            raise
+        except Exception:
+            pass
+
         # Keep running until stopped
-        while manager.mode != Mode.OFF:
+        while True:
+            if manager.mode == Mode.OFF:
+                break
+
             try:
                 time.sleep(0.5)
-                
+
                 # Check for UI commands
                 for cmd in poll_ui_commands():
                     if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
@@ -1144,15 +1256,23 @@ Status: Starting in STANDBY mode...
                             manager.set_mode(Mode.STANDBY)
                         else:
                             manager.set_mode(Mode.ACTIVE)
-                            
             except KeyboardInterrupt:
                 break
-                
+            except Exception as e:
+                print(f"[Social Mode Loop Error]: {e}")
+                time.sleep(0.5)
+
     except Exception as e:
         print(f"[Social Mode Error]: {e}")
     finally:
-        manager.stop()
-        speak("Social assistant stopped.")
+        if started:
+            manager.stop()
+        try:
+            speak("Social assistant stopped.")
+        except KeyboardInterrupt:
+            pass
+        except Exception:
+            pass
 
 
 # ============== MAIN ==============

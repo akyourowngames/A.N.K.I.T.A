@@ -34,18 +34,34 @@ class OwnerAuth:
         self.threshold = threshold
         self._encoder = None
         self._owner_embedding: Optional[np.ndarray] = None
+        self._encoder_unavailable = False
+        self._encoder_error: str = ""
+        self._warned_unavailable = False
         self._load_owner_embedding()
     
     def _get_encoder(self):
         """Lazy-load the voice encoder."""
+        if self._encoder_unavailable:
+            return None
         if self._encoder is None:
             try:
                 from resemblyzer import VoiceEncoder
                 self._encoder = VoiceEncoder()
                 print("[OwnerAuth] Voice encoder loaded")
-            except ImportError:
-                print("[OwnerAuth] ERROR: resemblyzer not installed. Run: pip install resemblyzer")
-                raise
+            except ImportError as e:
+                self._encoder_unavailable = True
+                self._encoder_error = str(e)
+                if not self._warned_unavailable:
+                    print("[OwnerAuth] ERROR: resemblyzer not installed. Run: pip install resemblyzer")
+                    self._warned_unavailable = True
+                return None
+            except Exception as e:
+                self._encoder_unavailable = True
+                self._encoder_error = str(e)
+                if not self._warned_unavailable:
+                    print(f"[OwnerAuth] Embedding generation failed: {e}")
+                    self._warned_unavailable = True
+                return None
         return self._encoder
     
     def _load_owner_embedding(self) -> None:
@@ -81,9 +97,7 @@ class OwnerAuth:
         return self._owner_embedding is not None
     
     def _preprocess_audio(self, audio: np.ndarray) -> np.ndarray:
-        """Preprocess audio for embedding generation."""
-        from resemblyzer import preprocess_wav
-        
+        """Preprocess audio for embedding generation (without webrtcvad)."""
         # Ensure float32 and correct shape
         if audio.dtype != np.float32:
             if audio.dtype in (np.int16, np.int32):
@@ -95,13 +109,28 @@ class OwnerAuth:
         if audio.ndim > 1:
             audio = audio.flatten()
         
-        # Preprocess (normalize, remove silence, etc.)
-        return preprocess_wav(audio, SAMPLE_RATE)
+        # Simple normalization (instead of resemblyzer.preprocess_wav which needs webrtcvad)
+        # Normalize volume
+        if np.abs(audio).max() > 0:
+            audio = audio / np.abs(audio).max()
+        
+        # Trim silence from start/end (simple energy-based)
+        energy = np.abs(audio)
+        threshold = 0.01
+        above_threshold = energy > threshold
+        if above_threshold.any():
+            first = np.argmax(above_threshold)
+            last = len(above_threshold) - np.argmax(above_threshold[::-1])
+            audio = audio[first:last]
+        
+        return audio
     
     def _generate_embedding(self, audio: np.ndarray) -> Optional[np.ndarray]:
         """Generate voice embedding from audio."""
         try:
             encoder = self._get_encoder()
+            if encoder is None:
+                return None
             processed = self._preprocess_audio(audio)
             
             # Check minimum length
@@ -112,7 +141,12 @@ class OwnerAuth:
             embedding = encoder.embed_utterance(processed)
             return embedding
         except Exception as e:
-            print(f"[OwnerAuth] Embedding generation failed: {e}")
+            if not self._encoder_unavailable:
+                self._encoder_unavailable = True
+                self._encoder_error = str(e)
+            if not self._warned_unavailable:
+                print(f"[OwnerAuth] Embedding generation failed: {e}")
+                self._warned_unavailable = True
             return None
     
     def enroll(self, audio_samples: List[np.ndarray]) -> Tuple[bool, str]:
@@ -127,6 +161,9 @@ class OwnerAuth:
         """
         if len(audio_samples) < ENROLLMENT_PHRASES:
             return False, f"Need at least {ENROLLMENT_PHRASES} samples, got {len(audio_samples)}"
+
+        if self._get_encoder() is None:
+            return False, "Owner voice enrollment unavailable (missing voice embedding dependencies)."
         
         embeddings = []
         for i, audio in enumerate(audio_samples):
@@ -166,6 +203,12 @@ class OwnerAuth:
         if not self.is_enrolled:
             print("[OwnerAuth] No owner enrolled - verification skipped")
             return True, 1.0  # Allow if not enrolled
+
+        if self._get_encoder() is None:
+            if not self._warned_unavailable:
+                print("[OwnerAuth] Owner verification unavailable - allowing")
+                self._warned_unavailable = True
+            return True, 1.0
         
         embedding = self._generate_embedding(audio)
         if embedding is None:

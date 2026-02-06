@@ -36,6 +36,7 @@ class SessionEntry:
     speaker: str  # "owner", "unknown_1", "unknown_2", etc.
     summary: str
     topic: Optional[str] = None
+    lang: str = ""  # Optional language tag (e.g. "hi", "en", "unknown")
     timestamp: str = ""
     
     def __post_init__(self):
@@ -171,6 +172,7 @@ class SessionMemory:
         speaker: str,
         summary: str,
         topic: Optional[str] = None,
+        lang: str = "",
         is_owner: bool = False
     ) -> None:
         """
@@ -180,6 +182,7 @@ class SessionMemory:
             speaker: Speaker identifier ("owner" or generated ID)
             summary: What was said (compact form)
             topic: Optional topic tag
+            lang: Optional language tag ("hi", "en", "unknown")
             is_owner: Whether speaker is the owner
         """
         self._ensure_session()
@@ -198,7 +201,8 @@ class SessionMemory:
         entry = SessionEntry(
             speaker=speaker_label,
             summary=summary,
-            topic=topic
+            topic=topic,
+            lang=lang or ""
         )
         
         with self._lock:
