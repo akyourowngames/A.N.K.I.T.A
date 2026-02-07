@@ -1,21 +1,5 @@
 [
   {
-    "id": "ep_a18ae614",
-    "intent": "system.gesture_mode",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T13:16:37.008286"
-  },
-  {
     "id": "ep_de48359f",
     "intent": "system.app.focus",
     "entities": {
@@ -2322,5 +2306,56 @@
     },
     "tags": [],
     "time": "2026-02-07T13:46:51.483128"
+  },
+  {
+    "id": "ep_3b311f90",
+    "intent": "web.search",
+    "entities": {
+      "query": "search for latest ai news",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "search for latest ai news",
+          "results": [
+            {
+              "title": "Artificial Intelligence - Latest AI News and Analysis - WSJ.com",
+              "snippet": "The latest artificial intelligence news coverage focusing on the technology, tools and the companies building AI technology.",
+              "url": "https://www.wsj.com/tech/ai?gaa_at=eafs&gaa_n=AWEtsqf8h3jZiWr1xDw5J7vH5gb5DbbYbDqb9yZwdoNFvzZCRQNYvHzSrH1W&gaa_ts=6987030a&gaa_sig=cxcl0hoia0QyWd5Pgh1BVsYS_wxFiW3O1zF-7YW48WdEaLHRVq6GKJ18T39UcEJJsYNuSN0eojSqAoHupCZ0VA%3D%3D",
+              "source": "Tavily"
+            },
+            {
+              "title": "Latest AI News and AI Breakthroughs that Matter Most: 2026 & 2025",
+              "snippet": "Wondering what's happening in the AI world? Here are the latest AI breakthroughs and news that are shaping the world around us!",
+              "url": "https://www.crescendo.ai/news/latest-ai-news-and-updates",
+              "source": "Tavily"
+            },
+            {
+              "title": "The Rundown AI: Home",
+              "snippet": "Get the latest AI news, understand why it matters, and learn how to apply it in your work. Join 2,000,000+ readers from companies like Apple, OpenAI, NASA.",
+              "url": "https://www.therundown.ai/",
+              "source": "Tavily"
+            },
+            {
+              "title": "AI News | Latest News | Insights Powering AI-Driven Business Growth",
+              "snippet": "AI News delivers the latest updates in artificial intelligence, machine learning, deep learning, enterprise AI, and emerging tech worldwide.",
+              "url": "https://www.artificialintelligence-news.com/",
+              "source": "Tavily"
+            },
+            {
+              "title": "AI News | Latest Headlines and Developments | Reuters",
+              "snippet": "Explore the latest artificial intelligence news with Reuters - from AI breakthroughs and technology trends to regulation, ethics, business and global",
+              "url": "https://www.reuters.com/technology/artificial-intelligence/",
+              "source": "Tavily"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T14:32:01.315624"
   }
 ]

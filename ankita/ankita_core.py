@@ -560,16 +560,81 @@ def handle_text(text: str, source: str = "user") -> str:
                             'entities': entities
                         }
                         
-                        # Execute
+                        # Execute and capture results
                         try:
                             plan_result = plan(action_intent)
                             exec_result = execute(plan_result)
-                            if isinstance(exec_result, dict) and exec_result.get('status') == 'success':
-                                learner.handle_positive_feedback(situation, tool)
+                            
+                            # CRITICAL: Executor wraps results in {'status', 'tool', 'last_result'}
+                            # We need to unwrap and get the actual tool result
+                            actual_result = exec_result
+                            if isinstance(exec_result, dict) and 'last_result' in exec_result:
+                                actual_result = exec_result.get('last_result', {})
+                                print(f"[Semantic DEBUG] Unwrapped last_result")
+                            
+                            # DEBUG: Print what we got back
+                            print(f"[Semantic DEBUG] Tool: {tool}")
+                            print(f"[Semantic DEBUG] Wrapped result type: {type(exec_result)}")
+                            print(f"[Semantic DEBUG] Wrapped result keys: {exec_result.keys() if isinstance(exec_result, dict) else 'N/A'}")
+                            print(f"[Semantic DEBUG] Actual result type: {type(actual_result)}")
+                            print(f"[Semantic DEBUG] Actual result keys: {actual_result.keys() if isinstance(actual_result, dict) else 'N/A'}")
+                            if isinstance(actual_result, dict):
+                                print(f"[Semantic DEBUG] Status: {actual_result.get('status')}")
+                                print(f"[Semantic DEBUG] Has results: {'results' in actual_result}")
+                                if 'results' in actual_result:
+                                    print(f"[Semantic DEBUG] Results count: {len(actual_result.get('results', []))}")
+                            
+                            # Display results to user if available
+                            result_displayed = False
+                            if isinstance(actual_result, dict):
+                                # For web search, show search results
+                                if 'results' in actual_result and isinstance(actual_result.get('results'), list):
+                                    raw_results = actual_result['results']
+                                    
+                                    # Handle double-nested results from executor
+                                    # Sometimes: {results: [{status, query, results: [ACTUAL]}]}
+                                    if raw_results and isinstance(raw_results[0], dict) and 'results' in raw_results[0]:
+                                        print(f"[Semantic DEBUG] Detected double-nested results, unwrapping...")
+                                        raw_results = raw_results[0].get('results', [])
+                                    
+                                    results = raw_results[:3]  # Show top 3
+                                    print(f"[Semantic DEBUG] Final results count: {len(results)}")
+                                    if results:
+                                        result_text = "\n"
+                                        for i, r in enumerate(results, 1):
+                                            title = r.get('title', 'Result')
+                                            snippet = r.get('snippet', '')
+                                            url = r.get('url', '')
+                                            result_text += f"{i}. {title}\n"
+                                            if snippet:
+                                                # Clean and truncate snippet
+                                                snippet_clean = snippet.strip().replace('\n', ' ')[:150]
+                                                result_text += f"   {snippet_clean}...\n"
+                                            if url:
+                                                result_text += f"   {url}\n"
+                                        print(result_text)
+                                        _print_ankita_stream(result_text)
+                                        add_conversation("ankita", result_text)
+                                        result_displayed = True
+                                
+                                # Check if tool reported success
+                                tool_success = actual_result.get('status') == 'success'
+                                
+                                # For search tools, success = having results
+                                if 'web.search' in tool and 'results' in actual_result:
+                                    tool_success = len(actual_result.get('results', [])) > 0
+                                
+                                # Handle success/failure for learning
+                                if tool_success or result_displayed:
+                                    learner.handle_positive_feedback(situation, tool)
+                                else:
+                                    learner.handle_negative_feedback(situation, tool)
                             else:
                                 learner.handle_negative_feedback(situation, tool)
                         except Exception as e:
                             print(f"[Semantic] Error executing {tool}: {e}")
+                            import traceback
+                            traceback.print_exc()
                             learner.handle_negative_feedback(situation, tool)
                 
                 publish_ui_state("IDLE")

@@ -8,10 +8,11 @@
     "instagram.comment": 1,
     "system.screenshot": 1,
     "youtube.open": 1,
-    "youtube.play": 3,
+    "youtube.play": 6,
     "system.brightness.up": 1,
     "instagram.close": 1,
-    "web.search": 6
+    "web.search": 16,
+    "system.bluetooth.off": 1
   },
   "time_patterns": {
     "23": {
@@ -31,8 +32,11 @@
       "instagram.close": 1
     },
     "14": {
-      "web.search": 6,
-      "youtube.play": 1
+      "web.search": 16,
+      "youtube.play": 4
+    },
+    "15": {
+      "system.bluetooth.off": 1
     }
   },
   "entity_preferences": {},
@@ -43,42 +47,78 @@
       "timestamp": "2026-02-07T12:56:44.170417",
       "expires": "2026-02-08T12:56:44.170417"
     },
-    "youtube.last_action": {
-      "value": "play",
-      "set_by": "youtube",
-      "timestamp": "2026-02-07T14:08:41.086268",
-      "expires": "2026-02-07T14:38:41.086268"
-    },
     "shared.query": {
       "value": {
-        "value": "relaxing music",
-        "source": "youtube",
-        "timestamp": "2026-02-07T14:08:40.716515"
+        "value": "home remedies",
+        "source": "web",
+        "timestamp": "2026-02-07T14:51:43.512668"
       },
       "set_by": "shared",
-      "timestamp": "2026-02-07T14:08:40.716515",
-      "expires": "2026-02-07T15:08:40.716515"
+      "timestamp": "2026-02-07T14:51:43.512668",
+      "expires": "2026-02-07T15:51:43.512668"
     },
-    "youtube.last_search": {
-      "value": "relaxing music",
-      "set_by": "youtube",
-      "timestamp": "2026-02-07T14:08:40.946160",
-      "expires": "2026-02-07T14:38:40.946160"
-    },
-    "youtube.is_playing": {
-      "value": true,
-      "set_by": "youtube",
-      "timestamp": "2026-02-07T14:08:41.099888",
-      "expires": "2026-02-07T14:38:41.099888"
-    },
-    "youtube.now_playing": {
-      "value": "relaxing music",
-      "set_by": "youtube",
-      "timestamp": "2026-02-07T14:08:41.625001",
-      "expires": "2026-02-07T14:38:41.625001"
+    "web.last_search": {
+      "value": "home remedies",
+      "set_by": "web",
+      "timestamp": "2026-02-07T14:51:43.522177",
+      "expires": "2026-02-07T15:21:43.522177"
     }
   },
   "shared_content": [
+    {
+      "type": "query",
+      "content": "home remedies",
+      "source": "web",
+      "timestamp": "2026-02-07T14:51:43.518701"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T14:49:46.127553"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T14:45:58.512079"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T14:43:46.524113"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T14:41:24.181995"
+    },
+    {
+      "type": "query",
+      "content": "search for latest ai news",
+      "source": "web",
+      "timestamp": "2026-02-07T14:32:01.266692"
+    },
+    {
+      "type": "query",
+      "content": "lofi hip hop",
+      "source": "youtube",
+      "timestamp": "2026-02-07T14:31:19.322412"
+    },
+    {
+      "type": "query",
+      "content": "news today",
+      "source": "youtube",
+      "timestamp": "2026-02-07T14:30:17.852146"
+    },
+    {
+      "type": "query",
+      "content": "movies",
+      "source": "youtube",
+      "timestamp": "2026-02-07T14:27:33.692142"
+    },
     {
       "type": "query",
       "content": "relaxing music",

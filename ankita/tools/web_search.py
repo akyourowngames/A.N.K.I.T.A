@@ -183,24 +183,50 @@ def run(query: str = "", max_results: int = 5, **kwargs):
     if not q:
         return {"status": "fail", "reason": "missing_query"}
 
+    # Handle empty string max_results from semantic control
+    if max_results == '' or max_results is None:
+        max_results = 5
+    try:
+        max_results = int(max_results)
+    except (ValueError, TypeError):
+        max_results = 5
+
+    # Add location to "near me" queries for better results
+    user_location = (os.getenv("USER_CITY") or os.getenv("USER_LOCATION") or "").strip()
+    if user_location and ("near me" in q.lower() or "nearby" in q.lower()):
+        # Replace "near me" with actual location
+        q_original = q
+        q = q.lower().replace("near me", f"in {user_location}")
+        q = q.replace("nearby", f"in {user_location}")
+        print(f"[WebSearch] Location-aware: '{q_original}' -> '{q}'")
+
     tl = q.lower()
 
     provider = (os.getenv("WEB_SEARCH_PROVIDER") or "").strip().lower()
-    if provider in ("tavily", "") and (os.getenv("TAVILY_API_KEY") or "").strip():
+    
+    # Try Tavily first (if available)
+    tavily_key = (os.getenv("TAVILY_API_KEY") or "").strip()
+    if tavily_key and provider in ("tavily", ""):
+        print(f"[WebSearch] Trying Tavily for: {q}")
         try:
             out = _tavily_search(q, max_results=max_results)
+            print(f"[WebSearch] Tavily result status: {out.get('status')}, results: {len(out.get('results', []))}")
             if out.get("status") == "success" and out.get("results"):
                 return {"status": "success", "query": q, "results": out.get("results", [])}
-        except Exception:
-            pass
+            else:
+                print(f"[WebSearch] Tavily failed: {out.get('reason', 'no results')}")
+        except Exception as e:
+            print(f"[WebSearch] Tavily exception: {e}")
 
+    # Try SerpAPI next
     if provider == "serpapi" and (os.getenv("SERPAPI_API_KEY") or "").strip():
+        print(f"[WebSearch] Trying SerpAPI for: {q}")
         try:
             out = _serpapi_search(q, max_results=max_results)
             if out.get("status") == "success" and out.get("results"):
                 return {"status": "success", "query": q, "results": out.get("results", [])}
-        except Exception:
-            pass
+        except Exception as e:
+            print(f"[WebSearch] SerpAPI exception: {e}")
 
     try:
         if any(k in tl for k in ("bitcoin", "btc")) and any(k in tl for k in ("price", "rate", "value", "cost")):

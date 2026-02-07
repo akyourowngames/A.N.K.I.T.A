@@ -493,5 +493,242 @@
     "topic": "search",
     "hour": 14,
     "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:27:33.676477",
+    "summary": "YouTube: Played 'movies'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "movies",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 20495.373249053955
+    },
+    "topic": "video",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:29:09.193686",
+    "summary": "Web: Searched 'home remedies'",
+    "action": "web.search",
+    "entities": {
+      "query": "home remedies",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 609.1458797454834
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:30:17.825531",
+    "summary": "YouTube: Played 'news today'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "news today",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 31471.27056121826
+    },
+    "topic": "video",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:30:29.353704",
+    "summary": "Web: Searched 'home remedies'",
+    "action": "web.search",
+    "entities": {
+      "query": "home remedies",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 550.2030849456787
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:31:19.278160",
+    "summary": "YouTube: Played 'lofi hip hop'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "lofi hip hop",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 16398.731231689453
+    },
+    "topic": "video",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:32:01.256808",
+    "summary": "Web: Searched 'search for latest ai news'",
+    "action": "web.search",
+    "entities": {
+      "query": "search for latest ai news",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1339.3423557281494
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:33:03.971354",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 477.6792526245117
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:39:06.188131",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 477.5428771972656
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:41:24.156237",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1476.15647315979
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:43:46.504835",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 747.4629878997803
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:45:58.494481",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 706.4518928527832
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:49:46.117214",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 757.6122283935547
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:51:43.491008",
+    "summary": "Web: Searched 'home remedies'",
+    "action": "web.search",
+    "entities": {
+      "query": "home remedies",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1636.6732120513916
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T15:03:31.521877",
+    "summary": "System: Bluetooth off",
+    "action": "system.bluetooth.off",
+    "entities": {
+      "action": "off"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 19381.816864013672
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Saturday"
   }
 ]
