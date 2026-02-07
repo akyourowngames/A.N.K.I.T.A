@@ -1,61 +1,5 @@
 [
   {
-    "id": "ep_de48359f",
-    "intent": "system.app.focus",
-    "entities": {
-      "action": "focus",
-      "app": "chatgpt"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Focused chatgpt",
-          "window_title": "ChatGPT"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:12:42.759577"
-  },
-  {
-    "id": "ep_d5c84c9a",
-    "intent": "system.gesture_mode",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:13:43.734755"
-  },
-  {
-    "id": "ep_7f940855",
-    "intent": "system.app.focus",
-    "entities": {
-      "action": "focus",
-      "app": "window"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Focused window",
-          "window_title": "CV-based Window Switching"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:18:13.996513"
-  },
-  {
     "id": "ep_9e9530b8",
     "intent": "system.volume.down",
     "entities": {
@@ -2357,5 +2301,60 @@
     },
     "tags": [],
     "time": "2026-02-07T14:32:01.315624"
+  },
+  {
+    "id": "ep_eea5ec6e",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T22:43:08.531191"
+  },
+  {
+    "id": "ep_073cccf5",
+    "intent": "window_control.desktop",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Showed desktop"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T22:43:20.229102"
+  },
+  {
+    "id": "ep_093c489a",
+    "intent": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "github"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Focused github",
+          "window_title": "GitHub Desktop"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T22:45:05.503705"
   }
 ]

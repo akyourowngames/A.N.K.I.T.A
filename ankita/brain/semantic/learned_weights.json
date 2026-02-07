@@ -9,7 +9,7 @@
   "system_hot:system.volume.down": 1.0,
   "system_hot:system.brightness.down": 1.0,
   "music:youtube.play": 1.0,
-  "hungry:web.search": 1.4000000000000004,
+  "hungry:web.search": 1.9000000000000008,
   "confused:youtube.play": 1.0,
   "sick:system.brightness.down": 0.8,
   "sick:web.search": 1.1,
@@ -19,5 +19,7 @@
   "movie:youtube.play": 1.0,
   "news:youtube.play": 1.0,
   "coding:system.app.open": 1.0,
-  "coding:youtube.play": 1.0
+  "coding:youtube.play": 1.0,
+  "weather_check:web.search": 1.1,
+  "morning:system.brightness.up": 0.8
 }

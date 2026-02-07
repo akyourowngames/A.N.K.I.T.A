@@ -1,7 +1,7 @@
 {
   "corrections": [],
   "action_frequency": {
-    "system.app.open": 2,
+    "system.app.open": 3,
     "instagram.search": 3,
     "instagram.dm": 4,
     "instagram.open": 6,
@@ -11,8 +11,10 @@
     "youtube.play": 6,
     "system.brightness.up": 1,
     "instagram.close": 1,
-    "web.search": 16,
-    "system.bluetooth.off": 1
+    "web.search": 22,
+    "system.bluetooth.off": 1,
+    "window_control.desktop": 1,
+    "system.app.focus": 3
   },
   "time_patterns": {
     "23": {
@@ -37,6 +39,15 @@
     },
     "15": {
       "system.bluetooth.off": 1
+    },
+    "21": {
+      "web.search": 4
+    },
+    "22": {
+      "web.search": 2,
+      "system.app.open": 1,
+      "window_control.desktop": 1,
+      "system.app.focus": 3
     }
   },
   "entity_preferences": {},
@@ -49,22 +60,98 @@
     },
     "shared.query": {
       "value": {
-        "value": "home remedies",
+        "value": "food delivery near me",
         "source": "web",
-        "timestamp": "2026-02-07T14:51:43.512668"
+        "timestamp": "2026-02-07T22:41:49.967052"
       },
       "set_by": "shared",
-      "timestamp": "2026-02-07T14:51:43.512668",
-      "expires": "2026-02-07T15:51:43.512668"
+      "timestamp": "2026-02-07T22:41:49.967052",
+      "expires": "2026-02-07T23:41:49.967052"
     },
     "web.last_search": {
-      "value": "home remedies",
+      "value": "food delivery near me",
       "set_by": "web",
-      "timestamp": "2026-02-07T14:51:43.522177",
-      "expires": "2026-02-07T15:21:43.522177"
+      "timestamp": "2026-02-07T22:41:49.977272",
+      "expires": "2026-02-07T23:11:49.977272"
+    },
+    "shared.app": {
+      "value": {
+        "value": "github",
+        "source": "system",
+        "timestamp": "2026-02-07T22:45:05.140075"
+      },
+      "set_by": "shared",
+      "timestamp": "2026-02-07T22:45:05.141072",
+      "expires": "2026-02-07T23:45:05.141072"
+    },
+    "system.last_app": {
+      "value": "github",
+      "set_by": "system",
+      "timestamp": "2026-02-07T22:45:05.263449",
+      "expires": "2026-02-07T23:15:05.263449"
+    },
+    "system.last_action": {
+      "value": "focus",
+      "set_by": "system",
+      "timestamp": "2026-02-07T22:45:05.360871",
+      "expires": "2026-02-07T23:15:05.360871"
+    },
+    "window_control.last_action": {
+      "value": "desktop",
+      "set_by": "window_control",
+      "timestamp": "2026-02-07T22:43:20.178081",
+      "expires": "2026-02-07T23:13:20.178081"
     }
   },
   "shared_content": [
+    {
+      "type": "app",
+      "content": "github",
+      "source": "system",
+      "timestamp": "2026-02-07T22:45:05.212933"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-07T22:43:08.252190"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T22:41:49.977272"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T22:03:54.110605"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T21:36:17.177303"
+    },
+    {
+      "type": "query",
+      "content": "weather today",
+      "source": "web",
+      "timestamp": "2026-02-07T21:07:32.422078"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T21:07:05.798995"
+    },
+    {
+      "type": "query",
+      "content": "food delivery near me",
+      "source": "web",
+      "timestamp": "2026-02-07T21:04:36.055292"
+    },
     {
       "type": "query",
       "content": "home remedies",

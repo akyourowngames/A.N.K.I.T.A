@@ -363,6 +363,53 @@
         "weight": 1.0,
         "description": "Finding relief options."
     },
+    "weather_check": {
+        "phrases": [
+            "what's the weather",
+            "mausam kaisa hai",
+            "weather check",
+            "temperature today",
+            "is it raining"
+        ],
+        "actions": [
+            {
+                "tool": "weather.current"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Checking current weather."
+    },
+    "morning": {
+        "phrases": [
+            "good morning",
+            "start my day",
+            "morning routine"
+        ],
+        "actions": [
+            {
+                "tool": "weather.current"
+            },
+            {
+                "tool": "calendar.today"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Good morning! Here's your day overview."
+    },
+    "downloads": {
+        "phrases": [
+            "show downloads",
+            "open downloads",
+            "downloads folder"
+        ],
+        "actions": [
+            {
+                "tool": "files.downloads"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening Downloads folder."
+    },
     "focus": {
         "phrases": [
             "i want focus",
@@ -372,12 +419,15 @@
         ],
         "actions": [
             {
+                "tool": "dnd.on"
+            },
+            {
                 "tool": "system.app.close",
                 "app": "chrome"
             }
         ],
         "weight": 1.0,
-        "description": "Focus mode activated."
+        "description": "Focus mode activated. Notifications silenced."
     },
     "work": {
         "phrases": [
@@ -482,12 +532,17 @@
         ],
         "actions": [
             {
+                "tool": "timer.set",
+                "duration": "30m",
+                "message": "Workout time complete!"
+            },
+            {
                 "tool": "youtube.play",
                 "query": "workout music"
             }
         ],
         "weight": 1.0,
-        "description": "Playing workout music."
+        "description": "Starting 30-minute workout with music."
     },
     "yoga": {
         "phrases": [

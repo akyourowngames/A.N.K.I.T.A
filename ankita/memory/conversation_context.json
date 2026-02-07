@@ -730,5 +730,191 @@
     "topic": "system",
     "hour": 15,
     "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T21:04:36.043119",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1594.825029373169
+    },
+    "topic": "search",
+    "hour": 21,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T21:07:05.783395",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 3131.316900253296
+    },
+    "topic": "search",
+    "hour": 21,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T21:07:32.410896",
+    "summary": "Web: Searched 'weather today'",
+    "action": "web.search",
+    "entities": {
+      "query": "weather today",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 3281.9340229034424
+    },
+    "topic": "search",
+    "hour": 21,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T21:36:17.143667",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 877.4542808532715
+    },
+    "topic": "search",
+    "hour": 21,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:03:53.973885",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 2214.301586151123
+    },
+    "topic": "search",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:41:49.953270",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1745.4652786254883
+    },
+    "topic": "search",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:43:08.135438",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 51.74589157104492
+    },
+    "topic": "system",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:43:20.169096",
+    "summary": "Window_Control: Desktop",
+    "action": "window_control.desktop",
+    "entities": {
+      "action": "desktop"
+    },
+    "result": {
+      "status": "success",
+      "message": "Showed desktop",
+      "duration_ms": 191.93124771118164
+    },
+    "topic": "system",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:44:41.463149",
+    "summary": "System: Focus window",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "window"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 1131.5202713012695
+    },
+    "topic": "system",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:44:46.031855",
+    "summary": "System: Focus window to github",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "window to github"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 440.7947063446045
+    },
+    "topic": "system",
+    "hour": 22,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T22:45:05.054276",
+    "summary": "System: Focus github",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "github"
+    },
+    "result": {
+      "status": "success",
+      "message": "Focused github",
+      "duration_ms": 1547.7724075317383
+    },
+    "topic": "system",
+    "hour": 22,
+    "day_of_week": "Saturday"
   }
 ]

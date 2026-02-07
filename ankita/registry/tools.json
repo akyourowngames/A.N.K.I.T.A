@@ -1,4 +1,9 @@
 {
+  "food.delivery": "tools.food_delivery",
+  "medicine.reminder": "tools.medicine_reminder",
+  "focus.mode": "tools.focus_mode",
+  "reminder.set": "tools.reminder_tool",
+  "spotify.play": "tools.spotify_player",
   "notepad.open": "tools.notepad.open",
   "notepad.open_file": "tools.notepad.open_file",
   "notepad.focus": "tools.notepad.focus",

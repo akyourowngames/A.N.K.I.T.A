@@ -791,5 +791,48 @@
         }
       }
     ]
+  },
+  "timer.set": {
+    "steps": [
+      {
+        "tool": "timer.set",
+        "args_from": "duration,message"
+      }
+    ]
+  },
+  "weather.check": {
+    "steps": [
+      {
+        "tool": "weather.current"
+      }
+    ]
+  },
+  "weather.forecast": {
+    "steps": [
+      {
+        "tool": "weather.forecast"
+      }
+    ]
+  },
+  "focus.on": {
+    "steps": [
+      {
+        "tool": "dnd.on"
+      }
+    ]
+  },
+  "files.downloads": {
+    "steps": [
+      {
+        "tool": "files.downloads"
+      }
+    ]
+  },
+  "calendar.open": {
+    "steps": [
+      {
+        "tool": "calendar.open"
+      }
+    ]
   }
 }

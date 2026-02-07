@@ -48,15 +48,23 @@ from brain.entity_extractor import extract
 from brain.text_normalizer import normalize_text
 from memory.ltm_manager import (
     get_correction,
-    get_preference,
-    get_preference_confidence,
-    find_time_habits,
-    mark_suggested_today,
-    mark_suggestion_dismissed_today,
     observe_success,
     set_correction,
-    was_suggested_today,
+    was_suggested_today
 )
+from brain.semantic.interpreter import SemanticInterpreter
+from brain.semantic.learner import SemanticLearner
+
+# ML Learning System
+from brain.context_collector import get_current_context
+from brain.learning_db import get_db
+from brain.ml_predictor import get_predictor
+
+# Advanced Learning System (RL + Meta + Few-Shot + Active)
+from brain.hybrid_intelligence import get_hybrid_ai
+
+interpreter = None
+learner = None
 
 
 _UI_STATE_ADDR = ("127.0.0.1", 50555)
@@ -561,6 +569,9 @@ def handle_text(text: str, source: str = "user") -> str:
                         }
                         
                         # Execute and capture results
+                        start_time = time.time()
+                        action_success = 1  # Assume success unless error
+                        
                         try:
                             plan_result = plan(action_intent)
                             exec_result = execute(plan_result)
@@ -571,6 +582,10 @@ def handle_text(text: str, source: str = "user") -> str:
                             if isinstance(exec_result, dict) and 'last_result' in exec_result:
                                 actual_result = exec_result.get('last_result', {})
                                 print(f"[Semantic DEBUG] Unwrapped last_result")
+                            
+                            # Check if action failed
+                            if isinstance(actual_result, dict) and actual_result.get('status') == 'fail':
+                                action_success = 0
                             
                             # DEBUG: Print what we got back
                             print(f"[Semantic DEBUG] Tool: {tool}")
@@ -600,26 +615,21 @@ def handle_text(text: str, source: str = "user") -> str:
                                     results = raw_results[:3]  # Show top 3
                                     print(f"[Semantic DEBUG] Final results count: {len(results)}")
                                     if results:
-                                        result_text = "\n"
+                                        print(f"\nAnkita:")
                                         for i, r in enumerate(results, 1):
-                                            title = r.get('title', 'Result')
-                                            snippet = r.get('snippet', '')
-                                            url = r.get('url', '')
-                                            result_text += f"{i}. {title}\n"
-                                            if snippet:
-                                                # Clean and truncate snippet
-                                                snippet_clean = snippet.strip().replace('\n', ' ')[:150]
-                                                result_text += f"   {snippet_clean}...\n"
-                                            if url:
-                                                result_text += f"   {url}\n"
-                                        print(result_text)
-                                        _print_ankita_stream(result_text)
-                                        add_conversation("ankita", result_text)
+                                            title = r.get('title', 'No title')
+                                            snippet = r.get('snippet', r.get('description', 'No description'))
+                                            url = r.get('url', r.get('link', ''))
+                                            source = r.get('source', 'Web')
+                                            
+                                            # Truncate snippet
+                                            if len(snippet) > 100:
+                                                snippet = snippet[:97] + "..."
+                                            
+                                            print(f"{i}. {title}")
+                                            print(f"   {snippet}")
+                                            print(f"   {url}")
                                         result_displayed = True
-                                
-                                # Check if tool reported success
-                                tool_success = actual_result.get('status') == 'success'
-                                
                                 # For search tools, success = having results
                                 if 'web.search' in tool and 'results' in actual_result:
                                     tool_success = len(actual_result.get('results', [])) > 0
@@ -631,6 +641,36 @@ def handle_text(text: str, source: str = "user") -> str:
                                     learner.handle_negative_feedback(situation, tool)
                             else:
                                 learner.handle_negative_feedback(situation, tool)
+                            
+                            # ML LEARNING: Log action to database with context
+                            exec_time_ms = int((time.time() - start_time) * 1000)
+                            
+                            try:
+                                # Get recent actions from DB
+                                db = get_db()
+                                recent = db.get_recent_actions(limit=5)
+                                recent_actions = [r['action_taken'] for r in recent]
+                                
+                                # Build context
+                                context = get_current_context(
+                                    situation=situation, # Use 'situation' from semantic detection
+                                    confidence=confidence, # Use 'confidence' from semantic detection
+                                    recent_actions=recent_actions
+                                )
+                                
+                                # Log to database
+                                db.log_action(
+                                    context=context,
+                                    action=tool,
+                                    params=entities,
+                                    success=action_success,
+                                    exec_time_ms=exec_time_ms
+                                )
+                                
+                                print(f"[Learning] Logged: {situation} → {tool} (success={action_success})")
+                            except Exception as learn_error:
+                                print(f"[Learning] Error logging action: {learn_error}")
+                            
                         except Exception as e:
                             print(f"[Semantic] Error executing {tool}: {e}")
                             import traceback

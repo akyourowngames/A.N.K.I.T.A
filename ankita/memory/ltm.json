@@ -38,7 +38,9 @@
     "time:12:00|open_app|latest news about open ai and claude": 1,
     "time:21:00|open_app|instagram": 1,
     "time:22:00|open_app|watch history": 1,
-    "time:23:00|open_app|notepad": 2
+    "time:23:00|open_app|notepad": 2,
+    "time:22:00|open_app|notepad": 1,
+    "time:22:00|focus_app|github": 1
   },
   "suggestion_history": {
     "2026-02-05": {
