@@ -61,11 +61,14 @@ def plan(intent_result):
             "clipboard": "read",  # default clipboard action is read
         }
         
-        # Determine the action based on the last part of the intent
-        if last_part in action_map:
-            entities["action"] = action_map[last_part]
-        elif "action" not in entities:
-            entities["action"] = last_part
+        # CRITICAL: Only determine action if NOT already provided by caller (e.g., semantic control)
+        # Semantic control already sets the correct action, don't override it!
+        if "action" not in entities or not entities.get("action"):
+            # Determine the action based on the last part of the intent
+            if last_part in action_map:
+                entities["action"] = action_map[last_part]
+            else:
+                entities["action"] = last_part
         
         return {
             "steps": [
@@ -170,6 +173,9 @@ def plan(intent_result):
             "search": "search",
             "profile": "profile",
             "notifications": "notifications",
+            "save": "save",
+            "story": "story",
+            "share": "share",
             "close": "close",
         }
         

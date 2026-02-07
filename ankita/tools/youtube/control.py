@@ -14,6 +14,41 @@ from tools.youtube.browser import get_page, reset
 import time
 
 
+# ============== MEMORY INTEGRATION ==============
+
+def _get_memory():
+    """Get the shared memory instance."""
+    try:
+        from memory.conversation_memory import get_conversation_memory
+        return get_conversation_memory()
+    except ImportError:
+        return None
+
+
+def _track_action(action: str, result: dict = None):
+    """Track YouTube actions in memory."""
+    memory = _get_memory()
+    if memory:
+        summary = f"YouTube: {action}"
+        memory.add_context(
+            summary=summary,
+            action=f"youtube.{action}",
+            entities={"action": action},
+            result=result or {},
+            topic="video"
+        )
+        
+        # Set tool-specific context
+        if action == "pause":
+            memory.set_tool_context("youtube", "is_playing", False)
+        elif action in ("play", "next", "previous"):
+            memory.set_tool_context("youtube", "is_playing", True)
+        
+        if action in ("subscriptions", "history", "home", "trending", "shorts"):
+            memory.set_tool_context("youtube", "current_page", action)
+
+
+
 def _ensure_youtube(page) -> bool:
     """Ensure we're on YouTube, navigate if not."""
     try:
@@ -33,6 +68,13 @@ def _is_video_playing(page) -> bool:
         return "/watch" in page.url or page.locator("video").count() > 0
     except:
         return False
+
+
+def _return_with_track(action: str, result: dict) -> dict:
+    """Return result and track it in memory if successful."""
+    if result.get("status") == "success":
+        _track_action(action, result)
+    return result
 
 
 def run(action: str = "pause", **kwargs) -> dict:
@@ -85,7 +127,7 @@ def run(action: str = "pause", **kwargs) -> dict:
         "likes": "liked",
         "wl": "watch_later",
     }
-    action = action_aliases.get(action, action)
+    normalized_action = action_aliases.get(action, action)
     
     last_err = None
     for attempt in range(2):
@@ -97,16 +139,16 @@ def run(action: str = "pause", **kwargs) -> dict:
             
             # === Playback Controls ===
             
-            if action == "pause":
+            if normalized_action == "pause":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video is playing"}
                 
                 # Press 'k' - YouTube's keyboard shortcut for play/pause
                 page.keyboard.press("k")
                 time.sleep(0.3)
-                return {"status": "success", "message": "Toggled play/pause"}
+                return _return_with_track("pause", {"status": "success", "message": "Toggled play/pause"})
             
-            if action == "fullscreen":
+            if normalized_action == "fullscreen":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video is playing"}
                 
@@ -115,7 +157,7 @@ def run(action: str = "pause", **kwargs) -> dict:
                 time.sleep(0.5)
                 return {"status": "success", "message": "Toggled fullscreen"}
             
-            if action == "theater":
+            if normalized_action == "theater":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video is playing"}
                 
@@ -124,7 +166,7 @@ def run(action: str = "pause", **kwargs) -> dict:
                 time.sleep(0.3)
                 return {"status": "success", "message": "Toggled theater mode"}
             
-            if action == "miniplayer":
+            if normalized_action == "miniplayer":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video is playing"}
                 
@@ -133,7 +175,7 @@ def run(action: str = "pause", **kwargs) -> dict:
                 time.sleep(0.3)
                 return {"status": "success", "message": "Toggled miniplayer"}
             
-            if action == "skip_ad":
+            if normalized_action == "skip_ad":
                 # Try to find and click skip ad button
                 skip_selectors = [
                     "button.ytp-ad-skip-button",
@@ -158,7 +200,7 @@ def run(action: str = "pause", **kwargs) -> dict:
                 # If no skip button, might not be an ad
                 return {"status": "skip", "message": "No skippable ad found"}
             
-            if action == "mute":
+            if normalized_action == "mute":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video is playing"}
                 
@@ -167,51 +209,51 @@ def run(action: str = "pause", **kwargs) -> dict:
                 time.sleep(0.2)
                 return {"status": "success", "message": "Muted video"}
             
-            if action == "unmute":
+            if normalized_action == "unmute":
                 # Same as mute - it toggles
                 page.keyboard.press("m")
                 time.sleep(0.2)
                 return {"status": "success", "message": "Unmuted video"}
             
-            if action == "volume_up":
+            if normalized_action == "volume_up":
                 # Press up arrow 5 times (each press is 5% volume)
                 for _ in range(5):
                     page.keyboard.press("ArrowUp")
                     time.sleep(0.05)
                 return {"status": "success", "message": "Volume increased"}
             
-            if action == "volume_down":
+            if normalized_action == "volume_down":
                 # Press down arrow 5 times
                 for _ in range(5):
                     page.keyboard.press("ArrowDown")
                     time.sleep(0.05)
                 return {"status": "success", "message": "Volume decreased"}
             
-            if action == "next":
+            if normalized_action == "next":
                 # Shift+N for next video
                 page.keyboard.press("Shift+n")
                 time.sleep(1)
                 return {"status": "success", "message": "Playing next video"}
             
-            if action == "previous":
+            if normalized_action == "previous":
                 # Shift+P for previous video  
                 page.keyboard.press("Shift+p")
                 time.sleep(1)
                 return {"status": "success", "message": "Playing previous video"}
             
-            if action == "captions":
+            if normalized_action == "captions":
                 # Press 'c' for captions
                 page.keyboard.press("c")
                 time.sleep(0.3)
                 return {"status": "success", "message": "Toggled captions"}
             
-            if action == "speed_up":
+            if normalized_action == "speed_up":
                 # Shift+> to speed up
                 page.keyboard.press("Shift+>")
                 time.sleep(0.2)
                 return {"status": "success", "message": "Increased playback speed"}
             
-            if action == "speed_down":
+            if normalized_action == "speed_down":
                 # Shift+< to slow down
                 page.keyboard.press("Shift+<")
                 time.sleep(0.2)
@@ -219,27 +261,27 @@ def run(action: str = "pause", **kwargs) -> dict:
             
             # === Navigation Controls ===
             
-            if action == "subscriptions":
+            if normalized_action == "subscriptions":
                 page.goto("https://www.youtube.com/feed/subscriptions")
                 time.sleep(2)
-                return {"status": "success", "message": "Opened subscriptions"}
+                return _return_with_track("subscriptions", {"status": "success", "message": "Opened subscriptions"})
             
-            if action == "history":
+            if normalized_action == "history":
                 page.goto("https://www.youtube.com/feed/history")
                 time.sleep(2)
-                return {"status": "success", "message": "Opened watch history"}
+                return _return_with_track("history", {"status": "success", "message": "Opened watch history"})
             
-            if action == "liked":
+            if normalized_action == "liked":
                 page.goto("https://www.youtube.com/playlist?list=LL")
                 time.sleep(2)
                 return {"status": "success", "message": "Opened liked videos"}
             
-            if action == "watch_later":
+            if normalized_action == "watch_later":
                 page.goto("https://www.youtube.com/playlist?list=WL")
                 time.sleep(2)
                 return {"status": "success", "message": "Opened Watch Later"}
             
-            if action == "queue":
+            if normalized_action == "queue":
                 if not _is_video_playing(page):
                     return {"status": "skip", "message": "No video to add to queue"}
                 
@@ -266,22 +308,22 @@ def run(action: str = "pause", **kwargs) -> dict:
                 
                 return {"status": "skip", "message": "Could not add to queue - try manually"}
             
-            if action == "home":
+            if normalized_action == "home":
                 page.goto("https://www.youtube.com")
                 time.sleep(2)
-                return {"status": "success", "message": "Went to YouTube home"}
+                return _return_with_track("home", {"status": "success", "message": "Went to YouTube home"})
             
-            if action == "trending":
+            if normalized_action == "trending":
                 page.goto("https://www.youtube.com/feed/trending")
                 time.sleep(2)
                 return {"status": "success", "message": "Opened trending"}
             
-            if action == "shorts":
+            if normalized_action == "shorts":
                 page.goto("https://www.youtube.com/shorts")
                 time.sleep(2)
-                return {"status": "success", "message": "Opened YouTube Shorts"}
+                return _return_with_track("shorts", {"status": "success", "message": "Opened YouTube Shorts"})
             
-            return {"status": "fail", "reason": f"Unknown action: {action}"}
+            return {"status": "fail", "reason": f"Unknown action: {normalized_action}"}
             
         except Exception as e:
             last_err = e

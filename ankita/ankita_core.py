@@ -480,6 +480,108 @@ def handle_text(text: str, source: str = "user") -> str:
             return True
         return False
 
+    # ===== SEMANTIC CONTROL LAYER =====
+    # Try semantic situation detection first (handles vague commands ONLY)
+    # Skip if it looks like an explicit action command
+    if not _looks_like_action(tnorm):
+        try:
+            from brain.semantic import get_interpreter, get_planner, get_learner
+            
+            interpreter = get_interpreter()
+            situation_result = interpreter.detect_situation(tnorm, threshold=0.6)
+            
+            if situation_result:
+                situation = situation_result['situation']
+                confidence = situation_result['confidence']
+                
+                print(f"[Semantic] Detected: {situation} (confidence: {confidence:.2f})")
+                
+                # Check for ambiguity
+                ambiguous = interpreter.get_ambiguous_situations(tnorm)
+                if ambiguous:
+                    options = ', '.join([s['situation'] for s in ambiguous])
+                    response = _jarvis_clarify(f"Do you mean: {options}?")
+                    add_conversation("ankita", response)
+                    publish_ui_state("IDLE")
+                    _print_ankita_stream(response)
+                    return response
+                
+                # Plan actions with context
+                planner = get_planner()
+                context = {
+                    'battery_percent': 100,  # TODO: Get actual battery level
+                    'time_of_day': 'day'  # TODO: Get actual time of day
+                }
+                actions = planner.plan_actions(situation, context)
+                
+                # Apply learning weights
+                learner = get_learner()
+                actions = learner.get_filtered_actions(situation, actions)
+                
+                if not actions:
+                    response = _jarvis_ack("Understood, but I'm not sure how to help with that yet.")
+                    add_conversation("ankita", response)
+                    publish_ui_state("IDLE")
+                    _print_ankita_stream(response)
+                    return response
+                
+                # Get description
+                description = planner.get_situation_description(situation)
+                print(f"[Ankita] {description}")
+                _print_ankita_stream(description)
+                add_conversation("ankita", description)
+                
+                # Execute actions directly
+                for action in actions:
+                    tool = action.get('tool', '')
+                    
+                    # Parse simplified tool format (e.g., "system.wifi.off" -> intent="system.wifi", action="off")
+                    parts = tool.split('.')
+                    if len(parts) >= 2:
+                        # Build entities from action dict
+                        entities = {k: v for k, v in action.items() if k != 'tool'}
+                        
+                        # Handle simplified formats like "system.wifi.off"
+                        if len(parts) == 3 and not entities.get('action'):
+                            # Format: category.tool.action (e.g., system.wifi.off)
+                            intent = f"{parts[0]}.{parts[1]}"
+                            entities['action'] = parts[2]
+                        elif len(parts) == 2:
+                            # Format: tool.action (e.g., youtube.play)
+                            intent = tool
+                            if not entities.get('action'):
+                                entities['action'] = parts[1]
+                        else:
+                            # Use full tool name as intent
+                            intent = tool
+                        
+                        action_intent = {
+                            'intent': intent,
+                            'entities': entities
+                        }
+                        
+                        # Execute
+                        try:
+                            plan_result = plan(action_intent)
+                            exec_result = execute(plan_result)
+                            if isinstance(exec_result, dict) and exec_result.get('status') == 'success':
+                                learner.handle_positive_feedback(situation, tool)
+                            else:
+                                learner.handle_negative_feedback(situation, tool)
+                        except Exception as e:
+                            print(f"[Semantic] Error executing {tool}: {e}")
+                            learner.handle_negative_feedback(situation, tool)
+                
+                publish_ui_state("IDLE")
+                return description
+        except Exception as e:
+            # Semantic control failed - fall back to traditional intent
+            print(f"[Semantic] Error: {e}")
+            import traceback
+            traceback.print_exc()
+            pass
+
+    # ===== TRADITIONAL INTENT CLASSIFICATION =====
     intent_result = classify(text)
 
     if intent_result["intent"].startswith("conversation."):

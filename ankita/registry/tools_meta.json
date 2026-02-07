@@ -1,66 +1,795 @@
 {
   "notepad.open": {
     "steps": [
-      { "tool": "notepad.open" }
+      {
+        "tool": "notepad.open"
+      }
     ]
   },
   "notepad.write_note": {
     "steps": [
-      { "tool": "notepad.write_file", "args_from": "content" },
-      { "tool": "notepad.open_file" }
+      {
+        "tool": "notepad.write_file",
+        "args_from": "content"
+      },
+      {
+        "tool": "notepad.open_file"
+      }
     ]
   },
   "notepad.continue_note": {
     "steps": [
-      { "tool": "notepad.write_file", "args_from": "content", "args": { "mode": "append" } },
-      { "tool": "notepad.open_file" }
+      {
+        "tool": "notepad.write_file",
+        "args_from": "content",
+        "args": {
+          "mode": "append"
+        }
+      },
+      {
+        "tool": "notepad.open_file"
+      }
     ]
   },
   "youtube.open": {
     "steps": [
-      { "tool": "youtube.open" }
+      {
+        "tool": "youtube.open"
+      }
     ]
   },
   "youtube.play": {
     "steps": [
-      { "tool": "youtube.open" },
-      { "tool": "youtube.play", "args_from": "query" }
+      {
+        "tool": "youtube.open"
+      },
+      {
+        "tool": "youtube.play",
+        "args_from": "query"
+      }
+    ]
+  },
+  "youtube.control": {
+    "steps": [
+      {
+        "tool": "youtube.control",
+        "args_from": [
+          "action"
+        ]
+      }
+    ]
+  },
+  "youtube.pause": {
+    "steps": [
+      {
+        "tool": "youtube.control",
+        "args": {
+          "action": "pause"
+        }
+      }
+    ]
+  },
+  "youtube.fullscreen": {
+    "steps": [
+      {
+        "tool": "youtube.control",
+        "args": {
+          "action": "fullscreen"
+        }
+      }
+    ]
+  },
+  "youtube.mute": {
+    "steps": [
+      {
+        "tool": "youtube.control",
+        "args": {
+          "action": "mute"
+        }
+      }
+    ]
+  },
+  "youtube.unmute": {
+    "steps": [
+      {
+        "tool": "youtube.control",
+        "args": {
+          "action": "unmute"
+        }
+      }
     ]
   },
   "web.search": {
     "steps": [
-      { "tool": "web.search", "args_from": ["query", "max_results"] }
+      {
+        "tool": "web.search",
+        "args_from": [
+          "query",
+          "max_results"
+        ]
+      }
     ]
-  }
-  ,
+  },
+  "system.volume.up": {
+    "steps": [
+      {
+        "tool": "system.volume.up",
+        "args": {
+          "action": "up"
+        }
+      }
+    ]
+  },
+  "system.volume.down": {
+    "steps": [
+      {
+        "tool": "system.volume.down",
+        "args": {
+          "action": "down"
+        }
+      }
+    ]
+  },
+  "system.volume.mute": {
+    "steps": [
+      {
+        "tool": "system.volume.mute",
+        "args": {
+          "action": "mute"
+        }
+      }
+    ]
+  },
+  "system.volume.unmute": {
+    "steps": [
+      {
+        "tool": "system.volume.unmute",
+        "args": {
+          "action": "unmute"
+        }
+      }
+    ]
+  },
+  "system.volume.set": {
+    "steps": [
+      {
+        "tool": "system.volume.set",
+        "args_from": "value",
+        "args": {
+          "action": "set"
+        }
+      }
+    ]
+  },
+  "system.brightness.up": {
+    "steps": [
+      {
+        "tool": "system.brightness.up",
+        "args": {
+          "action": "up"
+        }
+      }
+    ]
+  },
+  "system.brightness.down": {
+    "steps": [
+      {
+        "tool": "system.brightness.down",
+        "args": {
+          "action": "down"
+        }
+      }
+    ]
+  },
+  "system.brightness.set": {
+    "steps": [
+      {
+        "tool": "system.brightness.set",
+        "args_from": "value",
+        "args": {
+          "action": "set"
+        }
+      }
+    ]
+  },
+  "system.bluetooth.on": {
+    "steps": [
+      {
+        "tool": "system.bluetooth.on",
+        "args": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  "system.bluetooth.off": {
+    "steps": [
+      {
+        "tool": "system.bluetooth.off",
+        "args": {
+          "action": "off"
+        }
+      }
+    ]
+  },
+  "system.wifi.on": {
+    "steps": [
+      {
+        "tool": "system.wifi.on",
+        "args": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  "system.wifi.off": {
+    "steps": [
+      {
+        "tool": "system.wifi.off",
+        "args": {
+          "action": "off"
+        }
+      }
+    ]
+  },
+  "system.wifi.disconnect": {
+    "steps": [
+      {
+        "tool": "system.wifi.disconnect",
+        "args": {
+          "action": "disconnect"
+        }
+      }
+    ]
+  },
+  "system.wifi.status": {
+    "steps": [
+      {
+        "tool": "system.wifi.status",
+        "args": {
+          "action": "status"
+        }
+      }
+    ]
+  },
+  "system.hotspot.on": {
+    "steps": [
+      {
+        "tool": "system.hotspot.on",
+        "args": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  "system.hotspot.off": {
+    "steps": [
+      {
+        "tool": "system.hotspot.off",
+        "args": {
+          "action": "off"
+        }
+      }
+    ]
+  },
   "system.window_switch": {
     "steps": [
-      { "tool": "system.window_switch", "args_from": "query" }
+      {
+        "tool": "system.window_switch",
+        "args_from": "query"
+      }
     ]
   },
   "system.app.open": {
     "steps": [
-      { "tool": "system.app.open", "args_from": "app", "args": { "action": "open" } }
+      {
+        "tool": "system.app.open",
+        "args_from": "app",
+        "args": {
+          "action": "open"
+        }
+      }
     ]
   },
   "system.app.close": {
     "steps": [
-      { "tool": "system.app.close", "args_from": "app", "args": { "action": "close" } }
+      {
+        "tool": "system.app.close",
+        "args_from": "app",
+        "args": {
+          "action": "close"
+        }
+      }
     ]
   },
   "system.app.force_close": {
     "steps": [
-      { "tool": "system.app.force_close", "args_from": "app", "args": { "action": "close", "force": true } }
+      {
+        "tool": "system.app.force_close",
+        "args_from": "app",
+        "args": {
+          "action": "close",
+          "force": true
+        }
+      }
     ]
   },
   "system.app.close_active": {
     "steps": [
-      { "tool": "system.app.close_active", "args": { "action": "close_active" } }
+      {
+        "tool": "system.app.close_active",
+        "args": {
+          "action": "close_active"
+        }
+      }
     ]
   },
   "system.app.focus": {
     "steps": [
-      { "tool": "system.app.focus", "args_from": "app", "args": { "action": "focus" } }
+      {
+        "tool": "system.app.focus",
+        "args_from": "app",
+        "args": {
+          "action": "focus"
+        }
+      }
+    ]
+  },
+  "system.power.lock": {
+    "steps": [
+      {
+        "tool": "system.power.lock",
+        "args": {
+          "action": "lock"
+        }
+      }
+    ]
+  },
+  "system.power.sleep": {
+    "steps": [
+      {
+        "tool": "system.power.sleep",
+        "args": {
+          "action": "sleep"
+        }
+      }
+    ]
+  },
+  "system.power.shutdown": {
+    "steps": [
+      {
+        "tool": "system.power.shutdown",
+        "args": {
+          "action": "shutdown"
+        }
+      }
+    ]
+  },
+  "system.power.restart": {
+    "steps": [
+      {
+        "tool": "system.power.restart",
+        "args": {
+          "action": "restart"
+        }
+      }
+    ]
+  },
+  "system.screenshot": {
+    "steps": [
+      {
+        "tool": "system.screenshot",
+        "args_from": [
+          "mode"
+        ]
+      }
+    ]
+  },
+  "system.clipboard.read": {
+    "steps": [
+      {
+        "tool": "system.clipboard.read",
+        "args": {
+          "action": "read"
+        }
+      }
+    ]
+  },
+  "system.clipboard.write": {
+    "steps": [
+      {
+        "tool": "system.clipboard.write",
+        "args_from": "text",
+        "args": {
+          "action": "write"
+        }
+      }
+    ]
+  },
+  "system.clipboard.clear": {
+    "steps": [
+      {
+        "tool": "system.clipboard.clear",
+        "args": {
+          "action": "clear"
+        }
+      }
+    ]
+  },
+  "system.battery.status": {
+    "steps": [
+      {
+        "tool": "system.battery.status",
+        "args": {
+          "action": "status"
+        }
+      }
+    ]
+  },
+  "system.nightlight.on": {
+    "steps": [
+      {
+        "tool": "system.nightlight.on",
+        "args": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  "system.nightlight.off": {
+    "steps": [
+      {
+        "tool": "system.nightlight.off",
+        "args": {
+          "action": "off"
+        }
+      }
+    ]
+  },
+  "system.airplane_mode.on": {
+    "steps": [
+      {
+        "tool": "system.airplane_mode.on",
+        "args": {
+          "action": "on"
+        }
+      }
+    ]
+  },
+  "system.airplane_mode.off": {
+    "steps": [
+      {
+        "tool": "system.airplane_mode.off",
+        "args": {
+          "action": "off"
+        }
+      }
+    ]
+  },
+  "system.processes.kill": {
+    "steps": [
+      {
+        "tool": "system.processes.kill",
+        "args_from": [
+          "process",
+          "pid"
+        ],
+        "args": {
+          "action": "kill"
+        }
+      }
+    ]
+  },
+  "system.processes.manager": {
+    "steps": [
+      {
+        "tool": "system.processes.manager",
+        "args": {
+          "action": "manager"
+        }
+      }
+    ]
+  },
+  "system.disk.cleanup": {
+    "steps": [
+      {
+        "tool": "system.disk.cleanup",
+        "args": {
+          "action": "cleanup"
+        }
+      }
+    ]
+  },
+  "system.trash.empty": {
+    "steps": [
+      {
+        "tool": "system.trash.empty",
+        "args": {
+          "action": "empty"
+        }
+      }
+    ]
+  },
+  "instagram.open": {
+    "steps": [
+      {
+        "tool": "instagram.open",
+        "args": {
+          "action": "open"
+        }
+      }
+    ]
+  },
+  "instagram.login": {
+    "steps": [
+      {
+        "tool": "instagram.login",
+        "args_from": [
+          "username",
+          "password"
+        ],
+        "args": {
+          "action": "login"
+        }
+      }
+    ]
+  },
+  "instagram.logout": {
+    "steps": [
+      {
+        "tool": "instagram.logout",
+        "args": {
+          "action": "logout"
+        }
+      }
+    ]
+  },
+  "instagram.like": {
+    "steps": [
+      {
+        "tool": "instagram.like",
+        "args": {
+          "action": "like"
+        }
+      }
+    ]
+  },
+  "instagram.unlike": {
+    "steps": [
+      {
+        "tool": "instagram.unlike",
+        "args": {
+          "action": "unlike"
+        }
+      }
+    ]
+  },
+  "instagram.comment": {
+    "steps": [
+      {
+        "tool": "instagram.comment",
+        "args_from": "text",
+        "args": {
+          "action": "comment"
+        }
+      }
+    ]
+  },
+  "instagram.follow": {
+    "steps": [
+      {
+        "tool": "instagram.follow",
+        "args_from": "username",
+        "args": {
+          "action": "follow"
+        }
+      }
+    ]
+  },
+  "instagram.unfollow": {
+    "steps": [
+      {
+        "tool": "instagram.unfollow",
+        "args_from": "username",
+        "args": {
+          "action": "unfollow"
+        }
+      }
+    ]
+  },
+  "instagram.dm": {
+    "steps": [
+      {
+        "tool": "instagram.dm",
+        "args_from": [
+          "username",
+          "message"
+        ],
+        "args": {
+          "action": "dm"
+        }
+      }
+    ]
+  },
+  "instagram.message": {
+    "steps": [
+      {
+        "tool": "instagram.message",
+        "args_from": [
+          "username",
+          "message"
+        ],
+        "args": {
+          "action": "dm"
+        }
+      }
+    ]
+  },
+  "instagram.profile": {
+    "steps": [
+      {
+        "tool": "instagram.profile",
+        "args_from": "username",
+        "args": {
+          "action": "profile"
+        }
+      }
+    ]
+  },
+  "instagram.search": {
+    "steps": [
+      {
+        "tool": "instagram.search",
+        "args_from": "query",
+        "args": {
+          "action": "search"
+        }
+      }
+    ]
+  },
+  "instagram.feed": {
+    "steps": [
+      {
+        "tool": "instagram.feed",
+        "args": {
+          "action": "feed"
+        }
+      }
+    ]
+  },
+  "instagram.explore": {
+    "steps": [
+      {
+        "tool": "instagram.explore",
+        "args": {
+          "action": "navigate",
+          "destination": "explore"
+        }
+      }
+    ]
+  },
+  "instagram.reels": {
+    "steps": [
+      {
+        "tool": "instagram.reels",
+        "args": {
+          "action": "navigate",
+          "destination": "reels"
+        }
+      }
+    ]
+  },
+  "instagram.save": {
+    "steps": [
+      {
+        "tool": "instagram.save",
+        "args": {
+          "action": "save"
+        }
+      }
+    ]
+  },
+  "instagram.story": {
+    "steps": [
+      {
+        "tool": "instagram.story",
+        "args_from": "username",
+        "args": {
+          "action": "story"
+        }
+      }
+    ]
+  },
+  "instagram.share": {
+    "steps": [
+      {
+        "tool": "instagram.share",
+        "args_from": "username",
+        "args": {
+          "action": "share"
+        }
+      }
+    ]
+  },
+  "instagram.close": {
+    "steps": [
+      {
+        "tool": "instagram.close",
+        "args": {
+          "action": "close"
+        }
+      }
+    ]
+  },
+  "datetime.now": {
+    "steps": [
+      {
+        "tool": "datetime.now",
+        "args": {
+          "action": "now"
+        }
+      }
+    ]
+  },
+  "datetime.date": {
+    "steps": [
+      {
+        "tool": "datetime.date",
+        "args": {
+          "action": "date"
+        }
+      }
+    ]
+  },
+  "datetime.time": {
+    "steps": [
+      {
+        "tool": "datetime.time",
+        "args": {
+          "action": "time"
+        }
+      }
+    ]
+  },
+  "scheduler.add_job": {
+    "steps": [
+      {
+        "tool": "scheduler.add_job",
+        "args_from": [
+          "time",
+          "task"
+        ]
+      }
+    ]
+  },
+  "window_control.maximize": {
+    "steps": [
+      {
+        "tool": "window_control.maximize",
+        "args": {
+          "action": "maximize"
+        }
+      }
+    ]
+  },
+  "window_control.minimize": {
+    "steps": [
+      {
+        "tool": "window_control.minimize",
+        "args": {
+          "action": "minimize"
+        }
+      }
+    ]
+  },
+  "window_control.desktop": {
+    "steps": [
+      {
+        "tool": "window_control.desktop",
+        "args": {
+          "action": "desktop"
+        }
+      }
     ]
   }
 }

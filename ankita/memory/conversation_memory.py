@@ -791,6 +791,98 @@ class ConversationMemory:
                 self._save_json(LEARNING_PATH, self._learning_data)
         
         return removed
+    
+    def get_system_context(self) -> Dict:
+        """Get all system tool-related context."""
+        return {
+            "current_volume": self.get_tool_context("system", "current_volume"),
+            "current_brightness": self.get_tool_context("system", "current_brightness"),
+            "last_app": self.get_tool_context("system", "last_app"),
+            "last_action": self.get_tool_context("system", "last_action"),
+            "bluetooth_status": self.get_tool_context("system", "bluetooth_status"),
+            "hotspot_status": self.get_tool_context("system", "hotspot_status"),
+            "wifi_status": self.get_tool_context("system", "wifi_status"),
+            "favorite_apps": self.get_favorites("apps"),
+        }
+    
+    def get_notepad_context(self) -> Dict:
+        """Get all notepad-related context."""
+        return {
+            "last_content": self.get_tool_context("notepad", "last_content"),
+            "last_file": self.get_tool_context("notepad", "last_file"),
+            "is_open": self.get_tool_context("notepad", "is_open", False),
+        }
+    
+    def get_full_context(self) -> Dict:
+        """
+        Get full cross-tool context for deep integration.
+        This provides a complete picture of all tool states and shared data.
+        """
+        return {
+            "youtube": self.get_youtube_context(),
+            "instagram": self.get_instagram_context(),
+            "system": self.get_system_context(),
+            "notepad": self.get_notepad_context(),
+            "shared_content": self.get_shared_content(limit=10),
+            "recent_actions": self.get_recent_context(limit=10),
+            "suggestions": self.get_suggestions(limit=5),
+            "user_preferences": self.get_all_preferences(),
+            "learned_patterns": self.get_learned_patterns(),
+        }
+    
+    def get_relevant_context_for_tool(self, tool_name: str) -> Dict:
+        """
+        Get context relevant for a specific tool.
+        Includes shared content and related tool contexts.
+        """
+        category = tool_name.split(".")[0] if "." in tool_name else tool_name
+        
+        context = {
+            "own_context": {},
+            "shared_content": self.get_shared_content(limit=5),
+            "recent_related": [],
+            "suggestions": [],
+        }
+        
+        # Get tool-specific context
+        if category == "youtube":
+            context["own_context"] = self.get_youtube_context()
+        elif category == "instagram":
+            context["own_context"] = self.get_instagram_context()
+        elif category == "system":
+            context["own_context"] = self.get_system_context()
+        elif category == "notepad":
+            context["own_context"] = self.get_notepad_context()
+        
+        # Get related actions (same category)
+        recent = self.get_recent_context(limit=20)
+        context["recent_related"] = [
+            r for r in recent 
+            if r.get("action", "").startswith(f"{category}.")
+        ][:5]
+        
+        # Get cross-tool suggestions
+        context["suggestions"] = self.get_cross_tool_suggestions(category)
+        
+        return context
+    
+    def get_conversation_flow(self) -> List[Dict]:
+        """
+        Get the flow of conversation/actions for context understanding.
+        Returns a simplified timeline of recent actions.
+        """
+        recent = self.get_recent_context(limit=20)
+        flow = []
+        
+        for entry in recent:
+            flow.append({
+                "time": self._format_time_ago(entry.get("timestamp", "")),
+                "action": entry.get("action", "unknown"),
+                "summary": entry.get("summary", ""),
+                "topic": entry.get("topic", "general"),
+            })
+        
+        return flow
 
 
 # Singleton instance

@@ -1,0 +1,1230 @@
+{
+    "network_slow": {
+        "phrases": [
+            "net is slow",
+            "wifi is slow",
+            "internet sucks",
+            "network lag",
+            "pages not loading",
+            "connection slow",
+            "slow internet"
+        ],
+        "actions": [
+            {
+                "tool": "system.wifi.off"
+            },
+            {
+                "tool": "system.wifi.on"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Reconnecting Wi-Fi for you."
+    },
+    "system_hot": {
+        "phrases": [
+            "laptop is hot",
+            "system is heating",
+            "fan is loud",
+            "overheating",
+            "laptop garam hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.volume.down"
+            },
+            {
+                "tool": "system.brightness.down"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Cooling down system."
+    },
+    "system_slow": {
+        "phrases": [
+            "system is slow",
+            "laptop is lagging",
+            "pc is slow",
+            "hang ho raha hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Speeding up system."
+    },
+    "bored": {
+        "phrases": [
+            "i am bored",
+            "nothing to do",
+            "bore ho raha hu",
+            "maza nahi aa raha"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "trending"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening trending videos."
+    },
+    "sleepy": {
+        "phrases": [
+            "i'm sleepy",
+            "neend aa rahi hai",
+            "sona hai",
+            "thaka hua hun"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "system.volume.down"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Preparing for sleep."
+    },
+    "tired": {
+        "phrases": [
+            "i'm tired",
+            "exhausted",
+            "thak gaya",
+            "bahut thaka"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "calm music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Dimming screen and playing calm music."
+    },
+    "energize": {
+        "phrases": [
+            "i need energy",
+            "energy chahiye",
+            "pump up",
+            "josh chahiye"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "energetic music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing energetic music!"
+    },
+    "happy": {
+        "phrases": [
+            "i'm happy",
+            "feeling great",
+            "khush hu",
+            "maza aa raha"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "happy music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing happy music!"
+    },
+    "sad": {
+        "phrases": [
+            "i'm sad",
+            "feeling down",
+            "udaas hu",
+            "mood kharab hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "uplifting music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Cheering you up with music."
+    },
+    "angry": {
+        "phrases": [
+            "i'm angry",
+            "really mad",
+            "gussa aa raha"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "calming music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing calming music."
+    },
+    "frustrated": {
+        "phrases": [
+            "i'm frustrated",
+            "annoying",
+            "pareshan ho gaya"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "funny videos"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Showing funny videos."
+    },
+    "anxious": {
+        "phrases": [
+            "i'm anxious",
+            "nervous",
+            "tension hai",
+            "ghabrahat"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "meditation music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing meditation music."
+    },
+    "lonely": {
+        "phrases": [
+            "i'm lonely",
+            "feeling alone",
+            "akela feel ho raha"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "podcast"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing podcasts for company."
+    },
+    "confused": {
+        "phrases": [
+            "i'm confused",
+            "samajh nahi aa raha",
+            "confused hu"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "relaxing music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing relaxing music."
+    },
+    "motivated": {
+        "phrases": [
+            "i need motivation",
+            "inspire me",
+            "motivation chahiye"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "motivational speech"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Inspiring you with motivational content."
+    },
+    "nostalgic": {
+        "phrases": [
+            "feeling nostalgic",
+            "purani yaadein",
+            "old days"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "90s music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing nostalgic music."
+    },
+    "romantic": {
+        "phrases": [
+            "feeling romantic",
+            "love songs",
+            "pyaar wale gaane"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "romantic songs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing romantic songs."
+    },
+    "sick": {
+        "phrases": [
+            "i am sick",
+            "not feeling well",
+            "bimar hu",
+            "tabiyat kharab hai",
+            "health not good"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "web.search",
+                "query": "home remedies"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding home remedies for you. Please rest."
+    },
+    "headache": {
+        "phrases": [
+            "i have headache",
+            "sar dard ho raha",
+            "head is paining",
+            "migraine"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "relaxing sounds"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Dimming screen and playing relaxing sounds."
+    },
+    "fever": {
+        "phrases": [
+            "i have fever",
+            "bukhar hai",
+            "feeling hot",
+            "temperature high"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "fever remedies"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding fever remedies. Stay hydrated!"
+    },
+    "cold": {
+        "phrases": [
+            "i have cold",
+            "sardi hai",
+            "runny nose",
+            "sneezing"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "cold remedies"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding cold remedies."
+    },
+    "stomachache": {
+        "phrases": [
+            "stomach ache",
+            "pet dard",
+            "tummy hurts"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "stomach ache relief"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding relief options."
+    },
+    "focus": {
+        "phrases": [
+            "i want focus",
+            "concentrate",
+            "padhai karni hai",
+            "study time"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Focus mode activated."
+    },
+    "work": {
+        "phrases": [
+            "i need to work",
+            "kaam karna hai",
+            "work mode"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.open",
+                "app": "notepad"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening workspace."
+    },
+    "coding": {
+        "phrases": [
+            "i want to code",
+            "coding time",
+            "programming karna hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.open",
+                "app": "vscode"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "lofi hip hop"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening VSCode with coding music."
+    },
+    "meeting": {
+        "phrases": [
+            "i have a meeting",
+            "meeting hai",
+            "call karna hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.up"
+            },
+            {
+                "tool": "system.volume.up"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Preparing for meeting."
+    },
+    "presentation": {
+        "phrases": [
+            "i have presentation",
+            "present karna hai",
+            "demo dena hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Closing distractions for presentation."
+    },
+    "break": {
+        "phrases": [
+            "i need a break",
+            "break chahiye",
+            "thoda rest"
+        ],
+        "actions": [
+            {
+                "tool": "system.power.lock"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Locking screen for break."
+    },
+    "study_break": {
+        "phrases": [
+            "study break",
+            "padhai ka break",
+            "dimag fresh karo"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "relax music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Taking study break."
+    },
+    "workout": {
+        "phrases": [
+            "i want to workout",
+            "exercise karna hai",
+            "gym time"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "workout music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing workout music."
+    },
+    "yoga": {
+        "phrases": [
+            "i want to do yoga",
+            "yoga time",
+            "yoga karna hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "yoga music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing yoga music."
+    },
+    "meditation": {
+        "phrases": [
+            "i want to meditate",
+            "meditation karna hai",
+            "dhyan lagana hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "meditation sounds"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing meditation sounds."
+    },
+    "running": {
+        "phrases": [
+            "going for a run",
+            "running time",
+            "jogging"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "running music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing running music."
+    },
+    "music": {
+        "phrases": [
+            "play music",
+            "gaana chalao",
+            "music chahiye"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing music."
+    },
+    "relax": {
+        "phrases": [
+            "i want to relax",
+            "relax karna hai",
+            "chill"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "lofi music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing relaxing music."
+    },
+    "party": {
+        "phrases": [
+            "party mood",
+            "let's party",
+            "dance karna hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "party songs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing party music!"
+    },
+    "dance": {
+        "phrases": [
+            "i want to dance",
+            "dance karna hai",
+            "naachna hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "dance music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing dance music!"
+    },
+    "movie": {
+        "phrases": [
+            "i want to watch movie",
+            "movie dekhni hai",
+            "film time"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "movies"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding movies."
+    },
+    "entertainment": {
+        "phrases": [
+            "entertain me",
+            "kuch dekho",
+            "video chalao"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "trending"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding entertainment."
+    },
+    "comedy": {
+        "phrases": [
+            "make me laugh",
+            "comedy chahiye",
+            "funny videos"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "comedy"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing comedy content."
+    },
+    "podcast": {
+        "phrases": [
+            "play podcast",
+            "podcast suno",
+            "story sunao"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "podcasts"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing podcasts."
+    },
+    "gaming": {
+        "phrases": [
+            "i want to game",
+            "gaming time",
+            "game khelna hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Optimizing for gaming."
+    },
+    "reading": {
+        "phrases": [
+            "i want to read",
+            "reading time",
+            "book padhna hai"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Adjusting for reading."
+    },
+    "creative": {
+        "phrases": [
+            "i want to create",
+            "creative mode",
+            "art banana hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "creative music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing creative music."
+    },
+    "brainstorm": {
+        "phrases": [
+            "need ideas",
+            "brainstorm",
+            "sochna hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "ambient music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing ambient music."
+    },
+    "learn": {
+        "phrases": [
+            "i want to learn",
+            "sikna hai",
+            "teach me"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "educational"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding educational content."
+    },
+    "news": {
+        "phrases": [
+            "show me news",
+            "kya ho raha hai",
+            "news batao"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "news today"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Fetching news."
+    },
+    "sports": {
+        "phrases": [
+            "sports dekhni hai",
+            "match on hai",
+            "cricket"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "sports highlights"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding sports content."
+    },
+    "tech": {
+        "phrases": [
+            "tech news",
+            "latest gadgets",
+            "technology"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "tech news"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding tech updates."
+    },
+    "hungry": {
+        "phrases": [
+            "i'm hungry",
+            "bhookh lagi",
+            "kuch khana hai"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "food delivery near me"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding food options."
+    },
+    "cooking": {
+        "phrases": [
+            "i want to cook",
+            "recipe chahiye",
+            "khana banana"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "cooking recipes"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding recipes."
+    },
+    "thirsty": {
+        "phrases": [
+            "i'm thirsty",
+            "pyas lagi",
+            "water chahiye"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "drinks near me"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Stay hydrated!"
+    },
+    "shopping": {
+        "phrases": [
+            "i want to shop",
+            "shopping karna hai",
+            "buy something"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "online shopping"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening shopping options."
+    },
+    "fashion": {
+        "phrases": [
+            "fashion ideas",
+            "style chahiye",
+            "outfit ideas"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "fashion trends"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Showing fashion trends."
+    },
+    "travel": {
+        "phrases": [
+            "i want to travel",
+            "ghoomna hai",
+            "vacation"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "travel vlogs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Showing travel inspiration."
+    },
+    "booking": {
+        "phrases": [
+            "book ticket",
+            "booking karna hai",
+            "reserve"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "online booking"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Opening booking options."
+    },
+    "morning": {
+        "phrases": [
+            "good morning",
+            "subah ho gayi",
+            "din shuru karo"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.up"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "morning music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Good morning! Starting your day."
+    },
+    "night": {
+        "phrases": [
+            "good night",
+            "raat ho gayi",
+            "sone ka time"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "system.volume.down"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Good night! Sleep well."
+    },
+    "sleep_trouble": {
+        "phrases": [
+            "can't sleep",
+            "neend nahi aa rahi",
+            "insomnia"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "sleep sounds"
+            },
+            {
+                "tool": "system.brightness.down"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing sleep sounds."
+    },
+    "weather_check": {
+        "phrases": [
+            "how's the weather",
+            "mausam kaisa hai",
+            "will it rain"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "weather today"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Checking weather."
+    },
+    "traffic": {
+        "phrases": [
+            "how's the traffic",
+            "traffic kaisa hai",
+            "road condition"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "traffic update"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Checking traffic."
+    },
+    "celebration": {
+        "phrases": [
+            "let's celebrate",
+            "party karna hai",
+            "khushi hai"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "celebration music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing celebration music!"
+    },
+    "birthday": {
+        "phrases": [
+            "it's my birthday",
+            "birthday hai",
+            "janamdin"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "birthday songs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Happy Birthday! 🎉"
+    },
+    "anniversary": {
+        "phrases": [
+            "anniversary hai",
+            "saalgirah",
+            "special day"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "romantic songs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Happy Anniversary!"
+    },
+    "spiritual": {
+        "phrases": [
+            "feeling spiritual",
+            "peace chahiye",
+            "shanti"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "spiritual music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing spiritual music."
+    },
+    "prayer": {
+        "phrases": [
+            "i want to pray",
+            "prarthana",
+            "puja time"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "devotional songs"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing devotional music."
+    },
+    "cleaning": {
+        "phrases": [
+            "i need to clean",
+            "safai karna hai",
+            "organize room"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "energetic cleaning music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing cleaning music!"
+    },
+    "laundry": {
+        "phrases": [
+            "laundry time",
+            "kapde dhone hai",
+            "washing"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "podcast"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing podcast for you."
+    },
+    "date": {
+        "phrases": [
+            "i have a date",
+            "date pe ja raha",
+            "someone special"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "romantic music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing romantic music!"
+    },
+    "family_time": {
+        "phrases": [
+            "family time",
+            "parivaar ke saath",
+            "with relatives"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Enjoy family time!"
+    },
+    "exam": {
+        "phrases": [
+            "i have exam",
+            "exam hai",
+            "test tomorrow"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "study music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Focus mode for exam prep."
+    },
+    "interview": {
+        "phrases": [
+            "i have interview",
+            "job interview",
+            "interview prep"
+        ],
+        "actions": [
+            {
+                "tool": "web.search",
+                "query": "interview tips"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding interview tips. Good luck!"
+    },
+    "commute": {
+        "phrases": [
+            "going to work",
+            "office ja raha",
+            "commuting"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "podcast"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing podcast for commute."
+    },
+    "stuck_traffic": {
+        "phrases": [
+            "stuck in traffic",
+            "traffic jam",
+            "road blocked"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "calm music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Playing calming music."
+    },
+    "binge_watch": {
+        "phrases": [
+            "binge watch",
+            "series dekhna hai",
+            "web series"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "web series"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Finding series to watch."
+    },
+    "late_night": {
+        "phrases": [
+            "late night",
+            "raat ko",
+            "midnight"
+        ],
+        "actions": [
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "late night music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Setting late night vibe."
+    },
+    "procrastinating": {
+        "phrases": [
+            "i'm procrastinating",
+            "kaam nahi ho raha",
+            "distracted"
+        ],
+        "actions": [
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            },
+            {
+                "tool": "youtube.play",
+                "query": "focus music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Removing distractions!"
+    },
+    "overwhelmed": {
+        "phrases": [
+            "i'm overwhelmed",
+            "bahut kuch hai",
+            "stress"
+        ],
+        "actions": [
+            {
+                "tool": "youtube.play",
+                "query": "stress relief music"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Take a deep breath. Playing stress relief music."
+    }
+}

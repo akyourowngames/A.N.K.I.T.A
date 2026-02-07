@@ -1429,6 +1429,52 @@
       "close insta browser"
     ]
   },
+  "instagram.save": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "save post on instagram",
+      "save this post on insta",
+      "bookmark post on instagram",
+      "instagram save post",
+      "save on insta",
+      "bookmark on instagram",
+      "save this on insta",
+      "save the post"
+    ]
+  },
+  "instagram.story": {
+    "entities": [
+      "action",
+      "username"
+    ],
+    "examples": [
+      "view story on instagram",
+      "watch story on insta",
+      "view virat story on instagram",
+      "watch virat story on insta",
+      "instagram story",
+      "open stories on insta",
+      "view instagram stories",
+      "watch stories",
+      "see virat story"
+    ]
+  },
+  "instagram.share": {
+    "entities": [
+      "action",
+      "username"
+    ],
+    "examples": [
+      "share post on instagram",
+      "share to arjun on insta",
+      "instagram share post to arjun",
+      "send post to arjun on instagram",
+      "share this to arjun",
+      "share with arjun on insta"
+    ]
+  },
   "youtube.pause": {
     "entities": [
       "action"

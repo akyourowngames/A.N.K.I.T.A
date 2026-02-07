@@ -1,0 +1,113 @@
+{
+  "corrections": [],
+  "action_frequency": {
+    "system.app.open": 2,
+    "instagram.search": 3,
+    "instagram.dm": 4,
+    "instagram.open": 6,
+    "instagram.comment": 1,
+    "system.screenshot": 1,
+    "youtube.open": 1,
+    "youtube.play": 3,
+    "system.brightness.up": 1,
+    "instagram.close": 1,
+    "web.search": 6
+  },
+  "time_patterns": {
+    "23": {
+      "system.app.open": 2
+    },
+    "12": {
+      "instagram.search": 3,
+      "instagram.dm": 4
+    },
+    "13": {
+      "instagram.open": 6,
+      "instagram.comment": 1,
+      "system.screenshot": 1,
+      "youtube.open": 1,
+      "youtube.play": 2,
+      "system.brightness.up": 1,
+      "instagram.close": 1
+    },
+    "14": {
+      "web.search": 6,
+      "youtube.play": 1
+    }
+  },
+  "entity_preferences": {},
+  "tool_context": {
+    "instagram.dms_sent": {
+      "value": 1,
+      "set_by": "instagram",
+      "timestamp": "2026-02-07T12:56:44.170417",
+      "expires": "2026-02-08T12:56:44.170417"
+    },
+    "youtube.last_action": {
+      "value": "play",
+      "set_by": "youtube",
+      "timestamp": "2026-02-07T14:08:41.086268",
+      "expires": "2026-02-07T14:38:41.086268"
+    },
+    "shared.query": {
+      "value": {
+        "value": "relaxing music",
+        "source": "youtube",
+        "timestamp": "2026-02-07T14:08:40.716515"
+      },
+      "set_by": "shared",
+      "timestamp": "2026-02-07T14:08:40.716515",
+      "expires": "2026-02-07T15:08:40.716515"
+    },
+    "youtube.last_search": {
+      "value": "relaxing music",
+      "set_by": "youtube",
+      "timestamp": "2026-02-07T14:08:40.946160",
+      "expires": "2026-02-07T14:38:40.946160"
+    },
+    "youtube.is_playing": {
+      "value": true,
+      "set_by": "youtube",
+      "timestamp": "2026-02-07T14:08:41.099888",
+      "expires": "2026-02-07T14:38:41.099888"
+    },
+    "youtube.now_playing": {
+      "value": "relaxing music",
+      "set_by": "youtube",
+      "timestamp": "2026-02-07T14:08:41.625001",
+      "expires": "2026-02-07T14:38:41.625001"
+    }
+  },
+  "shared_content": [
+    {
+      "type": "query",
+      "content": "relaxing music",
+      "source": "youtube",
+      "timestamp": "2026-02-07T14:08:40.842290"
+    },
+    {
+      "type": "query",
+      "content": "music",
+      "source": "youtube",
+      "timestamp": "2026-02-07T13:57:42.251490"
+    },
+    {
+      "type": "query",
+      "content": "trending",
+      "source": "youtube",
+      "timestamp": "2026-02-07T13:40:54.967897"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-06T23:07:05.675833"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-06T23:07:01.523202"
+    }
+  ]
+}

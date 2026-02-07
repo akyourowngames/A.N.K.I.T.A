@@ -480,39 +480,137 @@ async def _instagram_navigate(page, destination: str):
 
 async def _instagram_search(page, query: str, search_type: str = "all"):
     """Search Instagram for users, hashtags, or places."""
-    await page.goto(f"{INSTAGRAM_URL}/explore/search/", wait_until="domcontentloaded")
+    
+    # First, try navigating to Instagram home and using the search from sidebar
+    current_url = page.url
+    if "instagram.com" not in current_url:
+        await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2000)
+    
+    # Strategy 1: Click on Search icon in the sidebar
+    search_icon = await page.query_selector('svg[aria-label="Search"]')
+    if search_icon:
+        try:
+            parent = await search_icon.query_selector("xpath=ancestor::a | ancestor::div[@role='button']")
+            if parent:
+                await parent.click()
+            else:
+                await search_icon.click()
+            await page.wait_for_timeout(1500)
+        except Exception:
+            pass
+    
+    # Strategy 2: Try to find search input with multiple selectors
+    search_selectors = [
+        'input[placeholder*="Search"]',
+        'input[aria-label*="Search"]',
+        'input[type="text"][placeholder]',
+        '[role="searchbox"]',
+        'input[autocomplete="off"]',
+    ]
+    
+    search_input = None
+    for selector in search_selectors:
+        search_input = await page.query_selector(selector)
+        if search_input:
+            # Verify it's visible
+            is_visible = await search_input.is_visible()
+            if is_visible:
+                break
+            search_input = None
+    
+    # Strategy 3: If still not found, navigate directly to explore page
+    if not search_input:
+        await page.goto(f"{INSTAGRAM_URL}/explore/", wait_until="domcontentloaded")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(1500)
+        
+        # Try clicking search icon again
+        search_icon = await page.query_selector('svg[aria-label="Search"]')
+        if search_icon:
+            try:
+                parent = await search_icon.query_selector("xpath=ancestor::a | ancestor::div[@role='button']")
+                if parent:
+                    await parent.click()
+                else:
+                    await search_icon.click()
+                await page.wait_for_timeout(1500)
+            except Exception:
+                pass
+        
+        # Try finding input again
+        for selector in search_selectors:
+            search_input = await page.query_selector(selector)
+            if search_input:
+                is_visible = await search_input.is_visible()
+                if is_visible:
+                    break
+                search_input = None
+    
+    if not search_input:
+        return {"status": "fail", "reason": "Search input not found, sir."}
+    
+    # Clear and type the query
     try:
-        await page.wait_for_load_state("networkidle", timeout=5000)
-    except Exception:
-        pass
-    await page.wait_for_timeout(1000)
+        await search_input.click()
+        await page.wait_for_timeout(500)
+        await search_input.fill("")  # Clear first
+        await search_input.type(query, delay=50)  # Type with delay for better detection
+        await page.wait_for_timeout(2500)  # Wait for search results to load
+    except Exception as e:
+        return {"status": "fail", "reason": f"Error typing search query: {str(e)}"}
     
-    # Find and click search input
-    search_input = await page.query_selector('input[placeholder*="Search"]')
-    if not search_input:
-        search_input = await page.query_selector('input[type="text"]')
-    
-    if not search_input:
-        return {"status": "fail", "reason": "Search input not found"}
-    
-    await search_input.click()
-    await search_input.fill(query)
-    await page.wait_for_timeout(2000)
-    
-    # Get search results
+    # Get search results from dropdown
     results = []
-    result_items = await page.query_selector_all('a[href*="/"]')
     
-    for item in result_items[:10]:
-        href = await item.get_attribute("href")
-        text = await item.inner_text()
-        if query.lower() in text.lower() or query.lower() in (href or "").lower():
-            results.append({"text": text.strip(), "href": href})
+    # Try multiple result selectors
+    result_selectors = [
+        'a[href^="/"][role="link"]',  # Profile links
+        '[role="listitem"] a',  # List items
+        'a[href*="/"]',  # Any links
+    ]
+    
+    for selector in result_selectors:
+        result_items = await page.query_selector_all(selector)
+        for item in result_items[:15]:
+            try:
+                href = await item.get_attribute("href")
+                if not href or href in ("/", "#") or "explore" in href:
+                    continue
+                
+                text = await item.inner_text()
+                text = text.strip()
+                
+                # Filter relevant results
+                if text and (query.lower() in text.lower() or query.lower() in (href or "").lower()):
+                    result_entry = {"text": text, "href": href}
+                    if result_entry not in results:
+                        results.append(result_entry)
+            except Exception:
+                continue
+        
+        if results:
+            break
+    
+    # Click on first result if available (optional - navigate to top result)
+    if results:
+        return {
+            "status": "success",
+            "message": f"Found {len(results)} results for '{query}', sir.",
+            "results": results[:10]
+        }
     
     return {
         "status": "success",
-        "message": f"Found {len(results)} results for '{query}'",
-        "results": results
+        "message": f"Search completed for '{query}', but no matching results found in dropdown.",
+        "results": []
     }
 
 
@@ -524,28 +622,45 @@ async def _instagram_like(page, post_url: str = None):
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(2500)
     
-    # Find like button
-    like_btn = await page.query_selector('svg[aria-label="Like"]')
+    # Multiple selectors for like button
+    like_selectors = [
+        'svg[aria-label="Like"]',
+        '[aria-label="Like"]',
+        'button svg[aria-label="Like"]',
+    ]
+    
+    like_btn = None
+    for selector in like_selectors:
+        like_btn = await page.query_selector(selector)
+        if like_btn:
+            break
     
     if not like_btn:
         # Check if already liked
-        unlike_btn = await page.query_selector('svg[aria-label="Unlike"]')
-        if unlike_btn:
-            return {"status": "success", "message": "Post already liked"}
-        return {"status": "fail", "reason": "Like button not found"}
+        unlike_selectors = [
+            'svg[aria-label="Unlike"]',
+            '[aria-label="Unlike"]',
+        ]
+        for selector in unlike_selectors:
+            unlike_btn = await page.query_selector(selector)
+            if unlike_btn:
+                return {"status": "success", "message": "Post already liked, sir."}
+        return {"status": "fail", "reason": "Like button not found, sir. Make sure you're viewing a post."}
     
-    # Click the parent button
-    parent = await like_btn.query_selector("xpath=ancestor::button")
-    if parent:
-        await parent.click()
-    else:
-        await like_btn.click()
+    # Click the parent button or the SVG itself
+    try:
+        parent = await like_btn.query_selector("xpath=ancestor::button | ancestor::div[@role='button']")
+        if parent:
+            await parent.click()
+        else:
+            await like_btn.click()
+        await page.wait_for_timeout(1500)
+    except Exception as e:
+        return {"status": "fail", "reason": f"Error clicking like button: {str(e)}"}
     
-    await page.wait_for_timeout(1000)
-    
-    return {"status": "success", "message": "Post liked"}
+    return {"status": "success", "message": "Post liked, sir."}
 
 
 async def _instagram_unlike(page, post_url: str = None):
@@ -556,22 +671,33 @@ async def _instagram_unlike(page, post_url: str = None):
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(2500)
     
-    unlike_btn = await page.query_selector('svg[aria-label="Unlike"]')
+    unlike_selectors = [
+        'svg[aria-label="Unlike"]',
+        '[aria-label="Unlike"]',
+    ]
+    
+    unlike_btn = None
+    for selector in unlike_selectors:
+        unlike_btn = await page.query_selector(selector)
+        if unlike_btn:
+            break
     
     if not unlike_btn:
-        return {"status": "success", "message": "Post not liked"}
+        return {"status": "success", "message": "Post not liked, sir."}
     
-    parent = await unlike_btn.query_selector("xpath=ancestor::button")
-    if parent:
-        await parent.click()
-    else:
-        await unlike_btn.click()
+    try:
+        parent = await unlike_btn.query_selector("xpath=ancestor::button | ancestor::div[@role='button']")
+        if parent:
+            await parent.click()
+        else:
+            await unlike_btn.click()
+        await page.wait_for_timeout(1500)
+    except Exception as e:
+        return {"status": "fail", "reason": f"Error clicking unlike button: {str(e)}"}
     
-    await page.wait_for_timeout(1000)
-    
-    return {"status": "success", "message": "Post unliked"}
+    return {"status": "success", "message": "Post unliked, sir."}
 
 
 async def _instagram_comment(page, text: str, post_url: str = None):
@@ -582,31 +708,122 @@ async def _instagram_comment(page, text: str, post_url: str = None):
             await page.wait_for_load_state("networkidle", timeout=5000)
         except Exception:
             pass
-        await page.wait_for_timeout(2000)
+        await page.wait_for_timeout(2500)
     
-    # Find comment input
-    comment_input = await page.query_selector('textarea[placeholder*="comment"]')
+    # First, try to click the comment icon to focus the comment area
+    comment_icon_selectors = [
+        'svg[aria-label="Comment"]',
+        '[aria-label="Comment"]',
+        'svg[aria-label="Add a comment"]',
+    ]
+    
+    for selector in comment_icon_selectors:
+        try:
+            comment_icon = await page.query_selector(selector)
+            if comment_icon:
+                parent = await comment_icon.query_selector("xpath=ancestor::button | ancestor::div[@role='button'] | ancestor::span")
+                if parent:
+                    await parent.click()
+                else:
+                    await comment_icon.click()
+                await page.wait_for_timeout(1000)
+                break
+        except Exception:
+            continue
+    
+    # Find comment input with multiple selectors
+    comment_input_selectors = [
+        'textarea[placeholder*="comment" i]',
+        'textarea[placeholder*="Comment" i]',
+        'textarea[aria-label*="comment" i]',
+        'textarea[aria-label*="Comment" i]',
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+        'textarea',
+    ]
+    
+    comment_input = None
+    is_contenteditable = False
+    
+    for selector in comment_input_selectors:
+        elements = await page.query_selector_all(selector)
+        for elem in elements:
+            try:
+                is_visible = await elem.is_visible()
+                if is_visible:
+                    # Prefer comment-specific inputs
+                    placeholder = await elem.get_attribute("placeholder") or ""
+                    aria_label = await elem.get_attribute("aria-label") or ""
+                    if "comment" in placeholder.lower() or "comment" in aria_label.lower():
+                        comment_input = elem
+                        contenteditable = await elem.get_attribute("contenteditable")
+                        is_contenteditable = contenteditable == "true"
+                        break
+                    elif not comment_input:
+                        comment_input = elem
+                        contenteditable = await elem.get_attribute("contenteditable")
+                        is_contenteditable = contenteditable == "true"
+            except Exception:
+                continue
+        if comment_input:
+            placeholder = await comment_input.get_attribute("placeholder") or ""
+            aria_label = await comment_input.get_attribute("aria-label") or ""
+            if "comment" in placeholder.lower() or "comment" in aria_label.lower():
+                break
+    
     if not comment_input:
-        comment_input = await page.query_selector('textarea')
+        return {"status": "fail", "reason": "Comment input not found, sir. Make sure you're viewing a post."}
     
-    if not comment_input:
-        return {"status": "fail", "reason": "Comment input not found"}
-    
-    await comment_input.click()
-    await comment_input.fill(text)
-    await page.wait_for_timeout(500)
+    # Click and type the comment
+    try:
+        await comment_input.click()
+        await page.wait_for_timeout(300)
+        
+        if is_contenteditable:
+            await page.keyboard.type(text, delay=30)
+        else:
+            await comment_input.fill(text)
+        
+        await page.wait_for_timeout(800)
+    except Exception as e:
+        return {"status": "fail", "reason": f"Error typing comment: {str(e)}"}
     
     # Find and click post button
-    post_btn = await page.query_selector('button:has-text("Post")')
-    if not post_btn:
-        post_btn = await page.query_selector('[role="button"]:has-text("Post")')
+    post_btn_selectors = [
+        'button:has-text("Post")',
+        'div[role="button"]:has-text("Post")',
+        '[role="button"]:has-text("Post")',
+        'button[type="submit"]',
+    ]
     
-    if post_btn:
-        await post_btn.click()
-        await page.wait_for_timeout(2000)
-        return {"status": "success", "message": "Comment posted"}
+    posted = False
+    for selector in post_btn_selectors:
+        try:
+            post_btn = await page.query_selector(selector)
+            if post_btn:
+                is_visible = await post_btn.is_visible()
+                is_enabled = await post_btn.is_enabled()
+                if is_visible and is_enabled:
+                    await post_btn.click()
+                    posted = True
+                    await page.wait_for_timeout(2000)
+                    break
+        except Exception:
+            continue
     
-    return {"status": "fail", "reason": "Post button not found"}
+    # Fallback: Press Enter to post (some UIs work this way)
+    if not posted:
+        try:
+            await page.keyboard.press("Enter")
+            await page.wait_for_timeout(2000)
+            posted = True
+        except Exception:
+            pass
+    
+    if posted:
+        return {"status": "success", "message": "Comment posted, sir."}
+    
+    return {"status": "fail", "reason": "Could not post comment, sir."}
 
 
 async def _instagram_follow(page, username: str):
@@ -669,64 +886,194 @@ async def _instagram_unfollow(page, username: str):
 
 async def _instagram_dm(page, username: str, message: str):
     """Send a direct message."""
-    # Navigate to DMs
+    # Navigate to DM new message page
     await page.goto(f"{INSTAGRAM_URL}/direct/new/", wait_until="domcontentloaded")
     try:
         await page.wait_for_load_state("networkidle", timeout=5000)
     except Exception:
         pass
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(2500)
     
-    # Search for user
-    search_input = await page.query_selector('input[placeholder*="Search"]')
+    # Find search input for recipient with multiple selectors
+    search_selectors = [
+        'input[placeholder*="Search"]',
+        'input[name="queryBox"]',
+        'input[aria-label*="Search"]',
+        'input[type="text"]',
+    ]
+    
+    search_input = None
+    for selector in search_selectors:
+        search_input = await page.query_selector(selector)
+        if search_input:
+            is_visible = await search_input.is_visible()
+            if is_visible:
+                break
+            search_input = None
+    
     if not search_input:
-        search_input = await page.query_selector('input[name="queryBox"]')
+        return {"status": "fail", "reason": "User search input not found, sir."}
     
-    if not search_input:
-        return {"status": "fail", "reason": "User search input not found"}
+    # Type username to search
+    await search_input.click()
+    await page.wait_for_timeout(300)
+    await search_input.fill("")
+    await search_input.type(username, delay=50)
+    await page.wait_for_timeout(2500)
     
-    await search_input.fill(username)
-    await page.wait_for_timeout(2000)
+    # Select user from results - try multiple approaches
+    user_found = False
     
-    # Select user from results
-    user_option = await page.query_selector(f'button:has-text("{username}")')
-    if not user_option:
-        user_option = await page.query_selector(f'[role="button"]:has-text("{username}")')
+    # Strategy 1: Click on the user result item (usually a div or span with username)
+    user_selectors = [
+        f'[role="button"]:has-text("{username}")',
+        f'button:has-text("{username}")',
+        f'div:has-text("{username}")',
+        f'span:has-text("{username}")',
+    ]
     
-    if user_option:
-        await user_option.click()
-        await page.wait_for_timeout(1000)
+    for selector in user_selectors:
+        try:
+            user_option = await page.query_selector(selector)
+            if user_option:
+                is_visible = await user_option.is_visible()
+                if is_visible:
+                    await user_option.click()
+                    user_found = True
+                    await page.wait_for_timeout(1500)
+                    break
+        except Exception:
+            continue
+    
+    # Strategy 2: Click on any clickable item in search results
+    if not user_found:
+        result_items = await page.query_selector_all('[role="listitem"], [role="option"]')
+        for item in result_items[:5]:
+            try:
+                text = await item.inner_text()
+                if username.lower() in text.lower():
+                    await item.click()
+                    user_found = True
+                    await page.wait_for_timeout(1500)
+                    break
+            except Exception:
+                continue
+    
+    # Strategy 3: Try clicking checkbox or radio button next to username
+    if not user_found:
+        checkboxes = await page.query_selector_all('input[type="checkbox"], [role="checkbox"]')
+        for checkbox in checkboxes:
+            try:
+                # Check if this checkbox is near the username
+                parent = await checkbox.query_selector("xpath=ancestor::div[contains(., '" + username + "')]")
+                if parent:
+                    await checkbox.click()
+                    user_found = True
+                    await page.wait_for_timeout(1000)
+                    break
+            except Exception:
+                continue
+    
+    if not user_found:
+        return {"status": "fail", "reason": f"User @{username} not found in search, sir."}
+    
+    # Click Next/Chat button to start conversation
+    next_selectors = [
+        'button:has-text("Chat")',
+        'button:has-text("Next")',
+        'div[role="button"]:has-text("Chat")',
+        'div[role="button"]:has-text("Next")',
+    ]
+    
+    for selector in next_selectors:
+        try:
+            next_btn = await page.query_selector(selector)
+            if next_btn:
+                is_visible = await next_btn.is_visible()
+                if is_visible:
+                    await next_btn.click()
+                    await page.wait_for_timeout(2500)
+                    break
+        except Exception:
+            continue
+    
+    # Find message input - Instagram uses both textarea and contenteditable divs
+    msg_input_selectors = [
+        'textarea[placeholder*="Message"]',
+        'textarea[placeholder*="message"]',
+        'textarea',
+        '[contenteditable="true"][role="textbox"]',
+        '[contenteditable="true"]',
+        'div[role="textbox"]',
+    ]
+    
+    msg_input = None
+    is_contenteditable = False
+    for selector in msg_input_selectors:
+        msg_input = await page.query_selector(selector)
+        if msg_input:
+            is_visible = await msg_input.is_visible()
+            if is_visible:
+                # Check if it's contenteditable
+                contenteditable = await msg_input.get_attribute("contenteditable")
+                is_contenteditable = contenteditable == "true"
+                break
+            msg_input = None
+    
+    if not msg_input:
+        return {"status": "fail", "reason": "Message input not found, sir."}
+    
+    # Type the message
+    await msg_input.click()
+    await page.wait_for_timeout(300)
+    
+    if is_contenteditable:
+        # For contenteditable divs, use keyboard typing
+        await page.keyboard.type(message, delay=30)
     else:
-        return {"status": "fail", "reason": f"User @{username} not found in search"}
+        await msg_input.fill(message)
     
-    # Click Next/Chat button
-    next_btn = await page.query_selector('button:has-text("Chat")')
-    if not next_btn:
-        next_btn = await page.query_selector('button:has-text("Next")')
-    
-    if next_btn:
-        await next_btn.click()
-        await page.wait_for_timeout(2000)
-    
-    # Type message
-    msg_input = await page.query_selector('textarea[placeholder*="Message"]')
-    if not msg_input:
-        msg_input = await page.query_selector('textarea')
-    
-    if not msg_input:
-        return {"status": "fail", "reason": "Message input not found"}
-    
-    await msg_input.fill(message)
     await page.wait_for_timeout(500)
     
-    # Send message
-    send_btn = await page.query_selector('button:has-text("Send")')
-    if send_btn:
-        await send_btn.click()
-        await page.wait_for_timeout(1000)
-        return {"status": "success", "message": f"Message sent to @{username}"}
+    # Send message - try button first, then Enter key
+    send_selectors = [
+        'button:has-text("Send")',
+        'div[role="button"]:has-text("Send")',
+        'svg[aria-label="Send Message"]',
+    ]
     
-    return {"status": "fail", "reason": "Send button not found"}
+    sent = False
+    for selector in send_selectors:
+        try:
+            send_btn = await page.query_selector(selector)
+            if send_btn:
+                is_visible = await send_btn.is_visible()
+                if is_visible:
+                    # If it's an SVG, click its parent
+                    if "svg" in selector:
+                        parent = await send_btn.query_selector("xpath=ancestor::button | ancestor::div[@role='button']")
+                        if parent:
+                            await parent.click()
+                        else:
+                            await send_btn.click()
+                    else:
+                        await send_btn.click()
+                    sent = True
+                    await page.wait_for_timeout(1500)
+                    break
+        except Exception:
+            continue
+    
+    # Fallback: Press Enter to send
+    if not sent:
+        await page.keyboard.press("Enter")
+        await page.wait_for_timeout(1500)
+        sent = True
+    
+    if sent:
+        return {"status": "success", "message": f"Message sent to @{username}, sir."}
+    
+    return {"status": "fail", "reason": "Could not send message, sir."}
 
 
 async def _instagram_view_profile(page, username: str):
@@ -769,9 +1116,166 @@ async def _instagram_view_profile(page, username: str):
     
     return {
         "status": "success",
-        "message": f"Viewing @{username}'s profile",
+        "message": f"Viewing @{username}'s profile, sir.",
         "profile": profile_info
     }
+
+
+async def _instagram_save_post(page, post_url: str = None):
+    """Save/bookmark a post."""
+    if post_url:
+        await page.goto(post_url, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2500)
+    
+    # Find save button
+    save_selectors = [
+        'svg[aria-label="Save"]',
+        '[aria-label="Save"]',
+        'svg[aria-label="Remove"]',  # Already saved
+        '[aria-label="Remove"]',
+    ]
+    
+    for selector in save_selectors:
+        save_btn = await page.query_selector(selector)
+        if save_btn:
+            # Check if already saved
+            aria_label = await save_btn.get_attribute("aria-label")
+            if aria_label and "Remove" in aria_label:
+                return {"status": "success", "message": "Post already saved, sir."}
+            
+            try:
+                parent = await save_btn.query_selector("xpath=ancestor::button | ancestor::div[@role='button']")
+                if parent:
+                    await parent.click()
+                else:
+                    await save_btn.click()
+                await page.wait_for_timeout(1500)
+                return {"status": "success", "message": "Post saved, sir."}
+            except Exception as e:
+                return {"status": "fail", "reason": f"Error saving post: {str(e)}"}
+    
+    return {"status": "fail", "reason": "Save button not found, sir. Make sure you're viewing a post."}
+
+
+async def _instagram_view_story(page, username: str = None):
+    """View a user's story."""
+    if username:
+        # Go to user profile first
+        await page.goto(f"{INSTAGRAM_URL}/{username}/", wait_until="domcontentloaded")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2500)
+        
+        # Click on profile picture to view story
+        story_selectors = [
+            'header img[alt*="profile"]',
+            'header canvas',  # Story ring
+            f'img[alt*="{username}" i]',
+            'header section > div:first-child',
+        ]
+        
+        for selector in story_selectors:
+            story_elem = await page.query_selector(selector)
+            if story_elem:
+                try:
+                    await story_elem.click()
+                    await page.wait_for_timeout(3000)
+                    return {"status": "success", "message": f"Viewing @{username}'s story, sir."}
+                except Exception:
+                    continue
+        
+        return {"status": "fail", "reason": f"No story available for @{username}, sir."}
+    
+    # If no username, go to home and click first story
+    await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded")
+    try:
+        await page.wait_for_load_state("networkidle", timeout=5000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(2500)
+    
+    # Click on first story in the stories bar
+    story_button = await page.query_selector('button[aria-label*="Story"]')
+    if not story_button:
+        story_button = await page.query_selector('canvas')  # Story ring canvas
+    
+    if story_button:
+        await story_button.click()
+        await page.wait_for_timeout(3000)
+        return {"status": "success", "message": "Viewing stories, sir."}
+    
+    return {"status": "fail", "reason": "No stories available, sir."}
+
+
+async def _instagram_share_post(page, username: str, post_url: str = None):
+    """Share a post to a user via DM."""
+    if post_url:
+        await page.goto(post_url, wait_until="domcontentloaded")
+        try:
+            await page.wait_for_load_state("networkidle", timeout=5000)
+        except Exception:
+            pass
+        await page.wait_for_timeout(2500)
+    
+    # Find share button
+    share_selectors = [
+        'svg[aria-label="Share Post"]',
+        'svg[aria-label="Share"]',
+        '[aria-label="Share Post"]',
+        '[aria-label="Share"]',
+    ]
+    
+    share_btn = None
+    for selector in share_selectors:
+        share_btn = await page.query_selector(selector)
+        if share_btn:
+            break
+    
+    if not share_btn:
+        return {"status": "fail", "reason": "Share button not found, sir."}
+    
+    try:
+        parent = await share_btn.query_selector("xpath=ancestor::button | ancestor::div[@role='button']")
+        if parent:
+            await parent.click()
+        else:
+            await share_btn.click()
+        await page.wait_for_timeout(2000)
+    except Exception as e:
+        return {"status": "fail", "reason": f"Error clicking share button: {str(e)}"}
+    
+    # Search for user to share with
+    search_input = await page.query_selector('input[placeholder*="Search"]')
+    if not search_input:
+        search_input = await page.query_selector('input[type="text"]')
+    
+    if search_input:
+        await search_input.type(username, delay=50)
+        await page.wait_for_timeout(2000)
+        
+        # Select user from results
+        user_option = await page.query_selector(f'[role="button"]:has-text("{username}")')
+        if not user_option:
+            user_option = await page.query_selector(f'div:has-text("{username}")')
+        
+        if user_option:
+            await user_option.click()
+            await page.wait_for_timeout(1000)
+            
+            # Click Send button
+            send_btn = await page.query_selector('button:has-text("Send")')
+            if send_btn:
+                await send_btn.click()
+                await page.wait_for_timeout(2000)
+                return {"status": "success", "message": f"Post shared with @{username}, sir."}
+    
+    return {"status": "fail", "reason": f"Could not share post with @{username}, sir."}
 
 
 async def _instagram_scroll_feed(page, count: int = 5):
@@ -872,6 +1376,9 @@ def run(action: str = "open", **kwargs) -> dict:
         - profile: View user profile (requires username)
         - feed: Scroll through feed (optional: count)
         - notifications: Get notifications
+        - save: Save/bookmark current post
+        - story: View stories (optional: username for specific user)
+        - share: Share current post to a user (requires username)
         - close: Close browser
     
     Examples:
@@ -880,6 +1387,8 @@ def run(action: str = "open", **kwargs) -> dict:
         run(action="like")
         run(action="follow", username="instagram")
         run(action="dm", username="friend", message="Hey!")
+        run(action="save")
+        run(action="story", username="virat.kohli")
     """
     action = (action or "open").strip().lower()
 
@@ -922,12 +1431,22 @@ def run(action: str = "open", **kwargs) -> dict:
         return None
 
     def _parse_query(s: str):
-        m = re.search(r"\bsearch\b(?:\s+instagram)?\s+for\s+(.+)$", s, re.IGNORECASE)
+        # Clean up common suffixes
+        cleaned = re.sub(r"\s+on\s+(insta|instagram)\s*$", "", s, flags=re.IGNORECASE)
+        
+        # Pattern: "search for X"
+        m = re.search(r"\bsearch\b(?:\s+instagram)?\s+for\s+(.+)$", cleaned, re.IGNORECASE)
         if m:
             return m.group(1).strip().strip("\"'")
-        m = re.search(r"\bsearch\b\s+(.+)$", s, re.IGNORECASE)
+        
+        # Pattern: "search X" (extract everything after "search")
+        m = re.search(r"\bsearch\b\s+(.+)$", cleaned, re.IGNORECASE)
         if m:
-            return m.group(1).strip().strip("\"'")
+            query = m.group(1).strip().strip("\"'")
+            # Remove action words that might be captured
+            query = re.sub(r"\s+(on\s+)?instagram\s*$", "", query, flags=re.IGNORECASE)
+            return query if query else None
+        
         return None
 
     def _parse_destination(s: str):
@@ -950,6 +1469,10 @@ def run(action: str = "open", **kwargs) -> dict:
         "message": "dm",
         "send": "dm",
         "scroll": "feed",
+        "bookmark": "save",
+        "stories": "story",
+        "watch": "story",
+        "view_story": "story",
     }
     action = aliases.get(action, action)
     
@@ -1001,7 +1524,7 @@ def run(action: str = "open", **kwargs) -> dict:
             if action == "search":
                 query = _first_present("query", "q") or _parse_query(user_text)
                 if not query:
-                    return {"status": "fail", "reason": "Search query required"}
+                    return {"status": "fail", "reason": "Search query required, sir. Please specify what to search for."}
                 search_type = kwargs.get("search_type", "all")
                 result = await _instagram_search(page, query=str(query), search_type=str(search_type))
                 await _save_storage_state()
@@ -1021,8 +1544,21 @@ def run(action: str = "open", **kwargs) -> dict:
 
             if action == "comment":
                 text = _first_present("text", "comment") or _parse_quoted(user_text)
+                
+                # Enhanced comment text extraction
+                if not text and user_text:
+                    # Clean up common suffixes
+                    cleaned = re.sub(r"\s+(on\s+)?(insta|instagram)\s*$", "", user_text, flags=re.IGNORECASE)
+                    
+                    # Pattern: "comment <text>" or "add comment <text>"
+                    m = re.search(r"\b(?:comment|add\s+comment)\s+(.+)$", cleaned, re.IGNORECASE)
+                    if m:
+                        text = m.group(1).strip().strip("\"'")
+                        # Additional cleanup
+                        text = re.sub(r"\s*(on\s+)?(insta|instagram)\s*$", "", text, flags=re.IGNORECASE).strip()
+                
                 if not text:
-                    return {"status": "fail", "reason": "Text required"}
+                    return {"status": "fail", "reason": "Comment text required, sir."}
                 post_url = kwargs.get("post_url")
                 result = await _instagram_comment(page, text=str(text), post_url=post_url)
                 await _save_storage_state()
@@ -1047,12 +1583,33 @@ def run(action: str = "open", **kwargs) -> dict:
             if action == "dm":
                 username = _first_present("username", "user", "to") or _parse_username(user_text)
                 message = _first_present("message", "msg") or _parse_quoted(user_text)
+                
+                # Enhanced message extraction for patterns like "dm arjun hi on insta"
                 if not message and user_text:
-                    m = re.search(r"\bmessage\b\s+(.+)$", user_text, re.IGNORECASE)
+                    # Clean up common suffixes from the full text first
+                    cleaned = re.sub(r"\s+(on\s+)?(insta|instagram)\s*$", "", user_text, flags=re.IGNORECASE)
+                    
+                    # Pattern: "dm/message <username> <message>"
+                    m = re.search(r"\b(?:dm|message|send)\s+([A-Za-z0-9._]+)\s+(.+)$", cleaned, re.IGNORECASE)
                     if m:
-                        message = m.group(1).strip().strip("\"'")
+                        if not username:
+                            username = m.group(1)
+                        message = m.group(2).strip().strip("\"'")
+                        # Additional cleanup for any remaining "insta" words
+                        message = re.sub(r"\s*(on\s+)?(insta|instagram)\s*$", "", message, flags=re.IGNORECASE).strip()
+                    else:
+                        # Fallback: try "message <content>" pattern
+                        m = re.search(r"\bmessage\b\s+(.+)$", cleaned, re.IGNORECASE)
+                        if m:
+                            message = m.group(1).strip().strip("\"'")
+                            message = re.sub(r"\s*(on\s+)?(insta|instagram)\s*$", "", message, flags=re.IGNORECASE).strip()
+                
+                # Final cleanup if message still contains stray "insta"
+                if message:
+                    message = re.sub(r"\s*(on\s+)?(insta|instagram)\s*$", "", message, flags=re.IGNORECASE).strip()
+                
                 if not username or not message:
-                    return {"status": "fail", "reason": "Username and message required"}
+                    return {"status": "fail", "reason": "Username and message required, sir."}
                 result = await _instagram_dm(page, username=str(username), message=str(message))
                 await _save_storage_state()
                 return result
@@ -1080,9 +1637,44 @@ def run(action: str = "open", **kwargs) -> dict:
                 await _save_storage_state()
                 return result
 
+            if action == "save":
+                post_url = kwargs.get("post_url")
+                result = await _instagram_save_post(page, post_url=post_url)
+                await _save_storage_state()
+                return result
+
+            if action == "story":
+                username = _first_present("username", "user") or _parse_username(user_text)
+                result = await _instagram_view_story(page, username=username)
+                await _save_storage_state()
+                return result
+
+            if action == "share":
+                username = _first_present("username", "user", "to") or _parse_username(user_text)
+                if not username:
+                    return {"status": "fail", "reason": "Username required to share post, sir."}
+                post_url = kwargs.get("post_url")
+                result = await _instagram_share_post(page, username=str(username), post_url=post_url)
+                await _save_storage_state()
+                return result
+
             return {"status": "fail", "reason": f"Unknown action: {action}"}
 
-        return _sync_wrapper(_dispatch())
+        result = _sync_wrapper(_dispatch())
+        
+        # Track action in memory
+        tracked_entities = {}
+        if "username" in kwargs:
+            tracked_entities["username"] = kwargs["username"]
+        if "query" in kwargs:
+            tracked_entities["query"] = kwargs["query"]
+        if "destination" in kwargs:
+            tracked_entities["destination"] = kwargs["destination"]
+        
+        if result.get("status") == "success":
+            _track_action(action, entities=tracked_entities, result=result)
+        
+        return result
         
     except Exception as e:
         return {"status": "fail", "reason": f"Instagram error: {str(e)}"}

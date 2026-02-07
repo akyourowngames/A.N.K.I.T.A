@@ -1,169 +1,5 @@
 [
   {
-    "id": "ep_fd8ca72d",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T21:29:35.166383"
-  },
-  {
-    "id": "ep_83bfa11f",
-    "intent": "system.gesture_mode",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T21:30:25.176807"
-  },
-  {
-    "id": "ep_8a9908e4",
-    "intent": "system.app.focus",
-    "entities": {
-      "action": "focus",
-      "app": "window"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Focused window",
-          "window_title": "CV-based Window Switching"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T21:55:54.088626"
-  },
-  {
-    "id": "ep_1039e433",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "vs code"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened vs code"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T21:56:55.136649"
-  },
-  {
-    "id": "ep_114cabd2",
-    "intent": "system.app.force_close",
-    "entities": {
-      "action": "close",
-      "app": "vs code",
-      "force": true
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "force closed vs code"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T21:57:40.422630"
-  },
-  {
-    "id": "ep_bd7d8151",
-    "intent": "system.volume.down",
-    "entities": {
-      "action": "down",
-      "step": null
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Volume decreased by 10"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T22:17:14.360490"
-  },
-  {
-    "id": "ep_67322fb1",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-04T22:59:33.410012"
-  },
-  {
-    "id": "ep_5956b54d",
-    "intent": "system.gesture_mode",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T13:15:31.885299"
-  },
-  {
-    "id": "ep_68372943",
-    "intent": "system.gesture_mode",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Gesture mode started in headless mode. Move your head left/right to switch windows. Gesture mode will run until you stop Ankita or restart."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T13:16:31.555001"
-  },
-  {
     "id": "ep_a18ae614",
     "intent": "system.gesture_mode",
     "entities": {},
@@ -2290,5 +2126,201 @@
     },
     "tags": [],
     "time": "2026-02-06T22:49:45.651243"
+  },
+  {
+    "id": "ep_6b72c780",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T23:07:01.587643"
+  },
+  {
+    "id": "ep_0964b6c6",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened notepad"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-06T23:07:05.685956"
+  },
+  {
+    "id": "ep_b425631b",
+    "intent": "instagram.search",
+    "entities": {
+      "user_text": "search virat on insta",
+      "action": "search"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Found 5 results for 'virat', sir.",
+          "results": [
+            {
+              "text": "virat.kohli\nVirat Kohli \u2022 274M followers",
+              "href": "/virat.kohli/"
+            },
+            {
+              "text": "virat.123114\nvirat \u2022 Followed by ohh_akshdeep + 20 more",
+              "href": "/virat.123114/"
+            },
+            {
+              "text": "ansh_3656b\nVirat \u2022 Followed by shaurya.raiii + 15 more",
+              "href": "/ansh_3656b/"
+            },
+            {
+              "text": "virat_mavi4007\nMavi 4007 \u2022 Followed by preet_mavi_7 + 1 more",
+              "href": "/virat_mavi4007/"
+            },
+            {
+              "text": "viratgujjar4007\nVirat Mavi \u2022 Followed by preet_mavi_7 + 1 more",
+              "href": "/viratgujjar4007/"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T12:56:12.408345"
+  },
+  {
+    "id": "ep_60419ad7",
+    "intent": "instagram.dm",
+    "entities": {
+      "user_text": "dm arjun hi insta",
+      "action": "dm"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Message sent to @arjun, sir."
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T12:56:44.398747"
+  },
+  {
+    "id": "ep_f7038e71",
+    "intent": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Instagram opened (logged in)",
+          "logged_in": true
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T13:04:25.342059"
+  },
+  {
+    "id": "ep_0a603832",
+    "intent": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Instagram opened (logged in)",
+          "logged_in": true
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T13:12:56.193699"
+  },
+  {
+    "id": "ep_c3401cb8",
+    "intent": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Instagram opened (logged in)",
+          "logged_in": true
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T13:13:09.518331"
+  },
+  {
+    "id": "ep_65bc481e",
+    "intent": "system.screenshot",
+    "entities": {
+      "action": "full"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Screenshot saved to Pictures/Screenshots",
+          "path": "C:\\Users\\anime\\Pictures\\Screenshots\\screenshot_20260207_131659.png"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T13:17:00.420399"
+  },
+  {
+    "id": "ep_a355c015",
+    "intent": "system.brightness.up",
+    "entities": {
+      "action": "up",
+      "step": null
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Brightness increased to 40"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-07T13:46:51.483128"
   }
 ]

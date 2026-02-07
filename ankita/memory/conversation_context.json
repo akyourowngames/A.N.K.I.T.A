@@ -1,0 +1,497 @@
+[
+  {
+    "timestamp": "2026-02-06T23:07:01.513259",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 21.512746810913086
+    },
+    "topic": "system",
+    "hour": 23,
+    "day_of_week": "Friday"
+  },
+  {
+    "timestamp": "2026-02-06T23:07:05.669365",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 1.995086669921875
+    },
+    "topic": "system",
+    "hour": 23,
+    "day_of_week": "Friday"
+  },
+  {
+    "timestamp": "2026-02-07T12:51:36.910414",
+    "summary": "Instagram: Search",
+    "action": "instagram.search",
+    "entities": {
+      "user_text": "search virat on insta",
+      "action": "search"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 37932.31010437012
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:52:08.998715",
+    "summary": "Instagram: Dm",
+    "action": "instagram.dm",
+    "entities": {
+      "user_text": "dm arjun hi on insta",
+      "action": "dm"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 323.81224632263184
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:52:23.265161",
+    "summary": "Instagram: Dm",
+    "action": "instagram.dm",
+    "entities": {
+      "user_text": "dm arjun hi on insta",
+      "action": "dm"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 307.3899745941162
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:56:11.921634",
+    "summary": "Instagram: search",
+    "action": "instagram.search",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Found 5 results for 'virat', sir.",
+      "results": [
+        {
+          "text": "virat.kohli\nVirat Kohli • 274M followers",
+          "href": "/virat.kohli/"
+        },
+        {
+          "text": "virat.123114\nvirat • Followed by ohh_akshdeep + 20 more",
+          "href": "/virat.123114/"
+        },
+        {
+          "text": "ansh_3656b\nVirat • Followed by shaurya.raiii + 15 more",
+          "href": "/ansh_3656b/"
+        },
+        {
+          "text": "virat_mavi4007\nMavi 4007 • Followed by preet_mavi_7 + 1 more",
+          "href": "/virat_mavi4007/"
+        },
+        {
+          "text": "viratgujjar4007\nVirat Mavi • Followed by preet_mavi_7 + 1 more",
+          "href": "/viratgujjar4007/"
+        }
+      ]
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:56:11.976482",
+    "summary": "Instagram: Search",
+    "action": "instagram.search",
+    "entities": {
+      "user_text": "search virat on insta",
+      "action": "search"
+    },
+    "result": {
+      "status": "success",
+      "message": "Found 5 results for 'virat', sir.",
+      "duration_ms": 25480.302095413208
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:56:44.166429",
+    "summary": "Instagram: dm",
+    "action": "instagram.dm",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Message sent to @arjun, sir."
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T12:56:44.179398",
+    "summary": "Instagram: Dm",
+    "action": "instagram.dm",
+    "entities": {
+      "user_text": "dm arjun hi insta",
+      "action": "dm"
+    },
+    "result": {
+      "status": "success",
+      "message": "Message sent to @arjun, sir.",
+      "duration_ms": 19456.796884536743
+    },
+    "topic": "social",
+    "hour": 12,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:04:25.153316",
+    "summary": "Instagram: open",
+    "action": "instagram.open",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "logged_in": true
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:04:25.177254",
+    "summary": "Instagram: Open",
+    "action": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "duration_ms": 11417.88649559021
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:12:56.070721",
+    "summary": "Instagram: open",
+    "action": "instagram.open",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "logged_in": true
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:12:56.082689",
+    "summary": "Instagram: Open",
+    "action": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "duration_ms": 21714.025020599365
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:13:09.401859",
+    "summary": "Instagram: open",
+    "action": "instagram.open",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "logged_in": true
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:13:09.414826",
+    "summary": "Instagram: Open",
+    "action": "instagram.open",
+    "entities": {
+      "user_text": "save post on insta",
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "duration_ms": 9411.8070602417
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:13:22.016272",
+    "summary": "Instagram: Comment",
+    "action": "instagram.comment",
+    "entities": {
+      "user_text": "comment on this post on insta",
+      "action": "comment"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 2701.709985733032
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:17:00.293735",
+    "summary": "System: screenshot screenshot",
+    "action": "system.screenshot",
+    "entities": {
+      "action": "full"
+    },
+    "result": {
+      "status": "success",
+      "message": "Screenshot saved to Pictures/Screenshots",
+      "duration_ms": 3258.4989070892334
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:40:48.372425",
+    "summary": "YouTube: Open",
+    "action": "youtube.open",
+    "entities": {
+      "action": "open"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 51141.91389083862
+    },
+    "topic": "video",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:40:54.925072",
+    "summary": "YouTube: Played 'trending'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "trending",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 6501.837491989136
+    },
+    "topic": "video",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:46:51.171515",
+    "summary": "System: Brightness up",
+    "action": "system.brightness.up",
+    "entities": {
+      "action": "up",
+      "step": null
+    },
+    "result": {
+      "status": "success",
+      "message": "Brightness increased to 40",
+      "duration_ms": 7245.720624923706
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:50:13.010751",
+    "summary": "Instagram: Close",
+    "action": "instagram.close",
+    "entities": {
+      "action": "close"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 543.1485176086426
+    },
+    "topic": "social",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T13:57:42.019367",
+    "summary": "YouTube: Played 'music'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "music",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 29119.01831626892
+    },
+    "topic": "video",
+    "hour": 13,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:05:07.418841",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 536.4854335784912
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:06:59.902897",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 557.0366382598877
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:08:40.673357",
+    "summary": "YouTube: Played 'relaxing music'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "relaxing music",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 39171.93603515625
+    },
+    "topic": "video",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:14:14.307234",
+    "summary": "Web: Searched 'home remedies'",
+    "action": "web.search",
+    "entities": {
+      "query": "home remedies",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 519.5984840393066
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:15:05.177848",
+    "summary": "Web: Searched 'online shopping'",
+    "action": "web.search",
+    "entities": {
+      "query": "online shopping",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 538.649320602417
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:24:25.382684",
+    "summary": "Web: Searched 'home remedies'",
+    "action": "web.search",
+    "entities": {
+      "query": "home remedies",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 504.2269229888916
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-07T14:25:58.758458",
+    "summary": "Web: Searched 'food delivery near me'",
+    "action": "web.search",
+    "entities": {
+      "query": "food delivery near me",
+      "max_results": ""
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 495.84293365478516
+    },
+    "topic": "search",
+    "hour": 14,
+    "day_of_week": "Saturday"
+  }
+]
