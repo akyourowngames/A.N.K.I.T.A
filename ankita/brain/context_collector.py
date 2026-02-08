@@ -3,6 +3,7 @@ Context Collector - Gathers rich context for learning system
 """
 import os
 import psutil
+import pygetwindow as gw
 from datetime import datetime
 
 
@@ -16,6 +17,29 @@ def get_current_context(situation=None, confidence=None, recent_actions=None):
     now = datetime.now()
     hour = now.hour
     
+    # Get active window info
+    active_window_title = "Unknown"
+    active_window_process = "Unknown"
+    try:
+        active_window = gw.getActiveWindow()
+        if active_window:
+            active_window_title = active_window.title
+
+        # Best-effort: resolve the foreground window process (Windows)
+        try:
+            import win32gui  # type: ignore
+            import win32process  # type: ignore
+            hwnd = win32gui.GetForegroundWindow()
+            if hwnd:
+                _, pid = win32process.GetWindowThreadProcessId(hwnd)
+                if pid:
+                    active_window_process = psutil.Process(pid).name()
+        except Exception:
+            # Keep "Unknown" if pywin32 isn't installed
+            pass
+    except Exception:
+        pass
+
     # Determine time of day
     if 5 <= hour < 12:
         time_of_day = "morning"
@@ -59,6 +83,9 @@ def get_current_context(situation=None, confidence=None, recent_actions=None):
         "battery_percent": battery_percent,
         "is_charging": is_charging,
         "memory_percent": memory_percent,
+        "cpu_percent": psutil.cpu_percent(),
+        "active_window_title": active_window_title,
+        "active_window_process": active_window_process,
         
         # User location (from env)
         "user_location": os.getenv("USER_CITY", ""),

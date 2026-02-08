@@ -129,13 +129,22 @@ _migrate_if_needed()
 def add_conversation(role: str, text: str):
     """Add a conversation turn (user or ankita)."""
     mem = load()
-    mem["conversation"].append({
+    entry = {
         "role": role,
         "text": text,
         "time": datetime.now().isoformat()
-    })
+    }
+    mem["conversation"].append(entry)
     mem["conversation"] = mem["conversation"][-15:]  # Keep last 15 turns
     save(mem)
+    
+    # NEW: Archive to LangChain Unlimited Memory
+    try:
+        from memory.langchain_memory import get_langchain_memory
+        lc_mem = get_langchain_memory()
+        lc_mem.add_memory(f"{role.upper()}: {text}", metadata=entry)
+    except Exception as e:
+        print(f"[MemoryManager] LangChain archival failed: {e}")
 
 def get_conversation():
     """Get recent conversation history."""
@@ -198,6 +207,15 @@ def add_episode(intent: str, entities: dict, result: dict, tags: list = None):
     mem["episodes"].append(episode)
     mem["episodes"] = mem["episodes"][-100:]  # Keep last 100 episodes
     save(mem)
+
+    # UNIFIED: Archive to LangChain
+    try:
+        from memory.langchain_memory import get_langchain_memory
+        lc_mem = get_langchain_memory()
+        summary = f"ACTION: {intent} with {entities}. Result: {result.get('status', 'unknown')}"
+        lc_mem.add_memory(summary, metadata=episode)
+    except Exception as e:
+        print(f"[MemoryManager] Episode archival failed: {e}")
     
     return episode
 
@@ -297,22 +315,22 @@ def get_all_prefs() -> dict:
 def add_note(filename: str, content: str = ""):
     """Track a note file with content for semantic indexing."""
     mem = load()
-    mem["notes"].append({
+    entry = {
         "file": filename,
         "content_preview": content[:200] if content else "",
         "time": datetime.now().isoformat()
-    })
+    }
+    mem["notes"].append(entry)
     save(mem)
     
-    # Also index semantically if content provided
+    # UNIFIED: Archive full note content to LangChain
     if content:
-        from memory.semantic import add_semantic
-        add_semantic(
-            text=content,
-            source="note",
-            ref=filename,
-            tags=["notes", "writing"]
-        )
+        try:
+            from memory.langchain_memory import get_langchain_memory
+            lc_mem = get_langchain_memory()
+            lc_mem.add_memory(f"NOTE ({filename}): {content}", metadata=entry)
+        except Exception as e:
+            print(f"[MemoryManager] Note archival failed: {e}")
 
 
 def last_note():

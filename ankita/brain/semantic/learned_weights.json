@@ -21,5 +21,7 @@
   "coding:system.app.open": 1.0,
   "coding:youtube.play": 1.0,
   "weather_check:web.search": 1.1,
-  "morning:system.brightness.up": 0.8
+  "morning:system.brightness.up": 0.8,
+  "tech:youtube.play": 0.9,
+  "angry:youtube.play": 0.8
 }

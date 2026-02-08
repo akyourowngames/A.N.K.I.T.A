@@ -97,14 +97,39 @@ class HybridIntelligence:
                 return {
                     **knn_pred,
                     'source': 'knn',
-                    'ask_user': False
+                    'ask_user': False,
+                    'params': knn_pred.get('params', {})
                 }
             elif knn_pred:
                 predictions.append(knn_pred)
         except Exception as e:
             print(f"[HybridAI] k-NN error: {e}")
-        
-        # Layer 5: Active Learning (Ask user when uncertain)
+
+        # Layer 5: Consensus / Voting Layer (Polish v4.2)
+        if len(predictions) >= 2:
+            # Count occurrences of actions
+            action_counts = {}
+            for p in predictions:
+                a = p['action']
+                action_counts[a] = action_counts.get(a, 0) + 1
+            
+            # Find majority
+            sorted_actions = sorted(action_counts.items(), key=lambda x: x[1], reverse=True)
+            if sorted_actions[0][1] >= 2:
+                best_action = sorted_actions[0][0]
+                # Combine confidence
+                total_conf = sum(p['confidence'] for p in predictions if p['action'] == best_action) / action_counts[best_action]
+                print(f"[HybridAI] Consensus reached: {best_action} ({total_conf:.2%})")
+                return {
+                    'action': best_action,
+                    'confidence': total_conf,
+                    'source': 'consensus',
+                    'reason': f"Consensus from {action_counts[best_action]} learners",
+                    'params': {},
+                    'ask_user': False
+                }
+
+        # Layer 6: Active Learning (Last resort)
         if predictions:
             should_ask, top_options = self.active_learner.should_query_user(predictions)
             

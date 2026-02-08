@@ -4,5 +4,10 @@
     "type": "daily",
     "text": "play lofi beats on youtube",
     "time": "07:00"
+  },
+  {
+    "id": "job_58b4392b",
+    "type": "daily",
+    "text": "set reminder to call"
   }
 ]

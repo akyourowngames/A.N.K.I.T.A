@@ -4,17 +4,40 @@ import os
 import tempfile
 import subprocess
 import random
+import time
 
-# Natural, expressive voices (female, Indian English)
-VOICES = [
-    "en-IN-NeerjaNeural",      # Default - warm, friendly
-    "en-IN-NeerjaExpressiveNeural",  # More expressive
-]
-DEFAULT_VOICE = "en-IN-NeerjaExpressiveNeural"
+# Global variable to track current player process for barge-in
+_current_player = None
+
+# Natural, expressive voices
+VOICES = {
+    "en": "en-IN-NeerjaExpressiveNeural",
+    "hi": "hi-IN-SwaraNeural",
+}
+DEFAULT_VOICE_EN = "en-IN-NeerjaExpressiveNeural"
+DEFAULT_VOICE_HI = "hi-IN-SwaraNeural"
 
 # Prosody settings for natural speech
 RATE = "+5%"      # Slightly faster (more natural)
 PITCH = "+0Hz"    # Natural pitch
+
+
+def _detect_language(text: str) -> str:
+    """Detect if the text is primarily Hindi or English."""
+    # Check for Devanagari script (Hindi)
+    if any("\u0900" <= char <= "\u097f" for char in text):
+        return "hi"
+    
+    # Common Hindi words written in Roman script
+    hindi_roman_keywords = ["hai", "hai", "karo", "kijiye", "shukriya", "dhanyawad", "namaste", "kaise"]
+    text_lower = text.lower()
+    if any(word in text_lower for word in hindi_roman_keywords):
+        # This is a bit naive but works for mixed Roman script
+        # However, it might misidentify English. 
+        # For now, we prioritize Devanagari detection.
+        pass
+
+    return "en"
 
 
 def _add_natural_pauses(text: str) -> str:
@@ -29,7 +52,9 @@ def _add_natural_pauses(text: str) -> str:
 
 async def _speak_async(text: str, path: str, voice: str = None):
     """Generate speech with natural prosody."""
-    voice = voice or DEFAULT_VOICE
+    if not voice:
+        lang = _detect_language(text)
+        voice = VOICES.get(lang, DEFAULT_VOICE_EN)
     
     # Make text more natural
     text = _add_natural_pauses(text)
@@ -43,13 +68,46 @@ async def _speak_async(text: str, path: str, voice: str = None):
     await communicate.save(path)
 
 
+def stop_speaking():
+    """Stop the current TTS playback (Barge-in)."""
+    global _current_player
+    if _current_player:
+        try:
+            print("[TTS] Interruption detected. Stopping speech.")
+            _current_player.terminate()
+            # Also kill any powershell processes started by the tts
+            subprocess.run(["taskkill", "/F", "/IM", "powershell.exe", "/T"], capture_output=True)
+            _current_player = None
+        except Exception as e:
+            print(f"[TTS] Error stopping speech: {e}")
+
+
 def speak(text: str, voice: str = None):
     """Generate speech and play it directly (no window, no popup)."""
+    global _current_player
+    
+    # Ensure any previous speech is stopped
+    stop_speaking()
+    
     temp_dir = tempfile.gettempdir()
-    mp3_file = os.path.join(temp_dir, "ankita_speech.mp3")
+    # Use unique filename to avoid file lock issues
+    unique_id = int(time.time() * 1000)
+    mp3_file = os.path.join(temp_dir, f"ankita_speech_{unique_id}.mp3")
     
     # Generate audio with natural prosody
-    asyncio.run(_speak_async(text, mp3_file, voice))
+    # Fix for asyncio.run() in running event loop
+    try:
+        loop = asyncio.get_running_loop()
+        # We're in an async context, use create_task
+        import threading
+        def run_in_thread():
+            asyncio.run(_speak_async(text, mp3_file, voice))
+        thread = threading.Thread(target=run_in_thread)
+        thread.start()
+        thread.join()  # Wait for completion
+    except RuntimeError:
+        # No running loop, safe to use asyncio.run()
+        asyncio.run(_speak_async(text, mp3_file, voice))
     
     # Play using Windows Media Player COM object (silent, no window)
     ps_cmd = f'''
@@ -63,7 +121,23 @@ def speak(text: str, voice: str = None):
     Start-Sleep -Milliseconds $duration
     $player.Close()
     '''
-    subprocess.run(["powershell", "-Command", ps_cmd], capture_output=True)
+    
+    _current_player = subprocess.Popen(["powershell", "-Command", ps_cmd], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    
+    # Wait for the process to finish if not interrupted
+    try:
+        _current_player.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        _current_player.terminate()
+    finally:
+        _current_player = None
+        
+    # Cleanup temp file
+    try:
+        if os.path.exists(mp3_file):
+            os.remove(mp3_file)
+    except:
+        pass  # Ignore cleanup errors
 
 
 def speak_emotion(text: str, emotion: str = "friendly"):

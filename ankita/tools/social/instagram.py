@@ -12,6 +12,7 @@ Capabilities:
 - Search users/hashtags
 - Post stories/photos
 - View notifications
+- Post to feed (photos/videos)
 
 Uses Playwright for web automation with fallback to accessibility APIs.
 """
@@ -1314,6 +1315,146 @@ async def _instagram_scroll_feed(page, count: int = 5):
     }
 
 
+async def _instagram_post(page, file_path: str, caption: str = ""):
+    """Post a photo/video to Instagram feed."""
+    if not os.path.exists(file_path):
+        return {"status": "fail", "reason": f"File not found: {file_path}"}
+    
+    try:
+        # Navigate home
+        await page.goto(INSTAGRAM_URL, wait_until="domcontentloaded")
+        await page.wait_for_timeout(3000)
+        
+        # Find Create button (+)
+        create_selectors = [
+            'svg[aria-label="New post"]',
+            'svg[aria-label="Create"]',
+            '[aria-label="New post"]',
+            '[aria-label="Create"]',
+            'div[role="button"]:has(svg[aria-label="Create"])',
+            'div[role="button"]:has(svg[aria-label="New post"])',
+            'a[href="#"] svg',
+            'div[role="button"]:has-text("Create")',
+            'span:has-text("Create")',
+            'text=Create'
+        ]
+        
+        create_btn = None
+        for selector in create_selectors:
+            try:
+                create_btn = await page.query_selector(selector)
+                if create_btn and await create_btn.is_visible():
+                    break
+            except: continue
+        
+        if not create_btn:
+            # Try finding the "Create" link specifically in the sidebar
+            create_btn = await page.query_selector('a[href*="create"]')
+        
+        if not create_btn:
+            # Last ditch: Look for the + icon in the bottom bar (mobile/small view)
+            create_btn = await page.query_selector('svg[aria-label="New Post"]')
+
+        if not create_btn:
+            return {"status": "fail", "reason": "Create button (+) not found"}
+        
+        # Click create button
+        try:
+            await create_btn.click()
+        except:
+            parent = await create_btn.query_selector("xpath=ancestor::a | ancestor::div[@role='button']")
+            if parent:
+                await parent.click()
+            else:
+                await create_btn.click()
+        
+        await page.wait_for_timeout(3000)
+        
+        # Find file input or "Select from computer"
+        file_input = await page.query_selector('input[type="file"]')
+        if not file_input:
+            # Try finding ANY button in the modal that looks like an upload button
+            upload_selectors = [
+                'button:has-text("Select from computer")',
+                'button:has-text("Select From Computer")',
+                'div[role="button"]:has-text("Select")',
+                'text=Select from computer'
+            ]
+            
+            select_btn = None
+            for selector in upload_selectors:
+                try:
+                    select_btn = await page.query_selector(selector)
+                    if select_btn and await select_btn.is_visible():
+                        break
+                except: continue
+            
+            if select_btn:
+                await select_btn.click()
+                await page.wait_for_timeout(2000)
+            else:
+                # INTEGRATION: Use the new Vision OCR tool to find the button visually
+                print("[Instagram] Select button not found via DOM. Triggering Vision OCR...")
+                try:
+                    from tools.vision.ocr import run as ocr_run
+                    # A.N.K.I.T.A 'sees' the button!
+                    ocr_res = ocr_run(action="click_text", target_text="Select from computer")
+                    if ocr_res.get("status") != "success":
+                        # Try just "Select"
+                        ocr_res = ocr_run(action="click_text", target_text="Select")
+                    
+                    if ocr_res.get("status") == "success":
+                        print(f"[Instagram] Vision OCR success: {ocr_res['message']}")
+                        await page.wait_for_timeout(2000)
+                    else:
+                        return {"status": "fail", "reason": "Vision OCR could not find upload button"}
+                except Exception as ve:
+                    return {"status": "fail", "reason": f"Vision OCR integration failed: {ve}"}
+            
+            # Type path via OS
+            import pyautogui
+            pyautogui.write(file_path)
+            pyautogui.press('enter')
+            await page.wait_for_timeout(4000)
+        else:
+            await file_input.set_input_files(file_path)
+            await page.wait_for_timeout(3000)
+        
+        # Click 'Next' (multiple times if needed)
+        for _ in range(2):
+            next_btn = await page.query_selector('button:has-text("Next")')
+            if next_btn and await next_btn.is_visible():
+                await next_btn.click()
+                await page.wait_for_timeout(2000)
+        
+        # Add caption
+        if caption:
+            caption_input = await page.query_selector('div[aria-label*="Write a caption"]')
+            if caption_input:
+                await caption_input.click()
+                await page.keyboard.type(caption, delay=30)
+                await page.wait_for_timeout(1000)
+        
+        # Click 'Share'
+        share_btn = await page.query_selector('button:has-text("Share")')
+        if share_btn:
+            await share_btn.click()
+            await page.wait_for_timeout(5000)
+            return {"status": "success", "message": "Post shared successfully!"}
+        
+        return {"status": "fail", "reason": "Share button not found"}
+            
+    except Exception as e:
+        return {"status": "fail", "reason": f"Post error: {str(e)}"}
+
+
+async def _instagram_screenshot(page):
+    """Take a screenshot for debugging."""
+    path = DATA_DIR / f"screenshot_{int(time.time())}.png"
+    await page.screenshot(path=str(path))
+    return {"status": "success", "message": f"Screenshot saved to {path}", "path": str(path)}
+
+
 async def _instagram_get_notifications(page):
     """Get recent notifications."""
     await page.goto(f"{INSTAGRAM_URL}/notifications/", wait_until="domcontentloaded")
@@ -1379,6 +1520,8 @@ def run(action: str = "open", **kwargs) -> dict:
         - save: Save/bookmark current post
         - story: View stories (optional: username for specific user)
         - share: Share current post to a user (requires username)
+        - post: Post photo/video to feed (requires file_path, optional: caption)
+        - screenshot: Take a screenshot of the current page for debugging
         - close: Close browser
     
     Examples:
@@ -1656,6 +1799,19 @@ def run(action: str = "open", **kwargs) -> dict:
                 post_url = kwargs.get("post_url")
                 result = await _instagram_share_post(page, username=str(username), post_url=post_url)
                 await _save_storage_state()
+                return result
+
+            if action == "post":
+                file_path = kwargs.get("file_path")
+                caption = kwargs.get("caption", "")
+                if not file_path:
+                    return {"status": "fail", "reason": "file_path is required for posting"}
+                result = await _instagram_post(page, file_path=file_path, caption=caption)
+                await _save_storage_state()
+                return result
+
+            if action == "screenshot":
+                result = await _instagram_screenshot(page)
                 return result
 
             return {"status": "fail", "reason": f"Unknown action: {action}"}

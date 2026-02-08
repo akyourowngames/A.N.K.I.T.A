@@ -104,9 +104,46 @@
       {
         "tool": "web.search",
         "args_from": [
-          "query",
-          "max_results"
+          "query"
         ]
+      }
+    ]
+  },
+  "openclaw.web_search": {
+    "steps": [
+      {
+        "tool": "openclaw.web_search",
+        "args": { "action": "web_search" },
+        "args_from": "query"
+      }
+    ]
+  },
+  "openclaw.send_message": {
+    "steps": [
+      {
+        "tool": "openclaw.send_message",
+        "args": { "action": "send_message" },
+        "args_from": [
+          "message",
+          "target"
+        ]
+      }
+    ]
+  },
+  "openclaw.get_weather": {
+    "steps": [
+      {
+        "tool": "openclaw.get_weather",
+        "args": { "action": "get_weather" },
+        "args_from": "location"
+      }
+    ]
+  },
+  "openclaw.get_status": {
+    "steps": [
+      {
+        "tool": "openclaw.get_status",
+        "args": { "action": "get_status" }
       }
     ]
   },
@@ -480,6 +517,30 @@
       }
     ]
   },
+  "system.processes.status": {
+    "steps": [
+      {
+        "tool": "system.processes.kill",
+        "args": { "action": "status" }
+      }
+    ]
+  },
+  "system.processes.cpu": {
+    "steps": [
+      {
+        "tool": "system.processes.kill",
+        "args": { "action": "cpu" }
+      }
+    ]
+  },
+  "system.processes.memory": {
+    "steps": [
+      {
+        "tool": "system.processes.kill",
+        "args": { "action": "memory" }
+      }
+    ]
+  },
   "system.processes.manager": {
     "steps": [
       {
@@ -721,6 +782,152 @@
       }
     ]
   },
+  "instagram.post": {
+    "steps": [
+      {
+        "tool": "instagram.post",
+        "args_from": ["file_path", "caption"],
+        "args": {
+          "action": "post"
+        }
+      }
+    ]
+  },
+  "instagram.screenshot": {
+    "steps": [
+      {
+        "tool": "instagram.screenshot",
+        "args": {
+          "action": "screenshot"
+        }
+      }
+    ]
+  },
+  "git.ghost.check": {
+    "steps": [
+      {
+        "tool": "git.ghost.check"
+      }
+    ]
+  },
+  "git.ghost.status": {
+    "steps": [
+      {
+        "tool": "git.ghost.status",
+        "args": { "action": "status" }
+      }
+    ]
+  },
+  "whatsapp.open": {
+    "steps": [
+      {
+        "tool": "whatsapp.open",
+        "args": { "action": "open" }
+      }
+    ]
+  },
+  "whatsapp.send": {
+    "steps": [
+      {
+        "tool": "whatsapp.send",
+        "args_from": ["contact", "message"],
+        "args": { "action": "send" }
+      }
+    ]
+  },
+  "whatsapp.notifications": {
+    "steps": [
+      {
+        "tool": "whatsapp.notifications",
+        "args": { "action": "notifications" }
+      }
+    ]
+  },
+  "whatsapp.answer": {
+    "steps": [
+      {
+        "tool": "whatsapp.answer",
+        "args": { "action": "answer" }
+      }
+    ]
+  },
+  "whatsapp.discuss": {
+    "steps": [
+      {
+        "tool": "whatsapp.discuss",
+        "args": { "action": "discuss" },
+        "args_from": ["contact", "topic"]
+      }
+    ]
+  },
+  "whatsapp.end_call": {
+    "steps": [
+      {
+        "tool": "whatsapp.end_call",
+        "args": { "action": "end" }
+      }
+    ]
+  },
+  "gmail.open": {
+    "steps": [
+      {
+        "tool": "gmail.open",
+        "args": { "action": "open" }
+      }
+    ]
+  },
+  "gmail.send": {
+    "steps": [
+      {
+        "tool": "gmail.send",
+        "args_from": ["to", "subject", "body"],
+        "args": { "action": "send" }
+      }
+    ]
+  },
+  "gmail.inbox": {
+    "steps": [
+      {
+        "tool": "gmail.inbox",
+        "args": { "action": "inbox" }
+      }
+    ]
+  },
+  "vision.ocr.read": {
+    "steps": [
+      {
+        "tool": "vision.ocr.read",
+        "args": { "action": "read_screen" }
+      }
+    ]
+  },
+  "vision.ocr.click": {
+    "steps": [
+      {
+        "tool": "vision.ocr.click",
+        "args_from": "target_text",
+        "args": { "action": "click_text" }
+      }
+    ]
+  },
+  "vision.ocr.find": {
+    "steps": [
+      {
+        "tool": "vision.ocr.click",
+        "args_from": "target_text",
+        "args": { "action": "find_text" }
+      }
+    ]
+  },
+  "vision.ocr.scan_region": {
+    "steps": [
+      {
+        "tool": "vision.ocr.click",
+        "args_from": "region",
+        "args": { "action": "scan_region" }
+      }
+    ]
+  },
   "datetime.now": {
     "steps": [
       {
@@ -832,6 +1039,115 @@
     "steps": [
       {
         "tool": "calendar.open"
+      }
+    ]
+  },
+  "calendar.today": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "today" }
+      }
+    ]
+  },
+  "calendar.week": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "week" }
+      }
+    ]
+  },
+  "calendar.month": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "month" }
+      }
+    ]
+  },
+  "calendar.add": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args_from": ["title", "date", "time", "duration"],
+        "args": { "action": "add" }
+      }
+    ]
+  },
+  "calendar.list": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "list" }
+      }
+    ]
+  },
+  "calendar.upcoming": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "upcoming" }
+      }
+    ]
+  },
+  "calendar.delete": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args_from": ["event_id", "title"],
+        "args": { "action": "delete" }
+      }
+    ]
+  },
+  "calendar.templates": {
+    "steps": [
+      {
+        "tool": "calendar.open",
+        "args": { "action": "templates" }
+      }
+    ]
+  },
+  "food.delivery": {
+    "steps": [
+      {
+        "tool": "food.delivery",
+        "args_from": ["cuisine", "restaurant", "service"]
+      }
+    ]
+  },
+  "reminder.set": {
+    "steps": [
+      {
+        "tool": "reminder.set",
+        "args_from": ["title", "time", "date"],
+        "args": { "action": "add" }
+      }
+    ]
+  },
+  "reminder.list": {
+    "steps": [
+      {
+        "tool": "reminder.set",
+        "args": { "action": "list" }
+      }
+    ]
+  },
+  "reminder.delete": {
+    "steps": [
+      {
+        "tool": "reminder.set",
+        "args_from": "title",
+        "args": { "action": "delete" }
+      }
+    ]
+  },
+  "reminder.complete": {
+    "steps": [
+      {
+        "tool": "reminder.set",
+        "args_from": "title",
+        "args": { "action": "complete" }
       }
     ]
   }

@@ -183,6 +183,30 @@ def run(query: str = "", max_results: int = 5, **kwargs):
     if not q:
         return {"status": "fail", "reason": "missing_query"}
 
+    # --- OpenClaw Priority Search ---
+    # Try to use OpenClaw's Brave search first if it's available
+    try:
+        # Check if bridge is online
+        bridge_resp = requests.get("http://127.0.0.1:5050/health", timeout=1)
+        if bridge_resp.ok:
+            print(f"[WebSearch] OpenClaw detected. Routing query: {q}")
+            # The bridge currently handles web_search async or returns a placeholder.
+            # Let's try to call the proxy endpoint we created.
+            proxy_resp = requests.post(
+                "http://127.0.0.1:5050/openclaw/web_search",
+                json={"query": q, "count": max_results},
+                timeout=5
+            )
+            if proxy_resp.ok:
+                proxy_data = proxy_resp.json()
+                # If the bridge returned actual results, return them
+                if proxy_data.get("results"):
+                    return {"status": "success", "query": q, "results": proxy_data["results"]}
+                # Otherwise, if it just acknowledged, we might want to continue to local fallbacks
+                # but for now let's trust the bridge if it's there.
+    except Exception:
+        pass
+
     # Handle empty string max_results from semantic control
     if max_results == '' or max_results is None:
         max_results = 5
@@ -250,6 +274,34 @@ def run(query: str = "", max_results: int = 5, **kwargs):
     except Exception:
         pass
 
+    try:
+        # Better fallback: DuckDuckGo 'HTML' search (naive but effective)
+        headers = {"User-Agent": "Mozilla/5.0"}
+        r = requests.get(
+            f"https://duckduckgo.com/html/?q={urllib.parse.quote(q)}",
+            headers=headers,
+            timeout=8
+        )
+        if r.ok:
+            from bs4 import BeautifulSoup
+            soup = BeautifulSoup(r.text, "html.parser")
+            results = []
+            for item in soup.find_all("div", class_="result")[:int(max_results)]:
+                title_tag = item.find("a", class_="result__a")
+                snippet_tag = item.find("a", class_="result__snippet")
+                if title_tag:
+                    results.append({
+                        "title": title_tag.get_text().strip(),
+                        "snippet": snippet_tag.get_text().strip() if snippet_tag else "",
+                        "url": title_tag.get("href", ""),
+                        "source": "DuckDuckGo"
+                    })
+            if results:
+                return {"status": "success", "query": q, "results": results}
+    except Exception as e:
+        print(f"[WebSearch] Scraper fallback failed: {e}")
+
+    # Fallback to the original API method if scraper fails
     try:
         r = requests.get(
             "https://api.duckduckgo.com/",

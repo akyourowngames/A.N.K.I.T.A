@@ -37,19 +37,27 @@ class FoodDelivery(BaseTool):
         """
         try:
             # Build search query
-            query = restaurant or cuisine or "food"
+            query = restaurant or cuisine or params.get('food') or "food"
+            
+            # Validate service
+            service_lower = service.lower() if service else 'ubereats'
+            if service_lower not in self.services:
+                available = ', '.join(self.services.keys())
+                return self._error(
+                    f"Unknown service '{service}'. Available: {available}"
+                )
             
             # Get service URL
-            base_url = self.services.get(service.lower(), self.services['ubereats'])
+            base_url = self.services[service_lower]
             url = f"{base_url}{query.replace(' ', '+')}"
             
             # Open in browser
             webbrowser.open(url)
             
             return self._success(
-                f"Opened {service} for '{query}'",
+                f"Opened {service_lower.title()} for '{query}'",
                 {
-                    'service': service,
+                    'service': service_lower,
                     'query': query,
                     'url': url
                 }

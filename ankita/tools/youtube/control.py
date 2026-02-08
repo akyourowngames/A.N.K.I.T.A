@@ -101,6 +101,8 @@ def run(action: str = "pause", **kwargs) -> dict:
         - speed_down: Decrease playback speed
         - liked: Go to liked videos
         - watch_later: Go to watch later
+        - transcript: Extract transcript from current video
+        - adblock: Inject ad-blocking script
     """
     action = (action or "pause").strip().lower().replace(" ", "_")
     
@@ -322,6 +324,65 @@ def run(action: str = "pause", **kwargs) -> dict:
                 page.goto("https://www.youtube.com/shorts")
                 time.sleep(2)
                 return _return_with_track("shorts", {"status": "success", "message": "Opened YouTube Shorts"})
+            
+            if normalized_action == "transcript":
+                if not _is_video_playing(page):
+                    return {"status": "skip", "message": "No video to extract transcript from"}
+                
+                try:
+                    # Click 'More' in description
+                    more_btn = page.locator("#description-inner #expand")
+                    if more_btn.is_visible(timeout=2000):
+                        more_btn.click()
+                        time.sleep(0.5)
+                    
+                    # Look for 'Show transcript' button
+                    transcript_btn = page.locator("button:has-text('Show transcript')").first
+                    if not transcript_btn.is_visible(timeout=2000):
+                        # Try the 3-dot menu if not in description
+                        page.locator("#button[aria-label='More actions']").first.click()
+                        time.sleep(0.5)
+                        transcript_btn = page.locator("ytd-menu-service-item-renderer:has-text('Show transcript')").first
+                    
+                    if transcript_btn.is_visible(timeout=2000):
+                        transcript_btn.click()
+                        time.sleep(2)
+                        
+                        # Extract segments
+                        segments = page.locator("ytd-transcript-segment-renderer")
+                        count = segments.count()
+                        
+                        if count > 0:
+                            text_lines = []
+                            for i in range(min(count, 100)): # Limit to first 100 segments
+                                segment = segments.nth(i)
+                                timestamp = segment.locator(".segment-timestamp").inner_text().strip()
+                                content = segment.locator(".segment-text").inner_text().strip()
+                                text_lines.append(f"[{timestamp}] {content}")
+                            
+                            full_transcript = "\n".join(text_lines)
+                            return {"status": "success", "message": "Transcript extracted", "transcript": full_transcript}
+                        
+                    return {"status": "fail", "reason": "Transcript button found but no segments loaded"}
+                except Exception as e:
+                    return {"status": "fail", "reason": f"Failed to extract transcript: {e}"}
+            
+            if normalized_action == "adblock":
+                # JavaScript to remove ads and fast-forward unskippable ones
+                ad_block_script = """
+                const skipAds = () => {
+                    const video = document.querySelector('video');
+                    const ad = document.querySelector('.ad-showing');
+                    if (ad && video) {
+                        video.currentTime = video.duration || 999;
+                    }
+                    const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern');
+                    if (skipBtn) skipBtn.click();
+                };
+                setInterval(skipAds, 1000);
+                """
+                page.evaluate(ad_block_script)
+                return {"status": "success", "message": "Ad-blocker injected and active"}
             
             return {"status": "fail", "reason": f"Unknown action: {normalized_action}"}
             

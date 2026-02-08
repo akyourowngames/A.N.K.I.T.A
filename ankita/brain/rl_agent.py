@@ -126,7 +126,7 @@ class QLearningAgent:
         self.db.conn.commit()
         self.total_updates += 1
         
-        print(f"[RL] Q({state_hash[:8]}, {action}): {old_q:.3f} → {new_q:.3f} (r={reward})")
+        print(f"[RL] Q({state_hash[:8]}, {action}): {old_q:.3f} -> {new_q:.3f} (r={reward})")
     
     def learn_from_outcome(self, context, situation, action, success, next_context=None):
         """Learn from action outcome."""

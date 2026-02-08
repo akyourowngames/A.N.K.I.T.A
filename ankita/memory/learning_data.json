@@ -1,20 +1,32 @@
 {
   "corrections": [],
   "action_frequency": {
-    "system.app.open": 3,
+    "system.app.open": 12,
     "instagram.search": 3,
     "instagram.dm": 4,
-    "instagram.open": 6,
+    "instagram.open": 7,
     "instagram.comment": 1,
     "system.screenshot": 1,
     "youtube.open": 1,
-    "youtube.play": 6,
+    "youtube.play": 9,
     "system.brightness.up": 1,
     "instagram.close": 1,
-    "web.search": 22,
-    "system.bluetooth.off": 1,
-    "window_control.desktop": 1,
-    "system.app.focus": 3
+    "web.search": 26,
+    "system.bluetooth.off": 3,
+    "window_control.desktop": 3,
+    "system.app.focus": 7,
+    "instagram.navigate": 1,
+    "system.nightlight.on": 3,
+    "system.brightness.down": 3,
+    "system.notification.send": 17,
+    "instagram.screenshot": 1,
+    "scheduler.add_job": 1,
+    "system.app.close": 2,
+    "openclaw.send_message": 7,
+    "openclaw.web_search": 4,
+    "system.processes.manager": 14,
+    "datetime.now": 2,
+    "notepad.write_file": 1
   },
   "time_patterns": {
     "23": {
@@ -29,16 +41,37 @@
       "instagram.comment": 1,
       "system.screenshot": 1,
       "youtube.open": 1,
-      "youtube.play": 2,
+      "youtube.play": 4,
       "system.brightness.up": 1,
-      "instagram.close": 1
+      "instagram.close": 1,
+      "system.app.open": 1,
+      "window_control.desktop": 1,
+      "openclaw.send_message": 2,
+      "openclaw.web_search": 1,
+      "system.app.focus": 3
     },
     "14": {
       "web.search": 16,
-      "youtube.play": 4
+      "youtube.play": 4,
+      "system.notification.send": 9,
+      "system.processes.manager": 9,
+      "system.app.open": 3,
+      "openclaw.web_search": 2,
+      "openclaw.send_message": 2,
+      "datetime.now": 1
     },
     "15": {
-      "system.bluetooth.off": 1
+      "system.bluetooth.off": 3,
+      "system.app.open": 2,
+      "system.app.close": 1,
+      "datetime.now": 1,
+      "openclaw.web_search": 1,
+      "openclaw.send_message": 3,
+      "web.search": 4,
+      "system.notification.send": 3,
+      "system.processes.manager": 3,
+      "youtube.play": 1,
+      "notepad.write_file": 1
     },
     "21": {
       "web.search": 4
@@ -48,62 +81,184 @@
       "system.app.open": 1,
       "window_control.desktop": 1,
       "system.app.focus": 3
+    },
+    "0": {
+      "instagram.navigate": 1
+    },
+    "1": {
+      "system.nightlight.on": 3,
+      "system.brightness.down": 3,
+      "system.notification.send": 3,
+      "instagram.open": 1,
+      "instagram.screenshot": 1
+    },
+    "11": {
+      "scheduler.add_job": 1,
+      "system.app.open": 2,
+      "system.app.close": 1,
+      "window_control.desktop": 1,
+      "system.app.focus": 1
+    },
+    "16": {
+      "system.notification.send": 2,
+      "system.processes.manager": 2
+    },
+    "17": {
+      "system.app.open": 1
     }
   },
   "entity_preferences": {},
   "tool_context": {
-    "instagram.dms_sent": {
-      "value": 1,
-      "set_by": "instagram",
-      "timestamp": "2026-02-07T12:56:44.170417",
-      "expires": "2026-02-08T12:56:44.170417"
-    },
-    "shared.query": {
-      "value": {
-        "value": "food delivery near me",
-        "source": "web",
-        "timestamp": "2026-02-07T22:41:49.967052"
-      },
-      "set_by": "shared",
-      "timestamp": "2026-02-07T22:41:49.967052",
-      "expires": "2026-02-07T23:41:49.967052"
-    },
-    "web.last_search": {
-      "value": "food delivery near me",
-      "set_by": "web",
-      "timestamp": "2026-02-07T22:41:49.977272",
-      "expires": "2026-02-07T23:11:49.977272"
-    },
     "shared.app": {
       "value": {
-        "value": "github",
+        "value": "nordberg",
         "source": "system",
-        "timestamp": "2026-02-07T22:45:05.140075"
+        "timestamp": "2026-02-08T17:51:21.077298"
       },
       "set_by": "shared",
-      "timestamp": "2026-02-07T22:45:05.141072",
-      "expires": "2026-02-07T23:45:05.141072"
+      "timestamp": "2026-02-08T17:51:21.077298",
+      "expires": "2026-02-08T18:51:21.077298"
     },
     "system.last_app": {
-      "value": "github",
+      "value": "nordberg",
       "set_by": "system",
-      "timestamp": "2026-02-07T22:45:05.263449",
-      "expires": "2026-02-07T23:15:05.263449"
+      "timestamp": "2026-02-08T17:51:21.087271",
+      "expires": "2026-02-08T18:21:21.087271"
     },
     "system.last_action": {
-      "value": "focus",
+      "value": "open",
       "set_by": "system",
-      "timestamp": "2026-02-07T22:45:05.360871",
-      "expires": "2026-02-07T23:15:05.360871"
-    },
-    "window_control.last_action": {
-      "value": "desktop",
-      "set_by": "window_control",
-      "timestamp": "2026-02-07T22:43:20.178081",
-      "expires": "2026-02-07T23:13:20.178081"
+      "timestamp": "2026-02-08T17:51:21.090261",
+      "expires": "2026-02-08T18:21:21.090261"
     }
   },
   "shared_content": [
+    {
+      "type": "app",
+      "content": "nordberg",
+      "source": "system",
+      "timestamp": "2026-02-08T17:51:21.082284"
+    },
+    {
+      "type": "query",
+      "content": "tech news",
+      "source": "youtube",
+      "timestamp": "2026-02-08T15:45:37.854214"
+    },
+    {
+      "type": "query",
+      "content": "search for latest ai news",
+      "source": "web",
+      "timestamp": "2026-02-08T15:23:51.598888"
+    },
+    {
+      "type": "query",
+      "content": "search for latest ai news",
+      "source": "web",
+      "timestamp": "2026-02-08T15:23:08.055382"
+    },
+    {
+      "type": "query",
+      "content": "search for latest AI news",
+      "source": "web",
+      "timestamp": "2026-02-08T15:21:02.060827"
+    },
+    {
+      "type": "app",
+      "content": "vs code",
+      "source": "system",
+      "timestamp": "2026-02-08T15:20:41.814286"
+    },
+    {
+      "type": "query",
+      "content": "search for latest ai news",
+      "source": "web",
+      "timestamp": "2026-02-08T15:06:01.817289"
+    },
+    {
+      "type": "query",
+      "content": "",
+      "source": "openclaw",
+      "timestamp": "2026-02-08T15:04:42.749087"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T15:04:02.508946"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T15:03:53.883196"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T14:48:58.720355"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T14:38:41.002922"
+    },
+    {
+      "type": "app",
+      "content": "benoit bird",
+      "source": "system",
+      "timestamp": "2026-02-08T14:35:33.576329"
+    },
+    {
+      "type": "query",
+      "content": "calming music",
+      "source": "youtube",
+      "timestamp": "2026-02-08T13:52:59.761866"
+    },
+    {
+      "type": "app",
+      "content": "chrome",
+      "source": "system",
+      "timestamp": "2026-02-08T13:52:00.994821"
+    },
+    {
+      "type": "query",
+      "content": "tech news",
+      "source": "youtube",
+      "timestamp": "2026-02-08T13:21:42.830446"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T13:16:17.404960"
+    },
+    {
+      "type": "app",
+      "content": "vs code",
+      "source": "system",
+      "timestamp": "2026-02-08T11:57:04.586317"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T11:55:19.088777"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T11:54:59.486628"
+    },
+    {
+      "type": "app",
+      "content": "notepad",
+      "source": "system",
+      "timestamp": "2026-02-08T11:28:56.721210"
+    },
     {
       "type": "app",
       "content": "github",

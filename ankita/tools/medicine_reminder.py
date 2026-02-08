@@ -50,17 +50,36 @@ class MedicineReminder(BaseTool):
     
     def _add_reminder(self, medicine, time, frequency):
         """Add a medicine reminder."""
-        if not medicine or not time:
-            return self._error("Medicine name and time are required")
+        if not medicine:
+            return self._error("Medicine name is required")
+        if not time:
+            return self._error("Time is required (format: HH:MM)")
+        
+        # Validate time format
+        try:
+            hours, minutes = map(int, time.split(':'))
+            if not (0 <= hours < 24 and 0 <= minutes < 60):
+                return self._error("Invalid time. Use format HH:MM (00:00 to 23:59)")
+        except:
+            return self._error("Invalid time format. Use HH:MM (e.g., 09:30)")
         
         # Load existing reminders
         reminders = self._load_reminders()
+        
+        # Check for duplicates
+        for r in reminders:
+            if (r.get('active') and 
+                r['medicine'].lower() == medicine.lower() and 
+                r['time'] == time):
+                return self._error(
+                    f"Reminder already exists for {medicine} at {time}"
+                )
         
         # Create new reminder
         reminder = {
             'medicine': medicine,
             'time': time,
-            'frequency': frequency,
+            'frequency': frequency or 'daily',
             'created': datetime.now().isoformat(),
             'active': True
         }
@@ -75,7 +94,7 @@ class MedicineReminder(BaseTool):
         self._create_notification(reminder)
         
         return self._success(
-            f"Reminder set for {medicine} at {time} ({frequency})",
+            f"✓ Reminder set: {medicine} at {time} ({frequency or 'daily'})",
             reminder
         )
     

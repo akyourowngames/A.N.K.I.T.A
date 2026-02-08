@@ -1,0 +1,227 @@
+{
+  "total": 20,
+  "semantic_matches": 8,
+  "traditional_matches": 0,
+  "action_matches": 6,
+  "failures": [
+    {
+      "query": "Put on songs",
+      "expected": {
+        "sit": "music",
+        "act": "spotify.play"
+      },
+      "got": {
+        "sem": "romantic",
+        "trad": "youtube.play",
+        "acts": [
+          "youtube.play"
+        ]
+      }
+    },
+    {
+      "query": "I need help with chill",
+      "expected": {
+        "sit": "chill",
+        "act": "spotify.play"
+      },
+      "got": {
+        "sem": "relax",
+        "trad": "system.power.sleep",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with weather",
+      "expected": {
+        "sit": "weather",
+        "act": "weather.current"
+      },
+      "got": {
+        "sem": "weather_check",
+        "trad": "unknown",
+        "acts": []
+      }
+    },
+    {
+      "query": "I want to play content",
+      "expected": {
+        "sit": "bored",
+        "act": "instagram.feed"
+      },
+      "got": {
+        "sem": "bored",
+        "trad": "youtube.play",
+        "acts": [
+          "youtube.play",
+          "instagram.reels"
+        ]
+      }
+    },
+    {
+      "query": "What's good, Ankita! with swagger",
+      "expected": {
+        "sit": "personality",
+        "act": "youtube.play"
+      },
+      "got": {
+        "sem": "personality",
+        "trad": "unknown",
+        "acts": [
+          "personality.cool",
+          "personality.swagger"
+        ]
+      }
+    },
+    {
+      "query": "I need help with email",
+      "expected": {
+        "sit": "email",
+        "act": "gmail.send"
+      },
+      "got": {
+        "sem": "coding",
+        "trad": "unknown",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with messaging",
+      "expected": {
+        "sit": "messaging",
+        "act": "whatsapp.open"
+      },
+      "got": {
+        "sem": "coding",
+        "trad": "unknown",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with weather",
+      "expected": {
+        "sit": "weather",
+        "act": "weather.current"
+      },
+      "got": {
+        "sem": "weather_check",
+        "trad": "unknown",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with chill",
+      "expected": {
+        "sit": "chill",
+        "act": "youtube.play"
+      },
+      "got": {
+        "sem": "relax",
+        "trad": "system.power.sleep",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with messaging",
+      "expected": {
+        "sit": "messaging",
+        "act": "whatsapp.open"
+      },
+      "got": {
+        "sem": "coding",
+        "trad": "unknown",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with chill",
+      "expected": {
+        "sit": "chill",
+        "act": "spotify.play"
+      },
+      "got": {
+        "sem": "relax",
+        "trad": "system.power.sleep",
+        "acts": []
+      }
+    },
+    {
+      "query": "I need help with chill",
+      "expected": {
+        "sit": "chill",
+        "act": "youtube.play"
+      },
+      "got": {
+        "sem": "relax",
+        "trad": "system.power.sleep",
+        "acts": []
+      }
+    },
+    {
+      "query": "I am looking for some music",
+      "expected": {
+        "sit": "music",
+        "act": "youtube.trending"
+      },
+      "got": {
+        "sem": "music",
+        "trad": "youtube.play",
+        "acts": [
+          "youtube.play"
+        ]
+      }
+    },
+    {
+      "query": "I could die for sushi",
+      "expected": {
+        "sit": "hungry",
+        "act": "web.search"
+      },
+      "got": {
+        "sem": "lonely",
+        "trad": "unknown",
+        "acts": [
+          "web.search",
+          "food.delivery",
+          "notepad.open"
+        ]
+      }
+    },
+    {
+      "query": "Need sleep",
+      "expected": {
+        "sit": "tired",
+        "act": "spotify.play"
+      },
+      "got": {
+        "sem": "sleep_trouble",
+        "trad": "unknown",
+        "acts": [
+          "system.brightness.down",
+          "youtube.play"
+        ]
+      }
+    }
+  ],
+  "latency_ms": [
+    132.6448917388916,
+    23.935794830322266,
+    25.930166244506836,
+    20.94435691833496,
+    23.93651008605957,
+    21.94070816040039,
+    20.943880081176758,
+    23.935556411743164,
+    27.925491333007812,
+    23.93627166748047,
+    21.9419002532959,
+    21.9423770904541,
+    20.94244956970215,
+    25.93088150024414,
+    22.940635681152344,
+    25.97332000732422,
+    31.87084197998047,
+    20.94244956970215,
+    24.93453025817871,
+    20.94244956970215
+  ]
+}

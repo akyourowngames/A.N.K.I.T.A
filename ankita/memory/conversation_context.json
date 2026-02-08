@@ -1,602 +1,5 @@
 [
   {
-    "timestamp": "2026-02-06T23:07:01.513259",
-    "summary": "System: Open notepad",
-    "action": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "notepad"
-    },
-    "result": {
-      "status": "success",
-      "message": "Opened notepad",
-      "duration_ms": 21.512746810913086
-    },
-    "topic": "system",
-    "hour": 23,
-    "day_of_week": "Friday"
-  },
-  {
-    "timestamp": "2026-02-06T23:07:05.669365",
-    "summary": "System: Open notepad",
-    "action": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "notepad"
-    },
-    "result": {
-      "status": "success",
-      "message": "Opened notepad",
-      "duration_ms": 1.995086669921875
-    },
-    "topic": "system",
-    "hour": 23,
-    "day_of_week": "Friday"
-  },
-  {
-    "timestamp": "2026-02-07T12:51:36.910414",
-    "summary": "Instagram: Search",
-    "action": "instagram.search",
-    "entities": {
-      "user_text": "search virat on insta",
-      "action": "search"
-    },
-    "result": {
-      "status": "fail",
-      "message": "",
-      "duration_ms": 37932.31010437012
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:52:08.998715",
-    "summary": "Instagram: Dm",
-    "action": "instagram.dm",
-    "entities": {
-      "user_text": "dm arjun hi on insta",
-      "action": "dm"
-    },
-    "result": {
-      "status": "fail",
-      "message": "",
-      "duration_ms": 323.81224632263184
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:52:23.265161",
-    "summary": "Instagram: Dm",
-    "action": "instagram.dm",
-    "entities": {
-      "user_text": "dm arjun hi on insta",
-      "action": "dm"
-    },
-    "result": {
-      "status": "fail",
-      "message": "",
-      "duration_ms": 307.3899745941162
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:56:11.921634",
-    "summary": "Instagram: search",
-    "action": "instagram.search",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "message": "Found 5 results for 'virat', sir.",
-      "results": [
-        {
-          "text": "virat.kohli\nVirat Kohli • 274M followers",
-          "href": "/virat.kohli/"
-        },
-        {
-          "text": "virat.123114\nvirat • Followed by ohh_akshdeep + 20 more",
-          "href": "/virat.123114/"
-        },
-        {
-          "text": "ansh_3656b\nVirat • Followed by shaurya.raiii + 15 more",
-          "href": "/ansh_3656b/"
-        },
-        {
-          "text": "virat_mavi4007\nMavi 4007 • Followed by preet_mavi_7 + 1 more",
-          "href": "/virat_mavi4007/"
-        },
-        {
-          "text": "viratgujjar4007\nVirat Mavi • Followed by preet_mavi_7 + 1 more",
-          "href": "/viratgujjar4007/"
-        }
-      ]
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:56:11.976482",
-    "summary": "Instagram: Search",
-    "action": "instagram.search",
-    "entities": {
-      "user_text": "search virat on insta",
-      "action": "search"
-    },
-    "result": {
-      "status": "success",
-      "message": "Found 5 results for 'virat', sir.",
-      "duration_ms": 25480.302095413208
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:56:44.166429",
-    "summary": "Instagram: dm",
-    "action": "instagram.dm",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "message": "Message sent to @arjun, sir."
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T12:56:44.179398",
-    "summary": "Instagram: Dm",
-    "action": "instagram.dm",
-    "entities": {
-      "user_text": "dm arjun hi insta",
-      "action": "dm"
-    },
-    "result": {
-      "status": "success",
-      "message": "Message sent to @arjun, sir.",
-      "duration_ms": 19456.796884536743
-    },
-    "topic": "social",
-    "hour": 12,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:04:25.153316",
-    "summary": "Instagram: open",
-    "action": "instagram.open",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "logged_in": true
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:04:25.177254",
-    "summary": "Instagram: Open",
-    "action": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "duration_ms": 11417.88649559021
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:12:56.070721",
-    "summary": "Instagram: open",
-    "action": "instagram.open",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "logged_in": true
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:12:56.082689",
-    "summary": "Instagram: Open",
-    "action": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "duration_ms": 21714.025020599365
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:13:09.401859",
-    "summary": "Instagram: open",
-    "action": "instagram.open",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "logged_in": true
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:13:09.414826",
-    "summary": "Instagram: Open",
-    "action": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "message": "Instagram opened (logged in)",
-      "duration_ms": 9411.8070602417
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:13:22.016272",
-    "summary": "Instagram: Comment",
-    "action": "instagram.comment",
-    "entities": {
-      "user_text": "comment on this post on insta",
-      "action": "comment"
-    },
-    "result": {
-      "status": "fail",
-      "message": "",
-      "duration_ms": 2701.709985733032
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:17:00.293735",
-    "summary": "System: screenshot screenshot",
-    "action": "system.screenshot",
-    "entities": {
-      "action": "full"
-    },
-    "result": {
-      "status": "success",
-      "message": "Screenshot saved to Pictures/Screenshots",
-      "duration_ms": 3258.4989070892334
-    },
-    "topic": "system",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:40:48.372425",
-    "summary": "YouTube: Open",
-    "action": "youtube.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 51141.91389083862
-    },
-    "topic": "video",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:40:54.925072",
-    "summary": "YouTube: Played 'trending'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "trending",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 6501.837491989136
-    },
-    "topic": "video",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:46:51.171515",
-    "summary": "System: Brightness up",
-    "action": "system.brightness.up",
-    "entities": {
-      "action": "up",
-      "step": null
-    },
-    "result": {
-      "status": "success",
-      "message": "Brightness increased to 40",
-      "duration_ms": 7245.720624923706
-    },
-    "topic": "system",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:50:13.010751",
-    "summary": "Instagram: Close",
-    "action": "instagram.close",
-    "entities": {
-      "action": "close"
-    },
-    "result": {
-      "status": "fail",
-      "message": "",
-      "duration_ms": 543.1485176086426
-    },
-    "topic": "social",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T13:57:42.019367",
-    "summary": "YouTube: Played 'music'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "music",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 29119.01831626892
-    },
-    "topic": "video",
-    "hour": 13,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:05:07.418841",
-    "summary": "Web: Searched 'food delivery near me'",
-    "action": "web.search",
-    "entities": {
-      "query": "food delivery near me",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 536.4854335784912
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:06:59.902897",
-    "summary": "Web: Searched 'food delivery near me'",
-    "action": "web.search",
-    "entities": {
-      "query": "food delivery near me",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 557.0366382598877
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:08:40.673357",
-    "summary": "YouTube: Played 'relaxing music'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "relaxing music",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 39171.93603515625
-    },
-    "topic": "video",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:14:14.307234",
-    "summary": "Web: Searched 'home remedies'",
-    "action": "web.search",
-    "entities": {
-      "query": "home remedies",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 519.5984840393066
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:15:05.177848",
-    "summary": "Web: Searched 'online shopping'",
-    "action": "web.search",
-    "entities": {
-      "query": "online shopping",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 538.649320602417
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:24:25.382684",
-    "summary": "Web: Searched 'home remedies'",
-    "action": "web.search",
-    "entities": {
-      "query": "home remedies",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 504.2269229888916
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:25:58.758458",
-    "summary": "Web: Searched 'food delivery near me'",
-    "action": "web.search",
-    "entities": {
-      "query": "food delivery near me",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 495.84293365478516
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:27:33.676477",
-    "summary": "YouTube: Played 'movies'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "movies",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 20495.373249053955
-    },
-    "topic": "video",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:29:09.193686",
-    "summary": "Web: Searched 'home remedies'",
-    "action": "web.search",
-    "entities": {
-      "query": "home remedies",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 609.1458797454834
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:30:17.825531",
-    "summary": "YouTube: Played 'news today'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "news today",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 31471.27056121826
-    },
-    "topic": "video",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:30:29.353704",
-    "summary": "Web: Searched 'home remedies'",
-    "action": "web.search",
-    "entities": {
-      "query": "home remedies",
-      "max_results": ""
-    },
-    "result": {
-      "status": "error",
-      "message": "",
-      "duration_ms": 550.2030849456787
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:31:19.278160",
-    "summary": "YouTube: Played 'lofi hip hop'",
-    "action": "youtube.play",
-    "entities": {
-      "query": "lofi hip hop",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 16398.731231689453
-    },
-    "topic": "video",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
-    "timestamp": "2026-02-07T14:32:01.256808",
-    "summary": "Web: Searched 'search for latest ai news'",
-    "action": "web.search",
-    "entities": {
-      "query": "search for latest ai news",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "message": "",
-      "duration_ms": 1339.3423557281494
-    },
-    "topic": "search",
-    "hour": 14,
-    "day_of_week": "Saturday"
-  },
-  {
     "timestamp": "2026-02-07T14:33:03.971354",
     "summary": "Web: Searched 'food delivery near me'",
     "action": "web.search",
@@ -916,5 +319,1336 @@
     "topic": "system",
     "hour": 22,
     "day_of_week": "Saturday"
+  },
+  {
+    "timestamp": "2026-02-08T00:55:30.863793",
+    "summary": "Instagram: navigate",
+    "action": "instagram.navigate",
+    "entities": {
+      "destination": "home"
+    },
+    "result": {
+      "status": "success",
+      "message": "Navigated to home",
+      "url": "https://www.instagram.com/"
+    },
+    "topic": "social",
+    "hour": 0,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:41:58.725302",
+    "summary": "System: nightlight on",
+    "action": "system.nightlight.on",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Opened Night Light settings",
+      "duration_ms": 7.980823516845703
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:01.420093",
+    "summary": "System: Brightness down",
+    "action": "system.brightness.down",
+    "entities": {},
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 2682.8253269195557
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:01.941697",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "Night Owl Mode",
+      "message": "It's late in Ghaziabad. Dimming screen for your eyes, Sir."
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 497.6694583892822
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:15.813170",
+    "summary": "System: nightlight on",
+    "action": "system.nightlight.on",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Opened Night Light settings",
+      "duration_ms": 7.978916168212891
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:17.492683",
+    "summary": "System: Brightness down",
+    "action": "system.brightness.down",
+    "entities": {},
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 1665.550708770752
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:17.957439",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "Night Owl Mode",
+      "message": "It's late in Ghaziabad. Dimming screen for your eyes, Sir."
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 454.78272438049316
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:30.123105",
+    "summary": "System: nightlight on",
+    "action": "system.nightlight.on",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Opened Night Light settings",
+      "duration_ms": 18.949508666992188
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:31.802649",
+    "summary": "System: Brightness down",
+    "action": "system.brightness.down",
+    "entities": {},
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 1667.5772666931152
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:42:32.248419",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "Night Owl Mode",
+      "message": "It's late in Ghaziabad. Dimming screen for your eyes, Sir."
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 439.82410430908203
+    },
+    "topic": "system",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:50:22.715502",
+    "summary": "Instagram: open",
+    "action": "instagram.open",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Instagram opened (logged in)",
+      "logged_in": true
+    },
+    "topic": "social",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T01:50:23.165298",
+    "summary": "Instagram: screenshot",
+    "action": "instagram.screenshot",
+    "entities": {},
+    "result": {
+      "status": "success",
+      "message": "Screenshot saved to C:\\Users\\anime\\3D Objects\\New folder\\A.N.K.I.T.A\\ankita\\data\\instagram\\screenshot_1770495622.png",
+      "path": "C:\\Users\\anime\\3D Objects\\New folder\\A.N.K.I.T.A\\ankita\\data\\instagram\\screenshot_1770495622.png"
+    },
+    "topic": "social",
+    "hour": 1,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:26:12.663762",
+    "summary": "Scheduler: Added job",
+    "action": "scheduler.add_job",
+    "entities": {
+      "text": "set reminder to call",
+      "type": "daily"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 20.94292640686035
+    },
+    "topic": "schedule",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:28:56.704254",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 13.962984085083008
+    },
+    "topic": "system",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:54:59.469673",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 12.964010238647461
+    },
+    "topic": "system",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:55:19.056865",
+    "summary": "System: Close notepad",
+    "action": "system.app.close",
+    "entities": {
+      "action": "close",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "closed notepad",
+      "duration_ms": 253.61299514770508
+    },
+    "topic": "system",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:55:38.578510",
+    "summary": "Window_Control: Desktop",
+    "action": "window_control.desktop",
+    "entities": {
+      "action": "desktop"
+    },
+    "result": {
+      "status": "success",
+      "message": "Showed desktop",
+      "duration_ms": 105.85355758666992
+    },
+    "topic": "system",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T11:57:04.541438",
+    "summary": "System: Focus vs code",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "vs code"
+    },
+    "result": {
+      "status": "success",
+      "message": "Focused vs code",
+      "duration_ms": 180.0992488861084
+    },
+    "topic": "system",
+    "hour": 11,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:16:17.389003",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 12.964725494384766
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:20:03.122738",
+    "summary": "Window_Control: Desktop",
+    "action": "window_control.desktop",
+    "entities": {
+      "action": "desktop"
+    },
+    "result": {
+      "status": "success",
+      "message": "Showed desktop",
+      "duration_ms": 108.71505737304688
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:21:42.805514",
+    "summary": "YouTube: Played 'tech news'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "tech news",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 18262.42756843567
+    },
+    "topic": "video",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:37:10.529135",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "message": "Hello world",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 301.1953830718994
+    },
+    "topic": "general",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:37:39.449939",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "message": "Hello world",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "error",
+      "message": "",
+      "duration_ms": 301.1934757232666
+    },
+    "topic": "general",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:50:41.444820",
+    "summary": "Openclaw: Web Search",
+    "action": "openclaw.web_search",
+    "entities": {
+      "query": "latest ai news and telegram me"
+    },
+    "result": {
+      "status": "error",
+      "message": "Unknown OpenClaw action: ",
+      "duration_ms": 301.194429397583
+    },
+    "topic": "general",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:51:38.058848",
+    "summary": "System: Focus telegram",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "telegram"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 303.1878471374512
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:52:00.979858",
+    "summary": "System: Focus chrome",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "chrome"
+    },
+    "result": {
+      "status": "success",
+      "message": "Focused chrome",
+      "duration_ms": 458.7733745574951
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:52:19.434303",
+    "summary": "System: Focus window",
+    "action": "system.app.focus",
+    "entities": {
+      "action": "focus",
+      "app": "window"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 302.19125747680664
+    },
+    "topic": "system",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T13:52:59.673811",
+    "summary": "YouTube: Played 'calming music'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "calming music",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 20768.291473388672
+    },
+    "topic": "video",
+    "hour": 13,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:05:15.112882",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (99.1%). Top offender: chrome.exe (96.6%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 5513.434410095215
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:05:15.632761",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 397.95875549316406
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:11:55.910939",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (86.0%). Top offender: System Idle Process (106.4%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1516.9415473937988
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:11:56.417130",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 486.24467849731445
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:22:22.554358",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (86.8%). Top offender: conhost.exe (92.4%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1692.1131610870361
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:22:23.349479",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 345.0477123260498
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:25:35.295097",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (98.8%). Top offender: conhost.exe (63.2%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 4631.150484085083
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:25:35.864605",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 408.9360237121582
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:32:17.677362",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (95.8%). Top offender: System Idle Process (96.3%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1717.4053192138672
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:32:18.004003",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 309.68666076660156
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:35:33.552393",
+    "summary": "System: Open benoit bird",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "benoit bird"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened benoit bird",
+      "duration_ms": 16.95394515991211
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:38:23.716013",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (92.9%). Top offender: conhost.exe (95.2%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 4757.272958755493
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:38:24.750429",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 370.1915740966797
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:38:40.958043",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 15.958547592163086
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:38:42.008745",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (90.7%). Top offender: conhost.exe (90.6%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1068.6547756195068
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:38:42.372805",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 334.14173126220703
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:39:46.557503",
+    "summary": "Openclaw: Web Search",
+    "action": "openclaw.web_search",
+    "entities": {
+      "query": "latest ai news and msg me on telegram"
+    },
+    "result": {
+      "status": "error",
+      "message": "Unknown OpenClaw action: ",
+      "duration_ms": 301.1939525604248
+    },
+    "topic": "general",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:40:10.918922",
+    "summary": "Openclaw: Web Search",
+    "action": "openclaw.web_search",
+    "entities": {
+      "query": "search for latest ai news"
+    },
+    "result": {
+      "status": "error",
+      "message": "Unknown OpenClaw action: ",
+      "duration_ms": 301.1937141418457
+    },
+    "topic": "general",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:42:20.647684",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (98.7%). Top offender: conhost.exe (64.7%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 6146.553039550781
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:42:21.020685",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 332.1113586425781
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:42:36.198989",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "message": "Ankita, send a telegram message to krish saying hello",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "error",
+      "message": "Unknown OpenClaw action: ",
+      "duration_ms": 301.192045211792
+    },
+    "topic": "general",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:48:51.942772",
+    "summary": "Datetime: Now",
+    "action": "datetime.now",
+    "entities": {
+      "action": "now"
+    },
+    "result": {
+      "status": "success",
+      "message": "Sunday, February 08, 2026 at 02:48 PM",
+      "duration_ms": 0.0
+    },
+    "topic": "general",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:48:58.702404",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 17.98558235168457
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:49:04.187155",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "action": "send_message",
+      "message": "Hello from script",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "success",
+      "message": "Hello from script",
+      "duration_ms": 10.970592498779297
+    },
+    "topic": "general",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:57:56.791720",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (89.2%). Top offender: conhost.exe (91.4%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1397.2618579864502
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T14:57:57.128101",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 318.42947006225586
+    },
+    "topic": "system",
+    "hour": 14,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:03:53.865245",
+    "summary": "System: Open notepad",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened notepad",
+      "duration_ms": 12.966394424438477
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:04:02.488002",
+    "summary": "System: Close notepad",
+    "action": "system.app.close",
+    "entities": {
+      "action": "close",
+      "app": "notepad"
+    },
+    "result": {
+      "status": "success",
+      "message": "closed notepad",
+      "duration_ms": 241.35375022888184
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:04:16.090962",
+    "summary": "Datetime: Now",
+    "action": "datetime.now",
+    "entities": {
+      "action": "now"
+    },
+    "result": {
+      "status": "success",
+      "message": "Sunday, February 08, 2026 at 03:04 PM",
+      "duration_ms": 0.0
+    },
+    "topic": "general",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:04:42.732135",
+    "summary": "Openclaw: Web Search",
+    "action": "openclaw.web_search",
+    "entities": {
+      "action": "web_search",
+      "query": ""
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 7.978916168212891
+    },
+    "topic": "general",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:05:22.249954",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "action": "send_message",
+      "message": "Hello from the new gui",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "success",
+      "message": "Hello from the new gui",
+      "duration_ms": 6.983280181884766
+    },
+    "topic": "general",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:06:01.797344",
+    "summary": "Web: Searched 'search for latest ai news'",
+    "action": "web.search",
+    "entities": {
+      "query": "search for latest ai news"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 1451.1184692382812
+    },
+    "topic": "search",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:07:10.406332",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "action": "send_message",
+      "message": "Verified fix",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "success",
+      "message": "Verified fix",
+      "duration_ms": 23.93364906311035
+    },
+    "topic": "general",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:07:47.001226",
+    "summary": "Openclaw: Send Message",
+    "action": "openclaw.send_message",
+    "entities": {
+      "action": "send_message",
+      "message": "Ankita, send a telegram message to krish saying the bridge is now 100 percent fire",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "success",
+      "message": "Ankita, send a telegram message to krish saying the bridge is now 100 percent fire",
+      "duration_ms": 23.937225341796875
+    },
+    "topic": "general",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:13:38.789236",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (89.8%). Top offender: audiodg.exe (104.5%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 953.4475803375244
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:13:39.363702",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 384.97066497802734
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:15:28.576628",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (99.8%). Top offender: audiodg.exe (100.7%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 2013.6127471923828
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:15:28.951625",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 340.0881290435791
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:20:41.792345",
+    "summary": "System: Open vs code",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "vs code"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened vs code",
+      "duration_ms": 11.96742057800293
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:21:02.018939",
+    "summary": "Web: Searched 'search for latest AI news'",
+    "action": "web.search",
+    "entities": {
+      "query": "search for latest AI news"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 72.80540466308594
+    },
+    "topic": "search",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:23:08.036433",
+    "summary": "Web: Searched 'search for latest ai news'",
+    "action": "web.search",
+    "entities": {
+      "query": "search for latest ai news"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 16.955137252807617
+    },
+    "topic": "search",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:23:51.578941",
+    "summary": "Web: Searched 'search for latest ai news'",
+    "action": "web.search",
+    "entities": {
+      "query": "search for latest ai news"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 45.87745666503906
+    },
+    "topic": "search",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:31:25.304591",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (90.5%). Top offender: conhost.exe (98.2%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 1107.0384979248047
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:31:25.756384",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 419.88062858581543
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:39:53.456686",
+    "summary": "System: Bluetooth off",
+    "action": "system.bluetooth.off",
+    "entities": {
+      "action": "off"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 3405.8868885040283
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:41:33.696053",
+    "summary": "System: Bluetooth off",
+    "action": "system.bluetooth.off",
+    "entities": {
+      "action": "off"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 2926.1717796325684
+    },
+    "topic": "system",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:45:37.834269",
+    "summary": "YouTube: Played 'tech news'",
+    "action": "youtube.play",
+    "entities": {
+      "query": "tech news",
+      "action": "play"
+    },
+    "result": {
+      "status": "success",
+      "message": "",
+      "duration_ms": 24358.325242996216
+    },
+    "topic": "video",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T15:47:44.272031",
+    "summary": "Notepad: Write File",
+    "action": "notepad.write_file",
+    "entities": {
+      "content": "hi",
+      "filename": "note.txt",
+      "mode": "new_version",
+      "open_after": true
+    },
+    "result": {
+      "status": "success",
+      "message": "Notepad opened",
+      "duration_ms": 12.965202331542969
+    },
+    "topic": "work",
+    "hour": 15,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T16:29:42.060685",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (98.0%). Top offender: MsMpEng.exe (120.4%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 2586.0812664031982
+    },
+    "topic": "system",
+    "hour": 16,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T16:29:42.486547",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 389.95838165283203
+    },
+    "topic": "system",
+    "hour": 16,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T16:36:52.728252",
+    "summary": "System: notification send",
+    "action": "system.notification.send",
+    "entities": {
+      "title": "High CPU",
+      "message": "High CPU detected (85.4%). Top offender: MsMpEng.exe (136.6%). Want me to open Task Manager or kill it?"
+    },
+    "result": {
+      "status": "success",
+      "message": "Notification sent",
+      "duration_ms": 3924.50213432312
+    },
+    "topic": "system",
+    "hour": 16,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T16:36:53.143141",
+    "summary": "System: processes manager",
+    "action": "system.processes.manager",
+    "entities": {
+      "action": "manager"
+    },
+    "result": {
+      "status": "fail",
+      "message": "",
+      "duration_ms": 379.98056411743164
+    },
+    "topic": "system",
+    "hour": 16,
+    "day_of_week": "Sunday"
+  },
+  {
+    "timestamp": "2026-02-08T17:51:21.061340",
+    "summary": "System: Open nordberg",
+    "action": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "nordberg"
+    },
+    "result": {
+      "status": "success",
+      "message": "Opened nordberg",
+      "duration_ms": 9.97304916381836
+    },
+    "topic": "system",
+    "hour": 17,
+    "day_of_week": "Sunday"
   }
 ]

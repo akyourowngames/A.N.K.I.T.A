@@ -30,7 +30,7 @@ class SemanticIntentMatcher:
     Uses sentence-transformers when available. If not installed, matcher is disabled.
     """
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", threshold: float = 0.65):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", threshold: float = 0.55):
         self.model_name = model_name
         self.threshold = float(threshold)
         self._enabled = False
@@ -103,6 +103,7 @@ class SemanticIntentMatcher:
             return None
 
         try:
+            # Use local sentence transformer
             qv = self._model.encode([query], normalize_embeddings=True)
             qv = np.array(qv[0], dtype=np.float32)
         except Exception:
@@ -117,15 +118,26 @@ class SemanticIntentMatcher:
             try:
                 scores = _cosine_similarity_matrix(qv, mat)
                 score = float(np.max(scores))
+                
+                # Check semantic match with intent name itself
+                intent_words = intent.replace('.', ' ').replace('_', ' ')
+                intent_vec = self._model.encode([intent_words], normalize_embeddings=True)[0]
+                name_score = float(np.dot(qv, intent_vec))
+                
+                # Take best of examples vs intent name
+                final_score = max(score, name_score)
+                
             except Exception:
                 continue
 
-            if score > best_score:
-                best_score = score
+            if final_score > best_score:
+                best_score = final_score
                 best_intent = intent
 
         if best_intent is None:
             return None
+
+        print(f"[NeuralMapper] Best match: {best_intent} ({best_score:.3f})")
 
         if best_score < self.threshold:
             return None

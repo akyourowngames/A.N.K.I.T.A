@@ -42,6 +42,11 @@ class SpotifyPlayer(BaseTool):
     
     def _play_music(self, query, playlist):
         """Play music on Spotify."""
+        # Validate input
+        search_term = query or playlist
+        if not search_term:
+            search_term = "discover weekly"  # Default playlist
+        
         # Check if Spotify app is installed
         spotify_installed = self._check_spotify_app()
         
@@ -52,7 +57,10 @@ class SpotifyPlayer(BaseTool):
                 uri = f"spotify:search:{query.replace(' ', '%20')}"
                 try:
                     subprocess.Popen(['start', uri], shell=True)
-                    return self._success(f"Playing '{query}' on Spotify app")
+                    return self._success(
+                        f"✓ Playing '{query}' on Spotify app",
+                        {'platform': 'app', 'query': query}
+                    )
                 except:
                     pass # Fall back to web
             
@@ -61,18 +69,20 @@ class SpotifyPlayer(BaseTool):
                 uri = f"spotify:playlist:{playlist}"
                 try:
                     subprocess.Popen(['start', uri], shell=True)
-                    return self._success(f"Opening playlist on Spotify app")
+                    return self._success(
+                        f"✓ Opening playlist on Spotify app",
+                        {'platform': 'app', 'playlist': playlist}
+                    )
                 except:
                     pass
         
         # Fallback: Open Spotify Web Player
-        search_term = query or playlist or "focus playlist"
         url = f"https://open.spotify.com/search/{search_term.replace(' ', '%20')}"
         webbrowser.open(url)
         
         return self._success(
-            f"Opened Spotify Web Player for '{search_term}'",
-            {'url': url, 'query': search_term}
+            f"✓ Opened Spotify Web Player for '{search_term}'",
+            {'platform': 'web', 'url': url, 'query': search_term}
         )
     
     def _open_spotify(self):

@@ -30,9 +30,17 @@ import subprocess
 import time
 from datetime import datetime
 
+# Auto-add script directory to sys.path for robust module loading
+script_dir = os.path.dirname(os.path.abspath(__file__))
+if script_dir not in sys.path:
+    sys.path.insert(0, script_dir)
+
 # Load .env file for API keys
 from dotenv import load_dotenv
-load_dotenv()
+# Try loading .env from current dir, then from the script's dir
+if not load_dotenv():
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    load_dotenv(os.path.join(script_dir, ".env"))
 
 
 from brain.intent_model import classify
@@ -46,11 +54,15 @@ from memory.recall import resolve_pronouns
 from brain.entity_normalizer import normalize
 from brain.entity_extractor import extract
 from brain.text_normalizer import normalize_text
+from memory import ltm_manager as ltm
 from memory.ltm_manager import (
     get_correction,
     observe_success,
     set_correction,
-    was_suggested_today
+    was_suggested_today,
+    mark_suggested_today,
+    mark_suggestion_dismissed_today,
+    find_time_habits,
 )
 from brain.semantic.interpreter import SemanticInterpreter
 from brain.semantic.learner import SemanticLearner
@@ -62,6 +74,19 @@ from brain.ml_predictor import get_predictor
 
 # Advanced Learning System (RL + Meta + Few-Shot + Active)
 from brain.hybrid_intelligence import get_hybrid_ai
+
+def _start_pulse_engine():
+    """Launch the proactive heartbeat in a separate thread."""
+    try:
+        from brain.pulse import PulseEngine
+        import threading
+        # Reduced frequency for stability
+        engine = PulseEngine(interval_sec=60)
+        thread = threading.Thread(target=engine.start, daemon=True)
+        thread.start()
+        print("[Ankita] Proactive Pulse Engine: ONLINE (Eco-mode)")
+    except Exception as e:
+        print(f"[Ankita] Failed to start Pulse Engine: {e}")
 
 interpreter = None
 learner = None
@@ -78,31 +103,61 @@ _suggestion_shown_this_session: bool = False
 
 
 def _jarvis_clarify(text: str) -> str:
-    return f"Sir, kindly confirm: {text}"
+    import random
+    phrases = [
+        f"Sir, kindly confirm: {text}",
+        f"Krish, did you mean {text}?",
+        f"Confirming for you, sir: {text}",
+        f"I want to be sure, Krish. Is it {text}?",
+    ]
+    return random.choice(phrases)
 
 
 def _jarvis_ack(text: str) -> str:
+    import random
     t = (text or "").strip()
-    if not t:
-        return "Yes sir."
-    return f"Yes sir. {t}"
+    
+    # Modern, sharp acknowledgments
+    pools = {
+        "standard": [
+            "On it, sir.", "Locked and loaded.", "Consider it done, Krish.",
+            "Absolutely. Processing now.", "Right away.", "Elite status active. Doing it now."
+        ],
+        "with_text": [
+            f"Yes sir. {t}", f"On it, Krish. {t}", f"Consider it done. {t}",
+            f"Absolutely, sir. {t}", f"Locked and loaded. {t}", f"Right away. {t}"
+        ]
+    }
+    
+    if t:
+        return random.choice(pools["with_text"])
+    return random.choice(pools["standard"])
 
 
 def _jarvis_fail(text: str) -> str:
+    import random
     t = (text or "Failed").strip()
-    return f"{t}, sir." if not t.lower().endswith(", sir.") else t
+    phrases = [
+        f"Apologies sir, {t}.",
+        f"Krish, I couldn't finish that. {t}.",
+        f"System hiccup, sir. {t}.",
+        f"Negative, Krish. {t}.",
+    ]
+    return random.choice(phrases)
 
 
-def _print_ankita_stream(text: str, chunk_chars: int = 6, delay_s: float = 0.015) -> None:
+def _print_ankita_stream(text: str, chunk_chars: int = 12, delay_s: float = 0.005) -> None:
     t = "" if text is None else str(text)
+    # Strip non-ascii for console printing stability
+    t_safe = t.encode('ascii', errors='replace').decode('ascii')
     sys.stdout.write("Ankita: ")
     sys.stdout.flush()
-    if not t:
+    if not t_safe:
         sys.stdout.write("\n")
         sys.stdout.flush()
         return
-    for i in range(0, len(t), int(chunk_chars)):
-        sys.stdout.write(t[i : i + int(chunk_chars)])
+    for i in range(0, len(t_safe), int(chunk_chars)):
+        sys.stdout.write(t_safe[i : i + int(chunk_chars)])
         sys.stdout.flush()
         time.sleep(float(delay_s))
     sys.stdout.write("\n")
@@ -111,11 +166,31 @@ def _print_ankita_stream(text: str, chunk_chars: int = 6, delay_s: float = 0.015
 
 def _is_affirmative(t: str) -> bool:
     tl = (t or "").strip().lower()
+    # RL: Positive Sentiment Reward
+    if any(word in tl for word in ("perfect", "thanks", "good job", "love it", "killer", "lit", "fire")):
+        try:
+            from brain.rl_agent import get_rl_agent
+            rl = get_rl_agent()
+            rl.learn_from_outcome(get_current_context(), "sentiment", "user_praise", success=1)
+            # Log as episode for history
+            add_episode("sentiment", {"vibe": "positive"}, {"status": "success"})
+            print("[RL] Positive sentiment detected. Reward +1 granted.")
+        except: pass
     return tl in ("yes", "y", "yeah", "yep", "ok", "okay", "sure", "do it")
 
 
 def _is_negative(t: str) -> bool:
     tl = (t or "").strip().lower()
+    # RL: Negative Sentiment Penalty
+    if any(word in tl for word in ("wrong", "bad", "stop", "no", "not that")):
+        try:
+            from brain.rl_agent import get_rl_agent
+            rl = get_rl_agent()
+            rl.learn_from_outcome(get_current_context(), "sentiment", "user_correction", success=-1)
+            # Log as episode for history
+            add_episode("sentiment", {"vibe": "negative"}, {"status": "failure"})
+            print("[RL] Negative sentiment detected. Penalty -1 applied.")
+        except: pass
     return tl in ("no", "n", "nope", "nah", "cancel", "stop")
 
 
@@ -126,7 +201,8 @@ def _maybe_make_suggestion(intent_result: dict) -> str | None:
         return None
 
     now = datetime.now()
-    habits = find_time_habits(now.hour)
+    # Use module-qualified call to avoid NameError if imports get refactored
+    habits = ltm.find_time_habits(now.hour)
     if not habits:
         return None
 
@@ -242,6 +318,7 @@ def _maybe_start_bubble(args: argparse.Namespace) -> None:
     if not os.path.exists(bubble_path):
         return
     try:
+        # Use the same python executable as the core
         subprocess.Popen([sys.executable, bubble_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         return
@@ -276,16 +353,32 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     
     # Record episode in memory
     if isinstance(result, dict) and result.get("status") == "success":
+        publish_ui_state("SUCCESS_PULSE")
         add_episode(
             intent_result["intent"],
             intent_result.get("entities", {}),
             result
         )
         observe_success(intent_result["intent"], intent_result.get("entities", {}), result)
+        
+        # RL: Reward the system for high-performance execution
+        try:
+            from brain.rl_agent import get_rl_agent
+            rl = get_rl_agent()
+            # Reward for matching the intent correctly
+            rl.learn_from_outcome(
+                context=get_current_context(),
+                situation=intent_result["intent"],
+                action=intent_result["intent"],
+                success=1
+            )
+        except Exception:
+            pass
 
     # Deterministic responses for system, datetime, and instagram tools (avoid LLM fluff; surface real errors)
     if intent_str.startswith("system.") or intent_str.startswith("datetime.") or intent_str.startswith("instagram."):
         if isinstance(result, dict) and result.get("status") == "success":
+            publish_ui_state("SUCCESS_PULSE")
             first = None
             if isinstance(result.get("results"), list) and result["results"]:
                 first = result["results"][0]
@@ -328,6 +421,46 @@ def handle_intent(intent_result: dict, user_text: str = "") -> str:
     return response
 
 
+def speak_with_bargein(text: str):
+    """Speak text while monitoring for interruptions."""
+    if not text:
+        return
+        
+    from voice.tts import speak as tts_speak, stop_speaking
+    import sounddevice as sd
+    import numpy as np
+    import threading
+    
+    interrupted = False
+    
+    def monitor_mic():
+        nonlocal interrupted
+        threshold = 0.025 # Higher threshold to avoid self-triggering
+        
+        def callback(indata, frames, time_info, status):
+            nonlocal interrupted
+            if interrupted:
+                return
+            volume_norm = np.linalg.norm(indata) * 10
+            if volume_norm > threshold:
+                interrupted = True
+                stop_speaking()
+                
+        with sd.InputStream(callback=callback):
+            while not interrupted and getattr(threading.current_thread(), "do_run", True):
+                sd.sleep(100)
+
+    # Start mic monitoring thread
+    t = threading.Thread(target=monitor_mic)
+    t.do_run = True
+    t.start()
+    
+    try:
+        tts_speak(text)
+    finally:
+        t.do_run = False
+        t.join(timeout=1)
+
 def handle_text(text: str, source: str = "user") -> str:
     """Process raw text input and return a natural language response."""
     # Record user input
@@ -335,7 +468,6 @@ def handle_text(text: str, source: str = "user") -> str:
         publish_ui_state("SLEEP")
         return ""
 
-    publish_ui_state("LISTENING")
     add_conversation(source, text)
 
     global _pending_followup
@@ -601,6 +733,7 @@ def handle_text(text: str, source: str = "user") -> str:
                             
                             # Display results to user if available
                             result_displayed = False
+                            tool_success = False
                             if isinstance(actual_result, dict):
                                 # For web search, show search results
                                 if 'results' in actual_result and isinstance(actual_result.get('results'), list):
@@ -633,6 +766,8 @@ def handle_text(text: str, source: str = "user") -> str:
                                 # For search tools, success = having results
                                 if 'web.search' in tool and 'results' in actual_result:
                                     tool_success = len(actual_result.get('results', [])) > 0
+                                elif actual_result.get('status') == 'success':
+                                    tool_success = True
                                 
                                 # Handle success/failure for learning
                                 if tool_success or result_displayed:
@@ -644,6 +779,8 @@ def handle_text(text: str, source: str = "user") -> str:
                             
                             # ML LEARNING: Log action to database with context
                             exec_time_ms = int((time.time() - start_time) * 1000)
+                            
+                            action_success = 1 if tool_success or result_displayed else 0
                             
                             try:
                                 # Get recent actions from DB
@@ -896,7 +1033,7 @@ def run_voice_mode():
 
             cmd = input("[Press Enter to speak] ")
             if cmd.lower() in ["exit", "quit", "bye"]:
-                speak("Goodbye!")
+                speak_with_bargein("Goodbye!")
                 break
             
             print("[Listening...]")
@@ -905,7 +1042,7 @@ def run_voice_mode():
             print(f"[You said]: {text}")
             
             if not text.strip():
-                speak("I didn't hear anything.")
+                speak_with_bargein("I didn't hear anything.")
                 continue
             
             # Get response and speak it
@@ -915,9 +1052,9 @@ def run_voice_mode():
                 print(f"[Translated->en]: {text_en}")
 
             response = handle_text(text_en)
-            speak(response)
+            speak_with_bargein(response)
         except KeyboardInterrupt:
-            speak("Goodbye!")
+            speak_with_bargein("Goodbye!")
             break
         except Exception as e:
             print(f"Error: {e}")
@@ -932,7 +1069,7 @@ def run_continuous_voice_mode(
     from voice.stt import transcribe
     from voice.tts import speak
 
-    wake_words = wake_words or ["jarvis", "hey jarvis"]
+    wake_words = wake_words or ["ankita", "hey ankita", "jarvis", "hey jarvis"]
     stop_words = stop_words or ["stop", "sleep", "go idle", "cancel"]
 
     _vosk_warned: dict[str, bool] = {}
@@ -991,7 +1128,7 @@ def run_continuous_voice_mode(
             return False
         return any(w in tl for w in stop_words)
 
-    def _listen_for_wake() -> bool:
+    def _listen_for_wake() -> str | bool:
         access_key = os.getenv("PICOVOICE_ACCESS_KEY") or os.getenv("PV_ACCESS_KEY")
         vosk_enabled = (os.getenv("VOSK_WAKE_ENABLED") or "").strip().lower() in ("1", "true", "yes", "on")
         if access_key:
@@ -1011,6 +1148,11 @@ def run_continuous_voice_mode(
                 )
                 try:
                     while True:
+                        # Poll UI commands while waiting for wake
+                        for cmd in poll_ui_commands():
+                            if cmd.get("type") == "command":
+                                return cmd
+
                         pcm = stream.read(porcupine.frame_length, exception_on_overflow=False)
                         pcm = struct.unpack_from("h" * porcupine.frame_length, pcm)
                         if porcupine.process(pcm) >= 0:
@@ -1040,11 +1182,28 @@ def run_continuous_voice_mode(
                 import vosk
                 import sounddevice as sd
 
+                # Robust path resolution for Vosk
+                if not os.path.isabs(model_path):
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    project_root = os.path.dirname(script_dir)
+                    model_path = os.path.join(project_root, model_path)
+
                 if not os.path.exists(model_path):
-                    if not _vosk_warned.get("missing_model"):
-                        _vosk_warned["missing_model"] = True
-                        print(f"[Wake/Vosk] VOSK_MODEL_PATH not found: {model_path}")
-                    return False
+                    # Try one more fallback: relative to project root directly
+                    script_dir = os.path.dirname(os.path.abspath(__file__))
+                    project_root = os.path.dirname(script_dir)
+                    alt_path = os.path.join(project_root, os.path.basename(model_path))
+                    if os.path.exists(alt_path):
+                        model_path = alt_path
+                    else:
+                        if not _vosk_warned.get("missing_model"):
+                            _vosk_warned["missing_model"] = True
+                            print(f"[Wake/Vosk] VOSK_MODEL_PATH not found. Checked: {model_path}")
+                        return False
+                
+                if not _vosk_warned.get("model_loaded"):
+                    _vosk_warned["model_loaded"] = True
+                    print(f"[Wake/Vosk] Loading model from: {model_path}")
 
                 model = vosk.Model(model_path)
                 rec = vosk.KaldiRecognizer(model, 16000)
@@ -1057,6 +1216,11 @@ def run_continuous_voice_mode(
                     channels=1,
                 ) as stream:
                     while True:
+                        # Poll UI commands while waiting for wake
+                        for cmd in poll_ui_commands():
+                            if cmd.get("type") == "command":
+                                return cmd
+
                         data_mv, _overflowed = stream.read(4000)
                         data = bytes(data_mv)
                         if not data:
@@ -1078,77 +1242,132 @@ def run_continuous_voice_mode(
                     print("[Wake/Vosk] Not active. Ensure deps installed: vosk, sounddevice, and a working microphone.")
                 return False
 
-        cmd = input("[Idle] Say wake word or press Enter to speak (type 'exit' to quit): ")
-        if (cmd or "").strip().lower() in ["exit", "quit", "bye"]:
-            return False
-        return True
+        # If no wake word engine, fall back to console input
+        # but check UI first
+        while True:
+            for cmd in poll_ui_commands():
+                if cmd.get("type") == "command":
+                    return cmd
+            
+            # Non-blocking input is hard in terminal, so we'll just check UI frequently
+            # and only block for a tiny bit or skip console in this mode if UI is active.
+            time.sleep(0.1)
+            # return True # Auto-trigger for debug if needed
+            # For now, if no engine, we just rely on UI commands
 
     state = "IDLE"
     publish_ui_state(state)
-    speak("Continuous mode enabled.")
-    print("[Ankita] Continuous voice mode. Wake word: Jarvis. Stop words: stop/sleep/cancel. Ctrl+C to quit.\n")
+    speak_with_bargein("Continuous mode enabled.")
+    print("[Ankita] Continuous voice mode. Wake word: Ankita/Jarvis. Stop words: stop/sleep/cancel. Ctrl+C to quit.\n")
 
     try:
         while True:
-            for cmd in poll_ui_commands():
-                if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
-                    global _ui_sleeping
-                    _ui_sleeping = not _ui_sleeping
-                    publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
-                if cmd.get("type") == "command" and cmd.get("command") == "open_panel":
-                    print("[Ankita] UI panel requested")
-            if _ui_sleeping:
-                state = "SLEEP"
-                publish_ui_state(state)
-                try:
-                    from time import sleep
-                    sleep(0.2)
-                except Exception:
-                    pass
-                continue
-
-            if state == "IDLE":
-                publish_ui_state("WAKE_ACTIVE")
-                ok = _listen_for_wake()
-                if not ok:
-                    speak("Goodbye!")
-                    break
-                state = "LISTENING"
-                publish_ui_state(state)
-
-            if state == "LISTENING":
-                publish_ui_state(state)
-                print("[Listening...]")
-                audio_path = record_audio(duration=command_seconds)
-                raw = transcribe(audio_path)
-                print(f"[You said]: {raw}")
-
-                if not (raw or "").strip():
-                    speak("I didn't hear anything.")
-                    state = "IDLE"
+            try:
+                for cmd in poll_ui_commands():
+                    if cmd.get("type") == "command" and cmd.get("command") == "toggle_sleep":
+                        global _ui_sleeping
+                        _ui_sleeping = not _ui_sleeping
+                        publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
+                    if cmd.get("type") == "command" and cmd.get("command") == "open_panel":
+                        print("[Ankita] UI panel requested")
+                    if cmd.get("type") == "command" and cmd.get("command") == "text_input":
+                        typed_text = cmd.get("text", "")
+                        if typed_text:
+                            print(f"[UI Typed]: {typed_text}")
+                            # Set state to executing BEFORE calling handle_text
+                            state = "EXECUTING"
+                            publish_ui_state(state)
+                            
+                            response = handle_text(typed_text)
+                            
+                            # Keep in executing state while speaking
+                            speak_with_bargein(response)
+                            
+                            state = "IDLE"
+                            publish_ui_state(state)
+                            continue # Skip the rest of this iteration to reset IDLE state correctly
+                if _ui_sleeping:
+                    state = "SLEEP"
                     publish_ui_state(state)
+                    try:
+                        from time import sleep
+                        sleep(0.2)
+                    except Exception:
+                        pass
                     continue
 
-                if _is_stop(raw):
-                    speak("Okay, going idle.")
+                if state == "IDLE":
+                    publish_ui_state("WAKE_ACTIVE")
+                    wake_result = _listen_for_wake()
+                    
+                    if isinstance(wake_result, dict):
+                        # It's a UI command detected during wake listening
+                        if wake_result.get("command") == "toggle_sleep":
+                            _ui_sleeping = not _ui_sleeping
+                            publish_ui_state("SLEEP" if _ui_sleeping else "IDLE")
+                            continue
+                        if wake_result.get("command") == "text_input":
+                            typed_text = wake_result.get("text", "")
+                            if typed_text:
+                                print(f"[UI Typed during wake]: {typed_text}")
+                                state = "EXECUTING"
+                                publish_ui_state(state)
+                                response = handle_text(typed_text)
+                                speak_with_bargein(response)
+                                state = "IDLE"
+                                publish_ui_state(state)
+                            continue
+                    
+                    if not wake_result:
+                        speak_with_bargein("Goodbye!")
+                        break
+                    
+                    state = "LISTENING"
+                    publish_ui_state(state)
+
+                if state == "LISTENING":
+                    publish_ui_state(state)
+                    print("[Listening...]")
+                    audio_path = record_audio(duration=command_seconds)
+                    raw = transcribe(audio_path)
+                    print(f"[You said]: {raw}")
+
+                    if not (raw or "").strip():
+                        speak_with_bargein("I didn't hear anything.")
+                        state = "IDLE"
+                        publish_ui_state(state)
+                        continue
+
+                    if _is_stop(raw):
+                        speak_with_bargein("Okay, going idle.")
+                        state = "IDLE"
+                        publish_ui_state(state)
+                        continue
+
+                    text_en, meta = _voice_to_english(raw)
+                    if meta.get("translated") and text_en:
+                        print(f"[Translated->en]: {text_en}")
+
+                    state = "EXECUTING"
+                    publish_ui_state(state)
+                    response = handle_text(text_en)
+                    speak_with_bargein(response)
                     state = "IDLE"
                     publish_ui_state(state)
-                    continue
-
-                text_en, meta = _voice_to_english(raw)
-                if meta.get("translated") and text_en:
-                    print(f"[Translated->en]: {text_en}")
-
-                state = "EXECUTING"
-                publish_ui_state(state)
-                response = handle_text(text_en)
-                speak(response)
+            except Exception as e:
+                print(f"[Ankita] Core loop error: {e}")
+                import traceback
+                traceback.print_exc()
                 state = "IDLE"
                 publish_ui_state(state)
+                try:
+                    time.sleep(1)
+                except:
+                    pass
 
     except KeyboardInterrupt:
         try:
-            speak("Goodbye!")
+            speak_with_bargein("Goodbye!")
         except Exception:
             pass
 
@@ -1185,7 +1404,7 @@ def run_hybrid_mode():
 
             cmd = input("You: ")
             if cmd.lower() in ["exit", "quit", "bye"]:
-                speak("Goodbye!")
+                speak_with_bargein("Goodbye!")
                 break
             
             if cmd.strip() == "":
@@ -1196,7 +1415,7 @@ def run_hybrid_mode():
                 print(f"[You said]: {text}")
                 
                 if not text.strip():
-                    speak("I didn't hear anything.")
+                    speak_with_bargein("I didn't hear anything.")
                     continue
                 
                 # Get response and speak it
@@ -1207,7 +1426,7 @@ def run_hybrid_mode():
 
                 response = handle_text(text_en)
                 print(f"Ankita: {response}")
-                speak(response)
+                speak_with_bargein(response)
             else:
                 # Text input (no TTS)
                 handle_text(cmd)
@@ -1240,19 +1459,19 @@ def run_voice_enrollment():
     # Fail fast if voice embedding dependencies are missing
     try:
         if getattr(auth, "_get_encoder", None) and auth._get_encoder() is None:
-            speak("Voice enrollment is unavailable because the required dependencies are missing.")
+            speak_with_bargein("Voice enrollment is unavailable because the required dependencies are missing.")
             print("\n✗ Voice enrollment unavailable (missing resemblyzer).")
             return
     except Exception:
-        speak("Voice enrollment is unavailable on this setup.")
+        speak_with_bargein("Voice enrollment is unavailable on this setup.")
         print("\n✗ Voice enrollment unavailable.")
         return
     
     if auth.is_enrolled:
-        speak("You already have a voice signature. Do you want to re-enroll?")
+        speak_with_bargein("You already have a voice signature. Do you want to re-enroll?")
         response = input("Re-enroll? (yes/no): ").strip().lower()
         if response not in ("yes", "y"):
-            speak("Keeping existing voice signature.")
+            speak_with_bargein("Keeping existing voice signature.")
             return
         auth.delete_enrollment()
     
@@ -1266,7 +1485,7 @@ def run_voice_enrollment():
     
     for i, phrase in enumerate(phrases, 1):
         print(f"\n[{i}/3] Please say: \"{phrase}\"")
-        speak(f"Phrase {i}. Please say: {phrase}")
+        speak_with_bargein(f"Phrase {i}. Please say: {phrase}")
         
         input("Press Enter when ready...")
         print("[Recording...]")
@@ -1291,11 +1510,11 @@ def run_voice_enrollment():
     success, message = auth.enroll(samples)
     
     if success:
-        speak("Voice enrollment successful! I will only respond to your commands.")
+        speak_with_bargein("Voice enrollment successful! I will only respond to your commands.")
         print(f"\n✓ {message}")
         print("\nYou can now use --social mode with owner-only commands.")
     else:
-        speak("Voice enrollment failed. Please try again.")
+        speak_with_bargein("Voice enrollment failed. Please try again.")
         print(f"\n✗ {message}")
 
 
@@ -1363,7 +1582,7 @@ Status: Starting in STANDBY mode...
             try:
                 audio_path = manager.export_recent_audio_wav(seconds=seconds)
                 if audio_path:
-                    speak(f"Processing the last {int(seconds)} seconds of conversation for accuracy.")
+                    speak_with_bargein(f"Processing the last {int(seconds)} seconds of conversation for accuracy.")
                     from context.assemblyai_client import upload_audio, request_transcription, poll_transcription
 
                     upload_url = upload_audio(audio_path)
@@ -1427,7 +1646,7 @@ Status: Starting in STANDBY mode...
         response = ask_llm(prompt)
         
         print(f"\n[Ankita]: {response}")
-        speak(response)
+        speak_with_bargein(response)
         
         # Add our response to context
         manager.add_context("ankita", response, is_owner=False)
@@ -1436,21 +1655,21 @@ Status: Starting in STANDBY mode...
         """Handle mode changes."""
         if mode == Mode.ACTIVE:
             try:
-                speak("Now listening and recording context.")
+                speak_with_bargein("Now listening and recording context.")
             except KeyboardInterrupt:
                 pass
             except Exception:
                 pass
         elif mode == Mode.STANDBY:
             try:
-                speak("Standby mode. Context cleared.")
+                speak_with_bargein("Standby mode. Context cleared.")
             except KeyboardInterrupt:
                 pass
             except Exception:
                 pass
         elif mode == Mode.OFF:
             try:
-                speak("Social mode disabled.")
+                speak_with_bargein("Social mode disabled.")
             except KeyboardInterrupt:
                 pass
             except Exception:
@@ -1464,7 +1683,7 @@ Status: Starting in STANDBY mode...
         manager.start()
         started = True
         try:
-            speak("Social assistant ready. Say Ankita active to begin.")
+            speak_with_bargein("Social assistant ready. Say Ankita active to begin.")
         except KeyboardInterrupt:
             raise
         except Exception:
@@ -1499,7 +1718,7 @@ Status: Starting in STANDBY mode...
         if started:
             manager.stop()
         try:
-            speak("Social assistant stopped.")
+            speak_with_bargein("Social assistant stopped.")
         except KeyboardInterrupt:
             pass
         except Exception:
@@ -1516,17 +1735,25 @@ def main():
     parser.add_argument("--social", action="store_true", help="Social assistant mode (group context, owner-controlled)")
     parser.add_argument("--enroll-voice", action="store_true", help="Enroll owner voice for social mode")
     parser.add_argument("--no-bubble", action="store_true", help="Disable floating bubble UI")
+    parser.add_argument("--api-port", type=int, default=5050, help="API bridge port (default: 5050)")
     args = parser.parse_args()
 
+    # Start OpenClaw API Bridge
+    try:
+        from api_bridge import start_bridge_thread
+        start_bridge_thread(port=args.api_port)
+        print(f"[Ankita] API Bridge: http://127.0.0.1:{args.api_port}")
+    except Exception as e:
+        print(f"[Ankita] API Bridge failed to start: {e}")
+
     _maybe_start_bubble(args)
+    _start_pulse_engine()
     
     print()
-    print("  █████╗ ███╗   ██╗██╗  ██╗██╗████████╗ █████╗ ")
-    print(" ██╔══██╗████╗  ██║██║ ██╔╝██║╚══██╔══╝██╔══██╗")
-    print(" ███████║██╔██╗ ██║█████╔╝ ██║   ██║   ███████║")
-    print(" ██╔══██║██║╚██╗██║██╔═██╗ ██║   ██║   ██╔══██║")
-    print(" ██║  ██║██║ ╚████║██║  ██╗██║   ██║   ██║  ██║")
-    print(" ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝  ╚═╝╚═╝   ╚═╝   ╚═╝  ╚═╝")
+    print("=" * 60)
+    print("         A.N.K.I.T.A - AI Assistant v2.0")
+    print("         OpenClaw Integration: ENABLED")
+    print("=" * 60)
     print()
     
     if args.enroll_voice:

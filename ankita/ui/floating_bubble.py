@@ -4,9 +4,9 @@ import socket
 import sys
 import time
 
-from PyQt5.QtCore import QPoint, QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QPainter, QPen
-from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget
+from PyQt5.QtCore import QPoint, QTimer, Qt, pyqtSignal, QRect
+from PyQt5.QtGui import QColor, QPainter, QPen, QFont, QLinearGradient
+from PyQt5.QtWidgets import QApplication, QLabel, QPushButton, QVBoxLayout, QWidget, QLineEdit
 
 
 _UI_STATE_BIND = ("127.0.0.1", 50555)
@@ -20,12 +20,15 @@ class FloatingBubble(QWidget):
     def __init__(self):
         super().__init__()
 
-        self.setFixedSize(74, 74)
+        self.setFixedSize(200, 200) 
         self.setWindowFlags(Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
 
         self._state = "IDLE"
         self._sleeping = False
+        self._last_msg = ""
+        self._history = []
+        self._success_pulse = 0
 
         self._drag_pos = QPoint()
         self._press_global = QPoint()
@@ -60,20 +63,32 @@ class FloatingBubble(QWidget):
 
         self._cmd_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-        # Create panel early so _apply_state can update it
-        self._panel = _MiniPanel()
-        self._panel.hide()
+        # Create mini console for typing
+        self._input_panel = _InputPanel(self)
+        self._input_panel.hide()
+        self._input_panel.submitted.connect(self._on_text_submit)
 
         self._apply_state("IDLE")
         self._ensure_anim_timer()
 
+        # Position at bottom-right
+        screen = QApplication.primaryScreen().geometry()
+        self.move(screen.width() - 220, screen.height() - 220)
+
         self.show()
+
+    def _on_text_submit(self, text):
+        if text.strip():
+            self._history.append(text)
+            self._history = self._history[-5:] # Last 5
+            self._send_command("text_input", {"text": text})
+        self._input_panel.hide()
 
     def _send_command(self, command: str, extra: dict | None = None) -> None:
         try:
             payload: dict = {"type": "command", "command": str(command)}
             if extra:
-                payload["extra"] = extra
+                payload.update(extra)
             data = json.dumps(payload).encode("utf-8")
             self._cmd_sock.sendto(data, _UI_CMD_SEND)
         except Exception:
@@ -93,13 +108,22 @@ class FloatingBubble(QWidget):
                 continue
             if not isinstance(msg, dict):
                 continue
-            if msg.get("type") != "state":
-                continue
-            state = str(msg.get("state") or "")
-            if state:
-                self._apply_state(state)
+            
+            if msg.get("type") == "state":
+                state = str(msg.get("state") or "")
+                if state:
+                    self._apply_state(state)
+            
+            if msg.get("type") == "text":
+                self._last_msg = msg.get("text", "")
+                self.update()
 
     def _apply_state(self, state: str) -> None:
+        if state == "SUCCESS_PULSE":
+            self._success_pulse = 20
+            self.update()
+            return
+
         self._state = state
         if state == "SLEEP":
             self._sleeping = True
@@ -107,95 +131,112 @@ class FloatingBubble(QWidget):
             self._sleeping = False
 
         if self._sleeping:
-            self._base_color = QColor(120, 120, 120)
-            self._glow_color = QColor(120, 120, 120)
+            self._base_color = QColor(100, 100, 100)
+            self._glow_color = QColor(100, 100, 100)
         elif state == "LISTENING":
-            self._base_color = QColor(0, 200, 100)
-            self._glow_color = QColor(0, 255, 140)
+            self._base_color = QColor(0, 220, 110)
+            self._glow_color = QColor(0, 255, 150)
         elif state == "EXECUTING":
-            self._base_color = QColor(255, 200, 0)
-            self._glow_color = QColor(255, 220, 80)
+            self._base_color = QColor(255, 180, 0)
+            self._glow_color = QColor(255, 200, 50)
+        elif state == "WAKE_ACTIVE":
+            self._base_color = QColor(200, 100, 255)
+            self._glow_color = QColor(220, 150, 255)
         else:
             self._base_color = QColor(70, 130, 255)
             self._glow_color = QColor(110, 170, 255)
 
         self._ensure_anim_timer()
-        self._panel.set_state(self._state, self._sleeping)
         self.update()
 
     def _ensure_anim_timer(self) -> None:
-        wants_anim = (self._state == "WAKE_ACTIVE") or (self._state == "EXECUTING")
+        wants_anim = (self._state == "WAKE_ACTIVE") or (self._state == "EXECUTING") or (self._state == "LISTENING")
         if wants_anim and not self._anim_timer.isActive():
             self._anim_timer.start(16)
         if (not wants_anim) and self._anim_timer.isActive():
             self._anim_timer.stop()
 
     def _on_anim_tick(self) -> None:
-        self._pulse_phase += 0.06
+        self._pulse_phase += 0.08
         if self._pulse_phase > (2 * math.pi):
             self._pulse_phase -= (2 * math.pi)
-        self._spinner_angle = (self._spinner_angle + 6.0) % 360.0
+        self._spinner_angle = (self._spinner_angle + 8.0) % 360.0
+        
+        if self._success_pulse > 0:
+            self._success_pulse -= 1
+            
         self.update()
 
     def _on_long_press(self) -> None:
         self._long_press_fired = True
-        self.long_pressed.emit()
+        self._send_command("toggle_sleep")
 
     def paintEvent(self, event):
-        size = float(min(self.width(), self.height()))
-        center = size / 2.0
-        padding = 6.0
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        base_r = max(18.0, (size / 2.0) - (padding + 6.0))
-        glow_r = base_r + 5.0
+        w, h = self.width(), self.height()
+        center_x, center_y = w // 2, h // 2
+        
+        base_r = 32
+        glow_r = base_r + 10
 
-        if self._state == "WAKE_ACTIVE":
-            t = (math.sin(self._pulse_phase) + 1.0) / 2.0
-            ring_alpha = int(40 + 120 * t)
-            ring_w = 2 + 3 * t
-            max_r = (size / 2.0) - padding - ring_w
-            ring_r = min(glow_r + 5.0 + 6.0 * t, max_r)
-
-            pen = QPen(QColor(self._glow_color.red(), self._glow_color.green(), self._glow_color.blue(), ring_alpha))
-            pen.setWidthF(ring_w)
-            painter.setPen(pen)
-            painter.setBrush(Qt.NoBrush)
-            painter.drawEllipse(QPoint(int(center), int(center)), int(ring_r), int(ring_r))
-
-        glow_alpha = 70
+        # Draw Glow
+        glow_alpha = 60 + int(20 * math.sin(self._pulse_phase))
         painter.setPen(Qt.NoPen)
         painter.setBrush(QColor(self._glow_color.red(), self._glow_color.green(), self._glow_color.blue(), glow_alpha))
-        painter.drawEllipse(QPoint(int(center), int(center)), int(glow_r), int(glow_r))
+        painter.drawEllipse(QPoint(center_x, center_y), glow_r, glow_r)
 
+        # Draw Base
         painter.setBrush(self._base_color)
-        painter.drawEllipse(QPoint(int(center), int(center)), int(base_r), int(base_r))
+        painter.drawEllipse(QPoint(center_x, center_y), base_r, base_r)
+        
+        # Success Pulse Glow
+        if self._success_pulse > 0:
+            p_r = base_r + (20 - self._success_pulse) * 2
+            alpha = int(self._success_pulse * 10)
+            painter.setPen(QPen(QColor(0, 255, 100, alpha), 3))
+            painter.drawEllipse(QPoint(center_x, center_y), p_r, p_r)
 
+        # State specific visuals
         if self._state == "EXECUTING":
-            arc_r = max(14.0, base_r - 8.0)
-            rect = (center - arc_r, center - arc_r, arc_r * 2.0, arc_r * 2.0)
-            pen = QPen(QColor(20, 20, 20, 200))
+            rect = QRect(center_x - 38, center_y - 38, 76, 76)
+            pen = QPen(QColor(255, 255, 255, 200))
             pen.setWidth(4)
-            pen.setCapStyle(Qt.RoundCap)
             painter.setPen(pen)
             painter.setBrush(Qt.NoBrush)
-            start_angle = int(-self._spinner_angle * 16)
-            span = int(-120 * 16)
-            painter.drawArc(int(rect[0]), int(rect[1]), int(rect[2]), int(rect[3]), start_angle, span)
+            painter.drawArc(rect, int(-self._spinner_angle * 16), int(-120 * 16))
+            self._draw_status_text(painter, "ANKITA Thinking", center_x, center_y + 55)
+
+        elif self._state == "LISTENING":
+            for i in range(3):
+                r = base_r + 5 + (i * 8 + self._pulse_phase * 6) % 22
+                alpha = 160 - int(r * 5)
+                if alpha > 0:
+                    painter.setPen(QPen(QColor(0, 255, 150, alpha), 2))
+                    painter.drawEllipse(QPoint(center_x, center_y), int(r), int(r))
+            self._draw_status_text(painter, "Listening...", center_x, center_y + 55)
+
+        elif self._state == "WAKE_ACTIVE":
+            self._draw_status_text(painter, "Yes Krish?", center_x, center_y + 55)
 
         if self._sleeping:
             painter.setPen(Qt.NoPen)
-            painter.setBrush(QColor(20, 20, 20, 120))
-            painter.drawEllipse(QPoint(int(center + 8), int(center - 10)), 5, 5)
-            painter.drawEllipse(QPoint(int(center - 4), int(center - 14)), 3, 3)
+            painter.setBrush(QColor(0, 0, 0, 120))
+            painter.drawEllipse(QPoint(center_x + 8, center_y - 10), 4, 4)
+            painter.drawEllipse(QPoint(center_x - 8, center_y - 10), 4, 4)
+            self._draw_status_text(painter, "Offline", center_x, center_y + 55)
+
+    def _draw_status_text(self, painter, text, x, y):
+        painter.setPen(QColor(255, 255, 255))
+        font = QFont("Segoe UI", 10, QFont.Bold)
+        painter.setFont(font)
+        painter.drawText(QRect(x - 90, y, 180, 25), Qt.AlignCenter, text)
 
     def mousePressEvent(self, event):
         if event.button() != Qt.LeftButton:
             return
         self._press_global = event.globalPos()
-        self._press_local = event.pos()
         self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
         self._moved = False
         self._long_press_fired = False
@@ -215,70 +256,56 @@ class FloatingBubble(QWidget):
             return
         was_long = self._long_press_fired
         self._press_timer.stop()
-        if was_long:
+        if was_long or self._moved:
             return
-        if self._moved:
-            return
-        self.clicked.emit()
+        
+        if self._input_panel.isVisible():
+            self._input_panel.hide()
+        else:
+            self._input_panel.show_at(self.geometry().center())
 
+class _InputPanel(QWidget):
+    submitted = pyqtSignal(str)
 
-class _MiniPanel(QWidget):
-    def __init__(self):
+    def __init__(self, parent):
         super().__init__()
-        self.setWindowFlags(Qt.Tool | Qt.WindowStaysOnTopHint)
-        self.setFixedSize(260, 160)
+        self.setWindowFlags(Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setFixedSize(320, 70)
 
-        self._title = QLabel("Ankita")
-        self._state = QLabel("State: IDLE")
-        self._hint = QLabel("Click bubble: show/hide\nLong press: sleep/wake")
+        self.edit = QLineEdit(self)
+        self.edit.setPlaceholderText("Direct command to ANKITA...")
+        self.edit.setStyleSheet("""
+            QLineEdit {
+                background: rgba(20, 20, 20, 240);
+                color: #4682ff;
+                border: 2px solid #4682ff;
+                border-radius: 20px;
+                padding: 12px;
+                font-family: 'Segoe UI';
+                font-size: 13px;
+                font-weight: bold;
+            }
+        """)
+        self.edit.returnPressed.connect(self._on_submit)
 
-        self._btn_sleep = QPushButton("Sleep")
-        self._btn_close = QPushButton("Close")
+        layout = QVBoxLayout()
+        layout.addWidget(self.edit)
+        self.setLayout(layout)
 
-        lay = QVBoxLayout()
-        lay.addWidget(self._title)
-        lay.addWidget(self._state)
-        lay.addWidget(self._hint)
-        lay.addWidget(self._btn_sleep)
-        lay.addWidget(self._btn_close)
-        self.setLayout(lay)
+    def show_at(self, pos):
+        self.move(pos.x() - 160, pos.y() - 110)
+        self.show()
+        self.edit.setFocus()
+        self.edit.clear()
 
-        self._sleeping = False
-
-        self._btn_close.clicked.connect(self.hide)
-
-    def set_state(self, state: str, sleeping: bool) -> None:
-        self._sleeping = bool(sleeping)
-        self._state.setText(f"State: {state}")
-        self._btn_sleep.setText("Wake" if self._sleeping else "Sleep")
-
+    def _on_submit(self):
+        self.submitted.emit(self.edit.text())
 
 def main() -> None:
     app = QApplication(sys.argv)
     w = FloatingBubble()
-
-    def _on_click():
-        if w._panel.isVisible():
-            w._panel.hide()
-            return
-        pos = w.geometry().topRight()
-        w._panel.move(pos.x() + 10, pos.y())
-        w._panel.show()
-        w._send_command("open_panel")
-
-    def _on_long_press():
-        w._send_command("toggle_sleep")
-
-    def _on_panel_sleep_toggle():
-        w._send_command("toggle_sleep")
-
-    w._panel._btn_sleep.clicked.connect(_on_panel_sleep_toggle)
-
-    w.clicked.connect(_on_click)
-    w.long_pressed.connect(_on_long_press)
-
     sys.exit(app.exec_())
-
 
 if __name__ == "__main__":
     main()

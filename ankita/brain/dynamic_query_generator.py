@@ -133,6 +133,16 @@ class DynamicQueryGenerator:
                 "{set} a {timer} for workout",
                 "Gym {session_type}",
                 "I'm {ready_to} {sweat}"
+            ],
+            "personality": [
+                "{greeting}, Ankita! {style}",
+                "You're looking {cool_adj} today",
+                "Be my {companion} {style}",
+                "Make things {cool_adj}",
+                "Handle this {style}",
+                "Yo, let's keep it {cool_adj}",
+                "Show me some {cool_adj} stuff",
+                "You're the {cool_adj}est {companion}"
             ]
         }
     
@@ -271,7 +281,13 @@ class DynamicQueryGenerator:
             "timer": ["timer", "stopwatch", "countdown"],
             "session_type": ["session", "time", "day"],
             "ready_to": ["ready to", "going to", "about to"],
-            "sweat": ["sweat", "work out", "exercise", "get fit"]
+            "sweat": ["sweat", "work out", "exercise", "get fit"],
+
+            # Personality / Coolness
+            "cool_adj": ["cool", "fire", "dope", "lit", "sick", "icy", "chill", "vibey"],
+            "style": ["with style", "elegantly", "like a boss", "with swagger", "effortlessly"],
+            "greeting": ["Yo", "Hey", "Sup", "What's good", "Ayo"],
+            "companion": ["bestie", "partner", "wingman", "bro", "homie", "fam"]
         }
     
     def generate(self, situation, avoid_duplicates=True):

@@ -60,6 +60,18 @@ def _generate_summary(tool_name: str, args: dict, result: dict) -> str:
             return f"Instagram: {action} @{args['username']}"
         return f"Instagram: {action.replace('_', ' ').title()}"
     
+    elif category == "whatsapp":
+        contact = args.get("contact") or args.get("recipient", "contact")
+        if action == "send":
+            return f"WhatsApp: Sent message to {contact}"
+        return f"WhatsApp: {action.replace('_', ' ').title()}"
+        
+    elif category == "gmail":
+        to = args.get("to", "recipient")
+        if action == "send":
+            return f"Gmail: Sent email to {to}"
+        return f"Gmail: {action.replace('_', ' ').title()}"
+
     elif category == "system":
         sub_category = tool_name.split(".")[1] if len(tool_name.split(".")) > 1 else ""
         if sub_category == "volume":
@@ -85,6 +97,9 @@ def _generate_summary(tool_name: str, args: dict, result: dict) -> str:
     elif category == "scheduler":
         return f"Scheduler: Added job"
     
+    elif category == "openclaw":
+        return f"Openclaw: {action.replace('_', ' ').title()}"
+    
     elif category == "web":
         if "query" in args:
             return f"Web: Searched '{args['query']}'"
@@ -101,6 +116,8 @@ def _detect_topic(tool_name: str, args: dict) -> str:
     topic_map = {
         "youtube": "video",
         "instagram": "social",
+        "whatsapp": "social",
+        "gmail": "communication",
         "notepad": "work",
         "system": "system",
         "scheduler": "schedule",
@@ -243,6 +260,16 @@ def _inject_memory_context(tool_name: str, args: dict) -> dict:
     if category == "instagram":
         ig_context = memory.get_instagram_context()
         enhanced_args["_instagram_context"] = ig_context
+    
+    # Inject WhatsApp context
+    if category == "whatsapp":
+        wa_context = memory.get_tool_context("whatsapp")
+        enhanced_args["_whatsapp_context"] = wa_context
+        
+    # Inject Gmail context
+    if category == "gmail":
+        gm_context = memory.get_tool_context("gmail")
+        enhanced_args["_gmail_context"] = gm_context
     
     # Inject recent actions for context
     recent = memory.get_recent_context(limit=3)

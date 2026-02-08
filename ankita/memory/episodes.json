@@ -1,272 +1,6 @@
 [
   {
-    "id": "ep_9e9530b8",
-    "intent": "system.volume.down",
-    "entities": {
-      "action": "down",
-      "step": null
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Volume decreased by 10"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:18:52.143579"
-  },
-  {
-    "id": "ep_d1e05f94",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:20:54.705145"
-  },
-  {
-    "id": "ep_95bd44bb",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:33:04.626787"
-  },
-  {
-    "id": "ep_0dbd9a94",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:34:12.694214"
-  },
-  {
-    "id": "ep_e86ae0cb",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:34:12.834821"
-  },
-  {
-    "id": "ep_963801e3",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:34:13.079462"
-  },
-  {
-    "id": "ep_238b1539",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T15:34:13.707468"
-  },
-  {
-    "id": "ep_4fb1ec53",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:26:40.024951"
-  },
-  {
-    "id": "ep_da21dcb5",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "vscode"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened vscode"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:26:40.246167"
-  },
-  {
-    "id": "ep_69a28e65",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:26:40.750735"
-  },
-  {
-    "id": "ep_f6ba269b",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:31:40.066345"
-  },
-  {
-    "id": "ep_6768ee0f",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome and open notepad"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome and open notepad"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:41:26.932329"
-  },
-  {
-    "id": "ep_ff223af3",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:42:42.599793"
-  },
-  {
-    "id": "ep_81039116",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T17:42:49.394180"
-  },
-  {
-    "id": "ep_aed5d95d",
+    "id": "ep_d771847f",
     "intent": "system.app.open",
     "entities": {
       "action": "open",
@@ -282,10 +16,10 @@
       ]
     },
     "tags": [],
-    "time": "2026-02-05T18:21:11.438197"
+    "time": "2026-02-08T15:03:53.920099"
   },
   {
-    "id": "ep_0a15ef21",
+    "id": "ep_ec165c1a",
     "intent": "system.app.close",
     "entities": {
       "action": "close",
@@ -301,624 +35,10 @@
       ]
     },
     "tags": [],
-    "time": "2026-02-05T18:21:18.021236"
+    "time": "2026-02-08T15:04:02.541859"
   },
   {
-    "id": "ep_d0077cbb",
-    "intent": "system.app.focus",
-    "entities": {
-      "action": "focus",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Focused chrome",
-          "window_title": "(43) Print Culture and the Modern World One Shot: FULL CHAPTER | Warrior 2026 |Class 10 History Chapter 5 - YouTube - Google Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T18:21:22.673107"
-  },
-  {
-    "id": "ep_fcd4a49a",
-    "intent": "web.search",
-    "entities": {
-      "query": "what is the current bitcoin price?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "what is the current bitcoin price?",
-          "results": []
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:05:19.262620"
-  },
-  {
-    "id": "ep_2c2f7aed",
-    "intent": "web.search",
-    "entities": {
-      "query": "latest ai news today?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "latest ai news today?",
-          "results": []
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:05:26.241112"
-  },
-  {
-    "id": "ep_d4df0e2c",
-    "intent": "web.search",
-    "entities": {
-      "query": "current weather in delhi?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "current weather in delhi?",
-          "results": []
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:05:34.206469"
-  },
-  {
-    "id": "ep_627d2399",
-    "intent": "web.search",
-    "entities": {
-      "query": "current weather in delhi?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "current weather in delhi?",
-          "results": []
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:05:55.315300"
-  },
-  {
-    "id": "ep_5a9e0674",
-    "intent": "web.search",
-    "entities": {
-      "query": "what is the current bitcoin price?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "what is the current bitcoin price?",
-          "results": [
-            {
-              "title": "bitcoin price (USD)",
-              "snippet": "bitcoin price is $67953 USD.",
-              "url": "https://www.coingecko.com/",
-              "source": "CoinGecko"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:10:51.547467"
-  },
-  {
-    "id": "ep_497a4b2f",
-    "intent": "web.search",
-    "entities": {
-      "query": "latest ai news today?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "latest ai news today?",
-          "results": [
-            {
-              "title": "Latest Agentic AI News Today | Trends, Predictions, & Analysis - Forbes",
-              "snippet": "Latest Agentic AI News Today | Trends, Predictions, & Analysis - Forbes (Thu, 05 Feb 2026 09:30:45 GMT)",
-              "url": "https://news.google.com/rss/articles/CBMiU0FVX3lxTE91bDl1M3dLNW1XQUh2R1dVNm8zZ2FNLWYwMUZWT2szQXI5Wll5ZGVJTFJEbkRmS2Zzc3gzbGdnUXlrUWQ0MlhKQ2ExUXZIWmRhWmlr?oc=5",
-              "source": "Google News"
-            },
-            {
-              "title": "How Anthropic's new AI tool Claude could impact IT jobs? Software veteran is 'sad': 'Will never ever writ - The Economic Times",
-              "snippet": "How Anthropic's new AI tool Claude could impact IT jobs? Software veteran is 'sad': 'Will never ever writ - The Economic Times (Thu, 05 Feb 2026 13:10:13 GMT)",
-              "url": "https://news.google.com/rss/articles/CBMihgJBVV95cUxPN1Mya1hCRVpoRTVBS2ZrOWJGMVFvd0ZpQXZ5RWt5LUlabmYzMV96YjNJVndKLWhYVU9IRzZILXM4RnlFeFBrTDE0cWRfNlZMUVNpYXF2Mnp2Rm9IdWxlWjVhWXpuN3VubHhoSEd3b29hYVB4RG5OeDJqYTFTd3RuVzFmTzZnOGlYeGRLWmNKV25qdHF6em95bjQ0eHpBNlkyanhRU01rZmpCLTBVUWNKR0VzRDVYeEI4X3ZBMDhuSWtaczYybE8wc091T0lkNnhnb1NOTmRTMUpkZjFQbEU5cWRzRy1MTWExU01CZF9Gei02SHhRSmo0SkpSYkpVQlB4dVNQUVJR0gGLAkFVX3lxTE9ENVZ6elJubUFheV9ZLXp0Qm5hX1EweW5aWW51UlRzZXBOQmZfTUNoUzVHM191anVJUUY2dnE3VFkyVF9wMS12LVdRLUwyVGhwbVlSTTVzcXRaVzlJVF9fVEZKY0lrM0RpTlNRWndHN0dscTBhTmN3b3M2bW83NHE5OGVfSzBZdHZnekE0bVRmYllWU0plOFNJZ1dMa3pkaGZQaFpFbTB4RzdKNmo0czBkZnA0eW1nVVpqSmdZVHh6T2hVc1VNSHBQSmJsQ2hKSTlyQ2Z4RlVxMU4ycjc1Q1FhRDg3NjA5ckoyd1gwczg1aUtSd3VOVUVUY3YwbE9nSGZtTzJBSUM4ZmVBRQ?oc=5",
-              "source": "Google News"
-            },
-            {
-              "title": "Explained: What is Anthropic's AI tool that wiped $285 billion off software stocks in a single day - Times of India",
-              "snippet": "Explained: What is Anthropic's AI tool that wiped $285 billion off software stocks in a single day - Times of India (Thu, 05 Feb 2026 07:31:00 GMT)",
-              "url": "https://news.google.com/rss/articles/CBMiigJBVV95cUxQaHkxeUNRSTN1T2g1U3FJa2Z2V196QjZmX2xjTXhNZFhNQkJRdVVGaVNHRDJKLUtWM1BQQXZLVG03amZtei16Y1FsUFV4RlVYOVlKVTYxQzZrN2hHUDBNajdQMjB1aFhlQy1Sb1ZMRFcyeHJHQ3R1alpDLW1sRzVyN1lfRjJkTHdwSW1nYnRsaWd6amJBLUsySG5zWmF0MW9GVVFyeTlULXZlS2RBb1Blb3ROYVZVXzc0MXJ6cWp5MjRtQnFjQnhiWnRQc1k5WGl3cHFCMWtyX3VDZnc4OFNhT0U3UjMzNzNWVXRLVkNGemZyZmphaENyZl9SRDhoMWhiRkZlV0hnbXRqUdIBjwJBVV95cUxNZ3gxNHl4NGU1VWViODRPYlFFV2poc2xpU2hocWdJYnpsMWs1S081RW9jdGtBdDF2MDVmOTNZMmdILUowNk9mTm9aVFE4U3VQWGpjU0tvZ3pNV2ZQSTRacDJibjIySW51d19VMWh6Z05lbzk3cWRYVlJzakVvZ2ctTGtZeEtiWWY0Y29LU29BeTA5Y19UTE1Ob3VCbWlSV21wcndsNm51ZE9wSFp2d3JJdXFQSjZQUFlwWUM5eTJrTDVmZG14LTJDc09ibk5iYV9iRk40c2RPS042d3pKaDJpQW9DM1RPbWp1WUZicDZEZjhGTTF5RFNjOXZ6VjdsSzhGWnNVdzlnaUZFU2hHQ1dj?oc=5",
-              "source": "Google News"
-            },
-            {
-              "title": "Why Anthropic's new AI tools rattled Wall Street's tech giants, hit Indian IT stocks - India Today",
-              "snippet": "Why Anthropic's new AI tools rattled Wall Street's tech giants, hit Indian IT stocks - India Today (Wed, 04 Feb 2026 04:33:36 GMT)",
-              "url": "https://news.google.com/rss/articles/CBMizwFBVV95cUxOYm95bWt2RG01M1pjbU1YbnlCcnRDRXpqNHdLbERmMnRQcENyMmZSQ05Pb2ZOQjdSd3VKRkh5QzlsU2hCR05aQzZWaFh6LUEtZHlRLXRPSzE3NVpiVVI4UDFMMGdWRVFtT0ZHV3Z5bVdTTDRSYTdwYXJIcEgyX0l4LTFwU0FMSDVJck5ONU8xNGFER0YzY1pVSWprR0o3ZlRCeG9TbmVESDV6WTBiUVh0bS1xek5yVkpwUWlUbm0xamJfMEpONUd0THhzSFlLajjSAdQBQVVfeXFMUGlhM0dLS3lmWFZHdTBVSkFOMEstbTVmcmc2YTdkQnZjU202NVBTLUZLTUtfZUVIZW9hNFQ3UHZWLTF3WEZzdEFnT3JYa2tWcjFwZVhwT2NYODduSGZXbXZzbE5zczdBNldqVGwweDA2UkpvWmMyWllaY0d1TC1XX2ZnSy1lNER6VFdRdUJ0ZHUzRzNuRXktN0dSMV9NUk1NMzlzcjlyR01IOFN0Wl9uNzFCU3gySU9jMVJ4RG5TVmNnS3FuZjJDWjdfYk9ONlBieWQ0ZmM?oc=5",
-              "source": "Google News"
-            },
-            {
-              "title": "Threat of New AI Tools Wipes $300 Billion Off Software and Data Stocks - The Wall Street Journal",
-              "snippet": "Threat of New AI Tools Wipes $300 Billion Off Software and Data Stocks - The Wall Street Journal (Tue, 03 Feb 2026 22:44:00 GMT)",
-              "url": "https://news.google.com/rss/articles/CBMimgFBVV95cUxQRDJ0dmhlRXVOUThrMk9sNC1lYWxGNGJqTElDVmZ4OFdxa3BCT2NKOXNVZ0FPOWgyeXFyT043MlBwTmFYeUY4YzZLa1ktNTlPcTZTYWtkMzNLSnk3Q29lalpzZFdKSHplRW9uMUJHdEtuTXBTdVVXMUFEZThDT0Y2OUNoUkhTOHVTdUtPWmM0QlRKNG53MGRkeGNR?oc=5",
-              "source": "Google News"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:11:50.140413"
-  },
-  {
-    "id": "ep_9998d0c6",
-    "intent": "web.search",
-    "entities": {
-      "query": "current weather in delhi?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "current weather in delhi?",
-          "results": [
-            {
-              "title": "Weather in delhi",
-              "snippet": "Current weather in delhi: 15\u00b0C (feels like 15\u00b0C), Haze.",
-              "url": "https://wttr.in/delhi",
-              "source": "wttr.in"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:12:18.951203"
-  },
-  {
-    "id": "ep_a6fd2499",
-    "intent": "web.search",
-    "entities": {
-      "query": "what is the current bitcoin price?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "what is the current bitcoin price?",
-          "results": [
-            {
-              "title": "Bitcoin price today - BTC price chart & live trends - Kraken",
-              "snippet": "Bitcoin price today is $69,323.00. In the last 24 hours Bitcoin's price moved -8.85%. The current BTC to USD conversion rate is $69,323.00 per BTC. The",
-              "url": "https://www.kraken.com/prices/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "BTC USD \u2014 Bitcoin Price and Chart - TradingView",
-              "snippet": "The current price of Bitcoin (BTC) is 67,311 USD \u2014 it has fallen \u22125.23% in the past 24 hours. Try placing this info into the context by checking out what coins",
-              "url": "https://www.tradingview.com/symbols/BTCUSD/",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The live Bitcoin price today is $67727.16 USD with a 24-hour trading volume of $99989123024.24 USD. We update our BTC to USD price in real-time.",
-              "url": "https://coinmarketcap.com/currencies/bitcoin/",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The price of Bitcoin (BTC) is $67602.78 today as of Feb 5, 2026, 11:48 am EST, with a 24-hour trading volume of $58.28B.",
-              "url": "https://www.coindesk.com/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin Price Today | BTC to USD Live Price, Market Cap & Chart",
-              "snippet": "The live price of Bitcoin is $67,935.48 per (BTC / USD) with a current market cap of $1,357.68B USD. 24-hour trading volume is $101.56B USD.",
-              "url": "https://www.binance.com/en/price/bitcoin",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:19:55.185822"
-  },
-  {
-    "id": "ep_84a85b4a",
-    "intent": "web.search",
-    "entities": {
-      "query": "what is the current bitcoin price?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "what is the current bitcoin price?",
-          "results": [
-            {
-              "title": "Bitcoin price today - BTC price chart & live trends - Kraken",
-              "snippet": "Bitcoin price today is $69,323.00. In the last 24 hours Bitcoin's price moved -8.85%. The current BTC to USD conversion rate is $69,323.00 per BTC. The",
-              "url": "https://www.kraken.com/prices/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The live Bitcoin price today is $67727.16 USD with a 24-hour trading volume of $99989123024.24 USD. We update our BTC to USD price in real-time.",
-              "url": "https://coinmarketcap.com/currencies/bitcoin/",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The price of Bitcoin (BTC) is $67602.78 today as of Feb 5, 2026, 11:48 am EST, with a 24-hour trading volume of $58.28B.",
-              "url": "https://www.coindesk.com/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin Price Today | BTC to USD Live Price, Market Cap & Chart",
-              "snippet": "The live price of Bitcoin is $67,935.48 per (BTC / USD) with a current market cap of $1,357.68B USD. 24-hour trading volume is $101.56B USD.",
-              "url": "https://www.binance.com/en/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin BTC (BTC-USD) Live Price, News, Chart & Price History",
-              "snippet": "The last known price of Bitcoin is 71,350.6529722 USD and is down -6.20 over the last 24 hours. It is currently trading on 12556 active market(s) with",
-              "url": "https://finance.yahoo.com/quote/BTC-USD/",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:20:12.277073"
-  },
-  {
-    "id": "ep_9ac3e9dc",
-    "intent": "web.search",
-    "entities": {
-      "query": "latest ai news today?",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "latest ai news today?",
-          "results": [
-            {
-              "title": "Artificial intelligence - NBC News",
-              "snippet": "The latest news and top stories on artificial intelligence, including AI chatbots like Microsoft's ChatGPT, Apple's AI Chatbot and Google's Bard.",
-              "url": "https://www.nbcnews.com/artificial-intelligence",
-              "source": "Tavily"
-            },
-            {
-              "title": "Latest AI News and AI Breakthroughs that Matter Most: 2026 & 2025",
-              "snippet": "Wondering what's happening in the AI world? Here are the latest AI breakthroughs and news that are shaping the world around us!",
-              "url": "https://www.crescendo.ai/news/latest-ai-news-and-updates",
-              "source": "Tavily"
-            },
-            {
-              "title": "Artificial Intelligence - Latest AI News and Analysis - WSJ.com",
-              "snippet": "Google to Double Spending as Earnings Beat Wall Street Expectations. AI is supercharging Google's advertising and cloud-computing businesses, and the company",
-              "url": "https://www.wsj.com/tech/ai?gaa_at=eafs&gaa_n=AWEtsqfdaKZQiyRtSe0saO2EvAjaFpZrUyv4TaQpKpIt3Hpb6hgU3V3A2RTN&gaa_ts=6984cdd5&gaa_sig=0HJJqidbs6Mc9-xhL4JbKMOyuH6zl_RIVcZPeMTGEeF8OlROvwYL3zGZo_Q0YJTuISVkS8umj-rsUBS_ouRJZA%3D%3D",
-              "source": "Tavily"
-            },
-            {
-              "title": "AI News | Latest News | Insights Powering AI-Driven Business Growth",
-              "snippet": "Microsoft unveils method to detect sleeper agent backdoors \u00b7 OpenAI's enterprise push: The hidden story behind AI's sales race \u00b7 AI Expo 2026 Day 1: Governance",
-              "url": "https://www.artificialintelligence-news.com/",
-              "source": "Tavily"
-            },
-            {
-              "title": "AI News & Artificial Intelligence | TechCrunch",
-              "snippet": "News coverage on artificial intelligence and machine learning tech, the companies building them, and the ethical issues AI raises today.",
-              "url": "https://techcrunch.com/category/artificial-intelligence/",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-05T22:20:26.838917"
-  },
-  {
-    "id": "ep_65462e9c",
-    "intent": "system.app.focus",
-    "entities": {
-      "action": "focus",
-      "app": "chrome"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Focused chrome",
-          "window_title": "Tavily API Platform - Google Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T12:37:52.252600"
-  },
-  {
-    "id": "ep_c875df23",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "latest news about open ai and claude"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened latest news about open ai and claude"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T12:43:24.152121"
-  },
-  {
-    "id": "ep_f2702bfb",
-    "intent": "web.search",
-    "entities": {
-      "query": "latest news about OpenAI and Claude",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "latest news about OpenAI and Claude",
-          "results": [
-            {
-              "title": "OpenAI counters Anthropic Claude Opus 4.6 with GPT-5.3 Codex, its ...",
-              "snippet": "OpenAI counters Anthropic Claude Opus 4.6 with GPT-5.3 Codex, its most advanced coding agent \u00b7 OpenAI's latest Codex model combines faster",
-              "url": "https://indianexpress.com/article/technology/tech-news-technology/openai-counters-anthropic-claude-opus-4-6-with-gpt-5-3-codex-its-most-advanced-coding-agent-10516681/",
-              "source": "Tavily"
-            },
-            {
-              "title": "OpenAI's GPT-5.3-Codex drops as Anthropic upgrades Claude",
-              "snippet": "OpenAI launched GPT-5.3-Codex as Anthropic released Claude Opus 4.6 in a simultaneous drop that kicks off the AI coding wars, with benchmark",
-              "url": "https://venturebeat.com/technology/openais-gpt-5-3-codex-drops-as-anthropic-upgrades-claude-ai-coding-wars-heat",
-              "source": "Tavily"
-            },
-            {
-              "title": "New Claude & GPT Models Just Dropped (It's War!) - YouTube",
-              "snippet": "Matt hits the nail on the head at the end; competition is the only thing keeping these companies honest. If OpenAI didn't have Anthropic",
-              "url": "https://www.youtube.com/watch?v=9f2egsZZjnw",
-              "source": "Tavily"
-            },
-            {
-              "title": "Anthropic launches Claude Opus 4.6 as AI moves toward a 'vibe ...",
-              "snippet": "Anthropic launched its latest AI model, Claude Opus 4.6, which is better at coding, sustaining tasks for longer and creating higher-quality",
-              "url": "https://www.cnbc.com/2026/02/05/anthropic-claude-opus-4-6-vibe-working.html",
-              "source": "Tavily"
-            },
-            {
-              "title": "GPT-5.3 Codex & Claude Opus 4.6: 2 NEW Models ... - YouTube",
-              "snippet": "Anthropic and OpenAI just had the biggest AI release day in history - dropping Claude Opus 4.6 and GPT-5.3 Codex within 20 minutes of each",
-              "url": "https://www.youtube.com/watch?v=2ECcWs6n-UA",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T12:52:56.940957"
-  },
-  {
-    "id": "ep_516987ad",
-    "intent": "web.search",
-    "entities": {
-      "query": "search for price of bitcoin",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "search for price of bitcoin",
-          "results": [
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The price of Bitcoin (BTC) is $64881.97 today as of Feb 6, 2026, 12:02 am EST, with a 24-hour trading volume of $81.26B.",
-              "url": "https://www.coindesk.com/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin Price, BTC Price, Live Charts, and Marketcap - Coinbase",
-              "snippet": "Price of BTC is $76,180.00 right now. Looking at Bitcoin's historical prices, it's -11% down from the previous week's price of $88,349.67, and observed a 4",
-              "url": "https://www.coinbase.com/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin (BTC) Price Today: BTC Live Price, Charts, News - Crypto.com",
-              "snippet": "Bitcoin's price today is $64,649.80, with a 24-hour trading volume of $143.44B. BTC is -9.36% in the last 24 hours. It is currently -23.60% from its 7-day",
-              "url": "https://crypto.com/en/price/bitcoin",
-              "source": "Tavily"
-            },
-            {
-              "title": "Bitcoin price today, BTC to USD live price, marketcap and chart",
-              "snippet": "The live Bitcoin price today is $64912.68 USD with a 24-hour trading volume of $141423589438.69 USD. We update our BTC to USD price in real-time.",
-              "url": "https://coinmarketcap.com/currencies/bitcoin/",
-              "source": "Tavily"
-            },
-            {
-              "title": "BTC USD \u2014 Bitcoin Price and Chart - TradingView",
-              "snippet": "The current price of Bitcoin (BTC) is 64,797 USD \u2014 it has fallen \u22125.23% in the past 24 hours. Try placing this info into the context by checking out what coins",
-              "url": "https://www.tradingview.com/symbols/BTCUSD/",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T13:06:18.123282"
-  },
-  {
-    "id": "ep_3885f272",
-    "intent": "web.search",
-    "entities": {
-      "query": "latest news on ai impact summit 2026 india",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "latest news on ai impact summit 2026 india",
-          "results": [
-            {
-              "title": "India AI Impact Summit 2026 - Vertiv",
-              "snippet": "\"India looks forward to welcoming the world to the AI Impact Summit in February 2026. We have picked the theme of Sarvajana Hitaya, Sarvajana Sukhaya or welfare",
-              "url": "https://www.vertiv.com/en-us/about/news-and-insights/events/2026-temp/india-ai-impact-summit-2026/",
-              "source": "Tavily"
-            },
-            {
-              "title": "AI India Impact Summit 2026 is curated around three pillars - IBEF",
-              "snippet": "The summit will demonstrate how AI can transform major sectors such as healthcare, education, agriculture, climate solutions, and manufacturing,",
-              "url": "https://www.ibef.org/news/ai-india-impact-summit-2026-is-curated-around-three-pillars-people-planet-progress",
-              "source": "Tavily"
-            },
-            {
-              "title": "AI India Impact Summit 2026 is curated around three pillars",
-              "snippet": "The five-day India AI Impact Summit 2026 will commence from 16th of this month. Most Read. View All arrow-right.",
-              "url": "https://www.newsonair.gov.in/ai-india-impact-summit-2026-is-curated-around-three-pillars-people-planet-progress-additional-secretary-meity-abhishek-singh/",
-              "source": "Tavily"
-            },
-            {
-              "title": "India AI Impact Summit 2026",
-              "snippet": "The India AI Impact Expo 2026 for Responsible Intelligence will bring together 300+ exhibitors from India and 30+ countries across 10+ thematic pavilions. View",
-              "url": "https://impact.indiaai.gov.in/",
-              "source": "Tavily"
-            },
-            {
-              "title": "AI's Century-Long Journey in Focus as India Hosts AI Impact Summit ...",
-              "snippet": "As New Delhi prepares to host the India AI Impact Summit 2026, attention turns to the evolution of artificial intelligence\u2014from early 20th",
-              "url": "https://www.youtube.com/watch?v=64L_rZOobH8",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T13:06:57.421227"
-  },
-  {
-    "id": "ep_7f182192",
-    "intent": "system.window_switch",
-    "entities": {
-      "query": "take a screenshot"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "result": {
-            "status": "success",
-            "matched_window": "CV-based Window Switching",
-            "message": "Activated \"CV-based Window Switching\" via win32"
-          }
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:41:59.578449"
-  },
-  {
-    "id": "ep_2f0933b7",
-    "intent": "system.clipboard.read",
-    "entities": {
-      "action": "read"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Clipboard content",
-          "content": "s\\New folder\\A.N.K.I.T.A\\ankita> python ankita_core.py\r\n\r\n  \u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2557   \u2588\u2588\u2557\u2588\u2588\u2557  \u2588\u2588\u2557\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2557 \u2588\u2588\u2588\u2588\u2588\u2557 \r\n \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\u2588\u2588\u2588\u2588\u2557  \u2588\u2588\u2551\u2588\u2588\u2551 \u2588\u2588\u2554\u255d\u2588\u2588\u2551\u255a\u2550\u2550\u2588\u2588\u2554\u2550\u2550\u255d\u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2557\r\n \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2554\u2588\u2588\u2557 \u2588\u2588\u2551\u2588\u2588\u2588\u2588\u2588\u2554\u255d \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2588\u2588\u2588\u2588\u2588\u2551\r\n \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\u2588\u2588\u2551\u255a\u2588\u2588\u2557\u2588\u2588\u2551\u2588\u2588\u2554\u2550\u2588\u2588\u2557 \u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2554\u2550\u2550\u2588\u2588\u2551\r\n \u2588\u2588\u2551  \u2588\u2588\u2551\u2588\u2588\u2551 \u255a\u2588\u2588\u2588\u2588\u2551\u2588\u2588\u2551  \u2588\u2588\u2557\u2588\u2588\u2551   \u2588\u2588\u2551   \u2588\u2588\u2551  \u2588\u2588\u2551\r\n \u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u2550\u2550\u255d\u255a\u2550\u255d  \u255a\u2550\u255d\u255a\u2550\u255d   \u255a\u2550\u255d   \u255a\u2550\u255d  \u255a\u2550\u255d\r\n\r\n[Ankita] Text mode. Type command or 'exit' to quit.\r\n\r\nYou: take a screenshot\r\n[LLM Fallback] Classified as: system.window_switch\r\nDEBUG: normalized entities -> {'query': 'take a screenshot'}\r\nDEBUG: planner received intent=system.window_switch, entities={'query': 'take a \r\nscreenshot'}\r\nDEBUG: executor received plan -> {'steps': [{'tool': 'system.window_switch', 'args': {'query': 'take a screenshot'}}]}\r\nDEBUG: executing tool system.window_switch -> module tools.system.window_switch \r\nwith args {'query': 'take a screenshot'}\r\nAnkita: Yes sir. Task completed\r\nYou: am i connected to wfi\r\nAnkita: Sir, your current network status indicates that you are connected to Wi-Fi.\r\nYou: How much battery left?\r\nAnkita: Sir, the current battery level is at 87% capacity.\r\nYou: Lock my computer\r\nAnkita: Sir, I am locking your computer as requested.\r\nYou:"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:47:26.535340"
-  },
-  {
-    "id": "ep_d4d64adf",
-    "intent": "system.battery.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Battery at 100% (Plugged in)",
-          "percent": 100,
-          "plugged": true,
-          "time_remaining": "Charging",
-          "level": "High",
-          "has_battery": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:47:35.411760"
-  },
-  {
-    "id": "ep_ae87c737",
+    "id": "ep_19f8dd32",
     "intent": "datetime.now",
     "entities": {
       "action": "now"
@@ -928,1331 +48,59 @@
       "results": [
         {
           "status": "success",
-          "message": "Friday, February 06, 2026 at 08:47 PM",
-          "datetime": "2026-02-06T20:47:52.589341",
-          "date": "2026-02-06",
-          "time": "20:47:52",
-          "day": "Friday",
+          "message": "Sunday, February 08, 2026 at 03:04 PM",
+          "datetime": "2026-02-08T15:04:16.090962",
+          "date": "2026-02-08",
+          "time": "15:04:16",
+          "day": "Sunday",
           "timezone": "India Standard Time"
         }
       ]
     },
     "tags": [],
-    "time": "2026-02-06T20:47:52.636847"
+    "time": "2026-02-08T15:04:16.132849"
   },
   {
-    "id": "ep_d03b1997",
-    "intent": "datetime.day",
-    "entities": {
-      "action": "day"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Today is Friday",
-          "day": "Friday",
-          "day_number": 4,
-          "iso_weekday": 5
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:48:03.036658"
-  },
-  {
-    "id": "ep_e751d136",
-    "intent": "system.screenshot",
-    "entities": {
-      "action": "full"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Screenshot saved",
-          "path": "C:\\Users\\anime\\Pictures\\Screenshots\\screenshot_20260206_205214.png"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:52:14.798343"
-  },
-  {
-    "id": "ep_ba127f62",
-    "intent": "system.wifi.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Connected to Amit_EXT (Signal: 89%)",
-          "connected": true,
-          "ssid": "Amit_EXT",
-          "signal": "89%"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:52:23.719543"
-  },
-  {
-    "id": "ep_90beb4c2",
-    "intent": "system.power.lock",
-    "entities": {
-      "action": "lock"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Computer locked"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:56:06.038635"
-  },
-  {
-    "id": "ep_61f0af67",
-    "intent": "datetime.yesterday",
-    "entities": {
-      "action": "yesterday"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Yesterday was Thursday, February 05, 2026",
-          "date": "2026-02-05",
-          "day": "Thursday"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:56:18.052729"
-  },
-  {
-    "id": "ep_060d047d",
-    "intent": "system.wifi.networks",
-    "entities": {
-      "action": "networks"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Found 11 networks: www.excitel.com (88%), Airtel_amit_4608 (31%), ISHU (72%), Amit-5G_EXT (75%), Amit-5G (90%)",
-          "networks": [
-            {
-              "ssid": "www.excitel.com",
-              "security": "WPA2-Personal",
-              "signal": "88%"
-            },
-            {
-              "ssid": "Airtel_amit_4608",
-              "security": "WPA2-Personal",
-              "signal": "31%"
-            },
-            {
-              "ssid": "ISHU",
-              "security": "WPA2-Personal",
-              "signal": "72%"
-            },
-            {
-              "ssid": "Amit-5G_EXT",
-              "security": "WPA2-Personal",
-              "signal": "75%"
-            },
-            {
-              "ssid": "Amit-5G",
-              "security": "WPA2-Personal",
-              "signal": "90%"
-            },
-            {
-              "ssid": "shubh_wifi_tplink_5G",
-              "security": "WPA2-Personal",
-              "signal": "40%"
-            },
-            {
-              "ssid": "extension_5G",
-              "security": "WPA2-Personal",
-              "signal": "40%"
-            },
-            {
-              "ssid": "extension",
-              "security": "WPA2-Personal",
-              "signal": "31%"
-            },
-            {
-              "ssid": "shubh_wifi_tplink",
-              "security": "WPA2-Personal",
-              "signal": "43%"
-            },
-            {
-              "ssid": "Amit",
-              "security": "WPA2-Personal",
-              "signal": "88%"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:56:37.712184"
-  },
-  {
-    "id": "ep_a0c46659",
-    "intent": "system.wifi.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Connected to 'Amit_EXT' (92% signal)",
-          "connected": true,
-          "ssid": "Amit_EXT",
-          "signal": "92%"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:56:48.458751"
-  },
-  {
-    "id": "ep_7d00e8b3",
-    "intent": "system.clipboard.read",
-    "entities": {
-      "action": "read"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Clipboard contains: VOSK_MODEL_PATH",
-          "content": "VOSK_MODEL_PATH",
-          "length": 15
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T20:57:04.120152"
-  },
-  {
-    "id": "ep_1eae07da",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "instagram"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened instagram"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:07:23.290347"
-  },
-  {
-    "id": "ep_1256c2d6",
-    "intent": "instagram.feed",
-    "entities": {
-      "action": "feed"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Scrolled feed, found 0 posts",
-          "posts": []
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:08:38.834915"
-  },
-  {
-    "id": "ep_75c881e8",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:13:15.017261"
-  },
-  {
-    "id": "ep_1645082c",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:17:17.979735"
-  },
-  {
-    "id": "ep_3c657b82",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened in Chrome (using your profile)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:23:31.601230"
-  },
-  {
-    "id": "ep_dd2eba50",
-    "intent": "instagram.feed",
-    "entities": {
-      "action": "feed"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened Instagram feed in Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:24:16.211115"
-  },
-  {
-    "id": "ep_897db630",
-    "intent": "instagram.explore",
-    "entities": {
-      "action": "navigate",
-      "destination": "explore"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened explore in Chrome",
-          "url": "https://www.instagram.com/explore/"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:24:33.848733"
-  },
-  {
-    "id": "ep_aa59be3f",
-    "intent": "instagram.reels",
-    "entities": {
-      "action": "navigate",
-      "destination": "reels"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened reels in Chrome",
-          "url": "https://www.instagram.com/reels/"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:24:49.088865"
-  },
-  {
-    "id": "ep_4d021b96",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:41:48.574866"
-  },
-  {
-    "id": "ep_f67713a8",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:44:05.141164"
-  },
-  {
-    "id": "ep_5038b5c5",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:44:21.634200"
-  },
-  {
-    "id": "ep_38edc739",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened in Chrome (using your profile)"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:46:47.217363"
-  },
-  {
-    "id": "ep_6102a7ca",
-    "intent": "instagram.feed",
-    "entities": {
-      "action": "feed"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened Instagram feed in Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:47:00.628069"
-  },
-  {
-    "id": "ep_31105388",
-    "intent": "instagram.explore",
-    "entities": {
-      "action": "navigate",
-      "destination": "explore"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Navigated to explore in Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:47:26.656351"
-  },
-  {
-    "id": "ep_2e1104f7",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened in Chrome (using your profile)"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:56:52.714262"
-  },
-  {
-    "id": "ep_43aea62a",
-    "intent": "instagram.explore",
-    "entities": {
-      "action": "navigate",
-      "destination": "explore"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Navigated to explore in Chrome"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T21:57:45.636109"
-  },
-  {
-    "id": "ep_e6bd0a00",
-    "intent": "web.search",
-    "entities": {
-      "query": "weather in delhi",
-      "max_results": 5
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "weather in delhi",
-          "results": [
-            {
-              "title": "Weather in delhi",
-              "snippet": "{'location': {'name': 'Delhi', 'region': 'Ontario', 'country': 'Canada', 'lat': 42.85, 'lon': -80.5, 'tz_id': 'America/Toronto', 'localtime_epoch': 1770396047, 'localtime': '2026-02-06 11:40'}, 'current': {'last_updated_epoch': 1770395400, 'last_updated': '2026-02-06 11:30', 'temp_c': -4.9, 'temp_f': 23.2, 'is_day': 1, 'condition': {'text': 'Light freezing rain', 'icon': '//cdn.weatherapi.com/weather/64x64/day/311.png', 'code': 1198}, 'wind_mph': 12.3, 'wind_kph': 19.8, 'wind_degree': 226, 'wind_dir': 'SW', 'pressure_mb': 1005.0, 'pressure_in': 29.68, 'precip_mm': 0.03, 'precip_in': 0.0, 'humidity': 81, 'cloud': 0, 'feelslike_c': -11.4, 'feelslike_f': 11.5, 'windchill_c': -11.9, 'windchill_f': 10.5, 'heatindex_c': -6.2, 'heatindex_f': 20.9, 'dewpoint_c': -7.6, 'dewpoint_f': 18.4, 'vis_km': 5.0, 'vis_miles': 3.0, 'uv': 1.2, 'gust_mph': 16.1, 'gust_kph': 25.9}}",
-              "url": "https://www.weatherapi.com/",
-              "source": "Tavily"
-            },
-            {
-              "title": "Delhi Weather in February, 2026: Comfortable and Pleasant",
-              "snippet": "# Delhi Weather in February. Delhi Weather in February is becoming hotter, but there is a large difference in temperature between day and night. The highest temperature in day is 32\u00b0C (89.6\u00b0F), the lowest in night is 9\u00b0C (48.2\u00b0F) and the average temperature is 18\u00b0C (64.4\u00b0F). New Delhi is mostly sunny in February, and in some hot weather, you should pay attention to sun protection. See also: India weather in February. 7-Day Delhi Weather Forecast. Averages for Delhi Weather in February. In early February, the weather is not so hot, so the long-sleeve shirt and trousers are necessary. Things to Do in Delhi in February. Our\u00a0Best Private India Tours\u00a0includes many visits to Delhi, so feel free to click if you decide to go there in February 2026. High/Low Temperatures of Delhi in February. Historical Delhi Weather in February. | February | Temperature | Sunrise / Sunset | Humidity  (%) |.",
-              "url": "https://www.agatetravel.com/india/delhi/weather-in-february.html",
-              "source": "Tavily"
-            },
-            {
-              "title": "Delhi weather in June 2026",
-              "snippet": "Location was added to My Locations. Location was removed from My Locations. # Delhi weather in June 2026. The temperatures in Delhi during June are extremely high, between **34\u00b0C and hot as 43\u00b0C**, drinking water regularly is advisable. | 1  43\u00b0 /31\u00b0 | 2  43\u00b0 /31\u00b0 | 3  42\u00b0 /31\u00b0 | 4  41\u00b0 /33\u00b0 | 5  43\u00b0 /32\u00b0 | 6  43\u00b0 /32\u00b0 |. | 28  40\u00b0 /33\u00b0 | 29  41\u00b0 /33\u00b0 | 30  37\u00b0 /30\u00b0 |. | January | **22\u00b0** / 12\u00b0 | 1 | 30 | 0 | 20 mm | Good | Delhi in January |. | November | **30\u00b0** / 21\u00b0 | 0 | 30 | 0 | 5 mm | Good | Delhi in November |. What is the chance of rain in Delhi in June? We know that finding the ideal hotel in Delhi can be a hard task... That\u2019s why we run our special tools and found the best hotels in Delhi. On average, there are 2 rainy days in Delhi during June.",
-              "url": "https://www.weather25.com/asia/india/delhi?page=month&month=June",
-              "source": "Tavily"
-            },
-            {
-              "title": "weather forecast for 6 February 2026 - Delhi",
-              "snippet": "# Delhi, Delhi - weather forecast for 6 February 2026. #### Seasonal weather forecast. ##### What the weather will be like in winter 2025-2026 in Delhi? ##### What the weather will be like in spring in Delhi? ##### What the summer will be like in Delhi? ##### What the weather will be like in autumn 2026 in Delhi?",
-              "url": "https://wisemeteo.com/en/country/india/region/delhi/city/delhi/date/02-06",
-              "source": "Tavily"
-            },
-            {
-              "title": "Delhi, India: 3 hour detailed weather forecast for 2026-02-06",
-              "snippet": "11:30. Partly cloudy. +15\u00b0 feels like: +15\u00b0. Partly cloudy ; 14:30. Sunny. +17\u00b0 feels like: +17\u00b0. Clear ; 17:30. A mix of sun and cloud. +16\u00b0",
-              "url": "https://weather.knopka.ca/f/countries/asia/India/Delhi/?view=3hour&date=2026-02-06",
-              "source": "Tavily"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:10:40.375835"
-  },
-  {
-    "id": "ep_b58d5ae5",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (not logged in)",
-          "logged_in": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:16:01.650679"
-  },
-  {
-    "id": "ep_febe4b9d",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:19:50.733951"
-  },
-  {
-    "id": "ep_eb9f0755",
-    "intent": "instagram.like",
-    "entities": {
-      "action": "like"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Post liked"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:19:59.307008"
-  },
-  {
-    "id": "ep_621e0c63",
-    "intent": "instagram.open",
-    "entities": {
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:22:35.321147"
-  },
-  {
-    "id": "ep_16851d4e",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "watch history"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened watch history"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:29:36.483359"
-  },
-  {
-    "id": "ep_d2394a14",
-    "intent": "youtube.open",
+    "id": "ep_3abe4674",
+    "intent": "openclaw.web_search",
     "entities": {},
     "result": {
       "status": "success",
       "results": [
         {
+          "note": "Async search triggered.",
+          "response": "I've initiated a cloud search for '' via OpenClaw. I'll notify you once the results are ready.",
+          "results": [],
           "status": "success"
         }
       ]
     },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:30:32.797106"
+    "tags": [],
+    "time": "2026-02-08T15:04:42.786987"
   },
   {
-    "id": "ep_82fb6e6c",
-    "intent": "youtube.open",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:31:05.760265"
-  },
-  {
-    "id": "ep_0cdb25ad",
-    "intent": "system.bluetooth.on",
+    "id": "ep_b965dba9",
+    "intent": "openclaw.send_message",
     "entities": {
-      "action": "on"
+      "message": "Hello from the new gui",
+      "target": "Krish"
     },
     "result": {
       "status": "success",
       "results": [
         {
           "status": "success",
-          "message": "Bluetooth turned on"
+          "action": "send_message",
+          "message": "Hello from the new gui",
+          "sent": true
         }
       ]
     },
     "tags": [],
-    "time": "2026-02-06T22:31:45.160101"
+    "time": "2026-02-08T15:05:22.292838"
   },
   {
-    "id": "ep_eb322d18",
-    "intent": "instagram.open",
-    "entities": {
-      "user_text": "open insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:35:46.542851"
-  },
-  {
-    "id": "ep_98182607",
-    "intent": "datetime.date",
-    "entities": {
-      "action": "date"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Today is Friday, February 06, 2026",
-          "date": "2026-02-06",
-          "formatted": "Friday, February 06, 2026",
-          "day": "Friday",
-          "month": "February",
-          "year": 2026
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:40:02.126882"
-  },
-  {
-    "id": "ep_47f11841",
-    "intent": "system.wifi.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Connected to 'Amit_EXT' (67% signal)",
-          "connected": true,
-          "ssid": "Amit_EXT",
-          "signal": "67%"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:41:07.936404"
-  },
-  {
-    "id": "ep_fefc1b1b",
-    "intent": "system.wifi.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Connected to 'Amit_EXT' (73% signal)",
-          "connected": true,
-          "ssid": "Amit_EXT",
-          "signal": "73%"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:41:11.858291"
-  },
-  {
-    "id": "ep_ae2fa62f",
-    "intent": "system.nightlight.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened Night Light settings"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:42:15.547690"
-  },
-  {
-    "id": "ep_1e98583b",
-    "intent": "system.hotspot.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Mobile Hotspot is off",
-          "hotspot_enabled": false
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:42:46.571179"
-  },
-  {
-    "id": "ep_d55963a5",
-    "intent": "system.trash.status",
-    "entities": {
-      "action": "status"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Recycle Bin: 70 item(s), 368.3 MB",
-          "items": 70,
-          "size": 386177708,
-          "size_formatted": "368.3 MB"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:43:12.566692"
-  },
-  {
-    "id": "ep_8fe7b8ee",
-    "intent": "system.processes.cpu",
-    "entities": {
-      "action": "cpu"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Top CPU: System Idle Process: 0.0%, System: 0.0%, Registry: 0.0%, RuntimeBroker.exe: 0.0%, ApplicationFrameHost.exe: 0.0%",
-          "processes": [
-            {
-              "pid": 0,
-              "name": "System Idle Process",
-              "cpu": 0.0,
-              "memory": 8192
-            },
-            {
-              "pid": 4,
-              "name": "System",
-              "cpu": 0.0,
-              "memory": 1138688
-            },
-            {
-              "pid": 100,
-              "name": "Registry",
-              "cpu": 0.0,
-              "memory": 49299456
-            },
-            {
-              "pid": 244,
-              "name": "RuntimeBroker.exe",
-              "cpu": 0.0,
-              "memory": 8990720
-            },
-            {
-              "pid": 248,
-              "name": "ApplicationFrameHost.exe",
-              "cpu": 0.0,
-              "memory": 14524416
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:43:25.709247"
-  },
-  {
-    "id": "ep_64f82ba2",
-    "intent": "youtube.history",
-    "entities": {
-      "action": "history"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened watch history"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:44:08.268595"
-  },
-  {
-    "id": "ep_4a472377",
-    "intent": "youtube.play",
-    "entities": {
-      "query": "tailwinder songs",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "tailwinder songs"
-        }
-      ]
-    },
-    "tags": [
-      "play",
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:44:28.135344"
-  },
-  {
-    "id": "ep_47060b81",
-    "intent": "youtube.fullscreen",
-    "entities": {
-      "action": "fullscreen"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Toggled fullscreen"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:44:36.755705"
-  },
-  {
-    "id": "ep_317aafe0",
-    "intent": "youtube.captions",
-    "entities": {
-      "action": "captions"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Toggled captions"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:45:25.662656"
-  },
-  {
-    "id": "ep_9133e635",
-    "intent": "youtube.speed_up",
-    "entities": {
-      "action": "speed_up"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Increased playback speed"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:45:36.392631"
-  },
-  {
-    "id": "ep_1f43a78e",
-    "intent": "youtube.pause",
-    "entities": {
-      "action": "pause"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Toggled play/pause"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:45:48.911697"
-  },
-  {
-    "id": "ep_f166eb35",
-    "intent": "youtube.play",
-    "entities": {
-      "query": "next video",
-      "action": "play"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "query": "next video"
-        }
-      ]
-    },
-    "tags": [
-      "play",
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:46:07.094913"
-  },
-  {
-    "id": "ep_276e9bb6",
-    "intent": "youtube.next",
-    "entities": {
-      "action": "next"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Playing next video"
-        }
-      ]
-    },
-    "tags": [
-      "music",
-      "youtube"
-    ],
-    "time": "2026-02-06T22:46:14.718441"
-  },
-  {
-    "id": "ep_7770eb51",
-    "intent": "system.clipboard.read",
-    "entities": {
-      "action": "read"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Clipboard is empty",
-          "content": ""
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:49:33.600229"
-  },
-  {
-    "id": "ep_988ee046",
-    "intent": "system.clipboard.read",
-    "entities": {
-      "action": "read"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Clipboard contains: ipboard.read', 'args': {'action': \r\n'read'}}]}",
-          "content": "ipboard.read', 'args': {'action': \r\n'read'}}]}",
-          "length": 46
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T22:49:45.651243"
-  },
-  {
-    "id": "ep_6b72c780",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "notepad"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened notepad"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T23:07:01.587643"
-  },
-  {
-    "id": "ep_0964b6c6",
-    "intent": "system.app.open",
-    "entities": {
-      "action": "open",
-      "app": "notepad"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Opened notepad"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-06T23:07:05.685956"
-  },
-  {
-    "id": "ep_b425631b",
-    "intent": "instagram.search",
-    "entities": {
-      "user_text": "search virat on insta",
-      "action": "search"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Found 5 results for 'virat', sir.",
-          "results": [
-            {
-              "text": "virat.kohli\nVirat Kohli \u2022 274M followers",
-              "href": "/virat.kohli/"
-            },
-            {
-              "text": "virat.123114\nvirat \u2022 Followed by ohh_akshdeep + 20 more",
-              "href": "/virat.123114/"
-            },
-            {
-              "text": "ansh_3656b\nVirat \u2022 Followed by shaurya.raiii + 15 more",
-              "href": "/ansh_3656b/"
-            },
-            {
-              "text": "virat_mavi4007\nMavi 4007 \u2022 Followed by preet_mavi_7 + 1 more",
-              "href": "/virat_mavi4007/"
-            },
-            {
-              "text": "viratgujjar4007\nVirat Mavi \u2022 Followed by preet_mavi_7 + 1 more",
-              "href": "/viratgujjar4007/"
-            }
-          ]
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T12:56:12.408345"
-  },
-  {
-    "id": "ep_60419ad7",
-    "intent": "instagram.dm",
-    "entities": {
-      "user_text": "dm arjun hi insta",
-      "action": "dm"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Message sent to @arjun, sir."
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T12:56:44.398747"
-  },
-  {
-    "id": "ep_f7038e71",
-    "intent": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T13:04:25.342059"
-  },
-  {
-    "id": "ep_0a603832",
-    "intent": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T13:12:56.193699"
-  },
-  {
-    "id": "ep_c3401cb8",
-    "intent": "instagram.open",
-    "entities": {
-      "user_text": "save post on insta",
-      "action": "open"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Instagram opened (logged in)",
-          "logged_in": true
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T13:13:09.518331"
-  },
-  {
-    "id": "ep_65bc481e",
-    "intent": "system.screenshot",
-    "entities": {
-      "action": "full"
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Screenshot saved to Pictures/Screenshots",
-          "path": "C:\\Users\\anime\\Pictures\\Screenshots\\screenshot_20260207_131659.png"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T13:17:00.420399"
-  },
-  {
-    "id": "ep_a355c015",
-    "intent": "system.brightness.up",
-    "entities": {
-      "action": "up",
-      "step": null
-    },
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Brightness increased to 40"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T13:46:51.483128"
-  },
-  {
-    "id": "ep_3b311f90",
+    "id": "ep_4d35fe04",
     "intent": "web.search",
     "entities": {
       "query": "search for latest ai news",
@@ -2268,7 +116,7 @@
             {
               "title": "Artificial Intelligence - Latest AI News and Analysis - WSJ.com",
               "snippet": "The latest artificial intelligence news coverage focusing on the technology, tools and the companies building AI technology.",
-              "url": "https://www.wsj.com/tech/ai?gaa_at=eafs&gaa_n=AWEtsqf8h3jZiWr1xDw5J7vH5gb5DbbYbDqb9yZwdoNFvzZCRQNYvHzSrH1W&gaa_ts=6987030a&gaa_sig=cxcl0hoia0QyWd5Pgh1BVsYS_wxFiW3O1zF-7YW48WdEaLHRVq6GKJ18T39UcEJJsYNuSN0eojSqAoHupCZ0VA%3D%3D",
+              "url": "https://www.wsj.com/tech/ai?gaa_at=eafs&gaa_n=AWEtsqeNUyJ8XzL2rgVfT7G63sh13m61ofx2kpt7DpgI0QWJC4bxVkVotrD2&gaa_ts=69885c84&gaa_sig=NVmbkmHzi6g7vODMp_IQEFQbh_mAbAlQ0Y7pzSrJcKVUf11TX0gAIkMuHfpI4TAmBxe4aI6uVewmw0poEYKMlQ%3D%3D",
               "source": "Tavily"
             },
             {
@@ -2300,61 +148,168 @@
       ]
     },
     "tags": [],
-    "time": "2026-02-07T14:32:01.315624"
+    "time": "2026-02-08T15:06:01.850204"
   },
   {
-    "id": "ep_eea5ec6e",
+    "id": "ep_90168985",
+    "intent": "openclaw.send_message",
+    "entities": {
+      "message": "Ankita, send a telegram message to krish saying the bridge is now 100 percent fire",
+      "target": "Krish"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "action": "send_message",
+          "message": "Ankita, send a telegram message to krish saying the bridge is now 100 percent fire",
+          "sent": true
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-08T15:07:47.043112"
+  },
+  {
+    "id": "ep_8163e70a",
     "intent": "system.app.open",
     "entities": {
       "action": "open",
-      "app": "notepad"
+      "app": "vs code"
     },
     "result": {
       "status": "success",
       "results": [
         {
           "status": "success",
-          "message": "Opened notepad"
+          "message": "Opened vs code"
         }
       ]
     },
     "tags": [],
-    "time": "2026-02-07T22:43:08.531191"
+    "time": "2026-02-08T15:20:41.868144"
   },
   {
-    "id": "ep_073cccf5",
-    "intent": "window_control.desktop",
-    "entities": {},
-    "result": {
-      "status": "success",
-      "results": [
-        {
-          "status": "success",
-          "message": "Showed desktop"
-        }
-      ]
-    },
-    "tags": [],
-    "time": "2026-02-07T22:43:20.229102"
-  },
-  {
-    "id": "ep_093c489a",
-    "intent": "system.app.focus",
+    "id": "ep_d41e2eae",
+    "intent": "web.search",
     "entities": {
-      "action": "focus",
-      "app": "github"
+      "query": "search for latest AI news",
+      "max_results": 5
     },
     "result": {
       "status": "success",
       "results": [
         {
           "status": "success",
-          "message": "Focused github",
-          "window_title": "GitHub Desktop"
+          "query": "search for latest AI news",
+          "results": [
+            {
+              "snippet": "I am reaching out to the OpenClaw cloud to get fresh info on 'search for latest AI news' for you.",
+              "source": "OpenClaw Cloud",
+              "title": "Live Search: search for latest AI news",
+              "url": "https://brave.com/search"
+            }
+          ]
         }
       ]
     },
     "tags": [],
-    "time": "2026-02-07T22:45:05.503705"
+    "time": "2026-02-08T15:21:02.095735"
+  },
+  {
+    "id": "ep_b181d576",
+    "intent": "web.search",
+    "entities": {
+      "query": "search for latest ai news",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "search for latest ai news",
+          "results": [
+            {
+              "snippet": "I am reaching out to the OpenClaw cloud to get fresh info on 'search for latest ai news' for you.",
+              "source": "OpenClaw Cloud",
+              "title": "Live Search: search for latest ai news",
+              "url": "https://brave.com/search"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-08T15:23:08.089293"
+  },
+  {
+    "id": "ep_262f212e",
+    "intent": "web.search",
+    "entities": {
+      "query": "search for latest ai news",
+      "max_results": 5
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "query": "search for latest ai news",
+          "results": [
+            {
+              "snippet": "I am reaching out to the OpenClaw cloud to get fresh info on 'search for latest ai news' for you.",
+              "source": "OpenClaw Cloud",
+              "title": "Live Search: search for latest ai news",
+              "url": "https://brave.com/search"
+            }
+          ]
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-08T15:23:51.639780"
+  },
+  {
+    "id": "ep_1d534f79",
+    "intent": "notepad.write_note",
+    "entities": {
+      "content": "hi"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Notepad opened"
+        }
+      ]
+    },
+    "tags": [
+      "writing",
+      "write",
+      "notes"
+    ],
+    "time": "2026-02-08T15:47:44.402681"
+  },
+  {
+    "id": "ep_3a9199de",
+    "intent": "system.app.open",
+    "entities": {
+      "action": "open",
+      "app": "nordberg"
+    },
+    "result": {
+      "status": "success",
+      "results": [
+        {
+          "status": "success",
+          "message": "Opened nordberg"
+        }
+      ]
+    },
+    "tags": [],
+    "time": "2026-02-08T17:51:21.174038"
   }
 ]

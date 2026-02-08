@@ -19,7 +19,7 @@ class ScenarioGenerator:
         
         if self.use_dynamic:
             self.dynamic_gen = DynamicQueryGenerator()
-            print("[ScenarioGen] Dynamic query generation enabled! 🚀")
+            print("[ScenarioGen] Dynamic query generation enabled! [Rocket]")
     
     def _load_scenarios(self):
         """Define all situation templates with variations."""
@@ -227,6 +227,90 @@ class ScenarioGenerator:
                     "instagram.feed",       # Social browsing
                     "instagram.reels",      # Reels
                     "web.search"            # Discover
+                ]
+            },
+            "personality": {
+                "queries": [
+                    "Be cool",
+                    "Show some style",
+                    "What's good Ankita",
+                    "You're fire",
+                    "Keep it lit"
+                ],
+                "contexts": {
+                    "any_time": {"hour": list(range(0, 24))}
+                },
+                "expected_actions": [
+                    "personality.cool",     # NEW! Stay cool
+                    "personality.swagger",  # NEW! Swagger mode
+                    "youtube.play",         # Play cool music
+                    "spotify.play"          # Vibe music
+                ]
+            },
+            "system_guardian": {
+                "queries": [
+                    "Check system health",
+                    "Is my PC lagging?",
+                    "Scan for heavy processes",
+                    "How's my memory looking?",
+                    "Guardian mode"
+                ],
+                "contexts": {
+                    "any_time": {"hour": list(range(0, 24))}
+                },
+                "expected_actions": [
+                    "system.sentinel.health",
+                    "system.sentinel.guardian"
+                ]
+            },
+            "vision_ocr": {
+                "queries": [
+                    "Read my screen",
+                    "What's on the display?",
+                    "Find the Login button",
+                    "Click on the text Next",
+                    "Scan the screen"
+                ],
+                "contexts": {
+                    "any_time": {"hour": list(range(0, 24))}
+                },
+                "expected_actions": [
+                    "vision.ocr.read",
+                    "vision.ocr.click"
+                ]
+            },
+            "messaging": {
+                "queries": [
+                    "Open WhatsApp",
+                    "Send a message to Arjun",
+                    "Any new WhatsApp messages?",
+                    "Message Rahul on WhatsApp",
+                    "WhatsApp notifications"
+                ],
+                "contexts": {
+                    "any_time": {"hour": list(range(0, 24))}
+                },
+                "expected_actions": [
+                    "whatsapp.open",
+                    "whatsapp.send",
+                    "whatsapp.notifications"
+                ]
+            },
+            "email": {
+                "queries": [
+                    "Open Gmail",
+                    "Check my emails",
+                    "Send an email to boss",
+                    "Any new mail?",
+                    "Gmail inbox"
+                ],
+                "contexts": {
+                    "any_time": {"hour": list(range(0, 24))}
+                },
+                "expected_actions": [
+                    "gmail.open",
+                    "gmail.send",
+                    "gmail.inbox"
                 ]
             }
         }

@@ -60,16 +60,21 @@
             "i am bored",
             "nothing to do",
             "bore ho raha hu",
-            "maza nahi aa raha"
+            "maza nahi aa raha",
+            "i want to do a game",
+            "gaming"
         ],
         "actions": [
             {
                 "tool": "youtube.play",
                 "query": "trending"
+            },
+            {
+                "tool": "instagram.reels"
             }
         ],
         "weight": 1.0,
-        "description": "Opening trending videos."
+        "description": "Opening trending videos or reels."
     },
     "sleepy": {
         "phrases": [
@@ -186,21 +191,41 @@
         "weight": 1.0,
         "description": "Showing funny videos."
     },
-    "anxious": {
+    "stressed": {
         "phrases": [
-            "i'm anxious",
-            "nervous",
-            "tension hai",
-            "ghabrahat"
+            "i'm stressed",
+            "feeling anxious",
+            "overwhelmed",
+            "too much pressure",
+            "experiencing a meltdown",
+            "panicking",
+            "tension",
+            "ghabrahat",
+            "anxiety",
+            "nervous"
         ],
         "actions": [
             {
-                "tool": "youtube.play",
-                "query": "meditation music"
+                "tool": "spotify.play",
+                "query": "calm music"
+            },
+            {
+                "tool": "dnd.on"
+            },
+            {
+                "tool": "system.app.close",
+                "app": "chrome"
+            },
+            {
+                "tool": "system.brightness.down"
+            },
+            {
+                "tool": "web.search",
+                "query": "stress relief tips"
             }
         ],
         "weight": 1.0,
-        "description": "Playing meditation music."
+        "description": "I sense you're stressed. Let me create a calm environment for you."
     },
     "lonely": {
         "phrases": [
@@ -283,7 +308,15 @@
             "not feeling well",
             "bimar hu",
             "tabiyat kharab hai",
-            "health not good"
+            "health not good",
+            "my body is sore",
+            "stomach is sore",
+            "have a headache",
+            "feel ill",
+            "feverish",
+            "cold",
+            "sardi",
+            "bukhar"
         ],
         "actions": [
             {
@@ -292,76 +325,16 @@
             {
                 "tool": "web.search",
                 "query": "home remedies"
+            },
+            {
+                "tool": "notepad.open"
+            },
+            {
+                "tool": "medicine.reminder"
             }
         ],
         "weight": 1.0,
         "description": "Finding home remedies for you. Please rest."
-    },
-    "headache": {
-        "phrases": [
-            "i have headache",
-            "sar dard ho raha",
-            "head is paining",
-            "migraine"
-        ],
-        "actions": [
-            {
-                "tool": "system.brightness.down"
-            },
-            {
-                "tool": "youtube.play",
-                "query": "relaxing sounds"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Dimming screen and playing relaxing sounds."
-    },
-    "fever": {
-        "phrases": [
-            "i have fever",
-            "bukhar hai",
-            "feeling hot",
-            "temperature high"
-        ],
-        "actions": [
-            {
-                "tool": "web.search",
-                "query": "fever remedies"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Finding fever remedies. Stay hydrated!"
-    },
-    "cold": {
-        "phrases": [
-            "i have cold",
-            "sardi hai",
-            "runny nose",
-            "sneezing"
-        ],
-        "actions": [
-            {
-                "tool": "web.search",
-                "query": "cold remedies"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Finding cold remedies."
-    },
-    "stomachache": {
-        "phrases": [
-            "stomach ache",
-            "pet dard",
-            "tummy hurts"
-        ],
-        "actions": [
-            {
-                "tool": "web.search",
-                "query": "stomach ache relief"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Finding relief options."
     },
     "weather_check": {
         "phrases": [
@@ -369,7 +342,8 @@
             "mausam kaisa hai",
             "weather check",
             "temperature today",
-            "is it raining"
+            "is it raining",
+            "forecast"
         ],
         "actions": [
             {
@@ -383,7 +357,8 @@
         "phrases": [
             "good morning",
             "start my day",
-            "morning routine"
+            "morning routine",
+            "subah ho gayi"
         ],
         "actions": [
             {
@@ -391,6 +366,9 @@
             },
             {
                 "tool": "calendar.today"
+            },
+            {
+                "tool": "system.brightness.up"
             }
         ],
         "weight": 1.0,
@@ -415,7 +393,8 @@
             "i want focus",
             "concentrate",
             "padhai karni hai",
-            "study time"
+            "study time",
+            "need to concentrate"
         ],
         "actions": [
             {
@@ -424,6 +403,9 @@
             {
                 "tool": "system.app.close",
                 "app": "chrome"
+            },
+            {
+                "tool": "focus.mode"
             }
         ],
         "weight": 1.0,
@@ -448,7 +430,9 @@
         "phrases": [
             "i want to code",
             "coding time",
-            "programming karna hai"
+            "programming karna hai",
+            "help with email",
+            "help with messaging"
         ],
         "actions": [
             {
@@ -528,7 +512,8 @@
         "phrases": [
             "i want to workout",
             "exercise karna hai",
-            "gym time"
+            "gym time",
+            "workout"
         ],
         "actions": [
             {
@@ -733,10 +718,67 @@
         "actions": [
             {
                 "tool": "system.brightness.down"
+            },
+            {
+                "tool": "vision.ocr.read"
             }
         ],
         "weight": 1.0,
         "description": "Adjusting for reading."
+    },
+    "vision_ocr": {
+        "phrases": [
+            "read screen",
+            "what is on display",
+            "scan screen",
+            "find text"
+        ],
+        "actions": [
+            {
+                "tool": "vision.ocr.read"
+            },
+            {
+                "tool": "vision.ocr.click"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Scanning your screen."
+    },
+    "system_guardian": {
+        "phrases": [
+            "guardian",
+            "system health",
+            "scan system",
+            "heavy processes"
+        ],
+        "actions": [
+            {
+                "tool": "system.sentinel.health"
+            },
+            {
+                "tool": "system.sentinel.guardian"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Running system guardian."
+    },
+    "personality": {
+        "phrases": [
+            "be cool",
+            "be fire",
+            "swagger",
+            "handle this"
+        ],
+        "actions": [
+            {
+                "tool": "personality.cool"
+            },
+            {
+                "tool": "personality.swagger"
+            }
+        ],
+        "weight": 1.0,
+        "description": "Vibe check passed."
     },
     "creative": {
         "phrases": [
@@ -832,12 +874,19 @@
         "phrases": [
             "i'm hungry",
             "bhookh lagi",
-            "kuch khana hai"
+            "kuch khana hai",
+            "sounds good"
         ],
         "actions": [
             {
                 "tool": "web.search",
                 "query": "food delivery near me"
+            },
+            {
+                "tool": "food.delivery"
+            },
+            {
+                "tool": "notepad.open"
             }
         ],
         "weight": 1.0,
@@ -933,28 +982,10 @@
         "weight": 1.0,
         "description": "Opening booking options."
     },
-    "morning": {
-        "phrases": [
-            "good morning",
-            "subah ho gayi",
-            "din shuru karo"
-        ],
-        "actions": [
-            {
-                "tool": "system.brightness.up"
-            },
-            {
-                "tool": "youtube.play",
-                "query": "morning music"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Good morning! Starting your day."
-    },
     "night": {
         "phrases": [
             "good night",
-            "raat ho gayi",
+            "raat हो गयी",
             "sone ka time"
         ],
         "actions": [
@@ -985,21 +1016,6 @@
         ],
         "weight": 1.0,
         "description": "Playing sleep sounds."
-    },
-    "weather_check": {
-        "phrases": [
-            "how's the weather",
-            "mausam kaisa hai",
-            "will it rain"
-        ],
-        "actions": [
-            {
-                "tool": "web.search",
-                "query": "weather today"
-            }
-        ],
-        "weight": 1.0,
-        "description": "Checking weather."
     },
     "traffic": {
         "phrases": [
@@ -1044,7 +1060,7 @@
             }
         ],
         "weight": 1.0,
-        "description": "Happy Birthday! 🎉"
+        "description": "Happy Birthday! "
     },
     "anniversary": {
         "phrases": [

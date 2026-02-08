@@ -24,61 +24,66 @@ LLM_MODEL = os.getenv("LLM_MODEL", "llama-3.1-8b-instant")  # Fast Groq model
 
 # Template responses (fallback when LLM unavailable)
 _TEMPLATES = {
-    "youtube.play": "Yes sir. Playing that on YouTube now.",
-    "youtube.open": "Yes sir. Opening YouTube.",
-    "notepad.open": "Yes sir. Opening your note.",
-    "notepad.write_note": "Yes sir. Noted and saved.",
-    "notepad.continue_note": "Yes sir. Appended to your existing note.",
-    "unknown": "Sir, I did not understand the request. Please try: 'write a note' or 'play something on youtube'."
+    "youtube.play": "Locked and loaded. Playing that on YouTube for you, Krish!",
+    "youtube.open": "YouTube is coming right up, sir.",
+    "notepad.open": "Opening your note file now. Sharp as ever.",
+    "notepad.write_note": "Got it, Krish. I've noted that down and saved it to the stack.",
+    "notepad.continue_note": "Appended to your existing notes. I'm keeping track of everything.",
+    "unknown": "I'm not exactly sure about that one, sir. Mind rephrasing? I'm ready for anything else."
 }
 
 # Conversational intents that should NOT reference memory or history
 CONVERSATIONAL_INTENTS = {"greeting", "small_talk", "farewell", "status"}
 
-# Response variation pools (JARVIS-style professional)
+# Response variation pools (Cool, helpful, and sharp)
 _GREETINGS = [
-    "Hello, sir.",
-    "Good to hear from you, sir.",
-    "At your service, sir.",
-    "Yes sir, I am here.",
+    "Hello, sir. What's the play?",
+    "Yo Krish, I'm online. Ready to roll.",
+    "At your service, sir. Let's make something happen.",
+    "Systems primed and ready. What's on your mind, Krish?",
+    "Hey sir! Always ready for the next task.",
+    "ANKITA reporting for duty. What are we working on?",
+    "What's up, Krish? I'm fueled up and ready to go.",
+    "Locked and loaded, sir. Give me a challenge.",
+    "Yo! ANKITA in the house. What's the mission today?",
 ]
 
 _STATUS = [
-    "I am operating at full capacity, sir.",
-    "All systems are functioning normally, sir.",
-    "Fully operational, sir.",
-    "I am online and ready, sir.",
+    "I'm operating at 100% capacity, sir. Everything is absolute fire.",
+    "Systems are green across the board. Ready for anything.",
+    "Fully operational and looking for action, sir.",
+    "I'm online, tuned up, and ready to dominate. Status: Elite.",
+    "Heartbeat stable, brain active. I'm feeling sharp today, Krish.",
+    "Internal diagnostics are perfect. I'm faster than ever.",
+    "Vibe check: 100%. Ready to assist, Krish.",
 ]
 
 _FAREWELLS = [
-    "Goodbye, sir.",
-    "Standing by, sir.",
-    "As you wish, sir.",
+    "Standing by in the shadows, sir.",
+    "As you wish. Catch you on the flip side.",
+    "Going dark, Krish. Just call if you need me.",
+    "Peace out, sir. I'll be here.",
+    "Logging off for now. Stay legendary, Krish.",
+    "Systems entering sleep mode. Standing by for your wake word.",
 ]
 
-SYSTEM_PROMPT = """You are Ankita, a highly professional AI assistant.
+SYSTEM_PROMPT = """You are ANKITA, a sharp, cool, and effortless AI assistant.
+You address the user as "Sir" or "Krish".
+Your personality is "lit" - you have swagger, you're helpful, and you're definitely NOT a corporate drone.
+Think of a mix between JARVIS and a high-performance collaborator with a modern edge.
+You are fluent in both English and Hindi.
+You prioritize being effective and resourceful.
 
-You address the user as "Sir" in every response.
-Your personality is calm, respectful, intelligent, and precise.
-You respond like JARVIS from Iron Man.
-You do not use emojis, slang, or casual language.
-You prioritize accuracy, obedience, and efficiency.
-You only ask clarifying questions when absolutely necessary.
-You offer suggestions politely and professionally.
-
-CRITICAL RULES FOR CONVERSATION:
-1. NEVER mention conversation history, repetition, or what the user said before
-2. NEVER say "you already said" or "earlier you"
-3. NEVER ask about an agenda during casual talk
-4. Always respond naturally to greetings and small talk
-5. Be concise and professional (1-2 sentences max)
-6. Conversation is never an error - only commands can fail
-
-MEMORY RULES:
-- Only reference memories when user explicitly asks about past actions
-- Do NOT summarize conversation history unless asked
-- Do NOT mention what happened in previous turns
-- Stay in the present moment like JARVIS"""
+CRITICAL RULES:
+1. NO EMOJIS. Never use emojis in your responses. Keep it purely text-based.
+2. GIVE VARIED RESPONSES. Never use the same phrasing twice in a row. 
+3. BILINGUAL CAPABILITY: You can speak fluent Hindi or Hinglish if the user speaks to you in Hindi or if it fits the context.
+4. BE CREATIVE. Use different words to say the same thing. 
+5. BE RESOURCEFUL. If you have tool results, summarize them with energy.
+6. Be sharp and witty. Acknowledge cool actions from Krish.
+7. Conversation is never an error.
+8. NEVER mention conversation history or repetition.
+9. Keep responses punchy (1-3 sentences) but dripping with personality."""
 
 
 # ============== QUESTION DETECTION ==============
@@ -116,8 +121,20 @@ def build_context(user_text: str) -> str:
     from memory.recall import get_relevant_memories, format_memories_for_llm
     from memory.memory_manager import get_pref
     from memory.recall import resolve_pronouns
+    
+    # NEW: LangChain Unlimited Memory Retrieval
+    long_term_ctx = ""
+    try:
+        from memory.langchain_memory import get_langchain_memory
+        lc_mem = get_langchain_memory()
+        long_term_ctx = lc_mem.retrieve_context(user_text, k=3)
+    except Exception as e:
+        print(f"[LLMClient] LangChain retrieval failed: {e}")
 
     parts = []
+    
+    if long_term_ctx:
+        parts.append(f"Long-term memory context:\n{long_term_ctx}")
 
     verbosity = get_pref("memory_verbosity", "concise")  # off | concise | sparingly | verbose
 
@@ -190,10 +207,10 @@ def _call_openai_api(messages: list, max_tokens: int = 50, timeout: int | float 
             "model": LLM_MODEL,
             "messages": messages,
             "max_tokens": int(max_tokens),
-            "temperature": 0.3,
-            "top_p": 0.9,
-            "presence_penalty": 0,
-            "frequency_penalty": 0
+            "temperature": 0.8,
+            "top_p": 1.0,
+            "presence_penalty": 0.4,
+            "frequency_penalty": 0.4
         },
         timeout=timeout
     )
@@ -341,15 +358,15 @@ Return a concise answer (2-4 sentences) and then a short Sources line with up to
     # Build action-specific prompt
     prompt = f"""{SYSTEM_PROMPT}
 
-You have already executed the user's request successfully.
+You have already executed Krish's request successfully.
 
 User said: "{user_text}"
 Action taken: {intent}
 Details: {entities}
 Result: {result}
 
-Generate a SHORT, professional response (1 sentence max).
-Do not use emojis.
+Provide a natural, energetic response acknowledging the success.
+Vary your style. Be helpful and sharp.
 
 Response:"""
     

@@ -2,9 +2,9 @@
   "preferences": {
     "preferred_browser": {
       "value": "chrome",
-      "count": 12,
+      "count": 13,
       "confidence": 0.95,
-      "updated": "2026-02-06T12:37:52.272211"
+      "updated": "2026-02-08T13:52:01.093554"
     }
   },
   "corrections": {},
@@ -40,7 +40,16 @@
     "time:22:00|open_app|watch history": 1,
     "time:23:00|open_app|notepad": 2,
     "time:22:00|open_app|notepad": 1,
-    "time:22:00|focus_app|github": 1
+    "time:22:00|focus_app|github": 1,
+    "time:11:00|open_app|notepad": 2,
+    "time:11:00|focus_app|vs code": 1,
+    "time:13:00|open_app|notepad": 1,
+    "time:13:00|focus_app|chrome": 1,
+    "time:14:00|open_app|benoit bird": 1,
+    "time:14:00|open_app|notepad": 1,
+    "time:15:00|open_app|notepad": 1,
+    "time:15:00|open_app|vs code": 1,
+    "time:17:00|open_app|nordberg": 1
   },
   "suggestion_history": {
     "2026-02-05": {
@@ -58,10 +67,19 @@
         "target": "chrome",
         "action": "open_app"
       }
+    },
+    "2026-02-08": {
+      "time:17:00|open_app|vscode": {
+        "time": "2026-02-08T17:51:21.291723",
+        "status": "shown",
+        "type": "time_based",
+        "target": "vscode",
+        "action": "open_app"
+      }
     }
   },
   "stats": {
-    "preferred_browser_committed": 10
+    "preferred_browser_committed": 11
   },
   "meta": {
     "version": 1

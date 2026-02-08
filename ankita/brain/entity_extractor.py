@@ -174,4 +174,56 @@ def extract(intent, text):
             "query": cleaned.strip()
         }
 
+    if intent == "whatsapp.send":
+        # Extract contact and message
+        return {"contact": "Krish", "message": text}
+
+    if intent == "whatsapp.discuss":
+        t = (text or "").strip().lower()
+        topic = "the task"
+        if "discuss " in t:
+            topic = t.split("discuss ")[1]
+        return {"contact": "Krish", "topic": topic}
+
+    if intent == "openclaw.send_message":
+        t = (text or "").strip()
+        tl = t.lower()
+        
+        # Naive extraction
+        target = "Krish"  # Default
+        if "to krish" in tl:
+            target = "Krish"
+        
+        # Extract message content
+        # Remove trigger phrases
+        message = tl
+        for prefix in [
+            "send a telegram message to krish",
+            "ping krish on telegram",
+            "message me on telegram",
+            "tell krish i am busy on telegram",
+            "send telegram message",
+            "notify me via telegram",
+            "send a message through openclaw",
+            "telegram message"
+        ]:
+            if message.startswith(prefix):
+                message = message[len(prefix):].strip()
+                break
+        
+        # Strip "that" or "saying" if they exist at start
+        message = re.sub(r"^(?:that|saying)\s+", "", message)
+        
+        return {"message": message.capitalize(), "target": target}
+
+    if intent == "web.search":
+        t = (text or "").strip()
+        tl = t.lower()
+        query = tl
+        for prefix in ["search for ", "search ", "google ", "look up ", "find "]:
+            if query.startswith(prefix):
+                query = query[len(prefix):].strip()
+                break
+        return {"query": query}
+
     return {}

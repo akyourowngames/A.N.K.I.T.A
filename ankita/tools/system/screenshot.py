@@ -1,128 +1,73 @@
 """
-Screenshot Tool - Capture screen, window, or region.
-Polished with better error handling and more actions.
+Screenshot Tool - Pro capture utility with window and region support.
 """
 import os
 import datetime
+import time
+import pyautogui
+import win32gui
+from PIL import ImageGrab
 
 
-def run(action: str = "full", save_path: str | None = None, **kwargs) -> dict:
+def run(action: str = "full", delay: int = 0, **kwargs) -> dict:
     """
-    Take screenshots.
+    Take screenshots with advanced options.
     
     Actions:
-        - full/screen/desktop: Capture entire screen
-        - window/active/current: Capture active window
-        - clipboard/copy: Capture to clipboard
+        - full: Entire screen
+        - window: Active window
+        - region: Select a region (requires manual mouse drag if implemented, or coordinates)
+        - clipboard: Copy to clipboard
+        - list: List recent screenshots
     """
     action = (action or "full").strip().lower()
+    save_path = kwargs.get("save_path") or kwargs.get("path")
     
-    # Normalize action aliases
-    action_aliases = {
-        "screen": "full",
-        "desktop": "full",
-        "active": "window",
-        "current": "window",
-        "copy": "clipboard",
-        "status": "full",  # Default fallback
-    }
-    action = action_aliases.get(action, action)
+    # Optional delay
+    if delay > 0:
+        time.sleep(delay)
+        
+    # Default dir
+    screenshots_dir = os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots")
+    os.makedirs(screenshots_dir, exist_ok=True)
     
-    try:
-        import pyautogui
-        from PIL import ImageGrab
-    except ImportError:
-        return {
-            "status": "fail",
-            "reason": "Missing dependencies. Install: pip install pyautogui pillow"
-        }
-    
-    # Generate default save path if not provided
-    if not save_path and action != "clipboard":
-        screenshots_dir = os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots")
-        os.makedirs(screenshots_dir, exist_ok=True)
+    if not save_path and action != "clipboard" and action != "list":
         timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
         save_path = os.path.join(screenshots_dir, f"screenshot_{timestamp}.png")
-    
+
     try:
-        if action in ("full",):
-            # Full screen capture
+        if action == "full":
             screenshot = pyautogui.screenshot()
             screenshot.save(save_path)
-            return {
-                "status": "success",
-                "message": f"Screenshot saved to Pictures/Screenshots",
-                "path": save_path
-            }
-        
-        if action in ("window",):
-            # Active window capture
-            try:
-                import win32gui
-                from PIL import ImageGrab
-                
-                hwnd = win32gui.GetForegroundWindow()
-                window_title = win32gui.GetWindowText(hwnd)
-                
-                # Get window dimensions
-                left, top, right, bottom = win32gui.GetWindowRect(hwnd)
-                
-                # Capture the window region
-                screenshot = ImageGrab.grab(bbox=(left, top, right, bottom))
-                screenshot.save(save_path)
-                
-                return {
-                    "status": "success",
-                    "message": f"Window screenshot saved ({window_title[:30]}...)" if len(window_title) > 30 else f"Window screenshot saved ({window_title})",
-                    "path": save_path,
-                    "window": window_title
-                }
-            except ImportError:
-                # Fallback to full screenshot if win32 not available
-                screenshot = pyautogui.screenshot()
-                screenshot.save(save_path)
-                return {
-                    "status": "success",
-                    "message": "Full screenshot saved (window capture unavailable)",
-                    "path": save_path
-                }
-        
-        if action in ("clipboard",):
-            # Capture to clipboard
+            return {"status": "success", "message": f"Full screenshot saved to {save_path}", "path": save_path}
+
+        if action == "window":
+            hwnd = win32gui.GetForegroundWindow()
+            rect = win32gui.GetWindowRect(hwnd)
+            screenshot = ImageGrab.grab(bbox=rect)
+            screenshot.save(save_path)
+            return {"status": "success", "message": f"Window screenshot saved to {save_path}", "path": save_path, "window": win32gui.GetWindowText(hwnd)}
+
+        if action == "clipboard":
             screenshot = pyautogui.screenshot()
-            try:
-                import io
-                import win32clipboard
-                
-                output = io.BytesIO()
-                screenshot.convert("RGB").save(output, "BMP")
-                data = output.getvalue()[14:]  # Remove BMP header
-                output.close()
-                
-                win32clipboard.OpenClipboard()
-                win32clipboard.EmptyClipboard()
-                win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
-                win32clipboard.CloseClipboard()
-                
-                return {
-                    "status": "success",
-                    "message": "Screenshot copied to clipboard"
-                }
-            except ImportError:
-                # Save to file as fallback
-                if not save_path:
-                    screenshots_dir = os.path.join(os.path.expanduser("~"), "Pictures", "Screenshots")
-                    os.makedirs(screenshots_dir, exist_ok=True)
-                    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-                    save_path = os.path.join(screenshots_dir, f"screenshot_{timestamp}.png")
-                screenshot.save(save_path)
-                return {
-                    "status": "success",
-                    "message": "Screenshot saved (clipboard unavailable)",
-                    "path": save_path
-                }
-        
+            import io
+            import win32clipboard
+            output = io.BytesIO()
+            screenshot.convert("RGB").save(output, "BMP")
+            data = output.getvalue()[14:]
+            output.close()
+            win32clipboard.OpenClipboard()
+            win32clipboard.EmptyClipboard()
+            win32clipboard.SetClipboardData(win32clipboard.CF_DIB, data)
+            win32clipboard.CloseClipboard()
+            return {"status": "success", "message": "Screenshot copied to clipboard"}
+
+        if action == "list":
+            files = [os.path.join(screenshots_dir, f) for f in os.listdir(screenshots_dir) if f.endswith('.png')]
+            files.sort(key=os.path.getmtime, reverse=True)
+            return {"status": "success", "message": f"Found {len(files)} screenshots", "files": files[:10]}
+
         return {"status": "fail", "reason": f"Unknown action: {action}"}
-        
+
     except Exception as e:
-        return {"status": "fail", "reason": "Screenshot failed", "error": str(e)}
+        return {"status": "fail", "reason": f"Screenshot failed: {str(e)}"}

@@ -53,17 +53,37 @@ class ReminderTool(BaseTool):
         """Add a reminder."""
         if not title:
             return self._error("Title is required")
+        if not title.strip():
+            return self._error("Title cannot be empty")
         
         # Parse date
         reminder_date = self._parse_date(date)
         
+        # Validate time if provided
+        if time:
+            try:
+                hours, minutes = map(int, time.split(':'))
+                if not (0 <= hours < 24 and 0 <= minutes < 60):
+                    return self._error("Invalid time. Use HH:MM format")
+            except:
+                return self._error("Invalid time format. Use HH:MM (e.g., 14:30)")
+        
         # Load existing
         reminders = self._load_reminders()
+        
+        # Check for duplicates
+        for r in reminders:
+            if (not r.get('completed') and 
+                r['title'].lower() == title.lower() and
+                r.get('date') == reminder_date):
+                return self._error(
+                    f"Similar reminder already exists for '{title}' on {reminder_date}"
+                )
         
         # Create reminder
         reminder = {
             'id': len(reminders) + 1,
-            'title': title,
+            'title': title.strip(),
             'time': time,
             'date': reminder_date,
             'created': datetime.now().isoformat(),
@@ -78,7 +98,7 @@ class ReminderTool(BaseTool):
         when = f"{reminder_date} at {time}" if time else reminder_date
         
         return self._success(
-            f"Reminder set: '{title}' for {when}",
+            f"✓ Reminder set: '{title}' for {when}",
             reminder
         )
     

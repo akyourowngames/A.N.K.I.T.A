@@ -10,12 +10,12 @@ DURATION = 5  # seconds
 
 def record_audio(
     duration=DURATION,
-    silence_duration: float = 0.8,
-    silence_threshold: float = 0.012,
-    min_speech_duration: float = 0.4,
+    silence_duration: float = 0.5,
+    silence_threshold: float = 0.015,
+    min_speech_duration: float = 0.2,
 ):
     max_duration = float(duration)
-    print(f"[Voice] Listening (max {max_duration:.0f}s)...")
+    print(f"[Voice] Listening...")
 
     frames: list[np.ndarray] = []
     started = False

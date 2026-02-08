@@ -92,14 +92,14 @@ class FewShotLearner:
                 SET success_count = success_count + 1
                 WHERE id = ?
             """, (existing[0],))
-            print(f"[FewShot] Updated example: {situation} → {action} (count: {existing[1] + 1})")
+            print(f"[FewShot] Updated example: {situation} -> {action} (count: {existing[1] + 1})")
         else:
             # Insert new
             cursor.execute("""
                 INSERT INTO embeddings (text, embedding, action, situation, created_at)
                 VALUES (?, ?, ?, ?, ?)
             """, (text, embedding_bytes, action, situation, datetime.now().isoformat()))
-            print(f"[FewShot] Stored new example: {situation} → {action}")
+            print(f"[FewShot] Stored new example: {situation} -> {action}")
         
         self.db.conn.commit()
     

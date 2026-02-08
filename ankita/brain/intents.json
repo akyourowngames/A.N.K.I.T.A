@@ -1808,5 +1808,260 @@
       "task manager",
       "process manager"
     ]
+  },
+  "personality.cool": {
+    "entities": [],
+    "examples": [
+      "be cool",
+      "stay lit",
+      "show some swagger",
+      "vibe with me",
+      "keep it fire",
+      "be dope",
+      "you're sick",
+      "stay icy",
+      "handle it with style",
+      "be my homie",
+      "vibe check",
+      "show your elite status"
+    ]
+  },
+  "openclaw.get_status": {
+    "entities": [],
+    "examples": [
+      "check openclaw status",
+      "how is the cloud bridge doing",
+      "openclaw connection status",
+      "is the link active",
+      "check bridge health"
+    ]
+  },
+  "system.sentinel.health": {
+    "entities": [],
+    "examples": [
+      "how's my system",
+      "check health",
+      "status report",
+      "system status",
+      "check resources",
+      "is my pc okay",
+      "how is my pc doing",
+      "performance check",
+      "is anything lagging",
+      "give me a system rundown",
+      "pc performance summary",
+      "resource usage overview",
+      "system health check"
+    ]
+  },
+  "system.sentinel.guardian": {
+    "entities": [],
+    "examples": [
+      "guard my system",
+      "scan for heavy apps",
+      "what's lagging my pc",
+      "check for rogue processes",
+      "guardian mode",
+      "patrol for heavy processes",
+      "who is eating my ram",
+      "find resource hogs"
+    ]
+  },
+  "system.commander.terminal": {
+    "entities": [],
+    "examples": [
+      "open terminal",
+      "launch cmd",
+      "give me a prompt",
+      "terminal mode",
+      "drop me into a shell",
+      "i need a command line",
+      "open windows terminal"
+    ]
+  },
+  "instagram.post": {
+    "entities": [
+      "file_path",
+      "caption"
+    ],
+    "examples": [
+      "post this on instagram",
+      "upload to insta",
+      "share this photo",
+      "post it",
+      "new instagram post",
+      "share this to my followers",
+      "upload that file to insta"
+    ]
+  },
+  "vision.ocr.read": {
+    "entities": [],
+    "examples": [
+      "read my screen",
+      "what's on my screen",
+      "scan screen for text",
+      "what does it say here"
+    ]
+  },
+  "vision.ocr.click": {
+    "entities": [
+      "target_text"
+    ],
+    "examples": [
+      "click on the button that says Login",
+      "find the text Search and click it",
+      "click Next",
+      "press the button named Submit"
+    ]
+  },
+  "whatsapp.open": {
+    "entities": [],
+    "examples": [
+      "open whatsapp",
+      "launch whatsapp",
+      "go to whatsapp",
+      "start whatsapp",
+      "open wa",
+      "whatsapp open",
+      "show whatsapp"
+    ]
+  },
+  "whatsapp.answer": {
+    "entities": [],
+    "examples": [
+      "answer the call",
+      "engage in call",
+      "talk to them",
+      "pick up the whatsapp call",
+      "answer whatsapp",
+      "chat with the person on call"
+    ]
+  },
+  "whatsapp.send": {
+    "entities": [
+      "contact",
+      "message"
+    ],
+    "examples": [
+      "send a whatsapp message to mom",
+      "message rahul on whatsapp",
+      "tell arjun i will be late on whatsapp",
+      "whatsapp message to dad",
+      "send whatsapp to group"
+    ]
+  },
+  "whatsapp.discuss": {
+    "entities": [
+      "contact",
+      "topic"
+    ],
+    "examples": [
+      "call me on whatsapp to discuss",
+      "discuss this with me on whatsapp",
+      "whatsapp call krish to discuss the project",
+      "i want to discuss on whatsapp",
+      "call me on whatsapp"
+    ]
+  },
+  "whatsapp.notifications": {
+    "entities": [],
+    "examples": [
+      "check whatsapp notifications",
+      "any new messages on whatsapp",
+      "show whatsapp alerts",
+      "who messaged me on whatsapp"
+    ]
+  },
+  "gmail.open": {
+    "entities": [],
+    "examples": [
+      "open gmail",
+      "launch gmail",
+      "go to my emails",
+      "open mail",
+      "check my inbox"
+    ]
+  },
+  "gmail.send": {
+    "entities": [
+      "to",
+      "subject",
+      "body"
+    ],
+    "examples": [
+      "send an email to boss",
+      "email rahul about the project",
+      "compose a mail to support",
+      "send gmail to mom"
+    ]
+  },
+  "gmail.inbox": {
+    "entities": [],
+    "examples": [
+      "check my gmail inbox",
+      "show my emails",
+      "any new mail in gmail",
+      "read my latest email"
+    ]
+  },
+  "system.processes.status": {
+    "entities": [
+      "action"
+    ],
+    "examples": [
+      "process status",
+      "show processes",
+      "list running processes",
+      "what is running",
+      "process list"
+    ]
+  },
+  "reminder.list": {
+    "entities": [],
+    "examples": [
+      "list my reminders",
+      "show reminders",
+      "what reminders do i have",
+      "reminders list",
+      "any reminders"
+    ]
+  },
+  "reminder.delete": {
+    "entities": [
+      "title"
+    ],
+    "examples": [
+      "delete reminder to call mom",
+      "remove reminder buy milk",
+      "cancel reminder meeting",
+      "delete my reminder"
+    ]
+  },
+  "reminder.complete": {
+    "entities": [
+      "title"
+    ],
+    "examples": [
+      "complete reminder buy milk",
+      "mark reminder done",
+      "finish reminder call dad",
+      "reminder done"
+    ]
+  },
+  "openclaw.send_message": {
+    "entities": [
+      "message",
+      "target"
+    ],
+    "examples": [
+      "send a telegram message to krish",
+      "ping krish on telegram",
+      "message me on telegram",
+      "tell krish i am busy on telegram",
+      "send telegram message",
+      "notify me via telegram",
+      "send a message through openclaw",
+      "telegram message hello"
+    ]
   }
 }
