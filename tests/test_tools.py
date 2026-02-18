@@ -1,5 +1,6 @@
 ﻿import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 import sys
 
@@ -101,9 +102,38 @@ class EngineTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as td:
             root = Path(td)
             (root / "data.txt").write_text("groq token", encoding="utf-8")
-            out = engine.try_direct_local_command("search for groq", workspace_root=root)
-            self.assertIsNotNone(out)
-            self.assertIn("groq", out.lower())
+            parsed = engine._parse_local_intent("search for groq", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "search_web")
+            self.assertEqual(args.get("query"), "groq")
+
+    def test_local_workspace_search_still_supported(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / "data.txt").write_text("groq token", encoding="utf-8")
+            parsed = engine._parse_local_intent("search for groq in this workspace", root)
+            self.assertIsNotNone(parsed)
+            name, _ = parsed
+            self.assertEqual(name, "search_text")
+
+    def test_news_intent_default_hides_links(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("search for latest ai news", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "search_news")
+            self.assertFalse(bool(args.get("include_urls")))
+
+    def test_news_intent_with_links_opt_in(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("search for latest ai news with links", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "search_news")
+            self.assertTrue(bool(args.get("include_urls")))
 
     def test_local_list_typo_workspace(self) -> None:
         with tempfile.TemporaryDirectory() as td:
@@ -168,6 +198,32 @@ class EngineTests(unittest.TestCase):
             self.assertEqual(name, "terminate_app")
             self.assertEqual(args.get("app"), "notepad")
 
+    def test_cron_status_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("cron status", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "cron")
+            self.assertEqual(args.get("action"), "status")
+
+    def test_play_music_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("play shape of you", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "play_music")
+            self.assertEqual(args.get("query"), "shape of you")
+
+    def test_stop_music_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("stop music", root)
+            self.assertIsNotNone(parsed)
+            name, _ = parsed
+            self.assertEqual(name, "stop_music")
+
 
 class TerminalOpsTests(unittest.TestCase):
     def test_run_command_argv(self) -> None:
@@ -192,6 +248,19 @@ class TerminalOpsTests(unittest.TestCase):
         ch = terminal_ops._candidate_app_names("chrome")
         self.assertTrue(any("code" in c.lower() for c in vs))
         self.assertTrue(any("chrome" in c.lower() for c in ch))
+
+    def test_cron_tool_status_call(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            result = engine._call("cron", {"action": "status"}, root)
+            self.assertEqual(result.get("kind"), "cron_status")
+
+    def test_play_music_tool_call(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch("tools.music_ops.play_music", return_value={"kind": "music_play", "launched": True, "pid": 1}):
+                result = engine._call("play_music", {"query": "shape of you"}, root)
+            self.assertEqual(result.get("kind"), "music_play")
 
 
 if __name__ == "__main__":

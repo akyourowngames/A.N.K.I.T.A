@@ -4,11 +4,108 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import cron_ops
 from . import fs_ops
+from . import music_ops
+from . import realtime_search
 from . import terminal_ops
 
 
 TOOL_SPECS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "cron",
+            "description": "Manage ANKITA cron jobs (status/list/add/update/remove/run/runs/run_due).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "job": {"type": "object"},
+                    "job_id": {"type": "string"},
+                    "patch": {"type": "object"},
+                    "include_disabled": {"type": "boolean"},
+                    "mode": {"type": "string"},
+                    "limit": {"type": "integer"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_web",
+            "description": "Search the public web for real-time information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                    "include_urls": {"type": "boolean"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_music",
+            "description": "Search music candidates on the web and rank best match to user request.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_music",
+            "description": "Play music in headless/background mode after validating best match from web search.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "headless": {"type": "boolean"},
+                    "stop_current": {"type": "boolean"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "stop_music",
+            "description": "Stop currently playing headless music process.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_news",
+            "description": "Search latest news headlines in real time.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "max_results": {"type": "integer"},
+                    "include_urls": {"type": "boolean"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -280,6 +377,43 @@ def _normalize_human_path(raw: str) -> str:
 
 
 def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, Any]:
+    if name == "cron":
+        return cron_ops.cron_action(
+            workspace_root=workspace_root,
+            action=str(args.get("action", "")),
+            job=args.get("job") if isinstance(args.get("job"), dict) else None,
+            job_id=str(args.get("job_id", "")) if args.get("job_id") is not None else None,
+            patch=args.get("patch") if isinstance(args.get("patch"), dict) else None,
+            include_disabled=bool(args.get("include_disabled", False)),
+            mode=str(args.get("mode", "due")),
+            limit=int(args.get("limit", 20)),
+        )
+    if name == "search_web":
+        return realtime_search.search_web(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 8)),
+            include_urls=bool(args.get("include_urls", False)),
+        )
+    if name == "search_music":
+        return music_ops.search_music(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 8)),
+        )
+    if name == "play_music":
+        return music_ops.play_music(
+            workspace_root=workspace_root,
+            query=str(args.get("query", "")),
+            headless=bool(args.get("headless", True)),
+            stop_current=bool(args.get("stop_current", True)),
+        )
+    if name == "stop_music":
+        return music_ops.stop_music(workspace_root=workspace_root)
+    if name == "search_news":
+        return realtime_search.search_news(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 8)),
+            include_urls=bool(args.get("include_urls", False)),
+        )
     if name == "terminate_app":
         return terminal_ops.terminate_app(
             app=str(args.get("app", "")),
@@ -412,7 +546,25 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
     has_exec = any(_match(t, ["run", "exec", "execute", "terminal", "cmd", "command", "powershell"], 0.72) for t in tokens)
     has_launch = any(_match(t, ["open", "launch", "start"], 0.72) for t in tokens)
     has_close = any(_match(t, ["close", "kill", "stop", "terminate", "quit"], 0.72) for t in tokens)
+    has_web_search = any(_match(t, ["web", "internet", "online", "google"], 0.72) for t in tokens)
+    has_news_search = any(_match(t, ["news", "headline", "headlines", "latest"], 0.72) for t in tokens)
+    has_search_word = any(_match(t, ["search", "find", "lookup"], 0.72) for t in tokens)
+    has_cron = any(_match(t, ["cron", "schedule", "reminder", "reminders"], 0.72) for t in tokens)
+    has_manage = any(_match(t, ["add", "create", "update", "remove", "run", "list", "status"], 0.72) for t in tokens)
+    has_music = any(_match(t, ["music", "song", "songs", "track", "audio"], 0.72) for t in tokens)
+    has_play = any(_match(t, ["play", "listen", "start"], 0.72) for t in tokens)
+    has_stop = any(_match(t, ["stop", "pause", "end"], 0.72) for t in tokens)
 
+    if has_cron and has_manage:
+        chosen.append("cron")
+    if has_music and has_play:
+        chosen.append("play_music")
+    if has_music and has_stop:
+        chosen.append("stop_music")
+    if has_news_search:
+        chosen.append("search_news")
+    if has_web_search and has_search_word:
+        chosen.append("search_web")
     if has_close:
         chosen.append("terminate_app")
     if has_launch:
@@ -452,6 +604,134 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
 
 
 def _format_result(result: Dict[str, Any]) -> str:
+    if isinstance(result, dict) and result.get("kind") == "music_search":
+        rows = result.get("results", [])
+        if not isinstance(rows, list):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        lines = [f"Music search for '{result.get('query', '')}'", "Top matches:"]
+        for i, row in enumerate(rows[:8], 1):
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"{i}. {row.get('title', '')} (score={row.get('score', 0)})")
+            lines.append(f"   {row.get('domain', '')}")
+        best = result.get("best_match")
+        if isinstance(best, dict):
+            lines.append(f"Best match: {best.get('title', '')} (score={best.get('score', 0)})")
+        return "\n".join(lines)
+
+    if isinstance(result, dict) and result.get("kind") == "music_play":
+        return (
+            f"[MUSIC PLAYING]\n"
+            f"title: {result.get('title', '')}\n"
+            f"pid: {result.get('pid', '')}\n"
+            f"score: {result.get('score', 0)}\n"
+            f"headless: {bool(result.get('headless', True))}"
+        )
+
+    if isinstance(result, dict) and result.get("kind") == "music_stop":
+        if bool(result.get("stopped")):
+            return f"[MUSIC STOPPED] pid={result.get('pid', '')}"
+        return f"[MUSIC STOP] no active player ({result.get('reason', 'unknown')})"
+
+    if isinstance(result, dict) and result.get("kind") == "cron_status":
+        return (
+            f"Cron status\n"
+            f"- jobs_total: {result.get('jobs_total', 0)}\n"
+            f"- jobs_enabled: {result.get('jobs_enabled', 0)}\n"
+            f"- jobs_due_now: {result.get('jobs_due_now', 0)}"
+        )
+
+    if isinstance(result, dict) and result.get("kind") == "cron_list":
+        jobs = result.get("jobs", [])
+        if not isinstance(jobs, list):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        lines = [f"Cron jobs: {len(jobs)}"]
+        for row in jobs[:40]:
+            if not isinstance(row, dict):
+                continue
+            jid = row.get("id", "")
+            name = row.get("name", "")
+            enabled = bool(row.get("enabled", True))
+            next_at = row.get("state", {}).get("next_run_at_ms") if isinstance(row.get("state"), dict) else None
+            lines.append(f"- {jid} | {name} | enabled={enabled} | next={next_at}")
+        if len(jobs) > 40:
+            lines.append("... [truncated in display]")
+        return "\n".join(lines)
+
+    if isinstance(result, dict) and result.get("kind") == "cron_job":
+        action = str(result.get("action", ""))
+        job = result.get("job", {})
+        if not isinstance(job, dict):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        return (
+            f"Cron {action} complete\n"
+            f"- id: {job.get('id', '')}\n"
+            f"- name: {job.get('name', '')}\n"
+            f"- enabled: {bool(job.get('enabled', True))}\n"
+            f"- next_run_at_ms: {job.get('state', {}).get('next_run_at_ms') if isinstance(job.get('state'), dict) else None}"
+        )
+
+    if isinstance(result, dict) and result.get("kind") in {"cron_run", "cron_run_due", "cron_runs"}:
+        if result.get("kind") == "cron_run":
+            return (
+                f"Cron run\n"
+                f"- job_id: {result.get('job_id', '')}\n"
+                f"- status: {result.get('status', '')}\n"
+                f"- duration_ms: {result.get('duration_ms', '')}\n"
+                f"- error: {result.get('error', '')}"
+            )
+        if result.get("kind") == "cron_run_due":
+            ran = result.get("ran", [])
+            if not isinstance(ran, list):
+                return json.dumps(result, ensure_ascii=False, indent=2)
+            lines = [f"Cron run_due executed: {len(ran)}"]
+            for row in ran[:40]:
+                if not isinstance(row, dict):
+                    continue
+                lines.append(f"- {row.get('job_id', '')}: {row.get('status', '')} ({row.get('duration_ms', '')} ms)")
+            return "\n".join(lines)
+        rows = result.get("runs", [])
+        if not isinstance(rows, list):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        lines = [f"Cron runs for {result.get('job_id', '')}: {len(rows)}"]
+        for row in rows[:40]:
+            if not isinstance(row, dict):
+                continue
+            lines.append(f"- {row.get('ts_ms', '')}: {row.get('status', '')} {row.get('error', '')}")
+        return "\n".join(lines)
+
+    if isinstance(result, dict) and result.get("kind") in {"web_search", "news_search"}:
+        rows = result.get("results", [])
+        if not isinstance(rows, list):
+            return json.dumps(result, ensure_ascii=False, indent=2)
+        kind = str(result.get("kind"))
+        engine = str(result.get("engine", ""))
+        query = str(result.get("query", ""))
+        include_urls = bool(result.get("include_urls", False))
+        label = "News Brief" if kind == "news_search" else "Web Brief"
+        lines = [f"{label} ({engine}) on '{query}'", "Key pointers:"]
+        for i, row in enumerate(rows[:12], 1):
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title", "")).strip()
+            url = str(row.get("url", "")).strip()
+            source = str(row.get("source", "")).strip()
+            published = str(row.get("published", "")).strip()
+            snippet = str(row.get("snippet", "")).strip()
+            meta = " | ".join(x for x in [source or row.get("domain", ""), published] if x)
+            lines.append(f"{i}. {title}".strip())
+            if meta:
+                lines.append(f"   {meta}")
+            if snippet:
+                lines.append(f"   {snippet}")
+            if include_urls and url:
+                lines.append(f"   {url}")
+        if len(rows) > 12:
+            lines.append("... [truncated in display]")
+        if not include_urls:
+            lines.append("Ask 'with links' if you want source URLs.")
+        return "\n".join(lines)
+
     if isinstance(result, dict) and result.get("terminated") is True:
         proc = result.get("process", "")
         requested = result.get("requested", "")
@@ -573,6 +853,32 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
     if not tokens:
         return None
 
+    if tokens[0] in {"stop", "pause"} and len(tokens) == 1:
+        return ("stop_music", {})
+
+    if tokens[0] in {"stop", "pause"} and any(t in {"music", "song", "audio"} for t in tokens[1:]):
+        return ("stop_music", {})
+
+    if tokens[0] in {"play", "listen"}:
+        if len(words) == 1:
+            return ("__run_help", {"message": "Usage: play <song name>"})
+        query = text.split(maxsplit=1)[1].strip().strip("\"'")
+        if query:
+            return ("play_music", {"query": query, "headless": True, "stop_current": True})
+
+    if tokens[0] == "cron":
+        if len(tokens) == 1:
+            return ("cron", {"action": "status"})
+        action = tokens[1]
+        if action in {"status", "list"}:
+            return ("cron", {"action": action})
+        if action in {"run", "remove", "runs"}:
+            if len(words) < 3:
+                return ("__run_help", {"message": f"Usage: cron {action} <job_id>"})
+            return ("cron", {"action": action, "job_id": words[2].strip()})
+        if action == "due":
+            return ("cron", {"action": "run_due"})
+
     if tokens[0] in {"close", "kill", "stop", "terminate", "quit"}:
         if len(words) == 1:
             return (
@@ -582,6 +888,30 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
         target_text = text.split(maxsplit=1)[1].strip().strip("\"'")
         if target_text:
             return ("terminate_app", {"app": target_text, "force": True})
+
+    # Realtime web/news search (separate from workspace file search)
+    news_tokens = {"news", "headline", "headlines", "latest"}
+    web_tokens = {"web", "internet", "online", "google"}
+    search_tokens = {"search", "find", "lookup"}
+    link_tokens = {"link", "links", "url", "urls", "source", "sources"}
+    has_news = any(t in news_tokens for t in tokens)
+    has_web = any(t in web_tokens for t in tokens)
+    has_search = any(t in search_tokens for t in tokens)
+    wants_links = any(t in link_tokens for t in tokens)
+    if has_news:
+        query = _extract_quoted_text(text)
+        if not query:
+            filtered = [w for w in words if w.lower().strip("\"'") not in news_tokens | search_tokens | {"for", "about"}]
+            query = " ".join(filtered).strip()
+        query = query or "latest technology news"
+        return ("search_news", {"query": query, "max_results": 8, "include_urls": wants_links})
+    if has_web and has_search:
+        query = _extract_quoted_text(text)
+        if not query:
+            filtered = [w for w in words if w.lower().strip("\"'") not in web_tokens | search_tokens | {"for", "about"}]
+            query = " ".join(filtered).strip()
+        if query:
+            return ("search_web", {"query": query, "max_results": 8, "include_urls": wants_links})
 
     if tokens[0] in {"open", "launch", "start"}:
         if len(words) == 1:
@@ -654,7 +984,24 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
         if query:
             if query.lower().startswith("for "):
                 query = query[4:].strip()
-            return ("search_text", {"query": query, "path": path, "max_results": 100})
+            scope_tokens = {
+                "workspace",
+                "project",
+                "repo",
+                "repository",
+                "codebase",
+                "file",
+                "files",
+                "folder",
+                "directory",
+                "path",
+                "here",
+            }
+            has_local_scope = any(t in scope_tokens for t in tokens)
+            if has_local_scope:
+                return ("search_text", {"query": query, "path": path, "max_results": 100})
+            wants_links = any(t in {"link", "links", "url", "urls", "source", "sources"} for t in tokens)
+            return ("search_web", {"query": query, "max_results": 8, "include_urls": wants_links})
 
     return None
 

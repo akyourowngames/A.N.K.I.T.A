@@ -21,6 +21,7 @@ SYSTEM_PROMPT = (
     "Use launch_app when user asks to open/start an application. "
     "Use terminate_app when user asks to close/kill an application. "
     "Use tools when asked to inspect or modify files. "
+    "For web/news results, provide concise key pointers first and avoid dumping raw URLs unless user explicitly asks for links. "
     "Always keep changes minimal and accurate."
 )
 

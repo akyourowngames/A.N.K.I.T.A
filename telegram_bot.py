@@ -8,6 +8,7 @@ import requests
 from dotenv import load_dotenv
 
 from agent_runtime import AgentRuntime, new_session
+from corn import CornRunner
 from llm import build_runtime_from_env
 
 WORKSPACE_ROOT = Path.cwd().resolve()
@@ -76,6 +77,15 @@ def parse_allowed_chat_ids(raw: str) -> set[int]:
     return out
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, str(default)).strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    return default
+
+
 def main() -> None:
     load_dotenv()
     token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
@@ -85,6 +95,14 @@ def main() -> None:
     allowed_chat_ids = parse_allowed_chat_ids(os.getenv("TELEGRAM_ALLOWED_CHAT_IDS", ""))
     runtime = build_runtime_from_env()
     agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
+    runner: CornRunner | None = None
+    if _env_bool("CORN_AUTO_RUN", True):
+        runner = CornRunner(
+            workspace_root=WORKSPACE_ROOT,
+            poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
+            max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
+        )
+        runner.start()
     sessions: Dict[int, List[Dict[str, Any]]] = {}
     offset = read_offset()
 
@@ -95,6 +113,7 @@ def main() -> None:
     print(f"Provider: {runtime.provider}")
     print(f"Model: {runtime.model}")
     print(f"Workspace: {WORKSPACE_ROOT}")
+    print(f"Corn scheduler: {'ON' if runner is not None else 'OFF'}")
 
     while True:
         try:
@@ -166,6 +185,9 @@ def main() -> None:
         except Exception as err:
             print(f"[telegram-error] {err}")
             time.sleep(2.0)
+
+    if runner is not None:
+        runner.stop()
 
 
 if __name__ == "__main__":
