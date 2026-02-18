@@ -224,6 +224,60 @@ class EngineTests(unittest.TestCase):
             name, _ = parsed
             self.assertEqual(name, "stop_music")
 
+    def test_current_music_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("what song is playing now", root)
+            self.assertIsNotNone(parsed)
+            name, _ = parsed
+            self.assertEqual(name, "current_music")
+
+    def test_system_volume_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("please increase the sound", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "system_control")
+            self.assertEqual(args.get("action"), "volume_up")
+
+    def test_system_show_desktop_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("show desktop", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "system_control")
+            self.assertEqual(args.get("action"), "show_desktop")
+
+    def test_system_wifi_off_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("turn off wifi", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "system_control")
+            self.assertEqual(args.get("action"), "wifi_off")
+
+    def test_system_brightness_set_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("set brightness to 35", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "system_control")
+            self.assertEqual(args.get("action"), "brightness_set")
+            self.assertEqual(int(args.get("amount", 0)), 35)
+
+    def test_system_screenshot_intent(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            parsed = engine._parse_local_intent("take screenshot", root)
+            self.assertIsNotNone(parsed)
+            name, args = parsed
+            self.assertEqual(name, "system_control")
+            self.assertEqual(args.get("action"), "screenshot")
+
 
 class TerminalOpsTests(unittest.TestCase):
     def test_run_command_argv(self) -> None:
@@ -261,6 +315,27 @@ class TerminalOpsTests(unittest.TestCase):
             with patch("tools.music_ops.play_music", return_value={"kind": "music_play", "launched": True, "pid": 1}):
                 result = engine._call("play_music", {"query": "shape of you"}, root)
             self.assertEqual(result.get("kind"), "music_play")
+
+    def test_current_music_tool_call(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch("tools.music_ops.current_music", return_value={"kind": "music_current", "playing": False}):
+                result = engine._call("current_music", {}, root)
+            self.assertEqual(result.get("kind"), "music_current")
+
+    def test_system_control_tool_call(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            with patch(
+                "tools.system_ops.system_control",
+                return_value={"kind": "system_control", "ok": True, "action": "volume_up", "amount": 2},
+            ) as mocked:
+                result = engine._call("system_control", {"action": "volume_up", "amount": 2, "path": "screens/x.png"}, root)
+                _, kwargs = mocked.call_args
+            self.assertEqual(result.get("kind"), "system_control")
+            self.assertTrue(bool(result.get("ok")))
+            self.assertEqual(kwargs.get("path"), "screens/x.png")
+            self.assertEqual(kwargs.get("workspace_root"), root)
 
 
 if __name__ == "__main__":

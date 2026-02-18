@@ -51,6 +51,13 @@ class MusicOpsTests(unittest.TestCase):
             self.assertEqual(out["kind"], "music_play")
             self.assertEqual(out["pid"], 123)
 
+    def test_current_music_none(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            out = music_ops.current_music(root)
+            self.assertEqual(out["kind"], "music_current")
+            self.assertFalse(out["playing"])
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

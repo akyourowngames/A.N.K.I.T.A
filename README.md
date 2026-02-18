@@ -42,6 +42,36 @@ python chat.py
 
 `chat.py` now auto-starts the Corn scheduler in-process by default (`CORN_AUTO_RUN=true`).
 
+## Desktop GUI (One-on-One)
+
+Run:
+
+```powershell
+python gui.py
+```
+
+Or via gateway:
+
+```powershell
+setx GATEWAY_MODE "gui"
+python gateway.py
+```
+
+Voice continuous call in GUI:
+- Set `SARVAM_API_KEY` in `.env`
+- Click `Start Voice Call`
+- Speak naturally; ANKITA listens in chunks, replies, and speaks back continuously
+- Click `Stop Voice` to end call loop
+- Global hotkey: double-press `F8` to start/stop voice (`VOICE_HOTKEY_KEY` / `VOICE_HOTKEY_DOUBLE_PRESS_MS`)
+- STT defaults to Python `SpeechRecognition` (`VOICE_STT_PROVIDER=speech_recognition`)
+- TTS stays on Sarvam (speaker/pace from `.env`)
+
+Install voice deps:
+
+```powershell
+pip install numpy sounddevice SpeechRecognition
+```
+
 ## Telegram Integration (OpenClaw-style Channel Adapter)
 
 This project now has a dedicated Telegram transport layer that reuses the same ANKITA agent runtime:
@@ -75,7 +105,32 @@ python gateway.py
 Mode selection:
 - `GATEWAY_MODE=telegram` -> run Telegram + Cron
 - `GATEWAY_MODE=chat` -> run CLI chat + Cron
+- `GATEWAY_MODE=voice` -> run browser voice gateway + Cron
+- `GATEWAY_MODE=gui` -> run desktop GUI + Cron
 - unset `GATEWAY_MODE`: auto-select Telegram when `TELEGRAM_BOT_TOKEN` exists, otherwise chat
+
+## External Voice Gateway (Option 2)
+
+One-on-one voice interaction outside Telegram using Sarvam:
+
+```powershell
+setx SARVAM_API_KEY "your_key"
+setx GATEWAY_MODE "voice"
+python gateway.py
+```
+
+Open:
+
+```text
+http://127.0.0.1:8765
+```
+
+Flow:
+- Browser mic capture (push-to-talk)
+- Sarvam STT (`speech-to-text`)
+- ANKITA agent response
+- Sarvam TTS (`text-to-speech`)
+- Audio reply in browser player
 
 Behavior:
 - per-chat memory sessions
@@ -104,6 +159,7 @@ Behavior:
 - `search_music(query, max_results)` (music candidate matching)
 - `play_music(query, headless, stop_current)` (headless/background playback)
 - `stop_music()` (stop active music playback)
+- `system_control(action, amount, path)` (`volume_up`, `volume_down`, `mute_toggle`, `show_desktop`, `media_play_pause`, `media_next`, `media_prev`, `lock_screen`, `window_minimize_all`, `window_restore_all`, `brightness_up`, `brightness_down`, `brightness_set`, `wifi_on`, `wifi_off`, `bluetooth_on`, `bluetooth_off`, `screenshot`)
 
 ## Safety model (OpenClaw-inspired)
 - All paths are resolved under workspace root.
@@ -118,6 +174,8 @@ Behavior:
 - Local NLP routing handles realtime search: `search web for ...`, `latest news about ...`.
 - Local NLP routing handles cron quick commands: `cron status`, `cron list`, `cron run <job_id>`.
 - Local NLP routing handles music commands: `play <song name>`, `stop music`.
+- Local NLP routing handles system controls: `increase volume`, `decrease sound`, `show desktop`, `next track`, `lock screen`.
+- Additional system NLP examples: `set brightness to 40`, `turn off wifi`, `turn on bluetooth`, `take screenshot`.
 - `search_web` uses Google Custom Search API if configured; otherwise falls back to DuckDuckGo HTML.
 - LLM tool-calling handles advanced multi-step operations.
 - Copilot mode uses OpenClaw-style token exchange:

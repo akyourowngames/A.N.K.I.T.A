@@ -18,7 +18,7 @@ def _tokenize(text: str) -> List[str]:
     return [t for t in cleaned.split(" ") if t]
 
 
-def _score(query: str, title: str, snippet: str = "") -> float:
+def _score(query: str, title: str, snippet: str = "", duration_sec: Optional[int] = None) -> float:
     q = query.strip().lower()
     blob = f"{title} {snippet}".strip().lower()
     if not q or not blob:
@@ -32,6 +32,13 @@ def _score(query: str, title: str, snippet: str = "") -> float:
     for t in penalty_terms:
         if t in blob and t not in q:
             penalty += 0.08
+    if "official" in blob:
+        penalty -= 0.05
+    if duration_sec is not None and duration_sec > 0:
+        if duration_sec < 60 and "short" not in q and "reel" not in q:
+            penalty += 0.25
+        if duration_sec < 120 and "full" in q:
+            penalty += 0.12
     return max(0.0, ((0.62 * overlap) + (0.38 * seq)) - penalty)
 
 
@@ -188,7 +195,8 @@ def search_music(query: str, max_results: int = 8) -> Dict[str, Any]:
         snippet = str(row.get("snippet", "")).strip()
         if not title or not url:
             continue
-        score = _score(q, title, snippet)
+        duration_sec = int(row.get("duration_sec")) if isinstance(row.get("duration_sec"), (int, float)) else None
+        score = _score(q, title, snippet, duration_sec=duration_sec)
         ranked.append(
             {
                 "title": title,
@@ -349,6 +357,23 @@ def stop_music(workspace_root: Path) -> Dict[str, Any]:
         return {"kind": "music_stop", "stopped": True, "pid": pid}
     except Exception as err:
         return {"kind": "music_stop", "stopped": False, "pid": pid, "error": str(err)}
+
+
+def current_music(workspace_root: Path) -> Dict[str, Any]:
+    state = _load_state(workspace_root)
+    pid = int(state.get("pid", 0) or 0)
+    if pid <= 0:
+        return {"kind": "music_current", "playing": False}
+    return {
+        "kind": "music_current",
+        "playing": True,
+        "pid": pid,
+        "title": str(state.get("title", "")),
+        "query": str(state.get("query", "")),
+        "url": str(state.get("url", "")),
+        "launcher": str(state.get("launcher", "")),
+        "engine": str(state.get("engine", "")),
+    }
 
 
 def play_music(workspace_root: Path, query: str, headless: bool = True, stop_current: bool = True) -> Dict[str, Any]:

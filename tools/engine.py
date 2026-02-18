@@ -8,6 +8,7 @@ from . import cron_ops
 from . import fs_ops
 from . import music_ops
 from . import realtime_search
+from . import system_ops
 from . import terminal_ops
 
 
@@ -84,6 +85,33 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "function": {
             "name": "stop_music",
             "description": "Stop currently playing headless music process.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "system_control",
+            "description": "Control system-level actions like volume, media keys, and show desktop.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string"},
+                    "amount": {"type": "integer"},
+                    "path": {"type": "string"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "current_music",
+            "description": "Get currently playing music details.",
             "parameters": {
                 "type": "object",
                 "properties": {},
@@ -408,6 +436,15 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         )
     if name == "stop_music":
         return music_ops.stop_music(workspace_root=workspace_root)
+    if name == "current_music":
+        return music_ops.current_music(workspace_root=workspace_root)
+    if name == "system_control":
+        return system_ops.system_control(
+            action=str(args.get("action", "")),
+            amount=int(args.get("amount", 1)),
+            path=str(args.get("path")) if args.get("path") is not None else None,
+            workspace_root=workspace_root,
+        )
     if name == "search_news":
         return realtime_search.search_news(
             query=str(args.get("query", "")),
@@ -554,6 +591,29 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
     has_music = any(_match(t, ["music", "song", "songs", "track", "audio"], 0.72) for t in tokens)
     has_play = any(_match(t, ["play", "listen", "start"], 0.72) for t in tokens)
     has_stop = any(_match(t, ["stop", "pause", "end"], 0.72) for t in tokens)
+    has_now = any(_match(t, ["current", "now", "what", "which", "name"], 0.72) for t in tokens)
+    has_system = any(
+        _match(
+            t,
+            [
+                "volume",
+                "mute",
+                "desktop",
+                "media",
+                "system",
+                "sound",
+                "brightness",
+                "wifi",
+                "wireless",
+                "bluetooth",
+                "screenshot",
+                "screen",
+                "window",
+            ],
+            0.72,
+        )
+        for t in tokens
+    )
 
     if has_cron and has_manage:
         chosen.append("cron")
@@ -561,6 +621,10 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
         chosen.append("play_music")
     if has_music and has_stop:
         chosen.append("stop_music")
+    if has_music and has_now:
+        chosen.append("current_music")
+    if has_system:
+        chosen.append("system_control")
     if has_news_search:
         chosen.append("search_news")
     if has_web_search and has_search_word:
@@ -632,6 +696,27 @@ def _format_result(result: Dict[str, Any]) -> str:
         if bool(result.get("stopped")):
             return f"[MUSIC STOPPED] pid={result.get('pid', '')}"
         return f"[MUSIC STOP] no active player ({result.get('reason', 'unknown')})"
+
+    if isinstance(result, dict) and result.get("kind") == "music_current":
+        if not bool(result.get("playing")):
+            return "No music is currently playing."
+        return (
+            f"[MUSIC CURRENT]\n"
+            f"title: {result.get('title', '')}\n"
+            f"pid: {result.get('pid', '')}\n"
+            f"engine: {result.get('engine', '')}\n"
+            f"launcher: {result.get('launcher', '')}"
+        )
+
+    if isinstance(result, dict) and result.get("kind") == "system_control":
+        lines = [
+            f"[SYSTEM] action={result.get('action', '')} ok={bool(result.get('ok'))} amount={result.get('amount', 1)}"
+        ]
+        if result.get("path"):
+            lines.append(f"path: {result.get('path', '')}")
+        lines.append(f"stdout: {result.get('stdout', '')}")
+        lines.append(f"stderr: {result.get('stderr', '')}")
+        return "\n".join(lines).strip()
 
     if isinstance(result, dict) and result.get("kind") == "cron_status":
         return (
@@ -865,6 +950,73 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
         query = text.split(maxsplit=1)[1].strip().strip("\"'")
         if query:
             return ("play_music", {"query": query, "headless": True, "stop_current": True})
+
+    if any(t in {"song", "music", "track"} for t in tokens) and any(
+        t in {"what", "which", "name", "current", "now", "playing"} for t in tokens
+    ):
+        return ("current_music", {})
+
+    has_volume = any(_match(t, ["volume", "sound", "audio", "loudness"], 0.72) for t in tokens)
+    has_up = any(_match(t, ["up", "increase", "higher", "raise", "boost", "louder"], 0.72) for t in tokens)
+    has_down = any(_match(t, ["down", "decrease", "lower", "reduce", "softer", "quieter"], 0.72) for t in tokens)
+    has_desktop = any(_match(t, ["desktop"], 0.75) for t in tokens)
+    has_show = any(_match(t, ["show", "minimize", "hide"], 0.74) for t in tokens)
+    has_lock = any(_match(t, ["lock"], 0.75) for t in tokens)
+    has_screen = any(_match(t, ["screen", "pc", "computer", "system"], 0.72) for t in tokens)
+    has_mute = any(_match(t, ["mute", "unmute", "silent"], 0.72) for t in tokens)
+    has_next = any(_match(t, ["next", "skip"], 0.72) for t in tokens)
+    has_prev = any(_match(t, ["previous", "prev", "back"], 0.72) for t in tokens)
+    has_media = any(_match(t, ["song", "track", "music", "audio", "media"], 0.72) for t in tokens)
+    has_play_pause = any(_match(t, ["playpause", "pause", "resume", "play"], 0.72) for t in tokens) and has_media
+    has_brightness = any(_match(t, ["brightness", "backlight"], 0.74) for t in tokens)
+    has_wifi = any(_match(t, ["wifi", "wi-fi", "wlan", "wireless"], 0.72) for t in tokens)
+    has_bluetooth = any(_match(t, ["bluetooth", "bt"], 0.72) for t in tokens)
+    has_screenshot = any(_match(t, ["screenshot", "snapshot", "capture"], 0.72) for t in tokens) and any(
+        _match(t, ["screen", "desktop"], 0.72) for t in tokens
+    ) or any(_match(t, ["screenshot"], 0.72) for t in tokens)
+    has_window = any(_match(t, ["window", "windows"], 0.72) for t in tokens)
+    has_restore = any(_match(t, ["restore", "undo"], 0.72) for t in tokens)
+    has_disable = any(_match(t, ["disable", "off", "turnoff", "disconnect"], 0.72) for t in tokens)
+    has_enable = any(_match(t, ["enable", "on", "turnon", "connect"], 0.72) for t in tokens)
+
+    if has_show and has_desktop:
+        return ("system_control", {"action": "show_desktop", "amount": 1})
+    if has_lock and has_screen:
+        return ("system_control", {"action": "lock_screen", "amount": 1})
+    if has_volume and has_up:
+        return ("system_control", {"action": "volume_up", "amount": 6})
+    if has_volume and has_down:
+        return ("system_control", {"action": "volume_down", "amount": 6})
+    if has_mute:
+        return ("system_control", {"action": "mute_toggle", "amount": 1})
+    if has_next and has_media:
+        return ("system_control", {"action": "media_next", "amount": 1})
+    if has_prev and has_media:
+        return ("system_control", {"action": "media_prev", "amount": 1})
+    if has_play_pause:
+        return ("system_control", {"action": "media_play_pause", "amount": 1})
+    if has_brightness and has_up:
+        return ("system_control", {"action": "brightness_up", "amount": 10})
+    if has_brightness and has_down:
+        return ("system_control", {"action": "brightness_down", "amount": 10})
+    if has_brightness:
+        nums = [int(t) for t in tokens if t.isdigit()]
+        if nums:
+            return ("system_control", {"action": "brightness_set", "amount": max(1, min(nums[0], 100))})
+    if has_wifi and has_disable:
+        return ("system_control", {"action": "wifi_off", "amount": 1})
+    if has_wifi and has_enable:
+        return ("system_control", {"action": "wifi_on", "amount": 1})
+    if has_bluetooth and has_disable:
+        return ("system_control", {"action": "bluetooth_off", "amount": 1})
+    if has_bluetooth and has_enable:
+        return ("system_control", {"action": "bluetooth_on", "amount": 1})
+    if has_screenshot:
+        return ("system_control", {"action": "screenshot", "amount": 1})
+    if has_window and has_show and not has_desktop:
+        return ("system_control", {"action": "window_minimize_all", "amount": 1})
+    if has_window and has_restore:
+        return ("system_control", {"action": "window_restore_all", "amount": 1})
 
     if tokens[0] == "cron":
         if len(tokens) == 1:
