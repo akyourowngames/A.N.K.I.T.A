@@ -1,6 +1,7 @@
 import base64
 import json
 import os
+import re
 import threading
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -17,6 +18,7 @@ from llm import build_runtime_from_env
 
 WORKSPACE_ROOT = Path.cwd().resolve()
 SARVAM_BASE_URL = "https://api.sarvam.ai"
+_SARVAM_SESSION = requests.Session()
 VALID_TTS_SPEAKERS = {
     "anushka",
     "abhilash",
@@ -83,6 +85,77 @@ def _sarvam_headers(api_key: str) -> Dict[str, str]:
     return {"api-subscription-key": api_key}
 
 
+def sanitize_for_voice(text: str) -> str:
+    raw = str(text or "").replace("\r\n", "\n").strip()
+    if not raw:
+        return ""
+
+    # Keep markdown link label, drop URL target.
+    out = re.sub(r"\[([^\]]+)\]\((?:https?://|www\.)[^)]+\)", r"\1", raw, flags=re.IGNORECASE)
+
+    # Strip URLs globally.
+    out = re.sub(r"(?:https?://|www\.)\S+", "", out, flags=re.IGNORECASE)
+
+    # Strip Windows/Unix-like file paths.
+    out = re.sub(r"[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s]*", "", out)
+    out = re.sub(r"(?:(?:\.\.?/)|/)[^\s]+", "", out)
+
+    # Strip common file names with extensions.
+    out = re.sub(r"\b[^\s]+\.(?:md|pdf|txt|json|yaml|yml|csv|log|py|js|ts|html|css)\b", "", out, flags=re.IGNORECASE)
+
+    # Remove labels left hanging after stripping paths/links.
+    out = re.sub(
+        r"\b(?:open(?:\s+live)?\s+map|open\s+in\s+map|open\s+it\s+at|file|path|url|link)\s*[:\-]?\s*",
+        "",
+        out,
+        flags=re.IGNORECASE,
+    )
+
+    out = re.sub(r"\s+", " ", out).strip(" ,.;:-")
+    if not out:
+        return "Done."
+    return out[:2200]
+
+
+def prepare_tts_text(text: str) -> str:
+    clean = sanitize_for_voice(text)
+    if not clean:
+        return ""
+    try:
+        max_chars = int(os.getenv("VOICE_TTS_MAX_CHARS", "160") or 160)
+    except Exception:
+        max_chars = 160
+    # 0 or negative disables truncation and speaks full text.
+    if max_chars <= 0:
+        return clean
+    max_chars = max(80, min(max_chars, 1400))
+    if len(clean) <= max_chars:
+        return clean
+
+    parts = [p.strip() for p in re.split(r"(?<=[.!?])\s+", clean) if p.strip()]
+    chosen: List[str] = []
+    size = 0
+    for part in parts:
+        add_len = len(part) + (1 if chosen else 0)
+        if size + add_len > max_chars:
+            break
+        chosen.append(part)
+        size += add_len
+
+    if chosen:
+        head = " ".join(chosen)
+    else:
+        clipped = clean[:max_chars].rstrip()
+        head = clipped.rsplit(" ", 1)[0].strip() if " " in clipped else clipped
+        if not head:
+            head = clipped
+
+    hint = os.getenv("VOICE_TTS_REST_HINT", "I've shown the rest on screen.").strip() or "I've shown the rest on screen."
+    if head.endswith((".", "!", "?")):
+        return f"{head} {hint}"
+    return f"{head}. {hint}"
+
+
 def _extract_audio_b64(tts_payload: Dict[str, Any]) -> str:
     audios = tts_payload.get("audios")
     if isinstance(audios, list) and audios and isinstance(audios[0], str):
@@ -99,7 +172,8 @@ def _sarvam_stt(api_key: str, audio_bytes: bytes, mime: str) -> Dict[str, Any]:
     url = f"{SARVAM_BASE_URL}/speech-to-text"
     files = {"file": ("speech.webm", audio_bytes, mime or "audio/webm")}
     data = {"model": model, "mode": mode}
-    res = requests.post(url, headers=_sarvam_headers(api_key), files=files, data=data, timeout=120)
+    timeout_sec = float(os.getenv("VOICE_STT_TIMEOUT_SEC", "45") or 45)
+    res = _SARVAM_SESSION.post(url, headers=_sarvam_headers(api_key), files=files, data=data, timeout=timeout_sec)
     res.raise_for_status()
     out = res.json()
     if not isinstance(out, dict):
@@ -113,18 +187,24 @@ def _sarvam_tts(api_key: str, text: str, lang_code: str) -> Dict[str, Any]:
     speaker = SPEAKER_ALIASES.get(raw_speaker, raw_speaker)
     if speaker not in VALID_TTS_SPEAKERS:
         speaker = "priya"
-    sample_rate = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "24000"))
-    pace = float(os.getenv("SARVAM_TTS_PACE", "1.0"))
+    sample_rate = int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "16000"))
+    pace = float(os.getenv("SARVAM_TTS_PACE", "1.12"))
     url = f"{SARVAM_BASE_URL}/text-to-speech"
     payload = {
-        "text": text[:2500],
+        "text": text[:1600],
         "target_language_code": lang_code,
         "model": model,
         "speaker": speaker,
         "sample_rate": sample_rate,
         "pace": pace,
     }
-    res = requests.post(url, headers={**_sarvam_headers(api_key), "Content-Type": "application/json"}, json=payload, timeout=120)
+    timeout_sec = float(os.getenv("VOICE_TTS_TIMEOUT_SEC", "45") or 45)
+    res = _SARVAM_SESSION.post(
+        url,
+        headers={**_sarvam_headers(api_key), "Content-Type": "application/json"},
+        json=payload,
+        timeout=timeout_sec,
+    )
     res.raise_for_status()
     out = res.json()
     if not isinstance(out, dict):
@@ -304,7 +384,7 @@ def main() -> None:
                 transcript = str(stt.get("transcript", "")).strip()
                 detected_lang = str(stt.get("language_code", "")).strip() or tts_lang
                 if not transcript:
-                    self._send_json(200, {"ok": True, "transcript": "", "reply_text": "I could not hear that clearly.", "audio_b64": ""})
+                    self._send_json(200, {"ok": True, "transcript": "", "reply_text": "माफ कीजिए, आवाज़ साफ़ नहीं आई।", "audio_b64": ""})
                     return
 
                 with sessions_lock:
@@ -312,8 +392,8 @@ def main() -> None:
                         sessions[session_id] = new_session()
                     msgs = sessions[session_id]
                 reply_text = agent.process_user_text(user_text=transcript, messages=msgs)
-
-                tts = _sarvam_tts(api_key=api_key, text=reply_text, lang_code=detected_lang if "-" in detected_lang else tts_lang)
+                spoken_text = prepare_tts_text(reply_text)
+                tts = _sarvam_tts(api_key=api_key, text=spoken_text, lang_code=detected_lang if "-" in detected_lang else tts_lang)
                 audio_b64 = _extract_audio_b64(tts)
                 self._send_json(
                     200,

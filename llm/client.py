@@ -20,6 +20,7 @@ GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 DEFAULT_COPILOT_MODEL = "gpt-4o"
 DEFAULT_MAX_TOKENS = 120
+_HTTP = requests.Session()
 
 
 @dataclass
@@ -28,7 +29,7 @@ class LLMRuntime:
     model: str
     api_key: str
     base_url: str
-    max_tokens: int
+    max_tokens: Optional[int]
 
 
 def _parse_int(value: str, fallback: int, minimum: int, maximum: int) -> int:
@@ -37,6 +38,19 @@ def _parse_int(value: str, fallback: int, minimum: int, maximum: int) -> int:
     except ValueError:
         return fallback
     return max(minimum, min(parsed, maximum))
+
+
+def _parse_max_tokens(value: str) -> Optional[int]:
+    raw = str(value or "").strip().lower()
+    if raw in {"auto", "none", "off", "model", "provider", "llm"}:
+        return None
+    try:
+        parsed = int(raw)
+    except ValueError:
+        return DEFAULT_MAX_TOKENS
+    if parsed <= 0:
+        return None
+    return max(64, min(parsed, 2048))
 
 
 def _env_first(*names: str) -> str:
@@ -104,7 +118,7 @@ def _github_device_login() -> str:
         "client_id": GITHUB_COPILOT_CLIENT_ID,
         "scope": "read:user",
     }
-    res = requests.post(
+    res = _HTTP.post(
         GITHUB_DEVICE_CODE_URL,
         headers={
             "Accept": "application/json",
@@ -133,7 +147,7 @@ def _github_device_login() -> str:
 
     deadline = time.time() + expires_in
     while time.time() < deadline:
-        token_res = requests.post(
+        token_res = _HTTP.post(
             GITHUB_DEVICE_TOKEN_URL,
             headers={
                 "Accept": "application/json",
@@ -185,7 +199,7 @@ def _exchange_github_to_copilot_token(github_token: str, cache_file: Path) -> Di
     if cached:
         return cached
 
-    res = requests.get(
+    res = _HTTP.get(
         COPILOT_TOKEN_URL,
         headers={
             "Accept": "application/json",
@@ -230,12 +244,8 @@ def _exchange_github_to_copilot_token(github_token: str, cache_file: Path) -> Di
 
 def build_runtime_from_env() -> LLMRuntime:
     provider = os.getenv("LLM_PROVIDER", "groq").strip().lower() or "groq"
-    max_tokens = _parse_int(
-        _env_first("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "COPILOT_MAX_TOKENS", str(DEFAULT_MAX_TOKENS)),
-        fallback=DEFAULT_MAX_TOKENS,
-        minimum=64,
-        maximum=2048,
-    )
+    max_tokens_raw = _env_first("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "COPILOT_MAX_TOKENS")
+    max_tokens = _parse_max_tokens(max_tokens_raw or "auto")
 
     if provider == "groq":
         api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -291,7 +301,7 @@ def call_chat_once(
     runtime: LLMRuntime,
     messages: List[Dict[str, Any]],
     tools: Optional[List[Dict[str, Any]]],
-    max_tokens: int,
+    max_tokens: Optional[int],
 ) -> Dict[str, Any]:
     url = f"{runtime.base_url}/chat/completions"
     headers = {
@@ -310,14 +320,15 @@ def call_chat_once(
         "model": runtime.model,
         "messages": messages,
         "temperature": 0.2,
-        "max_tokens": max_tokens,
-        "max_completion_tokens": max_tokens,
     }
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        payload["max_tokens"] = max_tokens
+        payload["max_completion_tokens"] = max_tokens
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
 
-    response = requests.post(url, headers=headers, json=payload, timeout=60)
+    response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
     response.raise_for_status()
     data = response.json()
     return data["choices"][0]["message"]
