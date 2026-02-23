@@ -183,14 +183,15 @@ class VoiceCallWorker(QThread):
         self.local_stt_timeout_sec = float(os.getenv("VOICE_LOCAL_STT_TIMEOUT_SEC", "5"))
         self.partial_merge_window_sec = float(os.getenv("VOICE_PARTIAL_MERGE_WINDOW_SEC", "1.0"))
         self.stt_provider = (os.getenv("VOICE_STT_PROVIDER", "sarvam").strip().lower() or "sarvam")
-        self.min_active_ratio = float(os.getenv("VOICE_GUI_MIN_ACTIVE_RATIO", "0.01"))
+        self.min_active_ratio = float(os.getenv("VOICE_GUI_MIN_ACTIVE_RATIO", "0.005"))
         self.end_silence_chunks = max(1, int(os.getenv("VOICE_GUI_END_SILENCE_CHUNKS", "2")))
         self.max_phrase_sec = float(os.getenv("VOICE_GUI_MAX_PHRASE_SEC", "4.0"))
         self.output_device = (os.getenv("VOICE_OUTPUT_DEVICE", "").strip() or None)
         self.output_fallback_scan = _env_bool("VOICE_OUTPUT_FALLBACK_SCAN", False)
         self.post_tts_cooldown_sec = float(os.getenv("VOICE_POST_TTS_COOLDOWN_SEC", "1.2"))
-        self.echo_guard_window_sec = float(os.getenv("VOICE_ECHO_GUARD_WINDOW_SEC", "8.0"))
-        self.duplicate_transcript_window_sec = float(os.getenv("VOICE_DUPLICATE_TRANSCRIPT_WINDOW_SEC", "6.0"))
+        self.echo_guard_window_sec = float(os.getenv("VOICE_ECHO_GUARD_WINDOW_SEC", "2.0"))
+        self.echo_similarity_threshold = float(os.getenv("VOICE_ECHO_SIMILARITY_THRESHOLD", "0.96"))
+        self.duplicate_transcript_window_sec = float(os.getenv("VOICE_DUPLICATE_TRANSCRIPT_WINDOW_SEC", "1.2"))
         gain_raw = os.getenv("VOICE_PLAYBACK_GAIN", "").strip()
         peak_raw = os.getenv("VOICE_PLAYBACK_PEAK_LIMIT", "").strip()
         self.playback_gain = float(gain_raw) if gain_raw else None
@@ -223,9 +224,9 @@ class VoiceCallWorker(QThread):
             return None
 
         abs_audio = np.abs(audio.astype(np.int32))
-        active_thresh = max(dynamic_thresh * 0.55, self.min_silence_rms + 8)
+        active_thresh = max(dynamic_thresh * 0.4, self.min_silence_rms + 4)
         active_ratio = float(np.mean(abs_audio >= active_thresh))
-        strong_rms = rms >= (dynamic_thresh * 1.08)
+        strong_rms = rms >= (dynamic_thresh * 1.0)
         if (active_ratio < self.min_active_ratio) and (not strong_rms):
             return None
         return audio
@@ -304,10 +305,13 @@ class VoiceCallWorker(QThread):
         if self.last_transcript_norm and tr == self.last_transcript_norm and (now - self.last_transcript_ts) <= self.duplicate_transcript_window_sec:
             return True
         if self.last_spoken_norm and (now - self.last_spoken_ts) <= self.echo_guard_window_sec:
-            if tr in self.last_spoken_norm or self.last_spoken_norm in tr:
-                return True
+            tr_words = tr.split()
+            sp_words = self.last_spoken_norm.split()
+            if len(tr_words) >= 10 and len(sp_words) >= 10:
+                if tr in self.last_spoken_norm or self.last_spoken_norm in tr:
+                    return True
             sim = difflib.SequenceMatcher(a=tr, b=self.last_spoken_norm).ratio()
-            if sim >= 0.72:
+            if sim >= self.echo_similarity_threshold:
                 return True
         self.last_transcript_norm = tr
         self.last_transcript_ts = now
@@ -403,9 +407,11 @@ class VoiceCallWorker(QThread):
                     import winsound
 
                     winsound.PlaySound(path, winsound.SND_FILENAME)
+                    return
                 else:
                     # best-effort fallback for non-Windows
                     os.system(f'afplay "{path}" >/dev/null 2>&1 || true')
+                    return
             finally:
                 try:
                     os.remove(path)
