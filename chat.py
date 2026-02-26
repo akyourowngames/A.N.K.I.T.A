@@ -46,6 +46,7 @@ def main() -> None:
 
     # Proactive engine
     proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
+    proactive.attach_memory(memory, session_id)
     proactive.start()
 
     print("\n╔══════════════════════════════════════╗")
@@ -66,10 +67,24 @@ def main() -> None:
     messages = new_session()
     session_id = "cli-session"
 
+    # Now that session_id is set, update proactive with it
+    proactive.attach_memory(memory, session_id)
+
     while True:
         # Check for proactive events
         for event in proactive.get_pending_events():
             print(f"\n[ANKITA] {event.message}\n")
+
+            # DreamState epiphany — auto-print and store in memory
+            if event.kind == "dream_epiphany":
+                epiphany_text = event.data.get("text", event.message)
+                if epiphany_text:
+                    print(f"[A.N.K.I.T.A — Dream] {epiphany_text}\n")
+                    try:
+                        memory.add(session_id, "assistant", epiphany_text)
+                    except Exception:
+                        pass
+                continue
 
             # Auto-handle content_request events from the raw_ideas watcher
             if event.kind == "content_request":
@@ -100,6 +115,9 @@ def main() -> None:
 
         if not user_text:
             continue
+
+        # Record interaction so idle/dream tracker resets
+        proactive.set_last_interaction()
 
         if user_text.lower() == "/exit":
             print("Bye.")

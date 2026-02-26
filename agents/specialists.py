@@ -6,6 +6,9 @@ making it focused and accurate — avoiding tool confusion.
 """
 from __future__ import annotations
 
+# DreamAgent is standalone (not Supervisor-routed) — exposed here for convenience
+from agents.dream_agent import DreamAgent  # noqa: F401
+
 from pathlib import Path
 from typing import Any, Dict, List
 

@@ -31,6 +31,7 @@ _DEFAULT_INTERVAL = float(os.getenv("PROACTIVE_INTERVAL_SEC", "15"))
 _CPU_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_CPU_THRESHOLD", "85"))
 _RAM_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_RAM_THRESHOLD", "88"))
 _BATTERY_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_BATTERY_THRESHOLD", "15"))
+_IDLE_THRESHOLD_SEC = float(os.getenv("ANKITA_IDLE_SECONDS", "3600"))  # 1 hour default
 
 
 class ProactiveEvent:
@@ -83,6 +84,12 @@ class ProactiveEngine:
         self._raw_ideas_dir.mkdir(parents=True, exist_ok=True)
         self._seen_raw_ideas: set = set()
 
+        # Idle / DreamState tracking
+        self._last_interaction: float = time.time()  # epoch seconds
+        self._dream_pending: bool = False             # True while dream is queued or synthesizing
+        self._memory_store: Optional[Any] = None     # injected by caller after init
+        self._session_id: str = "default"            # injected by caller
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             return
@@ -109,6 +116,33 @@ class ProactiveEngine:
         """Manually push a custom event (e.g. from cron worker)."""
         self._queue.put(ProactiveEvent("custom", message, data))
 
+    def set_last_interaction(self, ts: Optional[float] = None) -> None:
+        """
+        Record the time of the most recent user interaction.
+
+        Call this from the GUI (on_send, voice done) and from the CLI main
+        loop (after reading user input) so the idle tracker stays accurate.
+
+        Args:
+            ts: epoch seconds — defaults to now if not provided.
+        """
+        self._last_interaction = ts if ts is not None else time.time()
+        # If the user is back, allow a fresh dream on the next idle period
+        self._dream_pending = False
+
+    def attach_memory(self, memory_store: Any, session_id: str = "default") -> None:
+        """
+        Attach the MemoryStore so the DreamAgent can retrieve ChromaDB memories.
+
+        Call this once after both ProactiveEngine and MemoryStore are initialized.
+
+        Args:
+            memory_store: The active MemoryStore instance.
+            session_id:   The current chat session ID.
+        """
+        self._memory_store = memory_store
+        self._session_id = session_id
+
     # ------------------------------------------------------------------
     # Background loop
     # ------------------------------------------------------------------
@@ -120,6 +154,7 @@ class ProactiveEngine:
                 self._check_drop_files()
                 self._check_cron_overdue()
                 self._check_raw_ideas()
+                self._check_idle()
             except Exception:
                 pass  # Never crash the background thread
             self._stop_event.wait(timeout=self.interval_sec)
@@ -267,6 +302,61 @@ class ProactiveEngine:
                 ))
         except Exception:
             pass
+
+    def _check_idle(self) -> None:
+        """
+        Check if the user has been idle long enough to trigger a DreamState.
+
+        Fires at most once per idle session (reset by set_last_interaction).
+        Runs the DreamAgent in a separate daemon thread so the poll loop
+        never blocks waiting for the LLM.
+        """
+        if self._dream_pending:
+            return  # Already synthesising or queued — don't pile up dreams
+
+        idle_sec = time.time() - self._last_interaction
+        if idle_sec < _IDLE_THRESHOLD_SEC:
+            return  # Not idle long enough yet
+
+        if self._memory_store is None:
+            return  # No memory attached — skip silently
+
+        # Mark as pending so we don't spawn duplicate threads
+        self._dream_pending = True
+
+        memory_store = self._memory_store
+        session_id = self._session_id
+
+        def _synthesize() -> None:
+            try:
+                from agents.dream_agent import DreamAgent  # type: ignore
+                agent = DreamAgent()
+                epiphany = agent.synthesize(
+                    memory_store=memory_store,
+                    session_id=session_id,
+                )
+                if epiphany:
+                    idle_hrs = idle_sec / 3600
+                    idle_label = (
+                        f"{idle_hrs:.1f} hours" if idle_hrs >= 1
+                        else f"{idle_sec / 60:.0f} minutes"
+                    )
+                    self._queue.put(ProactiveEvent(
+                        "dream_epiphany",
+                        epiphany,
+                        {
+                            "text": epiphany,
+                            "idle_seconds": idle_sec,
+                            "idle_label": idle_label,
+                        },
+                    ))
+                else:
+                    # No epiphany generated — reset so it can try next cycle
+                    self._dream_pending = False
+            except Exception:
+                self._dream_pending = False  # Allow retry on next idle check
+
+        threading.Thread(target=_synthesize, daemon=True, name="DreamSynthesis").start()
 
     def _check_cron_overdue(self) -> None:
         """Check if any cron jobs are significantly overdue."""
