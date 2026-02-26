@@ -31,6 +31,16 @@ class LLMClientTests(unittest.TestCase):
         self.assertEqual(runtime.api_key, "k")
         self.assertEqual(runtime.max_tokens, 200)
 
+    def test_build_runtime_auto_max_tokens(self) -> None:
+        env = {
+            "LLM_PROVIDER": "groq",
+            "GROQ_API_KEY": "k",
+            "LLM_MAX_TOKENS": "auto",
+        }
+        with patch.dict("os.environ", env, clear=True):
+            runtime = llm_client.build_runtime_from_env()
+        self.assertIsNone(runtime.max_tokens)
+
     def test_build_runtime_copilot_direct_api_key(self) -> None:
         env = {
             "LLM_PROVIDER": "copilot",
@@ -102,6 +112,27 @@ class LLMClientTests(unittest.TestCase):
         self.assertIn("Editor-Version", headers)
         self.assertIn("User-Agent", headers)
         self.assertIn("Editor-Plugin-Version", headers)
+
+    def test_call_chat_once_omits_max_tokens_when_auto(self) -> None:
+        class FakeResponse:
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"role": "assistant", "content": "ok"}}]}
+
+        runtime = llm_client.LLMRuntime(
+            provider="groq",
+            model="llama-3.1-8b-instant",
+            api_key="k",
+            base_url="https://api.groq.com/openai/v1",
+            max_tokens=None,
+        )
+        with patch("llm.client.requests.post", return_value=FakeResponse()) as mock_post:
+            llm_client.call_chat_once(runtime, [{"role": "user", "content": "hi"}], tools=None, max_tokens=None)
+        payload = mock_post.call_args.kwargs["json"]
+        self.assertNotIn("max_tokens", payload)
+        self.assertNotIn("max_completion_tokens", payload)
 
 
 if __name__ == "__main__":

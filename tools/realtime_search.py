@@ -1,6 +1,7 @@
 import os
+import re
 from html.parser import HTMLParser
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, urlencode, urlparse
 import xml.etree.ElementTree as ET
 
@@ -133,6 +134,151 @@ def search_web(query: str, max_results: int = 8, include_urls: bool = False) -> 
         "query": q,
         "include_urls": bool(include_urls),
         "results": out,
+    }
+
+
+class _TextExtractor(HTMLParser):
+    """Strips HTML tags and extracts visible text."""
+
+    SKIP_TAGS = {"script", "style", "noscript", "head", "meta", "link", "iframe", "nav", "footer", "header"}
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._skip = 0
+        self._parts: List[str] = []
+
+    def handle_starttag(self, tag: str, attrs: List[tuple]) -> None:
+        if tag.lower() in self.SKIP_TAGS:
+            self._skip += 1
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag.lower() in self.SKIP_TAGS and self._skip > 0:
+            self._skip -= 1
+
+    def handle_data(self, data: str) -> None:
+        if self._skip == 0:
+            stripped = data.strip()
+            if stripped:
+                self._parts.append(stripped)
+
+    def get_text(self) -> str:
+        raw = " ".join(self._parts)
+        # Collapse multiple whitespace/newlines
+        raw = re.sub(r"\s{2,}", " ", raw)
+        return raw.strip()
+
+
+def fetch_page_content(url: str, max_chars: int = 4000, timeout: int = 15) -> Dict[str, Any]:
+    """Fetch a URL and return extracted readable text content from the page."""
+    url = str(url or "").strip()
+    if not url:
+        raise ValueError("url is required")
+
+    _BLOCKED_DOMAINS = {
+        "twitter.com", "x.com", "facebook.com", "instagram.com",
+        "linkedin.com", "reddit.com",  # often block scrapers
+    }
+    domain = _domain(url)
+    if any(domain == bd or domain.endswith("." + bd) for bd in _BLOCKED_DOMAINS):
+        return {
+            "kind": "page_content",
+            "url": url,
+            "domain": domain,
+            "ok": False,
+            "reason": "domain_blocked_for_scraping",
+            "content": "",
+        }
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/124.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+
+    try:
+        resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        resp.raise_for_status()
+    except requests.exceptions.Timeout:
+        return {"kind": "page_content", "url": url, "domain": domain, "ok": False, "reason": "timeout", "content": ""}
+    except requests.exceptions.HTTPError as e:
+        return {"kind": "page_content", "url": url, "domain": domain, "ok": False, "reason": f"http_error_{e.response.status_code}", "content": ""}
+    except Exception as e:
+        return {"kind": "page_content", "url": url, "domain": domain, "ok": False, "reason": str(e), "content": ""}
+
+    content_type = resp.headers.get("Content-Type", "")
+    if "text/html" not in content_type and "text/plain" not in content_type:
+        return {
+            "kind": "page_content",
+            "url": url,
+            "domain": domain,
+            "ok": False,
+            "reason": f"unsupported_content_type:{content_type}",
+            "content": "",
+        }
+
+    extractor = _TextExtractor()
+    try:
+        extractor.feed(resp.text)
+    except Exception:
+        pass
+
+    text = extractor.get_text()
+    truncated = len(text) > max_chars
+    return {
+        "kind": "page_content",
+        "url": url,
+        "domain": domain,
+        "ok": True,
+        "char_count": len(text),
+        "truncated": truncated,
+        "content": text[:max_chars],
+    }
+
+
+def search_and_fetch(query: str, max_results: int = 5, fetch_top: int = 2, max_chars_per_page: int = 3000) -> Dict[str, Any]:
+    """Search the web AND fetch actual content from the top results.
+    
+    Perfect for factual queries like 'price of bitcoin', 'weather today', 
+    'latest iPhone specs', etc. Returns real scraped data, not just URLs.
+    """
+    q = str(query or "").strip()
+    if not q:
+        raise ValueError("query is required")
+
+    # First get search results with URLs
+    search_result = search_web(q, max_results=max(max_results, fetch_top + 2), include_urls=True)
+    results = search_result.get("results", [])
+
+    fetched_pages: List[Dict[str, Any]] = []
+    attempted = 0
+    for row in results:
+        if attempted >= fetch_top or len(fetched_pages) >= fetch_top:
+            break
+        url = str(row.get("url", "")).strip()
+        if not url:
+            continue
+        attempted += 1
+        page = fetch_page_content(url, max_chars=max_chars_per_page)
+        if page.get("ok") and page.get("content", "").strip():
+            fetched_pages.append({
+                "title": str(row.get("title", "")),
+                "url": url,
+                "domain": str(row.get("domain", "")),
+                "content": page["content"],
+                "truncated": bool(page.get("truncated")),
+            })
+
+    return {
+        "kind": "search_and_fetch",
+        "query": q,
+        "engine": search_result.get("engine", ""),
+        "search_results": results[:max_results],
+        "fetched_pages": fetched_pages,
+        "pages_fetched": len(fetched_pages),
     }
 
 

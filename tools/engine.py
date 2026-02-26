@@ -4,6 +4,7 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
+from . import content_ops
 from . import cron_ops
 from . import fs_ops
 from . import music_ops
@@ -121,6 +122,44 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "queue_music",
+            "description": "Add a song to the music queue to play after current track ends.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Song or artist name to queue"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "show_queue",
+            "description": "Show all songs currently in the music queue.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "clear_queue",
+            "description": "Clear all songs from the music queue.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "play_next_in_queue",
+            "description": "Stop current music and play the next song in the queue.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_news",
             "description": "Search latest news headlines in real time.",
             "parameters": {
@@ -129,6 +168,48 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "query": {"type": "string"},
                     "max_results": {"type": "integer"},
                     "include_urls": {"type": "boolean"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fetch_page_content",
+            "description": (
+                "Fetch a URL and extract the full readable text from the page. "
+                "Use this when you need actual data from a specific URL — e.g. after search_web returns a link. "
+                "Returns the page's visible text content (not HTML)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The full URL to fetch"},
+                    "max_chars": {"type": "integer", "description": "Max characters to return (default 4000)"},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_and_fetch",
+            "description": (
+                "Search the web AND automatically fetch actual page content from top results. "
+                "ALWAYS prefer this over search_web for factual questions like: "
+                "'price of bitcoin', 'current weather', 'what is X', 'how much does Y cost', "
+                "'latest news about Z', 'specs of iPhone 16', etc. "
+                "Returns real scraped text data — not just titles and URLs."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "The search query"},
+                    "max_results": {"type": "integer", "description": "Number of search results to list (default 5)"},
+                    "fetch_top": {"type": "integer", "description": "Number of top pages to scrape for content (default 2)"},
+                    "max_chars_per_page": {"type": "integer", "description": "Max chars of content per page (default 3000)"},
                 },
                 "required": ["query"],
             },
@@ -361,6 +442,43 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_content",
+            "description": (
+                "Generate any type of text content using the LLM and save it to the Desktop. "
+                "Use this when the user asks to 'write', 'draft', 'create', or 'generate' "
+                "content such as a report, script, song, pitch deck, summary, paragraph, essay, "
+                "or any other written format. Returns the file path and a spoken confirmation."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "What the content is about (e.g. 'Helper ID app', 'Python coding').",
+                    },
+                    "format_type": {
+                        "type": "string",
+                        "description": (
+                            "The format of content to produce — e.g. 'report', 'script', 'song', "
+                            "'pitch deck', 'summary', 'paragraph', 'essay', 'email', 'poem'."
+                        ),
+                    },
+                    "extra_context": {
+                        "type": "string",
+                        "description": "Optional rough notes, bullet points, or extra instructions for the LLM.",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Optional absolute path to save the file. Defaults to the user's Desktop.",
+                    },
+                },
+                "required": ["topic", "format_type"],
+            },
+        },
+    },
 ]
 
 
@@ -438,6 +556,14 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         return music_ops.stop_music(workspace_root=workspace_root)
     if name == "current_music":
         return music_ops.current_music(workspace_root=workspace_root)
+    if name == "queue_music":
+        return music_ops.queue_music(workspace_root=workspace_root, query=str(args.get("query", "")))
+    if name == "show_queue":
+        return music_ops.show_queue(workspace_root=workspace_root)
+    if name == "clear_queue":
+        return music_ops.clear_queue(workspace_root=workspace_root)
+    if name == "play_next_in_queue":
+        return music_ops.play_next_in_queue(workspace_root=workspace_root)
     if name == "system_control":
         return system_ops.system_control(
             action=str(args.get("action", "")),
@@ -450,6 +576,18 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             query=str(args.get("query", "")),
             max_results=int(args.get("max_results", 8)),
             include_urls=bool(args.get("include_urls", False)),
+        )
+    if name == "fetch_page_content":
+        return realtime_search.fetch_page_content(
+            url=str(args.get("url", "")),
+            max_chars=int(args.get("max_chars", 4000)),
+        )
+    if name == "search_and_fetch":
+        return realtime_search.search_and_fetch(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 5)),
+            fetch_top=int(args.get("fetch_top", 2)),
+            max_chars_per_page=int(args.get("max_chars_per_page", 3000)),
         )
     if name == "terminate_app":
         return terminal_ops.terminate_app(
@@ -541,6 +679,14 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         return fs_ops.file_info(workspace_root, path=str(args.get("path", "")))
     if name == "apply_patch":
         return fs_ops.apply_patch(workspace_root, patch=str(args.get("patch", "")))
+    if name == "write_content":
+        return content_ops.write_and_save_content(
+            workspace_root=workspace_root,
+            topic=str(args.get("topic", "")),
+            format_type=str(args.get("format_type", "content")),
+            extra_context=str(args.get("extra_context", "")),
+            output_dir=str(args.get("output_dir")) if args.get("output_dir") else None,
+        )
     raise ValueError(f"Unknown tool: {name}")
 
 
@@ -586,12 +732,20 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
     has_web_search = any(_match(t, ["web", "internet", "online", "google"], 0.72) for t in tokens)
     has_news_search = any(_match(t, ["news", "headline", "headlines", "latest"], 0.72) for t in tokens)
     has_search_word = any(_match(t, ["search", "find", "lookup"], 0.72) for t in tokens)
+    has_fetch = any(_match(t, ["fetch", "scrape", "content", "page", "open", "read"], 0.72) for t in tokens) and any(
+        _match(t, ["url", "link", "website", "site"], 0.72) for t in tokens
+    )
+    has_factual = any(_match(t, ["price", "cost", "weather", "temperature", "rate", "value", "score", "how much", "what is", "details", "info", "specs"], 0.72) for t in tokens)
     has_cron = any(_match(t, ["cron", "schedule", "reminder", "reminders"], 0.72) for t in tokens)
     has_manage = any(_match(t, ["add", "create", "update", "remove", "run", "list", "status"], 0.72) for t in tokens)
     has_music = any(_match(t, ["music", "song", "songs", "track", "audio"], 0.72) for t in tokens)
     has_play = any(_match(t, ["play", "listen", "start"], 0.72) for t in tokens)
     has_stop = any(_match(t, ["stop", "pause", "end"], 0.72) for t in tokens)
     has_now = any(_match(t, ["current", "now", "what", "which", "name"], 0.72) for t in tokens)
+    has_queue = any(_match(t, ["queue", "add", "enqueue", "next", "lineup"], 0.72) for t in tokens)
+    has_show_queue = any(_match(t, ["show", "list", "view", "display"], 0.72) for t in tokens) and has_queue
+    has_clear_queue = any(_match(t, ["clear", "empty", "remove", "reset"], 0.72) for t in tokens) and has_queue
+    has_play_next = any(_match(t, ["next", "skip"], 0.72) for t in tokens) and has_music
     has_system = any(
         _match(
             t,
@@ -623,10 +777,22 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
         chosen.append("stop_music")
     if has_music and has_now:
         chosen.append("current_music")
+    if has_queue and has_music:
+        chosen.append("queue_music")
+    if has_show_queue:
+        chosen.append("show_queue")
+    if has_clear_queue:
+        chosen.append("clear_queue")
+    if has_play_next:
+        chosen.append("play_next_in_queue")
     if has_system:
         chosen.append("system_control")
     if has_news_search:
         chosen.append("search_news")
+    if has_fetch:
+        chosen.append("fetch_page_content")
+    if has_factual or (has_search_word and not has_web_search):
+        chosen.append("search_and_fetch")
     if has_web_search and has_search_word:
         chosen.append("search_web")
     if has_close:
@@ -696,6 +862,34 @@ def _format_result(result: Dict[str, Any]) -> str:
         if bool(result.get("stopped")):
             return f"[MUSIC STOPPED] pid={result.get('pid', '')}"
         return f"[MUSIC STOP] no active player ({result.get('reason', 'unknown')})"
+
+    if isinstance(result, dict) and result.get("kind") == "music_queue_add":
+        added = result.get("added", {})
+        return (
+            f"[QUEUED] #{result.get('position', '?')} — {added.get('title', '')}\n"
+            f"Queue length: {result.get('queue_length', 0)}"
+        )
+
+    if isinstance(result, dict) and result.get("kind") == "music_queue_show":
+        queue = result.get("queue", [])
+        if not queue:
+            return "Music queue is empty."
+        lines = [f"Music Queue ({len(queue)} track(s)):"]
+        for i, track in enumerate(queue, 1):
+            lines.append(f"{i}. {track.get('title', 'Unknown')} (query: {track.get('query', '')})")
+        return "\n".join(lines)
+
+    if isinstance(result, dict) and result.get("kind") == "music_queue_clear":
+        return "[QUEUE CLEARED] Music queue is now empty."
+
+    if isinstance(result, dict) and result.get("kind") == "music_queue_next":
+        if bool(result.get("played")):
+            return (
+                f"[PLAYING NEXT] {result.get('title', '')}\n"
+                f"pid: {result.get('pid', '')}\n"
+                f"remaining in queue: {result.get('remaining_in_queue', 0)}"
+            )
+        return f"[QUEUE NEXT] Could not play next track — {result.get('reason', 'unknown')}"
 
     if isinstance(result, dict) and result.get("kind") == "music_current":
         if not bool(result.get("playing")):
@@ -783,6 +977,41 @@ def _format_result(result: Dict[str, Any]) -> str:
             if not isinstance(row, dict):
                 continue
             lines.append(f"- {row.get('ts_ms', '')}: {row.get('status', '')} {row.get('error', '')}")
+        return "\n".join(lines)
+
+    if isinstance(result, dict) and result.get("kind") == "page_content":
+        if not bool(result.get("ok")):
+            return f"[FETCH FAILED] {result.get('url', '')}\nreason: {result.get('reason', 'unknown')}"
+        content = str(result.get("content", ""))
+        truncated = bool(result.get("truncated"))
+        suffix = "\n... [truncated — ask to fetch more if needed]" if truncated else ""
+        return f"[PAGE CONTENT] {result.get('url', '')}\ndomain: {result.get('domain', '')}\n\n{content}{suffix}"
+
+    if isinstance(result, dict) and result.get("kind") == "search_and_fetch":
+        query = str(result.get("query", ""))
+        engine = str(result.get("engine", ""))
+        fetched = result.get("fetched_pages", [])
+        search_results = result.get("search_results", [])
+        lines = [f"Search & Fetch results for: '{query}' (engine: {engine})"]
+        if fetched:
+            lines.append(f"\n--- Scraped content from {len(fetched)} page(s) ---")
+            for i, page in enumerate(fetched, 1):
+                lines.append(f"\n[Source {i}] {page.get('title', '')} ({page.get('domain', '')})")
+                lines.append(f"URL: {page.get('url', '')}")
+                lines.append(page.get("content", ""))
+                if bool(page.get("truncated")):
+                    lines.append("... [truncated]")
+        else:
+            lines.append("\n[No page content could be scraped — showing search results only]")
+            for i, row in enumerate(search_results[:5], 1):
+                title = str(row.get("title", ""))
+                snippet = str(row.get("snippet", ""))
+                url = str(row.get("url", ""))
+                lines.append(f"{i}. {title}")
+                if snippet:
+                    lines.append(f"   {snippet}")
+                if url:
+                    lines.append(f"   {url}")
         return "\n".join(lines)
 
     if isinstance(result, dict) and result.get("kind") in {"web_search", "news_search"}:
@@ -951,6 +1180,22 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
         if query:
             return ("play_music", {"query": query, "headless": True, "stop_current": True})
 
+    if tokens[0] == "queue" or (tokens[0] in {"add", "enqueue"} and any(t in {"song", "music", "track"} for t in tokens)):
+        if len(words) <= 1:
+            return ("show_queue", {})
+        query = text.split(maxsplit=1)[1].strip().strip("\"'")
+        if query:
+            return ("queue_music", {"query": query})
+
+    if tokens[0] in {"next", "skip"} and any(t in {"song", "music", "track", "queue"} for t in tokens):
+        return ("play_next_in_queue", {})
+
+    if tokens[0] in {"show", "list", "view"} and any(t in {"queue"} for t in tokens[1:]):
+        return ("show_queue", {})
+
+    if tokens[0] in {"clear", "empty", "reset"} and any(t in {"queue"} for t in tokens[1:]):
+        return ("clear_queue", {})
+
     if any(t in {"song", "music", "track"} for t in tokens) and any(
         t in {"what", "which", "name", "current", "now", "playing"} for t in tokens
     ):
@@ -1064,6 +1309,14 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
             query = " ".join(filtered).strip()
         if query:
             return ("search_web", {"query": query, "max_results": 8, "include_urls": wants_links})
+
+    # Factual queries — use search_and_fetch to get real data not just links
+    factual_triggers = {"price", "cost", "weather", "temperature", "rate", "how much", "what is",
+                        "specs", "details", "score", "value", "definition", "meaning", "who is", "when did"}
+    if any(trigger in text.lower() for trigger in factual_triggers):
+        query = _extract_quoted_text(text) or text.strip()
+        if query:
+            return ("search_and_fetch", {"query": query, "fetch_top": 2})
 
     if tokens[0] in {"open", "launch", "start"}:
         if len(words) == 1:

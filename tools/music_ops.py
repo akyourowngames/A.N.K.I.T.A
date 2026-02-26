@@ -343,6 +343,130 @@ def _fallback_windows_builtin(url: str, workspace_root: Path) -> Optional[Dict[s
     return None
 
 
+def _queue_path(workspace_root: Path) -> Path:
+    return workspace_root / ".ankita" / "music" / "queue.json"
+
+
+def _load_queue(workspace_root: Path) -> List[Dict[str, Any]]:
+    path = _queue_path(workspace_root)
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+        return data if isinstance(data, list) else []
+    except Exception:
+        return []
+
+
+def _save_queue(workspace_root: Path, queue: List[Dict[str, Any]]) -> None:
+    path = _queue_path(workspace_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(queue, ensure_ascii=True, indent=2), encoding="utf-8")
+
+
+def queue_music(workspace_root: Path, query: str) -> Dict[str, Any]:
+    """Add a song to the music queue without playing it immediately."""
+    q = str(query or "").strip()
+    if not q:
+        raise ValueError("query is required")
+    found = search_music(q, max_results=5)
+    best = found.get("best_match")
+    if not best or not bool(found.get("is_confident_match")):
+        candidates = [str(r.get("title", "")) for r in found.get("results", [])[:3]]
+        raise RuntimeError(f"Low confidence match. Top: {' | '.join(candidates)}")
+    queue = _load_queue(workspace_root)
+    entry = {
+        "query": q,
+        "title": str(best.get("title", "")),
+        "url": str(best.get("url", "")),
+        "score": float(best.get("score", 0.0)),
+        "engine": found.get("engine", ""),
+    }
+    queue.append(entry)
+    _save_queue(workspace_root, queue)
+    return {
+        "kind": "music_queue_add",
+        "added": entry,
+        "queue_length": len(queue),
+        "position": len(queue),
+    }
+
+
+def show_queue(workspace_root: Path) -> Dict[str, Any]:
+    """Show current music queue."""
+    queue = _load_queue(workspace_root)
+    return {
+        "kind": "music_queue_show",
+        "queue": queue,
+        "queue_length": len(queue),
+    }
+
+
+def clear_queue(workspace_root: Path) -> Dict[str, Any]:
+    """Clear the music queue."""
+    _save_queue(workspace_root, [])
+    return {"kind": "music_queue_clear", "cleared": True}
+
+
+def play_next_in_queue(workspace_root: Path) -> Dict[str, Any]:
+    """Play the next song in the queue."""
+    queue = _load_queue(workspace_root)
+    if not queue:
+        return {"kind": "music_queue_next", "played": False, "reason": "queue_empty"}
+    next_track = queue.pop(0)
+    _save_queue(workspace_root, queue)
+    url = str(next_track.get("url", ""))
+    title = str(next_track.get("title", ""))
+    if not url:
+        return {"kind": "music_queue_next", "played": False, "reason": "no_url_in_track"}
+
+    stop_music(workspace_root)
+    cmd = _build_player_command(url)
+    if cmd:
+        launched = _start_and_verify(cmd, workspace_root=workspace_root, startup_timeout_sec=3.0)
+        if launched.get("ok"):
+            payload = {
+                "pid": int(launched["pid"]),
+                "query": next_track.get("query", ""),
+                "title": title,
+                "url": url,
+                "cmd": cmd,
+                "log_path": launched.get("log_path", ""),
+                "engine": next_track.get("engine", ""),
+            }
+            _save_state(workspace_root, payload)
+            return {
+                "kind": "music_queue_next",
+                "played": True,
+                "pid": int(launched["pid"]),
+                "title": title,
+                "url": url,
+                "remaining_in_queue": len(queue),
+            }
+
+    fallback = _fallback_windows_builtin(url=url, workspace_root=workspace_root)
+    if fallback:
+        payload = {
+            "pid": fallback["pid"],
+            "query": next_track.get("query", ""),
+            "title": title,
+            "url": url,
+            "local_file": fallback["local_file"],
+            "launcher": fallback["launcher"],
+            "engine": next_track.get("engine", ""),
+        }
+        _save_state(workspace_root, payload)
+        return {
+            "kind": "music_queue_next",
+            "played": True,
+            "pid": fallback["pid"],
+            "title": title,
+            "url": url,
+            "launcher": fallback["launcher"],
+            "remaining_in_queue": len(queue),
+        }
+
+    return {"kind": "music_queue_next", "played": False, "reason": "no_player_available", "title": title}
+
+
 def stop_music(workspace_root: Path) -> Dict[str, Any]:
     state = _load_state(workspace_root)
     pid = int(state.get("pid", 0) or 0)

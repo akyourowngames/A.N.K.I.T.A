@@ -4,14 +4,12 @@ from .engine import (
     TOOL_SPECS,
     compact_messages,
     execute_tool_call,
-    select_tools_for_user_text,
-    try_direct_local_command,
 )
+from . import content_ops  # noqa: F401 — register content_ops for direct import
 
 __all__ = [
     "TOOL_SPECS",
     "compact_messages",
     "execute_tool_call",
-    "select_tools_for_user_text",
-    "try_direct_local_command",
+    "content_ops",
 ]

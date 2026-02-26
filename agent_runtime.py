@@ -1,4 +1,5 @@
 import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -9,21 +10,38 @@ from tools import (
     TOOL_SPECS,
     compact_messages,
     execute_tool_call,
-    select_tools_for_user_text,
-    try_direct_local_command,
 )
 
-MAX_TOOL_STEPS = 6
-SYSTEM_PROMPT = (
-    "You are a helpful personal AI assistant with safe local file tools. "
-    "Only call tools from the provided tool list. "
-    "Use run_command for explicit terminal command requests. "
-    "Use launch_app when user asks to open/start an application. "
-    "Use terminate_app when user asks to close/kill an application. "
-    "Use tools when asked to inspect or modify files. "
-    "For web/news results, provide concise key pointers first and avoid dumping raw URLs unless user explicitly asks for links. "
-    "Always keep changes minimal and accurate."
-)
+MAX_TOOL_STEPS = 12
+
+SYSTEM_PROMPT = """You are A.N.K.I.T.A — an advanced, proactive AI assistant inspired by J.A.R.V.I.S. \
+You are highly intelligent, resourceful, and can handle multi-step complex tasks autonomously.
+
+CAPABILITIES:
+- File system operations (read, write, edit, search, move, delete files/directories)
+- Real-time web search and news lookup
+- Music playback and control
+- System control (volume, brightness, WiFi, Bluetooth, screenshot, media keys)
+- Terminal command execution and app launch/close
+- Cron job scheduling and management
+
+REASONING APPROACH (ReAct Pattern):
+When given a complex task, reason step by step:
+1. THINK: Understand what the user wants, plan the approach
+2. ACT: Call the appropriate tool(s) — you can call multiple tools when needed
+3. OBSERVE: Analyze the tool results
+4. REPEAT: Continue until the task is fully solved
+5. RESPOND: Give a clear, concise final answer
+
+GUIDELINES:
+- Always use tools when action is needed — don't just describe, DO it
+- For multi-step tasks, chain tool calls until the goal is achieved
+- For web/news results, give concise key pointers; only show URLs if explicitly asked
+- Be proactive — if you notice something useful while doing a task, mention it
+- Keep file changes minimal and accurate
+- When running commands, prefer PowerShell on Windows
+- You have full autonomy to complete tasks end-to-end without asking for confirmation on small decisions
+"""
 
 
 def new_session() -> List[Dict[str, Any]]:
@@ -36,12 +54,39 @@ class AgentRuntime:
         self.workspace_root = workspace_root
         self.max_tokens = runtime.max_tokens
 
+    def _execute_tool_calls_parallel(
+        self, tool_calls: List[Dict[str, Any]]
+    ) -> List[Dict[str, Any]]:
+        """Execute multiple tool calls in parallel using a thread pool."""
+        if len(tool_calls) == 1:
+            # Single tool — no overhead of thread pool
+            tc = tool_calls[0]
+            try:
+                result = execute_tool_call(tc, workspace_root=self.workspace_root)
+            except Exception as err:
+                result = {"ok": False, "error": str(err)}
+            return [{"tc": tc, "result": result}]
+
+        results = [None] * len(tool_calls)
+        with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
+            future_to_idx = {
+                executor.submit(execute_tool_call, tc, self.workspace_root): i
+                for i, tc in enumerate(tool_calls)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                try:
+                    results[idx] = {"tc": tool_calls[idx], "result": future.result()}
+                except Exception as err:
+                    results[idx] = {"tc": tool_calls[idx], "result": {"ok": False, "error": str(err)}}
+        return results
+
     def run_turn(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
     ) -> str:
-        for _ in range(MAX_TOOL_STEPS):
+        for step in range(MAX_TOOL_STEPS):
             assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
             tool_calls = assistant_msg.get("tool_calls") or []
 
@@ -56,44 +101,35 @@ class AgentRuntime:
             if not tool_calls:
                 return assistant_msg.get("content", "").strip()
 
-            for tc in tool_calls:
-                tc_id = tc.get("id", "")
-                try:
-                    tool_result = execute_tool_call(tc, workspace_root=self.workspace_root)
-                except Exception as err:
-                    tool_result = {"ok": False, "error": str(err)}
-
+            # Execute all tool calls (parallel if multiple)
+            executed = self._execute_tool_calls_parallel(tool_calls)
+            for item in executed:
+                tc = item["tc"]
+                tool_result = item["result"]
                 messages.append(
                     {
                         "role": "tool",
-                        "tool_call_id": tc_id,
+                        "tool_call_id": tc.get("id", ""),
                         "content": json.dumps(tool_result, ensure_ascii=False),
                     }
                 )
-        return "I stopped after multiple tool steps. Please refine the request."
+
+        return "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
 
     def process_user_text(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
-        local_result = try_direct_local_command(user_text, workspace_root=self.workspace_root)
-        if local_result is not None:
-            messages.append({"role": "user", "content": user_text})
-            messages.append({"role": "assistant", "content": "Completed local workspace command successfully."})
-            return local_result
-
         messages.append({"role": "user", "content": user_text})
         try:
-            selected_tools = select_tools_for_user_text(user_text)
-            return self.run_turn(messages, tools=selected_tools or TOOL_SPECS)
+            return self.run_turn(messages, tools=TOOL_SPECS)
         except requests.HTTPError as err:
             status = err.response.status_code if err.response is not None else "?"
             body = err.response.text[:1000] if err.response is not None else str(err)
 
             if status == 413:
                 try:
-                    compacted = compact_messages(messages, keep_tail=6)
+                    compacted = compact_messages(messages, keep_tail=8)
                     messages.clear()
                     messages.extend(compacted)
-                    selected_tools = select_tools_for_user_text(user_text)
-                    return self.run_turn(messages, tools=selected_tools or TOOL_SPECS)
+                    return self.run_turn(messages, tools=TOOL_SPECS)
                 except Exception:
                     pass
 
