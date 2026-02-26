@@ -319,6 +319,90 @@ def launch_app(
     }
 
 
+# Destructive command patterns — blocked regardless of agent
+_BLOCKED_PATTERNS = [
+    "del /s", "del /f /s", "format c", "format d",
+    "rmdir /s", "rd /s", "rd /q", "rm -rf",
+    "Remove-Item -Recurse -Force",
+    "remove-item -recurse",
+    ":(){:|:&};:",  # fork bomb
+]
+
+
+def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
+    """
+    Execute any PowerShell/CMD command system-wide and return its output.
+
+    Unlike run_command(), this is NOT workspace-sandboxed — it runs in the
+    user's home directory and can reach any system path (ping, ipconfig, git, etc.).
+
+    Safety: hard 15-second timeout + block list of destructive commands.
+    """
+    cmd = str(command or "").strip()
+    if not cmd:
+        return {"ok": False, "output": "", "error": "No command provided.", "exit_code": -1}
+
+    # Safety check — block destructive patterns
+    cmd_lower = cmd.lower()
+    for pattern in _BLOCKED_PATTERNS:
+        if pattern.lower() in cmd_lower:
+            return {
+                "ok": False,
+                "output": "",
+                "error": f"Blocked: command contains a destructive pattern ('{pattern}'). Refusing to execute.",
+                "exit_code": -1,
+            }
+
+    timeout_sec = max(1, min(int(timeout), 60))
+
+    # On Windows, wrap in PowerShell so all cmds work naturally
+    if os.name == "nt":
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+    else:
+        argv = ["/bin/sh", "-c", cmd]
+
+    try:
+        result = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            timeout=timeout_sec,
+            shell=False,
+            check=False,
+            cwd=str(Path.home()),  # run from home — not workspace-sandboxed
+        )
+        output = (result.stdout or "").strip()
+        error = (result.stderr or "").strip()
+        if result.returncode == 0:
+            return {
+                "ok": True,
+                "output": output if output else "(No output)",
+                "error": error,
+                "exit_code": result.returncode,
+            }
+        else:
+            return {
+                "ok": False,
+                "output": output,
+                "error": error if error else f"Command exited with code {result.returncode}",
+                "exit_code": result.returncode,
+            }
+    except subprocess.TimeoutExpired:
+        return {
+            "ok": False,
+            "output": "",
+            "error": f"Command '{cmd}' timed out after {timeout_sec} seconds.",
+            "exit_code": -1,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "output": "",
+            "error": f"Execution failed: {e}",
+            "exit_code": -1,
+        }
+
+
 def terminate_app(
     app: str,
     force: bool = False,

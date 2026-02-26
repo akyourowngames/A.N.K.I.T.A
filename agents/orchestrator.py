@@ -24,9 +24,17 @@ from .specialists import SPECIALIST_MAP, SpecialistAgent
 _MAX_TOOL_STEPS = 8
 
 _SYNTHESIZER_PROMPT = (
-    "You are A.N.K.I.T.A's Synthesizer. You receive the outputs from multiple specialist agents "
-    "that worked on sub-tasks in parallel. Merge their results into a single, clear, natural response "
-    "for the user. Do not repeat yourself. Be concise and helpful."
+    "You are A.N.K.I.T.A's Synthesizer. You receive outputs from specialist agents that executed tasks. "
+    "Your ONLY job is to confirm what was done in ONE brief sentence.\n\n"
+    "STRICT RULES:\n"
+    "1. NEVER echo, repeat, or display the content that was written/generated "
+    "(no paragraphs, scripts, songs, emails, or any generated text in your reply).\n"
+    "2. NEVER apologize or say 'it seems there was an issue' if the agent outputs show tools succeeded.\n"
+    "3. NEVER offer manual alternatives like 'you can copy this yourself' or 'open it manually'.\n"
+    "4. If actions succeeded → ONE confirmation sentence. "
+    "Example: 'Done — written the paragraph, opened it in Notepad, and started your music.'\n"
+    "5. If a genuine error occurred (explicitly marked as failed) → ONE sentence stating what failed.\n"
+    "6. You are a STATUS REPORTER, not a content displayer or a chatbot. Be terse."
 )
 
 
@@ -99,17 +107,49 @@ class Orchestrator:
         if agent_names == ["GeneralAgent"]:
             return self._run_general(user_text, messages)
 
+        # Override lazy GeneralAgent routing: if the Supervisor chose only GeneralAgent
+        # but the user text clearly maps to a specialist, re-route to the right agent.
+        _ACTION_OVERRIDES = {
+            "play_music": ({"play", "song", "music", "listen", "lofi", "lo-fi"}, ["MusicAgent"]),
+            "stop_music": ({"stop music", "pause music"}, ["MusicAgent"]),
+            "screenshot": ({"screenshot", "screen capture", "take a screenshot"}, ["SystemAgent"]),
+            "launch_app": ({"open notepad", "launch", "open app", "start app"}, ["SystemAgent"]),
+            "write_content": ({"write a", "draft a", "generate a", "create a report",
+                               "write an essay", "write a poem", "write a script",
+                               "write a song", "write a paragraph"}, ["ContentAgent"]),
+            "search_web": ({"search for", "google", "look up", "find info"}, ["WebAgent"]),
+            "execute_shell": ({"ping ", "ipconfig", "netstat", "tasklist", "whoami",
+                               "git status", "git log", "git pull", "git push",
+                               "run git", "run script", "terminal command",
+                               "shell command", "what is my ip", "my ip address",
+                               "show processes", "running processes"}, ["TerminalAgent"]),
+        }
+        text_lower = user_text.lower()
+        if agent_names == ["GeneralAgent"]:
+            for _tool, (keywords, reroute_agents) in _ACTION_OVERRIDES.items():
+                if any(kw in text_lower for kw in keywords):
+                    agent_names = reroute_agents
+                    parallel = False
+                    break
+
         specialists = [SPECIALIST_MAP[n] for n in agent_names if n in SPECIALIST_MAP]
         if not specialists:
             return self._run_general(user_text, messages)
+
+        # Force sequential if a producer→consumer dependency is detected
+        # e.g. ContentAgent/FileAgent writes a file that SystemAgent/CodeAgent will open
+        _PRODUCERS = {"ContentAgent", "FileAgent"}
+        _CONSUMERS = {"SystemAgent", "CodeAgent"}
+        agent_name_set = set(agent_names)
+        if (_PRODUCERS & agent_name_set) and (_CONSUMERS & agent_name_set):
+            parallel = False  # override Supervisor — file must exist before it's opened
 
         # 2. Fan-Out: run specialists (parallel or sequential)
         results: List[Dict[str, Any]] = []
         if parallel and len(specialists) > 1:
             results = self._fan_out_parallel(specialists, user_text)
         else:
-            for sp in specialists:
-                results.append(_run_specialist(sp, user_text, self.runtime, self.workspace_root))
+            results = self._run_sequential_with_context(specialists, user_text)
 
         # 3. Fan-In: if only one result, return it directly
         if len(results) == 1:
@@ -121,6 +161,50 @@ class Orchestrator:
         reply = self._synthesize(user_text, results)
         self._append_to_messages(messages, user_text, reply)
         return reply
+
+    def _run_sequential_with_context(
+        self, specialists: List[SpecialistAgent], task: str
+    ) -> List[Dict[str, Any]]:
+        """Run specialists one by one, passing each result as context to the next.
+
+        This solves both the Race Condition and the Path Drop bugs:
+        - Race Condition: agents run sequentially, so files exist before being opened
+        - Path Drop: each agent's full reply (including FILE_PATH: ...) is appended
+          to the next agent's task so absolute paths are never lost
+        """
+        results: List[Dict[str, Any]] = []
+        context_so_far = ""  # accumulates previous agents' replies
+
+        for sp in specialists:
+            # Build the task for this agent — include prior context so paths propagate
+            if context_so_far:
+                enriched_task = (
+                    f"{task}\n\n"
+                    f"--- Context from previous agents ---\n{context_so_far}\n"
+                    f"--- End context ---\n\n"
+                    f"Use the FILE_PATH above if you need to open/read a file."
+                )
+            else:
+                enriched_task = task
+
+            result = _run_specialist(sp, enriched_task, self.runtime, self.workspace_root)
+            results.append(result)
+
+            # Accumulate this agent's reply so the next agent sees it
+            reply = result.get("reply", "")
+            if reply:
+                context_so_far += f"[{sp.name}]: {reply}\n"
+
+        return results
+
+    @staticmethod
+    def _extract_file_path(text: str) -> Optional[str]:
+        """Extract FILE_PATH: <path> from an agent reply."""
+        import re
+        match = re.search(r"FILE_PATH:\s*(.+?)(?:\n|$)", text)
+        if match:
+            return match.group(1).strip()
+        return None
 
     def _fan_out_parallel(
         self, specialists: List[SpecialistAgent], task: str

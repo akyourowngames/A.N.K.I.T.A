@@ -28,6 +28,7 @@ Available specialist agents:
 - CodeAgent: terminal commands, script execution, code patches
 - CronAgent: cron job scheduling (add, list, update, remove, run)
 - ContentAgent: generate and save any text content — reports, scripts, songs, pitch decks, summaries, emails, essays, poems
+- TerminalAgent: raw terminal/shell access — ping servers, ipconfig, git commands, dir/ls, run Python scripts, check network/system info, tasklist, netstat, whoami, curl
 - GeneralAgent: everything else, complex multi-domain tasks, general conversation
 
 Rules:
@@ -36,6 +37,22 @@ Rules:
 3. If unsure or the task is conversational, use GeneralAgent alone.
 4. Tasks that depend on each other must be handled by a single agent or GeneralAgent.
 5. Use ContentAgent whenever the user asks to 'write', 'draft', 'create', or 'generate' a piece of text content.
+6. DEPENDENCY RULE (CRITICAL): If Agent A must CREATE or WRITE a file/content that Agent B will then OPEN, READ, or USE — you MUST set "parallel": false. The producer agent runs first and its full absolute file path is passed to the consumer agent. Example chains that MUST be sequential (parallel: false):
+   - ContentAgent writes → SystemAgent opens in Notepad/app
+   - FileAgent writes → SystemAgent opens
+   - ContentAgent writes → CodeAgent reads/runs
+   If tasks are truly independent (e.g. play music + take screenshot), parallel: true is fine.
+7. SPECIALIST PRIORITY RULE (CRITICAL): NEVER route to GeneralAgent if the task clearly maps to a specialist. Use the right agent:
+   - User says open/launch/close an app, take screenshot, volume, brightness → SystemAgent
+   - User says play/stop/queue music → MusicAgent
+   - User says write/draft/create/generate text → ContentAgent
+   - User says list/read/save/delete files → FileAgent
+   - User says search/google/news/fetch → WebAgent
+   - User says run command/script/code in workspace → CodeAgent
+   - User says ping/ipconfig/git/netstat/tasklist/whoami/curl or any raw CLI command → TerminalAgent
+   - User says schedule/cron/remind → CronAgent
+   GeneralAgent is ONLY for pure conversation, greetings, or genuinely ambiguous requests with NO real-world actions.
+8. AUTONOMOUS EXECUTION RULE: You are routing for an AUTONOMOUS EXECUTION SYSTEM, not a text chatbot. Every action the user requests MUST be executed by a specialist agent. Never route a task to GeneralAgent just because it seems complex — complexity is handled inside each specialist.
 
 Respond ONLY with valid JSON in this exact format (no extra text):
 {
@@ -52,6 +69,19 @@ Examples:
 - "write a pitch script for Helper ID" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "content generation task"}
 - "draft a progress report on the OpenClaw architecture" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "content generation task"}
 - "write a funny song about Python" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "creative writing task"}
+- "write a paragraph about AI and open it in Notepad" → {"agents": ["ContentAgent", "SystemAgent"], "parallel": false, "reasoning": "ContentAgent must write file first before SystemAgent can open it — dependency chain"}
+- "write a paragraph about AI, open it in Notepad, and play music while I read it" → {"agents": ["ContentAgent", "SystemAgent", "MusicAgent"], "parallel": false, "reasoning": "ContentAgent writes first, SystemAgent opens after, MusicAgent plays — sequential to avoid race condition"}
+- "open Notepad" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "app launch is SystemAgent"}
+- "play some songs" → {"agents": ["MusicAgent"], "parallel": false, "reasoning": "music playback is MusicAgent"}
+- "take a screenshot" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "screenshot is SystemAgent"}
+- "ping google.com" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "raw CLI command is TerminalAgent"}
+- "what is my IP address" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "ipconfig is TerminalAgent"}
+- "run git status" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "git command is TerminalAgent"}
+- "show running processes" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "tasklist is TerminalAgent"}
+
+WRONG examples (never do this):
+- "write a paragraph about AI and open it in Notepad" → WRONG: {"agents": ["GeneralAgent"]} ← this causes lazy text response instead of action
+- "play music" → WRONG: {"agents": ["GeneralAgent"]} ← this causes text instructions instead of playing music
 """
 
 
@@ -99,7 +129,7 @@ class SupervisorAgent:
 
             # Validate agent names
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
-                     "CodeAgent", "CronAgent", "ContentAgent", "GeneralAgent"}
+                     "CodeAgent", "CronAgent", "ContentAgent", "GeneralAgent", "TerminalAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             return {

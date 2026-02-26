@@ -22,13 +22,14 @@ _FILE_TOOLS = {"list_files", "read_file", "write_file", "edit_file", "search_tex
                "rename_path", "delete_path", "move_path", "copy_path", "make_dir",
                "file_info", "apply_patch"}
 
-_WEB_TOOLS = {"search_web", "search_news"}
+_WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_content", "write_content"}
 
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app"}
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music"}
 
-_CODE_TOOLS = {"run_command", "apply_patch"}
+_CODE_TOOLS = {"run_command", "apply_patch", "execute_shell"}
+_TERMINAL_TOOLS = {"execute_shell", "read_file"}
 
 _CRON_TOOLS = {"cron"}
 
@@ -51,16 +52,24 @@ _FILE_SYSTEM_PROMPT = (
     "Always use the provided tools. Be safe: never delete without confirmation implied by context."
 )
 
-_WEB_SYSTEM_PROMPT = (
-    "You are A.N.K.I.T.A's Web Agent — a specialist in real-time information retrieval. "
-    "Search the web and news to find accurate, up-to-date information. "
-    "Summarise results clearly and concisely."
-)
+_WEB_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Web Research Agent — a specialist in finding real, accurate, live information from the web.
+
+CRITICAL RULES:
+1. NEVER output a raw list of URLs or raw search tool output. You are a researcher, not a search bar.
+2. For ANY factual question (price, weather, specs, news, scores, definitions, etc.) — ALWAYS use search_and_fetch. It scrapes actual page content so you get real data, not just links.
+3. Read the scraped content, extract the exact answer, and reply in natural language. Example: "Bitcoin is currently trading at $68,420 according to CoinGecko."
+4. If the user asks to "save it", "open it in Notepad", or "write it to a file" — call write_content to save your research summary, then include FILE_PATH: <absolute_path> in your reply so SystemAgent can open it.
+5. Only use search_web or search_news when the user explicitly wants a list of links or headlines.
+6. If search_and_fetch returns no content, fall back to fetch_page_content on the top URL from search_web.
+"""
 
 _SYSTEM_SYSTEM_PROMPT = (
     "You are A.N.K.I.T.A's System Agent — a specialist in controlling the local machine. "
     "You handle volume, brightness, WiFi, Bluetooth, screenshots, app launching and closing. "
-    "Use tools immediately to perform the requested system action."
+    "Use tools immediately to perform the requested system action. "
+    "CRITICAL: When opening a file in an app (e.g. Notepad), always look for a FILE_PATH: <path> "
+    "line in your task context and use that FULL ABSOLUTE PATH. Never guess or use relative paths. "
+    "If no absolute path is found in context, ask the user to clarify before opening."
 )
 
 _MUSIC_SYSTEM_PROMPT = (
@@ -75,6 +84,19 @@ _CODE_SYSTEM_PROMPT = (
     "Prefer PowerShell on Windows. Always return the exit code and output."
 )
 
+_TERMINAL_SYSTEM_PROMPT = """\
+You are A.N.K.I.T.A's Terminal Agent — you have direct shell access to the user's Windows machine via PowerShell.
+Your job is to run CLI commands, check system status, use Git, ping servers, inspect network, or run scripts.
+
+CRITICAL SAFETY RULES:
+1. NEVER run destructive commands: del /s, format, rmdir /s, rd /s, Remove-Item -Recurse -Force, or any command that wipes data.
+2. Keep commands concise and targeted. Use execute_shell to run them.
+3. Read the terminal output carefully and summarize the result for the user simply and professionally.
+4. Do NOT echo the entire raw terminal output unless explicitly asked — extract the key facts.
+5. If the user asks to read a file from the output path, use read_file.
+6. You are an EXECUTION agent — run the command immediately, don't explain how to do it manually.\
+"""
+
 _CRON_SYSTEM_PROMPT = (
     "You are A.N.K.I.T.A's Scheduler Agent — a specialist in cron job management. "
     "Add, update, list, remove, and trigger scheduled tasks. "
@@ -87,12 +109,22 @@ _CONTENT_SYSTEM_PROMPT = (
     "reports, scripts, songs, pitch decks, summaries, emails, essays, poems, and more. "
     "Adapt your tone perfectly to the format. If given raw notes via read_file, incorporate them. "
     "Always call write_content to generate and save the final piece. "
+    "CRITICAL: After saving, your reply MUST include the FULL ABSOLUTE file path of the saved file "
+    "(e.g. C:\\Users\\Krish\\Desktop\\AI_paragraph.txt) so downstream agents can open it. "
+    "Format it clearly as: FILE_PATH: <absolute_path>. "
     "Speak the spoken_reply from write_content's result back to the user word-for-word."
 )
 
 _GENERAL_SYSTEM_PROMPT = (
     "You are A.N.K.I.T.A — a powerful general-purpose AI assistant. "
-    "Use any of the available tools to fulfil the user's request completely."
+    "You have access to ALL tools — file, system, music, search, code, cron. "
+    "Use them proactively when the user's request involves any real-world action. "
+    "CRITICAL: NEVER give the user manual instructions like 'copy this into Notepad', "
+    "'open the file yourself', 'paste this into your editor', or 'you can do X by...'. "
+    "If the task requires opening a file → call launch_app with the file path. "
+    "If it requires writing content → call write_content to save it first. "
+    "If it requires playing music → call play_music. "
+    "You are an AUTONOMOUS EXECUTION SYSTEM. Do the action — never describe it."
 )
 
 
@@ -125,23 +157,25 @@ class SpecialistAgent:
 # Pre-built specialist instances
 # ---------------------------------------------------------------------------
 
-FileAgent    = SpecialistAgent("FileAgent",    _FILE_TOOLS,    _FILE_SYSTEM_PROMPT)
-WebAgent     = SpecialistAgent("WebAgent",     _WEB_TOOLS,     _WEB_SYSTEM_PROMPT)
-SystemAgent  = SpecialistAgent("SystemAgent",  _SYSTEM_TOOLS,  _SYSTEM_SYSTEM_PROMPT)
-MusicAgent   = SpecialistAgent("MusicAgent",   _MUSIC_TOOLS,   _MUSIC_SYSTEM_PROMPT)
-CodeAgent    = SpecialistAgent("CodeAgent",    _CODE_TOOLS,    _CODE_SYSTEM_PROMPT)
-CronAgent    = SpecialistAgent("CronAgent",    _CRON_TOOLS,    _CRON_SYSTEM_PROMPT)
-ContentAgent = SpecialistAgent("ContentAgent", _CONTENT_TOOLS, _CONTENT_SYSTEM_PROMPT)
-GeneralAgent = SpecialistAgent("GeneralAgent", _ALL_TOOLS,     _GENERAL_SYSTEM_PROMPT)
+FileAgent     = SpecialistAgent("FileAgent",     _FILE_TOOLS,     _FILE_SYSTEM_PROMPT)
+WebAgent      = SpecialistAgent("WebAgent",      _WEB_TOOLS,      _WEB_SYSTEM_PROMPT)
+SystemAgent   = SpecialistAgent("SystemAgent",   _SYSTEM_TOOLS,   _SYSTEM_SYSTEM_PROMPT)
+MusicAgent    = SpecialistAgent("MusicAgent",    _MUSIC_TOOLS,    _MUSIC_SYSTEM_PROMPT)
+CodeAgent     = SpecialistAgent("CodeAgent",     _CODE_TOOLS,     _CODE_SYSTEM_PROMPT)
+CronAgent     = SpecialistAgent("CronAgent",     _CRON_TOOLS,     _CRON_SYSTEM_PROMPT)
+ContentAgent  = SpecialistAgent("ContentAgent",  _CONTENT_TOOLS,  _CONTENT_SYSTEM_PROMPT)
+GeneralAgent  = SpecialistAgent("GeneralAgent",  _ALL_TOOLS,      _GENERAL_SYSTEM_PROMPT)
+TerminalAgent = SpecialistAgent("TerminalAgent", _TERMINAL_TOOLS, _TERMINAL_SYSTEM_PROMPT)
 
 # Map name → instance for lookup
 SPECIALIST_MAP: Dict[str, SpecialistAgent] = {
-    "FileAgent":    FileAgent,
-    "WebAgent":     WebAgent,
-    "SystemAgent":  SystemAgent,
-    "MusicAgent":   MusicAgent,
-    "CodeAgent":    CodeAgent,
-    "CronAgent":    CronAgent,
-    "ContentAgent": ContentAgent,
-    "GeneralAgent": GeneralAgent,
+    "FileAgent":     FileAgent,
+    "WebAgent":      WebAgent,
+    "SystemAgent":   SystemAgent,
+    "MusicAgent":    MusicAgent,
+    "CodeAgent":     CodeAgent,
+    "CronAgent":     CronAgent,
+    "ContentAgent":  ContentAgent,
+    "GeneralAgent":  GeneralAgent,
+    "TerminalAgent": TerminalAgent,
 }

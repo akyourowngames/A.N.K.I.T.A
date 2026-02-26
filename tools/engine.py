@@ -249,6 +249,33 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "execute_shell",
+            "description": (
+                "Run any PowerShell/CMD/shell command system-wide and return its output. "
+                "Use this for: ping, ipconfig, git commands, dir, python scripts, netstat, "
+                "tasklist, whoami, curl, or any CLI command. "
+                "NOT sandboxed to workspace — can reach any system path. "
+                "Has a hard timeout (default 15s). Destructive commands are blocked."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The exact CLI command to run (e.g. 'ping google.com -n 4', 'ipconfig', 'git status')",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Max seconds to wait before killing the command (default 15, max 60)",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "run_command",
             "description": "Execute a terminal command in workspace and return stdout/stderr/exit code.",
             "parameters": {
@@ -600,6 +627,11 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             app=str(args.get("app", "")),
             args=[str(v) for v in (args.get("args") or [])] if isinstance(args.get("args"), list) else None,
             cwd=str(args.get("cwd")) if args.get("cwd") is not None else None,
+        )
+    if name == "execute_shell":
+        return terminal_ops.execute_shell_command(
+            command=str(args.get("command", "")),
+            timeout=int(args.get("timeout", 15)),
         )
     if name == "run_command":
         env = args.get("env")
