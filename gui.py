@@ -145,10 +145,30 @@ class VoiceCallWorker(QThread):
         self.sample_rate = int(os.getenv("VOICE_GUI_SAMPLE_RATE", "16000"))
         self.chunk_sec = float(os.getenv("VOICE_GUI_CHUNK_SEC", "4.0"))
         self.silence_rms = float(os.getenv("VOICE_GUI_SILENCE_RMS", "450"))
-        idx_str = os.getenv("VOICE_GUI_DEVICE_INDEX", "").strip()
-        self.device_index = int(idx_str) if idx_str.isdigit() else None
         self.stt_provider = os.getenv("VOICE_STT_PROVIDER", "speech_recognition").strip().lower()
         self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
+
+        # Resolve microphone device index — always use Windows default input
+        idx_str = os.getenv("VOICE_GUI_DEVICE_INDEX", "").strip()
+        if idx_str.isdigit():
+            self.device_index = int(idx_str)
+            self.mic_name = f"Device #{self.device_index} (from .env)"
+        else:
+            # Explicitly resolve the OS default input device so we know exactly
+            # which mic is being used and log it clearly
+            try:
+                default_in = sd.default.device[0]  # index of default input
+                if default_in is None or default_in < 0:
+                    default_in = None
+                self.device_index = default_in
+                if default_in is not None:
+                    dev_info = sd.query_devices(default_in)
+                    self.mic_name = str(dev_info.get("name", f"Device #{default_in}"))
+                else:
+                    self.mic_name = "System default mic"
+            except Exception:
+                self.device_index = None
+                self.mic_name = "System default mic"
 
     def stop(self) -> None:
         self.running = False
@@ -656,6 +676,7 @@ class AnkitaWindow(QMainWindow):
         lang = self.voice_lang.text().strip() or "en-IN"
         self.voice_worker = VoiceCallWorker(
             self.agent, self.messages, api_key=api_key, lang_code=lang)
+        self._append("System", f"🎙 Mic: {self.voice_worker.mic_name}")
         self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
         self.voice_worker.heard.connect(lambda _: self.proactive.set_last_interaction())
         self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
@@ -666,7 +687,7 @@ class AnkitaWindow(QMainWindow):
         self.voice_worker.start()
         self.voice_start_btn.setEnabled(False)
         self.voice_stop_btn.setEnabled(True)
-        self.voice_status.setText("Voice: starting...")
+        self.voice_status.setText(f"Voice: listening on {self.voice_worker.mic_name[:30]}...")
 
     def on_voice_stop(self) -> None:
         if self.voice_worker is None:

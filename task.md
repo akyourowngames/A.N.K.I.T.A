@@ -359,6 +359,54 @@ The LLM extracts `topic` and `format_type` automatically from natural language.
 
 ---
 
+---
+
+## Telegram Bot Upgrade (Full Feature Parity with GUI/CLI)
+
+### What Was Added to `telegram_bot.py`
+
+The Telegram bridge was upgraded from a bare `AgentRuntime` wrapper to full
+feature parity with `gui.py` and `chat.py`.
+
+#### Multi-Agent Orchestrator
+- Imported `Orchestrator` from `agents`
+- Both `agent` (fallback) and `orchestrator` (default) instantiated
+- `/agents on|off` command toggles `use_multi_agent` at runtime
+- All user messages routed through `orchestrator.run()` when multi-agent is ON
+
+#### Vector Memory (ChromaDB) — Per-Chat Sessions
+- `MemoryStore` instantiated and shared across all Telegram chats
+- Each chat scoped by `session_id = f"telegram-{chat_id}"`
+- `memory.format_memory_context(text, n=4)` injected as system message before each reply
+- Both user and assistant turns stored after each exchange
+- `/memory` command shows the 5 most relevant recent memories for that chat
+
+#### ProactiveEngine Integration
+- `ProactiveEngine` started with `attach_memory(memory, "telegram-session")`
+- `_flush_proactive_events()` helper runs every `TELEGRAM_PROACTIVE_CHECK_SEC` (default 15s)
+- Events routed to `last_active_chat_id` (most recent chat) or first allowed chat
+- **`dream_epiphany`** — epiphany pushed as `💭 <text>`, stored in memory
+- **`content_request`** — ContentAgent runs synchronously, result pushed to chat
+- **All other events** (system, cron, drop_file) — pushed as `⚙️ <message>`
+- `proactive.set_last_interaction()` called on every user message to reset idle timer
+
+#### Commands Added
+| Command | Action |
+|---|---|
+| `/start` or `/help` | Show command list |
+| `/reset` | Clear chat session history |
+| `/memory` | Show 5 recent relevant ChromaDB memories |
+| `/agents on` | Enable multi-agent Orchestrator mode |
+| `/agents off` | Disable multi-agent, use bare AgentRuntime |
+
+#### New Env Vars
+| Variable | Default | Purpose |
+|---|---|---|
+| `TELEGRAM_PROACTIVE_CHECK_SEC` | `15` | How often to flush proactive events |
+| `ANKITA_MULTI_AGENT` | `true` | Enable/disable multi-agent on startup |
+
+---
+
 ## Files Changed / Created
 
 | File | Status | What changed |
