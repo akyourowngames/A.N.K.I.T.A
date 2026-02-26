@@ -148,24 +148,53 @@ class VoiceCallWorker(QThread):
         self.stt_provider = os.getenv("VOICE_STT_PROVIDER", "speech_recognition").strip().lower()
         self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
 
-        # Resolve microphone device index — always use Windows default input
+        # Resolve microphone device index
+        # Priority: .env VOICE_GUI_DEVICE_INDEX > Realtek mic > OS default input
         idx_str = os.getenv("VOICE_GUI_DEVICE_INDEX", "").strip()
         if idx_str.isdigit():
             self.device_index = int(idx_str)
-            self.mic_name = f"Device #{self.device_index} (from .env)"
-        else:
-            # Explicitly resolve the OS default input device so we know exactly
-            # which mic is being used and log it clearly
             try:
-                default_in = sd.default.device[0]  # index of default input
-                if default_in is None or default_in < 0:
-                    default_in = None
-                self.device_index = default_in
-                if default_in is not None:
-                    dev_info = sd.query_devices(default_in)
-                    self.mic_name = str(dev_info.get("name", f"Device #{default_in}"))
+                self.mic_name = sd.query_devices(self.device_index).get("name", f"Device #{self.device_index}")
+            except Exception:
+                self.mic_name = f"Device #{self.device_index} (from .env)"
+        else:
+            # Try to find the real physical mic — prefer Realtek over virtual devices
+            # Virtual/fake mics to skip
+            VIRTUAL_KEYWORDS = {"splitcam", "droidcam", "iriun", "virtual", "mapper",
+                                 "primary sound", "stereo mix", "midi", "output"}
+            PREFERRED_KEYWORDS = {"realtek", "microphone array", "array"}
+            try:
+                all_devices = sd.query_devices()
+                best_idx = None
+                best_name = ""
+                fallback_idx = None
+                fallback_name = ""
+                for i, d in enumerate(all_devices):
+                    if d["max_input_channels"] < 1:
+                        continue
+                    name_lower = d["name"].lower()
+                    is_virtual = any(v in name_lower for v in VIRTUAL_KEYWORDS)
+                    is_preferred = any(p in name_lower for p in PREFERRED_KEYWORDS)
+                    if is_preferred and not is_virtual:
+                        # Prefer higher sample rate variant (e.g. 48000 over 44100)
+                        if best_idx is None or d["default_samplerate"] >= all_devices[best_idx]["default_samplerate"]:
+                            best_idx = i
+                            best_name = d["name"]
+                    elif not is_virtual and fallback_idx is None:
+                        fallback_idx = i
+                        fallback_name = d["name"]
+
+                if best_idx is not None:
+                    self.device_index = best_idx
+                    self.mic_name = best_name
+                elif fallback_idx is not None:
+                    self.device_index = fallback_idx
+                    self.mic_name = fallback_name
                 else:
-                    self.mic_name = "System default mic"
+                    # Last resort — use OS default even if virtual
+                    default_in = sd.default.device[0]
+                    self.device_index = default_in if (default_in is not None and default_in >= 0) else None
+                    self.mic_name = sd.query_devices(self.device_index).get("name", "Default mic") if self.device_index is not None else "System default"
             except Exception:
                 self.device_index = None
                 self.mic_name = "System default mic"
@@ -289,6 +318,7 @@ class AnkitaWindow(QMainWindow):
         self.worker: AskWorker | None = None
         self.voice_worker: VoiceCallWorker | None = None
         self._content_worker: _ContentRequestWorker | None = None
+        self._pending_user_text: str = ""
         self.hotkey_listener = None
         self.hotkey_key = os.getenv("VOICE_HOTKEY_KEY", "f8").strip().lower() or "f8"
         self.hotkey_window_ms = max(120, int(os.getenv("VOICE_HOTKEY_DOUBLE_PRESS_MS", "400")))
@@ -629,6 +659,10 @@ class AnkitaWindow(QMainWindow):
         self.input.clear()
         self._append("You", text)
 
+        # Save user message to ChromaDB immediately so DreamAgent has memories
+        self.memory.add(self.session_id, "user", text)
+        self._pending_user_text = text  # store for _on_reply
+
         mem_context = self.memory.format_memory_context(text, n=4)
         if mem_context:
             self.messages.append({"role": "system", "content": mem_context})
@@ -646,11 +680,9 @@ class AnkitaWindow(QMainWindow):
             self._append("Assistant [Error]", error)
         else:
             self._append("Assistant", reply)
-            last_user = next(
-                (m["content"] for m in reversed(self.messages) if m.get("role") == "user"), "")
-            if last_user:
-                self.memory.add(self.session_id, "user", last_user)
+            # Save assistant reply to ChromaDB (user message already saved in on_send)
             self.memory.add(self.session_id, "assistant", reply)
+        self._pending_user_text = ""
         self._set_busy(False)
         self.input.setFocus()
 

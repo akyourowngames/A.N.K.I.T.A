@@ -166,7 +166,7 @@ def write_and_save_content(
     if output_dir:
         dest_dir = Path(output_dir).expanduser()
     else:
-        dest_dir = Path.home() / "Desktop"
+        dest_dir = workspace_root / "generated_files"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
@@ -192,7 +192,7 @@ def write_and_save_content(
     # ------------------------------------------------------------------
     spoken_reply = (
         f"Done! I've generated the {format_clean} about {topic_clean} "
-        f"and saved it to your Desktop as {filename}."
+        f"and saved it to the generated_files folder as {filename}."
     )
 
     return {

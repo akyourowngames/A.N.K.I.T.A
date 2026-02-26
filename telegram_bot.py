@@ -143,10 +143,10 @@ def main() -> None:
         )
         runner.start()
 
-    # Proactive engine — attach memory with a generic session id;
-    # DreamState epiphanies will be pushed to the last active Telegram chat.
+    # Proactive engine — memory session id will be updated to the real per-chat
+    # session id as soon as the first message arrives (see set_last_interaction below).
     proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
-    proactive.attach_memory(memory, "telegram-session")
+    proactive.attach_memory(memory, "telegram-session")  # placeholder; updated on first message
     proactive.start()
 
     # Per-chat state
@@ -154,10 +154,10 @@ def main() -> None:
     last_active_chat_id: Optional[int] = None        # for routing proactive events
 
     offset = read_offset()
-    poll_timeout = max(5, min(int(os.getenv("TELEGRAM_POLL_TIMEOUT", "30")), 120))
+    poll_timeout = max(5, min(int(os.getenv("TELEGRAM_POLL_TIMEOUT", "5")), 120))
     idle_sleep = max(0.2, min(float(os.getenv("TELEGRAM_IDLE_SLEEP_SEC", "0.5")), 3.0))
     # How often (seconds) to check the proactive queue between Telegram polls
-    proactive_check_interval = float(os.getenv("TELEGRAM_PROACTIVE_CHECK_SEC", "15"))
+    proactive_check_interval = float(os.getenv("TELEGRAM_PROACTIVE_CHECK_SEC", "5"))
     _last_proactive_check = time.time()
 
     print("╔══════════════════════════════════════╗")
@@ -289,6 +289,10 @@ def main() -> None:
                 if chat_id not in sessions:
                     sessions[chat_id] = new_session()
 
+                # Update proactive engine to use this chat's real session_id
+                # so DreamAgent searches the correct ChromaDB memories
+                proactive.attach_memory(memory, session_id)
+
                 # Reset idle tracker so DreamState doesn't fire while user is chatting
                 proactive.set_last_interaction()
 
@@ -365,11 +369,13 @@ def main() -> None:
                     send_text(bot_token, chat_id, f"⚠️ Error: {err}", msg_id)
                     continue
 
-                send_text(bot_token, chat_id, reply or "(empty response)", msg_id)
-
-                # Store in vector memory
+                # Store in vector memory BEFORE sending (so memory is always saved
+                # even if the Telegram send fails)
+                print(f"[telegram] Saving to memory: session={session_id}", flush=True)
                 memory.add(session_id, "user", text)
                 memory.add(session_id, "assistant", reply or "")
+
+                send_text(bot_token, chat_id, reply or "(empty response)", msg_id)
 
         except KeyboardInterrupt:
             print("\nStopping Telegram bot bridge.")

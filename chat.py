@@ -1,4 +1,6 @@
 import os
+import threading
+import time
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -46,7 +48,6 @@ def main() -> None:
 
     # Proactive engine
     proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
-    proactive.attach_memory(memory, session_id)
     proactive.start()
 
     print("\n╔══════════════════════════════════════╗")
@@ -67,46 +68,53 @@ def main() -> None:
     messages = new_session()
     session_id = "cli-session"
 
-    # Now that session_id is set, update proactive with it
+    # Now that session_id is set, attach memory properly
     proactive.attach_memory(memory, session_id)
 
+    # Background thread: drains proactive events every 5 seconds even while
+    # input("You: ") is blocking. This is how DreamState epiphanies get printed
+    # without needing the user to press Enter first.
+    _stop_event_watcher = threading.Event()
+
+    def _event_watcher() -> None:
+        while not _stop_event_watcher.is_set():
+            events = proactive.get_pending_events()
+            for event in events:
+                if event.kind == "dream_epiphany":
+                    epiphany_text = event.data.get("text", event.message)
+                    if epiphany_text:
+                        print(f"\n\n✨ [A.N.K.I.T.A — Dream] {epiphany_text}\n\nYou: ", end="", flush=True)
+                        try:
+                            memory.add(session_id, "assistant", epiphany_text)
+                        except Exception:
+                            pass
+                elif event.kind == "content_request":
+                    suggested_prompt = event.data.get("suggested_prompt", "")
+                    if suggested_prompt:
+                        print(f"\n\n[ANKITA] Processing content request in background...\n\nYou: ", end="", flush=True)
+                        try:
+                            if use_multi_agent:
+                                content_reply = orchestrator.run(
+                                    user_text=suggested_prompt,
+                                    messages=new_session(),
+                                )
+                            else:
+                                content_reply = agent.process_user_text(
+                                    user_text=suggested_prompt,
+                                    messages=new_session(),
+                                )
+                            print(f"\n[ANKITA] {content_reply}\n\nYou: ", end="", flush=True)
+                            memory.add(session_id, "assistant", content_reply)
+                        except Exception as _err:
+                            print(f"\n[ANKITA] Content generation error: {_err}\n\nYou: ", end="", flush=True)
+                else:
+                    print(f"\n\n[ANKITA] {event.message}\n\nYou: ", end="", flush=True)
+            time.sleep(5)
+
+    _watcher_thread = threading.Thread(target=_event_watcher, daemon=True, name="ProactiveEventWatcher")
+    _watcher_thread.start()
+
     while True:
-        # Check for proactive events
-        for event in proactive.get_pending_events():
-            print(f"\n[ANKITA] {event.message}\n")
-
-            # DreamState epiphany — auto-print and store in memory
-            if event.kind == "dream_epiphany":
-                epiphany_text = event.data.get("text", event.message)
-                if epiphany_text:
-                    print(f"[A.N.K.I.T.A — Dream] {epiphany_text}\n")
-                    try:
-                        memory.add(session_id, "assistant", epiphany_text)
-                    except Exception:
-                        pass
-                continue
-
-            # Auto-handle content_request events from the raw_ideas watcher
-            if event.kind == "content_request":
-                suggested_prompt = event.data.get("suggested_prompt", "")
-                if suggested_prompt:
-                    print(f"[ANKITA] Processing content request in background...\n")
-                    try:
-                        if use_multi_agent:
-                            content_reply = orchestrator.run(
-                                user_text=suggested_prompt,
-                                messages=new_session(),  # Fresh session — no context contamination
-                            )
-                        else:
-                            content_reply = agent.process_user_text(
-                                user_text=suggested_prompt,
-                                messages=new_session(),
-                            )
-                        print(f"[ANKITA] {content_reply}\n")
-                        memory.add(session_id, "assistant", content_reply)
-                    except Exception as _err:
-                        print(f"[ANKITA] Content generation error: {_err}\n")
-
         try:
             user_text = input("You: ").strip()
         except (EOFError, KeyboardInterrupt):
@@ -165,6 +173,7 @@ def main() -> None:
         memory.add(session_id, "user", user_text)
         memory.add(session_id, "assistant", assistant_text)
 
+    _stop_event_watcher.set()
     proactive.stop()
     if runner is not None:
         runner.stop()

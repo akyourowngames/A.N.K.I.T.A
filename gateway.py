@@ -2,11 +2,6 @@ import os
 
 from dotenv import load_dotenv
 
-import chat
-import gui
-import telegram_bot
-import voice_web
-
 
 def _select_mode() -> str:
     mode = os.getenv("GATEWAY_MODE", "").strip().lower()
@@ -24,14 +19,18 @@ def main() -> None:
     mode = _select_mode()
     print(f"ANKITA Gateway mode: {mode}")
     if mode == "telegram":
+        import telegram_bot  # lazy import — avoids loading PyQt6/gui/voice_web unnecessarily
         telegram_bot.main()
         return
     if mode == "voice":
+        import voice_web  # lazy import
         voice_web.main()
         return
     if mode == "gui":
+        import gui  # lazy import — PyQt6 only loaded when actually needed
         gui.main()
         return
+    import chat  # lazy import
     chat.main()
 
 

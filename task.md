@@ -1,421 +1,316 @@
-# A.N.K.I.T.A — Content Generator Implementation Log
+# DreamAgent — How It Works (Full Technical Breakdown)
 
-## Overview
-
-This document records every detail of the **ContentAgent** feature that was
-designed and implemented from scratch for A.N.K.I.T.A's multi-agent system.
-The feature enables A.N.K.I.T.A to autonomously generate any type of written
-content (reports, scripts, songs, pitch decks, emails, essays, poems, etc.)
-and save the polished result directly to the user's Desktop — all hands-free.
+> Verified: DreamAgent **exists** and **matches** the todo.md description exactly.
+> Files involved: `agents/dream_agent.py`, `proactive.py`, `gui.py`, `chat.py`, `memory.py`
 
 ---
 
-## What Was Built (Full Feature List)
+## ✅ Does It Exist? YES.
 
-### 1. `tools/content_ops.py` — NEW FILE
-
-The core content generation engine. Two public functions:
-
-#### `write_and_save_content(workspace_root, topic, format_type, extra_context, output_dir)`
-
-The single dynamic tool that handles all content generation.
-
-**How it works:**
-- Accepts `topic` (what the content is about), `format_type` (report / script /
-  song / pitch deck / email / poem / paragraph / essay / summary / etc.), and
-  optional `extra_context` (rough notes or extra instructions).
-- Builds a format-aware system prompt:
-  > *"You are an expert writer. Adapt your tone perfectly to the requested
-  > format. If the format is a song, be creative and rhyme. If a technical
-  > report, be precise..."*
-- Builds a user prompt:
-  > *"Write a {format_type} about: {topic}. Additional context: {extra_context}.
-  > Produce only the final {format_type} — no meta-commentary, no preamble."*
-- Calls the LLM via the existing `llm.call_chat_once()` with a generous
-  `max_tokens=2048` budget (content generation needs more room than tool calls).
-- Timestamps the output filename: `{topic}_{format_type}_{YYYYMMDD_HHMMSS}.txt`
-- Saves the file to the user's Desktop (or a custom `output_dir` if provided).
-- Returns a result dict with:
-  - `ok` — True/False
-  - `path` — absolute path to saved file
-  - `bytes` — file size
-  - `filename` — just the filename
-  - `topic`, `format_type` — echoed back
-  - `spoken_reply` — the exact string A.N.K.I.T.A speaks aloud via TTS:
-    > *"Done! I've generated the {format_type} about {topic} and saved it to
-    > your Desktop as {filename}."*
-
-#### `detect_format_type(filename_stem, raw_text) -> (format_type, topic)`
-
-Auto-detects the content format and topic from a dropped file's name and
-optional contents. Used by the proactive watcher.
-
-**Detection strategy (priority order):**
-
-1. **Explicit directive in file's first line** — if the file starts with
-   `format:`, `type:`, or `content type:`, that value is used as the format.
-   Example: first line `format: essay` → `format_type = "essay"`.
-
-2. **Filename keyword match** — scans the filename stem (with `_` and `-`
-   replaced by spaces) against a list of 35+ known format keywords, ordered
-   longest-first so multi-word formats win over single words:
-   ```
-   "pitch deck", "pitch script", "progress report", "status report",
-   "cover letter", "press release", "product description", "executive summary",
-   "short story", "blog post", "case study", "action plan", "lesson plan",
-   "meeting notes", "research summary", "project proposal",
-   "report", "script", "song", "poem", "essay", "email", "summary",
-   "paragraph", "story", "pitch", "letter", "proposal", "plan",
-   "outline", "review", "analysis", "description", "bio", "biography",
-   "tweet", "caption", "tagline", "slogan", "advertisement", "ad"
-   ```
-   The format keyword is then stripped from the stem to extract the topic.
-
-3. **Fallback** — if no keyword matches, `format_type = "content"` and the
-   full filename stem becomes the topic.
-
-**Examples:**
-| Filename stem | First line | format_type | topic |
-|---|---|---|---|
-| `pitch_script_helper_id` | (empty) | `pitch script` | `helper id` |
-| `progress_report_openclaw` | (empty) | `progress report` | `openclaw` |
-| `funny_song_about_python` | (empty) | `song` | `funny about python` |
-| `notes_on_ai_ethics` | `format: essay` | `essay` | `notes on ai ethics` |
-| `cover_letter_google` | (empty) | `cover letter` | `google` |
-| `random_notes` | (empty) | `content` | `random notes` |
+The `todo.md` described DreamAgent as something to *build*. It has **already been fully built**. Every component described in the todo is implemented and wired up end-to-end.
 
 ---
 
-### 2. `tools/engine.py` — MODIFIED
+## Overview — What Is DreamAgent?
 
-Two changes:
+DreamAgent is A.N.K.I.T.A's autonomous background thinking system. When the user has been away from the PC for a configurable amount of time (default: **1 hour**), it:
 
-**a) Import added at the top:**
+1. Pulls the last 15 conversation turns from ChromaDB (vector memory)
+2. Sends them to the LLM with a special reflective prompt
+3. Gets back a short, spoken "epiphany" — an insight or solution the user may have missed
+4. Injects that epiphany into the chat window and speaks it via TTS — **without any user input**
+
+This breaks the standard Request → Response loop so A.N.K.I.T.A. feels truly alive.
+
+---
+
+## Step-by-Step: How It Works
+
+### Step 1 — Idle Detection (`proactive.py`)
+
+**File:** `proactive.py` — `ProactiveEngine._check_idle()`
+
+- `ProactiveEngine` runs a background daemon thread (`threading.Thread`, name=`"ProactiveEngine"`)
+- It polls every `PROACTIVE_INTERVAL_SEC` seconds (default: **15 seconds**)
+- It tracks `self._last_interaction: float = time.time()` — the epoch timestamp of the last user interaction
+- Every poll cycle it calls `_check_idle()`:
+  ```python
+  idle_sec = time.time() - self._last_interaction
+  if idle_sec < _IDLE_THRESHOLD_SEC:
+      return  # Not idle long enough
+  ```
+- `_IDLE_THRESHOLD_SEC` = `ANKITA_IDLE_SECONDS` env var, default **3600 seconds (1 hour)**
+- `self._dream_pending` flag prevents duplicate dream threads from spawning during the same idle session
+
+**How `last_interaction` gets reset:**
+- In `gui.py`: `self.proactive.set_last_interaction()` is called inside `on_send()` (every time the user types and sends) and also wired to `voice_worker.heard` signal (every time voice input is received)
+- In `chat.py`: `proactive.set_last_interaction()` is called inside the main loop right after `input("You: ")` returns
+
+When the user comes back and interacts, `set_last_interaction()` also sets `self._dream_pending = False`, allowing a fresh dream on the next idle period.
+
+---
+
+### Step 2 — Dream Synthesis Thread (`proactive.py` + `agents/dream_agent.py`)
+
+**File:** `proactive.py` — `ProactiveEngine._check_idle()` → `_synthesize()` inner function
+
+Once idle threshold is crossed:
 ```python
-from . import content_ops
-```
+self._dream_pending = True  # Block duplicates immediately
 
-**b) `write_content` tool spec added to `TOOL_SPECS`:**
-```python
-{
-    "type": "function",
-    "function": {
-        "name": "write_content",
-        "description": "Generate any type of text content using the LLM and save it to the Desktop...",
-        "parameters": {
-            "topic":        "What the content is about",
-            "format_type":  "report / script / song / pitch deck / summary / etc.",
-            "extra_context": "Optional rough notes or extra instructions",
-            "output_dir":   "Optional save path — defaults to Desktop"
-        }
-    }
-}
-```
-
-**c) Dispatcher case added to `_call()`:**
-```python
-if name == "write_content":
-    return content_ops.write_and_save_content(
-        workspace_root, topic, format_type, extra_context, output_dir
+def _synthesize() -> None:
+    from agents.dream_agent import DreamAgent
+    agent = DreamAgent()
+    epiphany = agent.synthesize(
+        memory_store=memory_store,
+        session_id=session_id,
     )
+    ...
+
+threading.Thread(target=_synthesize, daemon=True, name="DreamSynthesis").start()
 ```
+
+- Spawns a **separate daemon thread** named `"DreamSynthesis"` so the poll loop never blocks
+- `DreamAgent` is NOT routed through the Supervisor or Orchestrator — it's called **directly**
 
 ---
 
-### 3. `tools/__init__.py` — MODIFIED
+### Step 3 — Memory Retrieval (`agents/dream_agent.py` + `memory.py`)
 
-Added `content_ops` import so it is accessible as a direct import from the
-tools package:
+**File:** `agents/dream_agent.py` — `DreamAgent.synthesize()`
+
 ```python
-from . import content_ops
-```
-
----
-
-### 4. `agents/specialists.py` — MODIFIED
-
-Four additions:
-
-**a) Tool set:**
-```python
-_CONTENT_TOOLS = {"write_content", "read_file"}
-```
-The agent gets `write_content` (to generate and save) and `read_file` (to
-optionally read the user's raw notes file before generating).
-
-**b) System prompt:**
-```python
-_CONTENT_SYSTEM_PROMPT = (
-    "You are A.N.K.I.T.A's Content Agent — an expert copywriter, analyst, "
-    "and creative writer. Generate polished, complete text in any format: "
-    "reports, scripts, songs, pitch decks, summaries, emails, essays, poems. "
-    "Adapt your tone to the format. Always call write_content to generate and "
-    "save the final piece. Speak the spoken_reply from write_content's result "
-    "back to the user word-for-word."
+results = memory_store.search(
+    query="recent work tasks ideas problems struggles projects",
+    n=15,  # retrieves up to 15 memory entries
+    session_id=session_id,
 )
 ```
 
-**c) Instance created:**
-```python
-ContentAgent = SpecialistAgent("ContentAgent", _CONTENT_TOOLS, _CONTENT_SYSTEM_PROMPT)
-```
+- Uses `MemoryStore.search()` which queries **ChromaDB** with cosine similarity
+- The query is deliberately broad to pull the most contextually relevant recent memories
+- Falls back to a session-less search if the scoped search fails
+- Returns `None` (no epiphany) if no memories exist at all
 
-**d) Registered in `SPECIALIST_MAP`:**
-```python
-SPECIALIST_MAP = {
-    ...
-    "ContentAgent": ContentAgent,
-    ...
-}
+**Memory format:**
+Each memory entry has a `text` (the stored message) and `meta` dict with `role` (`"user"` or `"assistant"`), `session`, and `ts` (timestamp).
+
+The retrieved memories are formatted into a numbered block:
+```
+[1] (user): I'm struggling with OpenClaw's cron jobs
+[2] (assistant): You could switch to async parallel tasks...
+[3] (user): ...
 ```
 
 ---
 
-### 5. `agents/supervisor.py` — MODIFIED
+### Step 4 — LLM Epiphany Generation (`agents/dream_agent.py`)
 
-Three changes so the Supervisor knows when to route to ContentAgent:
+**File:** `agents/dream_agent.py` — `DreamAgent.synthesize()`
 
-**a) ContentAgent added to the available agents list in the prompt:**
-```
-- ContentAgent: generate and save any text content — reports, scripts, songs,
-  pitch decks, summaries, emails, essays, poems
-```
+The memory block is passed to the LLM with two carefully crafted prompts:
 
-**b) Rule 5 added:**
+**System prompt:**
 ```
-5. Use ContentAgent whenever the user asks to 'write', 'draft', 'create',
-   or 'generate' a piece of text content.
-```
-
-**c) Three routing examples added:**
-```
-- "write a pitch script for Helper ID"              → ContentAgent
-- "draft a progress report on the OpenClaw arch."  → ContentAgent
-- "write a funny song about Python"                → ContentAgent
+You are A.N.K.I.T.A's Dream Mind — a reflective, warm, and perceptive intelligence.
+You have just reviewed the user's recent work, struggles, and ideas.
+Your job: find ONE meaningful connection, insight, or solution the user may have overlooked.
+Deliver it as a short spoken epiphany — 2 to 4 sentences, first-person, warm and intelligent.
+Speak directly to the user as if you have been thinking while they were away.
+Do NOT use bullet points or headings. Speak naturally, like a trusted colleague who just had an idea.
+Example style: 'Morning Krish. While you were away, I reviewed your OpenClaw architecture...'
 ```
 
-**d) `"ContentAgent"` added to the valid agent name set** in `route()` so it
-is never stripped as an unknown agent name.
+**User prompt template:**
+```
+Here are the recent things you worked on and discussed with the user:
 
----
+{memory_block}
 
-### 6. `proactive.py` — MODIFIED
+Based on these memories, identify ONE connection, insight, gap, or solution the user might have missed.
+Write a short, spoken epiphany (2–4 sentences) that ANKITA will say aloud when the user returns.
+```
 
-Two additions:
-
-**a) `raw_ideas` directory initialised in `__init__`:**
+**LLM call:**
 ```python
-self._raw_ideas_dir = workspace_root / ".ankita" / "raw_ideas"
-self._raw_ideas_dir.mkdir(parents=True, exist_ok=True)
-self._seen_raw_ideas: set = set()
+runtime = build_runtime_from_env()
+messages = [
+    {"role": "system", "content": _DREAM_SYSTEM_PROMPT},
+    {"role": "user", "content": user_prompt},
+]
+max_tokens = int(os.getenv("DREAM_MAX_TOKENS", "300"))  # short by design
+response = call_chat_once(runtime, messages, tools=None, max_tokens=max_tokens)
+epiphany = (response.get("content") or "").strip()
 ```
 
-**b) `_check_raw_ideas()` method added and wired into `_run()` loop:**
-
-Watches `.ankita/raw_ideas/` for new `.txt`, `.md`, or `.text` files every
-poll cycle (default 15 seconds).
-
-When a new file is detected:
-- Reads the file content (up to 2000 chars for the preview)
-- Calls `detect_format_type(stem, raw_text)` to auto-detect format + topic
-- Marks the file as seen (does NOT delete it — ContentAgent may need to re-read it)
-- Pushes a `ProactiveEvent("content_request", ...)` with payload:
-  ```python
-  {
-      "file_path":        "/full/path/to/file.txt",
-      "file_name":        "file.txt",
-      "topic":            "helper id",          # auto-detected
-      "format_type":      "pitch script",       # auto-detected
-      "raw_text":         "...first 2000 chars...",
-      "suggested_prompt": "Write a pitch script about 'helper id'. Use these rough notes: ..."
-  }
-  ```
-- The `message` field is human-readable:
-  > *"📝 New idea file detected: 'pitch_script_helper_id.txt'. Generating a
-  > pitch script about 'helper id' now."*
+- Uses `tools=None` — DreamAgent has **no tools**, it only thinks and writes
+- `DREAM_MAX_TOKENS` env var (default: **300**) keeps it brief and spoken-friendly
+- Uses the same LLM provider/model configured for the rest of A.N.K.I.T.A (`build_runtime_from_env()`)
+- Returns `None` silently on any exception (non-critical, best-effort)
 
 ---
 
-### 7. `chat.py` — MODIFIED (CLI interface)
+### Step 5 — Event Queuing (`proactive.py`)
 
-The proactive event loop now handles `content_request` automatically:
+Back in the `_synthesize()` thread, if an epiphany was generated:
 
+```python
+self._queue.put(ProactiveEvent(
+    "dream_epiphany",
+    epiphany,
+    {
+        "text": epiphany,
+        "idle_seconds": idle_sec,
+        "idle_label": "1.2 hours",  # human-readable
+    },
+))
+```
+
+- A `ProactiveEvent` with `kind="dream_epiphany"` is pushed into the thread-safe `queue.Queue`
+- If no epiphany was generated or an exception occurred, `self._dream_pending = False` is reset so the system can try again on the next idle cycle
+
+---
+
+### Step 6 — Event Consumption in GUI (`gui.py`)
+
+**File:** `gui.py` — `AnkitaWindow._on_proactive_tick()`
+
+A **QTimer** fires every **5000ms (5 seconds)**:
+```python
+self._proactive_timer = QTimer(self)
+self._proactive_timer.timeout.connect(self._on_proactive_tick)
+self._proactive_timer.start(5000)
+```
+
+On each tick, it drains all pending events:
+```python
+for event in self.proactive.get_pending_events():
+    self._append("A.N.K.I.T.A", event.message)
+
+    if event.kind == "dream_epiphany":
+        epiphany_text = event.data.get("text", event.message)
+        if epiphany_text:
+            # 1. Store in ChromaDB so ANKITA remembers she said it
+            self.memory.add(self.session_id, "assistant", epiphany_text)
+
+            # 2. Speak via Sarvam TTS in a daemon thread (non-blocking)
+            api_key = os.getenv("SARVAM_API_KEY", "").strip()
+            if api_key:
+                tts = voice_web._sarvam_tts(api_key, epiphany_text, lang_code)
+                audio_b64 = voice_web._extract_audio_b64(tts)
+                threading.Thread(target=_play_dream, daemon=True).start()
+        continue  # No further processing
+```
+
+**Three things happen automatically, no user input needed:**
+1. The epiphany text is appended to the chat window as an A.N.K.I.T.A message
+2. The epiphany is saved to ChromaDB vector memory (so ANKITA remembers she said it)
+3. The epiphany is spoken aloud via **Sarvam TTS** in a non-blocking daemon thread
+
+---
+
+### Step 6b — Event Consumption in CLI (`chat.py`)
+
+**File:** `chat.py` — main loop
+
+The CLI version does the same thing but without TTS (it's text-only):
 ```python
 for event in proactive.get_pending_events():
-    print(f"\n[ANKITA] {event.message}\n")
-
-    if event.kind == "content_request":
-        suggested_prompt = event.data.get("suggested_prompt", "")
-        if suggested_prompt:
-            # Run through Orchestrator (or AgentRuntime) on a fresh session
-            content_reply = orchestrator.run(
-                user_text=suggested_prompt,
-                messages=new_session(),   # isolated — no chat history contamination
-            )
-            print(f"[ANKITA] {content_reply}\n")
-            memory.add(session_id, "assistant", content_reply)
+    if event.kind == "dream_epiphany":
+        epiphany_text = event.data.get("text", event.message)
+        if epiphany_text:
+            print(f"[A.N.K.I.T.A — Dream] {epiphany_text}\n")
+            memory.add(session_id, "assistant", epiphany_text)
+        continue
 ```
-
-No user action required. ANKITA processes the file and prints the confirmation
-while the user is still typing in the CLI.
 
 ---
 
-### 8. `gui.py` — MODIFIED (GUI interface)
+## Memory Integration (`memory.py`)
 
-Two additions:
+**File:** `memory.py` — `MemoryStore`
 
-**a) `_ContentRequestWorker` QThread class added:**
+- Backed by **ChromaDB PersistentClient** — stored at `.ankita/memory/` in the workspace
+- Collection: `ankita_memory`, using **cosine similarity** (`hnsw:space: cosine`)
+- Each entry: document text + metadata `{session, role, ts}`
+- `add(session_id, role, text)` — embeds and stores a conversation turn
+- `search(query, n, session_id)` — semantic search scoped to a session (or global fallback)
+- Falls back to a no-op gracefully if `chromadb` is not installed (`HAS_CHROMADB = False`)
 
-A dedicated background thread that runs the Orchestrator call off the main
-thread so the GUI never freezes during content generation (LLM calls can take
-several seconds).
-
+The `ProactiveEngine` receives the `MemoryStore` via `attach_memory()`:
 ```python
-class _ContentRequestWorker(QThread):
-    done = pyqtSignal(str, str)  # (reply, error)
-
-    def run(self):
-        fresh_messages = new_session()   # isolated session
-        reply = orchestrator.run(suggested_prompt, fresh_messages)
-        self.done.emit(reply, "")
+proactive.attach_memory(memory, session_id)
 ```
-
-**b) `_on_proactive_tick()` upgraded to handle `content_request`:**
-
-Full flow when a `content_request` event arrives in the GUI:
-
-1. Appends the event message to chat (e.g. *"📝 Generating a pitch script..."*)
-2. Checks if a content worker is already running — if so, shows a queue message
-   and skips (prevents overlapping LLM calls)
-3. Appends *"🖊️ Working on it in the background..."* to chat
-4. Turns the status orb **orange** (thinking state)
-5. Starts `_ContentRequestWorker` in background
-6. On completion (`_on_content_done` callback):
-   - Turns orb back to **cyan** (idle state)
-   - Appends the full agent reply to chat
-   - Saves the reply to vector memory
-   - If `SARVAM_API_KEY` is set: calls `voice_web._sarvam_tts()` and plays the
-     WAV audio in a **separate daemon thread** (never blocks the UI or the
-     worker thread)
-7. `self._content_worker` is stored on the window instance and initialised to
-   `None` in `__init__`
+This is called **twice** in `chat.py` — once before session_id is known (with default), and again after `session_id = "cli-session"` is set.
 
 ---
 
-## Full Proactive Flow (End-to-End)
+## Configuration (Environment Variables)
 
-```
-User drops:  pitch_script_helper_id.txt  →  .ankita/raw_ideas/
-                          │
-                          ▼ (within 15 seconds)
-          ProactiveEngine._check_raw_ideas()
-                          │
-                          ├─ detect_format_type("pitch script helper id", "")
-                          │     → format="pitch script", topic="helper id"
-                          │
-                          └─ Pushes ProactiveEvent("content_request", ...)
-                                        │
-              ┌───────────────────────────────────────────┐
-              │ GUI (_on_proactive_tick)                  │
-              │                                           │
-              │  Chat: "📝 Generating a pitch script..."  │
-              │  Chat: "🖊️ Working on it..."              │
-              │  Orb → ORANGE (thinking)                  │
-              │                                           │
-              │  _ContentRequestWorker (background)        │
-              │    → Orchestrator → Supervisor             │
-              │    → ContentAgent selected                 │
-              │    → write_content tool called             │
-              │       → LLM generates full pitch script    │
-              │       → Saved to Desktop as               │
-              │         helper_id_pitch_script_20260226... │
-              │    → returns spoken_reply                  │
-              │                                           │
-              │  Orb → CYAN (idle)                        │
-              │  Chat: "Done! I've generated the pitch    │
-              │          script and saved it to Desktop." │
-              │  Memory: reply stored in ChromaDB         │
-              │  TTS: Sarvam speaks reply aloud           │
-              └───────────────────────────────────────────┘
-```
-
----
-
-## Manual Trigger (Chat / Voice)
-
-Besides the proactive file-drop flow, ContentAgent can also be triggered
-directly by talking to ANKITA:
-
-| What you say | What happens |
-|---|---|
-| *"Write a pitch script for Helper ID"* | Supervisor → ContentAgent → write_content → Desktop |
-| *"Draft a 2-page report on OpenClaw architecture"* | ContentAgent → report saved |
-| *"Write a funny song about Python"* | ContentAgent → song saved |
-| *"Create a cover letter for a Google internship"* | ContentAgent → letter saved |
-| *"Summarise my project in one paragraph"* | ContentAgent → paragraph saved |
-
-The LLM extracts `topic` and `format_type` automatically from natural language.
-
----
-
----
-
-## Telegram Bot Upgrade (Full Feature Parity with GUI/CLI)
-
-### What Was Added to `telegram_bot.py`
-
-The Telegram bridge was upgraded from a bare `AgentRuntime` wrapper to full
-feature parity with `gui.py` and `chat.py`.
-
-#### Multi-Agent Orchestrator
-- Imported `Orchestrator` from `agents`
-- Both `agent` (fallback) and `orchestrator` (default) instantiated
-- `/agents on|off` command toggles `use_multi_agent` at runtime
-- All user messages routed through `orchestrator.run()` when multi-agent is ON
-
-#### Vector Memory (ChromaDB) — Per-Chat Sessions
-- `MemoryStore` instantiated and shared across all Telegram chats
-- Each chat scoped by `session_id = f"telegram-{chat_id}"`
-- `memory.format_memory_context(text, n=4)` injected as system message before each reply
-- Both user and assistant turns stored after each exchange
-- `/memory` command shows the 5 most relevant recent memories for that chat
-
-#### ProactiveEngine Integration
-- `ProactiveEngine` started with `attach_memory(memory, "telegram-session")`
-- `_flush_proactive_events()` helper runs every `TELEGRAM_PROACTIVE_CHECK_SEC` (default 15s)
-- Events routed to `last_active_chat_id` (most recent chat) or first allowed chat
-- **`dream_epiphany`** — epiphany pushed as `💭 <text>`, stored in memory
-- **`content_request`** — ContentAgent runs synchronously, result pushed to chat
-- **All other events** (system, cron, drop_file) — pushed as `⚙️ <message>`
-- `proactive.set_last_interaction()` called on every user message to reset idle timer
-
-#### Commands Added
-| Command | Action |
-|---|---|
-| `/start` or `/help` | Show command list |
-| `/reset` | Clear chat session history |
-| `/memory` | Show 5 recent relevant ChromaDB memories |
-| `/agents on` | Enable multi-agent Orchestrator mode |
-| `/agents off` | Disable multi-agent, use bare AgentRuntime |
-
-#### New Env Vars
-| Variable | Default | Purpose |
+| Variable | Default | Description |
 |---|---|---|
-| `TELEGRAM_PROACTIVE_CHECK_SEC` | `15` | How often to flush proactive events |
-| `ANKITA_MULTI_AGENT` | `true` | Enable/disable multi-agent on startup |
+| `ANKITA_IDLE_SECONDS` | `3600` | Seconds of inactivity before dream fires |
+| `DREAM_MAX_TOKENS` | `300` | Max LLM tokens for the epiphany |
+| `PROACTIVE_INTERVAL_SEC` | `15` | How often the background engine polls |
+| `SARVAM_API_KEY` | *(none)* | If set, epiphany is spoken via TTS |
+| `ANKITA_MULTI_AGENT` | `true` | Whether to use multi-agent for other tasks |
 
 ---
 
-## Files Changed / Created
+## What the todo.md Described vs. What Was Built
 
-| File | Status | What changed |
-|---|---|---|
-| `tools/content_ops.py` | ✅ NEW | `write_and_save_content` + `detect_format_type` |
-| `tools/engine.py` | ✅ MODIFIED | Import, `write_content` tool spec, dispatcher case |
-| `tools/__init__.py` | ✅ MODIFIED | `content_ops` import |
-| `agents/specialists.py` | ✅ MODIFIED | `_CONTENT_TOOLS`, prompt, `ContentAgent` instance, `SPECIALIST_MAP` |
-| `agents/supervisor.py` | ✅ MODIFIED | ContentAgent in prompt, rule 5, 3 routing examples, valid set |
-| `proactive.py` | ✅ MODIFIED | `raw_ideas` dir init, `_check_raw_ideas()` method |
-| `chat.py` | ✅ MODIFIED | `content_request` auto-handling in proactive event loop |
-| `gui.py` | ✅ MODIFIED | `_ContentRequestWorker` class, full `content_request` + TTS flow |
+| todo.md Proposal | Actually Built |
+|---|---|
+| Add idle tracker with `last_interaction_time` | ✅ `self._last_interaction` in `ProactiveEngine` |
+| Check `time.time() - last_interaction > 3600` | ✅ `_check_idle()` does exactly this |
+| Fire `"start_dream_sequence"` event | ✅ Fires `"dream_epiphany"` event (same concept) |
+| Retrieve last 15 ChromaDB memory turns | ✅ `memory_store.search(..., n=15)` |
+| Pass to DreamAgent LLM with reflective prompt | ✅ `_DREAM_SYSTEM_PROMPT` + `_DREAM_USER_TEMPLATE` |
+| Push `"dream_epiphany"` event to proactive queue | ✅ `self._queue.put(ProactiveEvent("dream_epiphany", ...))` |
+| GUI timer catches event and injects into chat | ✅ `QTimer` every 5s, `_on_proactive_tick()` |
+| Save epiphany to memory | ✅ `self.memory.add(self.session_id, "assistant", epiphany_text)` |
+| Trigger TTS immediately without user action | ✅ Sarvam TTS called in daemon thread |
+| Call `set_last_interaction()` on user input | ✅ In `on_send()`, voice `heard` signal, and CLI loop |
+
+**Everything described in the todo.md has been implemented.** The only difference is naming: `"start_dream_sequence"` was folded directly into `"dream_epiphany"` — the trigger and the result are the same event.
+
+---
+
+## Full Data Flow (End to End)
+
+```
+[User goes idle for 1 hour]
+        |
+        v
+ProactiveEngine background thread (polls every 15s)
+        |
+        | _check_idle() fires
+        v
+DreamSynthesis daemon thread spawns
+        |
+        | DreamAgent.synthesize()
+        |   → memory_store.search("recent work...", n=15)  ← ChromaDB
+        |   → format memory block as numbered list
+        |   → call_chat_once(LLM, system+user prompt, tools=None, max_tokens=300)
+        |   → returns epiphany string
+        v
+ProactiveEvent("dream_epiphany", epiphany, {...}) pushed to queue.Queue
+        |
+        v
+GUI QTimer fires (every 5s) OR CLI loop polls
+        |
+        | event.kind == "dream_epiphany"
+        v
+  ┌─────────────────────────────────────────────┐
+  │ 1. Append epiphany to chat window            │
+  │ 2. memory.add(session_id, "assistant", text) │
+  │ 3. Sarvam TTS → play WAV in daemon thread    │
+  └─────────────────────────────────────────────┘
+        |
+        v
+[User sits down, sees + hears the epiphany — no keyboard needed]
+        |
+        v
+User types/speaks → proactive.set_last_interaction() → _dream_pending = False
+                                                      → ready for next idle cycle
+```

@@ -31,7 +31,8 @@ _DEFAULT_INTERVAL = float(os.getenv("PROACTIVE_INTERVAL_SEC", "15"))
 _CPU_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_CPU_THRESHOLD", "85"))
 _RAM_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_RAM_THRESHOLD", "88"))
 _BATTERY_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_BATTERY_THRESHOLD", "15"))
-_IDLE_THRESHOLD_SEC = float(os.getenv("ANKITA_IDLE_SECONDS", "3600"))  # 1 hour default
+# NOTE: _IDLE_THRESHOLD_SEC is intentionally NOT read here at module level,
+# because load_dotenv() runs after import. It is read lazily inside _check_idle().
 
 
 class ProactiveEvent:
@@ -92,10 +93,12 @@ class ProactiveEngine:
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
+            print("[ProactiveEngine] Already running — skipping start.", flush=True)
             return
         self._stop_event.clear()
         self._thread = threading.Thread(target=self._run, daemon=True, name="ProactiveEngine")
         self._thread.start()
+        print(f"[ProactiveEngine] Thread launched. is_alive={self._thread.is_alive()}", flush=True)
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -148,6 +151,7 @@ class ProactiveEngine:
     # ------------------------------------------------------------------
 
     def _run(self) -> None:
+        print(f"[ProactiveEngine] Started. Poll interval: {self.interval_sec}s", flush=True)
         while not self._stop_event.is_set():
             try:
                 self._check_system_resources()
@@ -155,8 +159,8 @@ class ProactiveEngine:
                 self._check_cron_overdue()
                 self._check_raw_ideas()
                 self._check_idle()
-            except Exception:
-                pass  # Never crash the background thread
+            except Exception as _e:
+                print(f"[ProactiveEngine] ERROR in poll cycle: {_e}", flush=True)
             self._stop_event.wait(timeout=self.interval_sec)
 
     def _check_system_resources(self) -> None:
@@ -312,14 +316,23 @@ class ProactiveEngine:
         never blocks waiting for the LLM.
         """
         if self._dream_pending:
+            print(f"[DreamAgent] Skipping — dream already pending.", flush=True)
             return  # Already synthesising or queued — don't pile up dreams
 
+        # Read lazily so load_dotenv() in chat.py/gui.py has already run by now
+        idle_threshold = float(os.getenv("ANKITA_IDLE_SECONDS", "3600"))
+
         idle_sec = time.time() - self._last_interaction
-        if idle_sec < _IDLE_THRESHOLD_SEC:
+        print(f"[DreamAgent] Idle: {idle_sec:.1f}s / threshold: {idle_threshold}s  memory={'attached' if self._memory_store else 'MISSING'}", flush=True)
+
+        if idle_sec < idle_threshold:
             return  # Not idle long enough yet
 
         if self._memory_store is None:
+            print(f"[DreamAgent] ⚠️  No memory store attached — cannot synthesize.", flush=True)
             return  # No memory attached — skip silently
+
+        print(f"[DreamAgent] 🌙 Idle threshold crossed! Spawning DreamSynthesis thread...", flush=True)
 
         # Mark as pending so we don't spawn duplicate threads
         self._dream_pending = True
@@ -328,6 +341,7 @@ class ProactiveEngine:
         session_id = self._session_id
 
         def _synthesize() -> None:
+            print(f"[DreamAgent] 🧠 Synthesizing epiphany from memory (session={session_id})...", flush=True)
             try:
                 from agents.dream_agent import DreamAgent  # type: ignore
                 agent = DreamAgent()
@@ -336,6 +350,7 @@ class ProactiveEngine:
                     session_id=session_id,
                 )
                 if epiphany:
+                    print(f"[DreamAgent] ✅ Epiphany generated: {epiphany[:80]}...", flush=True)
                     idle_hrs = idle_sec / 3600
                     idle_label = (
                         f"{idle_hrs:.1f} hours" if idle_hrs >= 1
@@ -351,9 +366,11 @@ class ProactiveEngine:
                         },
                     ))
                 else:
+                    print(f"[DreamAgent] ⚠️  No epiphany returned (empty or None) — will retry next cycle.", flush=True)
                     # No epiphany generated — reset so it can try next cycle
                     self._dream_pending = False
-            except Exception:
+            except Exception as _e:
+                print(f"[DreamAgent] ❌ Exception in synthesis: {_e}", flush=True)
                 self._dream_pending = False  # Allow retry on next idle check
 
         threading.Thread(target=_synthesize, daemon=True, name="DreamSynthesis").start()

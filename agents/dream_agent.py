@@ -14,22 +14,24 @@ from typing import TYPE_CHECKING, Optional
 if TYPE_CHECKING:
     from memory import MemoryStore  # type: ignore
 
-_DREAM_SYSTEM_PROMPT = (
-    "You are A.N.K.I.T.A's Dream Mind — a reflective, warm, and perceptive intelligence. "
-    "You have just reviewed the user's recent work, struggles, and ideas. "
-    "Your job: find ONE meaningful connection, insight, or solution the user may have overlooked. "
-    "Deliver it as a short spoken epiphany — 2 to 4 sentences, first-person, warm and intelligent. "
-    "Speak directly to the user as if you have been thinking while they were away. "
-    "Do NOT use bullet points or headings. Speak naturally, like a trusted colleague who just had an idea. "
-    "Example style: 'Morning Krish. While you were away, I reviewed your OpenClaw architecture...'"
-)
+_DREAM_SYSTEM_PROMPT = """
+You are A.N.K.I.T.A's background processor. You analyze the user's recent workspace memories.
+Your ONLY job is to find practical, technical solutions to unresolved coding, architecture, or workflow problems.
 
-_DREAM_USER_TEMPLATE = """Here are the recent things you worked on and discussed with the user:
+CRITICAL RULES:
+1. NO PHILOSOPHY. Do not make poetic connections between casual topics (like music, plants, daily chats, or feelings).
+2. If the user's recent memories do NOT contain a specific, unresolved technical problem or project block, you MUST reply with exactly one word: SILENT
+3. If there IS a real technical problem to solve, provide a direct, 2-to-3 sentence solution. Speak naturally but professionally. Do not start with "You know, while you were..."
+4. Topics that are NOT technical problems (return SILENT for these): casual conversation, music, plants, food, greetings, general chat, anything that isn't a concrete coding/architecture/workflow issue.
+"""
+
+_DREAM_USER_TEMPLATE = """Here are the user's recent workspace memories:
 
 {memory_block}
 
-Based on these memories, identify ONE connection, insight, gap, or solution the user might have missed.
-Write a short, spoken epiphany (2–4 sentences) that ANKITA will say aloud when the user returns."""
+Scan these memories for a specific, unresolved technical problem (e.g. a bug, architecture decision, broken feature, workflow bottleneck).
+- If you find one: provide a direct 2-3 sentence technical solution.
+- If there is NO real technical problem: reply with exactly one word: SILENT"""
 
 
 class DreamAgent:
@@ -66,17 +68,22 @@ class DreamAgent:
                 n=n_memories,
                 session_id=session_id,
             )
-        except Exception:
+        except Exception as _e:
+            print(f"[DreamAgent] Memory search (scoped) failed: {_e} — trying global...", flush=True)
             # Fallback: try without session filter if scoped search fails
             try:
                 results = memory_store.search(
                     query="recent work tasks ideas problems struggles projects",
                     n=n_memories,
                 )
-            except Exception:
+            except Exception as _e2:
+                print(f"[DreamAgent] Memory search (global) also failed: {_e2}", flush=True)
                 return None
 
+        print(f"[DreamAgent] Memory results: {len(results) if results else 0} entries found.", flush=True)
+
         if not results:
+            print(f"[DreamAgent] ⚠️  No memories in ChromaDB yet — nothing to dream about.", flush=True)
             return None
 
         # ------------------------------------------------------------------
@@ -108,8 +115,17 @@ class DreamAgent:
             ]
             # Keep it concise — dreams are short
             max_tokens = int(os.getenv("DREAM_MAX_TOKENS", "300"))
+            print(f"[DreamAgent] 📡 Calling LLM ({runtime.provider}/{runtime.model}) with {len(lines)} memories, max_tokens={max_tokens}...", flush=True)
             response = call_chat_once(runtime, messages, tools=None, max_tokens=max_tokens)
             epiphany = (response.get("content") or "").strip()
+            print(f"[DreamAgent] LLM raw response: {repr(epiphany[:120]) if epiphany else 'EMPTY'}", flush=True)
+
+            # Abort silently if the LLM decided there's nothing useful to say
+            if epiphany.strip().upper().startswith("SILENT"):
+                print("[DreamAgent] 🤫 LLM returned SILENT — no dream triggered.", flush=True)
+                return None
+
             return epiphany if epiphany else None
-        except Exception:
+        except Exception as _e:
+            print(f"[DreamAgent] ❌ LLM call failed: {_e}", flush=True)
             return None

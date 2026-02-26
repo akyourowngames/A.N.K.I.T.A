@@ -42,10 +42,12 @@ class MemoryStore:
         self._col: Any = None
 
         if not self.enabled:
+            print(f"[MemoryStore] ⚠️  ChromaDB not installed — memory disabled.", flush=True)
             return
 
         memory_dir = workspace_root / ".ankita" / "memory"
         memory_dir.mkdir(parents=True, exist_ok=True)
+        print(f"[MemoryStore] Initializing ChromaDB at {memory_dir}", flush=True)
 
         try:
             self._client = chromadb.PersistentClient(
@@ -56,13 +58,17 @@ class MemoryStore:
                 name=collection_name,
                 metadata={"hnsw:space": "cosine"},
             )
+            print(f"[MemoryStore] ✅ ChromaDB ready. Collection '{collection_name}' has {self._col.count()} entries.", flush=True)
         except Exception as err:
-            print(f"[MemoryStore] ChromaDB init failed: {err}")
+            print(f"[MemoryStore] ❌ ChromaDB init failed: {err}", flush=True)
             self.enabled = False
 
     def add(self, session_id: str, role: str, text: str) -> None:
         """Embed and store a single conversation turn."""
-        if not self.enabled or not text.strip():
+        if not self.enabled:
+            print(f"[MemoryStore] add() skipped — memory disabled.", flush=True)
+            return
+        if not text.strip():
             return
         ts = time.time()
         doc_id = _short_id(text, ts)
@@ -72,8 +78,9 @@ class MemoryStore:
                 ids=[doc_id],
                 metadatas=[{"session": session_id, "role": role, "ts": ts}],
             )
-        except Exception:
-            pass  # silent — memory is best-effort
+            print(f"[MemoryStore] ✅ Saved [{role}] to session '{session_id}': {text[:60]}...", flush=True)
+        except Exception as _e:
+            print(f"[MemoryStore] ❌ add() failed: {_e}", flush=True)
 
     def search(self, query: str, n: int = 5, session_id: Optional[str] = None) -> List[Dict[str, Any]]:
         """Return top-N semantically similar past turns."""
