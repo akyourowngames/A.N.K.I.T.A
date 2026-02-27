@@ -179,9 +179,10 @@ class WhatsAppBridge:
             self._playwright = pw
 
             if self.use_chrome:
-                # Hijack real Chrome — use its existing user data dir so WhatsApp
-                # Web is already logged in (no QR scan needed).
-                import platform
+                # Chrome hijack mode — copy the Chrome profile into a temp Playwright
+                # profile dir so Playwright has full control without fighting Chrome's
+                # own process lock. This is the most reliable approach.
+                import platform, shutil
                 if platform.system() == "Windows":
                     chrome_user_data = Path(os.path.expandvars(
                         r"%LOCALAPPDATA%\Google\Chrome\User Data"
@@ -191,17 +192,35 @@ class WhatsAppBridge:
                 else:
                     chrome_user_data = Path.home() / ".config" / "google-chrome"
 
-                print(f"[WhatsApp] Hijacking real Chrome at: {chrome_user_data}")
-                print(f"[WhatsApp] Profile: {self.chrome_profile}")
+                src_profile = chrome_user_data / self.chrome_profile
+                pw_profile_dir = self.session_dir / f"pw_chrome_{self.chrome_profile}"
+
+                print(f"[WhatsApp] Chrome profile source: {src_profile}")
+                print(f"[WhatsApp] Copying profile to Playwright session dir (first time may take 30s)...")
+
+                if not pw_profile_dir.exists():
+                    pw_profile_dir.mkdir(parents=True, exist_ok=True)
+                    # Copy only essential subdirs (cookies, local storage, cache is skipped)
+                    for subdir in ["Cookies", "Local Storage", "Session Storage",
+                                   "IndexedDB", "Local Extension Settings"]:
+                        src = src_profile / subdir
+                        dst = pw_profile_dir / subdir
+                        if src.exists():
+                            try:
+                                shutil.copytree(str(src), str(dst))
+                                print(f"[WhatsApp]   Copied: {subdir}")
+                            except Exception as copy_err:
+                                print(f"[WhatsApp]   Skipped {subdir}: {copy_err}")
+                    print("[WhatsApp] Profile copy complete.")
+                else:
+                    print("[WhatsApp] Using existing copied profile.")
+
                 self._browser = pw.chromium.launch_persistent_context(
-                    user_data_dir=str(chrome_user_data),
-                    channel="chrome",                # Use real Chrome binary
+                    user_data_dir=str(pw_profile_dir),
+                    channel="chrome",
                     headless=self.headless,
-                    args=[
-                        f"--profile-directory={self.chrome_profile}",
-                        "--no-first-run",
-                        "--no-default-browser-check",
-                    ],
+                    args=["--no-first-run", "--no-default-browser-check",
+                          "--disable-extensions-except=", "--no-sandbox"],
                     viewport={"width": 1280, "height": 800},
                 )
             else:
@@ -212,37 +231,44 @@ class WhatsAppBridge:
                     args=["--no-sandbox", "--disable-dev-shm-usage"],
                     viewport={"width": 1280, "height": 800},
                 )
-            # Grab the steering wheel — explicitly get or create the active page
-            print("[WhatsApp] Context launched. Grabbing page...")
-            pages = self._browser.pages
-            if pages:
-                # Prefer a page already at WhatsApp, otherwise use the first tab
-                wa_pages = [p for p in pages if "web.whatsapp.com" in (p.url or "")]
-                self._page = wa_pages[0] if wa_pages else pages[0]
-            else:
-                self._page = self._browser.new_page()
 
-            # Always force-navigate to WhatsApp Web so we're never stuck on about:blank
-            current_url = self._page.url or ""
-            if "web.whatsapp.com" not in current_url:
-                print("[WhatsApp] Navigating to web.whatsapp.com...")
-                self._page.goto(
-                    "https://web.whatsapp.com",
-                    wait_until="domcontentloaded",
-                    timeout=60_000,
-                )
-                print("[WhatsApp] Successfully loaded WhatsApp Web!")
-            else:
-                print(f"[WhatsApp] Already on WhatsApp Web ({current_url[:60]})")
+            # ------------------------------------------------------------------
+            # Grab the steering wheel — always open a fresh tab and navigate
+            # ------------------------------------------------------------------
+            print("[WhatsApp] Context launched. Opening WhatsApp Web...")
+            time.sleep(1.5)
 
-            # Wait for WhatsApp to fully load (chat list visible = logged in)
-            print("[WhatsApp] Waiting for WhatsApp to load (up to 90s)...")
+            # Open a fresh page — avoids restored tabs from previous sessions
+            self._page = self._browser.new_page()
+
+            # Navigate with retries
+            for attempt in range(1, 4):
+                try:
+                    print(f"[WhatsApp] Navigation attempt {attempt}/3...")
+                    self._page.goto(
+                        "https://web.whatsapp.com",
+                        wait_until="domcontentloaded",
+                        timeout=45_000,
+                    )
+                    print(f"[WhatsApp] ✅ Navigated! URL: {self._page.url}")
+                    break
+                except Exception as nav_err:
+                    print(f"[WhatsApp] Attempt {attempt} failed: {nav_err}")
+                    if attempt < 3:
+                        time.sleep(3)
+                    else:
+                        print("[WhatsApp] ❌ All navigation attempts failed.")
+
+            # Wait for WhatsApp chat list (= fully logged in)
+            print("[WhatsApp] Waiting for chat list (up to 120s)...")
             try:
-                self._page.wait_for_selector(SEL_CHAT_LIST, timeout=90_000)
-                print("[WhatsApp] ✅ WhatsApp loaded successfully.")
+                self._page.wait_for_selector(SEL_CHAT_LIST, timeout=120_000)
+                print("[WhatsApp] ✅ WhatsApp loaded! Chats are visible.")
             except PWTimeout:
-                print("[WhatsApp] ⚠️  Timed out waiting for chat list. Are you logged in?")
-                print("[WhatsApp]    If you see a QR code, scan it with your phone.")
+                print("[WhatsApp] ⚠️  Chat list not found within 120s.")
+                print(f"[WhatsApp]    Current URL: {self._page.url}")
+                print("[WhatsApp]    If you see a QR code — scan it with your phone.")
+                print("[WhatsApp]    Continuing poll loop anyway...")
 
             # Start the poll loop
             while not self._stop_event.is_set():
