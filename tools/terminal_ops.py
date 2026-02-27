@@ -403,21 +403,67 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
         }
 
 
+
+# Process names that must NEVER be killed — doing so destroys the Windows UI
+# or the OS itself (blank screen / BSOD territory).
+_BLOCKED_PROCESS_NAMES: frozenset = frozenset({
+    # Windows shell + UI
+    "explorer", "explorer.exe",
+    # Core OS / session management
+    "csrss", "csrss.exe",
+    "wininit", "wininit.exe",
+    "winlogon", "winlogon.exe",
+    "services", "services.exe",
+    "lsass", "lsass.exe",
+    "svchost", "svchost.exe",
+    "smss", "smss.exe",
+    "system", "system idle process",
+    # Wildcards / empty strings — nuclear buttons
+    "*", "", " ",
+    # ANKITA's own process
+    "python", "python.exe", "pythonw", "pythonw.exe",
+})
+
+
+def _is_blocked(name: str) -> bool:
+    """Return True if the process name is on the protected blocklist."""
+    stripped = name.strip().lower()
+    base = Path(stripped).stem  # e.g. "explorer.exe" → "explorer"
+    return stripped in _BLOCKED_PROCESS_NAMES or base in _BLOCKED_PROCESS_NAMES
+
+
 def terminate_app(
     app: str,
     force: bool = False,
 ) -> Dict[str, Any]:
     target = str(app or "").strip()
-    if not target:
-        raise ValueError("app is required")
+    if not target or target in ("*", ""):
+        raise ValueError("app is required — empty or wildcard target is not allowed")
+
+    # NUCLEAR BUG GUARD: block dangerous targets before any command is built
+    if _is_blocked(target):
+        raise PermissionError(
+            f"Refused to terminate '{target}' — this process is protected. "
+            f"Killing it would destroy the Windows UI or the OS session."
+        )
+
     candidates = _candidate_app_names(target)
     process_names: List[str] = []
     for c in candidates:
         base = Path(c).name
         if not base.lower().endswith(".exe"):
             base = f"{base}.exe"
+        # Double-check each resolved candidate against the blocklist
+        if _is_blocked(base):
+            continue  # Skip protected names silently
         if base not in process_names:
             process_names.append(base)
+
+    if not process_names:
+        raise PermissionError(
+            f"All resolved process names for '{target}' are on the protected list. "
+            f"Refusing to execute."
+        )
 
     if os.name == "nt":
         tried: List[str] = []
