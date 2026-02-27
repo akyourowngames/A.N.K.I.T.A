@@ -273,9 +273,19 @@ def build_runtime_from_env() -> LLMRuntime:
                 if not github_token:
                     github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
                 if not github_token:
+                    # Only do interactive device login as last resort
                     github_token = _github_device_login()
                     _save_cached_github_token(_github_auth_cache_path(), github_token)
-                token_payload = _exchange_github_to_copilot_token(github_token, _cache_path())
+                # Always delete stale copilot token so _exchange re-fetches if needed
+                cache = _cache_path()
+                existing = _load_cached_copilot_token(cache)
+                if existing is None and cache.exists():
+                    # Token file exists but is expired — delete it so exchange runs fresh
+                    try:
+                        cache.unlink()
+                    except Exception:
+                        pass
+                token_payload = _exchange_github_to_copilot_token(github_token, cache)
                 token = str(token_payload["token"])
         except Exception as err:
             print(f"Error: {err}")

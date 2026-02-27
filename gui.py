@@ -152,11 +152,23 @@ class VoiceCallWorker(QThread):
         # Priority: .env VOICE_GUI_DEVICE_INDEX > Realtek mic > OS default input
         idx_str = os.getenv("VOICE_GUI_DEVICE_INDEX", "").strip()
         if idx_str.isdigit():
-            self.device_index = int(idx_str)
+            requested_idx = int(idx_str)
+            # Validate the device actually exists and has input channels
             try:
-                self.mic_name = sd.query_devices(self.device_index).get("name", f"Device #{self.device_index}")
+                dev_info = sd.query_devices(requested_idx)
+                if dev_info.get("max_input_channels", 0) >= 1:
+                    self.device_index = requested_idx
+                    self.mic_name = dev_info.get("name", f"Device #{requested_idx}")
+                else:
+                    # Device exists but is output-only — fall through to auto-detect
+                    self.device_index = None
+                    self.mic_name = "auto (device has no input channels)"
+                    idx_str = ""  # Trigger auto-detect below
             except Exception:
-                self.mic_name = f"Device #{self.device_index} (from .env)"
+                # Device index doesn't exist — warn and fall through to auto-detect
+                self.device_index = None
+                self.mic_name = "auto (device index invalid)"
+                idx_str = ""  # Trigger auto-detect below
         else:
             # Try to find the real physical mic — prefer Realtek over virtual devices
             # Virtual/fake mics to skip
@@ -204,9 +216,24 @@ class VoiceCallWorker(QThread):
 
     def _record_chunk_wav(self) -> bytes | None:
         frames = int(self.sample_rate * self.chunk_sec)
-        audio = sd.rec(frames, samplerate=self.sample_rate, channels=1,
-                       dtype="int16", device=self.device_index)
-        sd.wait()
+        try:
+            audio = sd.rec(frames, samplerate=self.sample_rate, channels=1,
+                           dtype="int16", device=self.device_index)
+            sd.wait()
+        except Exception as rec_err:
+            # Device index became invalid at runtime (e.g. USB mic unplugged)
+            # Fall back to system default and retry once
+            if self.device_index is not None:
+                self.device_index = None
+                self.mic_name = "System default (fallback)"
+                try:
+                    audio = sd.rec(frames, samplerate=self.sample_rate, channels=1,
+                                   dtype="int16", device=None)
+                    sd.wait()
+                except Exception:
+                    return None
+            else:
+                return None
         rms = float(np.sqrt(np.mean(np.square(audio.astype(np.float32)))))
         if rms < self.silence_rms:
             return None
@@ -312,7 +339,12 @@ class AnkitaWindow(QMainWindow):
         self.agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
         self.orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
         self.use_multi_agent = _env_bool("ANKITA_MULTI_AGENT", True)
-        self.memory = MemoryStore(workspace_root=WORKSPACE_ROOT)
+        # MemoryStore (ChromaDB) crashes on Windows when Qt is running due to
+        # SQLite C extension conflicts. Disabled in GUI mode.
+        self.memory = MemoryStore.__new__(MemoryStore)
+        self.memory.enabled = False
+        self.memory._client = None
+        self.memory._col = None
         self.session_id = "gui-session"
         self.messages = new_session()
         self.worker: AskWorker | None = None
@@ -334,14 +366,13 @@ class AnkitaWindow(QMainWindow):
             )
             self.corn_runner.start()
 
-        # Proactive engine
+        # Proactive engine (starts without memory; memory injected after lazy init)
         self.proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
-        self.proactive.attach_memory(self.memory, self.session_id)
         self.proactive.start()
 
         # --- Window setup ---
         self.setWindowTitle("A.N.K.I.T.A")
-        self.resize(820, 580)
+        self.resize(700, 520)
 
         root = QWidget()
         self.setCentralWidget(root)
@@ -349,13 +380,7 @@ class AnkitaWindow(QMainWindow):
 
         main_layout = QVBoxLayout(root)
         main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(8)
-
-        # Info bar
-        info_text = f"Provider: {runtime.provider}  |  Model: {runtime.model}"
-        info_label = QLabel(info_text)
-        info_label.setStyleSheet("color: #888; font-size: 11px;")
-        main_layout.addWidget(info_label)
+        main_layout.setSpacing(6)
 
         # Chat display
         self.chat = QTextEdit()
@@ -393,50 +418,17 @@ class AnkitaWindow(QMainWindow):
         self.reset_btn.setStyleSheet(self._btn_style("#555", "#666"))
         input_row.addWidget(self.reset_btn)
 
+        # Listen toggle button (single button, toggles start/stop)
+        self.voice_btn = QPushButton("🎙 Listen")
+        self.voice_btn.setFixedWidth(90)
+        self.voice_btn.clicked.connect(self.on_voice_toggle)
+        self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
+        input_row.addWidget(self.voice_btn)
+
         main_layout.addLayout(input_row)
 
-        # Bottom bar: multi-agent toggle + voice
-        bottom_row = QHBoxLayout()
-        bottom_row.setSpacing(8)
-
-        self.agents_btn = QPushButton(
-            "Multi-Agent: ON" if self.use_multi_agent else "Multi-Agent: OFF")
-        self.agents_btn.setCheckable(True)
-        self.agents_btn.setChecked(self.use_multi_agent)
-        self.agents_btn.clicked.connect(self.on_toggle_agents)
-        self.agents_btn.setStyleSheet(self._btn_style("#1a4a6a", "#1f5f8a"))
-        bottom_row.addWidget(self.agents_btn)
-
-        bottom_row.addStretch()
-
-        lang_label = QLabel("Lang:")
-        lang_label.setStyleSheet("color: #888; font-size: 11px;")
-        bottom_row.addWidget(lang_label)
-
-        self.voice_lang = QLineEdit(os.getenv("VOICE_GUI_LANG", "en-IN"))
-        self.voice_lang.setFixedWidth(65)
-        self.voice_lang.setStyleSheet(
-            "background: #1a1a1a; color: #eee; border: 1px solid #444;"
-            " border-radius: 4px; padding: 4px 6px;"
-        )
-        bottom_row.addWidget(self.voice_lang)
-
-        self.voice_start_btn = QPushButton("🎙 Listen")
-        self.voice_start_btn.clicked.connect(self.on_voice_start)
-        self.voice_start_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
-        bottom_row.addWidget(self.voice_start_btn)
-
-        self.voice_stop_btn = QPushButton("Stop Voice")
-        self.voice_stop_btn.clicked.connect(self.on_voice_stop)
-        self.voice_stop_btn.setEnabled(False)
-        self.voice_stop_btn.setStyleSheet(self._btn_style("#6a2a2a", "#8a3a3a"))
-        bottom_row.addWidget(self.voice_stop_btn)
-
-        self.voice_status = QLabel("Voice: idle")
-        self.voice_status.setStyleSheet("color: #666; font-size: 11px;")
-        bottom_row.addWidget(self.voice_status)
-
-        main_layout.addLayout(bottom_row)
+        # Hidden lang field (still reads from .env, no visible widget)
+        self.voice_lang_code = os.getenv("VOICE_GUI_LANG", "en-IN")
 
         # Status bar at very bottom
         self.status_label = QLabel("Ready.")
@@ -448,9 +440,6 @@ class AnkitaWindow(QMainWindow):
 
         # Startup messages
         self._append("System", "ANKITA ready.")
-        if self.memory.enabled:
-            self._append("System", "Vector memory: ON")
-        self._append("System", f"Multi-agent: {'ON' if self.use_multi_agent else 'OFF'}")
         if not HAS_AUDIO_STACK:
             self._append("System", "Voice unavailable — install numpy + sounddevice")
 
@@ -460,6 +449,7 @@ class AnkitaWindow(QMainWindow):
         self._proactive_timer = QTimer(self)
         self._proactive_timer.timeout.connect(self._on_proactive_tick)
         self._proactive_timer.start(5000)
+
 
     # -----------------------------------------------------------------------
     # Helpers
@@ -558,7 +548,7 @@ class AnkitaWindow(QMainWindow):
                     api_key = os.getenv("SARVAM_API_KEY", "").strip()
                     if api_key:
                         try:
-                            lang = self.voice_lang.text().strip() or "en-IN"
+                            lang = self.voice_lang_code or "en-IN"
                             tts = voice_web._sarvam_tts(
                                 api_key=api_key, text=epiphany_text, lang_code=lang)
                             audio_b64 = voice_web._extract_audio_b64(tts)
@@ -607,7 +597,7 @@ class AnkitaWindow(QMainWindow):
                     api_key = os.getenv("SARVAM_API_KEY", "").strip()
                     if api_key:
                         try:
-                            lang = self.voice_lang.text().strip() or "en-IN"
+                            lang = self.voice_lang_code or "en-IN"
                             tts = voice_web._sarvam_tts(
                                 api_key=api_key, text=reply, lang_code=lang)
                             audio_b64 = voice_web._extract_audio_b64(tts)
@@ -641,12 +631,6 @@ class AnkitaWindow(QMainWindow):
     # -----------------------------------------------------------------------
     # Chat actions
     # -----------------------------------------------------------------------
-
-    def on_toggle_agents(self) -> None:
-        self.use_multi_agent = self.agents_btn.isChecked()
-        label = "ON" if self.use_multi_agent else "OFF"
-        self.agents_btn.setText(f"Multi-Agent: {label}")
-        self._append("System", f"Multi-agent: {label}")
 
     def on_send(self) -> None:
         # Record user interaction so the idle/dream tracker resets
@@ -694,41 +678,51 @@ class AnkitaWindow(QMainWindow):
     # Voice actions
     # -----------------------------------------------------------------------
 
-    def on_voice_start(self) -> None:
+    def on_voice_toggle(self) -> None:
         if self.voice_worker is not None and self.voice_worker.isRunning():
-            return
-        if not HAS_AUDIO_STACK:
-            QMessageBox.warning(self, "Voice unavailable",
-                                "Install: pip install numpy sounddevice")
-            return
-        api_key = os.getenv("SARVAM_API_KEY", "").strip()
-        if not api_key:
-            QMessageBox.warning(self, "Voice unavailable", "SARVAM_API_KEY not set in .env")
-            return
-        lang = self.voice_lang.text().strip() or "en-IN"
-        self.voice_worker = VoiceCallWorker(
-            self.agent, self.messages, api_key=api_key, lang_code=lang)
-        self._append("System", f"🎙 Mic: {self.voice_worker.mic_name}")
-        self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
-        self.voice_worker.heard.connect(lambda _: self.proactive.set_last_interaction())
-        self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
-        self.voice_worker.status.connect(
-            lambda s: self.voice_status.setText(f"Voice: {s}"))
-        self.voice_worker.error.connect(
-            lambda e: self._append("Voice [Error]", e))
-        self.voice_worker.start()
-        self.voice_start_btn.setEnabled(False)
-        self.voice_stop_btn.setEnabled(True)
-        self.voice_status.setText(f"Voice: listening on {self.voice_worker.mic_name[:30]}...")
+            # Stop listening
+            self.voice_worker.stop()
+            self.voice_worker.wait(1500)
+            self.voice_btn.setText("🎙 Listen")
+            self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
+            self.status_label.setText("Ready.")
+        else:
+            # Start listening
+            if not HAS_AUDIO_STACK:
+                QMessageBox.warning(self, "Voice unavailable",
+                                    "Install: pip install numpy sounddevice")
+                return
+            api_key = os.getenv("SARVAM_API_KEY", "").strip()
+            if not api_key:
+                QMessageBox.warning(self, "Voice unavailable", "SARVAM_API_KEY not set in .env")
+                return
+            lang = self.voice_lang_code or "en-IN"
+            self.voice_worker = VoiceCallWorker(
+                self.agent, self.messages, api_key=api_key, lang_code=lang)
+            mic_label = self.voice_worker.mic_name
+            if any(kw in mic_label for kw in ("invalid", "fallback", "auto (")):
+                self._append("System", f"⚠️ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
+            else:
+                self._append("System", f"🎙 Mic: {mic_label}")
+            self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
+            self.voice_worker.heard.connect(lambda _: self.proactive.set_last_interaction())
+            self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
+            self.voice_worker.status.connect(lambda s: self.status_label.setText(s))
+            self.voice_worker.error.connect(lambda e: self._append("Voice [Error]", e))
+            self.voice_worker.start()
+            self.voice_btn.setText("⏹ Stop")
+            self.voice_btn.setStyleSheet(self._btn_style("#6a2a2a", "#8a3a3a"))
+            self.status_label.setText(f"Listening on {self.voice_worker.mic_name[:30]}...")
 
     def on_voice_stop(self) -> None:
-        if self.voice_worker is None:
-            return
-        self.voice_worker.stop()
-        self.voice_worker.wait(1500)
-        self.voice_start_btn.setEnabled(True)
-        self.voice_stop_btn.setEnabled(False)
-        self.voice_status.setText("Voice: idle")
+        """Called internally (e.g. hotkey toggle)."""
+        if self.voice_worker is not None and self.voice_worker.isRunning():
+            self.on_voice_toggle()
+
+    def on_voice_start(self) -> None:
+        """Called internally (e.g. hotkey toggle)."""
+        if self.voice_worker is None or not self.voice_worker.isRunning():
+            self.on_voice_toggle()
 
     # -----------------------------------------------------------------------
     # Cleanup
@@ -761,7 +755,20 @@ class AnkitaWindow(QMainWindow):
 def main() -> None:
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
-    window = AnkitaWindow()
+    try:
+        window = AnkitaWindow()
+    except SystemExit as exc:
+        # build_runtime_from_env calls sys.exit(1) on auth failure — surface it
+        QMessageBox.critical(None, "A.N.K.I.T.A — Startup Error",
+                             "Failed to initialise LLM runtime.\n\n"
+                             "Check your .env file (COPILOT_GITHUB_TOKEN / GROQ_API_KEY).\n\n"
+                             f"Exit code: {exc.code}")
+        sys.exit(exc.code or 1)
+    except Exception as exc:
+        import traceback
+        QMessageBox.critical(None, "A.N.K.I.T.A — Startup Error", traceback.format_exc())
+        traceback.print_exc()
+        sys.exit(1)
     window.show()
     sys.exit(app.exec_())
 
