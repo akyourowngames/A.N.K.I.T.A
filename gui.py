@@ -173,8 +173,11 @@ class VoiceCallWorker(QThread):
             # Try to find the real physical mic — prefer Realtek over virtual devices
             # Virtual/fake mics to skip
             VIRTUAL_KEYWORDS = {"splitcam", "droidcam", "iriun", "virtual", "mapper",
-                                 "primary sound", "stereo mix", "midi", "output"}
-            PREFERRED_KEYWORDS = {"realtek", "microphone array", "array"}
+                                 "primary sound", "stereo mix", "midi", "output",
+                                 "loopback", "wave out mix"}
+            # Microsoft, Realtek, and Array mics are preferred over virtual/generic devices
+            PREFERRED_KEYWORDS = {"realtek", "microphone array", "array", "microsoft",
+                                   "hd audio", "usb audio", "headset", "built-in"}
             try:
                 all_devices = sd.query_devices()
                 best_idx = None

@@ -137,6 +137,57 @@ Behavior:
 - `/reset` command clears session for that chat
 - update offset persistence in `.ankita/telegram/update-offset.json`
 
+## 🎙 Changing the Microphone / Sound Device
+
+A.N.K.I.T.A auto-detects your microphone on startup, preferring real physical
+mics (Microsoft, Realtek, HD Audio, Headset) over virtual ones (SplitCam,
+DroidCam, Stereo Mix, etc.). If it picks the wrong mic, here's how to fix it.
+
+### Step 1 — List all available audio devices
+
+Run this in your terminal from the ANKITA folder:
+
+```powershell
+python -c "import sounddevice as sd; [print(f'{i:>3}: [{\"IN\" if d[\"max_input_channels\"]>0 else \"  \"}/{\"OUT\" if d[\"max_output_channels\"]>0 else \"   \"}] {d[\"name\"]}') for i, d in enumerate(sd.query_devices())]"
+```
+
+Example output:
+```
+  0: [IN /OUT] Microsoft Sound Mapper - Input
+  1: [IN /   ] Microphone Array (Realtek(R) Audio)
+  2: [IN /   ] Headset Microphone (USB Audio)
+  3: [   /OUT] Speakers (Realtek(R) Audio)
+ 27: [IN /   ] SplitCam Virtual Microphone
+```
+
+### Step 2 — Set the device index in `.env`
+
+Find the index number of the mic you want (e.g. `1` for Realtek above) and add
+it to your `.env` file:
+
+```env
+# Use device index 1 (Realtek Microphone Array)
+VOICE_GUI_DEVICE_INDEX=1
+```
+
+Restart ANKITA — it will use that specific device from now on.
+
+### Step 3 — Remove the setting to go back to auto-detect
+
+Delete or comment out the line in `.env`:
+
+```env
+# VOICE_GUI_DEVICE_INDEX=1
+```
+
+ANKITA will auto-detect again, preferring Microsoft/Realtek/HD Audio mics.
+
+> **Tip:** The GUI shows the active mic name in the status bar when you press
+> **🎙 Listen**. If it shows `⚠️ Mic fallback`, your configured index is
+> invalid — check the list above and update `.env`.
+
+---
+
 ## Tool Abilities (God Tier File Ops)
 - `list_files(path, max_entries)`
 - `read_file(path)`
