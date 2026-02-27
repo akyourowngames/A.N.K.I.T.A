@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import sys
+import threading
 import time
 from difflib import SequenceMatcher
 from pathlib import Path
@@ -66,7 +67,8 @@ def _search_with_ytdlp(query: str, max_results: int) -> List[Dict[str, Any]]:
         "--no-warnings",
         yq,
     ]
-    proc = subprocess.run(argv, capture_output=True, text=True, shell=False, check=False, timeout=45)
+    startup_timeout_sec = float(os.environ.get("FFPLAY_TIMEOUT", "5"))
+    proc = subprocess.run(argv, capture_output=True, text=True, shell=False, check=False, timeout=max(startup_timeout_sec, 45))
     if proc.returncode != 0:
         return []
     try:
@@ -229,7 +231,8 @@ def _build_player_command(url: str) -> Optional[List[str]]:
 
     if ffplay and ytdlp:
         if os.name == "nt":
-            cmd = f'& "{ytdlp}" -f bestaudio -o - "{url}" | & "{ffplay}" -nodisp -autoexit -loglevel error -i -'
+            # Fixed: PowerShell pipe doesn't use '& ' before the second command
+            cmd = f'& "{ytdlp}" -f bestaudio -o - "{url}" | "{ffplay}" -nodisp -autoexit -loglevel error -i -'
             return ["powershell", "-NoProfile", "-Command", cmd]
         cmd = f'"{ytdlp}" -f bestaudio -o - "{url}" | "{ffplay}" -nodisp -autoexit -loglevel error -i -'
         return ["/bin/sh", "-lc", cmd]
@@ -347,6 +350,9 @@ def _queue_path(workspace_root: Path) -> Path:
     return workspace_root / ".ankita" / "music" / "queue.json"
 
 
+_queue_lock = threading.Lock()
+
+
 def _load_queue(workspace_root: Path) -> List[Dict[str, Any]]:
     path = _queue_path(workspace_root)
     try:
@@ -359,7 +365,10 @@ def _load_queue(workspace_root: Path) -> List[Dict[str, Any]]:
 def _save_queue(workspace_root: Path, queue: List[Dict[str, Any]]) -> None:
     path = _queue_path(workspace_root)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(queue, ensure_ascii=True, indent=2), encoding="utf-8")
+    # Atomic write: write to temp file then rename to avoid partial reads
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(queue, ensure_ascii=True, indent=2), encoding="utf-8")
+    tmp.replace(path)
 
 
 def queue_music(workspace_root: Path, query: str) -> Dict[str, Any]:
@@ -372,16 +381,17 @@ def queue_music(workspace_root: Path, query: str) -> Dict[str, Any]:
     if not best or not bool(found.get("is_confident_match")):
         candidates = [str(r.get("title", "")) for r in found.get("results", [])[:3]]
         raise RuntimeError(f"Low confidence match. Top: {' | '.join(candidates)}")
-    queue = _load_queue(workspace_root)
-    entry = {
-        "query": q,
-        "title": str(best.get("title", "")),
-        "url": str(best.get("url", "")),
-        "score": float(best.get("score", 0.0)),
-        "engine": found.get("engine", ""),
-    }
-    queue.append(entry)
-    _save_queue(workspace_root, queue)
+    with _queue_lock:
+        queue = _load_queue(workspace_root)
+        entry = {
+            "query": q,
+            "title": str(best.get("title", "")),
+            "url": str(best.get("url", "")),
+            "score": float(best.get("score", 0.0)),
+            "engine": found.get("engine", ""),
+        }
+        queue.append(entry)
+        _save_queue(workspace_root, queue)
     return {
         "kind": "music_queue_add",
         "added": entry,

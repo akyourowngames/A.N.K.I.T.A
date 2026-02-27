@@ -371,6 +371,7 @@ class AnkitaWindow(QMainWindow):
 
         # Proactive engine (starts without memory; memory injected after lazy init)
         self.proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
+        self.proactive.attach_runtime(runtime)  # Required for Sentinel screen-watch to function
         self.proactive.start()
 
         # --- Window setup ---
@@ -534,6 +535,17 @@ class AnkitaWindow(QMainWindow):
 
     def _on_proactive_tick(self) -> None:
         for event in self.proactive.get_pending_events():
+
+            # ------------------------------------------------------------------
+            # Sentinel (idle screen-watch alert) — show with 👁️ prefix
+            # ------------------------------------------------------------------
+            if event.kind == "sentinel":
+                sentinel_text = event.data.get("text", event.message)
+                idle_label = event.data.get("idle_label", "a while")
+                if sentinel_text:
+                    self._append("👁️ Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
+                continue
+
             self._append("A.N.K.I.T.A", event.message)
 
             # ------------------------------------------------------------------

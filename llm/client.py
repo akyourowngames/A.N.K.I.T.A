@@ -19,7 +19,7 @@ GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 DEFAULT_COPILOT_MODEL = "gpt-4o"
-DEFAULT_MAX_TOKENS = 120
+DEFAULT_MAX_TOKENS = 2048  # 120 was far too low — tool call JSON alone can exceed 300 tokens
 _HTTP = requests.Session()
 
 
@@ -50,7 +50,7 @@ def _parse_max_tokens(value: str) -> Optional[int]:
         return DEFAULT_MAX_TOKENS
     if parsed <= 0:
         return None
-    return max(64, min(parsed, 2048))
+    return max(64, min(parsed, 8192))  # Raised cap: 2048 was too low for long tool-call chains
 
 
 def _env_first(*names: str) -> str:
@@ -312,6 +312,7 @@ def call_chat_with_image(
     prompt: str,
     image_b64: str,
     max_tokens: Optional[int] = None,
+    temperature: float = 0.0,
 ) -> str:
     """Send a single vision request to GPT-4o with an inline base64 image.
 
@@ -358,7 +359,7 @@ def call_chat_with_image(
     payload: Dict[str, Any] = {
         "model": runtime.model,
         "messages": [vision_message],
-        "temperature": 0.1,
+        "temperature": temperature,  # 0.0 for coordinate tasks (deterministic), 0.7 for descriptive
     }
     if isinstance(tokens, int) and tokens > 0:
         if runtime.provider == "copilot":
@@ -406,7 +407,35 @@ def call_chat_once(
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
 
-    response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
-    response.raise_for_status()
-    data = response.json()
-    return data["choices"][0]["message"]
+    # Configurable per-request timeout
+    request_timeout = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "45"))
+
+    # Exponential backoff with jitter for transient errors (429, 502, 503, 504)
+    _RETRYABLE = {429, 502, 503, 504}
+    max_retries = 3
+    for attempt in range(max_retries + 1):
+        try:
+            response = _HTTP.post(url, headers=headers, json=payload, timeout=request_timeout)
+            if response.status_code in _RETRYABLE and attempt < max_retries:
+                # Exponential backoff: 1s, 2s, 4s + jitter
+                delay = (2 ** attempt) + (hash(str(time.time())) % 100) / 100.0
+                retry_after = response.headers.get("Retry-After")
+                if retry_after:
+                    try:
+                        delay = max(delay, float(retry_after))
+                    except ValueError:
+                        pass
+                time.sleep(delay)
+                continue
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]
+        except requests.exceptions.Timeout:
+            if attempt < max_retries:
+                time.sleep(2 ** attempt)
+                continue
+            raise
+        except requests.HTTPError:
+            raise  # Don't retry non-retryable HTTP errors
+    # Should never reach here, but satisfy type checker
+    raise RuntimeError("call_chat_once: exhausted retries")

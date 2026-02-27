@@ -91,6 +91,10 @@ class ProactiveEngine:
         self._memory_store: Optional[Any] = None     # injected by caller after init
         self._session_id: str = "default"            # injected by caller
 
+        # Sentinel (Screen-watching idle alert) tracking
+        self._sentinel_triggered: bool = False       # True once sentinel fires; reset when user returns
+        self._runtime: Optional[Any] = None          # LLM runtime injected by caller
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             print("[ProactiveEngine] Already running — skipping start.", flush=True)
@@ -130,8 +134,20 @@ class ProactiveEngine:
             ts: epoch seconds — defaults to now if not provided.
         """
         self._last_interaction = ts if ts is not None else time.time()
-        # If the user is back, allow a fresh dream on the next idle period
+        # If the user is back, allow a fresh dream and sentinel on the next idle period
         self._dream_pending = False
+        self._sentinel_triggered = False
+
+    def attach_runtime(self, runtime: Any) -> None:
+        """
+        Inject the LLM runtime so the Sentinel can call the ScreenAgent.
+
+        Call this once after the runtime is built (in chat.py / gui.py).
+
+        Args:
+            runtime: The active LLMRuntime instance.
+        """
+        self._runtime = runtime
 
     def attach_memory(self, memory_store: Any, session_id: str = "default") -> None:
         """
@@ -159,6 +175,7 @@ class ProactiveEngine:
                 self._check_cron_overdue()
                 self._check_raw_ideas()
                 self._check_idle()
+                self._check_sentinel()
             except Exception as _e:
                 print(f"[ProactiveEngine] ERROR in poll cycle: {_e}", flush=True)
             self._stop_event.wait(timeout=self.interval_sec)
@@ -374,6 +391,134 @@ class ProactiveEngine:
                 self._dream_pending = False  # Allow retry on next idle check
 
         threading.Thread(target=_synthesize, daemon=True, name="DreamSynthesis").start()
+
+    def _check_sentinel(self) -> None:
+        """
+        Proactive Sentinel — watches the screen when the user is idle.
+
+        When the user hasn't touched the mouse/keyboard for SENTINEL_IDLE_SECONDS
+        (default 300 = 5 min), this method:
+          1. Captures the screen via the existing capture_screen() tool.
+          2. Runs the ScreenAgent with a SYSTEM ALERT prompt (vision-injected).
+          3. Pushes the agent's reply as a ProactiveEvent of kind 'sentinel'.
+          4. Sets _sentinel_triggered so it fires only ONCE per idle session.
+
+        The trigger resets when set_last_interaction() is called (user returns).
+
+        Requires:
+          - attach_runtime(runtime) must be called before starting the engine.
+          - mss and Pillow must be installed (for capture_screen).
+          - SENTINEL_IDLE_SECONDS env var (default 300).
+          - SENTINEL_ENABLED=false to disable (opt-out).
+        """
+        # Opt-out guard
+        if os.getenv("SENTINEL_ENABLED", "true").lower() == "false":
+            return
+
+        if self._sentinel_triggered:
+            # Check if user has returned (idle dropped below 5s → reset)
+            try:
+                from tools.idle_ops import get_idle_seconds  # type: ignore
+                if get_idle_seconds() < 5.0:
+                    print("[Sentinel] 👋 User returned. Resetting watch.", flush=True)
+                    self._sentinel_triggered = False
+            except Exception:
+                pass
+            return  # Already fired this idle session — don't fire again
+
+        if self._runtime is None:
+            return  # No runtime attached — can't call ScreenAgent
+
+        # Read threshold lazily (load_dotenv already ran by now)
+        sentinel_threshold = float(os.getenv("SENTINEL_IDLE_SECONDS", "300"))
+
+        # Use idle_ops for accurate OS-level idle time (mouse + keyboard)
+        try:
+            from tools.idle_ops import get_idle_seconds  # type: ignore
+            idle_sec = get_idle_seconds()
+        except Exception:
+            # Fallback: use internal last_interaction timestamp
+            idle_sec = time.time() - self._last_interaction
+
+        print(f"[Sentinel] Idle: {idle_sec:.1f}s / threshold: {sentinel_threshold}s", flush=True)
+
+        if idle_sec < sentinel_threshold:
+            return  # Not idle long enough yet
+
+        # Mark triggered BEFORE spawning thread to prevent duplicate fires
+        self._sentinel_triggered = True
+        runtime = self._runtime
+
+        def _sentinel_task() -> None:
+            print(f"[Sentinel] 🔍 User idle for {idle_sec:.0f}s — capturing screen...", flush=True)
+            try:
+                from tools.desktop_ops import capture_screen  # type: ignore
+                screen = capture_screen(monitor=1)
+
+                if not screen.get("ok"):
+                    print(f"[Sentinel] ❌ capture_screen failed: {screen.get('error')}", flush=True)
+                    self._sentinel_triggered = False
+                    return
+
+                b64 = screen.get("base64", "")
+                if not b64:
+                    self._sentinel_triggered = False
+                    return
+
+                # Build the SYSTEM ALERT prompt for ScreenAgent
+                idle_label = f"{idle_sec / 60:.0f} minutes" if idle_sec >= 60 else f"{idle_sec:.0f} seconds"
+                system_alert_prompt = (
+                    f"SYSTEM ALERT: The user has been idle for {idle_label}. "
+                    "Look at the attached screenshot of their screen. "
+                    "Identify what they are working on or where they are stuck. "
+                    "If you see an error, empty page, or obvious blocker — offer specific actionable help. "
+                    "Be brief (1-2 sentences), casual, and low-pressure. "
+                    "Do NOT ask generic questions like 'Can I help?' — be specific. "
+                    "Examples:\n"
+                    "  Good: 'Hey, I see a NameError on line 40 — want me to fix that?'\n"
+                    "  Good: 'Looks like your terminal is stuck. Want me to kill that process?'\n"
+                    "  Bad: 'Can I help you with something?'"
+                )
+
+                # Use call_chat_with_image directly (ScreenAgent specialist flow)
+                # This avoids a full orchestrator cycle for the sentinel
+                try:
+                    from llm.client import call_chat_with_image  # type: ignore
+                    reply = call_chat_with_image(
+                        runtime,
+                        system_alert_prompt,
+                        b64,
+                        max_tokens=200,
+                        temperature=0.7,
+                    )
+                except Exception as llm_err:
+                    print(f"[Sentinel] ❌ LLM call failed: {llm_err}", flush=True)
+                    self._sentinel_triggered = False
+                    return
+
+                if not reply or not reply.strip():
+                    self._sentinel_triggered = False
+                    return
+
+                reply = reply.strip()
+                print(f"[Sentinel] 💬 Ankita says: {reply}", flush=True)
+
+                self._queue.put(ProactiveEvent(
+                    "sentinel",
+                    reply,
+                    {
+                        "idle_seconds": idle_sec,
+                        "idle_label": idle_label,
+                        "screen_path": screen.get("path", ""),
+                        "text": reply,
+                    },
+                ))
+
+            except Exception as _e:
+                print(f"[Sentinel] ❌ Exception in sentinel task: {_e}", flush=True)
+                self._sentinel_triggered = False  # Allow retry
+
+        threading.Thread(target=_sentinel_task, daemon=True, name="SentinelTask").start()
 
     def _check_cron_overdue(self) -> None:
         """Check if any cron jobs are significantly overdue."""

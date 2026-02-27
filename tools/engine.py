@@ -711,6 +711,64 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "capture_webcam",
+            "description": (
+                "Takes a photo using the user's webcam (physical camera). "
+                "Use this when asked 'what am I holding', 'look at me', 'take a photo', "
+                "'take a selfie', 'scan my room', 'what is this', or 'check my fit'. "
+                "Returns a base64 image for vision analysis. "
+                "Do NOT use this for screen captures — use capture_screen for that."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "camera_index": {
+                        "type": "integer",
+                        "description": "Camera ID. 0 = default webcam (usually front camera). 1 = second camera.",
+                    },
+                    "save_path": {
+                        "type": "string",
+                        "description": "Optional absolute path to save the image for debugging. Omit for RAM-only mode.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "download_file",
+            "description": (
+                "Download a file (PDF, CSV, DOCX, XLSX, ZIP, etc.) from a direct URL to the local disk. "
+                "Use this when the user wants a document, datasheet, report, or any file — "
+                "NOT when they just want to read a web page. "
+                "Auto-detects the filename from the Content-Disposition header or URL tail. "
+                "Infers the file extension from the Content-Type if missing. "
+                "Saves to the user's Downloads folder by default. "
+                "Returns the absolute local path so you can then open it with launch_app."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {
+                        "type": "string",
+                        "description": "The direct URL of the file to download (e.g. https://example.com/report.pdf).",
+                    },
+                    "save_folder": {
+                        "type": "string",
+                        "description": (
+                            "Optional absolute path to a folder to save the file in. "
+                            "Defaults to the user's Downloads folder."
+                        ),
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_content",
             "description": (
                 "Generate any type of text content using the LLM and save it to the Desktop. "
@@ -980,6 +1038,16 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         )
     if name == "apply_patch":
         return fs_ops.apply_patch(workspace_root, patch=str(args.get("patch", "")))
+    if name == "capture_webcam":
+        return desktop_ops.capture_webcam(
+            camera_index=int(args.get("camera_index", 0)),
+            save_path=str(args.get("save_path")) if args.get("save_path") else None,
+        )
+    if name == "download_file":
+        return realtime_search.download_file(
+            url=str(args.get("url", "")),
+            save_folder=str(args.get("save_folder")) if args.get("save_folder") else None,
+        )
     if name == "write_content":
         return content_ops.write_and_save_content(
             workspace_root=workspace_root,
@@ -1031,6 +1099,9 @@ def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
 
     has_list = any(_match(t, ["list", "show", "display", "ls"], 0.74) for t in tokens)
     has_files = any(_match(t, ["file", "files", "dir", "directory", "folder"], 0.72) for t in tokens)
+    has_cam = any(_match(t, ["webcam", "camera", "photo", "selfie", "holding", "wearing", "room", "scan"], 0.85) for t in tokens)
+    if has_cam:
+        chosen.append("capture_webcam")
     has_read = any(_match(t, ["read", "open", "cat", "summarize"], 0.72) for t in tokens)
     has_search = any(_match(t, ["search", "find", "grep", "contains"], 0.72) for t in tokens)
     has_write = any(_match(t, ["write", "create", "save"], 0.72) for t in tokens)

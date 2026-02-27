@@ -147,6 +147,7 @@ def main() -> None:
     # session id as soon as the first message arrives (see set_last_interaction below).
     proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
     proactive.attach_memory(memory, "telegram-session")  # placeholder; updated on first message
+    proactive.attach_runtime(runtime)  # Required for Sentinel (idle screen-watch) to function
     proactive.start()
 
     # Per-chat state
@@ -218,6 +219,21 @@ def main() -> None:
                     memory.add("telegram-session", "assistant", content_reply or "")
                 except Exception as err:
                     print(f"[proactive-content-send-error] {err}")
+                continue
+
+            # ---- Sentinel (idle screen-watch alert) -------------------------
+            if event.kind == "sentinel":
+                sentinel_text = event.data.get("text", event.message)
+                idle_label = event.data.get("idle_label", "a while")
+                if sentinel_text:
+                    try:
+                        send_text(
+                            bot_token,
+                            target_chat,
+                            f"👁️ *Sentinel* — I noticed you've been away for {idle_label}:\n\n{sentinel_text}",
+                        )
+                    except Exception as err:
+                        print(f"[proactive-sentinel-send-error] {err}")
                 continue
 
             # ---- All other proactive events (system alerts, cron, drop_file) -

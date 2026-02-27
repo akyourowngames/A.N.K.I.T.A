@@ -139,13 +139,36 @@ def write_and_save_content(
     ]
 
     # ------------------------------------------------------------------
-    # 3. Call the LLM — use a generous token budget for content generation
+    # 3. Call the LLM — format-adaptive token budget + 30s timeout
     # ------------------------------------------------------------------
+    # Token budget scales with content complexity
+    _FORMAT_TOKEN_MAP: Dict[str, int] = {
+        "poem": 1024, "email": 1024, "summary": 1024, "caption": 512,
+        "tweet": 512, "tagline": 512, "slogan": 512,
+        "essay": 2048, "letter": 2048, "script": 2048, "story": 2048,
+        "report": 4096, "pitch deck": 4096, "pitch": 4096, "analysis": 4096,
+        "proposal": 4096, "plan": 4096,
+    }
+    generation_max_tokens = 2048  # default
+    for fmt_key, tok_budget in _FORMAT_TOKEN_MAP.items():
+        if fmt_key in format_clean.lower():
+            generation_max_tokens = tok_budget
+            break
+
+    from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     try:
         runtime = build_runtime_from_env()
-        # Content generation needs more tokens than typical tool calls
-        generation_max_tokens = 2048
-        response = call_chat_once(runtime, messages, tools=None, max_tokens=generation_max_tokens)
+        # Wrap LLM call in a 30-second timeout
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(call_chat_once, runtime, messages, None, generation_max_tokens)
+            try:
+                response = future.result(timeout=30)
+            except FuturesTimeout:
+                return {
+                    "ok": False,
+                    "error": "LLM timed out after 30 seconds.",
+                    "spoken_reply": f"Sorry, the {format_clean} generation timed out. Try again or use a shorter format.",
+                }
         generated_text = (response.get("content") or "").strip()
         if not generated_text:
             return {

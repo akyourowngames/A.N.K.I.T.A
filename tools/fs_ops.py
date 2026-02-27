@@ -64,12 +64,43 @@ def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200) ->
     return {"entries": entries, "truncated": False}
 
 
+_MAX_READ_BYTES = 50 * 1024 * 1024  # 50 MB hard limit
+
+
+def _detect_encoding(raw: bytes) -> str:
+    """Try to detect the best text encoding for a byte sequence.
+    Falls back through UTF-8 → cp1252 → latin-1 → replace."""
+    # Check for null bytes — likely binary
+    if b"\x00" in raw[:512]:
+        raise ValueError("file appears to be binary (null bytes in first 512 bytes)")
+    for enc in ("utf-8", "utf-8-sig", "cp1252", "latin-1"):
+        try:
+            raw.decode(enc)
+            return enc
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return "latin-1"  # guaranteed to decode any byte sequence
+
+
 def read_file(workspace_root: Path, path: str) -> Dict[str, Any]:
     target = resolve_safe_path(workspace_root, path)
     if not target.exists() or not target.is_file():
         raise FileNotFoundError(f"file not found: {path}")
-    text = target.read_text(encoding="utf-8")
-    return {"path": to_rel(workspace_root, target), "content": text}
+
+    # Guard: refuse files over 50 MB
+    size = target.stat().st_size
+    if size > _MAX_READ_BYTES:
+        raise ValueError(
+            f"file too large to read: {size / 1_048_576:.1f} MB "
+            f"(limit is {_MAX_READ_BYTES // 1_048_576} MB). "
+            "Use read_file_lines to read specific line ranges instead."
+        )
+
+    # Binary detection + encoding cascade
+    raw = target.read_bytes()
+    encoding = _detect_encoding(raw)
+    text = raw.decode(encoding, errors="replace")
+    return {"path": to_rel(workspace_root, target), "content": text, "encoding": encoding}
 
 
 def search_text(workspace_root: Path, query: str, path: str = ".", max_results: int = 100) -> Dict[str, Any]:

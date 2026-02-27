@@ -11,6 +11,7 @@ Falls back to the base AgentRuntime if anything goes wrong.
 from __future__ import annotations
 
 import json
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -22,6 +23,66 @@ from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
+
+
+def _extract_artifacts(text: str) -> Dict[str, List[str]]:
+    """
+    'Baton Pass' — sniff an agent's reply for artifacts (file paths, URLs)
+    so the Orchestrator can hand them explicitly to the next agent.
+
+    Returns a dict like:
+        {"files": ["C:\\Users\\Krish\\Desktop\\poem.txt"], "urls": ["https://..."]}
+    """
+    artifacts: Dict[str, List[str]] = {"files": [], "urls": []}
+
+    # FILE_PATH: <path> pattern (our standard output marker)
+    for m in re.finditer(r"FILE_PATH:\s*(.+?)(?:\n|$)", text):
+        path = m.group(1).strip()
+        if path and path not in artifacts["files"]:
+            artifacts["files"].append(path)
+
+    # Bare Windows/Unix absolute paths (e.g. C:\Users\...\file.txt or /home/.../file.txt)
+    for m in re.finditer(
+        r"(?<!\w)([A-Za-z]:\\[^\s\"'<>|*?\n]+|/(?:home|tmp|var|usr)/[^\s\"'<>|*?\n]+)",
+        text,
+    ):
+        path = m.group(1).strip().rstrip(".,;)")
+        if path and path not in artifacts["files"]:
+            artifacts["files"].append(path)
+
+    # URLs
+    for m in re.finditer(r"https?://[^\s\"'<>\n]+", text):
+        url = m.group(0).strip().rstrip(".,;)")
+        if url and url not in artifacts["urls"]:
+            artifacts["urls"].append(url)
+
+    return artifacts
+
+
+def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str, List[str]]) -> str:
+    """
+    'Telepathy' — build a clean, labeled context block to inject into the
+    next agent's brain so it knows exactly what the previous agent did.
+
+    ASSEMBLY LINE UPGRADE: If ContentAgent produced text but no file artifacts,
+    include the full CONTENT: block so FileAgent can extract and save it.
+    """
+    lines = [
+        "--- PREVIOUS AGENT OUTPUT ---",
+        f"[{agent_name}]: {reply.strip()}",
+    ]
+    if artifacts["files"]:
+        for f in artifacts["files"]:
+            lines.append(f"FILE: {f}")
+    if artifacts["urls"]:
+        for u in artifacts["urls"]:
+            lines.append(f"URL: {u}")
+    # ASSEMBLY LINE: If ContentAgent has no file/url artifacts, embed the raw content
+    # so FileAgent can read it from context and save it to disk.
+    if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
+        lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
+    lines.append("--- END CONTEXT ---")
+    return "\n".join(lines)
 
 _SYNTHESIZER_PROMPT = (
     "You are A.N.K.I.T.A's Synthesizer. You receive outputs from specialist agents that executed tasks. "
@@ -43,10 +104,25 @@ def _run_specialist(
     task: str,
     runtime: LLMRuntime,
     workspace_root: Path,
+    prior_context: Optional[str] = None,
 ) -> Dict[str, Any]:
-    """Run a single specialist agent to completion and return its result."""
+    """Run a single specialist agent to completion and return its result.
+
+    Args:
+        prior_context: 'Telepathy' block from previous agent — injected directly
+                       into the specialist's system prompt so it knows what happened
+                       before it woke up. No hunting through text needed.
+    """
     messages = specialist.make_messages(task)
     max_tokens = runtime.max_tokens
+
+    # TELEPATHY: inject prior context into the system message so the agent
+    # starts with full awareness of what previous agents did/produced.
+    if prior_context and messages and messages[0]["role"] == "system":
+        messages[0] = {
+            "role": "system",
+            "content": messages[0]["content"] + "\n\n" + prior_context,
+        }
 
     for _ in range(_MAX_TOOL_STEPS):
         try:
@@ -64,18 +140,85 @@ def _run_specialist(
         if not tool_calls:
             return {"agent": specialist.name, "ok": True, "reply": (response.get("content") or "").strip()}
 
+        # --- VISION INJECTION: collect image payloads from vision tools ---
+        vision_packets: List[Dict[str, Any]] = []
+
         for tc in tool_calls:
             try:
                 # Inject runtime so visual_click can call LLM vision API
                 execute_tool_call._runtime = runtime  # type: ignore[attr-defined]
                 result = execute_tool_call(tc, workspace_root=workspace_root)
+
+                # Check if this tool returned image data (capture_screen / read_screen_context).
+                # execute_tool_call wraps the inner result as {"ok": True, "result": {...}},
+                # so we must look BOTH at the top level AND inside result["result"].
+                _inner = result.get("result", {}) if isinstance(result, dict) else {}
+                _b64_source = None
+                if isinstance(result, dict) and "base64" in result:
+                    _b64_source = result
+                elif isinstance(_inner, dict) and "base64" in _inner:
+                    _b64_source = _inner
+
+                if _b64_source is not None:
+                    b64_data = _b64_source["base64"]
+
+                    # Strip the raw base64 blob from the text history — the LLM
+                    # cannot read it as text and it wastes thousands of tokens.
+                    # Rebuild the full wrapper without any base64 data.
+                    clean_inner = {k: v for k, v in _b64_source.items() if k != "base64"}
+                    clean_inner["base64"] = "<IMAGE_DATA_INJECTED_AS_VISION_MESSAGE>"
+                    if _b64_source is _inner:
+                        # base64 was inside result["result"] — rebuild the outer wrapper
+                        safe_result = {**result, "result": clean_inner}
+                    else:
+                        # base64 was at the top level
+                        safe_result = clean_inner
+
+                    # Build a proper multimodal vision message for the LLM
+                    vision_packets.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "System: Here is the screen capture you requested. "
+                                    "Analyse it carefully and describe exactly what you see."
+                                ),
+                            },
+                            {
+                                "type": "image_url",
+                                "image_url": {
+                                    "url": f"data:image/png;base64,{b64_data}",
+                                    "detail": "low",  # "low" = faster + cheaper; avoids payload size 400s
+                                },
+                            },
+                        ],
+                    })
+                    content_str = json.dumps(safe_result, ensure_ascii=False)
+                else:
+                    content_str = json.dumps(result, ensure_ascii=False)
+
             except Exception as err:
-                result = {"ok": False, "error": str(err)}
+                content_str = json.dumps({"ok": False, "error": str(err)})
+
             messages.append({
                 "role": "tool",
                 "tool_call_id": tc.get("id", ""),
-                "content": json.dumps(result, ensure_ascii=False),
+                "content": content_str,
             })
+
+        # Inject vision messages AFTER all tool outputs.
+        # IMPORTANT: The OpenAI message format requires that after tool messages
+        # we send an assistant turn, not a user turn. So we append a thin
+        # assistant "pass-through" message to bridge the tool results, then
+        # inject the image as a user message so the model sees the pixels.
+        if vision_packets:
+            # Bridge: assistant acknowledgement so the turn structure is valid
+            messages.append({
+                "role": "assistant",
+                "content": "I have the screen capture. Let me analyse it now.",
+            })
+            messages.extend(vision_packets)
 
     return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached)."}
 
@@ -116,9 +259,11 @@ class Orchestrator:
             "stop_music": ({"stop music", "pause music"}, ["MusicAgent"]),
             "screenshot": ({"screenshot", "screen capture", "take a screenshot"}, ["SystemAgent"]),
             "launch_app": ({"open notepad", "launch", "open app", "start app"}, ["SystemAgent"]),
-            "write_content": ({"write a", "draft a", "generate a", "create a report",
+            # ASSEMBLY LINE: write tasks → ContentAgent (writes) + FileAgent (saves)
+            "write_and_save_content": ({"write a", "draft a", "generate a", "create a report",
                                "write an essay", "write a poem", "write a script",
-                               "write a song", "write a paragraph"}, ["ContentAgent"]),
+                               "write a song", "write a paragraph", "write an email",
+                               "write a letter", "write a story", "write a summary"}, ["ContentAgent", "FileAgent"]),
             "search_web": ({"search for", "google", "look up", "find info"}, ["WebAgent"]),
             "execute_shell": ({"ping ", "ipconfig", "netstat", "tasklist", "whoami",
                                "git status", "git log", "git pull", "git push",
@@ -145,13 +290,14 @@ class Orchestrator:
         if not specialists:
             return self._run_general(user_text, messages)
 
-        # Force sequential if a producer→consumer dependency is detected
-        # e.g. ContentAgent/FileAgent writes a file that SystemAgent/CodeAgent will open
-        _PRODUCERS = {"ContentAgent", "FileAgent"}
-        _CONSUMERS = {"SystemAgent", "CodeAgent"}
+        # TIME LORD: Force sequential if a producer→consumer dependency is detected.
+        # ASSEMBLY LINE: ContentAgent produces text → FileAgent saves → SystemAgent opens.
+        # All three are in a strict dependency chain — always sequential.
+        _EXTERNAL_PRODUCERS = {"ContentAgent", "FileAgent", "WebAgent"}
+        _CONSUMERS = {"FileAgent", "SystemAgent", "CodeAgent"}
         agent_name_set = set(agent_names)
-        if (_PRODUCERS & agent_name_set) and (_CONSUMERS & agent_name_set):
-            parallel = False  # override Supervisor — file must exist before it's opened
+        if (_EXTERNAL_PRODUCERS & agent_name_set) and (_CONSUMERS & agent_name_set):
+            parallel = False  # override Supervisor — baton must be passed sequentially
 
         # 2. Fan-Out: run specialists (parallel or sequential)
         results: List[Dict[str, Any]] = []
@@ -176,35 +322,54 @@ class Orchestrator:
     ) -> List[Dict[str, Any]]:
         """Run specialists one by one, passing each result as context to the next.
 
-        This solves both the Race Condition and the Path Drop bugs:
-        - Race Condition: agents run sequentially, so files exist before being opened
-        - Path Drop: each agent's full reply (including FILE_PATH: ...) is appended
-          to the next agent's task so absolute paths are never lost
+        Implements the full Hive Mind Protocol:
+        - BATON PASS: Orchestrator sniffs artifacts (file paths, URLs) from each
+          agent's reply and hands them explicitly to the next agent.
+        - TELEPATHY: Prior context is injected directly into the next agent's
+          system prompt — not just appended to the task. The agent *knows* what
+          happened before it even reads the task.
+        - TIME LORD: Sequential execution guarantees producers finish before
+          consumers start. Files exist before they are opened.
         """
         results: List[Dict[str, Any]] = []
-        context_so_far = ""  # accumulates previous agents' replies
+        prior_context_block: Optional[str] = None  # injected into system prompt of next agent
 
         for sp in specialists:
-            # Build the task for this agent — include prior context so paths propagate
-            if context_so_far:
-                enriched_task = (
-                    f"{task}\n\n"
-                    f"--- Context from previous agents ---\n{context_so_far}\n"
-                    f"--- End context ---\n\n"
-                    f"Use the FILE_PATH above if you need to open/read a file."
-                )
-            else:
-                enriched_task = task
-
-            result = _run_specialist(sp, enriched_task, self.runtime, self.workspace_root)
+            result = _run_specialist(
+                sp, task, self.runtime, self.workspace_root,
+                prior_context=prior_context_block,
+            )
             results.append(result)
 
-            # Accumulate this agent's reply so the next agent sees it
+            # BATON PASS: sniff this agent's reply for artifacts
             reply = result.get("reply", "")
             if reply:
-                context_so_far += f"[{sp.name}]: {reply}\n"
+                artifacts = _extract_artifacts(reply)
+                # Build the Telepathy block for the next agent
+                prior_context_block = _build_prior_context_block(sp.name, reply, artifacts)
+
+            # AUDIT LOG: record agent name, tools used, and artifacts to .ankita/audit.jsonl
+            self._write_audit(sp.name, result)
 
         return results
+
+    def _write_audit(self, agent_name: str, result: Dict[str, Any]) -> None:
+        """Write a structured audit entry to .ankita/audit.jsonl for traceability."""
+        import time as _time
+        try:
+            audit_path = self.workspace_root / ".ankita" / "audit.jsonl"
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            entry = {
+                "ts": _time.time(),
+                "agent": agent_name,
+                "reply_preview": (result.get("reply", "") or "")[:120],
+                "tools_used": result.get("tools_used", []),
+                "artifacts": _extract_artifacts(result.get("reply", "") or ""),
+            }
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # Audit log failures must never crash the main flow
 
     @staticmethod
     def _extract_file_path(text: str) -> Optional[str]:

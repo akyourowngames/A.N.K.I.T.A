@@ -19,10 +19,19 @@ You are A.N.K.I.T.A's background processor. You analyze the user's recent worksp
 Your ONLY job is to find practical, technical solutions to unresolved coding, architecture, or workflow problems.
 
 CRITICAL RULES:
-1. NO PHILOSOPHY. Do not make poetic connections between casual topics (like music, plants, daily chats, or feelings).
-2. If the user's recent memories do NOT contain a specific, unresolved technical problem or project block, you MUST reply with exactly one word: SILENT
-3. If there IS a real technical problem to solve, provide a direct, 2-to-3 sentence solution. Speak naturally but professionally. Do not start with "You know, while you were..."
-4. Topics that are NOT technical problems (return SILENT for these): casual conversation, music, plants, food, greetings, general chat, anything that isn't a concrete coding/architecture/workflow issue.
+1. NO PHILOSOPHY. Do not make poetic connections between casual topics.
+2. If the user's recent memories do NOT contain a specific, unresolved technical problem, reply with SILENT.
+3. If there IS a real technical problem, provide a direct 2-3 sentence solution.
+4. Topics that are NOT technical problems (return SILENT): casual conversation, music, food, greetings, general chat.
+
+RESPOND ONLY IN THIS JSON FORMAT:
+{
+  "is_technical": true/false,
+  "problem": "one sentence description of the problem",
+  "solution": "2-3 sentence direct solution",
+  "confidence": 0-100
+}
+If not technical, use: {"is_technical": false, "problem": "", "solution": "SILENT", "confidence": 0}
 """
 
 _DREAM_USER_TEMPLATE = """Here are the user's recent workspace memories:
@@ -30,8 +39,7 @@ _DREAM_USER_TEMPLATE = """Here are the user's recent workspace memories:
 {memory_block}
 
 Scan these memories for a specific, unresolved technical problem (e.g. a bug, architecture decision, broken feature, workflow bottleneck).
-- If you find one: provide a direct 2-3 sentence technical solution.
-- If there is NO real technical problem: reply with exactly one word: SILENT"""
+Respond in the JSON format specified. confidence should reflect how clearly a real problem is present."""
 
 
 class DreamAgent:
@@ -106,6 +114,8 @@ class DreamAgent:
         # 3. Call the LLM with a focused, tool-free prompt
         # ------------------------------------------------------------------
         try:
+            import json
+            from pathlib import Path
             from llm import build_runtime_from_env, call_chat_once  # type: ignore
 
             runtime = build_runtime_from_env()
@@ -113,19 +123,61 @@ class DreamAgent:
                 {"role": "system", "content": _DREAM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ]
-            # Keep it concise — dreams are short
             max_tokens = int(os.getenv("DREAM_MAX_TOKENS", "300"))
-            print(f"[DreamAgent] 📡 Calling LLM ({runtime.provider}/{runtime.model}) with {len(lines)} memories, max_tokens={max_tokens}...", flush=True)
+            print(f"[DreamAgent] 📡 Calling LLM ({runtime.provider}/{runtime.model}) with {len(lines)} memories...", flush=True)
             response = call_chat_once(runtime, messages, tools=None, max_tokens=max_tokens)
-            epiphany = (response.get("content") or "").strip()
-            print(f"[DreamAgent] LLM raw response: {repr(epiphany[:120]) if epiphany else 'EMPTY'}", flush=True)
+            raw = (response.get("content") or "").strip()
+            print(f"[DreamAgent] LLM raw response: {repr(raw[:120]) if raw else 'EMPTY'}", flush=True)
 
-            # Abort silently if the LLM decided there's nothing useful to say
-            if epiphany.strip().upper().startswith("SILENT"):
-                print("[DreamAgent] 🤫 LLM returned SILENT — no dream triggered.", flush=True)
+            # ------------------------------------------------------------------
+            # Parse structured JSON output
+            # ------------------------------------------------------------------
+            parsed: dict = {}
+            try:
+                # Strip markdown code fences if present
+                clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+                parsed = json.loads(clean)
+            except Exception:
+                # Fallback: treat raw as old-style SILENT/solution text
+                if raw.upper().startswith("SILENT"):
+                    print("[DreamAgent] 🤫 SILENT (legacy format) — no dream triggered.", flush=True)
+                    return None
+                parsed = {"is_technical": True, "solution": raw, "confidence": 50}
+
+            # Confidence filter: only surface epiphanies with confidence ≥ 60
+            confidence = int(parsed.get("confidence", 0))
+            if not bool(parsed.get("is_technical")) or confidence < 60:
+                print(f"[DreamAgent] 🤫 Not technical or low confidence ({confidence}) — skipped.", flush=True)
                 return None
 
-            return epiphany if epiphany else None
+            solution = str(parsed.get("solution", "")).strip()
+            if not solution or solution.upper() == "SILENT":
+                return None
+
+            # ------------------------------------------------------------------
+            # Write to dream log — skip if exact solution already logged
+            # ------------------------------------------------------------------
+            dream_log_path = Path(".ankita") / "dreams.jsonl"
+            dream_log_path.parent.mkdir(parents=True, exist_ok=True)
+            try:
+                existing = dream_log_path.read_text(encoding="utf-8") if dream_log_path.exists() else ""
+                if solution[:80] in existing:
+                    print("[DreamAgent] ♻️  Duplicate dream — already in log. Skipped.", flush=True)
+                    return None
+                import time
+                with dream_log_path.open("a", encoding="utf-8") as f:
+                    f.write(json.dumps({
+                        "ts": time.time(),
+                        "problem": parsed.get("problem", ""),
+                        "solution": solution,
+                        "confidence": confidence,
+                    }, ensure_ascii=False) + "\n")
+            except Exception as log_err:
+                print(f"[DreamAgent] ⚠️  Dream log write failed: {log_err}", flush=True)
+
+            print(f"[DreamAgent] ✅ Epiphany fired (confidence={confidence}): {solution[:80]}...", flush=True)
+            return solution
+
         except Exception as _e:
             print(f"[DreamAgent] ❌ LLM call failed: {_e}", flush=True)
             return None

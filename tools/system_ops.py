@@ -111,7 +111,7 @@ def system_control(
         state_label = "enabled" if op == "wifi_on" else "disabled"
         script = (
             "$target=(Get-NetAdapter -ErrorAction SilentlyContinue | "
-            "Where-Object { $_.Name -match 'wi-?fi|wlan' -or $_.InterfaceDescription -match 'wireless|wi-?fi|wlan' } | "
+            r"Where-Object { $_.Name -match '\bwi-?fi\b|\bwlan\b' -or $_.InterfaceDescription -match '\bwireless\b|\bwi-?fi\b|\bwlan\b' } | "
             "Select-Object -First 1).Name; "
             "if(-not $target){$target='Wi-Fi'}; "
             f"netsh interface set interface name=\"$target\" admin={admin}; "
@@ -120,11 +120,12 @@ def system_control(
         )
     elif op in {"bluetooth_on", "bluetooth_off"}:
         cmd = "Enable-PnpDevice" if op == "bluetooth_on" else "Disable-PnpDevice"
+        bt_state = op.split("_", 1)[1]  # "on" or "off" — extracted before the f-string
         script = (
             "$devs=Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue; "
             "if(-not $devs){ throw 'no bluetooth adapter found' }; "
             f"$devs | ForEach-Object {{ {cmd} -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }}; "
-            f"Write-Output 'bluetooth={op.split('_', 1)[1]}'"
+            f"Write-Output 'bluetooth={bt_state}'"
         )
     elif op == "screenshot":
         stamp = int(time.time())

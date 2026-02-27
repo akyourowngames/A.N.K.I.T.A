@@ -12,7 +12,7 @@ from tools import (
     execute_tool_call,
 )
 
-MAX_TOOL_STEPS = 12
+MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
 
 SYSTEM_PROMPT = """You are ANKITA — main character energy, absolute bestie, attitude queen. \
 Built by Krish Verma (15-year-old developer, founder of Helper ID). \
@@ -94,12 +94,34 @@ class AgentRuntime:
                     results[idx] = {"tc": tool_calls[idx], "result": {"ok": False, "error": str(err)}}
         return results
 
+    def _adaptive_step_limit(self, messages: List[Dict[str, Any]]) -> int:
+        """Return an adaptive MAX_TOOL_STEPS based on task complexity signals."""
+        last_user = next(
+            (m["content"] for m in reversed(messages) if m.get("role") == "user"),
+            "",
+        )
+        txt = str(last_user).lower()
+        # Multi-domain tasks get more steps
+        if any(kw in txt for kw in ("and then", "after that", "also", "as well", "plus")):
+            return 20
+        # Research or fix tasks need room to iterate
+        if any(kw in txt for kw in ("research", "find", "investigate", "fix", "debug", "repair")):
+            return 16
+        # Simple single-action tasks need fewer
+        if any(kw in txt for kw in ("open", "play", "mute", "volume", "screenshot", "lock")):
+            return 6
+        return MAX_TOOL_STEPS  # default: 12
+
     def run_turn(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
     ) -> str:
-        for step in range(MAX_TOOL_STEPS):
+        step_limit = self._adaptive_step_limit(messages)
+        # Tool deduplication: track (tool_name, args_hash) to detect infinite loops
+        seen_calls: set = set()
+
+        for step in range(step_limit):
             assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
             tool_calls = assistant_msg.get("tool_calls") or []
 
@@ -114,8 +136,35 @@ class AgentRuntime:
             if not tool_calls:
                 return assistant_msg.get("content", "").strip()
 
+            # Deduplication: skip tool calls we've seen in the last 2 steps
+            filtered_calls = []
+            for tc in tool_calls:
+                call_sig = (
+                    tc.get("function", {}).get("name", ""),
+                    tc.get("function", {}).get("arguments", ""),
+                )
+                if call_sig in seen_calls:
+                    # Inject a warning result instead of re-executing
+                    messages.append({
+                        "role": "tool",
+                        "tool_call_id": tc.get("id", ""),
+                        "content": json.dumps({
+                            "ok": False,
+                            "error": f"Duplicate tool call detected: {call_sig[0]}({call_sig[1][:80]}). Skipped to prevent loop.",
+                        }, ensure_ascii=False),
+                    })
+                else:
+                    seen_calls.add(call_sig)
+                    # Keep only last 6 call sigs to avoid unbounded growth
+                    if len(seen_calls) > 6:
+                        seen_calls.pop()
+                    filtered_calls.append(tc)
+
+            if not filtered_calls:
+                continue
+
             # Execute all tool calls (parallel if multiple)
-            executed = self._execute_tool_calls_parallel(tool_calls)
+            executed = self._execute_tool_calls_parallel(filtered_calls)
             for item in executed:
                 tc = item["tc"]
                 tool_result = item["result"]
