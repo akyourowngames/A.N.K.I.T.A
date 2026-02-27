@@ -173,6 +173,30 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "search_price",
+            "description": (
+                "Fast, reliable price fetcher for crypto and stocks. "
+                "ALWAYS use this for any price query (bitcoin, ethereum, AAPL, gold, etc.) "
+                "BEFORE falling back to search_and_fetch. "
+                "Tries CoinGecko API (crypto) → Yahoo Finance scrape (stocks) → web fallback. "
+                "Returns the exact price in USD with 24h change for crypto. "
+                "No API key required."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "What to look up — e.g. 'bitcoin', 'ethereum', 'AAPL', 'Tesla stock', 'gold price'.",
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_news",
             "description": "Search latest news headlines in real time.",
             "parameters": {
@@ -812,6 +836,10 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             amount=int(args.get("amount", 1)),
             path=str(args.get("path")) if args.get("path") is not None else None,
             workspace_root=workspace_root,
+        )
+    if name == "search_price":
+        return realtime_search.search_price(
+            query=str(args.get("query", "")),
         )
     if name == "search_news":
         return realtime_search.search_news(

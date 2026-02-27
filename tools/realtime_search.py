@@ -16,13 +16,22 @@ class _DuckResultParser(HTMLParser):
         self._current_text_parts: List[str] = []
         self.results: List[Dict[str, str]] = []
 
-    def handle_starttag(self, tag: str, attrs: List[tuple[str, str | None]]) -> None:
+    def handle_starttag(self, tag: str, attrs: List[tuple]) -> None:
         if tag.lower() != "a":
             return
         attr_map = {k: (v or "") for k, v in attrs}
         cls = attr_map.get("class", "")
         href = attr_map.get("href", "")
-        if "result__a" in cls and href:
+        # Match DuckDuckGo's multiple HTML formats:
+        # Old: class="result__a"
+        # New HTML5: href contains "/l/?uddg=" redirect
+        # Fallback: any external http link that isn't duckduckgo.com itself
+        is_ddg_result = (
+            "result__a" in cls
+            or "uddg=" in href
+            or (href.startswith("http") and "duckduckgo.com" not in href and href.startswith("http"))
+        )
+        if is_ddg_result and href:
             self._capture = True
             self._current_href = href
             self._current_text_parts = []
@@ -239,7 +248,7 @@ def fetch_page_content(url: str, max_chars: int = 4000, timeout: int = 15) -> Di
     }
 
 
-def search_and_fetch(query: str, max_results: int = 5, fetch_top: int = 2, max_chars_per_page: int = 3000) -> Dict[str, Any]:
+def search_and_fetch(query: str, max_results: int = 5, fetch_top: int = 3, max_chars_per_page: int = 5000) -> Dict[str, Any]:
     """Search the web AND fetch actual content from the top results.
     
     Perfect for factual queries like 'price of bitcoin', 'weather today', 
@@ -280,6 +289,163 @@ def search_and_fetch(query: str, max_results: int = 5, fetch_top: int = 2, max_c
         "fetched_pages": fetched_pages,
         "pages_fetched": len(fetched_pages),
     }
+
+
+def search_price(query: str) -> Dict[str, Any]:
+    """
+    Fast, reliable price fetcher for crypto and stocks.
+
+    Tries 3 sources in priority order:
+    1. CoinGecko REST API (crypto — no API key needed)
+    2. Yahoo Finance page scrape (stocks)
+    3. search_and_fetch fallback (general price queries)
+
+    Args:
+        query: What to look up — e.g. "bitcoin", "ethereum", "AAPL", "gold price"
+
+    Returns:
+        Dict with ok, price, currency, source, and a human-readable summary.
+    """
+    q = str(query or "").strip().lower()
+    if not q:
+        raise ValueError("query is required")
+
+    # ------------------------------------------------------------------
+    # 1. CoinGecko — best for crypto (bitcoin, ethereum, solana, etc.)
+    # ------------------------------------------------------------------
+    _COINGECKO_IDS = {
+        "bitcoin": "bitcoin", "btc": "bitcoin",
+        "ethereum": "ethereum", "eth": "ethereum",
+        "solana": "solana", "sol": "solana",
+        "dogecoin": "dogecoin", "doge": "dogecoin",
+        "cardano": "cardano", "ada": "cardano",
+        "ripple": "ripple", "xrp": "ripple",
+        "litecoin": "litecoin", "ltc": "litecoin",
+        "polkadot": "polkadot", "dot": "polkadot",
+        "chainlink": "chainlink", "link": "chainlink",
+        "avalanche": "avalanche-2", "avax": "avalanche-2",
+        "polygon": "matic-network", "matic": "matic-network",
+        "shiba": "shiba-inu", "shib": "shiba-inu",
+        "binancecoin": "binancecoin", "bnb": "binancecoin",
+        "tron": "tron", "trx": "tron",
+        "toncoin": "the-open-network", "ton": "the-open-network",
+    }
+
+    # Match query against coin names/symbols
+    coin_id = None
+    for key, cg_id in _COINGECKO_IDS.items():
+        if key in q:
+            coin_id = cg_id
+            break
+
+    if coin_id:
+        try:
+            resp = requests.get(
+                "https://api.coingecko.com/api/v3/simple/price",
+                params={"ids": coin_id, "vs_currencies": "usd", "include_24hr_change": "true"},
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            coin_data = data.get(coin_id, {})
+            price = coin_data.get("usd")
+            change = coin_data.get("usd_24h_change")
+            if price is not None:
+                change_str = f" ({change:+.2f}% 24h)" if change is not None else ""
+                summary = f"{coin_id.replace('-', ' ').title()} is currently ${price:,.2f} USD{change_str}. (Source: CoinGecko)"
+                return {
+                    "ok": True,
+                    "query": q,
+                    "coin_id": coin_id,
+                    "price": price,
+                    "currency": "USD",
+                    "change_24h": change,
+                    "source": "coingecko",
+                    "summary": summary,
+                }
+        except Exception:
+            pass  # Fall through to next source
+
+    # ------------------------------------------------------------------
+    # 2. Yahoo Finance scrape — for stocks (AAPL, TSLA, GOOGL, etc.)
+    # ------------------------------------------------------------------
+    # Extract potential ticker from query (uppercased 1-5 char word)
+    ticker_match = re.search(r'\b([A-Z]{1,5})\b', query.upper())
+    ticker = ticker_match.group(1) if ticker_match else None
+
+    if ticker:
+        try:
+            yf_url = f"https://finance.yahoo.com/quote/{ticker}"
+            resp = requests.get(
+                yf_url,
+                timeout=10,
+                headers={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                    "Accept": "text/html",
+                },
+            )
+            if resp.status_code == 200:
+                # Extract price from HTML — Yahoo puts it in fin-streamer[data-field="regularMarketPrice"]
+                price_match = re.search(
+                    r'data-field="regularMarketPrice"[^>]*data-value="([0-9.,]+)"',
+                    resp.text,
+                )
+                if price_match:
+                    price_str = price_match.group(1).replace(",", "")
+                    price_val = float(price_str)
+                    summary = f"{ticker} is currently trading at ${price_val:,.2f} USD. (Source: Yahoo Finance)"
+                    return {
+                        "ok": True,
+                        "query": q,
+                        "ticker": ticker,
+                        "price": price_val,
+                        "currency": "USD",
+                        "source": "yahoo_finance",
+                        "summary": summary,
+                    }
+        except Exception:
+            pass  # Fall through to web scrape
+
+    # ------------------------------------------------------------------
+    # 3. Fallback — search_and_fetch with bigger limits
+    # ------------------------------------------------------------------
+    try:
+        result = search_and_fetch(
+            query=f"{query} price today USD",
+            max_results=5,
+            fetch_top=3,
+            max_chars_per_page=4000,
+        )
+        # Extract price-like patterns from fetched content
+        all_content = " ".join(
+            p.get("content", "") for p in result.get("fetched_pages", [])
+        )
+        # Look for $XX,XXX.XX or $XX.XX patterns
+        price_patterns = re.findall(r'\$[\d,]+(?:\.\d{1,2})?', all_content)
+        if price_patterns:
+            return {
+                "ok": True,
+                "query": q,
+                "source": "web_scrape",
+                "price_mentions": price_patterns[:5],
+                "summary": f"Found price mentions for '{query}': {', '.join(price_patterns[:5])}. Raw content available in fetched_pages.",
+                "fetched_pages": result.get("fetched_pages", []),
+            }
+        return {
+            "ok": False,
+            "query": q,
+            "source": "web_scrape",
+            "summary": f"Could not find a clear price for '{query}'. Try a more specific query.",
+            "fetched_pages": result.get("fetched_pages", []),
+        }
+    except Exception as err:
+        return {
+            "ok": False,
+            "query": q,
+            "source": "none",
+            "summary": f"All price sources failed: {err}",
+        }
 
 
 def search_news(query: str, max_results: int = 8, include_urls: bool = False) -> Dict[str, Any]:
