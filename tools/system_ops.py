@@ -142,12 +142,48 @@ def system_control(
             "$g.Dispose(); $bmp.Dispose(); "
             f"Write-Output '{escaped}'"
         )
+    elif op == "open_url":
+        # Open a URL in the default browser
+        url = str(path or "").strip().strip("\"'")
+        if not url:
+            raise ValueError("open_url requires a url — pass it via the 'path' parameter")
+        if not url.startswith(("http://", "https://", "ftp://")):
+            url = "https://" + url
+        escaped_url = url.replace("'", "''")
+        script = f"Start-Process '{escaped_url}'; Write-Output 'opened: {escaped_url}'"
+    elif op == "sleep_display":
+        # Turn off monitor without locking — sends SC_MONITORPOWER=2
+        script = (
+            "Add-Type -TypeDefinition '"
+            "using System; using System.Runtime.InteropServices; "
+            "public class Disp { "
+            "[DllImport(\"user32.dll\")] public static extern IntPtr SendMessage("
+            "IntPtr hWnd, uint Msg, IntPtr wParam, IntPtr lParam); }'; "
+            "[Disp]::SendMessage([IntPtr]-1, 0x0112, [IntPtr]0xF170, [IntPtr]2) | Out-Null; "
+            "Write-Output 'display_sleep=ok'"
+        )
+    elif op == "empty_recycle_bin":
+        script = "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; Write-Output 'recycle_bin=emptied'"
+    elif op == "get_system_info":
+        script = (
+            "$os=(Get-WmiObject Win32_OperatingSystem); "
+            "$cpu=[Math]::Round((Get-WmiObject Win32_Processor | "
+            "Measure-Object -Property LoadPercentage -Average).Average, 1); "
+            "$totalRam=[Math]::Round($os.TotalVisibleMemorySize/1MB, 2); "
+            "$freeRam=[Math]::Round($os.FreePhysicalMemory/1MB, 2); "
+            "$usedRam=[Math]::Round($totalRam - $freeRam, 2); "
+            "$ramPct=[Math]::Round(($usedRam/$totalRam)*100, 1); "
+            "$uptime=(Get-Date) - $os.ConvertToDateTime($os.LastBootUpTime); "
+            "$uptimeStr=('{0}d {1}h {2}m' -f [int]$uptime.TotalDays, $uptime.Hours, $uptime.Minutes); "
+            "Write-Output ('os=' + $os.Caption + ' | cpu=' + $cpu + '% | ram=' + $usedRam + '/' + $totalRam + 'GB (' + $ramPct + '%) | uptime=' + $uptimeStr)"
+        )
     else:
         raise ValueError(
             "unsupported action. use: volume_up, volume_down, mute_toggle, show_desktop, "
             "media_play_pause, media_next, media_prev, lock_screen, window_minimize_all, "
             "window_restore_all, brightness_up, brightness_down, brightness_set, wifi_on, wifi_off, "
-            "bluetooth_on, bluetooth_off, screenshot"
+            "bluetooth_on, bluetooth_off, screenshot, open_url, sleep_display, "
+            "empty_recycle_bin, get_system_info"
         )
 
     res = _run_powershell(script)

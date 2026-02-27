@@ -96,7 +96,19 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "system_control",
-            "description": "Control system-level actions like volume, media keys, and show desktop.",
+            "description": (
+                "Control system settings and perform system actions. "
+                "Actions: volume_up, volume_down, mute_toggle, "
+                "brightness_up, brightness_down, brightness_set, "
+                "wifi_on, wifi_off, bluetooth_on, bluetooth_off, "
+                "screenshot, show_desktop, lock_screen, "
+                "window_minimize_all, window_restore_all, "
+                "media_play_pause, media_next, media_prev, "
+                "open_url (opens URL in default browser — pass URL via path param), "
+                "sleep_display (turns off monitor without locking), "
+                "empty_recycle_bin (clears Recycle Bin silently), "
+                "get_system_info (returns OS, CPU%, RAM%, uptime)."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
