@@ -212,12 +212,28 @@ class WhatsAppBridge:
                     args=["--no-sandbox", "--disable-dev-shm-usage"],
                     viewport={"width": 1280, "height": 800},
                 )
-            # Use existing page or open a new one
+            # Grab the steering wheel — explicitly get or create the active page
+            print("[WhatsApp] Context launched. Grabbing page...")
             pages = self._browser.pages
-            self._page = pages[0] if pages else self._browser.new_page()
+            if pages:
+                # Prefer a page already at WhatsApp, otherwise use the first tab
+                wa_pages = [p for p in pages if "web.whatsapp.com" in (p.url or "")]
+                self._page = wa_pages[0] if wa_pages else pages[0]
+            else:
+                self._page = self._browser.new_page()
 
-            print("[WhatsApp] Navigating to WhatsApp Web...")
-            self._page.goto("https://web.whatsapp.com", wait_until="domcontentloaded")
+            # Always force-navigate to WhatsApp Web so we're never stuck on about:blank
+            current_url = self._page.url or ""
+            if "web.whatsapp.com" not in current_url:
+                print("[WhatsApp] Navigating to web.whatsapp.com...")
+                self._page.goto(
+                    "https://web.whatsapp.com",
+                    wait_until="domcontentloaded",
+                    timeout=60_000,
+                )
+                print("[WhatsApp] Successfully loaded WhatsApp Web!")
+            else:
+                print(f"[WhatsApp] Already on WhatsApp Web ({current_url[:60]})")
 
             # Wait for WhatsApp to fully load (chat list visible = logged in)
             print("[WhatsApp] Waiting for WhatsApp to load (up to 90s)...")
@@ -226,6 +242,7 @@ class WhatsAppBridge:
                 print("[WhatsApp] ✅ WhatsApp loaded successfully.")
             except PWTimeout:
                 print("[WhatsApp] ⚠️  Timed out waiting for chat list. Are you logged in?")
+                print("[WhatsApp]    If you see a QR code, scan it with your phone.")
 
             # Start the poll loop
             while not self._stop_event.is_set():

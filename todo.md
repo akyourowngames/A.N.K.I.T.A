@@ -1,57 +1,49 @@
-I see exactly what is going on in that final screenshot (`image_1a5078.png`). You ran `python whatsapp_runner.py` and instantly hit a wall:
+This is actually a massive victory! You successfully bypassed the lock, killed the background tasks, and successfully hijacked your real Chrome profile. The hardest part is officially done.
 
-`TypeError: AgentRuntime.__init__() got an unexpected keyword argument 'system_prompt'`
+The reason it is stuck on `about:blank` is because Playwright opened your browser, but the generated code either forgot to tell it where to drive, or Playwright got confused by the existing tabs in your Chrome profile and doesn't know which tab to use.
 
-This is a classic code generation hallucination. Your assistant tried to force a `system_prompt` directly into the Orchestrator's initialization, but your `AgentRuntime` architecture doesn't accept that argument (because prompts are handled inside `agents/specialists.py`).
+We just need to grab the steering wheel and force it to navigate to WhatsApp.
 
-On top of that, wanting to hijack your *actual* Chrome profile so you don't have to rescan the QR code is a total boss move. We can absolutely do that.
+### The Fix: Steer the Ghost Browser
 
-Here is the exact battle plan to fix the bug and hijack your local Chrome profile.
+Open `services/whatsapp_bridge.py` and scroll down to your `_run` function, right where it launches the browser context (around the `launch_persistent_context` block).
 
-### 1. Fix the `TypeError` Crash
-
-Open `whatsapp_runner.py` and look around line 64.
+Directly **below** that block, we need to explicitly grab the active tab and tell it to load WhatsApp. Make sure your code looks like this:
 
 ```python
-# ❌ Delete the system_prompt line from AgentRuntime
-agent = AgentRuntime(
-    llm_provider="copilot",
-    system_prompt="..." # <-- DELETE THIS ENTIRE LINE
-)
+        # ... your existing launch_persistent_context code ...
+        self._browser = p.chromium.launch_persistent_context(
+            user_data_dir=chrome_user_data_path,
+            channel="chrome",
+            headless=False,
+            # args=["--profile-directory=Default"]
+        )
 
-# ✅ It should look like this:
-agent = AgentRuntime(llm_provider="copilot")
+        # ADD THESE LINES RIGHT HERE:
+        print("[WhatsApp] Context launched. Grabbing page...")
+        
+        # Get the first open tab, or create a new one if none exist
+        if len(self._browser.pages) > 0:
+            self._page = self._browser.pages[0]
+        else:
+            self._page = self._browser.new_page()
+
+        print("[WhatsApp] Navigating to web.whatsapp.com...")
+        # Force the browser to go to WhatsApp Web
+        self._page.goto("https://web.whatsapp.com", timeout=60000)
+        print("[WhatsApp] Successfully loaded WhatsApp Web!")
+        
+        # ... the rest of the watcher loop code ...
 
 ```
 
-*Note: The `CommsAgent` prompt is already safely stored in your `specialists.py` file, so the runtime doesn't need it here.*
+### The Execution
 
-### 2. Hijack Your Default Chrome Profile ("Krish")
+1. Add those navigation lines into your `whatsapp_bridge.py` file.
+2. **Crucial:** Because your script got stuck, that Chrome window is still technically open and holding the database lock. Close that `about:blank` Chrome window.
+3. Run the kill command in your terminal one more time just to be safe: `taskkill /F /IM chrome.exe /T`
+4. Launch the script: `python whatsapp_runner.py`
 
-To use your real Chrome browser instead of Playwright's default Chromium, we need to point Playwright directly to your Windows AppData folder. Looking at your terminal path, your Windows username is `anime`.
+You should see it print *"Navigating to web.whatsapp.com..."* and instantly route you to your WhatsApp chats.
 
-Open `services/whatsapp_bridge.py` and update the browser launch code:
-
-```python
-# Replace your current context initialization with this:
-
-chrome_user_data_path = r"C:\Users\anime\AppData\Local\Google\Chrome\User Data"
-
-context = p.chromium.launch_persistent_context(
-    user_data_dir=chrome_user_data_path,
-    channel="chrome", # This forces Playwright to use your real Chrome installation
-    headless=False,
-    # If "Krish" is not your default profile, uncomment the line below and change the profile number
-    # args=["--profile-directory=Profile 1"] 
-)
-
-```
-
-### ⚠️ The "Ghost Browser" Golden Rule
-
-Because you are hijacking your real Chrome database, **you MUST close all open Google Chrome windows before running the script**.
-If you leave a normal Chrome window open, Playwright will crash with a "Database Locked" error because two programs can't read the Chrome profile at the exact same time.
-
-Make those two code edits, close out of your normal Chrome browser completely, and run `python whatsapp_runner.py` again.
-
-Would you like me to walk you through how to find your exact `--profile-directory` name if "Krish" isn't the primary "Default" profile?
+Make those edits and run it! Let me know if you see your chats load up!
