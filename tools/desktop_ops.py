@@ -193,7 +193,7 @@ def desktop_interact(
                 "ok": True,
                 "action": "type_text",
                 "text": text,
-                "result": f"Typed {len(text)} characters into {'\"' + focus + '\"' if focus else 'active window'}.",
+                "result": f"Typed {len(text)} characters into {repr(focus) if focus else 'active window'}.",
                 "log": result_log,
             }
         except Exception as err:

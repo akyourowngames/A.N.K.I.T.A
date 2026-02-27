@@ -361,8 +361,10 @@ def call_chat_with_image(
         "temperature": 0.1,
     }
     if isinstance(tokens, int) and tokens > 0:
-        payload["max_tokens"] = tokens
-        payload["max_completion_tokens"] = tokens
+        if runtime.provider == "copilot":
+            payload["max_completion_tokens"] = tokens
+        else:
+            payload["max_tokens"] = tokens
 
     response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
     response.raise_for_status()
@@ -396,8 +398,10 @@ def call_chat_once(
         "temperature": 0.2,
     }
     if isinstance(max_tokens, int) and max_tokens > 0:
-        payload["max_tokens"] = max_tokens
-        payload["max_completion_tokens"] = max_tokens
+        if runtime.provider == "copilot":
+            payload["max_completion_tokens"] = max_tokens
+        else:
+            payload["max_tokens"] = max_tokens
     if tools:
         payload["tools"] = tools
         payload["tool_choice"] = "auto"
