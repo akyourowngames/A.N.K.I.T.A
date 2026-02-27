@@ -290,19 +290,54 @@ def search_and_fetch(
         url = res.get("url", "")
         if not url:
             continue
-        print(f"[ANKITA] 🔍 Reading: {res.get('title', url)[:60]}...")
+        title = res.get("title", url)
+        print(f"[ANKITA] 🔍 Reading: {title[:60]}...")
+
+        # Try 1: Jina Reader (clean Markdown, bypasses most 403s)
         page = fetch_page_content(url, max_chars=max_chars_per_page)
-        if page.get("ok"):
+        if page.get("ok") and page.get("content", "").strip():
             fetched.append({
-                "title":   res.get("title", ""),
+                "title":   title,
                 "url":     url,
                 "content": page.get("content", ""),
+            })
+            continue
+
+        # Try 2: Direct requests with real browser headers (Jina failed or was blocked)
+        try:
+            resp = requests.get(url, headers=_REAL_BROWSER_HEADERS, timeout=15)
+            if resp.status_code == 200:
+                raw = resp.text
+                # Strip HTML tags to get readable text
+                clean = re.sub(r'<style[^>]*>.*?</style>', ' ', raw, flags=re.DOTALL)
+                clean = re.sub(r'<script[^>]*>.*?</script>', ' ', clean, flags=re.DOTALL)
+                clean = re.sub(r'<[^>]+>', ' ', clean)
+                clean = re.sub(r'\s+', ' ', clean).strip()
+                if len(clean) > 200:  # Only accept if we got meaningful content
+                    content = clean[:max_chars_per_page]
+                    fetched.append({
+                        "title":   title,
+                        "url":     url,
+                        "content": content,
+                    })
+                    continue
+        except Exception:
+            pass
+
+        # Try 3: Use snippet from search result as fallback content
+        snippet = res.get("snippet", "").strip()
+        if snippet:
+            fetched.append({
+                "title":   title,
+                "url":     url,
+                "content": f"[Snippet only — page fetch failed] {snippet}",
             })
 
     return {
         "kind": "search_and_fetch",
         "query": query,
         "results": fetched,
+        "fetched_pages": fetched,   # alias for backward compatibility
         "raw_search_count": len(search_res.get("results", [])),
     }
 
@@ -334,20 +369,29 @@ def search_news(
     limit = max(1, min(int(max_results), 20))
     results: List[Dict[str, Any]] = []
 
-    try:
-        from duckduckgo_search import DDGS  # type: ignore
-        with DDGS() as ddgs:
-            for r in ddgs.news(q, max_results=limit):
-                item: Dict[str, Any] = {
-                    "title":   r.get("title", ""),
-                    "snippet": r.get("body", ""),
-                    "source":  r.get("source", ""),
-                    "date":    r.get("date", ""),
-                }
-                if include_urls:
-                    item["url"] = r.get("url", "")
-                results.append(item)
-    except Exception as err:
+    # Try ddgs first (new package name), then old duckduckgo_search
+    for _pkg, _cls in [("ddgs", "DDGS"), ("duckduckgo_search", "DDGS")]:
+        try:
+            import importlib
+            mod = importlib.import_module(_pkg)
+            DDGSCls = getattr(mod, _cls)
+            with DDGSCls() as ddgs:
+                for r in ddgs.news(q, max_results=limit):
+                    item: Dict[str, Any] = {
+                        "title":   r.get("title", ""),
+                        "snippet": r.get("body", ""),
+                        "source":  r.get("source", ""),
+                        "date":    r.get("date", ""),
+                    }
+                    if include_urls:
+                        item["url"] = r.get("url", "")
+                    results.append(item)
+            if results:
+                break
+        except Exception:
+            continue
+
+    if not results:
         # Fallback to search_web with "news" appended
         return search_web(f"{q} news", max_results=limit, include_urls=include_urls)
 
