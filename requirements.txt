@@ -20,6 +20,9 @@ psutil>=5.9.0
 # pip install playwright && playwright install chromium
 playwright>=1.40.0
 
+# Web search (replaces duckduckgo-search which was renamed)
+ddgs>=7.0.0
+
 # God Mode Search — direct DuckDuckGo API (no HTML parsing, no 403s)
 # pip install duckduckgo-search
 duckduckgo-search>=6.0.0

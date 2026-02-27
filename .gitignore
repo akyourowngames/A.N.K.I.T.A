@@ -6,3 +6,9 @@ __pycache__/
 
 # WhatsApp session — contains browser profile data with real secrets, NEVER commit
 whatsapp_session/
+
+# Generated content files — auto-created by ContentAgent, not source code
+generated_files/
+
+# Temp debug/test files created by Rovo Dev
+tmp_rovodev_*

@@ -76,9 +76,12 @@ def search_web(
     limit = max(1, min(int(max_results), 20))
     results: List[Dict[str, Any]] = []
 
+    # ------------------------------------------------------------------
+    # Try 1: ddgs package (new name since 2025)
+    # ------------------------------------------------------------------
     try:
-        from duckduckgo_search import DDGS  # type: ignore
-        with DDGS() as ddgs:
+        from ddgs import DDGS as NewDDGS  # type: ignore
+        with NewDDGS() as ddgs:
             for r in ddgs.text(q, max_results=limit):
                 item: Dict[str, Any] = {
                     "title":   r.get("title", ""),
@@ -88,25 +91,103 @@ def search_web(
                 if include_urls:
                     item["url"] = r.get("href", "")
                 results.append(item)
-    except ImportError:
-        return {
-            "kind": "web_search",
-            "error": "duckduckgo-search not installed. Run: pip install duckduckgo-search",
-            "results": [],
-        }
-    except Exception as err:
-        return {
-            "kind": "web_search",
-            "error": f"Search failed: {err}",
-            "results": [],
-        }
+        if results:
+            return {
+                "kind": "web_search",
+                "engine": "ddgs-api",
+                "query": q,
+                "results": results,
+                "count": len(results),
+            }
+    except Exception:
+        pass  # Fall through
 
+    # ------------------------------------------------------------------
+    # Try 2: old duckduckgo_search package (pre-2025)
+    # ------------------------------------------------------------------
+    try:
+        from duckduckgo_search import DDGS  # type: ignore
+        with DDGS() as ddgs:
+            for r in ddgs.text(q, max_results=limit):
+                item = {
+                    "title":   r.get("title", ""),
+                    "snippet": r.get("body", ""),
+                    "domain":  _extract_domain(r.get("href", "")),
+                }
+                if include_urls:
+                    item["url"] = r.get("href", "")
+                results.append(item)
+        if results:
+            return {
+                "kind": "web_search",
+                "engine": "duckduckgo-api",
+                "query": q,
+                "results": results,
+                "count": len(results),
+            }
+    except Exception:
+        pass  # Fall through
+
+    # ------------------------------------------------------------------
+    # Try 3: DuckDuckGo HTML scrape (most stable — no package dependency)
+    # ------------------------------------------------------------------
+    ddg_url = f"https://html.duckduckgo.com/html/?{urlencode({'q': q, 'kl': 'us-en'})}"
+    try:
+        resp = requests.get(ddg_url, timeout=30, headers=_REAL_BROWSER_HEADERS)
+        resp.raise_for_status()
+        parser = _DuckResultParser()
+        parser.feed(resp.text)
+        for row in parser.results[:limit]:
+            item = _base_result(title=row["title"], url=row["url"], snippet="")
+            if include_urls:
+                item["url"] = row["url"]
+            results.append(item)
+        if results:
+            return {
+                "kind": "web_search",
+                "engine": "duckduckgo-html",
+                "query": q,
+                "include_urls": bool(include_urls),
+                "results": results,
+            }
+    except Exception:
+        pass  # Fall through
+
+    # ------------------------------------------------------------------
+    # Try 4: Google udm=14 scrape (no API key, Web-only tab)
+    # ------------------------------------------------------------------
+    try:
+        from urllib.parse import unquote
+        google_url = f"https://www.google.com/search?{urlencode({'q': q, 'udm': '14', 'num': limit})}"
+        resp = requests.get(google_url, timeout=30, headers=_REAL_BROWSER_HEADERS)
+        if resp.status_code == 200:
+            google_links = re.findall(r'<a href="/url\?q=([^&"]+)[^"]*"[^>]*>([^<]+)', resp.text)
+            for raw_url, raw_title in google_links[:limit]:
+                clean_url = unquote(raw_url)
+                clean_title = re.sub(r'<[^>]+>', '', raw_title).strip()
+                if clean_url.startswith("http") and "google.com" not in clean_url and clean_title:
+                    item = _base_result(title=clean_title, url=clean_url, snippet="")
+                    if include_urls:
+                        item["url"] = clean_url
+                    results.append(item)
+            if results:
+                return {
+                    "kind": "web_search",
+                    "engine": "google-udm14",
+                    "query": q,
+                    "include_urls": bool(include_urls),
+                    "results": results,
+                }
+    except Exception:
+        pass
+
+    # All sources exhausted
     return {
         "kind": "web_search",
-        "engine": "duckduckgo-api",
+        "engine": "none",
         "query": q,
-        "results": results,
-        "count": len(results),
+        "results": [],
+        "error": "All search sources failed or returned no results.",
     }
 
 
