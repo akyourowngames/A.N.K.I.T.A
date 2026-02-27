@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import content_ops
 from . import cron_ops
+from . import desktop_ops
 from . import fs_ops
 from . import music_ops
 from . import realtime_search
@@ -484,6 +485,56 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "desktop_interact",
+            "description": (
+                "Interact directly with the OS using keyboard input. "
+                "Use this to type passwords, press shortcuts, hit enter, or physically drive the UI. "
+                "NEVER ask the user to type it themselves — call this instead. "
+                "Actions: "
+                "'type_text' — types the given text into the currently focused window; "
+                "'press_shortcut' — presses a key combo like 'ctrl+c', 'enter', 'win+d', 'alt+f4', 'ctrl+shift+esc'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["type_text", "press_shortcut"],
+                        "description": "The interaction type.",
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": "The text to type, or the shortcut string (e.g. 'ctrl+shift+esc', 'enter', 'win+d').",
+                    },
+                },
+                "required": ["action", "text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_syntax",
+            "description": (
+                "Run a fast Python syntax and AST check on a file using the built-in compiler — "
+                "no subprocess needed. ALWAYS call this after editing code with edit_file_lines "
+                "and BEFORE running it with run_command. Catches SyntaxError and IndentationError instantly."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the Python (.py) file to check.",
+                    },
+                },
+                "required": ["file_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "read_file_lines",
             "description": (
                 "Read a specific range of lines from a file without loading the entire file. "
@@ -548,6 +599,78 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["file_path", "start_line", "end_line", "new_content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "capture_screen",
+            "description": (
+                "Capture a screenshot of the screen using mss (fast, no screen flash). "
+                "Returns the absolute file path and a base64-encoded PNG string ready for "
+                "GPT-4o vision analysis. Use this when the user asks what is on their screen, "
+                "to read errors, inspect UI, or before clicking a button visually."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "monitor": {
+                        "type": "integer",
+                        "description": "Monitor index: 0=all monitors combined, 1=primary (default), 2=second monitor.",
+                    },
+                    "save_path": {
+                        "type": "string",
+                        "description": "Optional absolute path to save the PNG. Defaults to .ankita/temp/screenshot_<ts>.png.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_screen_context",
+            "description": (
+                "Load an existing screenshot from disk and return its base64 representation "
+                "for vision analysis. Use this when a screenshot was already taken and you "
+                "want to re-analyze it without capturing a new one."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "image_path": {
+                        "type": "string",
+                        "description": "Absolute or relative path to a PNG/JPEG screenshot file.",
+                    },
+                },
+                "required": ["image_path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "visual_click",
+            "description": (
+                "Click a UI element on screen by describing it in natural language. "
+                "Takes a screenshot, uses GPT-4o vision to find the element's pixel coordinates, "
+                "then physically moves the mouse and clicks it with pyautogui. "
+                "Example: 'click the Deploy to Vercel button', 'click the red X', 'click Submit'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "target_description": {
+                        "type": "string",
+                        "description": "Natural-language description of the UI element to click, e.g. 'the Save button', 'the red X in the top right'.",
+                    },
+                    "screenshot_path": {
+                        "type": "string",
+                        "description": "Optional path to an existing screenshot. If omitted, a fresh screenshot is captured.",
+                    },
+                },
+                "required": ["target_description"],
             },
         },
     },
@@ -791,6 +914,16 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         )
     if name == "file_info":
         return fs_ops.file_info(workspace_root, path=str(args.get("path", "")))
+    if name == "desktop_interact":
+        return desktop_ops.desktop_interact(
+            action=str(args.get("action", "")),
+            text=str(args.get("text", "")),
+        )
+    if name == "check_syntax":
+        return fs_ops.check_syntax(
+            workspace_root=workspace_root,
+            path=str(args.get("file_path", "")),
+        )
     if name == "read_file_lines":
         return fs_ops.read_file_lines(
             workspace_root=workspace_root,
@@ -815,6 +948,23 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             format_type=str(args.get("format_type", "content")),
             extra_context=str(args.get("extra_context", "")),
             output_dir=str(args.get("output_dir")) if args.get("output_dir") else None,
+        )
+    if name == "capture_screen":
+        return desktop_ops.capture_screen(
+            monitor=int(args.get("monitor", 1)),
+            save_path=str(args.get("save_path")) if args.get("save_path") else None,
+        )
+    if name == "read_screen_context":
+        return desktop_ops.read_screen_context(
+            image_path=str(args.get("image_path", "")),
+        )
+    if name == "visual_click":
+        # visual_click needs the LLMRuntime — retrieve it from the global agent context if available
+        _runtime = getattr(execute_tool_call, "_runtime", None)
+        return desktop_ops.visual_click(
+            target_description=str(args.get("target_description", "")),
+            runtime=_runtime,
+            screenshot_path=str(args.get("screenshot_path")) if args.get("screenshot_path") else None,
         )
     raise ValueError(f"Unknown tool: {name}")
 

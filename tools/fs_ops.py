@@ -385,6 +385,75 @@ def edit_file_lines(
         return {"ok": False, "error": str(err)}
 
 
+def check_syntax(workspace_root: Path, path: str) -> Dict[str, Any]:
+    """
+    Run a fast Python syntax and AST check on a file using the built-in
+    compiler — no subprocess, no external linter required.
+
+    Use this AFTER editing code with edit_file_lines, BEFORE running it
+    with run_command. Catches indentation errors, SyntaxErrors, and
+    malformed expressions instantly.
+
+    Args:
+        workspace_root: Workspace root for path resolution.
+        path:           Path to the Python file to check.
+
+    Returns:
+        Dict with ok (bool), errors (list of error strings), and a summary.
+    """
+    try:
+        import ast as _ast
+        fpath = resolve_safe_path(workspace_root, path)
+
+        if not fpath.is_file():
+            return {"ok": False, "errors": [f"File not found: {path}"], "summary": "File not found."}
+
+        if fpath.suffix.lower() not in {".py", ".pyw"}:
+            return {
+                "ok": False,
+                "errors": [f"Not a Python file: {path}"],
+                "summary": "check_syntax only supports .py/.pyw files.",
+            }
+
+        source = fpath.read_text(encoding="utf-8", errors="replace")
+        errors = []
+
+        # Step 1: compile() catches SyntaxError + IndentationError
+        try:
+            compile(source, str(fpath), "exec")
+        except SyntaxError as e:
+            errors.append(
+                f"SyntaxError at line {e.lineno}: {e.msg} — {(e.text or '').strip()}"
+            )
+
+        # Step 2: ast.parse() catches additional structural issues
+        if not errors:
+            try:
+                _ast.parse(source, filename=str(fpath))
+            except SyntaxError as e:
+                errors.append(
+                    f"AST SyntaxError at line {e.lineno}: {e.msg} — {(e.text or '').strip()}"
+                )
+
+        if errors:
+            return {
+                "ok": False,
+                "path": to_rel(workspace_root, fpath),
+                "errors": errors,
+                "summary": f"❌ {len(errors)} syntax error(s) found — fix before running.",
+            }
+
+        return {
+            "ok": True,
+            "path": to_rel(workspace_root, fpath),
+            "errors": [],
+            "summary": f"✅ Syntax OK — {fpath.name} is clean and ready to run.",
+        }
+
+    except Exception as err:
+        return {"ok": False, "errors": [str(err)], "summary": f"check_syntax failed: {err}"}
+
+
 def apply_patch(workspace_root: Path, patch: str) -> Dict[str, Any]:
     begin = "*** Begin Patch"
     end = "*** End Patch"

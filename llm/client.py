@@ -307,6 +307,70 @@ def build_runtime_from_env() -> LLMRuntime:
     sys.exit(1)
 
 
+def call_chat_with_image(
+    runtime: LLMRuntime,
+    prompt: str,
+    image_b64: str,
+    max_tokens: Optional[int] = None,
+) -> str:
+    """Send a single vision request to GPT-4o with an inline base64 image.
+
+    This is used internally by the ScreenAgent tools (capture_screen / visual_click)
+    to let the model *look* at a screenshot and return a text answer.
+
+    Args:
+        runtime:    The active LLMRuntime (must be a model that supports vision, e.g. gpt-4o).
+        prompt:     The text instruction to accompany the image.
+        image_b64:  Base64-encoded PNG/JPEG image string (no data URI prefix needed).
+        max_tokens: Optional token cap. Falls back to runtime.max_tokens.
+
+    Returns:
+        The model's text reply (string).
+    """
+    url = f"{runtime.base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {runtime.api_key}",
+        "Content-Type": "application/json",
+        "Accept": "application/json",
+    }
+    if runtime.provider == "copilot":
+        headers["Editor-Version"] = "vscode/1.96.2"
+        headers["User-Agent"] = "GitHubCopilotChat/0.26.7"
+        headers["Editor-Plugin-Version"] = "copilot-chat/0.26.7"
+        headers["Copilot-Integration-Id"] = "vscode-chat"
+        headers["OpenAI-Intent"] = "conversation-panel"
+
+    vision_message = {
+        "role": "user",
+        "content": [
+            {"type": "text", "text": prompt},
+            {
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:image/png;base64,{image_b64}",
+                    "detail": "high",
+                },
+            },
+        ],
+    }
+
+    tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else runtime.max_tokens
+    payload: Dict[str, Any] = {
+        "model": runtime.model,
+        "messages": [vision_message],
+        "temperature": 0.1,
+    }
+    if isinstance(tokens, int) and tokens > 0:
+        payload["max_tokens"] = tokens
+        payload["max_completion_tokens"] = tokens
+
+    response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
+    response.raise_for_status()
+    data = response.json()
+    content = data["choices"][0]["message"].get("content") or ""
+    return content.strip()
+
+
 def call_chat_once(
     runtime: LLMRuntime,
     messages: List[Dict[str, Any]],

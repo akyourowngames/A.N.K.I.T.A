@@ -69,6 +69,10 @@ Examples:
 - "write a pitch script for Helper ID" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "content generation task"}
 - "draft a progress report on the OpenClaw architecture" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "content generation task"}
 - "write a funny song about Python" → {"agents": ["ContentAgent"], "parallel": false, "reasoning": "creative writing task"}
+- "hit enter", "press escape", "type my password" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "keyboard interaction via desktop_interact"}
+- "press ctrl+shift+esc" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "keyboard shortcut via desktop_interact"}
+- "deep dive into X", "research and investigate" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "deep research mode"}
+- "run test.py and fix errors" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "autonomous self-healing dev loop"}
 - "write a paragraph about AI and open it in Notepad" → {"agents": ["ContentAgent", "SystemAgent"], "parallel": false, "reasoning": "ContentAgent must write file first before SystemAgent can open it — dependency chain"}
 - "write a paragraph about AI, open it in Notepad, and play music while I read it" → {"agents": ["ContentAgent", "SystemAgent", "MusicAgent"], "parallel": false, "reasoning": "ContentAgent writes first, SystemAgent opens after, MusicAgent plays — sequential to avoid race condition"}
 - "open Notepad" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "app launch is SystemAgent"}
@@ -129,7 +133,8 @@ class SupervisorAgent:
 
             # Validate agent names
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
-                     "CodeAgent", "CronAgent", "ContentAgent", "GeneralAgent", "TerminalAgent"}
+                     "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
+                     "GeneralAgent", "TerminalAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             return {

@@ -319,14 +319,43 @@ def launch_app(
     }
 
 
-# Destructive command patterns — blocked regardless of agent
+# ---------------------------------------------------------------------------
+# Security: commands blocked regardless of what the LLM asks
+# ---------------------------------------------------------------------------
 _BLOCKED_PATTERNS = [
     "del /s", "del /f /s", "format c", "format d",
     "rmdir /s", "rd /s", "rd /q", "rm -rf",
     "Remove-Item -Recurse -Force",
     "remove-item -recurse",
     ":(){:|:&};:",  # fork bomb
+    "dd if=",
+    "shutdown /s", "shutdown -s",
+    "reg delete hklm", "reg delete hkcu",
 ]
+
+# Output size guardrails — prevent context window blowout
+_MAX_OUTPUT_LINES = 500
+_KEEP_HEAD_LINES = 200
+_KEEP_TAIL_LINES = 50
+
+
+def _truncate_output_lines(text: str) -> str:
+    """
+    Truncate large command output to prevent LLM context blowout.
+    Keeps first _KEEP_HEAD_LINES + last _KEEP_TAIL_LINES with a summary in between.
+    """
+    lines = text.splitlines()
+    total = len(lines)
+    if total <= _MAX_OUTPUT_LINES:
+        return text
+    head = lines[:_KEEP_HEAD_LINES]
+    tail = lines[-_KEEP_TAIL_LINES:]
+    skipped = total - _KEEP_HEAD_LINES - _KEEP_TAIL_LINES
+    return (
+        "\n".join(head)
+        + f"\n\n... [{skipped} lines truncated — use Select-Object -First 50 or head to limit output] ...\n\n"
+        + "\n".join(tail)
+    )
 
 
 def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
@@ -371,7 +400,7 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
             check=False,
             cwd=str(Path.home()),  # run from home — not workspace-sandboxed
         )
-        output = (result.stdout or "").strip()
+        output = _truncate_output_lines((result.stdout or "").strip())
         error = (result.stderr or "").strip()
         if result.returncode == 0:
             return {
