@@ -3,3 +3,6 @@
 .ankita/
 __pycache__/
 *.pyc
+
+# WhatsApp session — contains browser profile data with real secrets, NEVER commit
+whatsapp_session/

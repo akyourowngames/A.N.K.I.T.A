@@ -27,7 +27,13 @@ from typing import Any, Dict, List, Optional, Set
 # ---------------------------------------------------------------------------
 
 def _parse_vip_friends(raw: str) -> Set[str]:
-    """Parse comma-separated VIP contact names into a set (stripped, lowercased for matching)."""
+    """
+    Parse comma-separated VIP contact names into a set.
+
+    Each name is stripped of leading/trailing whitespace then lowercased
+    for case-insensitive matching against WhatsApp contact names.
+    Example: 'Dev, Sadhu Ram ,Krish' → {'dev', 'sadhu ram', 'krish'}
+    """
     return {name.strip().lower() for name in (raw or "").split(",") if name.strip()}
 
 
@@ -122,6 +128,9 @@ class WhatsAppBridge:
         self._browser = None
         self._page = None
 
+        # Debug mode — set WHATSAPP_DEBUG=true in .env for tick-by-tick logging
+        self._debug = _env_bool("WHATSAPP_DEBUG", False)
+
         # Track last replied message per chat to avoid duplicate replies
         # key: contact_name_lower, value: last message text we replied to
         self._last_replied: Dict[str, str] = {}
@@ -213,7 +222,7 @@ class WhatsAppBridge:
                         sync_needed = True
 
                 if sync_needed:
-                    print("[WhatsApp] Syncing Chrome profile (first time may take 30s)...")
+                    print("[WhatsApp] Syncing Chrome profile (copying only essential files)...")
                     # Remove stale copy
                     if pw_profile_copy.exists():
                         try:
@@ -222,13 +231,19 @@ class WhatsAppBridge:
                             pass
                     pw_profile_copy.mkdir(parents=True, exist_ok=True)
 
-                    # Copy essential subdirs — skip Cache/Code Cache to keep it fast
-                    _SKIP = {"Cache", "Code Cache", "GPUCache", "ShaderCache",
-                             "CacheStorage", "Service Worker", "DawnCache"}
+                    # Only copy the ESSENTIAL files WhatsApp needs for login.
+                    # This is fast (seconds, not minutes) and avoids the hang.
+                    _ESSENTIAL = {
+                        "Cookies",          # Login session cookies
+                        "Local Storage",    # WhatsApp Web local state
+                        "Session Storage",  # Session data
+                        "IndexedDB",        # WhatsApp message cache
+                        "Preferences",      # Chrome profile prefs (single file)
+                    }
                     errors = []
                     for item in src_profile.iterdir():
-                        if item.name in _SKIP:
-                            continue
+                        if item.name not in _ESSENTIAL:
+                            continue  # Skip everything else — Cache, Extensions, etc.
                         dst = pw_profile_copy / item.name
                         try:
                             if item.is_dir():
@@ -236,13 +251,12 @@ class WhatsAppBridge:
                                                 ignore_dangling_symlinks=True)
                             else:
                                 shutil.copy2(str(item), str(dst))
+                            print(f"[WhatsApp]   ✅ Copied: {item.name}")
                         except Exception as copy_err:
                             errors.append(f"{item.name}: {copy_err}")
+                            print(f"[WhatsApp]   ⚠️  Skipped {item.name}: {copy_err}")
 
-                    if errors:
-                        print(f"[WhatsApp] Profile sync done with {len(errors)} skipped items.")
-                    else:
-                        print("[WhatsApp] Profile sync complete ✅")
+                    print("[WhatsApp] Profile sync complete ✅")
                 else:
                     print("[WhatsApp] Profile is up-to-date, skipping sync.")
 
@@ -308,10 +322,17 @@ class WhatsAppBridge:
                 print("[WhatsApp]    Continuing poll loop anyway...")
 
             # Start the poll loop
+            tick_count = 0
             while not self._stop_event.is_set():
+                tick_count += 1
                 try:
-                    self._tick()
+                    self._tick(tick_count)
                 except Exception as err:
+                    err_str = str(err).lower()
+                    if any(kw in err_str for kw in ("closed", "target page", "browser has been closed")):
+                        print("[WhatsApp] 🔴 Browser was closed. Shutting down bridge gracefully...")
+                        self._stop_event.set()
+                        break
                     print(f"[WhatsApp] Tick error: {err}")
                 self._stop_event.wait(timeout=self.poll_interval)
 
@@ -329,22 +350,45 @@ class WhatsAppBridge:
     # Internal — watch logic
     # ------------------------------------------------------------------
 
-    def _tick(self) -> None:
+    def _tick(self, tick_count: int = 0) -> None:
         """One poll cycle: find unread chats and process them."""
+        from playwright.sync_api import Error as PWError
+
         page = self._page
         if page is None:
             return
 
-        # Find all unread badge elements
-        unread_badges = page.query_selector_all(SEL_UNREAD_BADGE)
-        if not unread_badges:
-            return  # Nothing to process
+        try:
+            if self._debug:
+                print(f"[WhatsApp Debug] --- Tick {tick_count} --- Scanning for unread messages...")
 
-        for badge in unread_badges:
-            try:
-                self._process_badge(badge)
-            except Exception as err:
-                print(f"[WhatsApp] Error processing badge: {err}")
+            # Find all unread badge elements
+            unread_badges = page.query_selector_all(SEL_UNREAD_BADGE)
+
+            if self._debug:
+                print(f"[WhatsApp Debug] Found {len(unread_badges)} unread badge(s).")
+
+            if not unread_badges:
+                if self._debug:
+                    print("[WhatsApp Debug] No unread messages. Sleeping...")
+                return  # Nothing to process
+
+            for badge in unread_badges:
+                try:
+                    self._process_badge(badge)
+                except PWError as pw_err:
+                    if "closed" in str(pw_err).lower():
+                        raise  # Re-raise so _run() can catch and exit cleanly
+                    print(f"[WhatsApp] Error processing badge: {pw_err}")
+                except Exception as err:
+                    print(f"[WhatsApp] Error processing badge: {err}")
+
+        except PWError as pw_err:
+            if "closed" in str(pw_err).lower():
+                raise  # Bubble up to _run() to trigger graceful shutdown
+            print(f"[WhatsApp] Playwright error in tick: {pw_err}")
+        except Exception as err:
+            print(f"[WhatsApp] Tick error: {err}")
 
     def _process_badge(self, badge: Any) -> None:
         """Click the chat associated with an unread badge and process the message."""
