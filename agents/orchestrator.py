@@ -21,7 +21,7 @@ from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages
 from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
 
-_MAX_TOOL_STEPS = 8
+_MAX_TOOL_STEPS = 20
 
 _SYNTHESIZER_PROMPT = (
     "You are A.N.K.I.T.A's Synthesizer. You receive outputs from specialist agents that executed tasks. "

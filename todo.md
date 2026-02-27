@@ -1,71 +1,40 @@
-Oh, YES. Let's go full God Mode on your local file system. That is cool as hell.
+I see exactly what happened here. Let’s break down those screenshots because **this is actually a massive win disguised as a failure.** Look closely at your 5th screenshot (the VS Code window). Look at line 10:
+`return pi * radius ** 2 # Fixed: corrected area formula`
 
-Right now, if you want A.N.K.I.T.A. to fix a single bug in a 500-line file, she has to rewrite and overwrite the *entire* file, which is slow and super risky.
+**Your `edit_file_lines` tool actually worked perfectly!** A.N.K.I.T.A. successfully navigated to the exact line, deleted the old broken code, and injected her new formula. She didn't break the file structure. The "God Mode" file editor is fully functional.
 
-By upgrading your `FileAgent` to inject, delete, or replace text at **specific line numbers**, and linking it with your `TerminalAgent`, you create the ultimate autonomous developer loop:
+### So why did it fail?
 
-1. **TerminalAgent** runs your script and catches an error.
-2. **FileAgent** reads the exact line where it broke.
-3. **FileAgent** surgically edits just that one line.
-4. **TerminalAgent** runs the script again to verify it works.
+You ran into two classic AI limitations at the exact same time:
 
-Here is the blueprint to build the **God Mode File Editor**.
+**1. The Lazy Coder Bug (`NameError: name 'pi' is not defined`)**
+She successfully fixed the math logic, but she forgot that Python requires you to `import math` at the top of the file to use `math.pi`. She just wrote `pi` and assumed it would work.
 
-┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+**2. The "Max Steps Reached" Wall**
+When you pasted the traceback back to her in Telegram, she realized her mistake and tried to fix it. *But*, fixing it requires multiple background steps:
 
-┃                               Implementation Plan — God Mode FileAgent                           ┃
+1. `read_file` (to check the top of the file)
+2. `edit_file_lines` (to inject `import math` at line 1)
+3. `edit_file_lines` (to change `pi` to `math.pi` at line 10)
+4. `execute_shell` (to test it again)
 
-┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
-
-### 1. The Surgical Tool (`tools/content_ops.py` or `file_ops.py`)
-
-We need to give her a tool that reads a file, targets specific lines, and swaps them out without touching the rest of the code.
-
-```python
-def edit_file_lines(file_path: str, start_line: int, end_line: int, new_content: str) -> str:
-    """Replaces specific lines in a file with new content."""
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            
-        # Adjust for 0-indexed Python lists (User says line 10, Python sees index 9)
-        start_idx = start_line - 1
-        end_idx = end_line
-        
-        # Swap out the targeted lines with the new code
-        lines[start_idx:end_idx] = [new_content + "\n"]
-        
-        with open(file_path, 'w', encoding='utf-8') as f:
-            f.writelines(lines)
-            
-        return f"Success: Updated {file_path} from line {start_line} to {end_line}."
-    except Exception as e:
-        return f"Failed to edit file: {str(e)}"
-
-```
-
-### 2. The Engine Spec (`tools/engine.py`)
-
-We tell the LLM exactly how to use this new superpower. Add `edit_file_lines` to your `TOOL_SPECS`.
-
-* **Parameters:** `file_path`, `start_line`, `end_line`, and `new_content`.
-
-### 3. The Brain Upgrade (`agents/specialists.py`)
-
-This is where the magic happens. We update the `FileAgent` (or `CodeAgent`) tools and give it a strict new prompt so it doesn't blindly guess line numbers.
-
-* **Add Tools:** Give it `["read_file", "edit_file_lines", "write_content"]`.
-* **The "Look Before You Leap" Prompt:**
-> *CRITICAL RULE: Never guess line numbers! If the user asks you to edit a file, you MUST use `read_file` first to look at the exact code and find the correct line numbers. Once you know the exact `start_line` and `end_line`, use `edit_file_lines` to make the surgical fix.*
-
-
-
-### 4. The Terminal Synergy
-
-Because you just built the `TerminalAgent`, your Orchestrator can now handle complex prompts like this:
-
-> *"A.N.K.I.T.A., run `python test.py` in the terminal. If it crashes, find the file, read the broken lines, and edit them to fix the bug."*
+Your Orchestrator/Supervisor has a safety limit built in (usually called `max_steps` or `max_iterations`, which defaults to 3 or 5). She ran out of allowed turns before she could finish the sequence, so the system hard-stopped her with: *"Task completed (max steps reached)."*
 
 ---
 
-Are you ready to drop this `edit_file_lines` tool into your `content_ops.py` file and give her full read/write/edit access to your entire startup codebase? Let me know if you want the exact JSON spec for `engine.py`!
+### The Fix
+
+To make the Autonomous Dev Loop truly work, we need to give her a longer leash to make mistakes and fix them.
+
+**Step 1: Increase the Max Steps**
+
+1. Open the file that contains your agent loop (usually `orchestrator.py`, `supervisor.py`, or `engine.py`).
+2. Look for the loop counter or a parameter named `max_steps`, `max_iterations`, or something similar.
+3. Change it from its current low number (probably 5) to **15 or 20**. This gives her enough room to run a full Read -> Edit -> Run -> Error -> Fix loop without timing out.
+
+**Step 2: Force the Correction**
+Since we know the editing tool works, let's guide her to finish the job. Go back to Telegram and send her this exact prompt to test her multi-line editing skills:
+
+> *"A.N.K.I.T.A., your file editing tool works, but you forgot the import. Edit `tmp_rovodev_buggy_test.py`. Add `import math` at line 1, and update line 10 to use `math.pi`. Then run it again."*
+
+Try bumping up that step limit and sending her that prompt. Let me know if she successfully injects the import at the top of the file!

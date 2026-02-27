@@ -36,6 +36,8 @@ _CRON_TOOLS = {"cron"}
 
 _CONTENT_TOOLS = {"write_content", "read_file"}
 
+_COMMS_TOOLS: set = set()  # Pure conversational agent — no file/system tools needed
+
 _ALL_TOOLS = {s["function"]["name"] for s in TOOL_SPECS}
 
 
@@ -122,6 +124,19 @@ _CRON_SYSTEM_PROMPT = (
     "Support 'at', 'every', and 'cron' schedule types."
 )
 
+_COMMS_SYSTEM_PROMPT = (
+    "You are A.N.K.I.T.A., an advanced local AI built by Krish Verma — a 15-year-old "
+    "developer and founder of Helper ID. You are currently managing Krish's WhatsApp "
+    "because he is deep in a coding session and asked you to handle messages. "
+    "Keep your replies short, natural, and text-message style — no markdown, no bullet "
+    "points, no weird formatting, no emojis unless the other person used them first. "
+    "Match the tone of the conversation: casual with friends, polite with others. "
+    "If someone asks what Krish is doing, say he is building his AI architecture or "
+    "working on his startup and will reply when he gets a break. "
+    "Never reveal you are an AI unless directly and sincerely asked. "
+    "Keep replies to 1-3 sentences max — this is WhatsApp, not an email."
+)
+
 _CONTENT_SYSTEM_PROMPT = (
     "You are A.N.K.I.T.A's Content Agent — an expert copywriter, analyst, and creative writer. "
     "Your job is to generate polished, complete text content in any format the user requests: "
@@ -183,6 +198,7 @@ MusicAgent    = SpecialistAgent("MusicAgent",    _MUSIC_TOOLS,    _MUSIC_SYSTEM_
 CodeAgent     = SpecialistAgent("CodeAgent",     _CODE_TOOLS,     _CODE_SYSTEM_PROMPT)
 CronAgent     = SpecialistAgent("CronAgent",     _CRON_TOOLS,     _CRON_SYSTEM_PROMPT)
 ContentAgent  = SpecialistAgent("ContentAgent",  _CONTENT_TOOLS,  _CONTENT_SYSTEM_PROMPT)
+CommsAgent    = SpecialistAgent("CommsAgent",    _COMMS_TOOLS,    _COMMS_SYSTEM_PROMPT)
 GeneralAgent  = SpecialistAgent("GeneralAgent",  _ALL_TOOLS,      _GENERAL_SYSTEM_PROMPT)
 TerminalAgent = SpecialistAgent("TerminalAgent", _TERMINAL_TOOLS, _TERMINAL_SYSTEM_PROMPT)
 
@@ -195,6 +211,7 @@ SPECIALIST_MAP: Dict[str, SpecialistAgent] = {
     "CodeAgent":     CodeAgent,
     "CronAgent":     CronAgent,
     "ContentAgent":  ContentAgent,
+    "CommsAgent":    CommsAgent,
     "GeneralAgent":  GeneralAgent,
     "TerminalAgent": TerminalAgent,
 }
