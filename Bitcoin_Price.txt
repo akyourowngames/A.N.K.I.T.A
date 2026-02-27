@@ -1,7 +1,1 @@
-Bitcoin price today:
-
-BTC/USD: $67,449.85
-Market Cap: $1.34T
-24h Volume: $52.37B
-Circulating Supply: 19.99M BTC
-Max Supply: 21M BTC
+Bitcoin is currently $65,950.00 USD (-3.30% 24h). (Source: CoinGecko)

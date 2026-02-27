@@ -7,6 +7,27 @@ import xml.etree.ElementTree as ET
 
 import requests
 
+# ---------------------------------------------------------------------------
+# Full modern browser headers — bypasses bot detection on DDG, school sites,
+# and most news/local websites that reject bare User-Agent strings.
+# ---------------------------------------------------------------------------
+_REAL_BROWSER_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "DNT": "1",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+}
+
 
 class _DuckResultParser(HTMLParser):
     def __init__(self) -> None:
@@ -22,14 +43,13 @@ class _DuckResultParser(HTMLParser):
         attr_map = {k: (v or "") for k, v in attrs}
         cls = attr_map.get("class", "")
         href = attr_map.get("href", "")
-        # Match DuckDuckGo's multiple HTML formats:
-        # Old: class="result__a"
-        # New HTML5: href contains "/l/?uddg=" redirect
-        # Fallback: any external http link that isn't duckduckgo.com itself
+        # Match DuckDuckGo's HTML formats (tightest matching — no noisy nav links):
+        # 1. Old stable format: class contains "result__a"
+        # 2. New HTML5 format: href contains "/l/?uddg=" (genuine DDG redirect)
+        # DO NOT use "any external http link" fallback — that grabs nav/footer garbage
         is_ddg_result = (
             "result__a" in cls
-            or "uddg=" in href
-            or (href.startswith("http") and "duckduckgo.com" not in href and href.startswith("http"))
+            or ("uddg=" in href and "/l/?" in href)
         )
         if is_ddg_result and href:
             self._capture = True
@@ -125,24 +145,67 @@ def search_web(query: str, max_results: int = 8, include_urls: bool = False) -> 
             # Fallback below
             pass
 
-    # Fallback: DuckDuckGo HTML results (no key)
-    url = f"https://duckduckgo.com/html/?{urlencode({'q': q})}"
-    resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
-    resp.raise_for_status()
-    parser = _DuckResultParser()
-    parser.feed(resp.text)
-    out = []
-    for row in parser.results[:limit]:
-        item = _base_result(title=row["title"], url=row["url"], snippet="")
-        if include_urls:
-            item["url"] = row["url"]
-        out.append(item)
+    # Fallback 1: DuckDuckGo HTML results (no key)
+    # Use html.duckduckgo.com (more stable endpoint) + kl=us-en for region
+    ddg_url = f"https://html.duckduckgo.com/html/?{urlencode({'q': q, 'kl': 'us-en'})}"
+    try:
+        resp = requests.get(ddg_url, timeout=30, headers=_REAL_BROWSER_HEADERS)
+        resp.raise_for_status()
+        parser = _DuckResultParser()
+        parser.feed(resp.text)
+        out = []
+        for row in parser.results[:limit]:
+            item = _base_result(title=row["title"], url=row["url"], snippet="")
+            if include_urls:
+                item["url"] = row["url"]
+            out.append(item)
+        if out:
+            return {
+                "kind": "web_search",
+                "engine": "duckduckgo-html",
+                "query": q,
+                "include_urls": bool(include_urls),
+                "results": out,
+            }
+    except Exception:
+        pass
+
+    # Fallback 2: Google with udm=14 (Web-only tab, bypasses AI overviews)
+    # Free — no API key needed. Scrapes the Google search results page.
+    try:
+        google_url = f"https://www.google.com/search?{urlencode({'q': q, 'udm': '14', 'num': limit})}"
+        resp = requests.get(google_url, timeout=30, headers=_REAL_BROWSER_HEADERS)
+        if resp.status_code == 200:
+            # Extract links from Google results — look for <a href="/url?q=...">
+            google_links = re.findall(r'<a href="/url\?q=([^&"]+)[^"]*"[^>]*>([^<]+)', resp.text)
+            out = []
+            for raw_url, raw_title in google_links[:limit]:
+                from urllib.parse import unquote
+                clean_url = unquote(raw_url)
+                clean_title = re.sub(r'<[^>]+>', '', raw_title).strip()
+                if clean_url.startswith("http") and "google.com" not in clean_url and clean_title:
+                    item = _base_result(title=clean_title, url=clean_url, snippet="")
+                    if include_urls:
+                        item["url"] = clean_url
+                    out.append(item)
+            if out:
+                return {
+                    "kind": "web_search",
+                    "engine": "google-udm14-scrape",
+                    "query": q,
+                    "include_urls": bool(include_urls),
+                    "results": out,
+                }
+    except Exception:
+        pass
+
+    # Last resort: return empty
     return {
         "kind": "web_search",
-        "engine": "duckduckgo-html",
+        "engine": "none",
         "query": q,
         "include_urls": bool(include_urls),
-        "results": out,
+        "results": [],
     }
 
 
@@ -198,15 +261,7 @@ def fetch_page_content(url: str, max_chars: int = 4000, timeout: int = 15) -> Di
             "content": "",
         }
 
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/124.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.5",
-    }
+    headers = _REAL_BROWSER_HEADERS
 
     try:
         resp = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
@@ -456,7 +511,7 @@ def search_news(query: str, max_results: int = 8, include_urls: bool = False) ->
 
     params = {"q": q, "hl": "en-US", "gl": "US", "ceid": "US:en"}
     url = f"https://news.google.com/rss/search?{urlencode(params)}"
-    resp = requests.get(url, timeout=30, headers={"User-Agent": "Mozilla/5.0"})
+    resp = requests.get(url, timeout=30, headers=_REAL_BROWSER_HEADERS)
     resp.raise_for_status()
 
     root = ET.fromstring(resp.text)
