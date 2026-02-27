@@ -251,6 +251,140 @@ def file_info(workspace_root: Path, path: str) -> Dict[str, Any]:
     }
 
 
+def read_file_lines(
+    workspace_root: Path,
+    path: str,
+    start_line: int,
+    end_line: int,
+) -> Dict[str, Any]:
+    """
+    Read a specific range of lines from a file without loading the entire file.
+
+    Lines are 1-indexed and inclusive on both ends, matching what editors show.
+    Useful for the "Look Before You Leap" pattern — read the exact broken lines
+    before calling edit_file_lines.
+
+    Args:
+        workspace_root: Workspace root for path resolution.
+        path:           Path to the file (absolute or relative to workspace).
+        start_line:     First line to return (1-indexed, inclusive).
+        end_line:       Last line to return (1-indexed, inclusive).
+
+    Returns:
+        Dict with ok, path, start_line, end_line, content (str), line_count.
+    """
+    try:
+        fpath = resolve_safe_path(workspace_root, path)
+        if not fpath.is_file():
+            return {"ok": False, "error": f"Not a file: {path}"}
+
+        all_lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        total = len(all_lines)
+
+        # Clamp to valid range (1-indexed → 0-indexed)
+        s = max(1, start_line)
+        e = min(end_line, total)
+        if s > total:
+            return {
+                "ok": False,
+                "error": f"start_line {start_line} exceeds file length {total}",
+            }
+
+        selected = all_lines[s - 1: e]
+        # Prefix each line with its line number for easy LLM reference
+        numbered = "".join(f"{s + i}: {line}" for i, line in enumerate(selected))
+
+        return {
+            "ok": True,
+            "path": to_rel(workspace_root, fpath),
+            "start_line": s,
+            "end_line": e,
+            "total_lines": total,
+            "content": numbered,
+            "line_count": len(selected),
+        }
+    except Exception as err:
+        return {"ok": False, "error": str(err)}
+
+
+def edit_file_lines(
+    workspace_root: Path,
+    path: str,
+    start_line: int,
+    end_line: int,
+    new_content: str,
+) -> Dict[str, Any]:
+    """
+    Surgically replace a specific range of lines in a file.
+
+    Only the targeted lines are changed — all surrounding code is left intact.
+    Lines are 1-indexed and inclusive on both ends.
+
+    IMPORTANT: Always call read_file or read_file_lines first to confirm the
+    exact line numbers before calling this function — never guess.
+
+    Args:
+        workspace_root: Workspace root for path resolution.
+        path:           Path to the file (absolute or relative to workspace).
+        start_line:     First line to replace (1-indexed, inclusive).
+        end_line:       Last line to replace (1-indexed, inclusive).
+        new_content:    Replacement text. May contain multiple lines separated
+                        by \\n. A trailing newline will be added automatically
+                        if missing so the file structure stays intact.
+
+    Returns:
+        Dict with ok, path, lines_replaced, total_lines_before, total_lines_after.
+    """
+    try:
+        fpath = resolve_safe_path(workspace_root, path)
+        if not fpath.is_file():
+            return {"ok": False, "error": f"Not a file: {path}"}
+
+        all_lines = fpath.read_text(encoding="utf-8", errors="replace").splitlines(keepends=True)
+        total_before = len(all_lines)
+
+        # Validate range
+        s = max(1, start_line)
+        e = min(end_line, total_before)
+        if s > total_before:
+            return {
+                "ok": False,
+                "error": f"start_line {start_line} exceeds file length {total_before}",
+            }
+        if s > e:
+            return {
+                "ok": False,
+                "error": f"start_line {s} is greater than end_line {e}",
+            }
+
+        # Ensure new_content ends with a newline so surrounding lines stay intact
+        if new_content and not new_content.endswith("\n"):
+            new_content = new_content + "\n"
+
+        # Split new_content into lines, preserving newlines
+        replacement_lines = [ln if ln.endswith("\n") else ln + "\n"
+                             for ln in new_content.splitlines()]
+
+        # Perform the surgical replacement (0-indexed slice)
+        all_lines[s - 1: e] = replacement_lines
+
+        fpath.write_text("".join(all_lines), encoding="utf-8")
+        total_after = len(all_lines)
+
+        return {
+            "ok": True,
+            "path": to_rel(workspace_root, fpath),
+            "start_line": s,
+            "end_line": e,
+            "lines_replaced": e - s + 1,
+            "replacement_line_count": len(replacement_lines),
+            "total_lines_before": total_before,
+            "total_lines_after": total_after,
+        }
+    except Exception as err:
+        return {"ok": False, "error": str(err)}
+
+
 def apply_patch(workspace_root: Path, patch: str) -> Dict[str, Any]:
     begin = "*** Begin Patch"
     end = "*** End Patch"

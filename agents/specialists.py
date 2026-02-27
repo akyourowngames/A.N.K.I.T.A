@@ -18,9 +18,9 @@ from tools.engine import TOOL_SPECS
 # Tool subsets by domain
 # ---------------------------------------------------------------------------
 
-_FILE_TOOLS = {"list_files", "read_file", "write_file", "edit_file", "search_text",
-               "rename_path", "delete_path", "move_path", "copy_path", "make_dir",
-               "file_info", "apply_patch"}
+_FILE_TOOLS = {"list_files", "read_file", "read_file_lines", "write_file", "edit_file",
+               "edit_file_lines", "search_text", "rename_path", "delete_path", "move_path",
+               "copy_path", "make_dir", "file_info", "apply_patch"}
 
 _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_content", "write_content"}
 
@@ -28,7 +28,8 @@ _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app"}
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music"}
 
-_CODE_TOOLS = {"run_command", "apply_patch", "execute_shell"}
+_CODE_TOOLS = {"run_command", "apply_patch", "execute_shell", "read_file",
+               "read_file_lines", "edit_file_lines", "write_file"}
 _TERMINAL_TOOLS = {"execute_shell", "read_file"}
 
 _CRON_TOOLS = {"cron"}
@@ -49,7 +50,16 @@ def _filter_specs(names: set) -> List[Dict[str, Any]]:
 _FILE_SYSTEM_PROMPT = (
     "You are A.N.K.I.T.A's File Agent — a specialist in file system operations. "
     "Your job is to read, write, search, organise, and manage files and directories. "
-    "Always use the provided tools. Be safe: never delete without confirmation implied by context."
+    "Always use the provided tools. Be safe: never delete without confirmation implied by context.\n\n"
+    "SURGICAL EDITING RULES (God Mode):\n"
+    "1. NEVER guess line numbers. If the user asks you to edit a specific part of a file, "
+    "you MUST call read_file or read_file_lines first to see the exact code and confirm the "
+    "correct line numbers.\n"
+    "2. For targeted fixes (bug patches, one-line changes, small refactors), prefer "
+    "edit_file_lines over write_file — it is safer and preserves the rest of the file.\n"
+    "3. Only use write_file when you need to create a new file or completely replace its content.\n"
+    "4. When using edit_file_lines, double-check start_line and end_line from what read_file_lines "
+    "showed you before calling it."
 )
 
 _WEB_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Web Research Agent — a specialist in finding real, accurate, live information from the web.
@@ -79,9 +89,18 @@ _MUSIC_SYSTEM_PROMPT = (
 )
 
 _CODE_SYSTEM_PROMPT = (
-    "You are A.N.K.I.T.A's Code Agent — a specialist in terminal commands and code execution. "
-    "Run shell commands, apply patches, execute scripts. "
-    "Prefer PowerShell on Windows. Always return the exit code and output."
+    "You are A.N.K.I.T.A's Code Agent — a specialist in terminal commands, code execution, "
+    "and autonomous bug fixing. Run shell commands, apply patches, execute scripts. "
+    "Prefer PowerShell on Windows. Always return the exit code and output.\n\n"
+    "AUTONOMOUS DEV LOOP (God Mode):\n"
+    "When asked to run a script and fix errors, follow this loop:\n"
+    "1. Run the script with run_command and read the error message carefully.\n"
+    "2. Identify the file and line number from the traceback.\n"
+    "3. Call read_file_lines on that file around the error line to see the exact broken code.\n"
+    "4. Call edit_file_lines to surgically fix only the broken lines — never rewrite the whole file.\n"
+    "5. Run the script again with run_command to verify the fix worked.\n"
+    "6. Repeat until the script passes or you exhaust reasonable attempts (max 3 fix cycles).\n"
+    "CRITICAL: Never guess line numbers — always read first, then edit."
 )
 
 _TERMINAL_SYSTEM_PROMPT = """\

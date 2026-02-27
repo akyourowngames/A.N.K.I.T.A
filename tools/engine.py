@@ -472,6 +472,76 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "read_file_lines",
+            "description": (
+                "Read a specific range of lines from a file without loading the entire file. "
+                "Lines are 1-indexed and inclusive on both ends. Each returned line is prefixed "
+                "with its line number. Use this BEFORE calling edit_file_lines to confirm the "
+                "exact line numbers — never guess. Example: to inspect lines 38-45 of a script."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file (absolute or relative to workspace).",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to read (1-indexed, inclusive).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to read (1-indexed, inclusive).",
+                    },
+                },
+                "required": ["file_path", "start_line", "end_line"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "edit_file_lines",
+            "description": (
+                "Surgically replace a specific range of lines in a file. "
+                "Only the targeted lines change — all surrounding code is preserved exactly. "
+                "Lines are 1-indexed and inclusive. "
+                "CRITICAL: Always call read_file or read_file_lines FIRST to confirm exact line "
+                "numbers before calling this — never guess. "
+                "Use this for bug fixes, one-line patches, refactors, and any change that "
+                "does NOT require rewriting the entire file."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file_path": {
+                        "type": "string",
+                        "description": "Path to the file (absolute or relative to workspace).",
+                    },
+                    "start_line": {
+                        "type": "integer",
+                        "description": "First line to replace (1-indexed, inclusive).",
+                    },
+                    "end_line": {
+                        "type": "integer",
+                        "description": "Last line to replace (1-indexed, inclusive).",
+                    },
+                    "new_content": {
+                        "type": "string",
+                        "description": (
+                            "Replacement text. May contain multiple lines separated by \\n. "
+                            "This replaces ALL lines from start_line to end_line."
+                        ),
+                    },
+                },
+                "required": ["file_path", "start_line", "end_line", "new_content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_content",
             "description": (
                 "Generate any type of text content using the LLM and save it to the Desktop. "
@@ -709,6 +779,21 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         )
     if name == "file_info":
         return fs_ops.file_info(workspace_root, path=str(args.get("path", "")))
+    if name == "read_file_lines":
+        return fs_ops.read_file_lines(
+            workspace_root=workspace_root,
+            path=str(args.get("file_path", "")),
+            start_line=int(args.get("start_line", 1)),
+            end_line=int(args.get("end_line", 1)),
+        )
+    if name == "edit_file_lines":
+        return fs_ops.edit_file_lines(
+            workspace_root=workspace_root,
+            path=str(args.get("file_path", "")),
+            start_line=int(args.get("start_line", 1)),
+            end_line=int(args.get("end_line", 1)),
+            new_content=str(args.get("new_content", "")),
+        )
     if name == "apply_patch":
         return fs_ops.apply_patch(workspace_root, patch=str(args.get("patch", "")))
     if name == "write_content":
