@@ -193,34 +193,71 @@ class WhatsAppBridge:
                     chrome_user_data = Path.home() / ".config" / "google-chrome"
 
                 src_profile = chrome_user_data / self.chrome_profile
-                pw_profile_dir = self.session_dir / f"pw_chrome_{self.chrome_profile}"
+
+                # We create a "fake User Data" dir that Playwright can own entirely.
+                # Inside it we put a copy of the Default profile so Chrome finds it.
+                pw_user_data_dir = self.session_dir / "chrome_user_data"
+                pw_profile_copy  = pw_user_data_dir / "Default"
 
                 print(f"[WhatsApp] Chrome profile source: {src_profile}")
-                print(f"[WhatsApp] Copying profile to Playwright session dir (first time may take 30s)...")
 
-                if not pw_profile_dir.exists():
-                    pw_profile_dir.mkdir(parents=True, exist_ok=True)
-                    # Copy only essential subdirs (cookies, local storage, cache is skipped)
-                    for subdir in ["Cookies", "Local Storage", "Session Storage",
-                                   "IndexedDB", "Local Extension Settings"]:
-                        src = src_profile / subdir
-                        dst = pw_profile_dir / subdir
-                        if src.exists():
-                            try:
-                                shutil.copytree(str(src), str(dst))
-                                print(f"[WhatsApp]   Copied: {subdir}")
-                            except Exception as copy_err:
-                                print(f"[WhatsApp]   Skipped {subdir}: {copy_err}")
-                    print("[WhatsApp] Profile copy complete.")
+                # Always re-sync the profile copy so cookies/session stay fresh
+                sync_needed = True
+                if pw_profile_copy.exists():
+                    # Re-sync if source is newer than our copy (mtime check)
+                    try:
+                        src_mtime = src_profile.stat().st_mtime
+                        dst_mtime = pw_profile_copy.stat().st_mtime
+                        sync_needed = src_mtime > dst_mtime
+                    except Exception:
+                        sync_needed = True
+
+                if sync_needed:
+                    print("[WhatsApp] Syncing Chrome profile (first time may take 30s)...")
+                    # Remove stale copy
+                    if pw_profile_copy.exists():
+                        try:
+                            shutil.rmtree(str(pw_profile_copy))
+                        except Exception:
+                            pass
+                    pw_profile_copy.mkdir(parents=True, exist_ok=True)
+
+                    # Copy essential subdirs — skip Cache/Code Cache to keep it fast
+                    _SKIP = {"Cache", "Code Cache", "GPUCache", "ShaderCache",
+                             "CacheStorage", "Service Worker", "DawnCache"}
+                    errors = []
+                    for item in src_profile.iterdir():
+                        if item.name in _SKIP:
+                            continue
+                        dst = pw_profile_copy / item.name
+                        try:
+                            if item.is_dir():
+                                shutil.copytree(str(item), str(dst),
+                                                ignore_dangling_symlinks=True)
+                            else:
+                                shutil.copy2(str(item), str(dst))
+                        except Exception as copy_err:
+                            errors.append(f"{item.name}: {copy_err}")
+
+                    if errors:
+                        print(f"[WhatsApp] Profile sync done with {len(errors)} skipped items.")
+                    else:
+                        print("[WhatsApp] Profile sync complete ✅")
                 else:
-                    print("[WhatsApp] Using existing copied profile.")
+                    print("[WhatsApp] Profile is up-to-date, skipping sync.")
 
+                # Launch with the fake User Data dir — Playwright owns it fully
                 self._browser = pw.chromium.launch_persistent_context(
-                    user_data_dir=str(pw_profile_dir),
+                    user_data_dir=str(pw_user_data_dir),
                     channel="chrome",
                     headless=self.headless,
-                    args=["--no-first-run", "--no-default-browser-check",
-                          "--disable-extensions-except=", "--no-sandbox"],
+                    args=[
+                        "--profile-directory=Default",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                        "--no-sandbox",
+                        "--disable-background-networking",
+                    ],
                     viewport={"width": 1280, "height": 800},
                 )
             else:
