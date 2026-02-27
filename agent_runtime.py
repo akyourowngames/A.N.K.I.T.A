@@ -68,6 +68,9 @@ class AgentRuntime:
         self, tool_calls: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
         """Execute multiple tool calls in parallel using a thread pool."""
+        # Inject runtime so visual_click (and any future vision tools) can call LLM
+        execute_tool_call._runtime = self.runtime  # type: ignore[attr-defined]
+
         if len(tool_calls) == 1:
             # Single tool — no overhead of thread pool
             tc = tool_calls[0]

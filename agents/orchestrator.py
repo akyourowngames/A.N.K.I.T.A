@@ -66,6 +66,8 @@ def _run_specialist(
 
         for tc in tool_calls:
             try:
+                # Inject runtime so visual_click can call LLM vision API
+                execute_tool_call._runtime = runtime  # type: ignore[attr-defined]
                 result = execute_tool_call(tc, workspace_root=workspace_root)
             except Exception as err:
                 result = {"ok": False, "error": str(err)}
@@ -123,6 +125,13 @@ class Orchestrator:
                                "run git", "run script", "terminal command",
                                "shell command", "what is my ip", "my ip address",
                                "show processes", "running processes"}, ["TerminalAgent"]),
+            "capture_screen": ({"what's on my screen", "what is on my screen",
+                                 "what does my screen show", "read the error on screen",
+                                 "read my screen", "look at my screen", "see my screen",
+                                 "what's on screen", "screen show", "screen says",
+                                 "click the", "click on the", "visual click",
+                                 "click button", "click submit", "click deploy",
+                                 "read error on screen", "what error", "error on screen"}, ["ScreenAgent"]),
         }
         text_lower = user_text.lower()
         if agent_names == ["GeneralAgent"]:

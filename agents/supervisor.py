@@ -29,6 +29,7 @@ Available specialist agents:
 - CronAgent: cron job scheduling (add, list, update, remove, run)
 - ContentAgent: generate and save any text content — reports, scripts, songs, pitch decks, summaries, emails, essays, poems
 - TerminalAgent: raw terminal/shell access — ping servers, ipconfig, git commands, dir/ls, run Python scripts, check network/system info, tasklist, netstat, whoami, curl
+- ScreenAgent: screen vision & mouse control — capture screenshots for analysis, read errors/UI off the screen, click UI elements by description (visual_click), ask "what's on my screen"
 - GeneralAgent: everything else, complex multi-domain tasks, general conversation
 
 Rules:
@@ -51,6 +52,7 @@ Rules:
    - User says run command/script/code in workspace → CodeAgent
    - User says ping/ipconfig/git/netstat/tasklist/whoami/curl or any raw CLI command → TerminalAgent
    - User says schedule/cron/remind → CronAgent
+   - User asks what's on screen, read error on screen, click a button visually, look at my screen → ScreenAgent
    GeneralAgent is ONLY for pure conversation, greetings, or genuinely ambiguous requests with NO real-world actions.
 8. AUTONOMOUS EXECUTION RULE: You are routing for an AUTONOMOUS EXECUTION SYSTEM, not a text chatbot. Every action the user requests MUST be executed by a specialist agent. Never route a task to GeneralAgent just because it seems complex — complexity is handled inside each specialist.
 
@@ -82,6 +84,11 @@ Examples:
 - "what is my IP address" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "ipconfig is TerminalAgent"}
 - "run git status" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "git command is TerminalAgent"}
 - "show running processes" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "tasklist is TerminalAgent"}
+- "what's on my screen" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen vision is ScreenAgent"}
+- "read the error on my screen" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen reading is ScreenAgent"}
+- "click the Deploy button" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "visual click is ScreenAgent"}
+- "what does my screen show" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen analysis is ScreenAgent"}
+- "look at my screen and tell me what's wrong" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen vision is ScreenAgent"}
 
 WRONG examples (never do this):
 - "write a paragraph about AI and open it in Notepad" → WRONG: {"agents": ["GeneralAgent"]} ← this causes lazy text response instead of action
@@ -134,7 +141,7 @@ class SupervisorAgent:
             # Validate agent names
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
                      "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
-                     "GeneralAgent", "TerminalAgent"}
+                     "GeneralAgent", "TerminalAgent", "ScreenAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             return {

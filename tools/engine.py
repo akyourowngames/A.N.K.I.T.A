@@ -488,10 +488,12 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             "name": "desktop_interact",
             "description": (
                 "Interact directly with the OS using keyboard input. "
-                "Use this to type passwords, press shortcuts, hit enter, or physically drive the UI. "
+                "Use this to type text, press shortcuts, hit enter, or physically drive the UI. "
                 "NEVER ask the user to type it themselves — call this instead. "
+                "ALWAYS pass the `focus` parameter when you know which app you are targeting "
+                "(e.g. 'Notepad', 'Chrome') — this prevents typing into the wrong window. "
                 "Actions: "
-                "'type_text' — types the given text into the currently focused window; "
+                "'type_text' — types the given text into the focused window; "
                 "'press_shortcut' — presses a key combo like 'ctrl+c', 'enter', 'win+d', 'alt+f4', 'ctrl+shift+esc'."
             ),
             "parameters": {
@@ -505,6 +507,14 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "text": {
                         "type": "string",
                         "description": "The text to type, or the shortcut string (e.g. 'ctrl+shift+esc', 'enter', 'win+d').",
+                    },
+                    "focus": {
+                        "type": "string",
+                        "description": (
+                            "Optional: Window title to focus BEFORE typing or pressing keys. "
+                            "e.g. 'Notepad', 'Visual Studio Code', 'Chrome'. "
+                            "Always provide this when you know which app you are targeting."
+                        ),
                     },
                 },
                 "required": ["action", "text"],
@@ -918,6 +928,7 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         return desktop_ops.desktop_interact(
             action=str(args.get("action", "")),
             text=str(args.get("text", "")),
+            focus=str(args["focus"]) if args.get("focus") else None,
         )
     if name == "check_syntax":
         return fs_ops.check_syntax(
