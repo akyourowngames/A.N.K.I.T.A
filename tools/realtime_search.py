@@ -73,7 +73,7 @@ def search_web(
     if not q:
         raise ValueError("query is required")
 
-    limit = max(1, min(int(max_results), 20))
+    limit = max(1, min(int(max_results), 50))  # increased cap from 20 → 50
     results: List[Dict[str, Any]] = []
 
     # ------------------------------------------------------------------
@@ -197,7 +197,7 @@ def search_web(
 
 def fetch_page_content(
     url: str,
-    max_chars: int = 6000,
+    max_chars: int = 15000,
 ) -> Dict[str, Any]:
     """
     Fetch and clean the content of any URL using Jina Reader.
@@ -225,7 +225,7 @@ def fetch_page_content(
         resp = requests.get(
             jina_url,
             headers=_jina_headers(),
-            timeout=20,
+            timeout=30,  # increased from 20s → 30s for slow pages
         )
 
         if resp.status_code != 200:
@@ -262,9 +262,9 @@ def fetch_page_content(
 
 def search_and_fetch(
     query: str,
-    max_results: int = 5,
-    fetch_top: int = 3,
-    max_chars_per_page: int = 5000,
+    max_results: int = 10,
+    fetch_top: int = 5,
+    max_chars_per_page: int = 12000,
 ) -> Dict[str, Any]:
     """
     Deep Search: search DuckDuckGo, then fetch the full Markdown content
@@ -314,7 +314,7 @@ def search_and_fetch(
                 clean = re.sub(r'<[^>]+>', ' ', clean)
                 clean = re.sub(r'\s+', ' ', clean).strip()
                 if len(clean) > 200:  # Only accept if we got meaningful content
-                    content = clean[:max_chars_per_page]
+                    content = clean[:max(max_chars_per_page, 12000)]
                     fetched.append({
                         "title":   title,
                         "url":     url,
@@ -366,7 +366,7 @@ def search_news(
     if not q:
         raise ValueError("query is required")
 
-    limit = max(1, min(int(max_results), 20))
+    limit = max(1, min(int(max_results), 30))  # increased cap from 20 → 30
     results: List[Dict[str, Any]] = []
 
     # Try ddgs first (new package name), then old duckduckgo_search
@@ -514,9 +514,9 @@ def search_price(query: str) -> Dict[str, Any]:
     try:
         result = search_and_fetch(
             query=f"{query} price today USD",
-            max_results=5,
-            fetch_top=2,
-            max_chars_per_page=4000,
+            max_results=8,
+            fetch_top=3,
+            max_chars_per_page=8000,
         )
         all_content = " ".join(p.get("content", "") for p in result.get("results", []))
         price_patterns = re.findall(r'\$[\d,]+(?:\.\d{1,2})?', all_content)
