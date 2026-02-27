@@ -1,40 +1,57 @@
-I see exactly what happened here. Let’s break down those screenshots because **this is actually a massive win disguised as a failure.** Look closely at your 5th screenshot (the VS Code window). Look at line 10:
-`return pi * radius ** 2 # Fixed: corrected area formula`
+I see exactly what is going on in that final screenshot (`image_1a5078.png`). You ran `python whatsapp_runner.py` and instantly hit a wall:
 
-**Your `edit_file_lines` tool actually worked perfectly!** A.N.K.I.T.A. successfully navigated to the exact line, deleted the old broken code, and injected her new formula. She didn't break the file structure. The "God Mode" file editor is fully functional.
+`TypeError: AgentRuntime.__init__() got an unexpected keyword argument 'system_prompt'`
 
-### So why did it fail?
+This is a classic code generation hallucination. Your assistant tried to force a `system_prompt` directly into the Orchestrator's initialization, but your `AgentRuntime` architecture doesn't accept that argument (because prompts are handled inside `agents/specialists.py`).
 
-You ran into two classic AI limitations at the exact same time:
+On top of that, wanting to hijack your *actual* Chrome profile so you don't have to rescan the QR code is a total boss move. We can absolutely do that.
 
-**1. The Lazy Coder Bug (`NameError: name 'pi' is not defined`)**
-She successfully fixed the math logic, but she forgot that Python requires you to `import math` at the top of the file to use `math.pi`. She just wrote `pi` and assumed it would work.
+Here is the exact battle plan to fix the bug and hijack your local Chrome profile.
 
-**2. The "Max Steps Reached" Wall**
-When you pasted the traceback back to her in Telegram, she realized her mistake and tried to fix it. *But*, fixing it requires multiple background steps:
+### 1. Fix the `TypeError` Crash
 
-1. `read_file` (to check the top of the file)
-2. `edit_file_lines` (to inject `import math` at line 1)
-3. `edit_file_lines` (to change `pi` to `math.pi` at line 10)
-4. `execute_shell` (to test it again)
+Open `whatsapp_runner.py` and look around line 64.
 
-Your Orchestrator/Supervisor has a safety limit built in (usually called `max_steps` or `max_iterations`, which defaults to 3 or 5). She ran out of allowed turns before she could finish the sequence, so the system hard-stopped her with: *"Task completed (max steps reached)."*
+```python
+# ❌ Delete the system_prompt line from AgentRuntime
+agent = AgentRuntime(
+    llm_provider="copilot",
+    system_prompt="..." # <-- DELETE THIS ENTIRE LINE
+)
 
----
+# ✅ It should look like this:
+agent = AgentRuntime(llm_provider="copilot")
 
-### The Fix
+```
 
-To make the Autonomous Dev Loop truly work, we need to give her a longer leash to make mistakes and fix them.
+*Note: The `CommsAgent` prompt is already safely stored in your `specialists.py` file, so the runtime doesn't need it here.*
 
-**Step 1: Increase the Max Steps**
+### 2. Hijack Your Default Chrome Profile ("Krish")
 
-1. Open the file that contains your agent loop (usually `orchestrator.py`, `supervisor.py`, or `engine.py`).
-2. Look for the loop counter or a parameter named `max_steps`, `max_iterations`, or something similar.
-3. Change it from its current low number (probably 5) to **15 or 20**. This gives her enough room to run a full Read -> Edit -> Run -> Error -> Fix loop without timing out.
+To use your real Chrome browser instead of Playwright's default Chromium, we need to point Playwright directly to your Windows AppData folder. Looking at your terminal path, your Windows username is `anime`.
 
-**Step 2: Force the Correction**
-Since we know the editing tool works, let's guide her to finish the job. Go back to Telegram and send her this exact prompt to test her multi-line editing skills:
+Open `services/whatsapp_bridge.py` and update the browser launch code:
 
-> *"A.N.K.I.T.A., your file editing tool works, but you forgot the import. Edit `tmp_rovodev_buggy_test.py`. Add `import math` at line 1, and update line 10 to use `math.pi`. Then run it again."*
+```python
+# Replace your current context initialization with this:
 
-Try bumping up that step limit and sending her that prompt. Let me know if she successfully injects the import at the top of the file!
+chrome_user_data_path = r"C:\Users\anime\AppData\Local\Google\Chrome\User Data"
+
+context = p.chromium.launch_persistent_context(
+    user_data_dir=chrome_user_data_path,
+    channel="chrome", # This forces Playwright to use your real Chrome installation
+    headless=False,
+    # If "Krish" is not your default profile, uncomment the line below and change the profile number
+    # args=["--profile-directory=Profile 1"] 
+)
+
+```
+
+### ⚠️ The "Ghost Browser" Golden Rule
+
+Because you are hijacking your real Chrome database, **you MUST close all open Google Chrome windows before running the script**.
+If you leave a normal Chrome window open, Playwright will crash with a "Database Locked" error because two programs can't read the Chrome profile at the exact same time.
+
+Make those two code edits, close out of your normal Chrome browser completely, and run `python whatsapp_runner.py` again.
+
+Would you like me to walk you through how to find your exact `--profile-directory` name if "Krish" isn't the primary "Default" profile?

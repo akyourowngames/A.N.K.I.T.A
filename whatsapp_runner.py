@@ -41,7 +41,7 @@ except ImportError:
         "Run: pip install playwright && playwright install chromium\n"
     )
 
-from agent_runtime import AgentRuntime, new_session  # noqa: E402
+from agent_runtime import AgentRuntime  # noqa: E402
 from agents.specialists import CommsAgent  # noqa: E402
 from llm import build_runtime_from_env  # noqa: E402
 from services.whatsapp_bridge import WhatsAppBridge, _parse_vip_friends, _env_bool  # noqa: E402
@@ -57,16 +57,10 @@ def main() -> None:
     print(f"[WhatsApp] LLM provider: {runtime.provider} / {runtime.model}")
 
     # ------------------------------------------------------------------
-    # Build a CommsAgent-backed AgentRuntime
-    # AgentRuntime wraps the LLM loop; we override its system prompt
-    # via CommsAgent's specialized system prompt.
+    # Build AgentRuntime — CommsAgent system prompt injected per-session
+    # inside WhatsAppBridge._generate_reply() via the messages list.
     # ------------------------------------------------------------------
-    agent = AgentRuntime(
-        runtime=runtime,
-        workspace_root=WORKSPACE_ROOT,
-        system_prompt=CommsAgent.system_prompt,
-        tool_specs=CommsAgent.tool_specs,  # empty — pure conversational
-    )
+    agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
 
     # ------------------------------------------------------------------
     # Load config from .env
@@ -84,6 +78,13 @@ def main() -> None:
     poll_interval = float(os.getenv("WHATSAPP_POLL_INTERVAL", "5"))
     typing_delay = int(os.getenv("WHATSAPP_TYPING_DELAY", "80"))
     headless = _env_bool("WHATSAPP_HEADLESS", False)
+    use_chrome = _env_bool("WHATSAPP_USE_CHROME", False)
+    chrome_profile = os.getenv("WHATSAPP_CHROME_PROFILE", "Default").strip()
+
+    if use_chrome:
+        print("[WhatsApp] ⚠️  Chrome hijack mode enabled.")
+        print("[WhatsApp] ⚠️  CLOSE ALL CHROME WINDOWS NOW before continuing!")
+        input("[WhatsApp] Press ENTER when all Chrome windows are closed...")
 
     # ------------------------------------------------------------------
     # Start the bridge
@@ -96,6 +97,8 @@ def main() -> None:
         poll_interval=poll_interval,
         typing_delay=typing_delay,
         headless=headless,
+        use_chrome=use_chrome,
+        chrome_profile=chrome_profile,
     )
 
     print()
@@ -107,6 +110,9 @@ def main() -> None:
     print(f"  Typing delay : {typing_delay}ms/key")
     print(f"  Session dir  : {session_dir}")
     print(f"  Headless     : {headless}")
+    print(f"  Chrome mode  : {'ON (real Chrome)' if use_chrome else 'OFF (Playwright Chromium)'}")
+    if use_chrome:
+        print(f"  Chrome profile: {chrome_profile}")
     print()
     print("Press Ctrl+C to stop.\n")
 

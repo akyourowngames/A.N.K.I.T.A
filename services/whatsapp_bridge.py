@@ -87,11 +87,12 @@ class WhatsAppBridge:
         poll_interval: float = 5.0,
         typing_delay: int = 80,
         headless: bool = False,
+        use_chrome: bool = False,
+        chrome_profile: str = "Default",
     ) -> None:
         """
         Args:
-            agent_runtime:  An AgentRuntime (or CommsAgent) instance used to
-                            generate WhatsApp replies.
+            agent_runtime:  An AgentRuntime instance used to generate WhatsApp replies.
             workspace_root: ANKITA workspace root (for session dir resolution).
             vip_friends:    Set of lowercased contact names to respond to.
                             If empty, responds to ALL contacts (not recommended).
@@ -99,6 +100,11 @@ class WhatsAppBridge:
             poll_interval:  Seconds between unread-badge checks.
             typing_delay:   Milliseconds between keystrokes (human simulation).
             headless:       Run browser in headless mode (False = visible window).
+            use_chrome:     If True, hijack the real Chrome installation instead of
+                            Playwright's bundled Chromium. Uses the existing Chrome
+                            session so WhatsApp Web is already logged in.
+                            WARNING: Close all Chrome windows before enabling this.
+            chrome_profile: Chrome profile to use (default: "Default").
         """
         self.agent_runtime = agent_runtime
         self.workspace_root = workspace_root or Path.cwd()
@@ -107,6 +113,8 @@ class WhatsAppBridge:
         self.poll_interval = poll_interval
         self.typing_delay = typing_delay
         self.headless = headless
+        self.use_chrome = use_chrome
+        self.chrome_profile = chrome_profile
 
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
@@ -169,13 +177,41 @@ class WhatsAppBridge:
 
         with sync_playwright() as pw:
             self._playwright = pw
-            print("[WhatsApp] Launching Chromium with persistent session...")
-            self._browser = pw.chromium.launch_persistent_context(
-                user_data_dir=str(self.session_dir),
-                headless=self.headless,
-                args=["--no-sandbox", "--disable-dev-shm-usage"],
-                viewport={"width": 1280, "height": 800},
-            )
+
+            if self.use_chrome:
+                # Hijack real Chrome — use its existing user data dir so WhatsApp
+                # Web is already logged in (no QR scan needed).
+                import platform
+                if platform.system() == "Windows":
+                    chrome_user_data = Path(os.path.expandvars(
+                        r"%LOCALAPPDATA%\Google\Chrome\User Data"
+                    ))
+                elif platform.system() == "Darwin":
+                    chrome_user_data = Path.home() / "Library" / "Application Support" / "Google" / "Chrome"
+                else:
+                    chrome_user_data = Path.home() / ".config" / "google-chrome"
+
+                print(f"[WhatsApp] Hijacking real Chrome at: {chrome_user_data}")
+                print(f"[WhatsApp] Profile: {self.chrome_profile}")
+                self._browser = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(chrome_user_data),
+                    channel="chrome",                # Use real Chrome binary
+                    headless=self.headless,
+                    args=[
+                        f"--profile-directory={self.chrome_profile}",
+                        "--no-first-run",
+                        "--no-default-browser-check",
+                    ],
+                    viewport={"width": 1280, "height": 800},
+                )
+            else:
+                print("[WhatsApp] Launching Playwright Chromium with persistent session...")
+                self._browser = pw.chromium.launch_persistent_context(
+                    user_data_dir=str(self.session_dir),
+                    headless=self.headless,
+                    args=["--no-sandbox", "--disable-dev-shm-usage"],
+                    viewport={"width": 1280, "height": 800},
+                )
             # Use existing page or open a new one
             pages = self._browser.pages
             self._page = pages[0] if pages else self._browser.new_page()
@@ -362,8 +398,12 @@ class WhatsAppBridge:
 
         try:
             from agent_runtime import new_session  # type: ignore
-            msgs = new_session()
-            # Inject conversation history
+            from agents.specialists import CommsAgent  # type: ignore
+
+            # Start with the CommsAgent system prompt (WhatsApp persona)
+            # instead of the default ANKITA general-purpose system prompt
+            msgs = [{"role": "system", "content": CommsAgent.system_prompt}]
+            # Inject conversation history for multi-turn context
             for turn in history:
                 msgs.append(turn)
 
