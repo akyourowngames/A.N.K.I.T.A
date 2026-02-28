@@ -30,7 +30,7 @@ _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_conte
               "deep_research"} | _MEMORY_TOOLS
 
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_interact",
-                 "read_file", "search_text"} | _MEMORY_TOOLS
+                 "read_file", "search_text", "execute_shell", "run_command"} | _MEMORY_TOOLS
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music"} | _MEMORY_TOOLS
 
@@ -112,7 +112,15 @@ _FILE_SYSTEM_PROMPT = (
     "don't read entire files blindly.\n"
     "6. Before writing a new file, use list_files to check if it already exists "
     "— avoid accidental overwrites.\n"
-    "7. After any save, always confirm with the exact absolute file path."
+    "7. After any save, always confirm with the exact absolute file path.\n\n"
+
+    "🔧 SELF-CORRECTION PROTOCOL:\n"
+    "NEVER report failure until ALL backup tools have been tried.\n"
+    "  write_file fails (permission)?  → try launch_app('powershell', ['New-Item -Path ... -Value ...'])\n"
+    "  write_file fails (path error)?  → try a different absolute path (e.g. C:\\Users\\anime\\Documents\\)\n"
+    "  read_file fails?                → try read_file_lines or list_files to confirm the path\n"
+    "  edit_file_lines fails?          → fall back to read_file → full rewrite with write_file\n"
+    "ONLY report failure after exhausting ALL alternatives."
 )
 
 _WEB_SYSTEM_PROMPT = """You are ANKITA's Deep Research Analyst. 🔍
@@ -165,6 +173,15 @@ If the user asks for a 'document', 'paper', 'datasheet', 'report', or 'file':
    - Other files → launch_app(app='explorer', args=[path])
 5. Reply: "Downloaded & opened! 📥 Saved to <path>"
 NEVER just dump a list of PDF links when the user asked for THE file — fetch it.
+
+SELF-CORRECTION PROTOCOL:
+NEVER report failure until ALL backup tools have been tried.
+  search_price fails?       → try search_and_fetch("bitcoin price site:coinmarketcap.com")
+  search_and_fetch fails?   → try fetch_page_content on a known good URL (coinmarketcap.com, google.com)
+  search_web fails?         → try search_news or search_and_fetch
+  fetch_page_content fails? → try a different URL from the search results
+  download_file fails?      → report the direct URL so the user can manually download
+ONLY report failure after exhausting ALL alternatives. Never give up after one attempt.
 """
 
 _SYSTEM_SYSTEM_PROMPT = (
@@ -201,7 +218,31 @@ _SYSTEM_SYSTEM_PROMPT = (
     "1. Use tools IMMEDIATELY — never describe, DO it.\n"
     "2. When opening a file in an app, look for FILE: or FILE_PATH: <path> in context — use FULL ABSOLUTE PATH.\n"
     "3. For terminate_app: NEVER kill explorer, system, or OS processes — they are protected.\n"
-    "4. Routing keywords: type, press, keyboard, shortcut, hit enter, alt+f4 → use desktop_interact."
+    "4. Routing keywords: type, press, keyboard, shortcut, hit enter, alt+f4 → use desktop_interact.\n\n"
+
+    "🔑 MACGYVER FALLBACK PROTOCOL (FAILURE IS NOT AN OPTION):\n"
+    "If ANY system_control action fails or returns an error → IMMEDIATELY call execute_shell with the "
+    "PowerShell equivalent. Do NOT ask for permission. Do NOT report failure. Just switch tools and get it done.\n"
+    "Try Method A (system_control) first. If it fails → Method B (execute_shell). NEVER give up after only one method.\n\n"
+
+    "📝 TERMINAL CHEAT SHEET (PowerShell fallback commands):\n"
+    "  Volume up:      (New-Object -ComObject WScript.Shell).SendKeys([char]175)\n"
+    "  Volume down:    (New-Object -ComObject WScript.Shell).SendKeys([char]174)\n"
+    "  Mute/unmute:    (New-Object -ComObject WScript.Shell).SendKeys([char]173)\n"
+    "  Brightness 80%: (Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,80)\n"
+    "  Brightness 50%: (Get-WmiObject -Namespace root/wmi -Class WmiMonitorBrightnessMethods).WmiSetBrightness(1,50)\n"
+    "  WiFi on:        netsh interface set interface \"Wi-Fi\" admin=enabled\n"
+    "  WiFi off:       netsh interface set interface \"Wi-Fi\" admin=disabled\n"
+    "  Bluetooth on:   Get-PnpDevice | Where-Object {$_.Class -eq 'Bluetooth'} | Enable-PnpDevice -Confirm:$false\n"
+    "  Screenshot:     Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen\n"
+    "  Show desktop:   (New-Object -ComObject Shell.Application).ToggleDesktop()\n"
+    "  Lock screen:    rundll32.exe user32.dll,LockWorkStation\n"
+    "  Media play/pause: (New-Object -ComObject WScript.Shell).SendKeys([char]179)\n"
+    "  Media next:     (New-Object -ComObject WScript.Shell).SendKeys([char]176)\n"
+    "  Media prev:     (New-Object -ComObject WScript.Shell).SendKeys([char]177)\n"
+    "  Open URL:       Start-Process 'https://example.com'\n"
+    "  Empty recycle bin: Clear-RecycleBin -Force\n"
+    "  System info:    Get-ComputerInfo | Select-Object OsName,OsArchitecture,CsPhyicallyInstalledMemory\n"
 )
 
 _MUSIC_SYSTEM_PROMPT = (
@@ -329,7 +370,13 @@ _CONTENT_SYSTEM_PROMPT = (
     "- NEVER give partial content — always output the complete, final piece.\n"
     "- Adapt tone to the format: poetic for poems, formal for reports, punchy for scripts.\n"
     "- In Journalist Mode: facts > style. In creative mode: style > constraints.\n"
-    "- Make it GOOD. You are the creative genius. The other agents handle the logistics."
+    "- Make it GOOD. You are the creative genius. The other agents handle the logistics.\n\n"
+    "🔧 SELF-CORRECTION PROTOCOL:\n"
+    "If your first attempt produces too short or empty content:\n"
+    "  → Rewrite with more detail and depth — do NOT output the same short text again.\n"
+    "  → If in Deep Mode: ensure each section has 500+ words before moving on.\n"
+    "  → NEVER output partial content — if you feel you're running out, summarise "
+    "remaining sections briefly rather than stopping mid-document."
 )
 
 _SCREEN_SYSTEM_PROMPT = (

@@ -1,3 +1,5 @@
+import comtypes
+import comtypes.client
 import ctypes
 import os
 import subprocess
@@ -26,23 +28,84 @@ def _run_powershell(script: str, timeout: int = 15) -> Dict[str, Any]:
 
 
 # ---------------------------------------------------------------------------
-# Volume helpers — use winmm.dll waveOut* (works on all Windows audio setups)
+# Volume helpers — Windows Core Audio (IAudioEndpointVolume) via comtypes
+# Controls the real Windows master volume slider (what you see in the taskbar)
 # ---------------------------------------------------------------------------
 
+_CLSID_MMDeviceEnumerator = comtypes.GUID("{BCDE0395-E52F-467C-8E3D-C4579291692E}")
+_IID_IMMDeviceEnumerator  = comtypes.GUID("{A95664D2-9614-4F35-A746-DE8DB63617E6}")
+_IID_IAudioEndpointVolume = comtypes.GUID("{5CDF2C82-841E-4546-9722-0CF74078229A}")
+
+
+class _IAudioEndpointVolume(comtypes.IUnknown):
+    _iid_ = _IID_IAudioEndpointVolume
+    _methods_ = [
+        comtypes.COMMETHOD([], comtypes.HRESULT, "RegisterControlChangeNotify", (["in"], ctypes.c_void_p)),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "UnregisterControlChangeNotify", (["in"], ctypes.c_void_p)),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetChannelCount", (["out"], ctypes.POINTER(ctypes.c_uint))),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "SetMasterVolumeLevel", (["in"], ctypes.c_float), (["in"], ctypes.c_void_p)),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetMasterVolumeLevel", (["out"], ctypes.POINTER(ctypes.c_float))),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "SetMasterVolumeLevelScalar", (["in"], ctypes.c_float), (["in"], ctypes.c_void_p)),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetMasterVolumeLevelScalar", (["out"], ctypes.POINTER(ctypes.c_float))),
+    ]
+
+
+class _IMMDevice(comtypes.IUnknown):
+    _iid_ = comtypes.GUID("{D666063F-1587-4E43-81F1-B948E807363F}")
+    _methods_ = [
+        comtypes.COMMETHOD([], comtypes.HRESULT, "Activate",
+            (["in"], comtypes.POINTER(comtypes.GUID)),
+            (["in"], ctypes.c_uint),
+            (["in"], ctypes.c_void_p),
+            (["out"], comtypes.POINTER(comtypes.POINTER(_IAudioEndpointVolume)))),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "OpenPropertyStore"),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetId"),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetState"),
+    ]
+
+
+class _IMMDeviceEnumerator(comtypes.IUnknown):
+    _iid_ = _IID_IMMDeviceEnumerator
+    _methods_ = [
+        comtypes.COMMETHOD([], comtypes.HRESULT, "EnumAudioEndpoints",
+            (["in"], ctypes.c_int), (["in"], ctypes.c_uint), (["out"], ctypes.POINTER(ctypes.c_void_p))),
+        comtypes.COMMETHOD([], comtypes.HRESULT, "GetDefaultAudioEndpoint",
+            (["in"], ctypes.c_int), (["in"], ctypes.c_int),
+            (["out"], comtypes.POINTER(comtypes.POINTER(_IMMDevice)))),
+    ]
+
+
+def _get_audio_endpoint_volume():
+    """Return the IAudioEndpointVolume COM interface for default audio output."""
+    ctypes.windll.ole32.CoInitialize(None)
+    enumerator = comtypes.CoCreateInstance(
+        _CLSID_MMDeviceEnumerator, _IMMDeviceEnumerator, comtypes.CLSCTX_ALL
+    )
+    device = enumerator.GetDefaultAudioEndpoint(0, 0)
+    return device.Activate(_IID_IAudioEndpointVolume, 23, None)
+
+
+def _vol_set_scalar(vol_interface, scalar: float) -> None:
+    """Set volume using raw vtable call (vtable index 7 = SetMasterVolumeLevelScalar)."""
+    ptr = ctypes.cast(vol_interface, ctypes.c_void_p).value
+    vtable_ptr = ctypes.cast(ptr, ctypes.POINTER(ctypes.c_void_p)).contents.value
+    func_addr = ctypes.cast(vtable_ptr, ctypes.POINTER(ctypes.c_void_p))[7]
+    SetVol = ctypes.WINFUNCTYPE(comtypes.HRESULT, ctypes.c_void_p, ctypes.c_float, ctypes.c_void_p)(func_addr)
+    SetVol(ptr, ctypes.c_float(scalar), None)
+
+
 def _get_master_volume_pct() -> int:
-    """Return current master volume as integer 0-100."""
-    vol = ctypes.c_uint32(0)
-    ctypes.windll.winmm.waveOutGetVolume(None, ctypes.byref(vol))
-    left = (vol.value & 0xFFFF) / 0xFFFF * 100
-    return round(left)
+    """Return current Windows master volume as integer 0-100."""
+    vol = _get_audio_endpoint_volume()
+    level = vol.GetMasterVolumeLevelScalar()
+    return round(level * 100)
 
 
 def _set_master_volume_pct(pct: int) -> None:
-    """Set master volume to pct (0-100)."""
+    """Set Windows master volume to pct (0-100)."""
     pct = max(0, min(100, pct))
-    word = int(pct / 100.0 * 0xFFFF)
-    packed = (word & 0xFFFF) | ((word & 0xFFFF) << 16)
-    ctypes.windll.winmm.waveOutSetVolume(None, packed)
+    vol = _get_audio_endpoint_volume()
+    _vol_set_scalar(vol, pct / 100.0)
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,34 @@ from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
 
+# ─────────────────────────────────────────────────────────────────────────────
+# HYDRA PROTOCOL — Escalation Matrix 🐉
+# Maps (primary_agent) → (backup_agent_name, context_note_for_backup)
+# ─────────────────────────────────────────────────────────────────────────────
+_ESCALATION_MATRIX: Dict[str, tuple] = {
+    "SystemAgent":  ("TerminalAgent",
+                     "SystemAgent tried and FAILED. Use raw PowerShell/CMD via execute_shell to achieve the same goal. "
+                     "Do NOT repeat what SystemAgent did. Use terminal commands directly."),
+    "WebAgent":     ("GeneralAgent",
+                     "WebAgent tried and FAILED (search API down or blocked). "
+                     "Use your internal LLM knowledge to answer as accurately as possible. "
+                     "State clearly that you are using knowledge cutoff data, not live web results."),
+    "FileAgent":    ("TerminalAgent",
+                     "FileAgent tried and FAILED (likely permission error). "
+                     "Use execute_shell to force-write the file via PowerShell: "
+                     "New-Item -Path '<path>' -ItemType File -Force; Set-Content -Path '<path>' -Value '<content>'"),
+    "ContentAgent": ("GeneralAgent",
+                     "ContentAgent timed out or failed. Write a shorter, concise version of the requested content. "
+                     "Quality matters more than length here — produce something complete and usable."),
+    "CodeAgent":    ("CodeAgent",
+                     "Your previous attempt had an error. Re-read the error message carefully, "
+                     "identify the root cause, and retry with a corrected approach. "
+                     "Do NOT repeat the same mistake."),
+    "MusicAgent":   ("TerminalAgent",
+                     "MusicAgent failed. Try launching the music app or file directly via execute_shell: "
+                     "Start-Process 'spotify:' or Start-Process 'wmplayer.exe'."),
+}
+
 
 def _extract_artifacts(text: str) -> Dict[str, List[str]]:
     """
@@ -448,14 +476,54 @@ class Orchestrator:
                 sp, task, self.runtime, self.workspace_root,
                 prior_context=prior_context_block,
             )
+
+            # ── HYDRA PROTOCOL: Error Interceptor 🐉 ─────────────────────────
+            # If the agent failed, look up the Escalation Matrix and reroute
+            # to a backup agent with a Post-Mortem Injection context prompt.
+            # Capped at 1 retry per agent to prevent infinite loops.
+            reply = result.get("reply", "")
+            agent_failed = (
+                not result.get("ok", True)
+                or reply.startswith("[Error]")
+                or "Tool not found" in reply
+                or "Permission denied" in reply
+                or "timed out" in reply.lower()
+            )
+            if agent_failed and sp.name in _ESCALATION_MATRIX:
+                backup_name, failure_note = _ESCALATION_MATRIX[sp.name]
+                backup_sp = SPECIALIST_MAP.get(backup_name)
+                if backup_sp and backup_sp.name != sp.name or (backup_sp and backup_sp.name == sp.name):
+                    print(
+                        f"[Hydra] ⚡ {sp.name} failed → rerouting to {backup_name}",
+                        flush=True,
+                    )
+                    post_mortem = (
+                        f"SYSTEM ALERT — HYDRA REROUTE:\n"
+                        f"Original request: {task}\n"
+                        f"{sp.name} already tried and failed with: {reply[:300]}\n\n"
+                        f"BACKUP MISSION: {failure_note}\n"
+                        f"Achieve the SAME goal using YOUR tools. Do not repeat the failed approach."
+                    )
+                    backup_result = _run_specialist(
+                        backup_sp, task, self.runtime, self.workspace_root,
+                        prior_context=post_mortem,
+                    )
+                    backup_result["rerouted_from"] = sp.name
+                    # Log both the failure and the reroute
+                    self._write_audit(sp.name, {**result, "hydra_rerouted_to": backup_name})
+                    self._write_audit(backup_name, {**backup_result, "hydra_backup": True})
+                    result = backup_result
+                    reply = result.get("reply", "")
+
             results.append(result)
 
             # BATON PASS: sniff this agent's reply for artifacts
-            reply = result.get("reply", "")
             if reply:
                 artifacts = _extract_artifacts(reply)
                 # Build the Telepathy block for the next agent
-                prior_context_block = _build_prior_context_block(sp.name, reply, artifacts)
+                prior_context_block = _build_prior_context_block(
+                    result.get("agent", sp.name), reply, artifacts
+                )
 
             # AUDIT LOG: record agent name, tools used, and artifacts to .ankita/audit.jsonl
             self._write_audit(sp.name, result)
