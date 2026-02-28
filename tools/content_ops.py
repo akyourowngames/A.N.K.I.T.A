@@ -89,25 +89,59 @@ _DEEP_MODE_KEYWORDS = {
 }
 
 # Sections for parallel chunk generation — each chunk gets its own LLM call
+# 8 sections × ~1500 words each = ~12,000 words total (~18-20 pages printed)
 _DEEP_SECTION_PLAN = [
-    ("Executive Summary & Background",
-     "Write the Executive Summary (300+ words) and Background & Context (500+ words) sections. "
-     "Start with '## Executive Summary' header. Be thorough and substantive."),
-    ("Main Analysis — Part 1",
-     "Write 2 deep analysis sections (500+ words each) covering the most important aspects. "
-     "Use '## [Section Name]' headers. Include specific facts, numbers, examples."),
-    ("Main Analysis — Part 2",
-     "Write 2 more deep analysis sections (500+ words each) covering different important aspects. "
-     "Use '## [Section Name]' headers. Include specific facts, numbers, examples."),
-    ("Main Analysis — Part 3",
-     "Write 1 deep analysis section (500+ words) covering remaining key aspects, "
-     "followed by a Real-World Examples & Case Studies section (600+ words). "
-     "Use '## [Section Name]' headers."),
-    ("Implications, Conclusion & Recommendations",
-     "Write the Implications & Impact section (400+ words), Conclusion (300+ words), "
-     "and Recommendations (300+ words). Use '## [Section Name]' headers. "
-     "Make the conclusion and recommendations actionable and specific."),
+    ("Executive Summary",
+     "Write a thorough Executive Summary section. Minimum 800 words. "
+     "Cover: what this document is about, key findings, why it matters, who should read it. "
+     "Start with '## Executive Summary'. Be substantive — no bullet-point only summaries."),
+
+    ("Background & Historical Context",
+     "Write a comprehensive Background & Historical Context section. Minimum 1200 words. "
+     "Cover: the history, origin, evolution, key milestones and timeline of this topic. "
+     "Include specific dates, names, events. Use '## Background & Historical Context' header "
+     "and '### [sub-topic]' subheaders."),
+
+    ("Current State & Landscape",
+     "Write a comprehensive Current State & Landscape section. Minimum 1200 words. "
+     "Cover: where things stand today, key players, current trends, market/field overview, "
+     "recent developments (last 2-3 years). Use '## Current State & Landscape' header "
+     "and multiple '### ' subheaders. Include specific facts and numbers."),
+
+    ("Deep Analysis — Part 1: Core Mechanisms & How It Works",
+     "Write a deep analytical section explaining the core mechanisms, processes, technology, "
+     "or principles behind this topic. Minimum 1200 words. Be technical but clear. "
+     "Use '## Core Mechanisms & How It Works' + '### ' subheaders. "
+     "Include diagrams described in text, step-by-step breakdowns where relevant."),
+
+    ("Deep Analysis — Part 2: Challenges, Risks & Controversies",
+     "Write a deep analytical section on challenges, risks, controversies, criticisms, "
+     "and open problems. Minimum 1200 words. Do not shy away from difficult aspects. "
+     "Use '## Challenges, Risks & Controversies' + '### ' subheaders. "
+     "Cite specific incidents, failures, debates where applicable."),
+
+    ("Real-World Examples & Case Studies",
+     "Write a rich Real-World Examples & Case Studies section. Minimum 1200 words. "
+     "Include at least 4-5 detailed case studies or examples — each with: context, "
+     "what happened, outcomes, lessons learned. Use '## Real-World Examples & Case Studies' "
+     "and '### Case Study N: [Name]' subheaders."),
+
+    ("Future Outlook & Emerging Trends",
+     "Write a forward-looking Future Outlook & Emerging Trends section. Minimum 1000 words. "
+     "Cover: what's coming in the next 5-10 years, emerging technologies or approaches, "
+     "expert predictions, opportunities and threats on the horizon. "
+     "Use '## Future Outlook & Emerging Trends' + '### ' subheaders."),
+
+    ("Implications, Recommendations & Conclusion",
+     "Write the final sections: Implications & Impact (500+ words), Strategic Recommendations "
+     "(500+ words — at least 6 specific, actionable recommendations with reasoning), "
+     "and Conclusion (400+ words — synthesise the whole document, not just summarise). "
+     "Use '## Implications & Impact', '## Recommendations', '## Conclusion' headers. "
+     "Make recommendations specific, numbered, and actionable."),
 ]
+
+# Per-section token budget — 4096 tokens ≈ ~3000 words per call
+_DEEP_SECTION_MAX_TOKENS = 4096
 
 _DEEP_MODE_SYSTEM_PROMPT = (
     "You are an expert writer, journalist, and analyst. "
@@ -188,45 +222,53 @@ def _generate_deep_parallel(
 
     def _generate_chunk(section_name: str, section_instructions: str) -> tuple[str, str]:
         chunk_system = (
-            _DEEP_MODE_SYSTEM_PROMPT
-            + "\n\nYou are generating ONE SECTION of a larger document. "
-            "Write ONLY this section — do not write an intro or outro for the whole doc. "
-            "Start directly with the section header."
+            "You are an expert writer, journalist, and analyst producing ONE SECTION "
+            "of a comprehensive long-form document. "
+            "Write ONLY this section — do not write an intro or outro for the whole document. "
+            "Start directly with the section header (## or ###). "
+            "DO NOT truncate. Write until the section is FULLY complete. "
+            "The minimum word count for your section is explicitly stated in the instructions — meet it."
         )
         chunk_user = (
-            f"Full document topic: {topic_clean} ({format_clean}){context_section}{research_note}\n\n"
-            f"YOUR SECTION TO WRITE: {section_name}\n"
-            f"INSTRUCTIONS: {section_instructions}\n\n"
-            f"Write this section completely and substantively. Minimum 800 words for this section. "
-            f"Use clear ## and ### headers. Start writing now."
+            f"DOCUMENT TOPIC: {topic_clean} ({format_clean}){context_section}{research_note}\n\n"
+            f"YOUR ASSIGNED SECTION: {section_name}\n\n"
+            f"DETAILED INSTRUCTIONS:\n{section_instructions}\n\n"
+            f"CRITICAL RULES:\n"
+            f"- Meet the minimum word count stated above — count your words before finishing.\n"
+            f"- Use ## for main header, ### for subheaders, #### for sub-subheaders.\n"
+            f"- Include specific facts, data, names, dates — no vague generalities.\n"
+            f"- Write in flowing prose paragraphs, NOT just bullet lists.\n"
+            f"- DO NOT add a document intro or conclusion — write ONLY this section.\n"
+            f"- Start writing the section NOW."
         )
         msgs = [
             {"role": "system", "content": chunk_system},
             {"role": "user", "content": chunk_user},
         ]
         try:
-            resp = call_chat_once(runtime, msgs, tools=None, max_tokens=2048)
+            resp = call_chat_once(runtime, msgs, tools=None, max_tokens=_DEEP_SECTION_MAX_TOKENS)
             text = (resp.get("content") or "").strip()
             return section_name, text
         except Exception as err:
             return section_name, f"## {section_name}\n\n[Section generation failed: {err}]"
 
-    # Generate title separately (fast, 128 tokens)
+    # Generate title separately (fast, 64 tokens)
     title_msgs = [
-        {"role": "system", "content": "Generate a professional document title only. No extra text."},
+        {"role": "system", "content": "Generate a professional document title only. No extra text. No quotes."},
         {"role": "user", "content": f"Write a title for a comprehensive {format_clean} about: {topic_clean}"},
     ]
     try:
         title_resp = call_chat_once(runtime, title_msgs, tools=None, max_tokens=64)
-        title = (title_resp.get("content") or f"Comprehensive {format_clean.title()}: {topic_clean}").strip()
+        title = (title_resp.get("content") or f"Comprehensive {format_clean.title()}: {topic_clean}").strip().strip('"\'')
     except Exception:
         title = f"Comprehensive {format_clean.title()}: {topic_clean}"
 
-    print(f"[ContentEngine] 🚀 Launching {len(_DEEP_SECTION_PLAN)} parallel section threads…", flush=True)
+    n_sections = len(_DEEP_SECTION_PLAN)
+    print(f"[ContentEngine] 🚀 Launching {n_sections} parallel section threads (4096 tokens each)…", flush=True)
 
-    # Parallel section generation — all 5 sections at once
+    # Parallel section generation — all 8 sections at once
     section_texts: dict[str, str] = {}
-    with ThreadPoolExecutor(max_workers=len(_DEEP_SECTION_PLAN)) as pool:
+    with ThreadPoolExecutor(max_workers=n_sections) as pool:
         futures = {
             pool.submit(_generate_chunk, sname, sinstr): sname
             for sname, sinstr in _DEEP_SECTION_PLAN
