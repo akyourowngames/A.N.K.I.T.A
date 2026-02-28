@@ -18,8 +18,10 @@ from typing import Any, Dict, List, Optional
 
 from llm import LLMRuntime, call_chat_once
 from llm.client import build_vision_runtime_from_env, call_chat_with_image
-from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages
+from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages, _estimate_tokens
 from tools.memory_ops import format_memory_block
+
+_ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
 from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
@@ -220,6 +222,19 @@ def _run_specialist(
         }
 
     for _ in range(_MAX_TOOL_STEPS):
+        # ── TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call ──
+        estimated = _estimate_tokens(messages)
+        if estimated > _ORCHESTRATOR_TOKEN_LIMIT:
+            print(
+                f"[TokenGuardian/{specialist.name}] ⚠️  ~{estimated:,} tokens — compacting…",
+                flush=True,
+            )
+            trimmed = compact_messages(messages)
+            messages = trimmed
+            print(
+                f"[TokenGuardian/{specialist.name}] ✅ Compacted to ~{_estimate_tokens(messages):,} tokens.",
+                flush=True,
+            )
         try:
             response = call_chat_once(runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
         except Exception as err:

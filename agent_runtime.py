@@ -11,7 +11,11 @@ from tools import (
     compact_messages,
     execute_tool_call,
 )
+from tools.engine import _estimate_tokens
 from tools.memory_ops import format_memory_block
+
+# Proactive compaction threshold — compact before sending if estimated > this many tokens
+_PROACTIVE_TOKEN_LIMIT = 48_000   # leaves 16k headroom below 64k limit
 
 MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
 
@@ -128,6 +132,20 @@ class AgentRuntime:
         seen_calls: set = set()
 
         for step in range(step_limit):
+            # ── TOKEN LIMIT GUARDIAN: proactive compaction before every call ───
+            estimated = _estimate_tokens(messages)
+            if estimated > _PROACTIVE_TOKEN_LIMIT:
+                print(
+                    f"[TokenGuardian] ⚠️  Estimated {estimated:,} tokens — compacting proactively…",
+                    flush=True,
+                )
+                compacted = compact_messages(messages)
+                messages.clear()
+                messages.extend(compacted)
+                print(
+                    f"[TokenGuardian] ✅ Compacted to ~{_estimate_tokens(messages):,} tokens.",
+                    flush=True,
+                )
             assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
             tool_calls = assistant_msg.get("tool_calls") or []
 
@@ -211,6 +229,31 @@ class AgentRuntime:
                     return self.run_turn(messages, tools=TOOL_SPECS)
                 except Exception:
                     pass
+
+            # ── TOKEN LIMIT GUARDIAN: handle 400 model_max_prompt_tokens_exceeded ──
+            if status == 400 and (
+                "model_max_prompt_tokens_exceeded" in body.lower()
+                or "prompt token count" in body.lower()
+                or "exceeds the limit" in body.lower()
+                or "context_length_exceeded" in body.lower()
+                or "maximum context length" in body.lower()
+            ):
+                print(
+                    f"[TokenGuardian] 🚨 HTTP 400 token limit hit — emergency compaction…",
+                    flush=True,
+                )
+                try:
+                    # Aggressive emergency compaction: keep only last 4 messages
+                    compacted = compact_messages(messages, keep_tail=4, char_limit=60_000)
+                    messages.clear()
+                    messages.extend(compacted)
+                    print(
+                        f"[TokenGuardian] ✅ Emergency compact → ~{_estimate_tokens(messages):,} tokens. Retrying…",
+                        flush=True,
+                    )
+                    return self.run_turn(messages, tools=TOOL_SPECS)
+                except Exception as compact_err:
+                    print(f"[TokenGuardian] ❌ Emergency compact failed: {compact_err}", flush=True)
 
             if status == 400 and "tool call validation failed" in body.lower():
                 try:

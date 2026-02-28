@@ -47,7 +47,31 @@ _HEAVY_KEYWORDS: List[str] = [
     "compare", "audit", "refactor", "migrate", "report", "benchmark",
     "test all", "run all", "batch", "bulk", "entire", "comprehensive",
     "detailed", "full analysis", "deep dive",
+    "deep report", "deep research", "search and write", "find and write",
+    "look up and", "research and save", "find info and", "search for and",
+    "look into and", "investigate and",
 ]
+
+# Search verbs + write verbs — if BOTH present → always spawn subagent drone
+_SEARCH_VERBS: frozenset = frozenset({
+    "search", "find", "look up", "lookup", "research", "investigate",
+    "google", "browse", "fetch", "get info", "check online",
+})
+_WRITE_VERBS: frozenset = frozenset({
+    "write", "generate", "create", "draft", "save", "report", "document",
+    "summarize", "summarise", "compile", "produce", "make a", "build a",
+})
+
+
+def _is_search_and_write(text: str) -> bool:
+    """
+    Return True if the user wants to both search/research AND write/save something.
+    These tasks MUST run as a background drone — they're long and multi-step.
+    """
+    t = text.lower()
+    has_search = any(sv in t for sv in _SEARCH_VERBS)
+    has_write = any(wv in t for wv in _WRITE_VERBS)
+    return has_search and has_write
 
 
 def _is_instant(text: str) -> bool:
@@ -59,7 +83,7 @@ def _is_instant(text: str) -> bool:
 def _is_heavy(text: str) -> bool:
     """Return True if the task should show a 'Started 🐝' acknowledgement."""
     t = text.lower()
-    return any(kw in t for kw in _HEAVY_KEYWORDS)
+    return any(kw in t for kw in _HEAVY_KEYWORDS) or _is_search_and_write(t)
 
 
 def _make_id(n: int = 4) -> str:

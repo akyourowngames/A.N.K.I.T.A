@@ -1993,9 +1993,122 @@ def try_direct_local_command(user_text: str, workspace_root: Path) -> Optional[s
     return _format_result(_call(name, args, workspace_root))
 
 
-def compact_messages(messages: List[Dict[str, Any]], keep_tail: int = 8) -> List[Dict[str, Any]]:
-    if len(messages) <= keep_tail + 1:
+def _strip_blobs(content: Any) -> Any:
+    """
+    Strip base64 image blobs and huge JSON payloads from a message content field.
+    Handles both string content and list-of-blocks (multimodal) content.
+    """
+    import re as _re
+    if isinstance(content, str):
+        # Strip inline base64 data URIs (data:image/...;base64,<blob>)
+        stripped = _re.sub(
+            r'data:image/[^;]+;base64,[A-Za-z0-9+/=]{200,}',
+            '[IMAGE_DATA_REMOVED]',
+            content,
+        )
+        # If the resulting string is still very large (>8000 chars), truncate it
+        if len(stripped) > 8000:
+            stripped = stripped[:8000] + "\n... [truncated to fit token limit]"
+        return stripped
+    if isinstance(content, list):
+        # Multimodal content blocks — remove image_url blocks entirely
+        return [
+            block for block in content
+            if not (isinstance(block, dict) and block.get("type") == "image_url")
+        ] or "[IMAGE_REMOVED]"
+    return content
+
+
+def _estimate_tokens(messages: List[Dict[str, Any]]) -> int:
+    """
+    Rough token estimator: chars / 4.
+    Fast enough to call before every LLM request.
+    """
+    total = 0
+    for m in messages:
+        content = m.get("content", "")
+        if isinstance(content, str):
+            total += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    total += len(str(block.get("text", "")))
+        # Also count tool_calls if present
+        if m.get("tool_calls"):
+            total += len(str(m["tool_calls"]))
+    return total // 4  # rough chars-to-tokens ratio
+
+
+def compact_messages(
+    messages: List[Dict[str, Any]],
+    keep_tail: int = 8,
+    char_limit: int = 120_000,   # ~30k tokens safety margin below 64k limit
+) -> List[Dict[str, Any]]:
+    """
+    Smart message compactor — Token Limit Guardian.
+
+    Strategy (in order):
+    1. Strip base64 blobs + large image_url blocks from ALL messages first.
+    2. Drop old tool messages (role='tool') beyond the last 4 turns — they're
+       the biggest offenders (search results, file contents, vision JSON).
+    3. If still over char_limit, drop oldest non-system messages until we fit.
+    4. Always keep: system message + last `keep_tail` messages.
+    5. Insert a synthetic system note about what was trimmed.
+    """
+    if not messages:
         return messages
-    system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
-    tail = messages[-keep_tail:]
-    return ([system_msg] if system_msg else []) + tail
+
+    # Step 1: Strip blobs from every message (in-place copy)
+    cleaned: List[Dict[str, Any]] = []
+    for m in messages:
+        m2 = dict(m)
+        if "content" in m2:
+            m2["content"] = _strip_blobs(m2["content"])
+        cleaned.append(m2)
+
+    # Step 2: If within budget, return as-is
+    if _estimate_tokens(cleaned) * 4 <= char_limit:
+        return cleaned
+
+    # Step 3: Separate system message
+    system_msg = cleaned[0] if cleaned and cleaned[0].get("role") == "system" else None
+    rest = cleaned[1:] if system_msg else cleaned
+
+    # Step 4: Drop old tool messages first (biggest savings)
+    # Keep only tool messages from the last 4 pairs (8 messages)
+    last_n = rest[-8:] if len(rest) > 8 else rest
+    older = rest[:-8] if len(rest) > 8 else []
+    # Filter older messages — drop tool results, keep user/assistant
+    older_filtered = [
+        m for m in older
+        if m.get("role") in ("user", "assistant") and m.get("content", "").strip()
+    ]
+    rest = older_filtered + last_n
+
+    # Step 5: If still over budget, trim oldest until fit
+    trimmed_count = 0
+    while rest and _estimate_tokens(([system_msg] if system_msg else []) + rest) * 4 > char_limit:
+        rest.pop(0)
+        trimmed_count += 1
+
+    # Always keep at minimum keep_tail messages
+    if len(rest) > keep_tail:
+        pass  # already fine
+    elif len(cleaned) > keep_tail:
+        rest = cleaned[-keep_tail:]
+        trimmed_count = len(cleaned) - keep_tail - (1 if system_msg else 0)
+
+    # Step 6: Insert trim notice as a system message
+    result: List[Dict[str, Any]] = []
+    if system_msg:
+        result.append(system_msg)
+    if trimmed_count > 0:
+        result.append({
+            "role": "system",
+            "content": (
+                f"[Token Guardian] Context trimmed: {trimmed_count} older messages removed "
+                f"to stay within the model's token limit. Recent conversation follows."
+            ),
+        })
+    result.extend(rest)
+    return result
