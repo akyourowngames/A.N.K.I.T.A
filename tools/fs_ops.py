@@ -148,14 +148,66 @@ def search_text(workspace_root: Path, query: str, path: str = ".", max_results: 
     return {"matches": matches, "truncated": False, "engine": "python"}
 
 
+def _audit_write(path: str, status: str, byte_count: int) -> None:
+    """Append a write event to ~/.ankita/audit.log for forensics (never crashes)."""
+    try:
+        import time as _time
+        audit_dir = Path.home() / ".ankita"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        log_line = (
+            f"[{_time.strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"Attempted write to: {path} | Status: {status} | Bytes: {byte_count}\n"
+        )
+        with open(audit_dir / "audit.log", "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception:
+        pass
+
+
 def write_file(workspace_root: Path, path: str, content: str, overwrite: bool = True) -> Dict[str, Any]:
-    target = resolve_safe_path(workspace_root, path)
+    """
+    Write content to a file.
+
+    Supports ABSOLUTE paths (e.g. C:\\Users\\anime\\Desktop\\poem.txt) directly —
+    these bypass workspace restriction so agents can save to Desktop.
+    For relative paths, resolves against workspace_root as before.
+
+    Returns a RECEIPT dict — agent must see status:'success' before claiming the file was saved.
+    """
+    raw_path = str(path).strip()
+    candidate = Path(raw_path)
+
+    # Absolute path (Desktop saves, etc.) — use directly without workspace restriction
+    if candidate.is_absolute():
+        target = candidate.resolve()
+    else:
+        target = resolve_safe_path(workspace_root, raw_path)
+
+    absolute_path = str(target)
+    _audit_write(absolute_path, "attempting", 0)
+
     existed = target.exists()
     if existed and not bool(overwrite):
+        _audit_write(absolute_path, "FAILED: file exists and overwrite=false", 0)
         raise FileExistsError(f"file exists and overwrite=false: {path}")
+
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(str(content), encoding="utf-8")
-    return {"path": to_rel(workspace_root, target), "bytes": len(str(content).encode("utf-8")), "overwrote": existed}
+    byte_count = len(str(content).encode("utf-8"))
+    try:
+        target.write_text(str(content), encoding="utf-8")
+        _audit_write(absolute_path, "success", byte_count)
+    except Exception as err:
+        _audit_write(absolute_path, f"FAILED: {err}", 0)
+        raise
+
+    return {
+        "status": "success",
+        "path": absolute_path,
+        "absolute_path": absolute_path,
+        "FILE_PATH": absolute_path,   # picked up by _extract_artifacts
+        "bytes": byte_count,
+        "overwrote": existed,
+    }
 
 
 def edit_file(

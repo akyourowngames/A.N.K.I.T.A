@@ -85,6 +85,9 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     # ASSEMBLY LINE: If ContentAgent has no file/url artifacts, embed the raw content
     # so FileAgent can read it from context and save it to disk.
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
+        import os as _os
+        desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
+        lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint — FileAgent reads this
         lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
     # NEWSROOM: If WebAgent's reply contains a RESEARCH_CONTEXT_BLOCK, extract it
     # and inject as a [RESEARCH_CONTEXT] block so ContentAgent enters Journalist Mode.

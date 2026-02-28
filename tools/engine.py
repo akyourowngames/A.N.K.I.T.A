@@ -417,11 +417,25 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "write_file",
-            "description": "Create or overwrite UTF-8 text file.",
+            "description": (
+                "Create or overwrite a UTF-8 text file. "
+                "SUPPORTS ABSOLUTE PATHS — ALWAYS use the full absolute Desktop path when saving for the user: "
+                "e.g. 'C:\\\\Users\\\\anime\\\\Desktop\\\\poem.txt'. "
+                "Returns a RECEIPT: {status: 'success', absolute_path: '...', FILE_PATH: '...', bytes: N}. "
+                "You MUST see status='success' in the receipt before telling the user the file was saved. "
+                "NEVER say 'I saved it' until you see that receipt. Report errors if they appear."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string"},
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "File path. Use FULL ABSOLUTE PATH for Desktop saves "
+                            "(e.g. C:\\\\Users\\\\anime\\\\Desktop\\\\report.txt). "
+                            "Relative paths resolve against the workspace root."
+                        ),
+                    },
                     "content": {"type": "string"},
                     "overwrite": {"type": "boolean"},
                 },

@@ -184,26 +184,31 @@ def write_and_save_content(
         }
 
     # ------------------------------------------------------------------
-    # 4. Determine output path
+    # 4. Determine output path — GPS LOCK: always Desktop unless overridden
     # ------------------------------------------------------------------
     if output_dir:
-        dest_dir = Path(output_dir).expanduser()
+        dest_dir = Path(output_dir).expanduser().resolve()
     else:
-        dest_dir = workspace_root / "generated_files"
+        # Hard-wire to the real Desktop — never a hidden project subfolder
+        dest_dir = Path.home() / "Desktop"
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     filename = f"{_safe_filename(topic)}_{_safe_filename(format_clean)}_{timestamp}.txt"
     file_path = dest_dir / filename
+    absolute_path = str(file_path.resolve())
 
     # ------------------------------------------------------------------
-    # 5. Save the generated content
+    # 5. Save the generated content + write audit log entry
     # ------------------------------------------------------------------
+    _audit_write(absolute_path, "attempting", 0)
     try:
         file_path.write_text(generated_text, encoding="utf-8")
         byte_count = len(generated_text.encode("utf-8"))
+        _audit_write(absolute_path, "success", byte_count)
     except Exception as err:
+        _audit_write(absolute_path, f"FAILED: {err}", 0)
         return {
             "ok": False,
             "error": f"Failed to save file: {err}",
@@ -211,19 +216,42 @@ def write_and_save_content(
         }
 
     # ------------------------------------------------------------------
-    # 6. Return result with the spoken reply A.N.K.I.T.A will say aloud
+    # 6. Return receipt — agent MUST see status:success before saying "saved"
     # ------------------------------------------------------------------
     spoken_reply = (
-        f"Done! I've generated the {format_clean} about {topic_clean} "
-        f"and saved it to the generated_files folder as {filename}."
+        f"Done! ✅ Generated the {format_clean} about {topic_clean} "
+        f"and saved it to Desktop as {filename}."
     )
 
     return {
         "ok": True,
-        "path": str(file_path),
+        "status": "success",
+        "path": absolute_path,
+        "absolute_path": absolute_path,
+        "FILE_PATH": absolute_path,        # picked up by _extract_artifacts
         "bytes": byte_count,
         "filename": filename,
         "topic": topic_clean,
         "format_type": format_clean,
         "spoken_reply": spoken_reply,
     }
+
+
+# ---------------------------------------------------------------------------
+# Audit log helper
+# ---------------------------------------------------------------------------
+
+def _audit_write(path: str, status: str, byte_count: int) -> None:
+    """Append a write event to ~/.ankita/audit.log for forensics."""
+    try:
+        import time as _time
+        audit_dir = Path.home() / ".ankita"
+        audit_dir.mkdir(parents=True, exist_ok=True)
+        log_line = (
+            f"[{_time.strftime('%Y-%m-%d %H:%M:%S')}] "
+            f"Attempted write to: {path} | Status: {status} | Bytes: {byte_count}\n"
+        )
+        with open(audit_dir / "audit.log", "a", encoding="utf-8") as f:
+            f.write(log_line)
+    except Exception:
+        pass  # Audit must never crash the main flow

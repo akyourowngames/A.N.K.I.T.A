@@ -1,9 +1,13 @@
+import ctypes
 import os
 import subprocess
 import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
 
 def _run_powershell(script: str, timeout: int = 15) -> Dict[str, Any]:
     out = subprocess.run(
@@ -19,6 +23,54 @@ def _run_powershell(script: str, timeout: int = 15) -> Dict[str, Any]:
         "stdout": (out.stdout or "").strip(),
         "stderr": (out.stderr or "").strip(),
     }
+
+
+# ---------------------------------------------------------------------------
+# Volume helpers — use winmm.dll waveOut* (works on all Windows audio setups)
+# ---------------------------------------------------------------------------
+
+def _get_master_volume_pct() -> int:
+    """Return current master volume as integer 0-100."""
+    vol = ctypes.c_uint32(0)
+    ctypes.windll.winmm.waveOutGetVolume(None, ctypes.byref(vol))
+    left = (vol.value & 0xFFFF) / 0xFFFF * 100
+    return round(left)
+
+
+def _set_master_volume_pct(pct: int) -> None:
+    """Set master volume to pct (0-100)."""
+    pct = max(0, min(100, pct))
+    word = int(pct / 100.0 * 0xFFFF)
+    packed = (word & 0xFFFF) | ((word & 0xFFFF) << 16)
+    ctypes.windll.winmm.waveOutSetVolume(None, packed)
+
+
+# ---------------------------------------------------------------------------
+# Brightness helpers — WMI (laptop/built-in) with keybd fallback
+# ---------------------------------------------------------------------------
+
+def _wmi_set_brightness(level: int) -> bool:
+    """Try WMI brightness set. Returns True if succeeded."""
+    r = _run_powershell(
+        f"$m=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods "
+        f"-ErrorAction SilentlyContinue | Select-Object -First 1; "
+        f"if($m){{ $m.WmiSetBrightness(1,{level}) | Out-Null; Write-Output 'ok' }} "
+        f"else {{ Write-Output 'no_wmi' }}"
+    )
+    return r["stdout"].strip() == "ok"
+
+
+def _wmi_get_brightness() -> Optional[int]:
+    """Return current brightness 0-100, or None if WMI not available."""
+    r = _run_powershell(
+        "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness "
+        "-ErrorAction SilentlyContinue | Select-Object -First 1; "
+        "if($b){ Write-Output $b.CurrentBrightness } else { Write-Output 'no_wmi' }"
+    )
+    v = r["stdout"].strip()
+    if v == "no_wmi" or not v.isdigit():
+        return None
+    return int(v)
 
 
 def _ensure_windows() -> None:
@@ -57,104 +109,92 @@ def system_control(
     )
 
     # ------------------------------------------------------------------
-    # Volume
+    # Volume — Python-native via winmm.dll (reliable on all Windows)
     # ------------------------------------------------------------------
     if op == "volume_up":
-        script = header + f"for($i=0;$i -lt {n};$i++){{ Press 0xAF }}; Write-Output 'ok'"
+        cur = _get_master_volume_pct()
+        new_vol = min(100, cur + n * 2)
+        _set_master_volume_pct(new_vol)
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": f"volume={new_vol}% (was {cur}%)", "stderr": "", "exit_code": 0, "amount": n,
+        }
     elif op == "volume_down":
-        script = header + f"for($i=0;$i -lt {n};$i++){{ Press 0xAE }}; Write-Output 'ok'"
+        cur = _get_master_volume_pct()
+        new_vol = max(0, cur - n * 2)
+        _set_master_volume_pct(new_vol)
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": f"volume={new_vol}% (was {cur}%)", "stderr": "", "exit_code": 0, "amount": n,
+        }
     elif op in {"mute_toggle", "mute", "unmute"}:
-        script = header + "Press 0xAD; Write-Output 'ok'"
+        # Use keybd_event for mute toggle (reliable)
+        keybd = ctypes.windll.user32.keybd_event
+        keybd(0xAD, 0, 0, 0); time.sleep(0.02); keybd(0xAD, 0, 2, 0)
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": "mute_toggled=ok", "stderr": "", "exit_code": 0, "amount": n,
+        }
     elif op == "volume_set":
-        # Set exact master volume 0-100 using Windows Core Audio COM
         level = max(0, min(int(amount), 100))
-        scalar = round(level / 100.0, 4)
-        script = (
-            "Add-Type -TypeDefinition '"
-            "using System; using System.Runtime.InteropServices;"
-            "public class Vol {"
-            "  [DllImport(\"ole32.dll\")] public static extern int CoCreateInstance(ref Guid c, IntPtr u, uint ctx, ref Guid i, out IntPtr p);"
-            "}'; "
-            "$code = @\"\n"
-            "using System;\n"
-            "using System.Runtime.InteropServices;\n"
-            "[Guid(\"BCDE0395-E52F-467C-8E3D-C4579291692E\")]\n"
-            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
-            "interface IMMDeviceEnumerator { int f1(); int f2(); [PreserveSig] int GetDefaultAudioEndpoint(int df, int role, out IMMDevice ppd); }\n"
-            "[Guid(\"D666063F-1587-4E43-81F1-B948E807363F\")]\n"
-            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
-            "interface IMMDevice { [PreserveSig] int Activate(ref Guid id, uint ctx, IntPtr p, out IAudioEndpointVolume ppv); }\n"
-            "[Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\")]\n"
-            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
-            "interface IAudioEndpointVolume { int f1();int f2();int f3(); [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid ctx); }\n"
-            "\"@\n"
-            "Add-Type -TypeDefinition $code; "
-            "$type = [Type]::GetTypeFromCLSID([Guid]'BCDE0395-E52F-467C-8E3D-C4579291692E'); "
-            "$enum = [Activator]::CreateInstance($type); "
-            "$dev = $null; $enum.GetDefaultAudioEndpoint(0,0,[ref]$dev) | Out-Null; "
-            "$aevId = [Guid]'5CDF2C82-841E-4546-9722-0CF74078229A'; "
-            "$vol = $null; $dev.Activate([ref]$aevId, 23, [IntPtr]::Zero, [ref]$vol) | Out-Null; "
-            f"$ctx=[Guid]::Empty; $vol.SetMasterVolumeLevelScalar({scalar},[ref]$ctx) | Out-Null; "
-            f"Write-Output 'volume={level}'"
-        )
+        _set_master_volume_pct(level)
+        actual = _get_master_volume_pct()
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": f"volume={actual}%", "stderr": "", "exit_code": 0, "amount": level,
+        }
     elif op == "get_volume":
-        script = (
-            "Add-Type -TypeDefinition '"
-            "using System; using System.Runtime.InteropServices;"
-            "public class VolQ {"
-            "  [DllImport(\"winmm.dll\")] public static extern int waveOutGetVolume(IntPtr h, out uint vol);"
-            "}'; "
-            # Use a simpler and more reliable approach: PowerShell audio API
-            "$obj = New-Object -ComObject WScript.Shell; "
-            "Add-Type -TypeDefinition @\"\n"
-            "using System.Runtime.InteropServices;\n"
-            "[Guid('5CDF2C82-841E-4546-9722-0CF74078229A')]\n"
-            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
-            "public interface IAudioEndpointVolume2 { int f1();int f2();int f3();int f4();\n"
-            "  [PreserveSig] int GetMasterVolumeLevelScalar(out float level); }\n"
-            "\"@ -ErrorAction SilentlyContinue; "
-            "$type = [Type]::GetTypeFromCLSID([Guid]'BCDE0395-E52F-467C-8E3D-C4579291692E'); "
-            "$enum = [Activator]::CreateInstance($type); "
-            "$dev = $null; $enum.GetDefaultAudioEndpoint(0,0,[ref]$dev) | Out-Null; "
-            "$aevId = [Guid]'5CDF2C82-841E-4546-9722-0CF74078229A'; "
-            "$vol = $null; $dev.Activate([ref]$aevId,23,[IntPtr]::Zero,[ref]$vol) | Out-Null; "
-            "$level = 0.0; $vol.GetMasterVolumeLevelScalar([ref]$level) | Out-Null; "
-            "$pct = [Math]::Round($level * 100); "
-            "Write-Output ('volume=' + $pct + '%')"
-        )
+        cur = _get_master_volume_pct()
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": f"volume={cur}%", "stderr": "", "exit_code": 0, "amount": n,
+        }
 
     # ------------------------------------------------------------------
-    # Brightness
+    # Brightness — WMI for laptop/built-in displays; honest error for external
     # ------------------------------------------------------------------
-    elif op in {"brightness_up", "brightness_down", "brightness_set"}:
-        if op == "brightness_set":
-            target_brightness = max(1, min(int(amount), 100))
-            expr = f"{target_brightness}"
+    elif op in {"brightness_up", "brightness_down", "brightness_set", "get_brightness"}:
+        if op == "get_brightness":
+            cur_b = _wmi_get_brightness()
+            if cur_b is None:
+                return {
+                    "kind": "system_control", "ok": False, "action": op,
+                    "stdout": "",
+                    "stderr": (
+                        "brightness_unavailable: This monitor does not support software brightness control. "
+                        "WMI brightness is only supported on laptop built-in displays (LVDS/eDP). "
+                        "For external monitors, adjust brightness using the physical buttons on the monitor."
+                    ),
+                    "exit_code": 1, "amount": n,
+                }
+            return {
+                "kind": "system_control", "ok": True, "action": op,
+                "stdout": f"brightness={cur_b}%", "stderr": "", "exit_code": 0, "amount": n,
+            }
+        elif op == "brightness_set":
+            target_b = max(1, min(int(amount), 100))
         else:
-            delta = n if op == "brightness_up" else -n
-            expr = (
-                "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness -ErrorAction SilentlyContinue | Select-Object -First 1; "
-                f"if($b){{ [Math]::Max(1,[Math]::Min(100,([int]$b.CurrentBrightness + ({delta})))) }} else {{ throw 'WMI brightness not available on this display' }}"
-            )
-        script = (
-            "try { "
-            "$target=[int]("
-            + expr
-            + "); "
-            + "$m=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods -ErrorAction Stop | Select-Object -First 1; "
-            + "if(-not $m){ throw 'No WmiMonitorBrightnessMethods found — this monitor may not support WMI brightness control' }; "
-            + "$m.WmiSetBrightness(1,$target) | Out-Null; "
-            + "Write-Output ('brightness=' + $target) "
-            + "} catch { Write-Error $_.Exception.Message }"
-        )
-    elif op == "get_brightness":
-        script = (
-            "try { "
-            "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness -ErrorAction Stop | Select-Object -First 1; "
-            "if(-not $b){ throw 'WMI brightness not available' }; "
-            "Write-Output ('brightness=' + $b.CurrentBrightness + '%') "
-            "} catch { Write-Error $_.Exception.Message }"
-        )
+            cur_b = _wmi_get_brightness()
+            if cur_b is None:
+                cur_b = 50  # assume midpoint if can't read
+            delta = n * 5 if op == "brightness_up" else -n * 5
+            target_b = max(1, min(100, cur_b + delta))
+        ok_b = _wmi_set_brightness(target_b)
+        if not ok_b:
+            return {
+                "kind": "system_control", "ok": False, "action": op,
+                "stdout": "",
+                "stderr": (
+                    "brightness_unavailable: This monitor does not support software brightness control via WMI. "
+                    "WMI brightness only works on laptop built-in displays. "
+                    "For external/desktop monitors, use the physical buttons on the monitor."
+                ),
+                "exit_code": 1, "amount": n,
+            }
+        return {
+            "kind": "system_control", "ok": True, "action": op,
+            "stdout": f"brightness={target_b}%", "stderr": "", "exit_code": 0, "amount": n,
+        }
 
     # ------------------------------------------------------------------
     # Wi-Fi / Bluetooth
