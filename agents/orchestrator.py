@@ -68,6 +68,9 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
 
     ASSEMBLY LINE UPGRADE: If ContentAgent produced text but no file artifacts,
     include the full CONTENT: block so FileAgent can extract and save it.
+
+    NEWSROOM UPGRADE: If WebAgent produced a RESEARCH_CONTEXT_BLOCK (from deep_research),
+    inject it as a [RESEARCH_CONTEXT] block into ContentAgent so it enters Journalist Mode.
     """
     lines = [
         "--- PREVIOUS AGENT OUTPUT ---",
@@ -83,6 +86,18 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     # so FileAgent can read it from context and save it to disk.
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
         lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
+    # NEWSROOM: If WebAgent's reply contains a RESEARCH_CONTEXT_BLOCK, extract it
+    # and inject as a [RESEARCH_CONTEXT] block so ContentAgent enters Journalist Mode.
+    if agent_name == "WebAgent":
+        import re as _re
+        rcb_match = _re.search(
+            r"RESEARCH_CONTEXT_BLOCK:(.*?)END_RESEARCH_CONTEXT",
+            reply,
+            _re.DOTALL,
+        )
+        if rcb_match:
+            research_block = rcb_match.group(0).strip()
+            lines.append(f"\n[RESEARCH_CONTEXT]\n{research_block}\n[/RESEARCH_CONTEXT]")
     lines.append("--- END CONTEXT ---")
     return "\n".join(lines)
 

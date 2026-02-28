@@ -53,6 +53,13 @@ A.N.K.I.T.A uses a Relay Race model. Agents pass the baton. Each does ONE job.
 6. "Research X and write a report" → ["WebAgent", "FileAgent"], parallel: false
    - WebAgent researches. FileAgent saves. Then add SystemAgent if "open it" requested.
 
+7. "Deep report on X" / "comprehensive analysis of Y" / "research and write about Z" /
+   "swarm research X" / "in-depth investigation" / "detailed writeup on W":
+   → ["WebAgent", "ContentAgent", "FileAgent"], parallel: false
+   - WebAgent calls deep_research(topic) → Master Intelligence Brief.
+   - ContentAgent enters Journalist Mode → writes fact-grounded article with citations.
+   - FileAgent saves the article to Desktop.
+
 SPECIALIST PRIORITY RULE:
 - open/launch/close app, screenshot, volume, brightness (NO writing) → SystemAgent only
 - play/stop/queue music → MusicAgent
@@ -91,6 +98,11 @@ Examples:
 - "fetch the numpy cheatsheet" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "file fetch: search → identify PDF URL → download_file → open"}
 - "what am I holding?" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "webcam task: capture_webcam → vision analysis"}
 - "take a selfie" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "webcam task: capture_webcam → describe photo"}
+- "deep report on AI regulation in India" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
+- "comprehensive analysis of climate change" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
+- "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
+- "research and write a detailed report on OpenAI" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
+- "in-depth investigation of cryptocurrency markets" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 
 WRONG — never do this:
 - "write a poem" → WRONG: {"agents": ["ContentAgent"]} ← ContentAgent has NO tools, can't save

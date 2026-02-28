@@ -5,14 +5,14 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 
-def _run_powershell(script: str) -> Dict[str, Any]:
+def _run_powershell(script: str, timeout: int = 15) -> Dict[str, Any]:
     out = subprocess.run(
         ["powershell", "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         shell=False,
         check=False,
-        timeout=15,
+        timeout=timeout,
     )
     return {
         "exit_code": out.returncode,
@@ -56,12 +56,275 @@ def system_control(
         "function Press([byte]$vk){ [K]::keybd_event($vk,0,0,0); Start-Sleep -Milliseconds 20; [K]::keybd_event($vk,0,2,0) }; "
     )
 
+    # ------------------------------------------------------------------
+    # Volume
+    # ------------------------------------------------------------------
     if op == "volume_up":
         script = header + f"for($i=0;$i -lt {n};$i++){{ Press 0xAF }}; Write-Output 'ok'"
     elif op == "volume_down":
         script = header + f"for($i=0;$i -lt {n};$i++){{ Press 0xAE }}; Write-Output 'ok'"
     elif op in {"mute_toggle", "mute", "unmute"}:
         script = header + "Press 0xAD; Write-Output 'ok'"
+    elif op == "volume_set":
+        # Set exact master volume 0-100 using Windows Core Audio COM
+        level = max(0, min(int(amount), 100))
+        scalar = round(level / 100.0, 4)
+        script = (
+            "Add-Type -TypeDefinition '"
+            "using System; using System.Runtime.InteropServices;"
+            "public class Vol {"
+            "  [DllImport(\"ole32.dll\")] public static extern int CoCreateInstance(ref Guid c, IntPtr u, uint ctx, ref Guid i, out IntPtr p);"
+            "}'; "
+            "$code = @\"\n"
+            "using System;\n"
+            "using System.Runtime.InteropServices;\n"
+            "[Guid(\"BCDE0395-E52F-467C-8E3D-C4579291692E\")]\n"
+            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
+            "interface IMMDeviceEnumerator { int f1(); int f2(); [PreserveSig] int GetDefaultAudioEndpoint(int df, int role, out IMMDevice ppd); }\n"
+            "[Guid(\"D666063F-1587-4E43-81F1-B948E807363F\")]\n"
+            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
+            "interface IMMDevice { [PreserveSig] int Activate(ref Guid id, uint ctx, IntPtr p, out IAudioEndpointVolume ppv); }\n"
+            "[Guid(\"5CDF2C82-841E-4546-9722-0CF74078229A\")]\n"
+            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
+            "interface IAudioEndpointVolume { int f1();int f2();int f3(); [PreserveSig] int SetMasterVolumeLevelScalar(float level, ref Guid ctx); }\n"
+            "\"@\n"
+            "Add-Type -TypeDefinition $code; "
+            "$type = [Type]::GetTypeFromCLSID([Guid]'BCDE0395-E52F-467C-8E3D-C4579291692E'); "
+            "$enum = [Activator]::CreateInstance($type); "
+            "$dev = $null; $enum.GetDefaultAudioEndpoint(0,0,[ref]$dev) | Out-Null; "
+            "$aevId = [Guid]'5CDF2C82-841E-4546-9722-0CF74078229A'; "
+            "$vol = $null; $dev.Activate([ref]$aevId, 23, [IntPtr]::Zero, [ref]$vol) | Out-Null; "
+            f"$ctx=[Guid]::Empty; $vol.SetMasterVolumeLevelScalar({scalar},[ref]$ctx) | Out-Null; "
+            f"Write-Output 'volume={level}'"
+        )
+    elif op == "get_volume":
+        script = (
+            "Add-Type -TypeDefinition '"
+            "using System; using System.Runtime.InteropServices;"
+            "public class VolQ {"
+            "  [DllImport(\"winmm.dll\")] public static extern int waveOutGetVolume(IntPtr h, out uint vol);"
+            "}'; "
+            # Use a simpler and more reliable approach: PowerShell audio API
+            "$obj = New-Object -ComObject WScript.Shell; "
+            "Add-Type -TypeDefinition @\"\n"
+            "using System.Runtime.InteropServices;\n"
+            "[Guid('5CDF2C82-841E-4546-9722-0CF74078229A')]\n"
+            "[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]\n"
+            "public interface IAudioEndpointVolume2 { int f1();int f2();int f3();int f4();\n"
+            "  [PreserveSig] int GetMasterVolumeLevelScalar(out float level); }\n"
+            "\"@ -ErrorAction SilentlyContinue; "
+            "$type = [Type]::GetTypeFromCLSID([Guid]'BCDE0395-E52F-467C-8E3D-C4579291692E'); "
+            "$enum = [Activator]::CreateInstance($type); "
+            "$dev = $null; $enum.GetDefaultAudioEndpoint(0,0,[ref]$dev) | Out-Null; "
+            "$aevId = [Guid]'5CDF2C82-841E-4546-9722-0CF74078229A'; "
+            "$vol = $null; $dev.Activate([ref]$aevId,23,[IntPtr]::Zero,[ref]$vol) | Out-Null; "
+            "$level = 0.0; $vol.GetMasterVolumeLevelScalar([ref]$level) | Out-Null; "
+            "$pct = [Math]::Round($level * 100); "
+            "Write-Output ('volume=' + $pct + '%')"
+        )
+
+    # ------------------------------------------------------------------
+    # Brightness
+    # ------------------------------------------------------------------
+    elif op in {"brightness_up", "brightness_down", "brightness_set"}:
+        if op == "brightness_set":
+            target_brightness = max(1, min(int(amount), 100))
+            expr = f"{target_brightness}"
+        else:
+            delta = n if op == "brightness_up" else -n
+            expr = (
+                "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness -ErrorAction SilentlyContinue | Select-Object -First 1; "
+                f"if($b){{ [Math]::Max(1,[Math]::Min(100,([int]$b.CurrentBrightness + ({delta})))) }} else {{ throw 'WMI brightness not available on this display' }}"
+            )
+        script = (
+            "try { "
+            "$target=[int]("
+            + expr
+            + "); "
+            + "$m=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods -ErrorAction Stop | Select-Object -First 1; "
+            + "if(-not $m){ throw 'No WmiMonitorBrightnessMethods found — this monitor may not support WMI brightness control' }; "
+            + "$m.WmiSetBrightness(1,$target) | Out-Null; "
+            + "Write-Output ('brightness=' + $target) "
+            + "} catch { Write-Error $_.Exception.Message }"
+        )
+    elif op == "get_brightness":
+        script = (
+            "try { "
+            "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness -ErrorAction Stop | Select-Object -First 1; "
+            "if(-not $b){ throw 'WMI brightness not available' }; "
+            "Write-Output ('brightness=' + $b.CurrentBrightness + '%') "
+            "} catch { Write-Error $_.Exception.Message }"
+        )
+
+    # ------------------------------------------------------------------
+    # Wi-Fi / Bluetooth
+    # ------------------------------------------------------------------
+    elif op in {"wifi_on", "wifi_off"}:
+        admin = "ENABLED" if op == "wifi_on" else "DISABLED"
+        state_label = "enabled" if op == "wifi_on" else "disabled"
+        script = (
+            "$target=(Get-NetAdapter -ErrorAction SilentlyContinue | "
+            r"Where-Object { $_.Name -match '\bwi-?fi\b|\bwlan\b' -or $_.InterfaceDescription -match '\bwireless\b|\bwi-?fi\b|\bwlan\b' } | "
+            "Select-Object -First 1).Name; "
+            "if(-not $target){$target='Wi-Fi'}; "
+            f"netsh interface set interface name=\"$target\" admin={admin}; "
+            "if($LASTEXITCODE -ne 0){ throw 'failed to toggle wifi adapter' }; "
+            f"Write-Output ('wifi={state_label} adapter=' + $target)"
+        )
+    elif op in {"bluetooth_on", "bluetooth_off"}:
+        cmd = "Enable-PnpDevice" if op == "bluetooth_on" else "Disable-PnpDevice"
+        bt_state = op.split("_", 1)[1]
+        script = (
+            "$devs=Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue; "
+            "if(-not $devs){ throw 'no bluetooth adapter found' }; "
+            f"$devs | ForEach-Object {{ {cmd} -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }}; "
+            f"Write-Output 'bluetooth={bt_state}'"
+        )
+
+    # ------------------------------------------------------------------
+    # Battery & Power
+    # ------------------------------------------------------------------
+    elif op == "get_battery_status":
+        script = (
+            "$b=Get-WmiObject Win32_Battery -ErrorAction SilentlyContinue; "
+            "if(-not $b){ Write-Output 'battery=not_found (desktop or battery not detected)' } else { "
+            "$pct=$b.EstimatedChargeRemaining; "
+            "$status=switch($b.BatteryStatus){ 1{'discharging'} 2{'plugged_in'} 3{'fully_charged'} 4{'low'} 5{'critical'} 6{'charging'} 7{'charging_high'} 8{'charging_low'} 9{'charging_critical'} default{'unknown'} }; "
+            "$mins=$b.EstimatedRunTime; "
+            "if($mins -eq 71582788){ $timeStr='unknown' } else { $h=[Math]::Floor($mins/60); $m=$mins%60; $timeStr=('{0}h {1}m' -f $h,$m) }; "
+            "Write-Output ('battery=' + $pct + '% | status=' + $status + ' | time_remaining=' + $timeStr) }"
+        )
+    elif op == "set_power_plan":
+        plan = str(path or "balanced").strip().lower()
+        plan_guids = {
+            "balanced": "381b4222-f694-41f0-9685-ff5bb260df2e",
+            "performance": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+            "high_performance": "8c5e7fda-e8bf-4a96-9a85-a6e23a8c635c",
+            "power_saver": "a1841308-3541-4fab-bc81-f71556f20b4a",
+            "saver": "a1841308-3541-4fab-bc81-f71556f20b4a",
+        }
+        guid = plan_guids.get(plan, plan_guids["balanced"])
+        script = (
+            f"powercfg /setactive {guid}; "
+            f"if($LASTEXITCODE -eq 0){{ Write-Output 'power_plan={plan}' }} else {{ Write-Error 'Failed to set power plan' }}"
+        )
+
+    # ------------------------------------------------------------------
+    # Network Status
+    # ------------------------------------------------------------------
+    elif op == "get_network_status":
+        script = (
+            "$adapters=Get-NetAdapter -ErrorAction SilentlyContinue | Where-Object { $_.Status -eq 'Up' }; "
+            "$adapterList=($adapters | ForEach-Object { $_.Name + '(' + $_.LinkSpeed + ')' }) -join ', '; "
+            "$ip=(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^127\\.' } | Select-Object -First 1).IPAddress; "
+            "try { $pub=(Invoke-WebRequest -Uri 'https://api.ipify.org' -UseBasicParsing -TimeoutSec 5).Content.Trim() } catch { $pub='unavailable' }; "
+            "$dns=(Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Select-Object -First 1).ServerAddresses -join ', '; "
+            "Write-Output ('adapters=' + $adapterList + ' | local_ip=' + $ip + ' | public_ip=' + $pub + ' | dns=' + $dns)"
+        )
+
+    # ------------------------------------------------------------------
+    # Clipboard
+    # ------------------------------------------------------------------
+    elif op == "get_clipboard":
+        script = (
+            "$c=Get-Clipboard -ErrorAction SilentlyContinue; "
+            "if($null -eq $c -or $c -eq ''){ Write-Output 'clipboard=(empty)' } else { Write-Output ('clipboard=' + ($c -join ' ')) }"
+        )
+    elif op == "set_clipboard":
+        text = str(path or "").strip().strip("\"'").replace("'", "''")
+        script = f"Set-Clipboard -Value '{text}'; Write-Output 'clipboard_set=ok'"
+
+    # ------------------------------------------------------------------
+    # Process Manager
+    # ------------------------------------------------------------------
+    elif op == "list_processes":
+        script = (
+            "$procs = Get-Process -ErrorAction SilentlyContinue | "
+            "Sort-Object CPU -Descending | Select-Object -First 15 | "
+            "ForEach-Object { $_.Name + '(cpu=' + [Math]::Round($_.CPU,1) + 's mem=' + [Math]::Round($_.WorkingSet64/1MB,1) + 'MB pid=' + $_.Id + ')' }; "
+            "Write-Output ($procs -join ' | ')"
+        )
+    elif op == "kill_process":
+        proc_name = str(path or "").strip().strip("\"'").replace("'", "''")
+        if not proc_name:
+            raise ValueError("kill_process requires a process name — pass it via the 'path' parameter")
+        script = (
+            f"$p=Get-Process -Name '{proc_name}' -ErrorAction SilentlyContinue; "
+            "if(-not $p){ Write-Error 'process not found' } else { "
+            f"Stop-Process -Name '{proc_name}' -Force -ErrorAction Stop; "
+            f"Write-Output 'killed={proc_name}' }}"
+        )
+
+    # ------------------------------------------------------------------
+    # Shutdown / Restart / Hibernate / Sign Out
+    # ------------------------------------------------------------------
+    elif op == "shutdown":
+        script = "shutdown /s /t 5; Write-Output 'shutdown=scheduled_in_5s'"
+    elif op == "restart":
+        script = "shutdown /r /t 5; Write-Output 'restart=scheduled_in_5s'"
+    elif op == "hibernate":
+        script = "shutdown /h; Write-Output 'hibernate=ok'"
+    elif op == "sign_out":
+        script = "shutdown /l; Write-Output 'sign_out=ok'"
+    elif op == "cancel_shutdown":
+        script = "shutdown /a; Write-Output 'shutdown=cancelled'"
+
+    # ------------------------------------------------------------------
+    # Night Light / Dark Mode
+    # ------------------------------------------------------------------
+    elif op in {"night_light_on", "night_light_off"}:
+        # Toggle Windows Night Light via registry + action center key
+        enable = "1" if op == "night_light_on" else "0"
+        state = "on" if op == "night_light_on" else "off"
+        script = (
+            "$regPath='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\CloudStore\\Store\\DefaultAccount\\Current\\default$windows.data.bluelightreduction.bluelightreductionstate\\windows.data.bluelightreduction.bluelightreductionstate'; "
+            "if(Test-Path $regPath){ "
+            "$data=(Get-ItemProperty -Path $regPath -Name Data -ErrorAction SilentlyContinue).Data; "
+            "if($data){ "
+            # Byte 18 controls the toggle: 0x13=on, 0x15=off (Windows internal)
+            f"$data[18] = if('{state}' -eq 'on'){{ 0x13 }} else {{ 0x15 }}; "
+            "Set-ItemProperty -Path $regPath -Name Data -Value $data; "
+            f"Write-Output 'night_light={state}' "
+            "} else { Write-Error 'Night light registry data not found' } "
+            "} else { Write-Error 'Night light registry path not found — feature may not be supported on this build' }"
+        )
+    elif op in {"dark_mode_on", "dark_mode_off", "light_mode_on", "light_mode_off"}:
+        # dark_mode_on → apps & system use dark (value=0)
+        # dark_mode_off / light_mode_on → apps & system use light (value=1)
+        use_dark = op in {"dark_mode_on", "light_mode_off"}
+        apps_val = "0" if use_dark else "1"
+        sys_val = "0" if use_dark else "1"
+        mode_label = "dark" if use_dark else "light"
+        script = (
+            "$regPath='HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize'; "
+            f"Set-ItemProperty -Path $regPath -Name AppsUseLightTheme -Value {apps_val} -Type DWord -Force; "
+            f"Set-ItemProperty -Path $regPath -Name SystemUsesLightTheme -Value {sys_val} -Type DWord -Force; "
+            f"Write-Output 'theme={mode_label}_mode'"
+        )
+
+    # ------------------------------------------------------------------
+    # Windows Toast Notification
+    # ------------------------------------------------------------------
+    elif op == "notify":
+        message = str(path or "").strip().strip("\"'").replace("'", "''").replace('"', '""')
+        if not message:
+            raise ValueError("notify requires a message — pass it via the 'path' parameter")
+        title = "A.N.K.I.T.A"
+        script = (
+            "[Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType=WindowsRuntime] | Out-Null; "
+            "[Windows.Data.Xml.Dom.XmlDocument, Windows.Data.Xml.Dom.XmlDocument, ContentType=WindowsRuntime] | Out-Null; "
+            f"$template = '<toast><visual><binding template=\"ToastText02\"><text id=\"1\">{title}</text><text id=\"2\">{message}</text></binding></visual></toast>'; "
+            "$xml = New-Object Windows.Data.Xml.Dom.XmlDocument; "
+            "$xml.LoadXml($template); "
+            "$toast = [Windows.UI.Notifications.ToastNotification]::new($xml); "
+            "$notifier = [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('ANKITA'); "
+            "$notifier.Show($toast); "
+            "Write-Output 'notify=sent'"
+        )
+
+    # ------------------------------------------------------------------
+    # Existing: Window / Desktop / Media / Screenshot / URL / Display
+    # ------------------------------------------------------------------
     elif op == "show_desktop":
         script = (
             header
@@ -88,45 +351,6 @@ def system_control(
             + "[K]::keybd_event(0x5B,0,0,0); [K]::keybd_event(0x10,0,0,0); [K]::keybd_event(0x4D,0,0,0); "
             + "[K]::keybd_event(0x4D,0,2,0); [K]::keybd_event(0x10,0,2,0); [K]::keybd_event(0x5B,0,2,0); Write-Output 'ok'"
         )
-    elif op in {"brightness_up", "brightness_down", "brightness_set"}:
-        if op == "brightness_set":
-            target_brightness = max(1, min(int(amount), 100))
-            expr = f"{target_brightness}"
-        else:
-            delta = n if op == "brightness_up" else -n
-            expr = (
-                "$b=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightness | Select-Object -First 1; "
-                f"[Math]::Max(1,[Math]::Min(100,([int]$b.CurrentBrightness + ({delta}))))"
-            )
-        script = (
-            "$target=[int]("
-            + expr
-            + "); "
-            + "$m=Get-WmiObject -Namespace root/WMI -Class WmiMonitorBrightnessMethods | Select-Object -First 1; "
-            + "$m.WmiSetBrightness(1,$target) | Out-Null; "
-            + "Write-Output (\"brightness=\" + $target)"
-        )
-    elif op in {"wifi_on", "wifi_off"}:
-        admin = "ENABLED" if op == "wifi_on" else "DISABLED"
-        state_label = "enabled" if op == "wifi_on" else "disabled"
-        script = (
-            "$target=(Get-NetAdapter -ErrorAction SilentlyContinue | "
-            r"Where-Object { $_.Name -match '\bwi-?fi\b|\bwlan\b' -or $_.InterfaceDescription -match '\bwireless\b|\bwi-?fi\b|\bwlan\b' } | "
-            "Select-Object -First 1).Name; "
-            "if(-not $target){$target='Wi-Fi'}; "
-            f"netsh interface set interface name=\"$target\" admin={admin}; "
-            "if($LASTEXITCODE -ne 0){ throw 'failed to toggle wifi adapter' }; "
-            f"Write-Output ('wifi={state_label} adapter=' + $target)"
-        )
-    elif op in {"bluetooth_on", "bluetooth_off"}:
-        cmd = "Enable-PnpDevice" if op == "bluetooth_on" else "Disable-PnpDevice"
-        bt_state = op.split("_", 1)[1]  # "on" or "off" — extracted before the f-string
-        script = (
-            "$devs=Get-PnpDevice -Class Bluetooth -ErrorAction SilentlyContinue; "
-            "if(-not $devs){ throw 'no bluetooth adapter found' }; "
-            f"$devs | ForEach-Object {{ {cmd} -InstanceId $_.InstanceId -Confirm:$false -ErrorAction Stop }}; "
-            f"Write-Output 'bluetooth={bt_state}'"
-        )
     elif op == "screenshot":
         stamp = int(time.time())
         default_name = f"screenshots/screenshot-{stamp}.png"
@@ -144,7 +368,6 @@ def system_control(
             f"Write-Output '{escaped}'"
         )
     elif op == "open_url":
-        # Open a URL in the default browser
         url = str(path or "").strip().strip("\"'")
         if not url:
             raise ValueError("open_url requires a url — pass it via the 'path' parameter")
@@ -153,7 +376,6 @@ def system_control(
         escaped_url = url.replace("'", "''")
         script = f"Start-Process '{escaped_url}'; Write-Output 'opened: {escaped_url}'"
     elif op == "sleep_display":
-        # Turn off monitor without locking — sends SC_MONITORPOWER=2
         script = (
             "Add-Type -TypeDefinition '"
             "using System; using System.Runtime.InteropServices; "
@@ -180,10 +402,19 @@ def system_control(
         )
     else:
         raise ValueError(
-            "unsupported action. use: volume_up, volume_down, mute_toggle, show_desktop, "
-            "media_play_pause, media_next, media_prev, lock_screen, window_minimize_all, "
-            "window_restore_all, brightness_up, brightness_down, brightness_set, wifi_on, wifi_off, "
-            "bluetooth_on, bluetooth_off, screenshot, open_url, sleep_display, "
+            "unsupported action. Supported actions: "
+            "volume_up, volume_down, volume_set, get_volume, mute_toggle, "
+            "brightness_up, brightness_down, brightness_set, get_brightness, "
+            "wifi_on, wifi_off, bluetooth_on, bluetooth_off, "
+            "get_battery_status, set_power_plan, "
+            "get_network_status, get_clipboard, set_clipboard, "
+            "list_processes, kill_process, "
+            "shutdown, restart, hibernate, sign_out, cancel_shutdown, "
+            "night_light_on, night_light_off, dark_mode_on, dark_mode_off, "
+            "notify, show_desktop, lock_screen, "
+            "window_minimize_all, window_restore_all, "
+            "media_play_pause, media_next, media_prev, "
+            "screenshot, open_url, sleep_display, "
             "empty_recycle_bin, get_system_info"
         )
 

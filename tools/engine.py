@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from . import content_ops
 from . import cron_ops
+from . import deep_research as deep_research_mod
 from . import desktop_ops
 from . import fs_ops
 from . import memory_ops
@@ -99,24 +100,67 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "function": {
             "name": "system_control",
             "description": (
-                "Control system settings and perform system actions. "
-                "Actions: volume_up, volume_down, mute_toggle, "
-                "brightness_up, brightness_down, brightness_set, "
-                "wifi_on, wifi_off, bluetooth_on, bluetooth_off, "
-                "screenshot, show_desktop, lock_screen, "
-                "window_minimize_all, window_restore_all, "
-                "media_play_pause, media_next, media_prev, "
-                "open_url (opens URL in default browser — pass URL via path param), "
-                "sleep_display (turns off monitor without locking), "
-                "empty_recycle_bin (clears Recycle Bin silently), "
-                "get_system_info (returns OS, CPU%, RAM%, uptime)."
+                "Control system settings and perform system actions on Windows. "
+                "\n\nVOLUME: volume_up, volume_down, mute_toggle, "
+                "volume_set (set exact % via amount param), get_volume (read current %). "
+                "\n\nBRIGHTNESS: brightness_up, brightness_down, "
+                "brightness_set (exact % via amount), get_brightness (read current %). "
+                "\n\nWI-FI / BLUETOOTH: wifi_on, wifi_off, bluetooth_on, bluetooth_off. "
+                "\n\nBATTERY & POWER: get_battery_status (%, charging state, time remaining), "
+                "set_power_plan (pass plan name via path: balanced/performance/power_saver). "
+                "\n\nNETWORK: get_network_status (local IP, public IP, DNS, active adapters). "
+                "\n\nCLIPBOARD: get_clipboard (read clipboard text), "
+                "set_clipboard (write text to clipboard — pass text via path param). "
+                "\n\nPROCESS MANAGER: list_processes (top 15 by CPU with RAM/PID), "
+                "kill_process (terminate process by name — pass name via path param). "
+                "\n\nSHUTDOWN: shutdown (5s delay), restart (5s delay), "
+                "hibernate, sign_out, cancel_shutdown (abort pending shutdown). "
+                "\n\nDISPLAY / THEME: night_light_on, night_light_off, "
+                "dark_mode_on, dark_mode_off (toggle Windows dark/light theme). "
+                "\n\nNOTIFICATIONS: notify (show Windows toast notification — pass message via path param). "
+                "\n\nWINDOW / DESKTOP: show_desktop, lock_screen, "
+                "window_minimize_all, window_restore_all, sleep_display. "
+                "\n\nMEDIA: media_play_pause, media_next, media_prev. "
+                "\n\nOTHER: screenshot (save PNG, optional path via path param), "
+                "open_url (open URL in browser — pass URL via path param), "
+                "empty_recycle_bin, get_system_info (OS, CPU%, RAM%, uptime)."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string"},
-                    "amount": {"type": "integer"},
-                    "path": {"type": "string"},
+                    "action": {
+                        "type": "string",
+                        "description": (
+                            "The action to perform. See tool description for full list. "
+                            "Examples: volume_set, get_volume, brightness_set, get_brightness, "
+                            "get_battery_status, set_power_plan, get_network_status, "
+                            "get_clipboard, set_clipboard, list_processes, kill_process, "
+                            "shutdown, restart, hibernate, sign_out, cancel_shutdown, "
+                            "night_light_on, night_light_off, dark_mode_on, dark_mode_off, notify."
+                        ),
+                    },
+                    "amount": {
+                        "type": "integer",
+                        "description": (
+                            "Numeric parameter for the action. "
+                            "For volume_up/down: steps (1-50). "
+                            "For volume_set: exact % (0-100). "
+                            "For brightness_up/down: steps (1-50). "
+                            "For brightness_set: exact % (1-100)."
+                        ),
+                    },
+                    "path": {
+                        "type": "string",
+                        "description": (
+                            "String parameter for actions that need text input: "
+                            "open_url → the URL, "
+                            "set_clipboard → text to copy, "
+                            "kill_process → process name, "
+                            "set_power_plan → plan name (balanced/performance/power_saver), "
+                            "notify → notification message text, "
+                            "screenshot → optional save path."
+                        ),
+                    },
                 },
                 "required": ["action"],
             },
@@ -842,6 +886,31 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "deep_research",
+            "description": (
+                "Run a comprehensive multi-threaded deep research on any topic. "
+                "ALWAYS use this for requests like: 'deep report on X', 'comprehensive analysis of Y', "
+                "'research and write about Z', 'detailed writeup on W', 'swarm research X', "
+                "'in-depth report', 'full investigation'. "
+                "Runs up to 10 parallel web scout threads → synthesises a Master Intelligence Brief. "
+                "Returns a RESEARCH_CONTEXT_BLOCK — pass this to ContentAgent for fact-grounded writing. "
+                "Do NOT use search_and_fetch for deep research tasks — use this instead."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "topic": {
+                        "type": "string",
+                        "description": "The research topic or question to investigate deeply.",
+                    },
+                },
+                "required": ["topic"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_content",
             "description": (
                 "Generate any type of text content using the LLM and save it to the Desktop. "
@@ -982,6 +1051,13 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         return realtime_search.fetch_page_content(
             url=str(args.get("url", "")),
             max_chars=int(args.get("max_chars", 4000)),
+        )
+    if name == "deep_research":
+        # runtime is injected via execute_tool_call._runtime by the Orchestrator
+        _rt = getattr(execute_tool_call, "_runtime", None)
+        return deep_research_mod.deep_research(
+            topic=str(args.get("topic", "")),
+            runtime=_rt,
         )
     if name == "search_and_fetch":
         return realtime_search.search_and_fetch(
