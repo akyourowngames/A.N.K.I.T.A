@@ -21,10 +21,12 @@ from dotenv import load_dotenv
 
 from agent_runtime import AgentRuntime, new_session
 from agents import Orchestrator
+from agents.hive import HiveMind
 from corn import CornRunner
 from llm import build_runtime_from_env
 from memory import MemoryStore
 from proactive import ProactiveEngine
+from session_manager import SessionManager
 
 WORKSPACE_ROOT = Path.cwd().resolve()
 STATE_DIR = Path(".ankita") / "telegram"
@@ -150,9 +152,13 @@ def main() -> None:
     proactive.attach_runtime(runtime)  # Required for Sentinel (idle screen-watch) to function
     proactive.start()
 
+    # Hive Mind — async background task manager
+    hive = HiveMind(orchestrator=orchestrator, agent_runtime=agent, use_multi_agent=use_multi_agent)
+
     # Per-chat state
-    sessions: Dict[int, List[Dict[str, Any]]] = {}   # chat_id → message history
-    last_active_chat_id: Optional[int] = None        # for routing proactive events
+    sessions: Dict[int, List[Dict[str, Any]]] = {}           # chat_id → message history
+    tg_session_managers: Dict[int, SessionManager] = {}      # chat_id → SessionManager
+    last_active_chat_id: Optional[int] = None                # for routing proactive events
 
     offset = read_offset()
     poll_timeout = max(5, min(int(os.getenv("TELEGRAM_POLL_TIMEOUT", "5")), 120))
@@ -301,9 +307,26 @@ def main() -> None:
                 last_active_chat_id = chat_id
                 session_id = f"telegram-{chat_id}"
 
-                # Ensure session exists
+                # Ensure session exists — restore from vault if available
                 if chat_id not in sessions:
-                    sessions[chat_id] = new_session()
+                    sm = SessionManager(
+                        workspace_root=WORKSPACE_ROOT / ".ankita" / "telegram" / str(chat_id),
+                        runtime=runtime,
+                    )
+                    tg_session_managers[chat_id] = sm
+                    restored = sm.load()
+                    base = new_session()
+                    if restored:
+                        sessions[chat_id] = sm.build_restored_messages(base)
+                        try:
+                            send_text(
+                                bot_token, chat_id,
+                                f"🧠 Session restored — I remember our last {len(restored)} messages.",
+                            )
+                        except Exception:
+                            pass
+                    else:
+                        sessions[chat_id] = base
 
                 # Update proactive engine to use this chat's real session_id
                 # so DreamAgent searches the correct ChromaDB memories
@@ -325,15 +348,28 @@ def main() -> None:
                             "/reset — clear chat memory\n"
                             "/memory — show recent relevant memories\n"
                             "/agents on — enable multi-agent mode\n"
-                            "/agents off — disable multi-agent mode\n\n"
+                            "/agents off — disable multi-agent mode\n"
+                            "/hive — show background task status\n"
+                            "show <id> — get result of a background task\n\n"
                             "Then just send normal prompts!"
                         ),
                         msg_id,
                     )
                     continue
 
+                if text.lower() == "/hive":
+                    send_text(bot_token, chat_id, hive.list_tasks(), msg_id)
+                    continue
+
+                if text.lower().startswith("show "):
+                    task_id = text[5:].strip()
+                    send_text(bot_token, chat_id, hive.get_result(task_id), msg_id)
+                    continue
+
                 if text.lower() == "/reset":
                     sessions[chat_id] = new_session()
+                    if chat_id in tg_session_managers:
+                        tg_session_managers[chat_id].clear()
                     send_text(bot_token, chat_id, "✅ Conversation reset.", msg_id)
                     continue
 
@@ -370,28 +406,47 @@ def main() -> None:
                 if mem_context:
                     sessions[chat_id].append({"role": "system", "content": mem_context})
 
+                # Build per-chat send_fn — called by drone when reply is ready
+                _chat_id_for_drone = chat_id
+                _session_id_for_drone = session_id
+                _msg_id_for_drone = msg_id
+
+                _sm_for_drone = tg_session_managers.get(chat_id)
+
+                def _drone_reply(
+                    note: str,
+                    _cid: int = _chat_id_for_drone,
+                    _sid: str = _session_id_for_drone,
+                    _sm: "SessionManager | None" = _sm_for_drone,
+                ) -> None:
+                    """Called from drone thread when reply is ready — sends to Telegram."""
+                    if not note:
+                        return
+                    try:
+                        memory.add(_sid, "assistant", note)
+                        send_text(bot_token, _cid, note)
+                        # ── Save to session vault + compress if needed ─────────
+                        if _sm is not None:
+                            _sm.add_message("assistant", note)
+                            _sm.compress_if_needed()
+                    except Exception as err:
+                        print(f"[drone-reply-error] {err}")
+
+                # Save user message now (reply saved in _drone_reply when it arrives)
+                memory.add(session_id, "user", text)
+                if chat_id in tg_session_managers:
+                    tg_session_managers[chat_id].add_message("user", text)
+
                 try:
-                    if use_multi_agent:
-                        reply = orchestrator.run(
-                            user_text=text,
-                            messages=sessions[chat_id],
-                        )
-                    else:
-                        reply = agent.process_user_text(
-                            user_text=text,
-                            messages=sessions[chat_id],
-                        )
+                    ack = hive.delegate(text, sessions[chat_id], send_fn=_drone_reply)
                 except Exception as err:
                     send_text(bot_token, chat_id, f"⚠️ Error: {err}", msg_id)
                     continue
 
-                # Store in vector memory BEFORE sending (so memory is always saved
-                # even if the Telegram send fails)
-                print(f"[telegram] Saving to memory: session={session_id}", flush=True)
-                memory.add(session_id, "user", text)
-                memory.add(session_id, "assistant", reply or "")
-
-                send_text(bot_token, chat_id, reply or "(empty response)", msg_id)
+                # For heavy tasks: send the "Started 🐝" acknowledgement immediately
+                # For normal tasks: ack is "" — _drone_reply delivers the real reply async
+                if ack:
+                    send_text(bot_token, chat_id, ack, msg_id)
 
         except KeyboardInterrupt:
             print("\nStopping Telegram bot bridge.")

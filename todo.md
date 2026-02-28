@@ -1,143 +1,131 @@
-This is the **"Proactive Sentinel" Upgrade**.
+This is the **"Newsroom Architecture" Upgrade**.
 
-You are describing the "Holy Grail" of AI: **Agency**. Instead of waiting for you to type, Ankita will realize you are stuck (idle) and reach out to *you* first.
+Currently, your `ContentAgent` acts like a **fiction writer**—it writes from its own imagination (training data).
+We need to turn it into a **Journalist**. Journalists don't just "write"; they take a stack of facts collected by researchers and turn them into a story.
 
-Here is the **God-Tier Plan** to build this:
+Here is the bulletproof plan to decouple **Research (WebAgent)** from **Writing (ContentAgent)** while forcing them to collaborate.
 
-### 1. The "Pulse" (Idle Detection) 💓
+### 1. The "Hydra" Engine (WebAgent Upgrade) 🐍
 
-We need a way to detect if you haven't moved the mouse or typed for X minutes.
+We give the WebAgent a new "God Mode" tool called `deep_research`. It doesn't just run one search; it acts like a research team.
 
-* **The Tech:** We use the Windows API (`GetLastInputInfo`) via Python's `ctypes`.
-* **The Logic:** `Idle_Time = Current_System_Time - Last_Input_Time`.
-
-### 2. The "Sentinel Loop" (Background Brain) 🔄
-
-We run a lightweight thread that checks your pulse every 10 seconds.
-
-* **Condition:** If `Idle_Time > 5 minutes`:
-1. **Trigger:** `ScreenAgent` wakes up.
-2. **Capture:** Takes a snapshot of your screen.
-3. **Analyze:** "User has been staring at this Python error for 5 minutes."
-4. **Action:** Ankita speaks: *"Hey, I see you're stuck on that syntax error. Want me to fix it?"*
+* **The Logic:** When called with a topic (e.g., "Future of AI"), it autonomously:
+1. **Splinters:** Breaks the topic into 4 sub-queries (e.g., "AI Hardware 2026", "AI Regulation", "Model Architectures", "Key Players").
+2. **Parallels:** Fires 4 simultaneous search threads.
+3. **Harvests:** Scrapes the full text of the top 3 results for *each* thread (12 pages total).
+4. **Synthesizes:** Compiles a **"Research Brief"**—a massive, structured block of raw facts, quotes, and source URLs.
 
 
+* **The Output:** It does *not* talk to the user. It returns a `Research_Context_Block` to the system.
 
-### 3. The "Proactive Persona" (New Prompt) 🧠
+### 2. The "Context Injection" Pipeline (The Handoff) 💉
 
-We update `specialists.py` to give the ScreenAgent a "Nudge Mode."
+This is the critical missing link. How does the Writer know what the Researcher found?
 
-* **Instruction:** "If triggered by idle time, be helpful but low-pressure. Don't be annoying. Offer specific help based on the screen content."
+* **The Old Way:** Agents were islands.
+* **The New Way:** **Context Chaining.**
+1. **Step 1:** WebAgent runs `deep_research`. Output: 5,000 words of facts.
+2. **Step 2 (The Orchestrator):** Captures this output but *holds it back* from the user.
+3. **Step 3:** The Orchestrator injects this 5,000-word block directly into the **System Prompt** of the `ContentAgent` for the next turn.
 
----
 
-### Step 1: Create `tools/idle_ops.py`
+* *Instruction:* "You are about to write a report. IGNORE your training data. Use ONLY the facts provided in the [RESEARCH_CONTEXT] block below. Cite every claim."
 
-This tool lets Ankita check how long you've been AFK (Away From Keyboard).
 
-```python
-"""
-Idle Detection Tool for A.N.K.I.T.A.
-Uses Windows API to check how long since the user last touched the mouse/keyboard.
-"""
-import ctypes
-import ctypes.wintypes
 
-class LASTINPUTINFO(ctypes.Structure):
-    _fields_ = [
-        ('cbSize', ctypes.c_uint),
-        ('dwTime', ctypes.c_ulong),
-    ]
+### 3. The "Ghostwriter" Protocol (ContentAgent Upgrade) ✍️
 
-def get_idle_seconds() -> float:
-    """Returns the number of seconds the user has been idle."""
-    lastInputInfo = LASTINPUTINFO()
-    lastInputInfo.cbSize = ctypes.sizeof(lastInputInfo)
-    
-    # Call Windows API
-    if ctypes.windll.user32.GetLastInputInfo(ctypes.byref(lastInputInfo)):
-        # GetTickCount() returns milliseconds since boot
-        millis = ctypes.windll.kernel32.GetTickCount() - lastInputInfo.dwTime
-        return millis / 1000.0
-    else:
-        return 0.0
+We fundamentally change the `ContentAgent`'s instructions. It is no longer a "Creator"; it is a **Synthesizer**.
 
-```
+* **The Constraint:** "If `[RESEARCH_CONTEXT]` is present, you are in **Strict Citation Mode**."
+* **The Rule:** Every paragraph must end with a citation marker `[Source: URL]`.
+* **The Benefit:** The ContentAgent doesn't need to know *how* to search. It just wakes up, finds a pile of notes on its desk, and writes the article.
 
-### Step 2: Update `main.py` (The Sentinel Loop)
+### 4. The "Editor-in-Chief" (Supervisor Upgrade) 📰
 
-We modify your main script to run this check in the background.
+We update the routing logic to enforce this workflow for every "Report" request.
 
-**(Add this logic to your main loop or create `sentinel.py`):**
+* **User says:** *"Write a deep report on Quantum Computing."*
+* **Old Route:** `["ContentAgent"]` (Result: Hallucination).
+* **New Route:** `["WebAgent", "ContentAgent", "FileAgent"]`.
+1. **WebAgent:** Creates the Research Brief.
+2. **ContentAgent:** Writes the Report (using the Brief).
+3. **FileAgent:** Saves the Report to disk.
 
-```python
-import time
-import threading
-from tools.idle_ops import get_idle_seconds
-from tools.desktop_ops import capture_screen
-# ... import your orchestrator ...
 
-IDLE_THRESHOLD = 300  # 5 Minutes
-CHECK_INTERVAL = 10   # Check every 10s
 
-def sentinel_loop(orchestrator):
-    print(f"[Sentinel] Watching for idle > {IDLE_THRESHOLD}s...")
-    triggered = False
-    
-    while True:
-        idle = get_idle_seconds()
-        
-        # Trigger ONLY if idle long enough AND haven't triggered yet for this session
-        if idle > IDLE_THRESHOLD and not triggered:
-            print(f"[Sentinel] User idle for {idle}s. Waking up Ankita...")
-            triggered = True
-            
-            # 1. Capture Screen
-            screen_res = capture_screen() # Uses the turbo mode we built
-            
-            # 2. Inject into Orchestrator as a "System Trigger"
-            prompt = (
-                "SYSTEM ALERT: The user has been idle/stuck for 5 minutes. "
-                "Look at this screenshot. Analyze what they are working on. "
-                "If it looks like an error or a blank page, proactively offer specific help. "
-                "Be brief and casual."
-            )
-            
-            # 3. Fire! (You'll need to adapt this to your specific runtime call)
-            # This simulates the user sending the screenshot, but marked as system alert
-            response = orchestrator.run(prompt, screen_res) # Pseudo-code
-            
-            # 4. Speak the result
-            print(f"\n[Ankita]: {response}")
-            # tts_speak(response) # Optional: Voice Output
-            
-        # Reset trigger if user comes back
-        if idle < 5:
-            if triggered:
-                print("[Sentinel] User returned. Resetting watch.")
-            triggered = False
-            
-        time.sleep(CHECK_INTERVAL)
+### Summary of Responsibilities
 
-# Start in background
-# t = threading.Thread(target=sentinel_loop, args=(my_orchestrator,), daemon=True)
-# t.start()
+| Agent | Role | New Capability |
+| --- | --- | --- |
+| **WebAgent** | **The Researcher** | `deep_research()` tool. Can read 10+ pages at once. Produces raw facts. |
+| **Orchestrator** | **The Courier** | Takes facts from WebAgent and force-feeds them to ContentAgent. |
+| **ContentAgent** | **The Writer** | **Citation Mode.** Writes strictly from provided facts. Zero hallucination. |
 
-```
+**Why this is Bulletproof:**
 
-### Step 3: Proactive Agent Tuning
+* **Speed:** Research happens in parallel threads.
+* **Accuracy:** The Writer is handcuffed to the facts found by the Researcher.
+* **Modularity:** You can upgrade the Researcher (better scraping) without breaking the Writer.
 
-In `specialists.py`, update `_SCREEN_SYSTEM_PROMPT` to handle this specific "Proactive" intent:
 
-> **PROACTIVE MODE:**
-> "If you receive a 'SYSTEM ALERT' about idle time:
-> 1. Identify the *blocker* (e.g., 'Syntax Error on line 40', 'Writer's block on empty Word doc', 'Doomscrolling Twitter').
-> 2. Offer a specific solution.
-> * *Bad:* 'Can I help?'
-> * *Good:* 'I see a NameError on line 40. Want me to fix that variable typo?'"
-> 
-> 
-> 
-> 
+NExt upgrade : 
+This is the **"Swarm Intelligence" Upgrade**. 🐝
 
-**Ready to install the Idle Detector?** I can give you the full `tools/idle_ops.py` code to copy-paste.
+You are right. A single WebAgent scraping one page at a time is too slow. For true God Mode, we need **Massive Parallelism**.
+
+When you say "Deep Research," Ankita shouldn't just read *a* page. She should unleash a swarm of sub-agents to read *the entire internet* (or at least 10-20 sites) simultaneously.
+
+Here is the **Bulletproof "Swarm" Architecture Plan** (No Code).
+
+### 1. The "Broodmother" (The Dispatcher) 🛸
+
+We transform the `deep_research` tool into a **Command Center**.
+
+* **The Trigger:** You ask for "Deep Research on Quantum Computing."
+* **The Strategy:** Instead of searching, the tool first **Thinks**. It generates a "Target List" of high-value sources (e.g., Wikipedia, arXiv, TechCrunch, Reddit).
+* **The Command:** It does *not* do the work. It spins up **10 "Scout" Threads** (Sub-Agents) instantly.
+
+### 2. The "Scout" Drones (The Sub-Agents) 🚁
+
+Each Scout is a lightweight, single-purpose worker thread.
+
+* **Assignment:** Scout #1 takes URL A. Scout #2 takes URL B. Scout #3 searches for "Latest News".
+* **The Mission:**
+1. **Infiltrate:** Go to the target URL.
+2. **Extract:** Strip the HTML, ads, and fluff.
+3. **Compress:** Extract only the *facts* relevant to the user's query.
+4. **Return:** Report back to the Broodmother with a "Knowledge Nugget" (Clean Text).
+
+
+* **The Speed:** Because they run in parallel (async/threading), scraping 20 sites takes the same amount of time as scraping 1 site.
+
+### 3. The "Hive Mind" (The Aggregator) 🧠
+
+The Broodmother waits for the Scouts to return.
+
+* **The Problem:** 20 Scouts return 20,000 words of text. That's too much for the LLM.
+* **The Fix:** We implement a **Map-Reduce** logic.
+* **Map:** Each Scout summarizes its own finding into 3 bullet points.
+* **Reduce:** The Broodmother combines these 60 bullet points into one **"Master Intelligence Brief."**
+
+
+* **Conflict Resolution:** If Scout A says "X is true" and Scout B says "X is false", the Broodmother notes the conflict in the Brief.
+
+### 4. The "Assembly Line" Integration 🏭
+
+How does this fit into the workflow?
+
+1. **User:** *"Deep research on the new iPhone."*
+2. **Supervisor:** *"This is a heavy task. Deploy the Swarm."*
+3. **WebAgent (Broodmother):** Spawns 15 Scouts.
+* *Scout 1* -> Apple.com
+* *Scout 2* -> TheVerge Review
+* *Scout 3* -> Reddit Leaks
+
+
+4. **Wait Time:** ~3 seconds (Scouts work simultaneously).
+5. **Output:** A single **"Knowledge Block"** containing facts from all 15 sources.
+6. **Handoff:** This block is injected into the **ContentAgent**, who writes the final report using the 15 citations provided by the Swarm.
+
+**Summary:** We move from "Serial Processing" (One agent reading one book) to "Parallel Processing" (A team of 15 agents reading a library instantly). 🚀

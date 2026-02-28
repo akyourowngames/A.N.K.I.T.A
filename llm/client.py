@@ -307,6 +307,73 @@ def build_runtime_from_env() -> LLMRuntime:
     sys.exit(1)
 
 
+def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
+    """
+    Build a vision-capable LLM runtime for image analysis tasks.
+
+    Priority:
+    1. VISION_PROVIDER env var (explicit override)
+    2. If main runtime is already vision-capable (copilot/gpt-4o) → use it directly
+    3. Try Copilot as fallback if COPILOT_GITHUB_TOKEN is set
+    4. Fall back to main runtime (will fail gracefully with a text error)
+
+    Usage: Pass this runtime to call_chat_with_image() for webcam/screenshot analysis.
+    """
+    vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower()
+
+    # 1. Explicit VISION_PROVIDER override
+    if vision_provider == "copilot":
+        try:
+            github_token = _env_first("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+            if not github_token:
+                github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
+            if github_token:
+                cache = _cache_path()
+                token_payload = _exchange_github_to_copilot_token(github_token, cache)
+                token = str(token_payload["token"])
+                derived_base = _derive_copilot_base_url(token)
+                base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
+                model = os.getenv("VISION_MODEL", os.getenv("COPILOT_MODEL", DEFAULT_COPILOT_MODEL)).strip() or DEFAULT_COPILOT_MODEL
+                return LLMRuntime(
+                    provider="copilot",
+                    model=model,
+                    api_key=token,
+                    base_url=base_url.rstrip("/"),
+                    max_tokens=main_runtime.max_tokens,
+                )
+        except Exception:
+            pass
+
+    # 2. Main runtime already supports vision (copilot/gpt-4o)
+    if main_runtime.provider == "copilot":
+        return main_runtime
+
+    # 3. Auto-fallback: try Copilot if COPILOT_GITHUB_TOKEN is available
+    github_token = _env_first("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+    if not github_token:
+        github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
+    if github_token:
+        try:
+            cache = _cache_path()
+            token_payload = _exchange_github_to_copilot_token(github_token, cache)
+            token = str(token_payload["token"])
+            derived_base = _derive_copilot_base_url(token)
+            base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
+            model = os.getenv("VISION_MODEL", DEFAULT_COPILOT_MODEL).strip() or DEFAULT_COPILOT_MODEL
+            return LLMRuntime(
+                provider="copilot",
+                model=model,
+                api_key=token,
+                base_url=base_url.rstrip("/"),
+                max_tokens=main_runtime.max_tokens,
+            )
+        except Exception:
+            pass
+
+    # 4. Last resort — return main runtime (will fail with a clear error in call_chat_with_image)
+    return main_runtime
+
+
 def call_chat_with_image(
     runtime: LLMRuntime,
     prompt: str,

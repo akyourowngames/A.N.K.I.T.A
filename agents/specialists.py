@@ -18,24 +18,26 @@ from tools.engine import TOOL_SPECS
 # Tool subsets by domain
 # ---------------------------------------------------------------------------
 
+_MEMORY_TOOLS = {"remember", "recall", "forget"}  # available to ALL agents
+
 _FILE_TOOLS = {"list_files", "read_file", "read_file_lines", "write_file", "edit_file",
                "edit_file_lines", "search_text", "rename_path", "delete_path", "move_path",
-               "copy_path", "make_dir", "file_info", "apply_patch", "write_content"}
+               "copy_path", "make_dir", "file_info", "apply_patch", "write_content"} | _MEMORY_TOOLS
 
 _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_content",
-              "search_price", "write_content", "download_file", "launch_app"}
+              "search_price", "write_content", "download_file", "launch_app"} | _MEMORY_TOOLS
 
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_interact",
-                 "read_file", "search_text"}
+                 "read_file", "search_text"} | _MEMORY_TOOLS
 
-_MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music"}
+_MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music"} | _MEMORY_TOOLS
 
 # UPGRADE: CodeAgent can now launch VS Code or terminals to show its work
 _CODE_TOOLS = {"run_command", "apply_patch", "execute_shell", "check_syntax",
-               "read_file", "read_file_lines", "edit_file_lines", "write_file", "launch_app"}
-_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command"}
+               "read_file", "read_file_lines", "edit_file_lines", "write_file", "launch_app"} | _MEMORY_TOOLS
+_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command"} | _MEMORY_TOOLS
 
-_CRON_TOOLS = {"cron"}
+_CRON_TOOLS = {"cron"} | _MEMORY_TOOLS
 
 # ASSEMBLY LINE: ContentAgent is now a pure text generator — NO tools.
 # FileAgent saves the output. SystemAgent opens the file.

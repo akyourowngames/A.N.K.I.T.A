@@ -11,6 +11,7 @@ from tools import (
     compact_messages,
     execute_tool_call,
 )
+from tools.memory_ops import format_memory_block
 
 MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
 
@@ -55,7 +56,12 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 
 
 def new_session() -> List[Dict[str, Any]]:
-    return [{"role": "system", "content": SYSTEM_PROMPT}]
+    """Start a fresh conversation with memory pre-injected into the system prompt."""
+    memory_block = format_memory_block()
+    system_content = SYSTEM_PROMPT
+    if memory_block:
+        system_content = f"{SYSTEM_PROMPT}\n\n{memory_block}"
+    return [{"role": "system", "content": system_content}]
 
 
 class AgentRuntime:
@@ -179,6 +185,17 @@ class AgentRuntime:
         return "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
 
     def process_user_text(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
+        # 🧠 Refresh memory block in system prompt on every turn.
+        # This ensures newly stored memories (via remember()) are immediately visible
+        # without needing to restart — critical for "remember that X → now use X" flows.
+        memory_block = format_memory_block()
+        if memory_block and messages and messages[0].get("role") == "system":
+            base = messages[0]["content"]
+            # Strip any old memory block and re-inject fresh one
+            if "--- LONG TERM MEMORY ---" in base:
+                base = base[:base.index("--- LONG TERM MEMORY ---")].rstrip()
+            messages[0]["content"] = f"{base}\n\n{memory_block}"
+
         messages.append({"role": "user", "content": user_text})
         try:
             return self.run_turn(messages, tools=TOOL_SPECS)

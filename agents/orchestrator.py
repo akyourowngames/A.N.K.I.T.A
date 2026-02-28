@@ -17,7 +17,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from llm import LLMRuntime, call_chat_once
+from llm.client import build_vision_runtime_from_env, call_chat_with_image
 from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages
+from tools.memory_ops import format_memory_block
 
 from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
@@ -99,6 +101,27 @@ _SYNTHESIZER_PROMPT = (
 )
 
 
+def _inject_memory(messages: List[Dict[str, Any]]) -> None:
+    """
+    Hippocampus Injection — prepend the long-term memory block to the system prompt.
+
+    This runs before EVERY specialist agent so they all share the same persistent
+    context without needing to explicitly call recall().
+
+    Only injects if .ankita/memory.json is non-empty (avoids useless padding).
+    """
+    memory_block = format_memory_block()
+    if not memory_block:
+        return  # vault is empty — nothing to inject
+
+    if messages and messages[0].get("role") == "system":
+        original = messages[0].get("content", "")
+        messages[0]["content"] = f"{original}\n\n{memory_block}"
+    else:
+        # No system message yet — insert one at the front
+        messages.insert(0, {"role": "system", "content": memory_block})
+
+
 def _run_specialist(
     specialist: SpecialistAgent,
     task: str,
@@ -115,6 +138,9 @@ def _run_specialist(
     """
     messages = specialist.make_messages(task)
     max_tokens = runtime.max_tokens
+
+    # 🧠 HIPPOCAMPUS INJECTION — every agent sees long-term memory before speaking
+    _inject_memory(messages)
 
     # TELEPATHY: inject prior context into the system message so the agent
     # starts with full awareness of what previous agents did/produced.
@@ -213,12 +239,77 @@ def _run_specialist(
         # assistant "pass-through" message to bridge the tool results, then
         # inject the image as a user message so the model sees the pixels.
         if vision_packets:
-            # Bridge: assistant acknowledgement so the turn structure is valid
-            messages.append({
-                "role": "assistant",
-                "content": "I have the screen capture. Let me analyse it now.",
-            })
-            messages.extend(vision_packets)
+            # --- GROQ BLIND FIX: Groq/LLaMA cannot process image_url messages.
+            # Instead: use a vision-capable runtime (Copilot/GPT-4o) to pre-describe
+            # the image as plain text, then inject that description for Groq to read.
+            if runtime.provider == "groq":
+                vision_runtime = build_vision_runtime_from_env(runtime)
+                if vision_runtime.provider != "groq":
+                    # We have a vision-capable runtime — pre-describe each image
+                    for vp in vision_packets:
+                        try:
+                            # Extract the base64 from the image_url content block
+                            b64 = None
+                            text_prompt = "Describe everything you can see in this image in detail. Include what the person is holding, wearing, or doing. Be specific."
+                            for block in vp.get("content", []):
+                                if block.get("type") == "image_url":
+                                    url_str = block["image_url"].get("url", "")
+                                    if "base64," in url_str:
+                                        b64 = url_str.split("base64,")[1]
+                                    elif len(url_str) > 100:
+                                        b64 = url_str
+                                elif block.get("type") == "text":
+                                    text_prompt = block.get("text", text_prompt)
+
+                            if b64:
+                                description = call_chat_with_image(
+                                    vision_runtime,
+                                    text_prompt,
+                                    b64,
+                                    max_tokens=600,
+                                    temperature=0.3,
+                                )
+                                # Inject as plain text — Groq can read this!
+                                messages.append({
+                                    "role": "assistant",
+                                    "content": "I captured the image. Let me describe what I see.",
+                                })
+                                messages.append({
+                                    "role": "user",
+                                    "content": f"[Vision Analysis by GPT-4o]\n{description}",
+                                })
+                            else:
+                                messages.append({
+                                    "role": "user",
+                                    "content": "[Image was captured but could not be decoded for vision analysis]",
+                                })
+                        except Exception as vision_err:
+                            messages.append({
+                                "role": "user",
+                                "content": f"[Vision analysis failed: {vision_err}]",
+                            })
+                else:
+                    # No vision runtime available — tell user clearly
+                    messages.append({
+                        "role": "assistant",
+                        "content": "I captured the image.",
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[Vision Analysis Unavailable]\n"
+                            "I captured the image but cannot analyse it because the current LLM (Groq/LLaMA) "
+                            "does not support vision. To enable real image analysis, add COPILOT_GITHUB_TOKEN "
+                            "to your .env file. I'll use that as the vision engine while keeping Groq for text."
+                        ),
+                    })
+            else:
+                # Vision-capable runtime (Copilot/GPT-4o) — inject images normally
+                messages.append({
+                    "role": "assistant",
+                    "content": "I have the screen capture. Let me analyse it now.",
+                })
+                messages.extend(vision_packets)
 
     return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached)."}
 

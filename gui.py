@@ -27,10 +27,12 @@ from PyQt5.QtWidgets import (
 
 from agent_runtime import AgentRuntime, new_session
 from agents import Orchestrator
+from agents.hive import HiveMind
 from corn import CornRunner
 from llm import build_runtime_from_env
 from memory import MemoryStore
 from proactive import ProactiveEngine
+from session_manager import SessionManager
 import voice_web
 
 WORKSPACE_ROOT = Path.cwd().resolve()
@@ -334,6 +336,8 @@ class VoiceCallWorker(QThread):
 
 class AnkitaWindow(QMainWindow):
     hotkey_toggle_requested = pyqtSignal()
+    # Signal for safely delivering drone replies from background threads to Qt UI
+    drone_reply_ready = pyqtSignal(str)  # emitted by drone thread, received by main thread
 
     def __init__(self) -> None:
         super().__init__()
@@ -349,7 +353,16 @@ class AnkitaWindow(QMainWindow):
         self.memory._client = None
         self.memory._col = None
         self.session_id = "gui-session"
-        self.messages = new_session()
+
+        # ── Session Manager (Black Box / Flight Recorder) ✈️ ──────────────────
+        self.session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)
+        restored_history = self.session.load()
+        base_messages = new_session()
+        if restored_history:
+            self.messages = self.session.build_restored_messages(base_messages)
+        else:
+            self.messages = base_messages
+
         self.worker: AskWorker | None = None
         self.voice_worker: VoiceCallWorker | None = None
         self._content_worker: _ContentRequestWorker | None = None
@@ -373,6 +386,15 @@ class AnkitaWindow(QMainWindow):
         self.proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
         self.proactive.attach_runtime(runtime)  # Required for Sentinel screen-watch to function
         self.proactive.start()
+
+        # Hive Mind — async background task manager
+        self.hive = HiveMind(
+            orchestrator=self.orchestrator,
+            agent_runtime=self.agent,
+            use_multi_agent=self.use_multi_agent,
+        )
+        # Connect drone reply signal to UI handler (thread-safe Qt signal-slot)
+        self.drone_reply_ready.connect(self._on_drone_reply)
 
         # --- Window setup ---
         self.setWindowTitle("A.N.K.I.T.A")
@@ -443,7 +465,10 @@ class AnkitaWindow(QMainWindow):
         self.hotkey_toggle_requested.connect(self._toggle_voice_by_hotkey)
 
         # Startup messages
-        self._append("System", "ANKITA ready.")
+        if self.session.restored:
+            self._append("System", f"✈️ Session restored — {len(restored_history)} messages loaded. I remember where we left off 🧠")
+        else:
+            self._append("System", "ANKITA ready.")
         if not HAS_AUDIO_STACK:
             self._append("System", "Voice unavailable — install numpy + sounddevice")
 
@@ -534,6 +559,11 @@ class AnkitaWindow(QMainWindow):
     # -----------------------------------------------------------------------
 
     def _on_proactive_tick(self) -> None:
+        # Drain Hive Mind drone completion notifications
+        if self.hive is not None:
+            for note in self.hive.check_notifications():
+                self._append("🐝 Hive", note)
+
         for event in self.proactive.get_pending_events():
 
             # ------------------------------------------------------------------
@@ -658,21 +688,53 @@ class AnkitaWindow(QMainWindow):
         self.input.clear()
         self._append("You", text)
 
+        # --- Hive Mind commands ---
+        if text.lower() == "/hive":
+            self._append("🐝 Hive", self.hive.list_tasks())
+            return
+        if text.lower().startswith("show "):
+            task_id = text[5:].strip()
+            self._append("🐝 Hive", self.hive.get_result(task_id))
+            return
+
         # Save user message to ChromaDB immediately so DreamAgent has memories
         self.memory.add(self.session_id, "user", text)
         self._pending_user_text = text  # store for _on_reply
+
+        # ── Save to session vault ──────────────────────────────────────────────
+        self.session.add_message("user", text)
 
         mem_context = self.memory.format_memory_context(text, n=4)
         if mem_context:
             self.messages.append({"role": "system", "content": mem_context})
 
+        # Route ALL messages through HiveMind — fully async, never blocks UI
+        # Reply arrives via Qt signal (thread-safe) from the drone thread
+        def _gui_reply(reply_text: str) -> None:
+            # Called from background drone thread — MUST use signal, not direct UI call
+            if reply_text:
+                self.drone_reply_ready.emit(reply_text)
+
         self._set_busy(True)
-        if self.use_multi_agent:
-            self.worker = _OrchestratorWorker(self.orchestrator, self.messages, text)
-        else:
-            self.worker = AskWorker(self.agent, self.messages, text)
-        self.worker.done.connect(self._on_reply)
-        self.worker.start()
+        ack = self.hive.delegate(text, self.messages, send_fn=_gui_reply)
+        if ack:
+            # Heavy task — show "Started 🐝" acknowledgement immediately
+            self._append("A.N.K.I.T.A", ack)
+            self._set_busy(False)  # unblock UI — drone runs in background
+
+    def _on_drone_reply(self, reply: str) -> None:
+        """Slot called safely on the main Qt thread when a drone finishes."""
+        if not reply:
+            return
+        self._append("A.N.K.I.T.A", reply)
+        self.memory.add(self.session_id, "assistant", reply)
+        # ── Save assistant reply to session vault + compress if needed ─────────
+        self.session.add_message("assistant", reply)
+        import threading as _t
+        _t.Thread(target=self.session.compress_if_needed, daemon=True,
+                  name="SessionCompressor").start()
+        self._set_busy(False)
+        self.input.setFocus()
 
     def _on_reply(self, reply: str, error: str) -> None:
         if error:
@@ -687,6 +749,7 @@ class AnkitaWindow(QMainWindow):
 
     def on_reset(self) -> None:
         self.messages = new_session()
+        self.session.clear()
         self._append("System", "Conversation reset.")
 
     # -----------------------------------------------------------------------
