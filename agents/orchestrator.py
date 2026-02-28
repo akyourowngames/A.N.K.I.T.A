@@ -168,6 +168,21 @@ def _inject_memory(messages: List[Dict[str, Any]]) -> None:
         messages.insert(0, {"role": "system", "content": memory_block})
 
 
+_DEEP_MODE_TASK_KEYWORDS = {
+    "deep", "comprehensive", "detailed", "in-depth", "in depth", "full",
+    "10 page", "10-page", "massive", "extensive", "thorough", "research",
+    "investigation", "complete", "full investigation", "deep report",
+    "deep dive", "deep-dive", "long form", "longform",
+}
+_DEEP_MODE_MAX_TOKENS = 8192
+
+
+def _is_deep_mode_task(task: str, prior_context: Optional[str] = None) -> bool:
+    """Return True if the task signals deep/long-form content generation."""
+    combined = f"{task} {prior_context or ''}".lower()
+    return any(kw in combined for kw in _DEEP_MODE_TASK_KEYWORDS)
+
+
 def _run_specialist(
     specialist: SpecialistAgent,
     task: str,
@@ -183,7 +198,15 @@ def _run_specialist(
                        before it woke up. No hunting through text needed.
     """
     messages = specialist.make_messages(task)
-    max_tokens = runtime.max_tokens
+
+    # PARALLEL CHUNK ENGINE: For ContentAgent in deep mode, boost the token budget
+    # to 8192 so the LLM can write a full 10-page document without truncation.
+    # For all other agents, use the runtime default.
+    if specialist.name == "ContentAgent" and _is_deep_mode_task(task, prior_context):
+        max_tokens = _DEEP_MODE_MAX_TOKENS
+        print(f"[Orchestrator] 🔥 ContentAgent DEEP MODE — max_tokens boosted to {max_tokens}", flush=True)
+    else:
+        max_tokens = runtime.max_tokens
 
     # 🧠 HIPPOCAMPUS INJECTION — every agent sees long-term memory before speaking
     _inject_memory(messages)

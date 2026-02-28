@@ -88,6 +88,27 @@ _DEEP_MODE_KEYWORDS = {
     "deep dive", "deep-dive", "long form", "longform",
 }
 
+# Sections for parallel chunk generation — each chunk gets its own LLM call
+_DEEP_SECTION_PLAN = [
+    ("Executive Summary & Background",
+     "Write the Executive Summary (300+ words) and Background & Context (500+ words) sections. "
+     "Start with '## Executive Summary' header. Be thorough and substantive."),
+    ("Main Analysis — Part 1",
+     "Write 2 deep analysis sections (500+ words each) covering the most important aspects. "
+     "Use '## [Section Name]' headers. Include specific facts, numbers, examples."),
+    ("Main Analysis — Part 2",
+     "Write 2 more deep analysis sections (500+ words each) covering different important aspects. "
+     "Use '## [Section Name]' headers. Include specific facts, numbers, examples."),
+    ("Main Analysis — Part 3",
+     "Write 1 deep analysis section (500+ words) covering remaining key aspects, "
+     "followed by a Real-World Examples & Case Studies section (600+ words). "
+     "Use '## [Section Name]' headers."),
+    ("Implications, Conclusion & Recommendations",
+     "Write the Implications & Impact section (400+ words), Conclusion (300+ words), "
+     "and Recommendations (300+ words). Use '## [Section Name]' headers. "
+     "Make the conclusion and recommendations actionable and specific."),
+]
+
 _DEEP_MODE_SYSTEM_PROMPT = (
     "You are an expert writer, journalist, and analyst. "
     "You are in DEEP MODE — the user wants a COMPREHENSIVE, LONG-FORM document. "
@@ -142,6 +163,95 @@ def _detect_deep_mode(format_type: str, topic: str, extra_context: str) -> bool:
     return any(kw in combined for kw in _DEEP_MODE_KEYWORDS)
 
 
+def _generate_deep_parallel(
+    topic_clean: str,
+    format_clean: str,
+    context_section: str,
+    research_context: str,
+    runtime: Any,
+    call_chat_once: Any,
+) -> str:
+    """
+    Parallel Chunk Engine — generates a 10-page deep document by splitting it
+    into 5 sections and calling the LLM in parallel for each section.
+    Then stitches all chunks into a single cohesive document.
+
+    Returns the full assembled document text.
+    """
+    from concurrent.futures import ThreadPoolExecutor, as_completed as _as_completed
+
+    research_note = (
+        f"\n\nRESEARCH CONTEXT (use ALL facts, cite sources):\n{research_context}"
+        if research_context
+        else ""
+    )
+
+    def _generate_chunk(section_name: str, section_instructions: str) -> tuple[str, str]:
+        chunk_system = (
+            _DEEP_MODE_SYSTEM_PROMPT
+            + "\n\nYou are generating ONE SECTION of a larger document. "
+            "Write ONLY this section — do not write an intro or outro for the whole doc. "
+            "Start directly with the section header."
+        )
+        chunk_user = (
+            f"Full document topic: {topic_clean} ({format_clean}){context_section}{research_note}\n\n"
+            f"YOUR SECTION TO WRITE: {section_name}\n"
+            f"INSTRUCTIONS: {section_instructions}\n\n"
+            f"Write this section completely and substantively. Minimum 800 words for this section. "
+            f"Use clear ## and ### headers. Start writing now."
+        )
+        msgs = [
+            {"role": "system", "content": chunk_system},
+            {"role": "user", "content": chunk_user},
+        ]
+        try:
+            resp = call_chat_once(runtime, msgs, tools=None, max_tokens=2048)
+            text = (resp.get("content") or "").strip()
+            return section_name, text
+        except Exception as err:
+            return section_name, f"## {section_name}\n\n[Section generation failed: {err}]"
+
+    # Generate title separately (fast, 128 tokens)
+    title_msgs = [
+        {"role": "system", "content": "Generate a professional document title only. No extra text."},
+        {"role": "user", "content": f"Write a title for a comprehensive {format_clean} about: {topic_clean}"},
+    ]
+    try:
+        title_resp = call_chat_once(runtime, title_msgs, tools=None, max_tokens=64)
+        title = (title_resp.get("content") or f"Comprehensive {format_clean.title()}: {topic_clean}").strip()
+    except Exception:
+        title = f"Comprehensive {format_clean.title()}: {topic_clean}"
+
+    print(f"[ContentEngine] 🚀 Launching {len(_DEEP_SECTION_PLAN)} parallel section threads…", flush=True)
+
+    # Parallel section generation — all 5 sections at once
+    section_texts: dict[str, str] = {}
+    with ThreadPoolExecutor(max_workers=len(_DEEP_SECTION_PLAN)) as pool:
+        futures = {
+            pool.submit(_generate_chunk, sname, sinstr): sname
+            for sname, sinstr in _DEEP_SECTION_PLAN
+        }
+        for future in _as_completed(futures):
+            sname = futures[future]
+            try:
+                _, text = future.result()
+                section_texts[sname] = text
+                wc = len(text.split())
+                print(f"[ContentEngine] ✅ Section '{sname}' — {wc} words", flush=True)
+            except Exception as err:
+                section_texts[sname] = f"## {sname}\n\n[Generation failed: {err}]"
+
+    # Stitch in order
+    parts = [f"# {title}\n"]
+    for sname, _ in _DEEP_SECTION_PLAN:
+        parts.append(section_texts.get(sname, f"## {sname}\n\n[Missing]"))
+
+    full_doc = "\n\n---\n\n".join(parts)
+    total_words = len(full_doc.split())
+    print(f"[ContentEngine] 🎉 Full document assembled: {total_words} words ({len(full_doc)} chars)", flush=True)
+    return full_doc
+
+
 def write_and_save_content(
     workspace_root: Path,
     topic: str,
@@ -188,16 +298,14 @@ def write_and_save_content(
     is_deep = _detect_deep_mode(format_clean, topic_clean, extra_context)
 
     if is_deep:
-        system_prompt = _DEEP_MODE_SYSTEM_PROMPT
-        user_prompt = (
-            f"Write a COMPREHENSIVE, LONG-FORM {format_clean} about: {topic_clean}."
-            f"{context_section}\n\n"
-            f"Target 6000-8000+ words. Use full document structure with headers. "
-            f"DO NOT truncate. Write the COMPLETE document from start to finish."
-        )
+        # Deep mode uses the Parallel Chunk Engine — generate sections in parallel
+        # then stitch. No single LLM call timeout concern.
         generation_max_tokens = _DEEP_TOKEN_BUDGET
-        timeout_secs = 120
-        depth_label = "deep"
+        timeout_secs = 180   # per-section calls are 30s each, total wall-clock ~60s parallel
+        depth_label = "deep (parallel chunks)"
+        # We'll skip messages/system_prompt — handled inside _generate_deep_parallel
+        system_prompt = _DEEP_MODE_SYSTEM_PROMPT
+        user_prompt = ""  # unused for deep mode
     else:
         system_prompt = _NORMAL_SYSTEM_PROMPT
         user_prompt = (
@@ -214,32 +322,52 @@ def write_and_save_content(
         depth_label = "normal"
 
     if is_deep:
-        print(f"[ContentEngine] 🔥 DEEP MODE activated for: {topic_clean!r} — {generation_max_tokens} tokens, {timeout_secs}s timeout", flush=True)
+        print(f"[ContentEngine] 🔥 DEEP MODE (Parallel Chunks) for: {topic_clean!r}", flush=True)
     else:
         print(f"[ContentEngine] ✍️  Normal mode: {format_clean!r} — {generation_max_tokens} tokens", flush=True)
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": user_prompt},
-    ]
-
     # ------------------------------------------------------------------
-    # 3. Call the LLM — two-speed timeout + adaptive token budget
+    # 3. Call the LLM — branch: parallel chunk engine (deep) or single call (normal)
     # ------------------------------------------------------------------
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     try:
         runtime = build_runtime_from_env()
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            future = pool.submit(call_chat_once, runtime, messages, None, generation_max_tokens)
-            try:
-                response = future.result(timeout=timeout_secs)
-            except FuturesTimeout:
-                return {
-                    "ok": False,
-                    "error": f"LLM timed out after {timeout_secs} seconds.",
-                    "spoken_reply": f"Sorry, the {format_clean} generation timed out after {timeout_secs}s. Try again.",
-                }
-        generated_text = (response.get("content") or "").strip()
+
+        if is_deep:
+            # ── PARALLEL CHUNK ENGINE ──────────────────────────────────────────
+            # Extract any research context from extra_context if present
+            research_ctx = ""
+            if "RESEARCH_CONTEXT_BLOCK:" in extra_context:
+                research_ctx = extra_context
+            elif "[RESEARCH_CONTEXT]" in extra_context:
+                research_ctx = extra_context
+
+            generated_text = _generate_deep_parallel(
+                topic_clean=topic_clean,
+                format_clean=format_clean,
+                context_section=context_section,
+                research_context=research_ctx,
+                runtime=runtime,
+                call_chat_once=call_chat_once,
+            )
+        else:
+            # ── NORMAL SINGLE CALL ─────────────────────────────────────────────
+            messages = [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ]
+            with ThreadPoolExecutor(max_workers=1) as pool:
+                future = pool.submit(call_chat_once, runtime, messages, None, generation_max_tokens)
+                try:
+                    response = future.result(timeout=timeout_secs)
+                except FuturesTimeout:
+                    return {
+                        "ok": False,
+                        "error": f"LLM timed out after {timeout_secs} seconds.",
+                        "spoken_reply": f"Sorry, the {format_clean} generation timed out after {timeout_secs}s. Try again.",
+                    }
+            generated_text = (response.get("content") or "").strip()
+
         if not generated_text:
             return {
                 "ok": False,
@@ -247,7 +375,7 @@ def write_and_save_content(
                 "spoken_reply": f"Sorry, I wasn't able to generate the {format_clean}. The model returned no content.",
             }
         word_count = len(generated_text.split())
-        print(f"[ContentEngine] ✅ Generated {word_count} words ({len(generated_text)} chars) in {depth_label} mode.", flush=True)
+        print(f"[ContentEngine] ✅ Generated {word_count} words ({len(generated_text)} chars) [{depth_label}]", flush=True)
     except Exception as err:
         return {
             "ok": False,

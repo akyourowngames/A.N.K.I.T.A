@@ -256,7 +256,7 @@ class SessionManager:
                 },
                 {"role": "user", "content": transcript},
             ]
-            result = call_chat_once(self.runtime, summary_msgs, tools=None)
+            result = call_chat_once(self.runtime, summary_msgs, tools=None, max_tokens=256)
             return (result.get("content") or "").strip() or "(empty summary)"
         except Exception as err:
             print(f"[SessionManager] ⚠️  LLM summary failed: {err}", flush=True)
