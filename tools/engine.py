@@ -930,7 +930,13 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "Generate any type of text content using the LLM and save it to the Desktop. "
                 "Use this when the user asks to 'write', 'draft', 'create', or 'generate' "
                 "content such as a report, script, song, pitch deck, summary, paragraph, essay, "
-                "or any other written format. Returns the file path and a spoken confirmation."
+                "or any other written format. Returns the file path and a spoken confirmation.\n\n"
+                "TWO-SPEED ENGINE (auto-detected from keywords):\n"
+                "  NORMAL mode: concise output matching format norms (poems ~20 lines, emails ~250 words, reports ~800 words).\n"
+                "  DEEP mode: 6000-8000+ words (~10 printed pages) — triggered automatically when topic or format_type "
+                "contains: 'deep', 'comprehensive', 'detailed', 'in-depth', 'massive', 'extensive', 'thorough', "
+                "'10 page', 'full investigation', 'long form', 'deep dive'.\n"
+                "For deep reports: pass format_type='deep report' or include 'comprehensive' in topic."
             ),
             "parameters": {
                 "type": "object",

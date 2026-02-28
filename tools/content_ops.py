@@ -81,6 +81,67 @@ def detect_format_type(filename_stem: str, raw_text: str = "") -> tuple[str, str
     return "content", topic
 
 
+_DEEP_MODE_KEYWORDS = {
+    "deep", "comprehensive", "detailed", "in-depth", "in depth", "full",
+    "10 page", "10-page", "massive", "extensive", "thorough", "research",
+    "investigation", "complete", "full investigation", "deep report",
+    "deep dive", "deep-dive", "long form", "longform",
+}
+
+_DEEP_MODE_SYSTEM_PROMPT = (
+    "You are an expert writer, journalist, and analyst. "
+    "You are in DEEP MODE — the user wants a COMPREHENSIVE, LONG-FORM document. "
+    "Target: 6000-8000+ words minimum (approximately 10+ pages when printed).\n\n"
+    "MANDATORY STRUCTURE:\n"
+    "  # [Document Title]\n"
+    "  ## Executive Summary (300+ words)\n"
+    "  ## Background & Context (500+ words)\n"
+    "  ## [Main Analysis Section 1] (500+ words)\n"
+    "  ## [Main Analysis Section 2] (500+ words)\n"
+    "  ## [Main Analysis Section 3] (500+ words)\n"
+    "  ## [Main Analysis Section 4] (500+ words)\n"
+    "  ## [Main Analysis Section 5] (500+ words)\n"
+    "  ## Real-World Examples & Case Studies (600+ words)\n"
+    "  ## Implications & Impact (400+ words)\n"
+    "  ## Conclusion (300+ words)\n"
+    "  ## Recommendations (300+ words)\n"
+    "  ## References / Sources (if available)\n\n"
+    "RULES:\n"
+    "- Every section MUST be substantive — no filler, no vague summaries.\n"
+    "- Use headers (##), subheaders (###), bullet lists, numbered lists throughout.\n"
+    "- Include specific facts, numbers, names, dates wherever applicable.\n"
+    "- DO NOT truncate. DO NOT summarise at the end. Write the COMPLETE document.\n"
+    "- If research context is provided, use ALL facts from it. Cite every claim.\n"
+    "- Adapt tone to the format: analytical for reports, narrative for essays, etc.\n"
+    "- Quality over speed — this is a flagship document, not a draft."
+)
+
+_NORMAL_SYSTEM_PROMPT = (
+    "You are an expert writer and analyst. "
+    "Adapt your tone perfectly to the requested format. "
+    "If the format is a song or poem, be creative and use rhyme/rhythm. "
+    "If the format is a technical report, be precise and professional. "
+    "If the format is a script or pitch deck, be persuasive and structured. "
+    "Always produce complete, polished, ready-to-use content — not an outline."
+)
+
+# Token budgets — (normal, deep) per format
+_FORMAT_TOKEN_MAP: Dict[str, int] = {
+    "poem": 1024, "email": 1024, "summary": 1024, "caption": 512,
+    "tweet": 512, "tagline": 512, "slogan": 512,
+    "essay": 2048, "letter": 2048, "script": 2048, "story": 2048,
+    "report": 3000, "pitch deck": 3000, "pitch": 3000, "analysis": 3000,
+    "proposal": 3000, "plan": 3000,
+}
+_DEEP_TOKEN_BUDGET = 8192   # ~6000-8000 words
+
+
+def _detect_deep_mode(format_type: str, topic: str, extra_context: str) -> bool:
+    """Return True if the request signals deep/comprehensive/long-form writing."""
+    combined = f"{format_type} {topic} {extra_context}".lower()
+    return any(kw in combined for kw in _DEEP_MODE_KEYWORDS)
+
+
 def write_and_save_content(
     workspace_root: Path,
     topic: str,
@@ -90,6 +151,11 @@ def write_and_save_content(
 ) -> Dict[str, Any]:
     """
     Generate any type of text content via LLM and save it to disk.
+
+    Two-speed engine:
+      - NORMAL: concise, format-appropriate output (1024–3000 tokens, 30s timeout)
+      - DEEP:   long-form, 10-page document (8192 tokens, 120s timeout)
+                Triggered by keywords: deep, comprehensive, detailed, in-depth, etc.
 
     Args:
         workspace_root: The ANKITA workspace root (used only for relative ops).
@@ -109,7 +175,7 @@ def write_and_save_content(
     from llm import build_runtime_from_env, call_chat_once  # type: ignore
 
     # ------------------------------------------------------------------
-    # 2. Build the generation prompt
+    # 2. Detect depth mode + build the generation prompt
     # ------------------------------------------------------------------
     format_clean = format_type.strip() or "content"
     topic_clean = topic.strip() or "the requested subject"
@@ -119,19 +185,38 @@ def write_and_save_content(
         else ""
     )
 
-    system_prompt = (
-        "You are an expert writer and analyst. "
-        "Adapt your tone perfectly to the requested format. "
-        "If the format is a song or poem, be creative and use rhyme/rhythm. "
-        "If the format is a technical report, be precise and professional. "
-        "If the format is a script or pitch deck, be persuasive and structured. "
-        "Always produce complete, polished, ready-to-use content — not an outline."
-    )
+    is_deep = _detect_deep_mode(format_clean, topic_clean, extra_context)
 
-    user_prompt = (
-        f"Write a {format_clean} about: {topic_clean}.{context_section}\n\n"
-        f"Produce only the final {format_clean} — no meta-commentary, no preamble."
-    )
+    if is_deep:
+        system_prompt = _DEEP_MODE_SYSTEM_PROMPT
+        user_prompt = (
+            f"Write a COMPREHENSIVE, LONG-FORM {format_clean} about: {topic_clean}."
+            f"{context_section}\n\n"
+            f"Target 6000-8000+ words. Use full document structure with headers. "
+            f"DO NOT truncate. Write the COMPLETE document from start to finish."
+        )
+        generation_max_tokens = _DEEP_TOKEN_BUDGET
+        timeout_secs = 120
+        depth_label = "deep"
+    else:
+        system_prompt = _NORMAL_SYSTEM_PROMPT
+        user_prompt = (
+            f"Write a {format_clean} about: {topic_clean}.{context_section}\n\n"
+            f"Produce only the final {format_clean} — no meta-commentary, no preamble."
+        )
+        # Normal token budget — scales with format
+        generation_max_tokens = 2048  # default
+        for fmt_key, tok_budget in _FORMAT_TOKEN_MAP.items():
+            if fmt_key in format_clean.lower():
+                generation_max_tokens = tok_budget
+                break
+        timeout_secs = 30
+        depth_label = "normal"
+
+    if is_deep:
+        print(f"[ContentEngine] 🔥 DEEP MODE activated for: {topic_clean!r} — {generation_max_tokens} tokens, {timeout_secs}s timeout", flush=True)
+    else:
+        print(f"[ContentEngine] ✍️  Normal mode: {format_clean!r} — {generation_max_tokens} tokens", flush=True)
 
     messages = [
         {"role": "system", "content": system_prompt},
@@ -139,35 +224,20 @@ def write_and_save_content(
     ]
 
     # ------------------------------------------------------------------
-    # 3. Call the LLM — format-adaptive token budget + 30s timeout
+    # 3. Call the LLM — two-speed timeout + adaptive token budget
     # ------------------------------------------------------------------
-    # Token budget scales with content complexity
-    _FORMAT_TOKEN_MAP: Dict[str, int] = {
-        "poem": 1024, "email": 1024, "summary": 1024, "caption": 512,
-        "tweet": 512, "tagline": 512, "slogan": 512,
-        "essay": 2048, "letter": 2048, "script": 2048, "story": 2048,
-        "report": 4096, "pitch deck": 4096, "pitch": 4096, "analysis": 4096,
-        "proposal": 4096, "plan": 4096,
-    }
-    generation_max_tokens = 2048  # default
-    for fmt_key, tok_budget in _FORMAT_TOKEN_MAP.items():
-        if fmt_key in format_clean.lower():
-            generation_max_tokens = tok_budget
-            break
-
     from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
     try:
         runtime = build_runtime_from_env()
-        # Wrap LLM call in a 30-second timeout
         with ThreadPoolExecutor(max_workers=1) as pool:
             future = pool.submit(call_chat_once, runtime, messages, None, generation_max_tokens)
             try:
-                response = future.result(timeout=30)
+                response = future.result(timeout=timeout_secs)
             except FuturesTimeout:
                 return {
                     "ok": False,
-                    "error": "LLM timed out after 30 seconds.",
-                    "spoken_reply": f"Sorry, the {format_clean} generation timed out. Try again or use a shorter format.",
+                    "error": f"LLM timed out after {timeout_secs} seconds.",
+                    "spoken_reply": f"Sorry, the {format_clean} generation timed out after {timeout_secs}s. Try again.",
                 }
         generated_text = (response.get("content") or "").strip()
         if not generated_text:
@@ -176,6 +246,8 @@ def write_and_save_content(
                 "error": "LLM returned empty content.",
                 "spoken_reply": f"Sorry, I wasn't able to generate the {format_clean}. The model returned no content.",
             }
+        word_count = len(generated_text.split())
+        print(f"[ContentEngine] ✅ Generated {word_count} words ({len(generated_text)} chars) in {depth_label} mode.", flush=True)
     except Exception as err:
         return {
             "ok": False,

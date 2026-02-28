@@ -191,9 +191,14 @@ def main() -> None:
             continue
 
         if user_text.lower().startswith("show "):
+            # Smart Fallback Protocol: only intercept if a real task ID exists.
+            # "Show me my clipboard" → pass to agent. "show a1b2" → task report.
             task_id = user_text[5:].strip()
-            print(f"\n{hive.get_result(task_id)}\n")
-            continue
+            task_report = hive.get_result(task_id)
+            if task_report and "No task found" not in task_report and "Error" not in task_report:
+                print(f"\n{task_report}\n")
+                continue
+            # No real task found → fall through to agent (don't intercept)
 
         # ── Save user turn to session vault ───────────────────────────────────
         session.add_message("user", user_text)
