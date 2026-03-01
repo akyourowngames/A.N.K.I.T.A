@@ -31,6 +31,8 @@ AGENTS:
 - TerminalAgent: raw terminal/shell access — ping, ipconfig, git, tasklist, netstat, whoami, curl.
 - ScreenAgent: Visual tasks ("look at this", "click that", "what's on my screen").
 - CommsAgent: WhatsApp messages.
+- IntegrationAgent: Cloud API tasks — Google Sheets (log/track/read data), YouTube (subscriptions, playlists), Figma (design files, comments, node properties).
+- WatchdogAgent: Background monitoring — price alerts, news tracking, file watching, git repo watching. Use for: 'watch', 'track', 'monitor', 'alert me when', 'notify me when', 'keep an eye on', 'tell me if'.
 - GeneralAgent: Complex multi-step tasks that genuinely cross domains, or pure conversation.
 
 ASSEMBLY LINE ROUTING RULES (CRITICAL — READ FIRST):
@@ -71,6 +73,9 @@ SPECIALIST PRIORITY RULE:
 - ping/ipconfig/git/netstat/tasklist/whoami/curl → TerminalAgent
 - schedule/cron/remind → CronAgent
 - what's on screen, click button visually → ScreenAgent
+- log/add expense/track/record/spreadsheet/google sheet → IntegrationAgent
+- new videos from/subscriptions/youtube playlist/create playlist → IntegrationAgent
+- figma/design file/design comments/client feedback/hex code/button colour → IntegrationAgent
 - GeneralAgent ONLY for pure conversation or genuinely ambiguous with NO real-world actions.
 
 Respond ONLY with valid JSON:
@@ -98,6 +103,19 @@ Examples:
 - "fetch the numpy cheatsheet" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "file fetch: search → identify PDF URL → download_file → open"}
 - "what am I holding?" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "webcam task: capture_webcam → vision analysis"}
 - "take a selfie" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "webcam task: capture_webcam → describe photo"}
+- "add 500rs pizza to my expenses" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Google Sheets: append_row to Expenses sheet"}
+- "log my workout — 30 pushups" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Google Sheets: append_row to workout tracker"}
+- "read my to-do list from sheets" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Google Sheets: read_range from To-Do sheet"}
+- "any new videos from Fireship?" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "YouTube: search_channel_videos for Fireship"}
+- "create a playlist of these python tutorials" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "YouTube: create_playlist with video IDs"}
+- "check design comments on the homepage figma" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Figma: read_comments on Homepage file"}
+- "what's the hex code of the primary button in figma?" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Figma: get_node_properties for button node"}
+- "alert me if BTC drops 5%" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "price alert via WatchdogManager"}
+- "watch my Downloads folder" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "file watcher via WatchdogManager"}
+- "track news about AI" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "news keyword watcher via WatchdogManager"}
+- "monitor my git repo" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "git watcher via WatchdogManager"}
+- "notify me when ethereum crosses $5000" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "price alert via WatchdogManager"}
+- "watchdog status" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "show watchdog status"}
 - "deep report on AI regulation in India" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "comprehensive analysis of climate change" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
@@ -156,7 +174,8 @@ class SupervisorAgent:
             # Validate agent names
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
                      "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
-                     "GeneralAgent", "TerminalAgent", "ScreenAgent"}
+                     "GeneralAgent", "TerminalAgent", "ScreenAgent",
+                     "IntegrationAgent", "WatchdogAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             return {

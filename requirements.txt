@@ -26,3 +26,9 @@ ddgs>=7.0.0
 # God Mode Search — direct DuckDuckGo API (no HTML parsing, no 403s)
 # pip install duckduckgo-search
 duckduckgo-search>=6.0.0
+
+# Octopus Protocol — Cloud Integration (Google Sheets, YouTube, Figma)
+# pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.2.0

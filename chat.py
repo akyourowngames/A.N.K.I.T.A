@@ -16,6 +16,9 @@ from session_manager import SessionManager
 
 WORKSPACE_ROOT = Path.cwd().resolve()
 
+# Module-level reference so the WatchdogManager singleton is accessible globally
+watchdog_mgr = None
+
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name, str(default)).strip().lower()
@@ -56,6 +59,13 @@ def main() -> None:
     proactive.attach_runtime(runtime)
     proactive.start()
 
+    # Watchdog system — always-on 24/7 monitoring
+    from watchdog_manager import WatchdogManager
+    global watchdog_mgr  # expose as module global so orchestrator can reach it
+    watchdog_mgr = WatchdogManager(workspace_root=WORKSPACE_ROOT, proactive=proactive)
+    watchdog_mgr.load_config()
+    watchdog_mgr.start_all()
+
     # Hive Mind — async background task manager
     hive = HiveMind(orchestrator=orchestrator, agent_runtime=agent, use_multi_agent=use_multi_agent)
 
@@ -89,7 +99,7 @@ def main() -> None:
     print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
     print(f"  Hive Mind   : ON 🐝")
     print(f"  Session     : {session_label} ✈️")
-    print("\n  Commands: /exit  /reset  /agents on|off  /memory  /hive  show <id>")
+    print("\n  Commands: /exit  /reset  /agents on|off  /memory  /hive  /watchdogs  show <id>")
     print("─" * 42 + "\n")
 
     if session.restored:
@@ -188,6 +198,11 @@ def main() -> None:
 
         if user_text.lower() == "/hive":
             print(f"\n{hive.list_tasks()}\n")
+            continue
+
+        if user_text.lower() == "/watchdogs":
+            status = watchdog_mgr.status() if watchdog_mgr else "⚠️ WatchdogManager not running."
+            print(f"\n{status}\n")
             continue
 
         if user_text.lower().startswith("show "):

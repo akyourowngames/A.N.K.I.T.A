@@ -1,8 +1,8 @@
-"""
+﻿"""
 Orchestrator for A.N.K.I.T.A multi-agent system.
 
 Implements the Fan-Out / Fan-In parallel execution pattern:
-  1. Supervisor routes request → list of specialist agents
+  1. Supervisor routes request â†’ list of specialist agents
   2. Fan-Out: dispatch agents concurrently (ThreadPoolExecutor)
   3. Fan-In: collect results, synthesize a single cohesive response
 
@@ -28,10 +28,10 @@ from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
 
-# ─────────────────────────────────────────────────────────────────────────────
-# HYDRA PROTOCOL — Escalation Matrix 🐉
-# Maps (primary_agent) → (backup_agent_name, context_note_for_backup)
-# ─────────────────────────────────────────────────────────────────────────────
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# HYDRA PROTOCOL â€” Escalation Matrix ðŸ‰
+# Maps (primary_agent) â†’ (backup_agent_name, context_note_for_backup)
+# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 _ESCALATION_MATRIX: Dict[str, tuple] = {
     "SystemAgent":  ("TerminalAgent",
                      "SystemAgent tried and FAILED. Use raw PowerShell/CMD via execute_shell to achieve the same goal. "
@@ -46,7 +46,7 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
                      "New-Item -Path '<path>' -ItemType File -Force; Set-Content -Path '<path>' -Value '<content>'"),
     "ContentAgent": ("GeneralAgent",
                      "ContentAgent timed out or failed. Write a shorter, concise version of the requested content. "
-                     "Quality matters more than length here — produce something complete and usable."),
+                     "Quality matters more than length here â€” produce something complete and usable."),
     "CodeAgent":    ("CodeAgent",
                      "Your previous attempt had an error. Re-read the error message carefully, "
                      "identify the root cause, and retry with a corrected approach. "
@@ -59,7 +59,7 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
 
 def _extract_artifacts(text: str) -> Dict[str, List[str]]:
     """
-    'Baton Pass' — sniff an agent's reply for artifacts (file paths, URLs)
+    'Baton Pass' â€” sniff an agent's reply for artifacts (file paths, URLs)
     so the Orchestrator can hand them explicitly to the next agent.
 
     Returns a dict like:
@@ -93,7 +93,7 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
 
 def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str, List[str]]) -> str:
     """
-    'Telepathy' — build a clean, labeled context block to inject into the
+    'Telepathy' â€” build a clean, labeled context block to inject into the
     next agent's brain so it knows exactly what the previous agent did.
 
     ASSEMBLY LINE UPGRADE: If ContentAgent produced text but no file artifacts,
@@ -117,7 +117,7 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
         import os as _os
         desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
-        lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint — FileAgent reads this
+        lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint â€” FileAgent reads this
         lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
     # NEWSROOM: If WebAgent's reply contains a RESEARCH_CONTEXT_BLOCK, extract it
     # and inject as a [RESEARCH_CONTEXT] block so ContentAgent enters Journalist Mode.
@@ -142,16 +142,16 @@ _SYNTHESIZER_PROMPT = (
     "(no paragraphs, scripts, songs, emails, or any generated text in your reply).\n"
     "2. NEVER apologize or say 'it seems there was an issue' if the agent outputs show tools succeeded.\n"
     "3. NEVER offer manual alternatives like 'you can copy this yourself' or 'open it manually'.\n"
-    "4. If actions succeeded → ONE confirmation sentence. "
-    "Example: 'Done — written the paragraph, opened it in Notepad, and started your music.'\n"
-    "5. If a genuine error occurred (explicitly marked as failed) → ONE sentence stating what failed.\n"
+    "4. If actions succeeded â†’ ONE confirmation sentence. "
+    "Example: 'Done â€” written the paragraph, opened it in Notepad, and started your music.'\n"
+    "5. If a genuine error occurred (explicitly marked as failed) â†’ ONE sentence stating what failed.\n"
     "6. You are a STATUS REPORTER, not a content displayer or a chatbot. Be terse."
 )
 
 
 def _inject_memory(messages: List[Dict[str, Any]]) -> None:
     """
-    Hippocampus Injection — prepend the long-term memory block to the system prompt.
+    Hippocampus Injection â€” prepend the long-term memory block to the system prompt.
 
     This runs before EVERY specialist agent so they all share the same persistent
     context without needing to explicitly call recall().
@@ -160,13 +160,13 @@ def _inject_memory(messages: List[Dict[str, Any]]) -> None:
     """
     memory_block = format_memory_block()
     if not memory_block:
-        return  # vault is empty — nothing to inject
+        return  # vault is empty â€” nothing to inject
 
     if messages and messages[0].get("role") == "system":
         original = messages[0].get("content", "")
         messages[0]["content"] = f"{original}\n\n{memory_block}"
     else:
-        # No system message yet — insert one at the front
+        # No system message yet â€” insert one at the front
         messages.insert(0, {"role": "system", "content": memory_block})
 
 
@@ -195,7 +195,7 @@ def _run_specialist(
     """Run a single specialist agent to completion and return its result.
 
     Args:
-        prior_context: 'Telepathy' block from previous agent — injected directly
+        prior_context: 'Telepathy' block from previous agent â€” injected directly
                        into the specialist's system prompt so it knows what happened
                        before it woke up. No hunting through text needed.
     """
@@ -206,11 +206,11 @@ def _run_specialist(
     # For all other agents, use the runtime default.
     if specialist.name == "ContentAgent" and _is_deep_mode_task(task, prior_context):
         max_tokens = _DEEP_MODE_MAX_TOKENS
-        print(f"[Orchestrator] 🔥 ContentAgent DEEP MODE — max_tokens boosted to {max_tokens}", flush=True)
+        print(f"[Orchestrator] ðŸ”¥ ContentAgent DEEP MODE â€” max_tokens boosted to {max_tokens}", flush=True)
     else:
         max_tokens = runtime.max_tokens
 
-    # 🧠 HIPPOCAMPUS INJECTION — every agent sees long-term memory before speaking
+    # ðŸ§  HIPPOCAMPUS INJECTION â€” every agent sees long-term memory before speaking
     _inject_memory(messages)
 
     # TELEPATHY: inject prior context into the system message so the agent
@@ -222,23 +222,67 @@ def _run_specialist(
         }
 
     for _ in range(_MAX_TOOL_STEPS):
-        # ── TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call ──
+        # â”€â”€ TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call â”€â”€
         estimated = _estimate_tokens(messages)
         if estimated > _ORCHESTRATOR_TOKEN_LIMIT:
             print(
-                f"[TokenGuardian/{specialist.name}] ⚠️  ~{estimated:,} tokens — compacting…",
+                f"[TokenGuardian/{specialist.name}] âš ï¸  ~{estimated:,} tokens â€” compactingâ€¦",
                 flush=True,
             )
             trimmed = compact_messages(messages)
             messages = trimmed
             print(
-                f"[TokenGuardian/{specialist.name}] ✅ Compacted to ~{_estimate_tokens(messages):,} tokens.",
+                f"[TokenGuardian/{specialist.name}] âœ… Compacted to ~{_estimate_tokens(messages):,} tokens.",
                 flush=True,
             )
         try:
             response = call_chat_once(runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
         except Exception as err:
-            return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
+            # ðŸ’Ž Prism Protocol â€” 400 / context_length_exceeded recovery
+            err_str = str(err).lower()
+            is_payload_err = (
+                "400" in err_str
+                or "context_length_exceeded" in err_str
+                or "bad request" in err_str
+                or "too large" in err_str
+                or "request too large" in err_str
+                or "maximum context" in err_str
+            )
+            if is_payload_err:
+                # Find the last tool message and replace its content with a slim placeholder
+                trimmed = False
+                for i in range(len(messages) - 1, -1, -1):
+                    if messages[i].get("role") == "tool":
+                        messages[i] = {
+                            **messages[i],
+                            "content": (
+                                '[Tool output was too large and has been removed. '
+                                'Tell the user: "The result was too big to process. '
+                                'Please ask for a smaller range or more specific query."]'
+                            ),
+                        }
+                        trimmed = True
+                        break
+                if trimmed:
+                    print(
+                        f"[Prism/{specialist.name}] ðŸ’Ž Context overflow â€” trimmed last tool msg, retrying...",
+                        flush=True,
+                    )
+                    try:
+                        response = call_chat_once(runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
+                    except Exception as retry_err:
+                        return {
+                            "agent": specialist.name,
+                            "ok": False,
+                            "reply": (
+                                "âš ï¸ The data returned was too large for me to process. "
+                                "Please try a more specific request, a smaller date range, or fewer items."
+                            ),
+                        }
+                else:
+                    return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
+            else:
+                return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
 
         tool_calls = response.get("tool_calls") or []
         messages.append({
@@ -272,13 +316,13 @@ def _run_specialist(
                 if _b64_source is not None:
                     b64_data = _b64_source["base64"]
 
-                    # Strip the raw base64 blob from the text history — the LLM
+                    # Strip the raw base64 blob from the text history â€” the LLM
                     # cannot read it as text and it wastes thousands of tokens.
                     # Rebuild the full wrapper without any base64 data.
                     clean_inner = {k: v for k, v in _b64_source.items() if k != "base64"}
                     clean_inner["base64"] = "<IMAGE_DATA_INJECTED_AS_VISION_MESSAGE>"
                     if _b64_source is _inner:
-                        # base64 was inside result["result"] — rebuild the outer wrapper
+                        # base64 was inside result["result"] â€” rebuild the outer wrapper
                         safe_result = {**result, "result": clean_inner}
                     else:
                         # base64 was at the top level
@@ -329,7 +373,7 @@ def _run_specialist(
             if runtime.provider == "groq":
                 vision_runtime = build_vision_runtime_from_env(runtime)
                 if vision_runtime.provider != "groq":
-                    # We have a vision-capable runtime — pre-describe each image
+                    # We have a vision-capable runtime â€” pre-describe each image
                     for vp in vision_packets:
                         try:
                             # Extract the base64 from the image_url content block
@@ -353,7 +397,7 @@ def _run_specialist(
                                     max_tokens=600,
                                     temperature=0.3,
                                 )
-                                # Inject as plain text — Groq can read this!
+                                # Inject as plain text â€” Groq can read this!
                                 messages.append({
                                     "role": "assistant",
                                     "content": "I captured the image. Let me describe what I see.",
@@ -373,7 +417,7 @@ def _run_specialist(
                                 "content": f"[Vision analysis failed: {vision_err}]",
                             })
                 else:
-                    # No vision runtime available — tell user clearly
+                    # No vision runtime available â€” tell user clearly
                     messages.append({
                         "role": "assistant",
                         "content": "I captured the image.",
@@ -388,7 +432,7 @@ def _run_specialist(
                         ),
                     })
             else:
-                # Vision-capable runtime (Copilot/GPT-4o) — inject images normally
+                # Vision-capable runtime (Copilot/GPT-4o) â€” inject images normally
                 messages.append({
                     "role": "assistant",
                     "content": "I have the screen capture. Let me analyse it now.",
@@ -415,7 +459,7 @@ class Orchestrator:
     def run(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
         """
         Full orchestration pipeline:
-          Supervisor → [Fan-Out specialist(s)] → Synthesizer → reply
+          Supervisor â†’ [Fan-Out specialist(s)] â†’ Synthesizer â†’ reply
         """
         # 1. Supervisor routes the request
         routing = self.supervisor.route(user_text)
@@ -423,7 +467,7 @@ class Orchestrator:
         parallel: bool = routing["parallel"]
         reasoning: str = routing.get("reasoning", "")
 
-        # Single GeneralAgent → just use the full agent runtime (cheaper, faster)
+        # Single GeneralAgent â†’ just use the full agent runtime (cheaper, faster)
         if agent_names == ["GeneralAgent"]:
             return self._run_general(user_text, messages)
 
@@ -434,7 +478,7 @@ class Orchestrator:
             "stop_music": ({"stop music", "pause music"}, ["MusicAgent"]),
             "screenshot": ({"screenshot", "screen capture", "take a screenshot"}, ["SystemAgent"]),
             "launch_app": ({"open notepad", "launch", "open app", "start app"}, ["SystemAgent"]),
-            # ASSEMBLY LINE: write tasks → ContentAgent (writes) + FileAgent (saves)
+            # ASSEMBLY LINE: write tasks â†’ ContentAgent (writes) + FileAgent (saves)
             "write_and_save_content": ({"write a", "draft a", "generate a", "create a report",
                                "write an essay", "write a poem", "write a script",
                                "write a song", "write a paragraph", "write an email",
@@ -461,18 +505,22 @@ class Orchestrator:
                     parallel = False
                     break
 
+        # WATCHDOG AGENT: intercept and execute WATCHDOG_ACTION commands
+        if agent_names == ["WatchdogAgent"]:
+            return self._run_watchdog_agent(user_text, messages)
+
         specialists = [SPECIALIST_MAP[n] for n in agent_names if n in SPECIALIST_MAP]
         if not specialists:
             return self._run_general(user_text, messages)
 
-        # TIME LORD: Force sequential if a producer→consumer dependency is detected.
-        # ASSEMBLY LINE: ContentAgent produces text → FileAgent saves → SystemAgent opens.
-        # All three are in a strict dependency chain — always sequential.
+        # TIME LORD: Force sequential if a producerâ†’consumer dependency is detected.
+        # ASSEMBLY LINE: ContentAgent produces text â†’ FileAgent saves â†’ SystemAgent opens.
+        # All three are in a strict dependency chain â€” always sequential.
         _EXTERNAL_PRODUCERS = {"ContentAgent", "FileAgent", "WebAgent"}
         _CONSUMERS = {"FileAgent", "SystemAgent", "CodeAgent"}
         agent_name_set = set(agent_names)
         if (_EXTERNAL_PRODUCERS & agent_name_set) and (_CONSUMERS & agent_name_set):
-            parallel = False  # override Supervisor — baton must be passed sequentially
+            parallel = False  # override Supervisor â€” baton must be passed sequentially
 
         # 2. Fan-Out: run specialists (parallel or sequential)
         results: List[Dict[str, Any]] = []
@@ -501,7 +549,7 @@ class Orchestrator:
         - BATON PASS: Orchestrator sniffs artifacts (file paths, URLs) from each
           agent's reply and hands them explicitly to the next agent.
         - TELEPATHY: Prior context is injected directly into the next agent's
-          system prompt — not just appended to the task. The agent *knows* what
+          system prompt â€” not just appended to the task. The agent *knows* what
           happened before it even reads the task.
         - TIME LORD: Sequential execution guarantees producers finish before
           consumers start. Files exist before they are opened.
@@ -515,7 +563,7 @@ class Orchestrator:
                 prior_context=prior_context_block,
             )
 
-            # ── HYDRA PROTOCOL: Error Interceptor 🐉 ─────────────────────────
+            # â”€â”€ HYDRA PROTOCOL: Error Interceptor ðŸ‰ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
             # If the agent failed, look up the Escalation Matrix and reroute
             # to a backup agent with a Post-Mortem Injection context prompt.
             # Capped at 1 retry per agent to prevent infinite loops.
@@ -532,11 +580,11 @@ class Orchestrator:
                 backup_sp = SPECIALIST_MAP.get(backup_name)
                 if backup_sp and backup_sp.name != sp.name or (backup_sp and backup_sp.name == sp.name):
                     print(
-                        f"[Hydra] ⚡ {sp.name} failed → rerouting to {backup_name}",
+                        f"[Hydra] âš¡ {sp.name} failed â†’ rerouting to {backup_name}",
                         flush=True,
                     )
                     post_mortem = (
-                        f"SYSTEM ALERT — HYDRA REROUTE:\n"
+                        f"SYSTEM ALERT â€” HYDRA REROUTE:\n"
                         f"Original request: {task}\n"
                         f"{sp.name} already tried and failed with: {reply[:300]}\n\n"
                         f"BACKUP MISSION: {failure_note}\n"
@@ -645,6 +693,74 @@ class Orchestrator:
             if messages and messages[-1].get("role") == "user":
                 messages.pop()
             return f"[Error] {err}"
+
+    def _run_watchdog_agent(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
+        """
+        Run WatchdogAgent: get LLM to parse the user's intent into a WATCHDOG_ACTION,
+        then execute it against the WatchdogManager singleton.
+        """
+        from .specialists import SPECIALIST_MAP
+        import re as _re
+
+        specialist = SPECIALIST_MAP.get("WatchdogAgent")
+        if specialist is None:
+            return "âŒ WatchdogAgent not found."
+
+        # Get LLM response (WatchdogAgent has no tools â€” pure text output)
+        msg = specialist.make_messages(user_text)
+        try:
+            response = call_chat_once(self.runtime, msg, tools=None, max_tokens=512)
+            llm_reply = (response.get("content") or "").strip()
+        except Exception as err:
+            return f"[WatchdogAgent Error] {err}"
+
+        # Parse WATCHDOG_ACTION from LLM reply
+        action_match = _re.search(r"WATCHDOG_ACTION:\s*(.+?)(?:\n|$)", llm_reply)
+        if not action_match:
+            # No action found â€” just return the LLM reply as-is
+            self._append_to_messages(messages, user_text, llm_reply)
+            return llm_reply
+
+        action_line = action_match.group(1).strip()
+        parts = [p.strip() for p in action_line.split("|")]
+        action = parts[0] if parts else ""
+        action_result = ""
+
+        # Execute action against WatchdogManager via singleton registry
+        try:
+            import watchdog_manager as _wdm
+            mgr = _wdm.get_instance()
+            if mgr is None:
+                action_result = "âš ï¸ WatchdogManager not running yet â€” start ANKITA first."
+            elif action == "add_price_alert" and len(parts) >= 4:
+                symbol, condition_type, value = parts[1], parts[2], float(parts[3])
+                action_result = mgr.add_price_alert(symbol, condition_type, value)
+            elif action == "add_news_keyword" and len(parts) >= 2:
+                keyword = parts[1]
+                action_result = mgr.add_news_keyword(keyword)
+            elif action == "add_watch_dir" and len(parts) >= 2:
+                directory = parts[1]
+                action_result = mgr.add_watch_dir(directory)
+            elif action == "add_git_repo" and len(parts) >= 2:
+                repo_path = parts[1]
+                action_result = mgr.add_git_repo(repo_path)
+            elif action == "status":
+                action_result = mgr.status()
+            elif action == "stop" and len(parts) >= 2:
+                watcher_name = parts[1]
+                mgr.unregister(watcher_name)
+                action_result = f"âœ… Stopped watcher: {watcher_name}"
+            else:
+                action_result = f"âš ï¸ Unknown watchdog action: {action}"
+        except Exception as exc:
+            action_result = f"âŒ Watchdog error: {exc}"
+
+        # Build final reply: strip the raw WATCHDOG_ACTION line, append result
+        friendly = _re.sub(r"WATCHDOG_ACTION:.*?(?:\n|$)", "", llm_reply).strip()
+        final_reply = f"{action_result}\n\n{friendly}".strip() if friendly else action_result
+
+        self._append_to_messages(messages, user_text, final_reply)
+        return final_reply
 
     def _append_to_messages(
         self, messages: List[Dict[str, Any]], user_text: str, reply: str

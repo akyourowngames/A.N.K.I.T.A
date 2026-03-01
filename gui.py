@@ -3,6 +3,7 @@ import io
 import os
 import sys
 import tempfile
+import threading
 import time
 import wave
 from pathlib import Path
@@ -331,6 +332,121 @@ class VoiceCallWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
+# Wake Word Listener — always-on background speech recogniser
+# ---------------------------------------------------------------------------
+
+class WakeWordListener(QThread):
+    """Continuously listens in the background using speech_recognition.
+
+    Emits:
+        wake_detected  — user said "hi ankita" / "hey ankita"
+        stop_detected  — user said "stop" (while voice worker is active)
+    """
+    wake_detected = pyqtSignal()
+    stop_detected = pyqtSignal()
+
+    # Words that count as the wake phrase (any substring match, lowercase)
+    WAKE_PHRASES = {
+        # English variants
+        "hi ankita", "hey ankita", "hello ankita",
+        "hi, ankita", "hey, ankita", "hello, ankita",
+        "okay ankita", "ok ankita", "oi ankita",
+        "wake up ankita", "ankita wake up",
+        # Common speech-recognition misheards
+        "hi ankit", "hey ankit", "hello ankit",
+        "hi ankitha", "hey ankitha", "hello ankitha",
+        "hi an kita", "hey an kita",
+        "ankita listen", "ankita start",
+        # Hindi/mixed
+        "ankita suno", "ankita sun",
+        "hello ankita ji", "hi ankita ji",
+    }
+    # Words that trigger a stop
+    STOP_PHRASES = {
+        "stop", "stop it", "stop now", "cancel",
+        "bas", "bas karo", "ruko", "quiet", "silence",
+        "shut up", "enough", "pause",
+    }
+
+    def __init__(self, voice_active_flag, lang_code: str = "en-IN"):
+        super().__init__()
+        self._flag = voice_active_flag   # threading.Event — set while VoiceCallWorker records
+        self._running = True
+        self._lang = lang_code
+        self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
+
+    def stop(self) -> None:
+        self._running = False
+
+    def run(self) -> None:
+        print("[WakeWord] Thread started.", flush=True)
+        if not HAS_SPEECH_RECOGNITION:
+            print("[WakeWord] speech_recognition not available — thread exiting.", flush=True)
+            return
+        r = self.recognizer
+        # Lower energy threshold — we only need short phrases
+        r.dynamic_energy_threshold = True
+        r.energy_threshold = 300
+        r.pause_threshold = 0.6
+
+        print(f"[WakeWord] Listening for wake phrases. Lang={self._lang}", flush=True)
+        loop_count = 0
+        while self._running:
+            # Back off while VoiceCallWorker is actively recording — avoids mic contention
+            if self._flag.is_set():
+                import time as _t
+                _t.sleep(0.3)
+                continue
+
+            loop_count += 1
+            if loop_count % 10 == 1:
+                print(f"[WakeWord] Loop #{loop_count} — waiting for speech...", flush=True)
+
+            try:
+                with sr.Microphone() as source:
+                    # Adjust once per open
+                    r.adjust_for_ambient_noise(source, duration=0.3)
+                    try:
+                        audio = r.listen(source, timeout=2, phrase_time_limit=4)
+                    except sr.WaitTimeoutError:
+                        continue
+                try:
+                    text = r.recognize_google(audio, language=self._lang).lower().strip()
+                    print(f"[WakeWord] Heard: '{text}'", flush=True)
+                except sr.UnknownValueError:
+                    print("[WakeWord] Could not understand audio.", flush=True)
+                    continue
+                except sr.RequestError as e:
+                    print(f"[WakeWord] Google STT error: {e}", flush=True)
+                    continue
+
+                # --- Wake word check ---
+                if any(phrase in text for phrase in self.WAKE_PHRASES):
+                    print(f"[WakeWord] WAKE WORD matched! text='{text}'", flush=True)
+                    if not self._flag.is_set():   # only wake if not already listening
+                        self.wake_detected.emit()
+                    continue
+
+                # --- Stop command check ---
+                if any(phrase in text for phrase in self.STOP_PHRASES):
+                    print(f"[WakeWord] STOP COMMAND matched! text='{text}'", flush=True)
+                    if self._flag.is_set():        # only stop if currently listening
+                        self.stop_detected.emit()
+                    continue
+
+            except OSError as e:
+                print(f"[WakeWord] OSError (mic unavailable?): {e}", flush=True)
+                import time as _t
+                _t.sleep(1.0)
+            except Exception as e:
+                print(f"[WakeWord] Unexpected error: {e}", flush=True)
+                import time as _t
+                _t.sleep(0.5)
+
+        print("[WakeWord] Thread stopped.", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Main Window
 # ---------------------------------------------------------------------------
 
@@ -368,6 +484,10 @@ class AnkitaWindow(QMainWindow):
         self._content_worker: _ContentRequestWorker | None = None
         self._pending_user_text: str = ""
         self.hotkey_listener = None
+        # Threading event: set while VoiceCallWorker is actively recording
+        # so WakeWordListener backs off and avoids mic contention
+        self._voice_active_flag = threading.Event()
+        self.wake_word_listener: WakeWordListener | None = None
         self.hotkey_key = os.getenv("VOICE_HOTKEY_KEY", "f8").strip().lower() or "f8"
         self.hotkey_window_ms = max(120, int(os.getenv("VOICE_HOTKEY_DOUBLE_PRESS_MS", "400")))
         self.hotkey_last_press_ts = 0.0
@@ -386,6 +506,12 @@ class AnkitaWindow(QMainWindow):
         self.proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
         self.proactive.attach_runtime(runtime)  # Required for Sentinel screen-watch to function
         self.proactive.start()
+
+        # Watchdog system — always-on 24/7 monitoring
+        from watchdog_manager import WatchdogManager
+        self.watchdog_mgr = WatchdogManager(workspace_root=WORKSPACE_ROOT, proactive=self.proactive)
+        self.watchdog_mgr.load_config()
+        self.watchdog_mgr.start_all()
 
         # Hive Mind — async background task manager
         self.hive = HiveMind(
@@ -474,6 +600,20 @@ class AnkitaWindow(QMainWindow):
 
         self._setup_hotkey_listener()
 
+        # Wake word listener — always-on background speech recogniser
+        print(f"[WakeWord] HAS_SPEECH_RECOGNITION={HAS_SPEECH_RECOGNITION}", flush=True)
+        if HAS_SPEECH_RECOGNITION:
+            self.wake_word_listener = WakeWordListener(
+                voice_active_flag=self._voice_active_flag,
+                lang_code=self.voice_lang_code or "en-IN",
+            )
+            self.wake_word_listener.wake_detected.connect(self._on_wake_word)
+            self.wake_word_listener.stop_detected.connect(self._on_stop_command)
+            self.wake_word_listener.start()
+            print(f"[WakeWord] Listener started. isRunning={self.wake_word_listener.isRunning()}", flush=True)
+        else:
+            print("[WakeWord] NOT started — speech_recognition not installed.", flush=True)
+
         # Proactive polling timer
         self._proactive_timer = QTimer(self)
         self._proactive_timer.timeout.connect(self._on_proactive_tick)
@@ -553,6 +693,28 @@ class AnkitaWindow(QMainWindow):
             self.on_voice_stop()
         else:
             self.on_voice_start()
+
+    # -----------------------------------------------------------------------
+    # Wake word / stop command handlers
+    # -----------------------------------------------------------------------
+
+    def _on_wake_word(self) -> None:
+        """Called on Qt main thread when wake word 'hi ankita' is detected."""
+        print("[WakeWord] _on_wake_word() called on main thread.", flush=True)
+        if self.voice_worker is not None and self.voice_worker.isRunning():
+            print("[WakeWord] Already listening — ignoring wake.", flush=True)
+            return  # Already listening — ignore duplicate wake
+        self._append("System", "Wake word 'Hi Ankita' detected - starting voice listener...")
+        self.on_voice_start()
+
+    def _on_stop_command(self) -> None:
+        """Called on Qt main thread when 'stop' is detected during active listening."""
+        print("[WakeWord] _on_stop_command() called on main thread.", flush=True)
+        if self.voice_worker is None or not self.voice_worker.isRunning():
+            print("[WakeWord] Voice not running — ignoring stop.", flush=True)
+            return
+        self._append("System", "Stop command heard - stopping voice listener.")
+        self.on_voice_stop()
 
     # -----------------------------------------------------------------------
     # Proactive tick
@@ -758,9 +920,10 @@ class AnkitaWindow(QMainWindow):
 
     def on_voice_toggle(self) -> None:
         if self.voice_worker is not None and self.voice_worker.isRunning():
-            # Stop listening
+            # Stop listening — clear the flag so WakeWordListener can resume
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
+            self._voice_active_flag.clear()
             self.voice_btn.setText("🎙 Listen")
             self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
             self.status_label.setText("Ready.")
@@ -787,6 +950,8 @@ class AnkitaWindow(QMainWindow):
             self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
             self.voice_worker.status.connect(lambda s: self.status_label.setText(s))
             self.voice_worker.error.connect(lambda e: self._append("Voice [Error]", e))
+            # Set flag so WakeWordListener backs off while VoiceCallWorker holds the mic
+            self._voice_active_flag.set()
             self.voice_worker.start()
             self.voice_btn.setText("⏹ Stop")
             self.voice_btn.setStyleSheet(self._btn_style("#6a2a2a", "#8a3a3a"))
@@ -816,8 +981,13 @@ class AnkitaWindow(QMainWindow):
         if self.voice_worker is not None and self.voice_worker.isRunning():
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
+        if self.wake_word_listener is not None and self.wake_word_listener.isRunning():
+            self.wake_word_listener.stop()
+            self.wake_word_listener.wait(2000)
         if self.corn_runner is not None:
             self.corn_runner.stop()
+        if hasattr(self, "watchdog_mgr"):
+            self.watchdog_mgr.stop_all()
         if self.hotkey_listener is not None:
             try:
                 self.hotkey_listener.stop()

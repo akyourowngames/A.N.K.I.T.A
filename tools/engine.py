@@ -14,9 +14,85 @@ from . import music_ops
 from . import realtime_search
 from . import system_ops
 from . import terminal_ops
+from . import sheets_ops
+from . import youtube_ops
+from . import figma_ops
+from . import whatsapp_ops
+from . import contacts_ops
 
 
 TOOL_SPECS: List[Dict[str, Any]] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "lookup_contact",
+            "description": "Look up a contact's phone number by name. Use this BEFORE send_whatsapp when the user gives a name instead of a number.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Contact name, e.g. 'Rahul' or 'mom'"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "add_contact",
+            "description": "Save a new contact (name + phone number) to the contacts book.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name":  {"type": "string", "description": "Contact name"},
+                    "phone": {"type": "string", "description": "Phone in E.164 format, e.g. '+919876543210'"},
+                },
+                "required": ["name", "phone"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remove_contact",
+            "description": "Remove a contact from the contacts book by name.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Contact name to remove"},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_contacts",
+            "description": "List all saved contacts with their phone numbers.",
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "send_whatsapp",
+            "description": (
+                "Send a WhatsApp message to a phone number using WhatsApp Web + Selenium. "
+                "Uses the user's real Chrome profile so WhatsApp Web is already logged in. "
+                "phone must be in E.164 format e.g. '+919876543210'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "phone":   {"type": "string", "description": "Recipient phone in E.164 format, e.g. '+919876543210'"},
+                    "message": {"type": "string", "description": "The message text to send"},
+                    "wait":    {"type": "integer", "description": "Seconds to wait for WhatsApp Web to load (default 10)"},
+                },
+                "required": ["phone", "message"],
+            },
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -925,6 +1001,92 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "sheets_op",
+            "description": (
+                "Interact with Google Sheets. Actions: "
+                "'append_row' — add a row of data (e.g. log an expense, track a workout); "
+                "'read_range' — read cell range from a sheet; "
+                "'create_sheet' — create a new spreadsheet; "
+                "'list_sheets' — list all spreadsheets; "
+                "'update_cell' — update a specific cell."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action":           {"type": "string", "enum": ["append_row", "read_range", "create_sheet", "list_sheets", "update_cell"]},
+                    "spreadsheet_name": {"type": "string", "description": "Human-readable spreadsheet name, e.g. 'Expenses 2026'"},
+                    "data":             {"type": "array",  "description": "Row data for append_row, e.g. ['2026-02-28', 'Pizza', 500]"},
+                    "range_notation":   {"type": "string", "description": "A1 notation range for read_range, e.g. 'A1:D20'"},
+                    "sheet_tab":        {"type": "string", "description": "Tab name within the spreadsheet (default: 'Sheet1')"},
+                    "title":            {"type": "string", "description": "Title for create_sheet"},
+                    "cell":             {"type": "string", "description": "Cell reference for update_cell, e.g. 'B3'"},
+                    "value":            {"description": "New value for update_cell"},
+                    "max_results":      {"type": "integer"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "youtube_op",
+            "description": (
+                "Manage YouTube library. Actions: "
+                "'get_subscriptions' — list subscribed channels; "
+                "'search_channel_videos' — search videos from a specific channel; "
+                "'create_playlist' — create a new playlist (optionally add videos); "
+                "'list_playlists' — list your playlists; "
+                "'add_to_playlist' — add a video to an existing playlist."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action":       {"type": "string", "enum": ["get_subscriptions", "search_channel_videos", "create_playlist", "list_playlists", "add_to_playlist"]},
+                    "channel_name": {"type": "string", "description": "Channel name for search_channel_videos, e.g. 'Fireship'"},
+                    "query":        {"type": "string", "description": "Optional search term within the channel"},
+                    "name":         {"type": "string", "description": "Playlist name for create_playlist"},
+                    "description":  {"type": "string", "description": "Optional playlist description"},
+                    "video_ids":    {"type": "array",  "items": {"type": "string"}, "description": "YouTube video IDs to add to new playlist"},
+                    "playlist_id":  {"type": "string", "description": "Playlist ID for add_to_playlist"},
+                    "video_id":     {"type": "string", "description": "Video ID for add_to_playlist"},
+                    "max_results":  {"type": "integer"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "figma_op",
+            "description": (
+                "Interact with Figma design files. Actions: "
+                "'list_projects' — list projects in a team; "
+                "'list_files' — list design files in a project; "
+                "'read_comments' — read all comments on a file; "
+                "'post_comment' — post a comment on a file; "
+                "'get_node_properties' — get properties (colours, size, font) of specific nodes; "
+                "'get_file_info' — get file metadata (name, pages, last modified)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action":       {"type": "string", "enum": ["list_projects", "list_files", "read_comments", "post_comment", "get_node_properties", "get_file_info"]},
+                    "team_id":      {"type": "string", "description": "Figma Team ID for list_projects"},
+                    "project_id":   {"type": "string", "description": "Figma Project ID for list_files"},
+                    "file_key":     {"type": "string", "description": "Figma file key (from figma.com/file/<KEY>)"},
+                    "message":      {"type": "string", "description": "Comment text for post_comment"},
+                    "node_id":      {"type": "string", "description": "Optional node ID to anchor comment to a specific element"},
+                    "node_ids":     {"type": "string", "description": "Comma-separated node IDs for get_node_properties, e.g. '1:2,1:3'"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "write_content",
             "description": (
                 "Generate any type of text content using the LLM and save it to the Desktop. "
@@ -1009,6 +1171,27 @@ def _normalize_human_path(raw: str) -> str:
 
 
 def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, Any]:
+    if name == "lookup_contact":
+        return contacts_ops.lookup_contact(name=str(args.get("name", "")))
+
+    if name == "add_contact":
+        return contacts_ops.add_contact(
+            name=str(args.get("name", "")),
+            phone=str(args.get("phone", "")),
+        )
+
+    if name == "remove_contact":
+        return contacts_ops.remove_contact(name=str(args.get("name", "")))
+
+    if name == "list_contacts":
+        return contacts_ops.list_contacts()
+
+    if name == "send_whatsapp":
+        return whatsapp_ops.send_whatsapp(
+            phone=str(args.get("phone", "")),
+            message=str(args.get("message", "")),
+            wait=int(args.get("wait", 10)),
+        )
     if name == "cron":
         return cron_ops.cron_action(
             workspace_root=workspace_root,
@@ -1253,7 +1436,108 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             runtime=_runtime,
             screenshot_path=str(args.get("screenshot_path")) if args.get("screenshot_path") else None,
         )
+    # ── Google Sheets ──────────────────────────────────────────────────────────
+    if name == "sheets_op":
+        action = str(args.get("action", ""))
+        if action == "append_row":
+            return sheets_ops.append_row(
+                spreadsheet_name=str(args.get("spreadsheet_name", "")),
+                data=args.get("data", []),
+                sheet_tab=str(args.get("sheet_tab", "Sheet1")),
+            )
+        if action == "read_range":
+            return sheets_ops.read_range(
+                spreadsheet_name=str(args.get("spreadsheet_name", "")),
+                range_notation=str(args.get("range_notation", "A1:Z100")),
+                sheet_tab=str(args.get("sheet_tab", "Sheet1")),
+            )
+        if action == "create_sheet":
+            return sheets_ops.create_sheet(title=str(args.get("title", "")))
+        if action == "list_sheets":
+            return sheets_ops.list_sheets(max_results=int(args.get("max_results", 20)))
+        if action == "update_cell":
+            return sheets_ops.update_cell(
+                spreadsheet_name=str(args.get("spreadsheet_name", "")),
+                cell=str(args.get("cell", "A1")),
+                value=args.get("value", ""),
+                sheet_tab=str(args.get("sheet_tab", "Sheet1")),
+            )
+        return {"status": "error", "message": f"Unknown sheets_op action: {action}"}
+
+    # ── YouTube ────────────────────────────────────────────────────────────────
+    if name == "youtube_op":
+        action = str(args.get("action", ""))
+        if action == "get_subscriptions":
+            return youtube_ops.get_subscriptions(max_results=int(args.get("max_results", 20)))
+        if action == "search_channel_videos":
+            return youtube_ops.search_channel_videos(
+                channel_name=str(args.get("channel_name", "")),
+                query=str(args.get("query", "")),
+                max_results=int(args.get("max_results", 10)),
+            )
+        if action == "create_playlist":
+            return youtube_ops.create_playlist(
+                name=str(args.get("name", "")),
+                description=str(args.get("description", "")),
+                video_ids=args.get("video_ids") if isinstance(args.get("video_ids"), list) else None,
+            )
+        if action == "list_playlists":
+            return youtube_ops.list_playlists(max_results=int(args.get("max_results", 20)))
+        if action == "add_to_playlist":
+            return youtube_ops.add_to_playlist(
+                playlist_id=str(args.get("playlist_id", "")),
+                video_id=str(args.get("video_id", "")),
+            )
+        return {"status": "error", "message": f"Unknown youtube_op action: {action}"}
+
+    # ── Figma ──────────────────────────────────────────────────────────────────
+    if name == "figma_op":
+        action = str(args.get("action", ""))
+        if action == "list_projects":
+            return figma_ops.list_projects(team_id=str(args.get("team_id", "")))
+        if action == "list_files":
+            return figma_ops.list_files(project_id=str(args.get("project_id", "")))
+        if action == "read_comments":
+            return figma_ops.read_comments(file_key=str(args.get("file_key", "")))
+        if action == "post_comment":
+            return figma_ops.post_comment(
+                file_key=str(args.get("file_key", "")),
+                message=str(args.get("message", "")),
+                node_id=str(args.get("node_id")) if args.get("node_id") else None,
+            )
+        if action == "get_node_properties":
+            return figma_ops.get_node_properties(
+                file_key=str(args.get("file_key", "")),
+                node_ids=str(args.get("node_ids", "")),
+            )
+        if action == "get_file_info":
+            return figma_ops.get_file_info(file_key=str(args.get("file_key", "")))
+        return {"status": "error", "message": f"Unknown figma_op action: {action}"}
+
     raise ValueError(f"Unknown tool: {name}")
+
+
+_HARD_CAP_CHARS = 3000
+_HARD_CAP_MSG   = "\n... [OUTPUT TRUNCATED — too much data. Please refine your request or ask for a smaller range.]"
+
+
+def _hard_cap(result: Any) -> Any:
+    """
+    Prism Protocol — Token Budget Guard 💎
+    Converts any tool result to a string and hard-caps it at _HARD_CAP_CHARS characters.
+    This prevents 400 Bad Request / context_length_exceeded crashes from fat API payloads.
+    Non-string results (dicts, lists) are JSON-serialised first, then checked.
+    Returns the original result unchanged if it's within the limit.
+    """
+    if isinstance(result, (dict, list)):
+        serialised = json.dumps(result, ensure_ascii=False)
+        if len(serialised) <= _HARD_CAP_CHARS:
+            return result  # small enough — keep native type for downstream
+        truncated = serialised[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+        return {"status": "truncated", "data": truncated}
+    if isinstance(result, str) and len(result) > _HARD_CAP_CHARS:
+        return result[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+    return result
 
 
 def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path) -> Dict[str, Any]:
@@ -1270,6 +1554,8 @@ def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path) -> Dict[s
         raise ValueError(f"Tool args must be an object for {name}")
 
     result = _call(name, args, workspace_root)
+    # 💎 Prism Protocol: hard-cap ALL tool outputs before they enter the context window
+    result = _hard_cap(result)
     return {"ok": True, "tool": name, "result": result}
 
 
