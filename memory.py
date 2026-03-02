@@ -89,8 +89,8 @@ class MemoryStore:
                 if distances and float(distances[0]) < 0.05:
                     # Too similar — skip
                     return
-        except Exception:
-            pass  # If dedup check fails, proceed to store anyway
+        except Exception as _dedup_err:
+            print(f"[MemoryStore] ⚠️  Dedup check failed (proceeding to store): {_dedup_err}", flush=True)
 
         # Entity tagging: extract meaningful metadata labels
         import re as _re
@@ -143,9 +143,12 @@ class MemoryStore:
             results = []
             for doc, meta, dist in zip(docs, metas, distances):
                 ts_val = float(meta.get("ts", 0))
-                # TTL filter: skip entries older than the cutoff
+                # TTL filter: skip entries OLDER than the cutoff.
+                # BUG FIX: was `ts_val < ttl_cutoff` which kept old entries and
+                # discarded recent ones. Correct condition: skip if timestamp is
+                # BEFORE the cutoff (i.e. older than TTL days).
                 if ts_val > 0 and ts_val < ttl_cutoff:
-                    continue
+                    continue  # older than TTL — skip
                 # Temporal decay score: boost recent memories
                 age_days = (now - ts_val) / 86400 if ts_val > 0 else 90
                 recency_boost = max(0.0, 1.0 - (age_days / self._TTL_DAYS))
@@ -156,7 +159,8 @@ class MemoryStore:
             # Re-rank by combined score
             results.sort(key=lambda x: x["_score"], reverse=True)
             return [{"text": r["text"], "meta": r["meta"]} for r in results[:n]]
-        except Exception:
+        except Exception as _search_err:
+            print(f"[MemoryStore] ⚠️  search() failed: {_search_err}", flush=True)
             return []
 
     def format_memory_context(self, query: str, n: int = 5) -> str:

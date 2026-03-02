@@ -54,8 +54,8 @@ def _load_memory() -> Dict[str, Any]:
                 if key not in data:
                     data[key] = type(default)()
             return data
-    except Exception:
-        pass
+    except Exception as _load_err:
+        print(f"[Memory] ⚠️  Failed to load memory.json: {_load_err} — starting fresh", flush=True)
     return {k: ([] if isinstance(v, list) else {}) for k, v in _DEFAULT_STRUCTURE.items()}
 
 
@@ -138,12 +138,22 @@ def remember(text: str, category: str = "facts") -> str:
                                       "i'm from", "i am from", "based in")):
             category = "locations"
 
+    # Validate category — only allow known categories to prevent junk key accumulation
+    _VALID_CATEGORIES = set(_DEFAULT_STRUCTURE.keys())
+    if category not in _VALID_CATEGORIES:
+        # Map unknown category to closest known one
+        print(f"[Memory] ⚠️  Unknown category '{category}' — mapping to 'facts'", flush=True)
+        category = "facts"
+
+    # Cap per-category list size (keep newest 100 items — prune oldest)
+    _MAX_ITEMS_PER_CATEGORY = 100
+
     with _LOCK:
         data = _load_memory()
 
-        # Auto-create category if it doesn't exist yet
+        # Ensure category exists (known categories only now)
         if category not in data:
-            data[category] = []
+            data[category] = type(_DEFAULT_STRUCTURE[category])()
 
         target = data[category]
 
@@ -156,6 +166,11 @@ def remember(text: str, category: str = "facts") -> str:
             if fuzzy_match:
                 return f"✅ Already have something similar: '{fuzzy_match}'"
             target.append(text)
+            # Prune oldest entries if over cap
+            if len(target) > _MAX_ITEMS_PER_CATEGORY:
+                pruned = len(target) - _MAX_ITEMS_PER_CATEGORY
+                data[category] = target[-_MAX_ITEMS_PER_CATEGORY:]
+                print(f"[Memory] 🗑️  Pruned {pruned} oldest entries from [{category}] (cap={_MAX_ITEMS_PER_CATEGORY})", flush=True)
         elif isinstance(target, dict):
             # For dict categories (e.g. 'projects'), use text as a key with empty value
             # Format: "key: value" or just "key"
@@ -185,8 +200,26 @@ def recall(query: Optional[str] = None) -> str:
         data = _load_memory()
 
     if not query:
-        # Return a pretty-printed full dump
-        return json.dumps(data, indent=2, ensure_ascii=False)
+        # Return a human-readable summary instead of raw JSON
+        total_items = sum(
+            len(v) if isinstance(v, list) else len(v)
+            for v in data.values()
+        )
+        if total_items == 0:
+            return "No memories stored yet. Tell me things about yourself and I'll remember them!"
+        lines = ["📚 Here's everything I remember:\n"]
+        for cat, items in data.items():
+            if not items:
+                continue
+            label = cat.replace("_", " ").title()
+            lines.append(f"**{label}:**")
+            if isinstance(items, list):
+                for item in items:
+                    lines.append(f"  • {item}")
+            elif isinstance(items, dict):
+                for k, v in items.items():
+                    lines.append(f"  • {k}: {v}" if v else f"  • {k}")
+        return "\n".join(lines)
 
     query_lower = query.lower().strip()
     hits: List[str] = []
