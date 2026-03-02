@@ -358,15 +358,6 @@ class WatchdogManager:
                 "watch_branches": [],
                 "check_ci_status": False,
             },
-            "app_config": {
-                "enabled": True,
-                "poll_interval_sec": 30,
-                "cpu_threshold_pct": 80,
-                "ram_threshold_mb": 1500,
-                "watch_processes": [],
-                "alert_on_crash": True,
-                "cooldown_sec": 300,
-            },
             "network_config": {
                 "enabled": True,
                 "poll_interval_sec": 30,
@@ -415,14 +406,6 @@ class WatchdogManager:
                 "credentials_file": "",
                 "token_file": ".ankita/gmail_token.json",
                 "cooldown_sec": 60,
-            },
-            "anomaly_config": {
-                "enabled": True,
-                "poll_interval_sec": 60,
-                "baseline_samples": 168,
-                "z_score_threshold": 2.5,
-                "min_samples_before_alert": 24,
-                "cooldown_sec": 600,
             },
         }
         default = defaults.get(config_name, {"enabled": False})

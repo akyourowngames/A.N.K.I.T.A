@@ -12,3 +12,6 @@ generated_files/
 
 # Temp debug/test files created by Rovo Dev
 tmp_rovodev_*
+client_secret*.json  
+tmp_out.txt  
+tools/.coingecko_coins.json  

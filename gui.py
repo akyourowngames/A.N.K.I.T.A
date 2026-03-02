@@ -22,6 +22,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
     QPushButton,
     QTextEdit,
+    QTextBrowser,
     QVBoxLayout,
     QWidget,
 )
@@ -540,8 +541,10 @@ class AnkitaWindow(QMainWindow):
         main_layout.setSpacing(6)
 
         # Chat display
-        self.chat = QTextEdit()
+        self.chat = QTextBrowser()
         self.chat.setReadOnly(True)
+        self.chat.setOpenLinks(False)
+        self.chat.anchorClicked.connect(self._on_feedback_link_clicked)
         self.chat.setFont(QFont("Consolas", 12))
         self.chat.setStyleSheet(
             "background: #1a1a1a; color: #ddd; border: 1px solid #333;"
@@ -576,7 +579,7 @@ class AnkitaWindow(QMainWindow):
         input_row.addWidget(self.reset_btn)
 
         # Listen toggle button (single button, toggles start/stop)
-        self.voice_btn = QPushButton("ðŸŽ™ Listen")
+        self.voice_btn = QPushButton("🎤 Listen")
         self.voice_btn.setFixedWidth(90)
         self.voice_btn.clicked.connect(self.on_voice_toggle)
         self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
@@ -597,11 +600,11 @@ class AnkitaWindow(QMainWindow):
 
         # Startup messages
         if self.session.restored:
-            self._append("System", f"âœˆï¸ Session restored â€” {len(restored_history)} messages loaded. I remember where we left off ðŸ§ ")
+            self._append("System", f"🎉 Session restored — {len(restored_history)} messages loaded. I remember where we left off 🎉")
         else:
             self._append("System", "ANKITA ready.")
         if not HAS_AUDIO_STACK:
-            self._append("System", "Voice unavailable â€” install numpy + sounddevice")
+            self._append("System", "Voice unavailable — install numpy + sounddevice")
 
         self._setup_hotkey_listener()
 
@@ -740,7 +743,7 @@ class AnkitaWindow(QMainWindow):
                 sentinel_text = event.data.get("text", event.message)
                 idle_label = event.data.get("idle_label", "a while")
                 if sentinel_text:
-                    self._append("ðŸ‘ï¸ Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
+                    self._append("🧠 Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
                 continue
 
             self._append("A.N.K.I.T.A", event.message)
@@ -994,7 +997,7 @@ class AnkitaWindow(QMainWindow):
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
             self._voice_active_flag.clear()
-            self.voice_btn.setText("ðŸŽ™ Listen")
+            self.voice_btn.setText("🎤 Listen")
             self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
             self.status_label.setText("Ready.")
         else:
@@ -1012,7 +1015,7 @@ class AnkitaWindow(QMainWindow):
                 self.agent, self.messages, api_key=api_key, lang_code=lang)
             mic_label = self.voice_worker.mic_name
             if any(kw in mic_label for kw in ("invalid", "fallback", "auto (")):
-                self._append("System", f"âš ï¸ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
+                self._append("System", f"⚠️ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
             else:
                 self._append("System", f"ðŸŽ™ Mic: {mic_label}")
             self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
@@ -1023,7 +1026,7 @@ class AnkitaWindow(QMainWindow):
             # Set flag so WakeWordListener backs off while VoiceCallWorker holds the mic
             self._voice_active_flag.set()
             self.voice_worker.start()
-            self.voice_btn.setText("â¹ Stop")
+            self.voice_btn.setText("⏹️ Stop")
             self.voice_btn.setStyleSheet(self._btn_style("#6a2a2a", "#8a3a3a"))
             self.status_label.setText(f"Listening on {self.voice_worker.mic_name[:30]}...")
 
