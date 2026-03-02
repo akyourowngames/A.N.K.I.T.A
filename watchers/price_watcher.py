@@ -125,12 +125,13 @@ class PriceWatcher(BaseWatcher):
                 continue
 
             price, change_pct = self._fetch_price(symbol)
-            if price is None:
-                err_msg = f"All price sources failed for '{symbol}' — check symbol spelling or network"
+            if price is None or price <= 0:
+                err_msg = f"All price sources failed for '{symbol}' (got {price}) — check symbol spelling or network"
                 print(f"[PriceWatcher] ❌ {err_msg}", flush=True)
                 self.state["last_error"][symbol] = {
                     "time": time.time(),
                     "msg": err_msg,
+                    "last_attempted_price": price,
                 }
                 self._save_state()
                 continue

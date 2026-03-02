@@ -202,7 +202,7 @@ def main() -> None:
         for event in proactive.get_pending_events():
             # ---- DreamState epiphany ----------------------------------------
             if event.kind == "dream_epiphany":
-                    send_text(bot_token, target_chat, f"💭 {epiphany_text}")
+                epiphany_text = event.message
                 if not epiphany_text:
                     continue
                 try:
@@ -214,7 +214,7 @@ def main() -> None:
 
             # ---- ContentAgent raw_ideas request ------------------------------
             if event.kind == "content_request":
-                    send_text(bot_token, target_chat, f"💡 {event.message}")
+                suggested_prompt = event.message
                 if not suggested_prompt:
                     continue
                 try:
@@ -242,7 +242,7 @@ def main() -> None:
                 sentinel_text = event.data.get("text", event.message)
                 idle_label = event.data.get("idle_label", "a while")
                 if sentinel_text:
-                            f"👁 *Sentinel* — I noticed you've been away for {idle_label}:\n\n{sentinel_text}",
+                    try:
                         send_text(
                             bot_token,
                             target_chat,

@@ -468,14 +468,94 @@ class AgentRuntime:
         # This ensures newly stored memories (via remember()) are immediately visible
         # without needing to restart — critical for "remember that X → now use X" flows.
         memory_block = format_memory_block()
+        
+        # 🔍 INTELLIGENT SEMANTIC MEMORY SEARCH:
+        # Use LLM to detect if the query needs context from past conversations.
+        # This handles vague queries like "continue", "tell me more", "what was that",
+        # or references to past topics without hardcoding specific keywords.
+        semantic_context = ""
+        needs_context = self._check_needs_semantic_context(user_text, messages)
+        if needs_context:
+            try:
+                from memory import MemoryStore
+                mem_store = MemoryStore(self.workspace_root)
+                if mem_store.enabled:
+                    # Search for semantically similar past conversations
+                    hits = mem_store.search(user_text, n=5)
+                    if hits:
+                        semantic_context = "\n[Recent relevant context from past conversations:]\n"
+                        for hit in hits:
+                            role = hit["meta"].get("role", "?")
+                            text_snippet = hit['text'][:300]
+                            semantic_context += f"  {role}: {text_snippet}...\n"
+                        print(f"[SemanticMemory] 💡 Injected {len(hits)} relevant memories", flush=True)
+            except Exception as mem_err:
+                print(f"[SemanticMemory] ⚠️  Search failed: {mem_err}", flush=True)
+        
         if memory_block and messages and messages[0].get("role") == "system":
             base = messages[0]["content"]
             # Strip any old memory block and re-inject fresh one
             if "--- LONG TERM MEMORY ---" in base:
                 base = base[:base.index("--- LONG TERM MEMORY ---")].rstrip()
             messages[0]["content"] = f"{base}\n\n{memory_block}"
+            if semantic_context:
+                messages[0]["content"] += f"\n\n{semantic_context}"
 
         messages.append({"role": "user", "content": user_text})
+    
+    def _check_needs_semantic_context(self, user_text: str, messages: List[Dict[str, Any]]) -> bool:
+        """
+        Use LLM to intelligently detect if user query needs context from past conversations.
+        
+        Returns True for:
+        - Vague continuation requests: "continue", "go on", "tell me more"
+        - References to past topics: "what did you say about X", "remind me"
+        - Follow-up questions without context: "why?", "how?", "what about..."
+        - Pronoun-heavy queries: "what was that", "tell me about it"
+        
+        Returns False for:
+        - Specific, self-contained queries
+        - New topics with full context
+        """
+        # Quick heuristic: very short queries often need context
+        if len(user_text.split()) <= 3:
+            return True
+        
+        # Use a fast, lightweight LLM call to classify the query
+        try:
+            classification_prompt = f"""Analyze this user query and determine if it needs context from past conversation to be understood.
+
+Query: "{user_text}"
+
+Does this query need past conversation context? Consider:
+- Is it a continuation request? (continue, go on, more)
+- Does it reference something without explaining what? (that, it, this)
+- Is it a follow-up question? (why, how, what about)
+- Does it assume prior knowledge?
+
+Answer with just one word: YES or NO"""
+
+            # Use a simple completion - no tools needed for classification
+            from llm.client import get_completion
+            response = get_completion(
+                model="gpt-4o-mini",  # Fast, cheap model for classification
+                messages=[{"role": "user", "content": classification_prompt}],
+                temperature=0,
+                max_tokens=10
+            )
+            
+            answer = response.strip().upper()
+            needs_context = "YES" in answer
+            print(f"[SemanticMemory] Query context check: '{user_text[:50]}...' → {answer}", flush=True)
+            return needs_context
+            
+        except Exception as e:
+            # Fallback: if LLM fails, use simple heuristics
+            print(f"[SemanticMemory] LLM classification failed, using fallback: {e}", flush=True)
+            fallback_triggers = ["continue", "more", "go on", "what was", "remind me", 
+                                 "tell me about", "why", "how so", "elaborate"]
+            return any(trigger in user_text.lower() for trigger in fallback_triggers)
+    
         # Select only relevant tools — avoids Copilot 400 from oversized tool payloads
         active_tools = self._select_tools(user_text)
         try:

@@ -573,7 +573,21 @@ def search_price(query: str) -> Dict[str, Any]:
     # CoinGecko — crypto prices (dynamic coin list, 16000+ coins supported)
     # ------------------------------------------------------------------
     _COINGECKO_IDS = _load_coingecko_coins()
-    coin_id = next((cg_id for key, cg_id in _COINGECKO_IDS.items() if key in q), None)
+    
+    # Priority matching: exact match first, then word boundary match, then substring
+    coin_id = None
+    
+    # Try exact match first (e.g., "bitcoin" → "bitcoin", not "swapbased-coin")
+    coin_id = _COINGECKO_IDS.get(q.lower())
+    
+    # If no exact match, try word-boundary matching (e.g., "bitcoin price" → "bitcoin")
+    if not coin_id:
+        for key, cg_id in _COINGECKO_IDS.items():
+            # Match if the key appears as a complete word in the query
+            import re
+            if re.search(r'\b' + re.escape(key) + r'\b', q.lower()):
+                coin_id = cg_id
+                break
     if coin_id:
         try:
             resp = requests.get(
