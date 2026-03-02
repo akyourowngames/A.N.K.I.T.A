@@ -971,6 +971,30 @@ class AnkitaWindow(QMainWindow):
         self._set_busy(False)
         self.input.setFocus()
 
+    def _on_feedback_link_clicked(self, url) -> None:
+        """Handle thumbs up/down anchor clicks in the chat QTextBrowser."""
+        try:
+            link = url.toString() if hasattr(url, 'toString') else str(url)
+        except Exception:
+            link = str(url)
+        if not link.startswith("fb:"):
+            # Let external links open normally
+            import webbrowser
+            webbrowser.open(link)
+            return
+        parts = link.split(":")
+        if len(parts) < 3:
+            return
+        direction = parts[1]   # thumbs_up or thumbs_down
+        iid = parts[2]         # interaction_id
+        rating = "positive" if direction == "thumbs_up" else "negative"
+        emoji = "\U0001f44d" if rating == "positive" else "\U0001f44e"
+        try:
+            self.feedback_engine.record_feedback(iid, rating)
+            self._append("A.N.K.I.T.A", f"Thanks for the feedback {emoji}")
+        except Exception as exc:
+            self._append("A.N.K.I.T.A", f"Feedback error: {exc}")
+
     def _on_reply(self, reply: str, error: str) -> None:
         if error:
             self._append("Assistant [Error]", error)
