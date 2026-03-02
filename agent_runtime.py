@@ -479,7 +479,16 @@ class AgentRuntime:
         # Select only relevant tools — avoids Copilot 400 from oversized tool payloads
         active_tools = self._select_tools(user_text)
         try:
-            return self.run_turn(messages, tools=active_tools)
+            reply = self.run_turn(messages, tools=active_tools)
+            # ── AUTO MEMORY EXTRACTION ────────────────────────────────────────
+            # Fire-and-forget background thread: extract key facts from this turn
+            # and store them automatically. Never blocks the main response.
+            try:
+                from tools.memory_ops import auto_extract_memories_async
+                auto_extract_memories_async(user_text, reply)
+            except Exception:
+                pass  # Auto-memory is optional — never crash the main loop
+            return reply
         except requests.HTTPError as err:
             status = err.response.status_code if err.response is not None else "?"
             body = err.response.text[:2000] if err.response is not None else str(err)
