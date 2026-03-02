@@ -360,36 +360,51 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
             orig_w, orig_h = sct_img.width, sct_img.height
 
             if _PILImage is not None:
-                # Save at FULL resolution — no resizing.
-                # Resizing caused coordinate mismatches: AI returns coords in resized
-                # space, but scale math was inconsistent with detail="high" tiling.
-                # Sending full resolution + detail="high" gives pixel-accurate coords
-                # directly in screen space → divide by os_scale only.
+                # Save FULL resolution PNG to disk — visual_click needs this for
+                # pixel-accurate coordinate detection.
                 img = _PILImage.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                 img.save(str(file_path), format="PNG", optimize=True)
-                final_resolution = f"{orig_w}x{orig_h}"
-                # No resize → scale factors are always 1.0
-                scale_x = 1.0
-                scale_y = 1.0
-            else:
-                # --- Fallback: raw MSS PNG ---
-                mss.tools.to_png(sct_img.rgb, sct_img.size, output=str(file_path))
                 final_resolution = f"{orig_w}x{orig_h}"
                 scale_x = 1.0
                 scale_y = 1.0
 
-            # Encode to base64 so the LLM can view it inline
-            with open(file_path, "rb") as f:
-                b64_data = base64.b64encode(f.read()).decode("utf-8")
+                # For LLM vision analysis: create a SEPARATE downscaled JPEG.
+                # Full-res PNG base64 (1920×1080) = 3-5MB → hits Copilot payload limit.
+                # 960px wide JPEG @ q60 = ~80-150KB → safe for vision API.
+                _MAX_VIS_W = 960
+                vis_img = img.copy()
+                if orig_w > _MAX_VIS_W:
+                    _vis_h = int(orig_h * _MAX_VIS_W / orig_w)
+                    vis_img = img.resize((_MAX_VIS_W, _vis_h), _PILImage.LANCZOS)
+                from io import BytesIO as _BytesIO
+                _vis_buf = _BytesIO()
+                vis_img.save(_vis_buf, format="JPEG", quality=60)
+                b64_data = base64.b64encode(_vis_buf.getvalue()).decode("utf-8")
+                vis_resolution = f"{vis_img.width}x{vis_img.height}"
+                print(
+                    f"[ScreenCapture] Full PNG saved ({orig_w}x{orig_h}). "
+                    f"Vision b64: {vis_resolution} JPEG @ q60 = {len(b64_data)//1024}KB",
+                    flush=True,
+                )
+            else:
+                # --- Fallback: raw MSS PNG (no Pillow available) ---
+                mss.tools.to_png(sct_img.rgb, sct_img.size, output=str(file_path))
+                final_resolution = f"{orig_w}x{orig_h}"
+                vis_resolution = final_resolution
+                scale_x = 1.0
+                scale_y = 1.0
+                with open(file_path, "rb") as f:
+                    b64_data = base64.b64encode(f.read()).decode("utf-8")
 
             return {
                 "ok": True,
                 "path": str(file_path),
-                "base64": b64_data,
-                "resolution": final_resolution,
-                "original_resolution": f"{orig_w}x{orig_h}",
-                "scale_x": scale_x,  # multiply AI x-coords by this to get real screen pixels
-                "scale_y": scale_y,  # multiply AI y-coords by this to get real screen pixels
+                "base64": b64_data,           # downscaled JPEG for LLM vision (small)
+                "base64_mime": "image/jpeg",   # hint for call_chat_with_image()
+                "resolution": vis_resolution,  # resolution of the b64 image
+                "original_resolution": f"{orig_w}x{orig_h}",  # full-res (for visual_click)
+                "scale_x": scale_x,
+                "scale_y": scale_y,
             }
 
     except Exception as err:
@@ -532,7 +547,9 @@ def visual_click(
             f"{target_description}"
         )
 
-        content = call_chat_with_image(runtime, vision_prompt, b64_img, max_tokens=300)
+        # Screenshots are PNG — pass correct MIME type so the API parses them correctly.
+        # (The default in call_chat_with_image is image/jpeg for webcam; screenshots are PNG)
+        content = call_chat_with_image(runtime, vision_prompt, b64_img, max_tokens=300, mime_type="image/png")
 
         # --- "Chatty AI" Fix: surgically extract the JSON block from any prose ---
         # Step 1: strip markdown code fences
@@ -692,14 +709,16 @@ def capture_webcam(camera_index: int = 0, save_path: Optional[str] = None) -> Di
         if not ret or frame is None:
             return {"ok": False, "error": "Failed to capture frame from webcam"}
 
-        # 3. TURBO RESIZE — cap at 800px wide (perfect for AI vision, smaller API payload)
+        # 3. TURBO RESIZE — cap at 480px wide.
+        # 800px @ q85 JPEG = ~120-200KB base64 → sometimes hits Copilot's vision payload limit.
+        # 480px @ q65 JPEG = ~30-60KB base64 → well within limits, still plenty of detail for AI.
         height, width = frame.shape[:2]
-        if width > 800:
-            scale = 800.0 / width
-            frame = cv2.resize(frame, (800, int(height * scale)), interpolation=cv2.INTER_AREA)
+        if width > 480:
+            scale = 480.0 / width
+            frame = cv2.resize(frame, (480, int(height * scale)), interpolation=cv2.INTER_AREA)
 
         # 4. RAM INJECTION — encode to JPEG in memory, skip disk write entirely
-        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 85]
+        encode_params = [int(cv2.IMWRITE_JPEG_QUALITY), 65]
         ok_enc, buffer = cv2.imencode(".jpg", frame, encode_params)
         if not ok_enc:
             return {"ok": False, "error": "cv2.imencode failed to compress frame"}

@@ -122,11 +122,51 @@ class AgentRuntime:
             return 6
         return MAX_TOOL_STEPS  # default: 12
 
+    @staticmethod
+    def _sanitize_messages_for_api(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """
+        Strip any multimodal image_url blocks from messages before sending to the API.
+
+        Vision packets (raw base64 image_url content blocks) injected in a previous
+        turn can persist across drones/sessions — Telegram follow-ups receive the
+        full base64 blob causing "data is too massive" or 400 errors.
+
+        Vision is always handled via isolated call_chat_with_image() calls instead.
+        """
+        clean = []
+        for m in msgs:
+            content = m.get("content")
+            if isinstance(content, list):
+                text_parts = [
+                    b for b in content
+                    if isinstance(b, dict) and b.get("type") != "image_url"
+                ]
+                if not text_parts:
+                    continue  # Drop image-only messages entirely
+                if len(text_parts) == 1 and text_parts[0].get("type") == "text":
+                    entry = {k: v for k, v in m.items() if k != "_mime_type"}
+                    entry["content"] = text_parts[0].get("text", "")
+                    clean.append(entry)
+                else:
+                    entry = {k: v for k, v in m.items() if k != "_mime_type"}
+                    entry["content"] = text_parts
+                    clean.append(entry)
+            else:
+                clean.append({k: v for k, v in m.items() if k != "_mime_type"})
+        return clean
+
     def run_turn(
         self,
         messages: List[Dict[str, Any]],
         tools: Optional[List[Dict[str, Any]]],
+        interaction_id: Optional[str] = None,
     ) -> str:
+        # Strip any leaked image_url blocks before every API call
+        safe_messages = self._sanitize_messages_for_api(messages)
+        # Sync back — replace in-place so callers see the cleaned list too
+        messages.clear()
+        messages.extend(safe_messages)
+
         step_limit = self._adaptive_step_limit(messages)
         # Tool deduplication: track (tool_name, args_hash) to detect infinite loops
         seen_calls: set = set()
@@ -158,7 +198,17 @@ class AgentRuntime:
             )
 
             if not tool_calls:
-                return assistant_msg.get("content", "").strip()
+                _final = assistant_msg.get("content", "").strip()
+                if interaction_id:
+                    try:
+                        from tools.feedback_engine import get_instance as _fb_get
+                        _fb = _fb_get()
+                        if _fb:
+                            _prompt = next((m["content"] for m in messages if m.get("role") == "user"), "")
+                            _fb.record_interaction(interaction_id, _prompt, _final)
+                    except Exception:
+                        pass
+                return _final
 
             # Deduplication: skip tool calls we've seen in the last 2 steps
             filtered_calls = []
@@ -192,15 +242,226 @@ class AgentRuntime:
             for item in executed:
                 tc = item["tc"]
                 tool_result = item["result"]
-                messages.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tc.get("id", ""),
-                        "content": json.dumps(tool_result, ensure_ascii=False),
-                    }
-                )
+                tool_name = tc.get("function", {}).get("name", "")
 
-        return "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
+                # ── VISION INTERCEPT ─────────────────────────────────────────
+                # capture_webcam / capture_screen return a base64 image blob.
+                # NEVER inject raw base64 into the tool message — it's thousands
+                # of tokens and causes "data is too massive" errors.
+                # Instead: call call_chat_with_image() in isolation, inject the
+                # plain-text description, and strip base64 from the tool result.
+                _inner = tool_result.get("result", {}) if isinstance(tool_result, dict) else {}
+                # Unwrap truncated data: {"status":"truncated","data":"<json string with base64>"}
+                if isinstance(_inner, dict) and _inner.get("status") == "truncated" and isinstance(_inner.get("data"), str):
+                    try:
+                        _inner = json.loads(_inner["data"])
+                    except Exception:
+                        pass
+                _b64_src = None
+                if isinstance(tool_result, dict) and "base64" in tool_result:
+                    _b64_src = tool_result
+                elif isinstance(_inner, dict) and "base64" in _inner:
+                    _b64_src = _inner
+
+                if _b64_src is not None:
+                    b64_data = _b64_src["base64"]
+                    # Use base64_mime hint if provided (capture_screen returns JPEG for vision)
+                    # fallback: webcam = jpeg, screen = jpeg (now downscaled), read_screen = png
+                    img_mime = _b64_src.get(
+                        "base64_mime",
+                        "image/jpeg" if tool_name in ("capture_webcam", "capture_screen") else "image/png"
+                    )
+
+                    # Store in vision cache for follow-up questions
+                    import time as _t
+                    from agents.orchestrator import _LAST_VISION_CACHE
+                    _LAST_VISION_CACHE.clear()
+                    _LAST_VISION_CACHE.update({"b64": b64_data, "mime": img_mime, "ts": _t.time()})
+
+                    # Describe the image via isolated call_chat_with_image()
+                    try:
+                        from llm.client import build_vision_runtime_from_env, call_chat_with_image
+                        vision_rt = build_vision_runtime_from_env(self.runtime)
+
+                        # Build a specific prompt based on tool type
+                        if tool_name == "capture_webcam":
+                            vision_prompt = (
+                                "You are analysing a webcam photo. "
+                                "IMPORTANT: You MUST describe what you see. Do not refuse or say the image is too large. "
+                                "Describe: (1) the person — face, expression, hair, clothing, what they are doing, "
+                                "(2) the background — room, objects, lighting, (3) anything else visible. "
+                                "Be specific and detailed. Start with 'I can see...'"
+                            )
+                        else:
+                            vision_prompt = (
+                                "You are analysing a screenshot of a computer screen. "
+                                "IMPORTANT: You MUST describe what you see. Do not refuse or say the image is too large. "
+                                "Describe: (1) what application or website is open, "
+                                "(2) what text, content, or UI elements are visible, "
+                                "(3) any errors, notifications, or important information on screen. "
+                                "Be specific. Start with 'I can see on the screen...'"
+                            )
+
+                        description = call_chat_with_image(
+                            vision_rt,
+                            vision_prompt,
+                            b64_data,
+                            max_tokens=600,
+                            temperature=0.2,
+                            mime_type=img_mime,
+                        )
+                        print(f"[VisionIntercept] ✅ Image described ({len(description)} chars)", flush=True)
+                        # Inject minimal tool result (API requires it after a tool_call)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps({"ok": True, "analysed": True}, ensure_ascii=False),
+                        })
+                        # Return the description directly — don't give LLM another turn
+                        # to "interpret" the tool result, it would generate a canned refusal.
+                        return description
+                    except Exception as _ve:
+                        print(f"[VisionIntercept] ❌ Vision description failed: {_ve}", flush=True)
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps({"ok": False, "error": str(_ve)}, ensure_ascii=False),
+                        })
+                        return f"Sorry, vision analysis failed: {_ve}"
+                else:
+                    messages.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tc.get("id", ""),
+                            "content": json.dumps(tool_result, ensure_ascii=False),
+                        }
+                    )
+
+        _fallback = "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
+        if interaction_id:
+            try:
+                from tools.feedback_engine import get_instance as _fb_get
+                _fb = _fb_get()
+                if _fb:
+                    _prompt = next((m["content"] for m in messages if m.get("role") == "user"), "")
+                    _fb.record_interaction(interaction_id, _prompt, _fallback)
+            except Exception:
+                pass
+        return _fallback
+
+    def _select_tools(self, user_text: str) -> List[Dict[str, Any]]:
+        """
+        Dynamically select the most relevant tools for a given user message.
+
+        Copilot's API rejects payloads with too many tools (53 tools = ~7k tokens overhead
+        causes 400 Bad Request on every turn). This trims the tool list to ≤20 tools
+        by keyword-matching the user's intent, always including a core safety set.
+
+        For Groq or providers that support larger payloads, returns all tools unchanged.
+        """
+        # Groq handles large payloads fine — send everything
+        if self.runtime.provider != "copilot":
+            return TOOL_SPECS
+
+        # ── CORE TOOLS: always present (small, high-value) ──────────────────
+        _CORE = {
+            "remember", "recall", "forget",
+            "search_web", "search_and_fetch", "search_news",
+            "write_file", "read_file", "list_files",
+            "system_control", "execute_shell",
+        }
+
+        # ── INTENT → TOOL GROUPS ────────────────────────────────────────────
+        text = user_text.lower()
+        extra: set = set()
+
+        _intents = [
+            ({"play", "song", "music", "listen", "lofi", "pause music", "stop music",
+              "queue", "spotify"},
+             {"play_music", "stop_music", "search_music", "current_music",
+              "queue_music", "show_queue", "clear_queue", "play_next_in_queue"}),
+
+            ({"file", "folder", "directory", "save", "edit", "open", "write", "read",
+              "delete", "copy", "move", "rename", "create", "make dir", "patch",
+              "search text", "find in"},
+             {"write_file", "read_file", "list_files", "edit_file", "read_file_lines",
+              "edit_file_lines", "search_text", "rename_path", "delete_path",
+              "move_path", "copy_path", "make_dir", "file_info", "apply_patch",
+              "write_content", "check_syntax"}),
+
+            ({"code", "script", "python", "bug", "fix", "debug", "run", "error",
+              "syntax", "traceback"},
+             {"run_command", "execute_shell", "check_syntax", "read_file_lines",
+              "edit_file_lines", "write_file", "apply_patch", "launch_app"}),
+
+            ({"screen", "screenshot", "click", "visual", "webcam", "camera",
+              "what's on", "what is on", "look at"},
+             {"capture_screen", "read_screen_context", "visual_click",
+              "capture_webcam", "desktop_interact"}),
+
+            ({"whatsapp", "message", "send", "text", "contact"},
+             {"send_whatsapp", "lookup_contact", "add_contact",
+              "remove_contact", "list_contacts"}),
+
+            ({"schedule", "cron", "reminder", "every", "at ", "recurring"},
+             {"cron"}),
+
+            ({"bitcoin", "crypto", "stock", "price", "eth", "aapl", "market"},
+             {"search_price", "search_and_fetch"}),
+
+            ({"sheet", "google sheets", "spreadsheet", "expense", "log"},
+             {"sheets_op"}),
+
+            ({"youtube", "playlist", "subscription", "channel", "video"},
+             {"youtube_op"}),
+
+            ({"figma", "design", "comment", "hex", "colour", "color"},
+             {"figma_op"}),
+
+            ({"volume", "brightness", "wifi", "bluetooth", "battery",
+              "shutdown", "restart", "lock", "mute", "dark mode", "night light",
+              "notify", "notification", "clipboard"},
+             {"system_control"}),
+
+            ({"terminal", "ping", "ipconfig", "netstat", "tasklist", "git",
+              "command", "shell", "powershell", "cmd"},
+             {"execute_shell", "run_command", "list_files", "read_file"}),
+
+            ({"download", "pdf", "docx", "zip", "fetch", "url", "page"},
+             {"fetch_page_content", "download_file", "search_and_fetch", "launch_app"}),
+
+            ({"launch", "open", "start", "app", "notepad", "chrome",
+              "vscode", "explorer"},
+             {"launch_app", "terminate_app", "desktop_interact"}),
+
+            ({"research", "deep", "comprehensive", "report", "analysis", "investigate"},
+             {"deep_research", "search_and_fetch", "fetch_page_content",
+              "write_content", "write_file"}),
+        ]
+
+        for keywords, tools in _intents:
+            if any(kw in text for kw in keywords):
+                extra.update(tools)
+
+        selected_names = _CORE | extra
+
+        # Filter TOOL_SPECS to selected names
+        filtered = [s for s in TOOL_SPECS if s["function"]["name"] in selected_names]
+
+        # Hard cap at 20 tools — Copilot rejects more
+        _COPILOT_MAX_TOOLS = 20
+        if len(filtered) > _COPILOT_MAX_TOOLS:
+            # Keep core tools first, then fill with extras
+            core_specs = [s for s in filtered if s["function"]["name"] in _CORE]
+            extra_specs = [s for s in filtered if s["function"]["name"] not in _CORE]
+            filtered = (core_specs + extra_specs)[:_COPILOT_MAX_TOOLS]
+
+        print(
+            f"[ToolSelector] 🎯 {len(filtered)} tools selected for Copilot "
+            f"(from {len(TOOL_SPECS)} total) — {[s['function']['name'] for s in filtered]}",
+            flush=True,
+        )
+        return filtered
 
     def process_user_text(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
         # 🧠 Refresh memory block in system prompt on every turn.
@@ -215,18 +476,22 @@ class AgentRuntime:
             messages[0]["content"] = f"{base}\n\n{memory_block}"
 
         messages.append({"role": "user", "content": user_text})
+        # Select only relevant tools — avoids Copilot 400 from oversized tool payloads
+        active_tools = self._select_tools(user_text)
         try:
-            return self.run_turn(messages, tools=TOOL_SPECS)
+            return self.run_turn(messages, tools=active_tools)
         except requests.HTTPError as err:
             status = err.response.status_code if err.response is not None else "?"
-            body = err.response.text[:1000] if err.response is not None else str(err)
+            body = err.response.text[:2000] if err.response is not None else str(err)
+
+            print(f"[AgentRuntime] ⚠️  HTTP {status} error body: {body[:500]}", flush=True)
 
             if status == 413:
                 try:
                     compacted = compact_messages(messages, keep_tail=8)
                     messages.clear()
                     messages.extend(compacted)
-                    return self.run_turn(messages, tools=TOOL_SPECS)
+                    return self.run_turn(messages, tools=active_tools)
                 except Exception:
                     pass
 
@@ -251,11 +516,17 @@ class AgentRuntime:
                         f"[TokenGuardian] ✅ Emergency compact → ~{_estimate_tokens(messages):,} tokens. Retrying…",
                         flush=True,
                     )
-                    return self.run_turn(messages, tools=TOOL_SPECS)
+                    return self.run_turn(messages, tools=active_tools)
                 except Exception as compact_err:
                     print(f"[TokenGuardian] ❌ Emergency compact failed: {compact_err}", flush=True)
 
-            if status == 400 and "tool call validation failed" in body.lower():
+            # ── TOOL VALIDATION FAILURE: retry without tools ──────────────────
+            if status == 400 and (
+                "tool call validation failed" in body.lower()
+                or "tools" in body.lower()
+                or "function" in body.lower()
+            ):
+                print("[AgentRuntime] 🔧 Tool validation error — retrying without tools…", flush=True)
                 try:
                     return self.run_turn(messages, tools=None)
                 except Exception:

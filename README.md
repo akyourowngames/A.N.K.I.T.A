@@ -273,3 +273,168 @@ Example cron tool payload (from chat):
   }
 }
 ```
+
+---
+
+## 🐕 Watchdog System — Complete Reference
+
+### Architecture Overview
+
+```
+gui.py / chat.py
+    │
+    ├── ProactiveEngine (proactive.py)          ← 1 daemon thread
+    │       │   _queue (queue.Queue)
+    │       ├── _check_system_resources()       ← CPU/RAM/Battery via psutil
+    │       ├── _check_drop_files()             ← .ankita/proactive_events/*.json
+    │       ├── _check_raw_ideas()              ← .ankita/raw_ideas/
+    │       ├── _check_idle()                   ← spawns DreamAgent thread after 1 hr idle
+    │       ├── _check_sentinel()               ← spawns ScreenAgent thread after 5 min idle
+    │       └── _check_cron_overdue()           ← monitors CornRunner delays
+    │
+    ├── WatchdogManager (watchdog_manager.py)   ← owns 4 watcher daemon threads
+    │       ├── PriceWatcher                    ← every 2 min
+    │       ├── NewsWatcher                     ← every 10 min
+    │       ├── FileWatcher                     ← every 30 sec
+    │       └── GitWatcher                      ← every 5 min
+    │           (each watcher → _alert() → ProactiveEngine._queue)
+    │
+    └── CornRunner (corn/runner.py)             ← 1 daemon thread, polls every 5 sec
+            └── CornService                     ← reads .ankita/corn/jobs.json, runs due jobs
+```
+
+---
+
+### The 4 Watchers
+
+#### 💰 PriceWatcher
+
+| Property | Value |
+|---|---|
+| **Poll interval** | Every **120 seconds** (2 min) |
+| **External APIs** | CoinGecko API → Yahoo Finance → `search_price()` tool (fallback chain) |
+| **What it watches** | `config["assets"]` list — crypto/stock symbols with alert conditions |
+| **Alert conditions** | `price_above`, `price_below`, `change_pct_above`, `change_pct_below` |
+| **Cooldown** | **1800 seconds (30 min)** — won't spam the same asset within cooldown |
+| **State stored** | `last_price`, `last_alert_time`, `last_change_pct` per symbol |
+| **Config file** | `.ankita/watchdogs/price_config.json` |
+| **Example alert** | `💰 BTC crossed $100,000! Current price: $100,432` |
+
+#### 📰 NewsWatcher
+
+| Property | Value |
+|---|---|
+| **Poll interval** | Every **600 seconds** (10 min) |
+| **External APIs** | `search_news()` tool → Google News RSS (`news.google.com/rss`) → urllib fallback |
+| **What it watches** | `config["keywords"]` list (e.g. `"AI India"`, `"Helper ID"`) |
+| **Deduplication** | SHA256 hash of URL/title — never shows the same article twice |
+| **Max per cycle** | 5 articles per check cycle |
+| **Max hash store** | 5,000 hashes before pruning |
+| **Config file** | `.ankita/watchdogs/news_config.json` |
+| **Example alert** | `📰 AI India: OpenAI expands to India — TechCrunch 🔗 https://...` |
+
+#### 📁 FileWatcher
+
+| Property | Value |
+|---|---|
+| **Poll interval** | Every **30 seconds** |
+| **External APIs** | None — pure `os.scandir()` |
+| **What it watches** | `config["directories"]` list of folder paths |
+| **Change detection** | Compares live `mtime` snapshot against stored baseline |
+| **First run** | Baseline only, no alerts (avoids startup spam) |
+| **Auto-summarise** | Offers `"Say 'summarise [file]'"` hint for `.pdf`, `.docx`, `.txt`, `.md` |
+| **Ignored extensions** | `.tmp`, `.lock`, `.lnk`, `.ini`, `.db`, `.log`, `.part` |
+| **State stored** | `snapshots[dir_path][filename] = mtime` |
+| **Config file** | `.ankita/watchdogs/file_config.json` |
+| **Example alert** | `📄 New file in Downloads: report.pdf 💡 Say 'summarise report.pdf' to read it!` |
+
+#### 🔀 GitWatcher
+
+| Property | Value |
+|---|---|
+| **Poll interval** | Every **300 seconds** (5 min) |
+| **External APIs** | Local `git log --since=<timestamp>` + optional GitHub API for PRs/issues |
+| **GitHub token** | Resolves from `GITHUB_TOKEN` → `GH_TOKEN` → cached device login token |
+| **What it watches** | `config["repos"]` list of local repo paths |
+| **First run** | Records baseline timestamp only — no alerts |
+| **Max commits shown** | 10 per check (rest shown as `"...and N more"`) |
+| **State stored** | `last_check_time[repo_path] = epoch_float` |
+| **Config file** | `.ankita/watchdogs/git_config.json` |
+| **Example alert** | `🔀 ANKITA New commit by Prakhar (2026-03-01): a1b2c3 — fix: tool schema bug` |
+
+---
+
+### ProactiveEngine — The Alert Bus
+
+Runs a single daemon thread every **15 seconds**, doing 6 checks:
+
+| Check | Trigger | Action |
+|---|---|---|
+| `_check_system_resources()` | CPU >85%, RAM >90%, Battery <15% | Pushes `system_alert` event |
+| `_check_drop_files()` | New `.json` in `.ankita/proactive_events/` | Reads + forwards event |
+| `_check_raw_ideas()` | New file in `.ankita/raw_ideas/` | Triggers content generation |
+| `_check_idle()` | No user input for **3600s (1 hr)** | Spawns `DreamAgent` thread to synthesize insights |
+| `_check_sentinel()` | OS idle >**300s (5 min)** | Spawns `ScreenAgent` thread (screenshot + offers help) |
+| `_check_cron_overdue()` | Cron job past its schedule | Warns about delayed jobs |
+
+All 4 watchers push alerts directly into `ProactiveEngine._queue` via `BaseWatcher._alert()`.
+
+---
+
+### CornRunner / CornService
+
+| Component | Role |
+|---|---|
+| `CornRunner` | Daemon thread, polls every **5 seconds**, calls `CornService.run_due()` |
+| `CornService` | CRUD for jobs stored in `.ankita/corn/jobs.json`, runs due jobs via subprocess |
+| `CornStore` | Atomic JSON file read/write using temp-file rename (crash-safe) |
+| Schedule types | `"at"` (one-shot datetime), `"every"` (repeating interval ms), `"cron"` (5-field cron expr) |
+| Payload types | `"command"` (subprocess with timeout) or `"note"` (text message) |
+| Concurrency | File lock (`.json.lock`) prevents double execution |
+| Run history | Appended to `.ankita/corn/runs.jsonl` |
+
+---
+
+### Startup Wiring
+
+```
+gui.py (or chat.py)
+│
+├── proactive = ProactiveEngine(workspace_root)
+├── proactive.start()                         → daemon thread starts
+│
+├── watchdog_mgr = WatchdogManager(workspace_root, proactive=proactive)
+├── watchdog_mgr.load_config()                → reads 4 config JSONs, instantiates 4 watchers
+├── watchdog_mgr.start_all()                  → spawns 4 daemon threads
+│
+└── corn_runner = CornRunner(workspace_root)
+    └── corn_runner.start()                   → spawns 1 daemon thread
+```
+
+All watcher threads are **daemon threads** — they die automatically when the app exits. All watcher state is persisted to `.ankita/watchdogs/state/*.json` so alerts survive restarts.
+
+---
+
+### Dynamic Wiring (runtime commands)
+
+You can add new watches at runtime by telling ANKITA:
+
+| What you say | What it calls |
+|---|---|
+| `"Alert me when BTC drops 5%"` | `watchdog_mgr.add_price_alert(symbol, conditions)` |
+| `"Watch news for Helper ID"` | `watchdog_mgr.add_news_keyword(keyword)` |
+| `"Watch my Downloads folder"` | `watchdog_mgr.add_watch_dir(path)` |
+| `"Watch my ANKITA repo for commits"` | `watchdog_mgr.add_git_repo(path)` |
+
+These update the config JSON and hot-reload the watcher without restarting the app.
+
+---
+
+### BaseWatcher — Self-Healing Core
+
+All 4 watchers inherit from `BaseWatcher` which provides:
+
+- **Auto-crash recovery** with exponential backoff (1s → 2s → 4s → ... capped at 300s)
+- **Graceful shutdown** via `threading.Event` (`_stop.set()`)
+- **State persistence** to `.ankita/watchdogs/state/<name>.json` across restarts
+- **Alert routing** to `ProactiveEngine._queue` via `_alert(message, kind)`

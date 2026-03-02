@@ -90,6 +90,17 @@ class DreamAgent:
 
         print(f"[DreamAgent] Memory results: {len(results) if results else 0} entries found.", flush=True)
 
+        # Trigger FeedbackEngine self-analysis during idle cycle
+        try:
+            from tools.feedback_engine import get_instance as _get_fb
+            _fb = _get_fb()
+            if _fb is not None:
+                _fb_summary = _fb.analyze_recent(memories=results)
+                if _fb_summary:
+                    print(f"[DreamAgent] {_fb_summary}", flush=True)
+        except Exception as _fb_exc:
+            print(f"[DreamAgent] FeedbackEngine analyze error: {_fb_exc}", flush=True)
+
         if not results:
             print(f"[DreamAgent] ⚠️  No memories in ChromaDB yet — nothing to dream about.", flush=True)
             return None

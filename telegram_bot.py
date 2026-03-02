@@ -155,6 +155,12 @@ def main() -> None:
     # Hive Mind — async background task manager
     hive = HiveMind(orchestrator=orchestrator, agent_runtime=agent, use_multi_agent=use_multi_agent)
 
+    # Watchdog system — always-on 24/7 monitoring (shared singleton with chat/gui)
+    from watchdog_manager import WatchdogManager
+    watchdog_mgr = WatchdogManager(workspace_root=WORKSPACE_ROOT, proactive=proactive)
+    watchdog_mgr.load_config()
+    watchdog_mgr.start_all()
+
     # Per-chat state
     sessions: Dict[int, List[Dict[str, Any]]] = {}           # chat_id → message history
     tg_session_managers: Dict[int, SessionManager] = {}      # chat_id → SessionManager
@@ -350,6 +356,9 @@ def main() -> None:
                             "/agents on — enable multi-agent mode\n"
                             "/agents off — disable multi-agent mode\n"
                             "/hive — show background task status\n"
+                            "/watchdogs — show all watcher statuses\n"
+                            "/github status — check GitHub token\n"
+                            "/reauth github — re-authorize GitHub (device flow)\n"
                             "show <id> — get result of a background task\n\n"
                             "Then just send normal prompts!"
                         ),
@@ -359,6 +368,28 @@ def main() -> None:
 
                 if text.lower() == "/hive":
                     send_text(bot_token, chat_id, hive.list_tasks(), msg_id)
+                    continue
+
+                if text.lower() == "/watchdogs":
+                    send_text(bot_token, chat_id, watchdog_mgr.status(), msg_id)
+                    continue
+
+                if text.lower() in ("/reauth github", "/reauth-github"):
+                    send_text(bot_token, chat_id, "⏳ GitHub Device Flow started — check server logs for the code and URL, then authorize in browser.", msg_id)
+                    import threading as _thr
+                    def _tg_reauth(_cid=chat_id, _mid=msg_id):
+                        try:
+                            from tools.auth_manager import get_github_token, github_token_status
+                            get_github_token(force_reauth=True)
+                            send_text(bot_token, _cid, github_token_status(), _mid)
+                        except Exception as _exc:
+                            send_text(bot_token, _cid, f"❌ Re-auth failed: {_exc}", _mid)
+                    _thr.Thread(target=_tg_reauth, daemon=True).start()
+                    continue
+
+                if text.lower() == "/github status":
+                    from tools.auth_manager import github_token_status
+                    send_text(bot_token, chat_id, github_token_status(), msg_id)
                     continue
 
                 if text.lower().startswith("show "):
@@ -456,6 +487,7 @@ def main() -> None:
             time.sleep(2.0)
 
     proactive.stop()
+    watchdog_mgr.stop_all()
     if runner is not None:
         runner.stop()
 

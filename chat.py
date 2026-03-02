@@ -38,6 +38,10 @@ def main() -> None:
     orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
     agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
 
+    # Self-improvement feedback engine
+    from tools.feedback_engine import init_engine as _init_fb
+    feedback_engine = _init_fb(workspace_root=WORKSPACE_ROOT, llm_runtime=runtime)
+
     # Vector memory
     memory = MemoryStore(workspace_root=WORKSPACE_ROOT)
 
@@ -99,7 +103,7 @@ def main() -> None:
     print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
     print(f"  Hive Mind   : ON 🐝")
     print(f"  Session     : {session_label} ✈️")
-    print("\n  Commands: /exit  /reset  /agents on|off  /memory  /hive  /watchdogs  show <id>")
+    print("\n  Commands: /exit  /reset  /agents on|off  /memory  /hive  /watchdogs  /reauth github  /github status  show <id>")
     print("─" * 42 + "\n")
 
     if session.restored:
@@ -150,6 +154,8 @@ def main() -> None:
 
     _watcher_thread = threading.Thread(target=_event_watcher, daemon=True, name="ProactiveEventWatcher")
     _watcher_thread.start()
+
+    _last_iid: List[Optional[str]] = [None]  # mutable ref for nested _print_reply closure
 
     while True:
         try:
@@ -205,6 +211,25 @@ def main() -> None:
             print(f"\n{status}\n")
             continue
 
+        if user_text.lower() in ("/reauth github", "/reauth-github"):
+            try:
+                from tools.auth_manager import get_github_token, github_token_status
+                print("\n🔐 Starting GitHub re-authorization via Device Flow...")
+                get_github_token(force_reauth=True)
+                print(f"\n{github_token_status()}\n")
+            except Exception as _exc:
+                print(f"\n❌ GitHub re-auth failed: {_exc}\n")
+            continue
+
+        if user_text.lower() == "/github status":
+            from tools.auth_manager import github_token_status
+            print(f"\n{github_token_status()}\n")
+            continue
+
+        if user_text.lower() == "/feedback stats":
+            print(f"\n{feedback_engine.get_stats()}\n")
+            continue
+
         if user_text.lower().startswith("show "):
             # Smart Fallback Protocol: only intercept if a real task ID exists.
             # "Show me my clipboard" → pass to agent. "show a1b2" → task report.
@@ -224,14 +249,31 @@ def main() -> None:
             # Insert memory as a temporary system message before user turn
             messages.append({"role": "system", "content": mem_context})
 
+        # Detect implicit feedback ("good", "👍", etc.) before treating as new query
+        _impl_fb = feedback_engine.detect_implicit_feedback(user_text, _last_iid[0])
+        if _impl_fb is not None:
+            _emoji = "👍" if _impl_fb == "positive" else "👎"
+            print(f"\nA.N.K.I.T.A: Thanks for the feedback {_emoji}\n\nYou: ", end="", flush=True)
+            continue
+
         # send_fn: called from background drone thread when reply is ready
-        def _print_reply(text: str, _session_id: str = session_id) -> None:
+        def _print_reply(text: str, _session_id: str = session_id, _iid_ref: List = _last_iid) -> None:
             if not text:
                 return
             print(f"\nA.N.K.I.T.A: {text}\n\nYou: ", end="", flush=True)
             try:
                 memory.add(_session_id, "assistant", text)
                 proactive.set_last_interaction()
+                # Track last interaction ID for feedback detection
+                if _iid_ref[0] is None:
+                    try:
+                        from tools.feedback_engine import get_instance as _fb_get
+                        _fb = _fb_get()
+                        if _fb:
+                            _iid_ref[0] = _fb.new_interaction()
+                            _fb.record_interaction(_iid_ref[0], "", text)
+                    except Exception:
+                        pass
                 # ── Save assistant reply to session vault ──────────────────
                 session.add_message("assistant", text)
                 # ── Compress if history is getting long (background thread) ─

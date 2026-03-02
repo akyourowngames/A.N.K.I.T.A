@@ -228,23 +228,18 @@ class WatchdogManager:
 
     def load_config(self) -> None:
         """
-        Load watcher configs from .ankita/watchdogs/*.json and instantiate watchers.
-        Safe to call multiple times (re-registers changed configs).
+        Auto-discover and load ALL watchers from the watchers/ package.
+
+        Scans watchers/*.py for BaseWatcher subclasses, pairs each with its
+        matching <name>_config.json, and instantiates enabled watchers.
+        Safe to call multiple times (hot-updates existing configs).
         """
-        from watchers import PriceWatcher, NewsWatcher, FileWatcher, GitWatcher
+        discovered = self._discover_watcher_classes()
 
-        watcher_classes = {
-            "price_config": PriceWatcher,
-            "news_config":  NewsWatcher,
-            "file_config":  FileWatcher,
-            "git_config":   GitWatcher,
-        }
-
-        for config_name, WatcherClass in watcher_classes.items():
+        for WatcherClass, config_name in discovered:
             config_file = self._config_dir / f"{config_name}.json"
             if not config_file.exists():
-                # Write default config so user can edit it
-                self._write_default_config(config_name)
+                self._write_default_config(config_name, WatcherClass)
 
             try:
                 config = json.loads(config_file.read_text(encoding="utf-8"))
@@ -259,15 +254,17 @@ class WatchdogManager:
 
             watcher_name = WatcherClass.__name__
             if watcher_name in self._watchers:
-                # Hot-update existing watcher config
                 self._watchers[watcher_name].update_config(config)
             else:
-                watcher = WatcherClass(
-                    config=config,
-                    proactive=self.proactive,
-                    workspace_root=self.workspace_root,
-                )
-                self._watchers[watcher_name] = watcher
+                try:
+                    watcher = WatcherClass(
+                        config=config,
+                        proactive=self.proactive,
+                        workspace_root=self.workspace_root,
+                    )
+                    self._watchers[watcher_name] = watcher
+                except Exception as exc:
+                    print(f"[WatchdogManager] Failed to instantiate {watcher_name}: {exc}", flush=True)
 
         print(
             f"[WatchdogManager] {len(self._watchers)} watcher(s) loaded: "
@@ -275,13 +272,64 @@ class WatchdogManager:
             flush=True,
         )
 
-    def _write_default_config(self, config_name: str) -> None:
+    def _discover_watcher_classes(self) -> List[tuple]:
+        """
+        Auto-discover all BaseWatcher subclasses in the watchers/ package.
+
+        Scans every *.py file in the watchers/ directory, imports it, and
+        finds classes that inherit from BaseWatcher.
+
+        Returns:
+            List of (WatcherClass, config_name) tuples.
+            config_name is derived from the class name:
+                PriceWatcher  → price_config
+                NewsWatcher   → news_config
+                AppWatcher    → app_config
+        """
+        import importlib
+        import inspect
+
+        watchers_dir = Path(__file__).parent / "watchers"
+        results: List[tuple] = []
+        seen_names: set = set()
+
+        for py_file in sorted(watchers_dir.glob("*.py")):
+            if py_file.name.startswith("_"):
+                continue
+            module_name = f"watchers.{py_file.stem}"
+            try:
+                mod = importlib.import_module(module_name)
+            except Exception as exc:
+                print(f"[WatchdogManager] Could not import {module_name}: {exc}", flush=True)
+                continue
+
+            for attr_name in dir(mod):
+                obj = getattr(mod, attr_name)
+                if (
+                    inspect.isclass(obj)
+                    and issubclass(obj, BaseWatcher)
+                    and obj is not BaseWatcher
+                    and obj.__name__ not in seen_names
+                ):
+                    seen_names.add(obj.__name__)
+                    # Derive config name: "PriceWatcher" → "price_config"
+                    config_name = obj.__name__.lower().replace("watcher", "_config")
+                    results.append((obj, config_name))
+                    print(
+                        f"[WatchdogManager] Discovered: {obj.__name__} → {config_name}.json",
+                        flush=True,
+                    )
+
+        return results
+
+    def _write_default_config(self, config_name: str, watcher_class=None) -> None:
         """Write a sensible default config file so the user can customise it."""
         defaults: Dict[str, Any] = {
             "price_config": {
                 "enabled": True,
                 "poll_interval_sec": 120,
                 "cooldown_sec": 1800,
+                "portfolio_mode": False,
                 "assets": [
                     {"symbol": "bitcoin",  "alert_conditions": [{"type": "change_pct_below", "value": -5}]},
                     {"symbol": "ethereum", "alert_conditions": [{"type": "change_pct_below", "value": -5}]},
@@ -291,6 +339,7 @@ class WatchdogManager:
                 "enabled": True,
                 "poll_interval_sec": 600,
                 "keywords": ["AI India", "artificial intelligence", "Helper ID"],
+                "keyword_priorities": {},
             },
             "file_config": {
                 "enabled": True,
@@ -306,6 +355,74 @@ class WatchdogManager:
                 "poll_interval_sec": 300,
                 "repos": [],
                 "github_token_env": "GITHUB_TOKEN",
+                "watch_branches": [],
+                "check_ci_status": False,
+            },
+            "app_config": {
+                "enabled": True,
+                "poll_interval_sec": 30,
+                "cpu_threshold_pct": 80,
+                "ram_threshold_mb": 1500,
+                "watch_processes": [],
+                "alert_on_crash": True,
+                "cooldown_sec": 300,
+            },
+            "network_config": {
+                "enabled": True,
+                "poll_interval_sec": 30,
+                "ping_host": "8.8.8.8",
+                "ping_timeout_sec": 3,
+                "latency_alert_ms": 300,
+                "check_vpn": True,
+                "cooldown_sec": 120,
+            },
+            "disk_config": {
+                "enabled": True,
+                "poll_interval_sec": 300,
+                "free_space_alert_pct": 10,
+                "free_space_critical_pct": 5,
+                "watch_paths": [],
+                "track_growth": True,
+                "growth_alert_mb_per_hour": 500,
+                "cooldown_sec": 1800,
+            },
+            "battery_config": {
+                "enabled": True,
+                "poll_interval_sec": 60,
+                "low_battery_pct": 20,
+                "critical_battery_pct": 10,
+                "overcharge_pct": 95,
+                "alert_on_plug_unplug": True,
+                "cooldown_sec": 300,
+            },
+            "calendar_config": {
+                "enabled": False,
+                "poll_interval_sec": 120,
+                "alert_minutes_before": [10, 2],
+                "calendar_ids": ["primary"],
+                "credentials_file": "",
+                "token_file": ".ankita/calendar_token.json",
+                "local_tasks_file": ".ankita/tasks.json",
+                "cooldown_sec": 60,
+            },
+            "email_config": {
+                "enabled": False,
+                "poll_interval_sec": 120,
+                "max_results": 10,
+                "vip_senders": [],
+                "urgent_keywords": ["urgent", "asap", "deadline", "action required"],
+                "label_filter": "INBOX",
+                "credentials_file": "",
+                "token_file": ".ankita/gmail_token.json",
+                "cooldown_sec": 60,
+            },
+            "anomaly_config": {
+                "enabled": True,
+                "poll_interval_sec": 60,
+                "baseline_samples": 168,
+                "z_score_threshold": 2.5,
+                "min_samples_before_alert": 24,
+                "cooldown_sec": 600,
             },
         }
         default = defaults.get(config_name, {"enabled": False})
@@ -353,15 +470,42 @@ class WatchdogManager:
     # ------------------------------------------------------------------
 
     def status(self) -> str:
-        """Return a formatted status table of all registered watchers."""
+        """Return a formatted health dashboard of all registered watchers."""
         if not self._watchers:
             return "No watchers registered."
-        lines = ["🐕 Watchdog Status:", "─" * 40]
+
+        lines = ["🐕 Watchdog Health Dashboard", "═" * 60]
+        total = len(self._watchers)
+        running = sum(1 for w in self._watchers.values() if w.is_alive())
+        lines.append(f"  Active: {running}/{total} watchers running\n")
+
         for name, watcher in self._watchers.items():
-            alive = "✅ Running" if watcher.is_alive() else "❌ Stopped"
+            alive = "✅" if watcher.is_alive() else "❌"
             poll = f"{watcher.poll_interval:.0f}s"
-            lines.append(f"  {name:<20} {alive}  (poll: {poll})")
-        lines.append("─" * 40)
+
+            # Crash history (from state if available)
+            backoff = watcher._backoff
+            backoff_str = f"  backoff={backoff:.0f}s" if backoff > 1.0 else ""
+
+            # Last alert time (if watcher tracks it)
+            last_alert_info = ""
+            last_alert_map = watcher.state.get("last_alert_time", {})
+            if last_alert_map:
+                import time as _time
+                most_recent = max(last_alert_map.values()) if last_alert_map else 0
+                if most_recent:
+                    secs_ago = int(_time.time() - most_recent)
+                    if secs_ago < 3600:
+                        last_alert_info = f"  last alert: {secs_ago}s ago"
+                    else:
+                        last_alert_info = f"  last alert: {secs_ago // 3600}h ago"
+
+            lines.append(
+                f"  {alive} {name:<22} poll={poll:<6}{backoff_str}{last_alert_info}"
+            )
+
+        lines.append("═" * 60)
+        lines.append("  Tip: Edit .ankita/watchdogs/*.json to configure each watcher.")
         return "\n".join(lines)
 
     def add_price_alert(self, symbol: str, condition_type: str, value: float) -> str:

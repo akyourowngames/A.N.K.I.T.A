@@ -276,15 +276,22 @@ def build_runtime_from_env() -> LLMRuntime:
                     # Only do interactive device login as last resort
                     github_token = _github_device_login()
                     _save_cached_github_token(_github_auth_cache_path(), github_token)
-                # Always delete stale copilot token so _exchange re-fetches if needed
+                # Always check the cached Copilot token — if it is missing, expired,
+                # or corrupt in any way, delete the file unconditionally so
+                # _exchange_github_to_copilot_token() fetches a fresh one.
                 cache = _cache_path()
                 existing = _load_cached_copilot_token(cache)
-                if existing is None and cache.exists():
-                    # Token file exists but is expired — delete it so exchange runs fresh
-                    try:
-                        cache.unlink()
-                    except Exception:
-                        pass
+                if existing is None:
+                    # Token is absent, expired, or unreadable — purge so exchange runs fresh
+                    if cache.exists():
+                        try:
+                            cache.unlink()
+                            print(
+                                "[LLM] 🗑️  Stale/expired Copilot token cache deleted — fetching fresh token.",
+                                flush=True,
+                            )
+                        except Exception as _del_err:
+                            print(f"[LLM] ⚠️  Could not delete stale token cache: {_del_err}", flush=True)
                 token_payload = _exchange_github_to_copilot_token(github_token, cache)
                 token = str(token_payload["token"])
         except Exception as err:
@@ -341,11 +348,15 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
                     base_url=base_url.rstrip("/"),
                     max_tokens=main_runtime.max_tokens,
                 )
-        except Exception:
-            pass
+        except Exception as _ve:
+            print(f"[VisionRuntime] ⚠️  VISION_PROVIDER=copilot build failed: {_ve}", flush=True)
 
     # 2. Main runtime already supports vision (copilot/gpt-4o)
     if main_runtime.provider == "copilot":
+        print(
+            f"[VisionRuntime] ✅ Using main runtime for vision: {main_runtime.provider}/{main_runtime.model}",
+            flush=True,
+        )
         return main_runtime
 
     # 3. Auto-fallback: try Copilot if COPILOT_GITHUB_TOKEN is available
@@ -360,6 +371,10 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
             derived_base = _derive_copilot_base_url(token)
             base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
             model = os.getenv("VISION_MODEL", DEFAULT_COPILOT_MODEL).strip() or DEFAULT_COPILOT_MODEL
+            print(
+                f"[VisionRuntime] ✅ Auto-fallback Copilot vision runtime: {model}",
+                flush=True,
+            )
             return LLMRuntime(
                 provider="copilot",
                 model=model,
@@ -367,10 +382,15 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
                 base_url=base_url.rstrip("/"),
                 max_tokens=main_runtime.max_tokens,
             )
-        except Exception:
-            pass
+        except Exception as _ve2:
+            print(f"[VisionRuntime] ⚠️  Auto-fallback Copilot build failed: {_ve2}", flush=True)
 
     # 4. Last resort — return main runtime (will fail with a clear error in call_chat_with_image)
+    print(
+        f"[VisionRuntime] ⚠️  No vision runtime found — returning main runtime ({main_runtime.provider}/{main_runtime.model}). "
+        "Vision calls will likely fail. Set VISION_PROVIDER=copilot or COPILOT_GITHUB_TOKEN in .env.",
+        flush=True,
+    )
     return main_runtime
 
 
@@ -380,6 +400,7 @@ def call_chat_with_image(
     image_b64: str,
     max_tokens: Optional[int] = None,
     temperature: float = 0.0,
+    mime_type: str = "image/jpeg",
 ) -> str:
     """Send a single vision request to GPT-4o with an inline base64 image.
 
@@ -391,6 +412,10 @@ def call_chat_with_image(
         prompt:     The text instruction to accompany the image.
         image_b64:  Base64-encoded PNG/JPEG image string (no data URI prefix needed).
         max_tokens: Optional token cap. Falls back to runtime.max_tokens.
+        temperature: Sampling temperature. 0.0 = deterministic (default, good for coords).
+        mime_type:  MIME type of the image — "image/jpeg" (default, webcam) or "image/png"
+                    (screenshots). Must match the actual encoding of image_b64 or the API
+                    will silently misparse the image.
 
     Returns:
         The model's text reply (string).
@@ -408,6 +433,18 @@ def call_chat_with_image(
         headers["Copilot-Integration-Id"] = "vscode-chat"
         headers["OpenAI-Intent"] = "conversation-panel"
 
+    system_message = {
+        "role": "system",
+        "content": (
+            "You are a vision analysis assistant. "
+            "When given an image, you ALWAYS provide a thorough, specific description of what you see. "
+            "You NEVER say the image is 'too large', 'too complex', or that you 'cannot process' it. "
+            "You NEVER ask the user to specify what to focus on — you describe everything. "
+            "You NEVER refuse to analyse an image. "
+            "Start your response with what you observe directly."
+        ),
+    }
+
     vision_message = {
         "role": "user",
         "content": [
@@ -415,8 +452,8 @@ def call_chat_with_image(
             {
                 "type": "image_url",
                 "image_url": {
-                    "url": f"data:image/png;base64,{image_b64}",
-                    "detail": "high",
+                    "url": f"data:{mime_type};base64,{image_b64}",
+                    "detail": "low",
                 },
             },
         ],
@@ -425,8 +462,8 @@ def call_chat_with_image(
     tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else runtime.max_tokens
     payload: Dict[str, Any] = {
         "model": runtime.model,
-        "messages": [vision_message],
-        "temperature": temperature,  # 0.0 for coordinate tasks (deterministic), 0.7 for descriptive
+        "messages": [system_message, vision_message],
+        "temperature": temperature,
     }
     if isinstance(tokens, int) and tokens > 0:
         if runtime.provider == "copilot":

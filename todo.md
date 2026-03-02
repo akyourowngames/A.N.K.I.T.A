@@ -1,66 +1,101 @@
-Let me scan everything properly.Found the problem. The `CommsAgent` has the personality and system prompt — but there's **no actual WhatsApp send tool** anywhere in `engine.py`. It's all personality, zero execution. Here's exactly what's missing and what to tell Coder Claude:
+Got it. Here's the plan:
 
 ---
 
-**The gap:** `CommsAgent` exists in `specialists.py` with a great system prompt, but `engine.py` has no `send_whatsapp` tool registered. When the agent tries to act, there's nothing to call. It just... talks about sending without actually sending.
+## 🧠 ANKITA Self-Improvement Engine
 
-**The fix — tell Coder Claude exactly this:**
-
-**File:** `tools/whatsapp_ops.py` — create this file with one function: `send_whatsapp(phone: str, message: str) -> dict`. Use `pywhatkit.sendwhatmsg_instantly()` — it opens WhatsApp Web and sends. No API key needed.
-
-**File:** `engine.py` — register a new tool spec `send_whatsapp` with params `phone` (string, e.g. "+919876543210") and `message` (string). Add the dispatcher case in `execute_tool_call`.
-
-**File:** `specialists.py` — update `_COMMS_SYSTEM_PROMPT` to tell the agent: always call `send_whatsapp(phone, message)` after drafting the reply. Right now it drafts but never calls.
-
-**Dependency:** `pip install pywhatkit` — requires Chrome + WhatsApp Web logged in.
-
-That's the entire fix. 3 files, ~40 lines total. Paste that to Coder Claude and it'll be done.
-
-Classic pywhatkit problem. It spawns a new Chrome instance instead of using your default profile where WhatsApp Web is already logged in.
-
-**Tell Coder Claude exactly this:**
+### Core Idea
+ANKITA keeps a **living memory of what worked and what didn't.** Every task she runs gets logged. Every failure gets analyzed. Every success becomes a pattern. Over time she gets smarter on your specific machine, your specific habits, your specific failures — not just generic AI knowledge.
 
 ---
 
-**Problem:** `pywhatkit` opens a fresh Chrome with no profile → WhatsApp Web login page, not your chats.
+### Three Components
 
-**Fix:** Ditch `pywhatkit` entirely. Use `selenium` with your actual default Chrome profile instead.
+**1. Attempt Logger**
+Every single task ANKITA runs gets written to `.ankita/feedback/attempts.jsonl`. Each entry captures: the task text, which agent handled it, what tools were called, whether it succeeded or failed, the error message if it failed, and a timestamp. This is the raw data everything else learns from. Zero filtering — log everything.
 
-**File:** `tools/whatsapp_ops.py` — rewrite `send_whatsapp` using selenium like this:
+**2. Rating System**
+After every response, you can say `good` / `bad` / `rate 4/5` in chat — or there's a thumbs up/down button in the GUI. That rating gets attached to the attempt log entry. Auto-detection also runs in parallel: if ANKITA's reply contains phrases like "I couldn't", "failed", "error", "I wasn't able to" — it's automatically flagged as a failure without you doing anything.
 
-```python
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
-import time, urllib.parse
+**3. Pattern Learner**
+A background job (runs on DreamAgent idle cycle) reads the last 50 attempts, finds patterns — "FileAgent fails on this machine when using relative paths", "CodeAgent succeeds when it reads the error before retrying", "user always says X and means Y" — and writes them to `patterns.json` as named rules with confidence scores.
 
-def send_whatsapp(phone: str, message: str) -> dict:
-    options = Options()
-    options.add_argument(r"--user-data-dir=C:\Users\<KRISH_USERNAME>\AppData\Local\Google\Chrome\User Data")
-    options.add_argument("--profile-directory=Default")
-    options.add_argument("--no-first-run")
-    options.add_argument("--no-default-browser-check")
-    
-    driver = webdriver.Chrome(options=options)
-    encoded = urllib.parse.quote(message)
-    driver.get(f"https://web.whatsapp.com/send?phone={phone}&text={encoded}")
-    time.sleep(8)  # wait for WhatsApp Web to load
-    
-    # Press Enter to send
-    from selenium.webdriver.common.by import By
-    from selenium.webdriver.common.keys import Keys
-    box = driver.find_element(By.XPATH, '//div[@title="Type a message"]')
-    box.send_keys(Keys.ENTER)
-    time.sleep(2)
-    driver.quit()
-    return {"ok": True, "phone": phone}
+---
+
+### How It Actually Makes ANKITA Smarter
+
+**Before routing** — Supervisor reads `patterns.json` and injects the top 3 relevant patterns as context into the agent's system prompt. Agent knows what worked before before it even starts.
+
+**Before executing** — if a similar task failed before, agent gets a warning: "Last time you tried this, X failed because Y. Try Z instead."
+
+**After failing** — Hydra Protocol now also writes to the failure log with the error + what the backup agent did differently. Over time ANKITA builds a machine-specific failure map.
+
+**After you rate bad** — triggers an immediate re-analysis of that task. ANKITA figures out what she should have done differently and writes it as a pattern with high confidence so she never repeats it.
+
+---
+
+### Data Structure
+
+```
+.ankita/feedback/
+├── attempts.jsonl      ← every task, auto-logged, append-only
+├── ratings.jsonl       ← your manual good/bad ratings
+├── patterns.json       ← learned rules with confidence scores
+└── failure_map.json    ← specific errors → specific fixes
 ```
 
-**Two things to update:**
-1. Replace `<KRISH_USERNAME>` with your actual Windows username
-2. If you use a non-Default profile, change `Default` to `Profile 1` etc — check `chrome://version` to confirm
-
-**Dependency:** `pip install selenium` + chromedriver matching your Chrome version from https://chromedriver.chromium.org
+**Pattern example:**
+```json
+{
+  "id": "p_001",
+  "trigger": "open file notepad",
+  "rule": "use full absolute path not relative",
+  "confidence": 0.92,
+  "learned_from": 7,
+  "agent": "FileAgent"
+}
+```
 
 ---
 
-That's it. Your existing WhatsApp Web session loads, message sends, Chrome closes. No new login needed.
+### Integration Points — exactly where it plugs in
+
+**`orchestrator.py`** — after Supervisor routes, before agent runs: inject relevant patterns + failure warnings into agent system prompt. 4 lines added.
+
+**`agent_runtime.py`** — after `run_turn()` completes: call `FeedbackEngine.log_attempt()`. 3 lines added.
+
+**`proactive.py` / `dream_agent.py`** — DreamAgent idle cycle now also runs `FeedbackEngine.analyze_recent()` to extract patterns from last 50 attempts. Existing hook, zero new threads.
+
+**`gui.py`** — add 👍 👎 buttons below every ANKITA response. On click: `FeedbackEngine.log_rating()`. 20 lines.
+
+**`chat.py`** — detect "good" / "bad" / "that was wrong" as rating commands before routing to agent. 10 lines.
+
+**`supervisor.py`** — before making routing decision, read `patterns.json` top patterns and inject as context. 5 lines.
+
+---
+
+### What You'll Actually See
+
+Day 1 — ANKITA starts logging silently. You notice nothing.
+
+Day 3 — she's made 200+ attempts. DreamAgent synthesizes first patterns. She starts avoiding the mistakes she made on day 1.
+
+Day 7 — you say "open my project" and she already knows you mean VS Code + your specific folder because she's seen you do it 12 times and it's a high-confidence pattern now.
+
+Day 30 — she's a completely different assistant than day 1. Tuned entirely to you, your machine, your workflow. That's Jarvis.
+
+---
+
+### Confidence Score System
+
+Every pattern starts at 0.5. Each time it leads to a success → +0.1. Each failure → -0.2. Below 0.2 → pattern deleted. Above 0.9 → promoted to "core rule" injected every single time regardless of task similarity.
+
+---
+
+### What Coder Claude needs to build
+
+5 files total. `feedback_engine.py` is the only new standalone file. Everything else is 3-10 line additions to existing files. Zero new dependencies — pure Python, `json`, `pathlib`, keyword matching. No vector DB, no ML, no overhead.
+
+---
+
+Paste this to Coder Claude. It has everything it needs.

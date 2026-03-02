@@ -147,8 +147,18 @@ class SupervisorAgent:
             }
         Falls back to GeneralAgent on any error.
         """
+        # Inject learned improvement patterns from FeedbackEngine
+        _injected = ""
+        try:
+            from tools.feedback_engine import get_instance as _get_fb
+            _fb = _get_fb()
+            if _fb is not None:
+                _injected = _fb.get_injected_patterns()
+        except Exception:
+            pass
+
         messages = [
-            {"role": "system", "content": _SUPERVISOR_SYSTEM_PROMPT},
+            {"role": "system", "content": (_injected + _SUPERVISOR_SYSTEM_PROMPT) if _injected else _SUPERVISOR_SYSTEM_PROMPT},
             {"role": "user", "content": user_text},
         ]
         try:

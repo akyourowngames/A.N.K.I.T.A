@@ -89,28 +89,86 @@ class SessionManager:
             msgs = data.get("messages", [])
             if not isinstance(msgs, list) or len(msgs) == 0:
                 return None
+            # Sanitize restored messages — strip any base64 blobs that would
+            # cause a 400 Bad Request loop on every startup turn.
+            clean_msgs = [self._sanitize_message(m) for m in msgs]
             with self._lock:
-                self._messages = msgs
+                self._messages = clean_msgs
                 self._workspace = data.get("workspace", str(self.workspace_root))
                 self._active_tasks = data.get("active_tasks", [])
                 self._restored = True
             print(
-                f"[SessionManager] ✅ Restored {len(msgs)} messages from previous session.",
+                f"[SessionManager] ✅ Restored {len(clean_msgs)} messages from previous session.",
                 flush=True,
             )
-            return list(msgs)
+            return list(clean_msgs)
         except Exception as err:
             print(f"[SessionManager] ⚠️  Could not load session: {err}", flush=True)
             return None
+
+    # ─────────────────────────────────────────────────────────────────────────
+    # Sanitization helpers
+    # ─────────────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _sanitize_content(content: Any) -> str:
+        """
+        Strip base64 image blobs and oversized content from a message before
+        persisting or sending to the LLM.
+
+        Protects against:
+        - 400 Bad Request loops caused by restored sessions with embedded base64 images
+        - Context window overflow from huge tool-result strings
+        """
+        if not isinstance(content, str):
+            # Multimodal content (list of blocks) — flatten to text only
+            if isinstance(content, list):
+                text_parts = []
+                for block in content:
+                    if isinstance(block, dict):
+                        if block.get("type") == "text":
+                            text_parts.append(block.get("text", ""))
+                        elif block.get("type") == "image_url":
+                            text_parts.append("[image: stripped for storage]")
+                return " ".join(text_parts).strip()
+            return str(content)
+
+        # Strip inline base64 data URIs (data:image/...;base64,<blob>)
+        import re as _re
+        sanitized = _re.sub(
+            r"data:image/[^;]+;base64,[A-Za-z0-9+/=]{100,}",
+            "[base64_image_stripped]",
+            content,
+        )
+        # Strip raw base64 blobs that appear without a data URI prefix
+        # (long runs of base64 chars ≥ 500 chars with no spaces)
+        sanitized = _re.sub(
+            r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/=]{500,}(?![A-Za-z0-9+/=])",
+            "[large_blob_stripped]",
+            sanitized,
+        )
+        # Hard cap: if content is still >50KB after sanitization, truncate it
+        _MAX_CONTENT_BYTES = 50_000
+        if len(sanitized.encode("utf-8", errors="replace")) > _MAX_CONTENT_BYTES:
+            sanitized = sanitized[:_MAX_CONTENT_BYTES] + "\n…[truncated — content too large to persist]"
+        return sanitized
+
+    @staticmethod
+    def _sanitize_message(msg: Dict[str, Any]) -> Dict[str, Any]:
+        """Return a copy of msg with sanitized content."""
+        sanitized = dict(msg)
+        sanitized["content"] = SessionManager._sanitize_content(msg.get("content", ""))
+        return sanitized
 
     def add_message(self, role: str, content: str) -> None:
         """
         Append a single message to the in-memory history and immediately
         persist to disk. Thread-safe.
         """
-        if not content or not content.strip():
+        if not content or not str(content).strip():
             return
-        msg = {"role": role, "content": content.strip(), "ts": time.time()}
+        safe_content = self._sanitize_content(content)
+        msg = {"role": role, "content": safe_content, "ts": time.time()}
         with self._lock:
             self._messages.append(msg)
         self._persist()

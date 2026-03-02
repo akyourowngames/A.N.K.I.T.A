@@ -28,6 +28,27 @@ from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
 
+# ─────────────────────────────────────────────────────────────────────────────
+# VISION CACHE — remembers the last captured image for 60 seconds so
+# follow-up messages like "describe it", "what do you see", "tell me more"
+# don't require the user to trigger a new capture.
+# Structure: {"b64": str, "mime": str, "ts": float, "source": str}
+# source = "gui" | "chat" | "telegram" — only inject if same source channel
+# ─────────────────────────────────────────────────────────────────────────────
+_LAST_VISION_CACHE: Dict[str, Any] = {}
+_VISION_CACHE_TTL_SEC = 60  # seconds before cache expires
+
+_VISION_FOLLOWUP_KEYWORDS = {
+    "describe", "what do you see", "tell me", "what's in", "what is in",
+    "analyse", "analyze", "look at", "what did you", "explain what",
+    "describe it", "describe the", "what are", "can you see", "do you see",
+    "what's there", "what is there", "read it", "read the", "what text",
+    "any text", "what does it show", "what does it say",
+}
+
+# Tools that can capture images — only these should trigger vision cache
+_VISION_TOOL_NAMES = {"capture_webcam", "capture_screen", "read_screen_context", "visual_click"}
+
 # â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 # HYDRA PROTOCOL â€” Escalation Matrix ðŸ‰
 # Maps (primary_agent) â†’ (backup_agent_name, context_note_for_backup)
@@ -201,14 +222,83 @@ def _run_specialist(
     """
     messages = specialist.make_messages(task)
 
+    # ── SANITIZE MESSAGES: strip any image_url blocks that leaked from prior turns ──
+    # Vision packets injected in a previous turn (e.g. from GUI) can persist in the
+    # messages list passed to drones — causing "data too massive" on Telegram/follow-ups.
+    def _strip_image_blocks(msgs: list) -> list:
+        clean = []
+        for m in msgs:
+            content = m.get("content")
+            if isinstance(content, list):
+                # Filter out image_url blocks — keep only text blocks
+                text_parts = [b for b in content if isinstance(b, dict) and b.get("type") != "image_url"]
+                if not text_parts:
+                    continue  # Skip messages that were ONLY images
+                # If only one text block, flatten to string
+                if len(text_parts) == 1 and text_parts[0].get("type") == "text":
+                    clean.append({**m, "content": text_parts[0].get("text", ""), "_mime_type": None})
+                else:
+                    clean.append({**m, "content": text_parts})
+            else:
+                clean.append(m)
+        return clean
+
+    messages = _strip_image_blocks(messages)
+
     # PARALLEL CHUNK ENGINE: For ContentAgent in deep mode, boost the token budget
     # to 8192 so the LLM can write a full 10-page document without truncation.
     # For all other agents, use the runtime default.
     if specialist.name == "ContentAgent" and _is_deep_mode_task(task, prior_context):
         max_tokens = _DEEP_MODE_MAX_TOKENS
-        print(f"[Orchestrator] ðŸ”¥ ContentAgent DEEP MODE â€” max_tokens boosted to {max_tokens}", flush=True)
+        print(f"[Orchestrator] ContentAgent DEEP MODE - max_tokens boosted to {max_tokens}", flush=True)
     else:
         max_tokens = runtime.max_tokens
+
+    # ── VISION FOLLOW-UP CACHE ─────────────────────────────────────────────
+    # If the user is asking a describe/analyse follow-up (no new tool needed)
+    # AND we have a fresh cached image (<60s old), inject it directly so the
+    # model can answer without needing to re-capture.
+    import time as _time_fup
+    _task_lower = task.lower()
+    _cache_fresh = (
+        _LAST_VISION_CACHE
+        and (_time_fup.time() - _LAST_VISION_CACHE.get("ts", 0)) < _VISION_CACHE_TTL_SEC
+    )
+    _is_followup = any(kw in _task_lower for kw in _VISION_FOLLOWUP_KEYWORDS)
+    if _cache_fresh and _is_followup:
+        _cached_b64 = _LAST_VISION_CACHE["b64"]
+        _cached_mime = _LAST_VISION_CACHE["mime"]
+        print(
+            f"[VisionCache] 🖼️  Using cached image ({_cached_mime}) for follow-up via call_chat_with_image: '{task[:60]}'",
+            flush=True,
+        )
+        # Use call_chat_with_image() — isolated API call with ONLY image + prompt.
+        # Never inject raw image into messages (causes "too massive" context overflow).
+        try:
+            _vision_rt = build_vision_runtime_from_env(runtime)
+            _cache_desc = call_chat_with_image(
+                _vision_rt,
+                f"The user asks: {task}\nDescribe what you see in this image, focusing on the user's question.",
+                _cached_b64,
+                max_tokens=600,
+                temperature=0.3,
+                mime_type=_cached_mime,
+            )
+            messages.append({
+                "role": "assistant",
+                "content": "Looking at the image from earlier...",
+            })
+            messages.append({
+                "role": "user",
+                "content": f"[Vision Analysis — cached image]\n{_cache_desc}",
+            })
+            print(f"[VisionCache] ✅ Follow-up description ready ({len(_cache_desc)} chars)", flush=True)
+        except Exception as _cache_vision_err:
+            print(f"[VisionCache] ❌ call_chat_with_image failed: {_cache_vision_err}", flush=True)
+            messages.append({
+                "role": "user",
+                "content": f"[Vision follow-up failed: {_cache_vision_err}]",
+            })
 
     # ðŸ§  HIPPOCAMPUS INJECTION â€” every agent sees long-term memory before speaking
     _inject_memory(messages)
@@ -305,8 +395,15 @@ def _run_specialist(
 
                 # Check if this tool returned image data (capture_screen / read_screen_context).
                 # execute_tool_call wraps the inner result as {"ok": True, "result": {...}},
-                # so we must look BOTH at the top level AND inside result["result"].
+                # but sometimes the inner result is truncated to {"status":"truncated","data":"<json>"}
+                # where the actual base64 is inside the JSON string in "data".
                 _inner = result.get("result", {}) if isinstance(result, dict) else {}
+                # Unwrap truncated data if needed
+                if isinstance(_inner, dict) and _inner.get("status") == "truncated" and isinstance(_inner.get("data"), str):
+                    try:
+                        _inner = json.loads(_inner["data"])
+                    except Exception:
+                        pass
                 _b64_source = None
                 if isinstance(result, dict) and "base64" in result:
                     _b64_source = result
@@ -316,21 +413,65 @@ def _run_specialist(
                 if _b64_source is not None:
                     b64_data = _b64_source["base64"]
 
-                    # Strip the raw base64 blob from the text history â€” the LLM
+                    # Detect MIME type from the tool result:
+                    # - capture_webcam() encodes as JPEG → "image/jpeg"
+                    # - capture_screen() / read_screen_context() encodes as PNG → "image/png"
+                    # Using the wrong MIME type causes the API to silently misparse the image.
+                    _tool_name = tc.get("function", {}).get("name", "")
+                    _img_mime = "image/jpeg" if _tool_name == "capture_webcam" else "image/png"
+
+                    # ── VISION CACHE: store this capture so follow-up messages
+                    # ("describe it", "what do you see") can re-use it without
+                    # triggering a new capture. TTL = 60 seconds.
+                    import time as _time
+                    _LAST_VISION_CACHE.clear()
+                    _LAST_VISION_CACHE.update({
+                        "b64": b64_data,
+                        "mime": _img_mime,
+                        "ts": _time.time(),
+                    })
+
+                    # Strip the raw base64 blob from the text history — the LLM
                     # cannot read it as text and it wastes thousands of tokens.
                     # Rebuild the full wrapper without any base64 data.
                     clean_inner = {k: v for k, v in _b64_source.items() if k != "base64"}
                     clean_inner["base64"] = "<IMAGE_DATA_INJECTED_AS_VISION_MESSAGE>"
                     if _b64_source is _inner:
-                        # base64 was inside result["result"] â€” rebuild the outer wrapper
+                        # base64 was inside result["result"] — rebuild the outer wrapper
                         safe_result = {**result, "result": clean_inner}
                     else:
                         # base64 was at the top level
                         safe_result = clean_inner
 
+                    # Apply size guard before building vision packet — compress if >200KB base64
+                    _vp_b64 = b64_data
+                    _vp_mime = _img_mime
+                    _VP_MAX_B64 = 200_000
+                    if len(_vp_b64) > _VP_MAX_B64:
+                        try:
+                            import base64 as _b64vp
+                            from io import BytesIO as _BytesIOvp
+                            from PIL import Image as _PILvp
+                            _raw_vp = _b64vp.b64decode(_vp_b64)
+                            _img_vp = _PILvp.open(_BytesIOvp(_raw_vp)).convert("RGB")
+                            _w_vp, _h_vp = _img_vp.size
+                            if _w_vp > 480:
+                                _img_vp = _img_vp.resize((480, int(_h_vp * 480 / _w_vp)), _PILvp.LANCZOS)
+                            _buf_vp = _BytesIOvp()
+                            _img_vp.save(_buf_vp, format="JPEG", quality=50)
+                            _vp_b64 = _b64vp.b64encode(_buf_vp.getvalue()).decode("utf-8")
+                            _vp_mime = "image/jpeg"
+                            print(
+                                f"[VisionPacket] 🗜️  Packet re-compressed to 480px/q50 ({len(_vp_b64):,} chars)",
+                                flush=True,
+                            )
+                        except Exception as _vp_err:
+                            print(f"[VisionPacket] ⚠️  Re-compress failed: {_vp_err}", flush=True)
+
                     # Build a proper multimodal vision message for the LLM
                     vision_packets.append({
                         "role": "user",
+                        "_mime_type": _vp_mime,  # metadata for _describe_vision_packets_as_text
                         "content": [
                             {
                                 "type": "text",
@@ -342,7 +483,7 @@ def _run_specialist(
                             {
                                 "type": "image_url",
                                 "image_url": {
-                                    "url": f"data:image/png;base64,{b64_data}",
+                                    "url": f"data:{_vp_mime};base64,{_vp_b64}",
                                     "detail": "low",  # "low" = faster + cheaper; avoids payload size 400s
                                 },
                             },
@@ -367,77 +508,117 @@ def _run_specialist(
         # assistant "pass-through" message to bridge the tool results, then
         # inject the image as a user message so the model sees the pixels.
         if vision_packets:
-            # --- GROQ BLIND FIX: Groq/LLaMA cannot process image_url messages.
-            # Instead: use a vision-capable runtime (Copilot/GPT-4o) to pre-describe
-            # the image as plain text, then inject that description for Groq to read.
-            if runtime.provider == "groq":
-                vision_runtime = build_vision_runtime_from_env(runtime)
-                if vision_runtime.provider != "groq":
-                    # We have a vision-capable runtime â€” pre-describe each image
-                    for vp in vision_packets:
-                        try:
-                            # Extract the base64 from the image_url content block
-                            b64 = None
-                            text_prompt = "Describe everything you can see in this image in detail. Include what the person is holding, wearing, or doing. Be specific."
-                            for block in vp.get("content", []):
-                                if block.get("type") == "image_url":
-                                    url_str = block["image_url"].get("url", "")
-                                    if "base64," in url_str:
-                                        b64 = url_str.split("base64,")[1]
-                                    elif len(url_str) > 100:
-                                        b64 = url_str
-                                elif block.get("type") == "text":
-                                    text_prompt = block.get("text", text_prompt)
+            # Determine if the current runtime/model can natively handle vision payloads.
+            # Only GPT-4o (and variants) support image_url messages.
+            # gpt-4, gpt-3.5-turbo, and LLaMA models will return 400 Bad Request.
+            # Broaden model check: any gpt-4, gpt-4o, o1, claude, gemini variant supports vision.
+            # Previously only exact substrings "gpt-4o" / "gpt-4-vision" matched, so
+            # models like "gpt-4o-2024-05-13" silently fell through to the text-only path.
+            _VISION_CAPABLE_MODELS = {
+                "gpt-4o", "gpt-4-vision", "gpt-4-vision-preview",
+                "gpt-4-turbo", "o1", "claude", "gemini",
+            }
+            # Copilot + any gpt-4 variant → always vision capable (Copilot only serves gpt-4 family)
+            _model_lower = runtime.model.lower()
+            _model_supports_vision = runtime.provider == "copilot" and (
+                any(vm in _model_lower for vm in _VISION_CAPABLE_MODELS)
+                or "gpt-4" in _model_lower  # catch any gpt-4.x variant not in the set above
+            )
 
-                            if b64:
-                                description = call_chat_with_image(
-                                    vision_runtime,
-                                    text_prompt,
-                                    b64,
-                                    max_tokens=600,
-                                    temperature=0.3,
-                                )
-                                # Inject as plain text â€” Groq can read this!
-                                messages.append({
-                                    "role": "assistant",
-                                    "content": "I captured the image. Let me describe what I see.",
-                                })
-                                messages.append({
-                                    "role": "user",
-                                    "content": f"[Vision Analysis by GPT-4o]\n{description}",
-                                })
-                            else:
-                                messages.append({
-                                    "role": "user",
-                                    "content": "[Image was captured but could not be decoded for vision analysis]",
-                                })
-                        except Exception as vision_err:
-                            messages.append({
-                                "role": "user",
-                                "content": f"[Vision analysis failed: {vision_err}]",
-                            })
-                else:
-                    # No vision runtime available â€” tell user clearly
-                    messages.append({
-                        "role": "assistant",
-                        "content": "I captured the image.",
-                    })
-                    messages.append({
-                        "role": "user",
-                        "content": (
-                            "[Vision Analysis Unavailable]\n"
-                            "I captured the image but cannot analyse it because the current LLM (Groq/LLaMA) "
-                            "does not support vision. To enable real image analysis, add COPILOT_GITHUB_TOKEN "
-                            "to your .env file. I'll use that as the vision engine while keeping Groq for text."
-                        ),
-                    })
+            # Helper: pre-describe each vision packet as plain text via a vision runtime.
+            def _describe_vision_packets_as_text(vision_runtime: "LLMRuntime") -> None:
+                for vp in vision_packets:
+                    try:
+                        b64 = None
+                        # Retrieve the MIME type stored as metadata on the vision packet
+                        vp_mime = vp.get("_mime_type", "image/jpeg")
+                        # Tailor prompt by image source — screen vs webcam
+                        _is_screen = vp_mime == "image/png" or "screen" in str(vp.get("_tool_name", ""))
+                        if _is_screen:
+                            text_prompt = (
+                                "You are analysing a screenshot of a computer screen. "
+                                "IMPORTANT: You MUST describe what you see. Do not refuse or say the image is too large. "
+                                "Describe: (1) what application or website is open, "
+                                "(2) what text, content, or UI elements are visible, "
+                                "(3) any errors, notifications, or important information on screen. "
+                                "Be specific. Start with 'I can see on the screen...'"
+                            )
+                        else:
+                            text_prompt = (
+                                "You are analysing a webcam photo. "
+                                "IMPORTANT: You MUST describe what you see. Do not refuse or say the image is too large. "
+                                "Describe: (1) the person — face, expression, hair, clothing, what they are doing, "
+                                "(2) the background — room, objects, lighting, (3) anything else visible. "
+                                "Be specific and detailed. Start with 'I can see...'"
+                            )
+                        for block in vp.get("content", []):
+                            if block.get("type") == "image_url":
+                                url_str = block["image_url"].get("url", "")
+                                if "base64," in url_str:
+                                    b64 = url_str.split("base64,")[1]
+                                elif len(url_str) > 100:
+                                    b64 = url_str
+                            elif block.get("type") == "text":
+                                text_prompt = block.get("text", text_prompt)
+
+                        if b64:
+                            description = call_chat_with_image(
+                                vision_runtime,
+                                text_prompt,
+                                b64,
+                                max_tokens=600,
+                                temperature=0.2,
+                                mime_type=vp_mime,
+                            )
+                            print(f"[VisionPipeline] ✅ Image described ({len(description)} chars)", flush=True)
+                            # Store description on the vision_packets list so the caller can
+                            # return it directly without giving GPT-4o another turn to refuse.
+                            vp["_description"] = description
+                        else:
+                            vp["_description"] = "[Image was captured but could not be decoded for vision analysis]"
+                    except Exception as vision_err:
+                        print(f"[VisionPipeline] ❌ call_chat_with_image failed: {vision_err}", flush=True)
+                        vp["_description"] = f"[Vision analysis failed: {vision_err}]"
+
+            # ── UNIFIED VISION PATH ─────────────────────────────────────────────────
+            # ALWAYS use call_chat_with_image() for vision — an isolated API call
+            # with ONLY the image + prompt (no chat history, no tool specs).
+            # 
+            # Why: injecting raw image_url into the main messages list combines the
+            # image tokens with conversation history + 53 tool specs, easily exceeding
+            # Copilot's context window → "data is too massive to process".
+            #
+            # call_chat_with_image() sends a fresh, minimal request: just the image
+            # and one text prompt. The text description is then injected into the
+            # main messages so the chat model can reason about it.
+            vision_runtime = build_vision_runtime_from_env(runtime)
+            _is_vision_capable = (
+                vision_runtime.provider == "copilot"
+                and (
+                    any(vm in vision_runtime.model.lower() for vm in _VISION_CAPABLE_MODELS)
+                    or "gpt-4" in vision_runtime.model.lower()
+                )
+            )
+            if _is_vision_capable:
+                _describe_vision_packets_as_text(vision_runtime)
+                # Collect all descriptions and return directly — do NOT give GPT-4o
+                # another turn to "interpret" the tool result, it generates a canned refusal.
+                descriptions = [vp.get("_description", "") for vp in vision_packets if vp.get("_description")]
+                if descriptions:
+                    final_desc = "\n\n".join(descriptions)
+                    return {"agent": specialist.name, "ok": True, "reply": final_desc}
             else:
-                # Vision-capable runtime (Copilot/GPT-4o) â€” inject images normally
-                messages.append({
-                    "role": "assistant",
-                    "content": "I have the screen capture. Let me analyse it now.",
-                })
-                messages.extend(vision_packets)
+                # No vision runtime available — tell user clearly
+                provider_label = f"{runtime.provider}/{runtime.model}"
+                return {
+                    "agent": specialist.name,
+                    "ok": True,
+                    "reply": (
+                        f"I captured the image but cannot analyse it because no vision-capable model "
+                        f"is configured ({provider_label}). "
+                        "Set VISION_PROVIDER=copilot and VISION_MODEL=gpt-4o in your .env to enable vision."
+                    ),
+                }
 
     return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached)."}
 
@@ -462,10 +643,27 @@ class Orchestrator:
           Supervisor â†’ [Fan-Out specialist(s)] â†’ Synthesizer â†’ reply
         """
         # 1. Supervisor routes the request
+        # Generate an interaction ID for FeedbackEngine tracking
+        _interaction_id: Optional[str] = None
+        try:
+            from tools.feedback_engine import get_instance as _get_fb
+            _fb_eng = _get_fb()
+            if _fb_eng is not None:
+                _interaction_id = _fb_eng.new_interaction()
+        except Exception:
+            pass
+
         routing = self.supervisor.route(user_text)
         agent_names: List[str] = routing["agents"]
         parallel: bool = routing["parallel"]
         reasoning: str = routing.get("reasoning", "")
+
+        # Record routing decision in FeedbackEngine
+        if _interaction_id:
+            try:
+                _fb_eng.record_routing(_interaction_id, agent_names, reasoning, user_text)
+            except Exception:
+                pass
 
         # Single GeneralAgent â†’ just use the full agent runtime (cheaper, faster)
         if agent_names == ["GeneralAgent"]:

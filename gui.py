@@ -1,4 +1,4 @@
-import base64
+﻿import base64
 import io
 import os
 import sys
@@ -163,17 +163,17 @@ class VoiceCallWorker(QThread):
                     self.device_index = requested_idx
                     self.mic_name = dev_info.get("name", f"Device #{requested_idx}")
                 else:
-                    # Device exists but is output-only — fall through to auto-detect
+                    # Device exists but is output-only â€” fall through to auto-detect
                     self.device_index = None
                     self.mic_name = "auto (device has no input channels)"
                     idx_str = ""  # Trigger auto-detect below
             except Exception:
-                # Device index doesn't exist — warn and fall through to auto-detect
+                # Device index doesn't exist â€” warn and fall through to auto-detect
                 self.device_index = None
                 self.mic_name = "auto (device index invalid)"
                 idx_str = ""  # Trigger auto-detect below
         else:
-            # Try to find the real physical mic — prefer Realtek over virtual devices
+            # Try to find the real physical mic â€” prefer Realtek over virtual devices
             # Virtual/fake mics to skip
             VIRTUAL_KEYWORDS = {"splitcam", "droidcam", "iriun", "virtual", "mapper",
                                  "primary sound", "stereo mix", "midi", "output",
@@ -209,7 +209,7 @@ class VoiceCallWorker(QThread):
                     self.device_index = fallback_idx
                     self.mic_name = fallback_name
                 else:
-                    # Last resort — use OS default even if virtual
+                    # Last resort â€” use OS default even if virtual
                     default_in = sd.default.device[0]
                     self.device_index = default_in if (default_in is not None and default_in >= 0) else None
                     self.mic_name = sd.query_devices(self.device_index).get("name", "Default mic") if self.device_index is not None else "System default"
@@ -332,15 +332,15 @@ class VoiceCallWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Wake Word Listener — always-on background speech recogniser
+# Wake Word Listener â€” always-on background speech recogniser
 # ---------------------------------------------------------------------------
 
 class WakeWordListener(QThread):
     """Continuously listens in the background using speech_recognition.
 
     Emits:
-        wake_detected  — user said "hi ankita" / "hey ankita"
-        stop_detected  — user said "stop" (while voice worker is active)
+        wake_detected  â€” user said "hi ankita" / "hey ankita"
+        stop_detected  â€” user said "stop" (while voice worker is active)
     """
     wake_detected = pyqtSignal()
     stop_detected = pyqtSignal()
@@ -370,7 +370,7 @@ class WakeWordListener(QThread):
 
     def __init__(self, voice_active_flag, lang_code: str = "en-IN"):
         super().__init__()
-        self._flag = voice_active_flag   # threading.Event — set while VoiceCallWorker records
+        self._flag = voice_active_flag   # threading.Event â€” set while VoiceCallWorker records
         self._running = True
         self._lang = lang_code
         self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
@@ -381,10 +381,10 @@ class WakeWordListener(QThread):
     def run(self) -> None:
         print("[WakeWord] Thread started.", flush=True)
         if not HAS_SPEECH_RECOGNITION:
-            print("[WakeWord] speech_recognition not available — thread exiting.", flush=True)
+            print("[WakeWord] speech_recognition not available â€” thread exiting.", flush=True)
             return
         r = self.recognizer
-        # Lower energy threshold — we only need short phrases
+        # Lower energy threshold â€” we only need short phrases
         r.dynamic_energy_threshold = True
         r.energy_threshold = 300
         r.pause_threshold = 0.6
@@ -392,7 +392,7 @@ class WakeWordListener(QThread):
         print(f"[WakeWord] Listening for wake phrases. Lang={self._lang}", flush=True)
         loop_count = 0
         while self._running:
-            # Back off while VoiceCallWorker is actively recording — avoids mic contention
+            # Back off while VoiceCallWorker is actively recording â€” avoids mic contention
             if self._flag.is_set():
                 import time as _t
                 _t.sleep(0.3)
@@ -400,7 +400,7 @@ class WakeWordListener(QThread):
 
             loop_count += 1
             if loop_count % 10 == 1:
-                print(f"[WakeWord] Loop #{loop_count} — waiting for speech...", flush=True)
+                print(f"[WakeWord] Loop #{loop_count} â€” waiting for speech...", flush=True)
 
             try:
                 with sr.Microphone() as source:
@@ -462,6 +462,11 @@ class AnkitaWindow(QMainWindow):
         self.agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
         self.orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
         self.use_multi_agent = _env_bool("ANKITA_MULTI_AGENT", True)
+
+        # Self-improvement feedback engine
+        from tools.feedback_engine import init_engine as _init_fb
+        self.feedback_engine = _init_fb(workspace_root=WORKSPACE_ROOT, llm_runtime=runtime)
+        self._last_fb_iid: Optional[str] = None  # last interaction ID for feedback
         # MemoryStore (ChromaDB) crashes on Windows when Qt is running due to
         # SQLite C extension conflicts. Disabled in GUI mode.
         self.memory = MemoryStore.__new__(MemoryStore)
@@ -470,7 +475,7 @@ class AnkitaWindow(QMainWindow):
         self.memory._col = None
         self.session_id = "gui-session"
 
-        # ── Session Manager (Black Box / Flight Recorder) ✈️ ──────────────────
+        # â”€â”€ Session Manager (Black Box / Flight Recorder) âœˆï¸ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self.session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)
         restored_history = self.session.load()
         base_messages = new_session()
@@ -507,13 +512,13 @@ class AnkitaWindow(QMainWindow):
         self.proactive.attach_runtime(runtime)  # Required for Sentinel screen-watch to function
         self.proactive.start()
 
-        # Watchdog system — always-on 24/7 monitoring
+        # Watchdog system â€” always-on 24/7 monitoring
         from watchdog_manager import WatchdogManager
         self.watchdog_mgr = WatchdogManager(workspace_root=WORKSPACE_ROOT, proactive=self.proactive)
         self.watchdog_mgr.load_config()
         self.watchdog_mgr.start_all()
 
-        # Hive Mind — async background task manager
+        # Hive Mind â€” async background task manager
         self.hive = HiveMind(
             orchestrator=self.orchestrator,
             agent_runtime=self.agent,
@@ -571,7 +576,7 @@ class AnkitaWindow(QMainWindow):
         input_row.addWidget(self.reset_btn)
 
         # Listen toggle button (single button, toggles start/stop)
-        self.voice_btn = QPushButton("🎙 Listen")
+        self.voice_btn = QPushButton("ðŸŽ™ Listen")
         self.voice_btn.setFixedWidth(90)
         self.voice_btn.clicked.connect(self.on_voice_toggle)
         self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
@@ -592,15 +597,15 @@ class AnkitaWindow(QMainWindow):
 
         # Startup messages
         if self.session.restored:
-            self._append("System", f"✈️ Session restored — {len(restored_history)} messages loaded. I remember where we left off 🧠")
+            self._append("System", f"âœˆï¸ Session restored â€” {len(restored_history)} messages loaded. I remember where we left off ðŸ§ ")
         else:
             self._append("System", "ANKITA ready.")
         if not HAS_AUDIO_STACK:
-            self._append("System", "Voice unavailable — install numpy + sounddevice")
+            self._append("System", "Voice unavailable â€” install numpy + sounddevice")
 
         self._setup_hotkey_listener()
 
-        # Wake word listener — always-on background speech recogniser
+        # Wake word listener â€” always-on background speech recogniser
         print(f"[WakeWord] HAS_SPEECH_RECOGNITION={HAS_SPEECH_RECOGNITION}", flush=True)
         if HAS_SPEECH_RECOGNITION:
             self.wake_word_listener = WakeWordListener(
@@ -612,7 +617,7 @@ class AnkitaWindow(QMainWindow):
             self.wake_word_listener.start()
             print(f"[WakeWord] Listener started. isRunning={self.wake_word_listener.isRunning()}", flush=True)
         else:
-            print("[WakeWord] NOT started — speech_recognition not installed.", flush=True)
+            print("[WakeWord] NOT started â€” speech_recognition not installed.", flush=True)
 
         # Proactive polling timer
         self._proactive_timer = QTimer(self)
@@ -702,8 +707,8 @@ class AnkitaWindow(QMainWindow):
         """Called on Qt main thread when wake word 'hi ankita' is detected."""
         print("[WakeWord] _on_wake_word() called on main thread.", flush=True)
         if self.voice_worker is not None and self.voice_worker.isRunning():
-            print("[WakeWord] Already listening — ignoring wake.", flush=True)
-            return  # Already listening — ignore duplicate wake
+            print("[WakeWord] Already listening â€” ignoring wake.", flush=True)
+            return  # Already listening â€” ignore duplicate wake
         self._append("System", "Wake word 'Hi Ankita' detected - starting voice listener...")
         self.on_voice_start()
 
@@ -711,7 +716,7 @@ class AnkitaWindow(QMainWindow):
         """Called on Qt main thread when 'stop' is detected during active listening."""
         print("[WakeWord] _on_stop_command() called on main thread.", flush=True)
         if self.voice_worker is None or not self.voice_worker.isRunning():
-            print("[WakeWord] Voice not running — ignoring stop.", flush=True)
+            print("[WakeWord] Voice not running â€” ignoring stop.", flush=True)
             return
         self._append("System", "Stop command heard - stopping voice listener.")
         self.on_voice_stop()
@@ -724,24 +729,24 @@ class AnkitaWindow(QMainWindow):
         # Drain Hive Mind drone completion notifications
         if self.hive is not None:
             for note in self.hive.check_notifications():
-                self._append("🐝 Hive", note)
+                self._append("ðŸ Hive", note)
 
         for event in self.proactive.get_pending_events():
 
             # ------------------------------------------------------------------
-            # Sentinel (idle screen-watch alert) — show with 👁️ prefix
+            # Sentinel (idle screen-watch alert) â€” show with ðŸ‘ï¸ prefix
             # ------------------------------------------------------------------
             if event.kind == "sentinel":
                 sentinel_text = event.data.get("text", event.message)
                 idle_label = event.data.get("idle_label", "a while")
                 if sentinel_text:
-                    self._append("👁️ Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
+                    self._append("ðŸ‘ï¸ Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
                 continue
 
             self._append("A.N.K.I.T.A", event.message)
 
             # ------------------------------------------------------------------
-            # DreamState epiphany — auto-inject reply + TTS, no user input needed
+            # DreamState epiphany â€” auto-inject reply + TTS, no user input needed
             # ------------------------------------------------------------------
             if event.kind == "dream_epiphany":
                 epiphany_text = event.data.get("text", event.message)
@@ -852,45 +857,110 @@ class AnkitaWindow(QMainWindow):
 
         # --- Hive Mind commands ---
         if text.lower() == "/hive":
-            self._append("🐝 Hive", self.hive.list_tasks())
+            self._append("ðŸ Hive", self.hive.list_tasks())
             return
+        # --- Watchdog status command ---
+        if text.lower() == "/watchdogs":
+            mgr = getattr(self, "watchdog_mgr", None)
+            status = mgr.status() if mgr else "[Watchdog] WatchdogManager not running."
+            self._append("Watchdogs", status)
+            return
+
+        # --- Implicit feedback detection (👍/👎 or "good"/"bad") ---
+        _impl_fb = None
+        try:
+            _impl_fb = self.feedback_engine.detect_implicit_feedback(text, self._last_fb_iid)
+        except Exception:
+            pass
+        if _impl_fb is not None:
+            _emoji = "👍" if _impl_fb == "positive" else "👎"
+            self._append("A.N.K.I.T.A", f"Thanks for the feedback {_emoji}")
+            return
+
+        # --- Feedback stats ---
+        if text.lower() == "/feedback stats":
+            try:
+                self._append("📊 Feedback", self.feedback_engine.get_stats())
+            except Exception as exc:
+                self._append("📊 Feedback", f"Error: {exc}")
+            return
+
+        # --- GitHub re-authorization command ---
+        if text.lower() in ("/reauth github", "/reauth-github"):
+            import threading
+            def _do_reauth():
+                try:
+                    from tools.auth_manager import get_github_token, github_token_status
+                    self._append("GitHub", "Starting Device Flow... check the browser and enter the code shown.")
+                    get_github_token(force_reauth=True)
+                    self._append("GitHub", github_token_status())
+                except Exception as exc:
+                    self._append("GitHub", f"Re-auth failed: {exc}")
+            threading.Thread(target=_do_reauth, daemon=True).start()
+            return
+
+        if text.lower() == "/github status":
+            try:
+                from tools.auth_manager import github_token_status
+                self._append("GitHub", github_token_status())
+            except Exception as exc:
+                self._append("GitHub", f"Error: {exc}")
+            return
+
         if text.lower().startswith("show "):
             task_id = text[5:].strip()
-            self._append("🐝 Hive", self.hive.get_result(task_id))
+            self._append("ðŸ Hive", self.hive.get_result(task_id))
             return
 
         # Save user message to ChromaDB immediately so DreamAgent has memories
         self.memory.add(self.session_id, "user", text)
         self._pending_user_text = text  # store for _on_reply
 
-        # ── Save to session vault ──────────────────────────────────────────────
+        # â”€â”€ Save to session vault â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self.session.add_message("user", text)
 
         mem_context = self.memory.format_memory_context(text, n=4)
         if mem_context:
             self.messages.append({"role": "system", "content": mem_context})
 
-        # Route ALL messages through HiveMind — fully async, never blocks UI
+        # Route ALL messages through HiveMind â€” fully async, never blocks UI
         # Reply arrives via Qt signal (thread-safe) from the drone thread
         def _gui_reply(reply_text: str) -> None:
-            # Called from background drone thread — MUST use signal, not direct UI call
+            # Called from background drone thread â€” MUST use signal, not direct UI call
             if reply_text:
                 self.drone_reply_ready.emit(reply_text)
 
         self._set_busy(True)
         ack = self.hive.delegate(text, self.messages, send_fn=_gui_reply)
         if ack:
-            # Heavy task — show "Started 🐝" acknowledgement immediately
+            # Heavy task â€” show "Started ðŸ" acknowledgement immediately
             self._append("A.N.K.I.T.A", ack)
-            self._set_busy(False)  # unblock UI — drone runs in background
+            self._set_busy(False)  # unblock UI â€” drone runs in background
 
     def _on_drone_reply(self, reply: str) -> None:
         """Slot called safely on the main Qt thread when a drone finishes."""
         if not reply:
             return
         self._append("A.N.K.I.T.A", reply)
+
+        # FeedbackEngine: track this response for implicit/explicit feedback
+        try:
+            _iid = self.feedback_engine.new_interaction()
+            self.feedback_engine.record_interaction(_iid, "", reply)
+            self._last_fb_iid = _iid
+            # Append thumbs up/down HTML after the response
+            self.chat.append(
+                f"<span style='color:#888;font-size:11px;'>"
+                f"  <a href='fb:thumbs_up:{_iid}' style='color:#5f5;text-decoration:none;'>👍 Good</a>"
+                f"  &nbsp;&nbsp;"
+                f"  <a href='fb:thumbs_down:{_iid}' style='color:#f55;text-decoration:none;'>👎 Bad</a>"
+                f"</span>"
+            )
+        except Exception:
+            pass
+
         self.memory.add(self.session_id, "assistant", reply)
-        # ── Save assistant reply to session vault + compress if needed ─────────
+        # ── Save assistant reply to session vault + compress if needed ──────────
         self.session.add_message("assistant", reply)
         import threading as _t
         _t.Thread(target=self.session.compress_if_needed, daemon=True,
@@ -920,11 +990,11 @@ class AnkitaWindow(QMainWindow):
 
     def on_voice_toggle(self) -> None:
         if self.voice_worker is not None and self.voice_worker.isRunning():
-            # Stop listening — clear the flag so WakeWordListener can resume
+            # Stop listening â€” clear the flag so WakeWordListener can resume
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
             self._voice_active_flag.clear()
-            self.voice_btn.setText("🎙 Listen")
+            self.voice_btn.setText("ðŸŽ™ Listen")
             self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
             self.status_label.setText("Ready.")
         else:
@@ -942,9 +1012,9 @@ class AnkitaWindow(QMainWindow):
                 self.agent, self.messages, api_key=api_key, lang_code=lang)
             mic_label = self.voice_worker.mic_name
             if any(kw in mic_label for kw in ("invalid", "fallback", "auto (")):
-                self._append("System", f"⚠️ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
+                self._append("System", f"âš ï¸ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
             else:
-                self._append("System", f"🎙 Mic: {mic_label}")
+                self._append("System", f"ðŸŽ™ Mic: {mic_label}")
             self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
             self.voice_worker.heard.connect(lambda _: self.proactive.set_last_interaction())
             self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
@@ -953,7 +1023,7 @@ class AnkitaWindow(QMainWindow):
             # Set flag so WakeWordListener backs off while VoiceCallWorker holds the mic
             self._voice_active_flag.set()
             self.voice_worker.start()
-            self.voice_btn.setText("⏹ Stop")
+            self.voice_btn.setText("â¹ Stop")
             self.voice_btn.setStyleSheet(self._btn_style("#6a2a2a", "#8a3a3a"))
             self.status_label.setText(f"Listening on {self.voice_worker.mic_name[:30]}...")
 
@@ -1006,15 +1076,15 @@ def main() -> None:
     try:
         window = AnkitaWindow()
     except SystemExit as exc:
-        # build_runtime_from_env calls sys.exit(1) on auth failure — surface it
-        QMessageBox.critical(None, "A.N.K.I.T.A — Startup Error",
+        # build_runtime_from_env calls sys.exit(1) on auth failure â€” surface it
+        QMessageBox.critical(None, "A.N.K.I.T.A â€” Startup Error",
                              "Failed to initialise LLM runtime.\n\n"
                              "Check your .env file (COPILOT_GITHUB_TOKEN / GROQ_API_KEY).\n\n"
                              f"Exit code: {exc.code}")
         sys.exit(exc.code or 1)
     except Exception as exc:
         import traceback
-        QMessageBox.critical(None, "A.N.K.I.T.A — Startup Error", traceback.format_exc())
+        QMessageBox.critical(None, "A.N.K.I.T.A â€” Startup Error", traceback.format_exc())
         traceback.print_exc()
         sys.exit(1)
     window.show()

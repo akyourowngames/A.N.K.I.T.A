@@ -1015,7 +1015,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "properties": {
                     "action":           {"type": "string", "enum": ["append_row", "read_range", "create_sheet", "list_sheets", "update_cell"]},
                     "spreadsheet_name": {"type": "string", "description": "Human-readable spreadsheet name, e.g. 'Expenses 2026'"},
-                    "data":             {"type": "array",  "description": "Row data for append_row, e.g. ['2026-02-28', 'Pizza', 500]"},
+                    "data":             {"type": "array",  "items": {}, "description": "Row data for append_row, e.g. ['2026-02-28', 'Pizza', 500]"},
                     "range_notation":   {"type": "string", "description": "A1 notation range for read_range, e.g. 'A1:D20'"},
                     "sheet_tab":        {"type": "string", "description": "Tab name within the spreadsheet (default: 'Sheet1')"},
                     "title":            {"type": "string", "description": "Title for create_sheet"},
@@ -1528,11 +1528,33 @@ def _hard_cap(result: Any) -> Any:
     This prevents 400 Bad Request / context_length_exceeded crashes from fat API payloads.
     Non-string results (dicts, lists) are JSON-serialised first, then checked.
     Returns the original result unchanged if it's within the limit.
+
+    VISION EXCEPTION: If the result contains a "base64" key (vision tool output),
+    we strip the base64 field BEFORE checking size. The vision intercept in
+    agent_runtime.py / orchestrator.py handles base64 separately via call_chat_with_image().
+    Truncating a base64 field corrupts the image and breaks JSON parsing.
     """
-    if isinstance(result, (dict, list)):
+    if isinstance(result, dict):
+        # VISION EXCEPTION: preserve base64 fields from truncation
+        # The vision intercept extracts base64 BEFORE _hard_cap is applied in execute_tool_call.
+        # But if the result is large due to OTHER fields, strip base64 for size check only.
+        if "base64" in result:
+            # Pass through unchanged — vision intercept handles this result directly
+            return result
+        # Recursively check inner "result" dict for base64
+        _inner = result.get("result", {})
+        if isinstance(_inner, dict) and "base64" in _inner:
+            return result  # pass through — vision intercept will unwrap it
+
         serialised = json.dumps(result, ensure_ascii=False)
         if len(serialised) <= _HARD_CAP_CHARS:
-            return result  # small enough — keep native type for downstream
+            return result
+        truncated = serialised[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+        return {"status": "truncated", "data": truncated}
+    if isinstance(result, list):
+        serialised = json.dumps(result, ensure_ascii=False)
+        if len(serialised) <= _HARD_CAP_CHARS:
+            return result
         truncated = serialised[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
         return {"status": "truncated", "data": truncated}
     if isinstance(result, str) and len(result) > _HARD_CAP_CHARS:

@@ -530,7 +530,12 @@ AVAILABLE ACTIONS (interpret user intent and call the right one):
    Trigger phrases: 'watchdog status', 'what are you watching', 'show watchers', 'monitoring status'
    → Reply with: "WATCHDOG_ACTION: status"
 
-5. STOP WATCHER — user wants to stop a specific watcher:
+5. ADD GIT REPO — user wants to monitor a git repository for new commits/PRs:
+   Trigger phrases: 'watch git repo', 'monitor repository', 'track commits', 'alert on new commits'
+   → Parse the repo path or URL
+   → Reply with: "WATCHDOG_ACTION: add_git_repo|<repo_path_or_url>"
+
+6. STOP WATCHER — user wants to stop a specific watcher:
    → Reply with: "WATCHDOG_ACTION: stop|<WatcherName>"
 
 PARSING EXAMPLES:
@@ -539,6 +544,7 @@ PARSING EXAMPLES:
 - "watch bitcoin, alert if it goes above $100k" → "WATCHDOG_ACTION: add_price_alert|bitcoin|price_above|100000"
 - "track news about AI regulation in India" → "WATCHDOG_ACTION: add_news_keyword|AI regulation India"
 - "watch my Downloads folder" → "WATCHDOG_ACTION: add_watch_dir|C:/Users/anime/Downloads"
+- "monitor my project repo" → "WATCHDOG_ACTION: add_git_repo|C:/Users/anime/3D Objects/A.N.K.I.T.A"
 - "what are you monitoring?" → "WATCHDOG_ACTION: status"
 
 RULES:

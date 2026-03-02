@@ -3,7 +3,7 @@ WhatsApp send tool for A.N.K.I.T.A — PyAutoGUI-based outbound sender.
 
 Strategy:
   1. Open WhatsApp Web send URL in your default browser (already logged in).
-  2. Wait 10 seconds for the page to load.
+  2. Wait 15 seconds for the page to load.
   3. Click message box, paste via clipboard, hit Enter.
 
   No profile issues. Messages stay in history. Works with your real Chrome.
@@ -41,17 +41,17 @@ def _focus_browser() -> None:
         pass
 
 
-def send_whatsapp(phone: str, message: str, wait: int = 10) -> Dict[str, Any]:
+def send_whatsapp(phone: str, message: str, wait: int = 15) -> Dict[str, Any]:
     """
     Send a WhatsApp message via WhatsApp Web using PyAutoGUI.
 
-    Opens the send URL in your default browser, waits 10 seconds for it
+    Opens the send URL in your default browser, waits 15 seconds for it
     to load, then uses keyboard automation to send the message.
 
     Args:
         phone:   E.164 format number, e.g. "+919876543210".
         message: The message text to send.
-        wait:    Seconds to wait for WhatsApp Web to load (default 10).
+        wait:    Seconds to wait for WhatsApp Web to load (default 15).
 
     Returns:
         {"ok": True,  "phone": phone, "message": message} on success.
