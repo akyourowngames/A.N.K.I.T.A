@@ -311,30 +311,19 @@ def auto_extract_memories(user_text: str, assistant_reply: str) -> List[str]:
     """
     Automatically extract key facts from a conversation turn and store them.
 
+    Fully LLM-driven — no hardcoded keyword lists or category rules.
+    The model decides what is worth remembering and how to categorize it.
+
     Runs a lightweight LLM pass over (user_text, assistant_reply) to identify
     any personal facts, preferences, names, locations, or projects worth remembering.
     Silently skips if nothing extractable is found.
 
-    Runs in a background thread — never blocks the main conversation.
-
     Returns:
-        List of extracted + stored memory strings (empty if nothing found).
+        List of newly stored memory strings (empty if nothing new found).
     """
-    # Quick rule-based pre-filter: only run LLM extraction if the user message
-    # contains personal signals. Avoids wasting tokens on "what is 2+2?" etc.
-    _PERSONAL_SIGNALS = [
-        "i am", "i'm", "my name", "my age", "i work", "i live", "i like",
-        "i love", "i hate", "i prefer", "i use", "i study", "i go to",
-        "my friend", "my brother", "my sister", "my mom", "my dad", "my family",
-        "my project", "my app", "my company", "my boss", "my team",
-        "i'm from", "i was born", "i have a", "i own", "my hobby", "i enjoy",
-        "my favourite", "my favorite", "i want to", "my goal", "my dream",
-        "i drink", "i eat", "i play", "i watch", "i read", "i listen",
-        "call me", "remember", "don't forget", "note that", "keep in mind",
-    ]
-    text_lower = user_text.lower()
-    has_signal = any(sig in text_lower for sig in _PERSONAL_SIGNALS)
-    if not has_signal:
+    # Skip very short messages that are unlikely to contain facts (< 4 words)
+    # This avoids wasting API calls on one-word replies like "ok", "thanks", "yes"
+    if len(user_text.split()) < 4:
         return []
 
     try:
@@ -342,32 +331,50 @@ def auto_extract_memories(user_text: str, assistant_reply: str) -> List[str]:
 
         runtime = build_runtime_from_env()
 
+        # Get existing memories to avoid re-storing duplicates
+        existing = format_memory_block()
+
         extraction_prompt = (
-            "Extract ONLY personal facts about the user from this conversation turn. "
-            "Output a JSON array of objects: [{\"text\": \"fact\", \"category\": \"category\"}]\n"
-            "Categories: user_profile, facts, preferences, people, locations, projects\n"
-            "Rules:\n"
-            "- Only extract CLEAR, SPECIFIC facts (not vague statements)\n"
-            "- Skip questions, hypotheticals, small talk\n"
-            "- Skip facts already covered by the assistant's memory recall\n"
-            "- Each fact should be a complete sentence\n"
-            "- Return [] if nothing worth remembering\n\n"
+            "You are a personal memory extractor for an AI assistant.\n"
+            "Analyse the conversation turn below and extract any facts worth remembering long-term about the USER.\n\n"
+            "What to extract:\n"
+            "- Personal details (name, age, location, occupation, nationality)\n"
+            "- Preferences and opinions (likes, dislikes, habits, favourite things)\n"
+            "- People they mention (friends, family, colleagues)\n"
+            "- Places (where they live, work, study, visit)\n"
+            "- Projects or goals they are working on\n"
+            "- Any specific facts they share about themselves\n\n"
+            "What to skip:\n"
+            "- Questions the user is asking\n"
+            "- General knowledge queries (weather, news, coding help)\n"
+            "- Hypotheticals or jokes\n"
+            "- Facts already in memory (shown below)\n"
+            "- Vague or unclear statements\n\n"
+            f"Existing memories (do NOT re-extract these):\n{existing or 'None yet'}\n\n"
             f"User said: {user_text}\n"
-            f"Assistant replied: {assistant_reply[:500]}\n\n"
-            "JSON array only, no explanation:"
+            f"Assistant replied: {assistant_reply[:300]}\n\n"
+            "Output ONLY a JSON array (or [] if nothing to store):\n"
+            '[{"text": "User\'s name is Prakhar", "category": "user_profile"}, ...]\n'
+            "Valid categories: user_profile, facts, preferences, people, locations, projects\n"
+            "JSON array only:"
         )
 
         raw = call_chat_once(
             runtime,
             extraction_prompt,
-            max_tokens=300,
+            max_tokens=400,
             temperature=0.0,
-            system="You are a memory extraction assistant. Output only valid JSON arrays.",
+            system=(
+                "You extract personal facts from conversations and output only valid JSON arrays. "
+                "Never output anything other than a JSON array. If nothing to extract, output []."
+            ),
         )
 
-        # Parse JSON from response
+        # Parse JSON — handle markdown code fences if model wraps in ```json
         import re as _re
-        match = _re.search(r"\[.*?\]", raw, _re.DOTALL)
+        # Strip markdown fences
+        raw_clean = _re.sub(r"```(?:json)?", "", raw).strip().strip("`")
+        match = _re.search(r"\[.*?\]", raw_clean, _re.DOTALL)
         if not match:
             return []
 
@@ -381,12 +388,12 @@ def auto_extract_memories(user_text: str, assistant_reply: str) -> List[str]:
                 continue
             text = str(item.get("text", "")).strip()
             category = str(item.get("category", "facts")).strip()
-            if not text or len(text) < 5:
+            if not text or len(text) < 8:
                 continue
             result = remember(text, category)
-            if "Already" not in result:  # Only count truly new memories
+            if "Already" not in result:
                 stored.append(text)
-                print(f"[AutoMemory] 💡 Extracted: [{category}] {text}", flush=True)
+                print(f"[AutoMemory] 💡 Stored: [{category}] {text}", flush=True)
 
         return stored
 
