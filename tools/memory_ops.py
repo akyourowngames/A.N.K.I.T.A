@@ -359,16 +359,21 @@ def auto_extract_memories(user_text: str, assistant_reply: str) -> List[str]:
             "JSON array only:"
         )
 
-        raw = call_chat_once(
-            runtime,
-            extraction_prompt,
-            max_tokens=400,
-            temperature=0.0,
-            system=(
-                "You extract personal facts from conversations and output only valid JSON arrays. "
-                "Never output anything other than a JSON array. If nothing to extract, output []."
-            ),
-        )
+        _messages = [
+            {
+                "role": "system",
+                "content": (
+                    "You extract personal facts from conversations and output only valid JSON arrays. "
+                    "Never output anything other than a JSON array. If nothing to extract, output []."
+                ),
+            },
+            {
+                "role": "user",
+                "content": extraction_prompt,
+            },
+        ]
+        response_msg = call_chat_once(runtime, _messages, None, 400)
+        raw = str(response_msg.get("content") or "")
 
         # Parse JSON — handle markdown code fences if model wraps in ```json
         import re as _re
