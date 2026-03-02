@@ -1,4 +1,4 @@
-"""
+﻿"""
 Telegram bridge for A.N.K.I.T.A.
 
 OpenClaw-style channel adapter — reuses the same agent runtime as gui.py and
@@ -161,6 +161,10 @@ def main() -> None:
     watchdog_mgr.load_config()
     watchdog_mgr.start_all()
 
+    # Self-improvement feedback engine
+    from tools.feedback_engine import init_engine as _init_fb
+    feedback_engine = _init_fb(workspace_root=WORKSPACE_ROOT, llm_runtime=runtime)
+
     # Per-chat state
     sessions: Dict[int, List[Dict[str, Any]]] = {}           # chat_id → message history
     tg_session_managers: Dict[int, SessionManager] = {}      # chat_id → SessionManager
@@ -198,7 +202,7 @@ def main() -> None:
         for event in proactive.get_pending_events():
             # ---- DreamState epiphany ----------------------------------------
             if event.kind == "dream_epiphany":
-                epiphany_text = event.data.get("text", event.message)
+                    send_text(bot_token, target_chat, f"💭 {epiphany_text}")
                 if not epiphany_text:
                     continue
                 try:
@@ -210,7 +214,7 @@ def main() -> None:
 
             # ---- ContentAgent raw_ideas request ------------------------------
             if event.kind == "content_request":
-                suggested_prompt = event.data.get("suggested_prompt", "")
+                    send_text(bot_token, target_chat, f"💡 {event.message}")
                 if not suggested_prompt:
                     continue
                 try:
@@ -238,7 +242,7 @@ def main() -> None:
                 sentinel_text = event.data.get("text", event.message)
                 idle_label = event.data.get("idle_label", "a while")
                 if sentinel_text:
-                    try:
+                            f"👁 *Sentinel* — I noticed you've been away for {idle_label}:\n\n{sentinel_text}",
                         send_text(
                             bot_token,
                             target_chat,
@@ -246,6 +250,63 @@ def main() -> None:
                         )
                     except Exception as err:
                         print(f"[proactive-sentinel-send-error] {err}")
+                continue
+
+            # ---- Price alert from PriceWatcher ---------------------------------
+            if event.kind == "price_alert":
+                symbol = event.data.get("symbol", "")
+                price = event.data.get("price", "")
+                condition = event.data.get("condition", "")
+                msg = event.message or f"{symbol} price alert: {condition} @ {price}"
+                try:
+                    send_text(bot_token, target_chat, f"\U0001f4c8 *Price Alert*\n{msg}")
+                except Exception as err:
+                    print(f"[proactive-price-send-error] {err}")
+                continue
+
+            # ---- News alert from NewsWatcher ------------------------------------
+            if event.kind == "news_alert":
+                keyword = event.data.get("keyword", "")
+                headline = event.data.get("headline", event.message)
+                url = event.data.get("url", "")
+                body = f"\U0001f4f0 *News Alert*"
+                if keyword:
+                    body += f" — {keyword}"
+                body += f"\n{headline}"
+                if url:
+                    body += f"\n{url}"
+                try:
+                    send_text(bot_token, target_chat, body)
+                except Exception as err:
+                    print(f"[proactive-news-send-error] {err}")
+                continue
+
+            # ---- File change from FileWatcher -----------------------------------
+            if event.kind == "file_change":
+                path = event.data.get("path", "")
+                change_type = event.data.get("change_type", "changed")
+                msg = event.message or f"File {change_type}: {path}"
+                try:
+                    send_text(bot_token, target_chat, f"\U0001f4c2 *File Change*\n{msg}")
+                except Exception as err:
+                    print(f"[proactive-file-send-error] {err}")
+                continue
+
+            # ---- Git commit/PR from GitWatcher ----------------------------------
+            if event.kind == "git_commit":
+                repo = event.data.get("repo", "")
+                commits = event.data.get("commits", [])
+                msg = event.message or f"New commits in {repo}"
+                body = f"\U0001f4bb *Git Update*"
+                if repo:
+                    body += f" — {repo}"
+                body += f"\n{msg}"
+                if commits:
+                    body += "\n" + "\n".join(f"  • {c}" for c in commits[:5])
+                try:
+                    send_text(bot_token, target_chat, body)
+                except Exception as err:
+                    print(f"[proactive-git-send-error] {err}")
                 continue
 
             # ---- All other proactive events (system alerts, cron, drop_file) -
@@ -359,6 +420,7 @@ def main() -> None:
                             "/watchdogs — show all watcher statuses\n"
                             "/github status — check GitHub token\n"
                             "/reauth github — re-authorize GitHub (device flow)\n"
+                            "/feedback stats — show self-improvement stats\n"
                             "show <id> — get result of a background task\n\n"
                             "Then just send normal prompts!"
                         ),
@@ -390,6 +452,13 @@ def main() -> None:
                 if text.lower() == "/github status":
                     from tools.auth_manager import github_token_status
                     send_text(bot_token, chat_id, github_token_status(), msg_id)
+                    continue
+
+                if text.lower() == "/feedback stats":
+                    try:
+                        send_text(bot_token, chat_id, feedback_engine.get_stats(), msg_id)
+                    except Exception as _exc:
+                        send_text(bot_token, chat_id, f"Error: {_exc}", msg_id)
                     continue
 
                 if text.lower().startswith("show "):

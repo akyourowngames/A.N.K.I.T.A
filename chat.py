@@ -264,16 +264,24 @@ def main() -> None:
             try:
                 memory.add(_session_id, "assistant", text)
                 proactive.set_last_interaction()
-                # Track last interaction ID for feedback detection
-                if _iid_ref[0] is None:
-                    try:
-                        from tools.feedback_engine import get_instance as _fb_get
-                        _fb = _fb_get()
-                        if _fb:
-                            _iid_ref[0] = _fb.new_interaction()
-                            _fb.record_interaction(_iid_ref[0], "", text)
-                    except Exception:
-                        pass
+                # Sync last interaction ID from FeedbackEngine so implicit feedback
+                # detection ("good"/"bad") targets the correct orchestrator interaction
+                try:
+                    from tools.feedback_engine import get_instance as _fb_get
+                    _fb = _fb_get()
+                    if _fb:
+                        # Use the most recently completed interaction logged to disk
+                        from tools.feedback_engine import _load_jsonl, _INSTANCE as _fb_inst
+                        if _fb_inst is not None:
+                            recent = _load_jsonl(_fb_inst._interactions_path, max_lines=1)
+                            if recent:
+                                _iid_ref[0] = recent[-1].get("id")
+                            elif _iid_ref[0] is None:
+                                # Fallback: create a new record for this response
+                                _iid_ref[0] = _fb.new_interaction()
+                                _fb.record_interaction(_iid_ref[0], "", text)
+                except Exception:
+                    pass
                 # ── Save assistant reply to session vault ──────────────────
                 session.add_message("assistant", text)
                 # ── Compress if history is getting long (background thread) ─
