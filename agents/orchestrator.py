@@ -72,6 +72,7 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
                      "Use a sensible filename based on the topic. "
                      "Then call launch_app to open it. "
                      "Do NOT just return text — save it."),
+    "CodeAgent":    ("CodeAgent",
                      "Your previous attempt had an error. Re-read the error message carefully, "
                      "identify the root cause, and retry with a corrected approach. "
                      "Do NOT repeat the same mistake."),
