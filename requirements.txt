@@ -1,0 +1,34 @@
+requests==2.32.3
+python-dotenv==1.0.1
+PyQt5==5.15.11
+numpy==2.1.3
+sounddevice==0.5.1
+SpeechRecognition==3.10.4
+pynput==1.7.7
+mss>=9.0.1
+pyautogui>=0.9.54
+
+# Optional — vector memory (semantic long-term recall)
+# pip install chromadb
+chromadb>=0.4.0
+
+# Optional — proactive system monitoring (CPU/RAM/battery alerts)
+# pip install psutil
+psutil>=5.9.0
+
+# Optional — WhatsApp AI Bridge (Ghost Browser mode)
+# pip install playwright && playwright install chromium
+playwright>=1.40.0
+
+# Web search (replaces duckduckgo-search which was renamed)
+ddgs>=7.0.0
+
+# God Mode Search — direct DuckDuckGo API (no HTML parsing, no 403s)
+# pip install duckduckgo-search
+duckduckgo-search>=6.0.0
+
+# Octopus Protocol — Cloud Integration (Google Sheets, YouTube, Figma)
+# pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+google-api-python-client>=2.100.0
+google-auth-oauthlib>=1.1.0
+google-auth-httplib2>=0.2.0
