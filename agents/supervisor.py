@@ -20,6 +20,12 @@ _SUPERVISOR_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Supervisor — the routing 
 
 Your job: Analyze the request and pick the BEST specialist.
 
+FOLLOW-UP DETECTION (CRITICAL — READ FIRST):
+If the message is a follow-up question about something ANKITA just did:
+  - Contains: "did you", "have you", "what did you", "why did you", "can you show me", "where is it"
+  - Route to GeneralAgent — it's a conversational clarification, not a new task
+  - GeneralAgent has access to conversation history and can answer based on what was just done
+
 AGENTS:
 - ContentAgent: Writes poems, essays, scripts, emails. (Can now OPEN apps to show work — handles full write+open pipeline itself).
 - SystemAgent: Controls Volume, Wi-Fi, Bluetooth, Screen, launches apps. (DOES NOT WRITE CONTENT).
@@ -91,6 +97,14 @@ A.N.K.I.T.A uses a Relay Race model. Agents pass the baton. Each does ONE job.
 
 11. "Fact check this" / "Is it true that" → WebAgent ONLY (uses fact_check tool)
 
+SAVE EXISTING CONTENT RULE (CRITICAL):
+If the user says "save that", "save it", "save this", "put that in a file", "prepare a report on it", "write it to a file" 
+and there is PREVIOUS CONTENT in the conversation history:
+  → Route to FileAgent ONLY (not ContentAgent)
+  → FileAgent will extract the content from history and save it
+  → This is DIFFERENT from "write X and save it" which needs ContentAgent first
+  → Key indicators: "that", "it", "this" referring to previous content
+
 SPECIALIST PRIORITY RULE:
 - open/launch/close app, screenshot, volume, brightness (NO writing) → SystemAgent only
 - play/stop/queue music → MusicAgent
@@ -118,6 +132,11 @@ Examples:
 - "write a poem in Notepad" → {"agents": ["ContentAgent", "FileAgent", "SystemAgent"], "parallel": false, "reasoning": "assembly line: write → save → open"}
 - "compare Python vs JavaScript" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "WebAgent uses compare_search for side-by-side comparison"}
 - "what does reddit think about AI" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "WebAgent uses search_reddit for community opinions"}
+- "save that to a file" (after previous content) → {"agents": ["FileAgent"], "parallel": false, "reasoning": "FileAgent saves existing content from conversation history"}
+- "save it" (after comparison/search) → {"agents": ["FileAgent"], "parallel": false, "reasoning": "FileAgent extracts and saves previous result"}
+- "put that in a file" → {"agents": ["FileAgent"], "parallel": false, "reasoning": "FileAgent saves content that already exists in history"}
+- "prepare a report on it and open in notepad" (after comparison) → {"agents": ["FileAgent"], "parallel": false, "reasoning": "FileAgent extracts previous comparison, saves it, and opens in Notepad"}
+- "write it to a file" (after search results) → {"agents": ["FileAgent"], "parallel": false, "reasoning": "FileAgent saves existing search results from history"}
 - "how do I fix ModuleNotFoundError" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "WebAgent uses search_stackoverflow for programming errors"}
 - "fact check: AI will replace all jobs" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "WebAgent uses fact_check to verify claims"}
 - "how's my PC health" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "SystemAgent uses system_health for diagnostics"}
@@ -181,8 +200,14 @@ class SupervisorAgent:
     def __init__(self, runtime: LLMRuntime) -> None:
         self.runtime = runtime
 
-    def route(self, user_text: str) -> Dict[str, Any]:
+    def route(self, user_text: str, history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
+        Route user request to appropriate specialist agent(s).
+        
+        Args:
+            user_text: The current user message
+            history: Optional conversation history (last N turns) for context
+        
         Returns:
             {
                 "agents": ["FileAgent", ...],
@@ -203,8 +228,13 @@ class SupervisorAgent:
 
         messages = [
             {"role": "system", "content": (_injected + _SUPERVISOR_SYSTEM_PROMPT) if _injected else _SUPERVISOR_SYSTEM_PROMPT},
-            {"role": "user", "content": user_text},
         ]
+        
+        # Inject conversation history if provided (last 4 turns for context)
+        if history:
+            messages.extend(history[-4:])  # Keep it short - Supervisor has 256 token budget
+        
+        messages.append({"role": "user", "content": user_text})
         try:
             response = call_chat_once(self.runtime, messages, tools=None, max_tokens=256)
             content = (response.get("content") or "").strip()

@@ -206,12 +206,58 @@ def _is_deep_mode_task(task: str, prior_context: Optional[str] = None) -> bool:
     return any(kw in combined for kw in _DEEP_MODE_TASK_KEYWORDS)
 
 
+def _extract_clean_history(messages: List[Dict[str, Any]], max_turns: int = 6) -> List[Dict[str, Any]]:
+    """Extract the last N clean user/assistant turns from conversation history.
+    
+    Filters out:
+    - System messages
+    - Tool messages
+    - Messages with base64 content
+    - Multimodal content (lists)
+    
+    Args:
+        messages: Full conversation history
+        max_turns: Maximum number of turns to extract (default 6 = 3 exchanges)
+    
+    Returns:
+        List of clean user/assistant message dicts
+    """
+    clean = []
+    for msg in reversed(messages):
+        role = msg.get("role")
+        content = msg.get("content")
+        
+        # Skip system and tool messages
+        if role in ("system", "tool"):
+            continue
+        
+        # Skip multimodal content (lists with image_url blocks)
+        if isinstance(content, list):
+            continue
+        
+        # Skip messages with base64 data
+        if isinstance(content, str) and ("base64" in content or len(content) > 10000):
+            continue
+        
+        # Only keep user and assistant messages with clean text content
+        if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+            clean.append({"role": role, "content": content})
+        
+        # Stop when we have enough turns
+        if len(clean) >= max_turns:
+            break
+    
+    # Reverse back to chronological order
+    return list(reversed(clean))
+
+
 def _run_specialist(
     specialist: SpecialistAgent,
     task: str,
     runtime: LLMRuntime,
     workspace_root: Path,
     prior_context: Optional[str] = None,
+    conversation_history: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     """Run a single specialist agent to completion and return its result.
 
@@ -220,7 +266,7 @@ def _run_specialist(
                        into the specialist's system prompt so it knows what happened
                        before it woke up. No hunting through text needed.
     """
-    messages = specialist.make_messages(task)
+    messages = specialist.make_messages(task, history=conversation_history)
 
     # ── SANITIZE MESSAGES: strip any image_url blocks that leaked from prior turns ──
     # Vision packets injected in a previous turn (e.g. from GUI) can persist in the
@@ -653,7 +699,9 @@ class Orchestrator:
         except Exception:
             pass
 
-        routing = self.supervisor.route(user_text)
+        # Extract clean history for supervisor routing context
+        supervisor_history = _extract_clean_history(messages, max_turns=4)
+        routing = self.supervisor.route(user_text, history=supervisor_history)
         agent_names: List[str] = routing["agents"]
         parallel: bool = routing["parallel"]
         reasoning: str = routing.get("reasoning", "")
@@ -694,6 +742,8 @@ class Orchestrator:
         if parallel and len(specialists) > 1:
             results = self._fan_out_parallel(specialists, user_text)
         else:
+            # Store messages for history extraction
+            self.messages = messages
             results = self._run_sequential_with_context(specialists, user_text)
 
         # 3. Fan-In: if only one result, return it directly
@@ -724,10 +774,14 @@ class Orchestrator:
         results: List[Dict[str, Any]] = []
         prior_context_block: Optional[str] = None  # injected into system prompt of next agent
 
+        # Extract clean conversation history for context continuity
+        conversation_history = _extract_clean_history(self.messages, max_turns=6) if hasattr(self, "messages") else []
+
         for sp in specialists:
             result = _run_specialist(
                 sp, task, self.runtime, self.workspace_root,
                 prior_context=prior_context_block,
+                conversation_history=conversation_history,
             )
 
             # â”€â”€ HYDRA PROTOCOL: Error Interceptor ðŸ‰ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -760,6 +814,7 @@ class Orchestrator:
                     backup_result = _run_specialist(
                         backup_sp, task, self.runtime, self.workspace_root,
                         prior_context=post_mortem,
+                        conversation_history=conversation_history,
                     )
                     backup_result["rerouted_from"] = sp.name
                     # Log both the failure and the reroute

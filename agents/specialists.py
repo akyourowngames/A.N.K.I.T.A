@@ -98,6 +98,21 @@ _FILE_SYSTEM_PROMPT = (
     "  Any other file    → launch_app(app='explorer', args=[absolute_path])\n"
     "This is Proof of Life — if the file pops open, it's real. Do this WITHOUT being asked.\n\n"
 
+    "SAVE THAT PROTOCOL (CRITICAL — READ WHEN USER SAYS 'SAVE THAT'):\n"
+    "When the user says 'save that', 'save it', 'save this', 'put that in a file', 'prepare a report on it':\n"
+    "1. Look at your conversation history (the messages you received before the current task)\n"
+    "2. Find the MOST RECENT assistant message with substantial content (comparison, search result, analysis)\n"
+    "3. Extract that content EXACTLY — this is what 'that' or 'it' refers to\n"
+    "4. DO NOT generate new content. DO NOT write apologies. Just extract and save what's already there.\n"
+    "5. Generate a filename based on the content topic:\n"
+    "   - Price comparison → 'price_comparison_<products>.txt'\n"
+    "   - Search results → 'search_results_<topic>.txt'\n"
+    "   - Analysis → 'analysis_<topic>.txt'\n"
+    f"6. Save to {_DESKTOP}\\<filename> using write_file with the EXTRACTED content\n"
+    "7. Open it with launch_app(app='notepad', args=[absolute_path])\n"
+    "8. Reply: 'Saved to Desktop as <filename> and opened it in Notepad! ✅'\n"
+    "NEVER say 'I cannot open it' — you have launch_app tool. NEVER generate new content when history exists.\n\n"
+
     "ASSEMBLY LINE ROLE:\n"
     "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'CONTENT:' section, "
     "that means ContentAgent just generated text for you to save. Your job:\n"
@@ -997,11 +1012,27 @@ class SpecialistAgent:
         self.tool_specs = _filter_specs(tool_names)
         self.system_prompt = system_prompt
 
-    def make_messages(self, task: str) -> List[Dict[str, Any]]:
-        return [
-            {"role": "system", "content": self.system_prompt},
-            {"role": "user", "content": task},
-        ]
+    def make_messages(self, task: str, history: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+        """Build messages for this specialist.
+
+        Args:
+            task: The current user task/message
+            history: Optional conversation history (last N clean user/assistant turns)
+
+        Returns:
+            List of messages: [system, history..., current_task]
+        """
+        messages = [{"role": "system", "content": self.system_prompt}]
+
+        # Inject conversation history if provided
+        if history:
+            messages.extend(history)
+
+        # Add current task
+        messages.append({"role": "user", "content": task})
+
+        return messages
+
 
     def __repr__(self) -> str:
         return f"<SpecialistAgent name={self.name!r} tools={[s['function']['name'] for s in self.tool_specs]}>"
