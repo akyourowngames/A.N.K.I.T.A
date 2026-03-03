@@ -981,6 +981,282 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "scrape_structured",
+            "description": (
+                "Extract structured data from any URL: tables → CSV-ready rows, links, emails, phone numbers, or embedded JSON. "
+                "Use when user wants 'get all rows from this table', 'find all emails on this page', 'extract the data from X'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "The URL to scrape"},
+                    "extract": {
+                        "type": "string",
+                        "enum": ["tables", "links", "emails", "phones", "json"],
+                        "description": "Type of data to extract: tables, links, emails, phones, or json"
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "compare_search",
+            "description": (
+                "Research two things in parallel and return structured comparison data. "
+                "Use for 'X vs Y', 'compare X and Y', 'which is better X or Y'. "
+                "Runs parallel searches and synthesizes a head-to-head comparison."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "item_a": {"type": "string", "description": "First item to compare"},
+                    "item_b": {"type": "string", "description": "Second item to compare"},
+                    "aspects": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional aspects to compare (e.g., ['price', 'specs', 'pros', 'cons'])"
+                    },
+                },
+                "required": ["item_a", "item_b"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_monitor",
+            "description": (
+                "Track if a web page has changed since last visit. "
+                "Actions: 'add' (start monitoring), 'check' (check all for changes), 'list' (show monitored pages), 'remove' (stop monitoring). "
+                "Use for 'tell me when this page changes', 'monitor this URL', 'notify me if X updates'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "check", "list", "remove"],
+                        "description": "Action to perform"
+                    },
+                    "url": {"type": "string", "description": "URL to monitor (required for add/remove)"},
+                    "keyword": {"type": "string", "description": "Optional keyword to watch for"},
+                    "label": {"type": "string", "description": "Optional label for the monitor"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "multi_search",
+            "description": (
+                "Run multiple independent search queries in parallel. "
+                "Perfect for: list comparisons, batch lookups, research on N topics at once. "
+                "Use when user asks about multiple separate things: 'find best X, Y, and Z', 'research A, B, C'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "queries": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of search queries to run in parallel"
+                    },
+                    "fetch_top": {
+                        "type": "integer",
+                        "description": "Number of pages to fetch per query (default 2)"
+                    },
+                },
+                "required": ["queries"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fact_check",
+            "description": (
+                "Verify a claim by fetching N independent sources and detecting conflicts. "
+                "Returns verified/disputed/unverified verdict with confidence percentage. "
+                "Use for 'is it true that...', 'fact check this:', 'verify this claim', 'did X really say'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "claim": {"type": "string", "description": "The claim to verify"},
+                    "sources": {
+                        "type": "integer",
+                        "description": "Number of sources to check (default 4)"
+                    },
+                },
+                "required": ["claim"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_reddit",
+            "description": (
+                "Search Reddit for crowd-sourced opinions and discussions. "
+                "Use for 'what does reddit think of X', 'reddit best X', 'has anyone had this problem', "
+                "'what do people say about Y'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "subreddit": {
+                        "type": "string",
+                        "description": "Optional subreddit name (e.g., 'python', 'programming')"
+                    },
+                    "max_posts": {
+                        "type": "integer",
+                        "description": "Maximum number of posts to return (default 5)"
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_stackoverflow",
+            "description": (
+                "Search Stack Overflow for programming solutions and technical answers. "
+                "Use for 'how to fix X error', 'Stack Overflow Y solution', technical programming questions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"},
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of results (default 5)"
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "image_search",
+            "description": (
+                "Search for images on the web via DuckDuckGo Images. "
+                "Optionally download the top result to Desktop. "
+                "Use for 'find images of X', 'download logo of Y', 'get a photo of Z'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Image search query"},
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of images to return (default 5)"
+                    },
+                    "download": {
+                        "type": "boolean",
+                        "description": "If true, downloads the top result to Desktop (default false)"
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "summarise_url",
+            "description": (
+                "Fetch a URL and produce a targeted summary. "
+                "Styles: 'bullets' (N bullet points), 'tldr' (2-3 sentences), 'eli5' (simple explanation), "
+                "'key_stats' (numbers only), 'pros_cons' (pros and cons lists). "
+                "Use when user pastes a URL and says 'summarise', 'tldr', 'what does this say'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "url": {"type": "string", "description": "URL to summarise"},
+                    "style": {
+                        "type": "string",
+                        "enum": ["bullets", "tldr", "eli5", "key_stats", "pros_cons"],
+                        "description": "Summary style (default 'bullets')"
+                    },
+                    "max_bullets": {
+                        "type": "integer",
+                        "description": "Number of bullet points for bullets style (default 7)"
+                    },
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trending_topics",
+            "description": (
+                "Fetch what's trending right now across Hacker News, Reddit, and news sources. "
+                "Use for 'what's trending', 'what's hot today', 'what are people talking about', 'top stories right now'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "category": {
+                        "type": "string",
+                        "enum": ["general", "tech", "finance", "sports", "entertainment", "science"],
+                        "description": "Category of trending topics (default 'general')"
+                    },
+                    "region": {
+                        "type": "string",
+                        "description": "Region code (default 'US')"
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "web_to_dataset",
+            "description": (
+                "Research a topic and extract structured data rows from web results ready for CSV/JSON export. "
+                "Use for 'build a table of X', 'give me a list of Y with their Z', 'make a spreadsheet of', "
+                "'extract all X and their Y from the web'."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Research query"},
+                    "columns": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of column names for the dataset"
+                    },
+                    "max_rows": {
+                        "type": "integer",
+                        "description": "Maximum number of rows to extract (default 20)"
+                    },
+                    "output_format": {
+                        "type": "string",
+                        "enum": ["json", "csv"],
+                        "description": "Output format (default 'json')"
+                    },
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "deep_research",
             "description": (
                 "Run a comprehensive multi-threaded deep research on any topic. "
@@ -1589,6 +1865,69 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
         return realtime_search.download_file(
             url=str(args.get("url", "")),
             save_folder=str(args.get("save_folder")) if args.get("save_folder") else None,
+        )
+    if name == "scrape_structured":
+        return realtime_search.scrape_structured(
+            url=str(args.get("url", "")),
+            extract=str(args.get("extract", "tables")),
+        )
+    if name == "compare_search":
+        return realtime_search.compare_search(
+            item_a=str(args.get("item_a", "")),
+            item_b=str(args.get("item_b", "")),
+            aspects=args.get("aspects"),
+        )
+    if name == "web_monitor":
+        return realtime_search.web_monitor(
+            action=str(args.get("action", "")),
+            url=str(args.get("url")) if args.get("url") else None,
+            keyword=str(args.get("keyword")) if args.get("keyword") else None,
+            label=str(args.get("label")) if args.get("label") else None,
+        )
+    if name == "multi_search":
+        return realtime_search.multi_search(
+            queries=args.get("queries", []),
+            fetch_top=int(args.get("fetch_top", 2)),
+        )
+    if name == "fact_check":
+        return realtime_search.fact_check(
+            claim=str(args.get("claim", "")),
+            sources=int(args.get("sources", 4)),
+        )
+    if name == "search_reddit":
+        return realtime_search.search_reddit(
+            query=str(args.get("query", "")),
+            subreddit=str(args.get("subreddit")) if args.get("subreddit") else None,
+            max_posts=int(args.get("max_posts", 5)),
+        )
+    if name == "search_stackoverflow":
+        return realtime_search.search_stackoverflow(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 5)),
+        )
+    if name == "image_search":
+        return realtime_search.image_search(
+            query=str(args.get("query", "")),
+            max_results=int(args.get("max_results", 5)),
+            download=bool(args.get("download", False)),
+        )
+    if name == "summarise_url":
+        return realtime_search.summarise_url(
+            url=str(args.get("url", "")),
+            style=str(args.get("style", "bullets")),
+            max_bullets=int(args.get("max_bullets", 7)),
+        )
+    if name == "trending_topics":
+        return realtime_search.trending_topics(
+            category=str(args.get("category", "general")),
+            region=str(args.get("region", "US")),
+        )
+    if name == "web_to_dataset":
+        return realtime_search.web_to_dataset(
+            query=str(args.get("query", "")),
+            columns=args.get("columns"),
+            max_rows=int(args.get("max_rows", 20)),
+            output_format=str(args.get("output_format", "json")),
         )
     if name == "write_content":
         return content_ops.write_and_save_content(

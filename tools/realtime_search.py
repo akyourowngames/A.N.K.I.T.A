@@ -20,10 +20,16 @@ import os
 import re
 import threading
 import time
+import warnings
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse, urlencode
 
 import requests
+
+# Suppress SSL warnings for scraping
+warnings.filterwarnings('ignore', message='Unverified HTTPS request')
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 log = logging.getLogger(__name__)
 
@@ -371,11 +377,40 @@ def fetch_page_content(
         )
 
         if resp.status_code != 200:
+            # Fallback to direct fetch if Jina fails
+            log.warning(f"[Jina] HTTP {resp.status_code}, falling back to direct fetch")
+            try:
+                direct_resp = requests.get(url, headers=_REAL_BROWSER_HEADERS, timeout=15, verify=False)
+                if direct_resp.status_code == 200:
+                    # Strip HTML tags to get readable text
+                    raw = direct_resp.text
+                    clean = re.sub(r'<style[^>]*>.*?</style>', ' ', raw, flags=re.DOTALL)
+                    clean = re.sub(r'<script[^>]*>.*?</script>', ' ', clean, flags=re.DOTALL)
+                    clean = re.sub(r'<[^>]+>', ' ', clean)
+                    clean = re.sub(r'\s+', ' ', clean).strip()
+                    
+                    truncated = False
+                    if len(clean) > max_chars:
+                        clean = clean[:max_chars] + "\n\n... [Content Truncated] ..."
+                        truncated = True
+                    
+                    return {
+                        "kind": "page_content",
+                        "ok": True,
+                        "url": url,
+                        "content": clean,
+                        "format": "text",
+                        "truncated": truncated,
+                        "char_count": len(clean),
+                    }
+            except Exception:
+                pass
+            
             return {
                 "kind": "page_content",
                 "ok": False,
                 "url": url,
-                "error": f"Jina Reader returned HTTP {resp.status_code}",
+                "error": f"Jina Reader returned HTTP {resp.status_code} and direct fetch failed",
             }
 
         text = resp.text
@@ -395,6 +430,33 @@ def fetch_page_content(
         }
 
     except Exception as err:
+        # Final fallback to direct fetch
+        try:
+            direct_resp = requests.get(url, headers=_REAL_BROWSER_HEADERS, timeout=15, verify=False)
+            if direct_resp.status_code == 200:
+                raw = direct_resp.text
+                clean = re.sub(r'<style[^>]*>.*?</style>', ' ', raw, flags=re.DOTALL)
+                clean = re.sub(r'<script[^>]*>.*?</script>', ' ', clean, flags=re.DOTALL)
+                clean = re.sub(r'<[^>]+>', ' ', clean)
+                clean = re.sub(r'\s+', ' ', clean).strip()
+                
+                truncated = False
+                if len(clean) > max_chars:
+                    clean = clean[:max_chars] + "\n\n... [Content Truncated] ..."
+                    truncated = True
+                
+                return {
+                    "kind": "page_content",
+                    "ok": True,
+                    "url": url,
+                    "content": clean,
+                    "format": "text",
+                    "truncated": truncated,
+                    "char_count": len(clean),
+                }
+        except Exception:
+            pass
+        
         return {"kind": "page_content", "ok": False, "url": url, "error": str(err)}
 
 
@@ -815,3 +877,787 @@ def download_file(url: str, save_folder: str = None) -> Dict[str, Any]:
         return {"ok": False, "url": url, "error": f"HTTP {err.response.status_code}: {err}"}
     except Exception as err:
         return {"ok": False, "url": url, "error": str(err)}
+
+
+# ---------------------------------------------------------------------------
+# 7. Structured Scraper — Extract tables, emails, links, phones, JSON
+# ---------------------------------------------------------------------------
+
+def scrape_structured(url: str, extract: str = "tables") -> Dict[str, Any]:
+    """
+    Extract structured data from a web page.
+    
+    Args:
+        url: The URL to scrape
+        extract: Type of data to extract:
+                 "tables" - HTML tables → list of rows
+                 "links" - All HTTP/HTTPS links
+                 "emails" - Email addresses
+                 "phones" - Phone numbers
+                 "json" - Embedded JSON blobs (schema.org, Next.js data, etc.)
+    
+    Returns:
+        Dict with ok, extract, url, and extracted data
+    """
+    if not url:
+        return {"ok": False, "error": "No URL provided"}
+    
+    url = str(url).strip()
+    
+    try:
+        resp = requests.get(url, headers=_REAL_BROWSER_HEADERS, timeout=20, verify=False)
+        resp.raise_for_status()
+        html = resp.text
+        
+        if extract == "tables":
+            # Parse HTML tables into list-of-dicts
+            rows = re.findall(r'<tr[^>]*>(.*?)</tr>', html, re.DOTALL | re.IGNORECASE)
+            tables = []
+            for row in rows:
+                cells = re.findall(r'<t[dh][^>]*>(.*?)</t[dh]>', row, re.DOTALL | re.IGNORECASE)
+                clean = [re.sub(r'<[^>]+>', '', c).strip() for c in cells]
+                if any(clean):  # Only add non-empty rows
+                    tables.append(clean)
+            return {
+                "ok": True,
+                "extract": "tables",
+                "url": url,
+                "rows": tables,
+                "count": len(tables),
+                "summary": f"Extracted {len(tables)} table rows from {url}"
+            }
+        
+        elif extract == "links":
+            links = re.findall(r'href=["\']([^"\']+)["\']', html)
+            links = [l for l in links if l.startswith('http')]
+            unique_links = list(dict.fromkeys(links))[:50]  # Dedupe and limit
+            return {
+                "ok": True,
+                "extract": "links",
+                "url": url,
+                "links": unique_links,
+                "count": len(unique_links),
+                "summary": f"Found {len(unique_links)} unique links on {url}"
+            }
+        
+        elif extract == "emails":
+            emails = list(set(re.findall(
+                r'[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}',
+                html
+            )))
+            return {
+                "ok": True,
+                "extract": "emails",
+                "url": url,
+                "emails": emails,
+                "count": len(emails),
+                "summary": f"Found {len(emails)} email addresses on {url}"
+            }
+        
+        elif extract == "phones":
+            phones = list(set(re.findall(
+                r'[\+]?[(]?[0-9]{1,4}[)]?[-\s\.]?[0-9]{3,5}[-\s\.]?[0-9]{4,6}',
+                html
+            )))[:30]
+            return {
+                "ok": True,
+                "extract": "phones",
+                "url": url,
+                "phones": phones,
+                "count": len(phones),
+                "summary": f"Found {len(phones)} phone numbers on {url}"
+            }
+        
+        elif extract == "json":
+            # Find embedded JSON blobs (Next.js __NEXT_DATA__, schema.org, etc.)
+            json_blobs = re.findall(
+                r'<script[^>]*type=["\']application/(?:ld\+)?json["\'][^>]*>(.*?)</script>',
+                html,
+                re.DOTALL | re.IGNORECASE
+            )
+            parsed = []
+            import json
+            for blob in json_blobs[:3]:
+                try:
+                    parsed.append(json.loads(blob.strip()))
+                except:
+                    pass
+            return {
+                "ok": True,
+                "extract": "json",
+                "url": url,
+                "blobs": parsed,
+                "count": len(parsed),
+                "summary": f"Extracted {len(parsed)} JSON blobs from {url}"
+            }
+        
+        return {"ok": False, "error": f"Unknown extract type: {extract}"}
+    
+    except Exception as err:
+        return {"ok": False, "url": url, "error": str(err)}
+
+
+# ---------------------------------------------------------------------------
+# 8. Compare Search — Side-by-side parallel research
+# ---------------------------------------------------------------------------
+
+def compare_search(
+    item_a: str,
+    item_b: str,
+    aspects: List[str] = None
+) -> Dict[str, Any]:
+    """
+    Research two things in parallel and return structured comparison data.
+    
+    Args:
+        item_a: First item to compare
+        item_b: Second item to compare
+        aspects: Optional list of aspects to compare (e.g., ["price", "specs", "pros", "cons"])
+    
+    Returns:
+        Dict with comparison data for both items
+    """
+    import concurrent.futures
+    
+    aspects = aspects or ["overview", "price", "pros", "cons", "verdict"]
+    
+    def _research_one(item: str) -> Dict:
+        result = search_and_fetch(
+            query=f"{item} review specs pros cons 2024",
+            fetch_top=3,
+            max_chars_per_page=8000
+        )
+        content = " ".join(
+            r.get("content", "") for r in result.get("results", [])
+        )[:8000]
+        return {"item": item, "content": content}
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+        fut_a = ex.submit(_research_one, item_a)
+        fut_b = ex.submit(_research_one, item_b)
+        data_a = fut_a.result()
+        data_b = fut_b.result()
+    
+    return {
+        "ok": True,
+        "kind": "comparison",
+        "item_a": item_a,
+        "item_b": item_b,
+        "aspects": aspects,
+        "data_a": data_a["content"],
+        "data_b": data_b["content"],
+        "instruction": (
+            "Compare these two items across all aspects and output a markdown table + verdict. "
+            "Format: | Aspect | Item A | Item B | Winner |"
+        ),
+        "summary": f"Researched {item_a} vs {item_b} in parallel"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 9. Web Monitor — Track page changes
+# ---------------------------------------------------------------------------
+
+import hashlib
+from pathlib import Path
+
+_MONITOR_STORE = Path.home() / ".ankita" / "web_monitors.json"
+
+def web_monitor(
+    action: str,
+    url: str = None,
+    keyword: str = None,
+    label: str = None
+) -> Dict[str, Any]:
+    """
+    Track if a web page has changed since last visit.
+    
+    Args:
+        action: "add" | "check" | "list" | "remove"
+        url: URL to monitor (required for add/remove)
+        keyword: Optional keyword to watch for (triggers alert when found)
+        label: Optional label for the monitor
+    
+    Returns:
+        Dict with action results
+    """
+    import json
+    
+    store = json.loads(_MONITOR_STORE.read_text()) if _MONITOR_STORE.exists() else {}
+    
+    if action == "add":
+        if not url:
+            return {"ok": False, "error": "url required"}
+        
+        page = fetch_page_content(url, max_chars=30000)
+        if not page.get("ok"):
+            return {"ok": False, "error": f"Could not fetch {url}"}
+        
+        content_hash = hashlib.sha256(page["content"].encode()).hexdigest()
+        key = label or url[:60]
+        store[key] = {
+            "url": url,
+            "hash": content_hash,
+            "keyword": keyword,
+            "added": time.time(),
+            "last_checked": time.time(),
+            "change_count": 0
+        }
+        _MONITOR_STORE.parent.mkdir(exist_ok=True)
+        _MONITOR_STORE.write_text(json.dumps(store, indent=2))
+        return {
+            "ok": True,
+            "monitoring": key,
+            "url": url,
+            "summary": f"Now monitoring {key} for changes"
+        }
+    
+    elif action == "check":
+        results = []
+        for key, config in store.items():
+            page = fetch_page_content(config["url"], max_chars=30000)
+            if not page.get("ok"):
+                continue
+            
+            new_hash = hashlib.sha256(page["content"].encode()).hexdigest()
+            changed = new_hash != config["hash"]
+            keyword_found = (
+                config.get("keyword") and
+                config["keyword"].lower() in page["content"].lower()
+            )
+            
+            if changed:
+                store[key]["hash"] = new_hash
+                store[key]["change_count"] = config.get("change_count", 0) + 1
+                store[key]["last_checked"] = time.time()
+            
+            results.append({
+                "label": key,
+                "url": config["url"],
+                "changed": changed,
+                "keyword_found": keyword_found,
+                "change_count": store[key]["change_count"]
+            })
+        
+        _MONITOR_STORE.write_text(json.dumps(store, indent=2))
+        return {
+            "ok": True,
+            "results": results,
+            "monitored": len(results),
+            "summary": f"Checked {len(results)} monitored pages"
+        }
+    
+    elif action == "list":
+        return {
+            "ok": True,
+            "monitors": list(store.keys()),
+            "count": len(store),
+            "summary": f"Monitoring {len(store)} pages"
+        }
+    
+    elif action == "remove":
+        removed = store.pop(label or url or "", None)
+        _MONITOR_STORE.write_text(json.dumps(store, indent=2))
+        return {
+            "ok": True,
+            "removed": bool(removed),
+            "summary": f"Removed monitor: {label or url}" if removed else "Monitor not found"
+        }
+    
+    return {"ok": False, "error": f"Unknown action: {action}"}
+
+
+# ---------------------------------------------------------------------------
+# 10. Multi Search — Parallel multi-query research
+# ---------------------------------------------------------------------------
+
+def multi_search(queries: List[str], fetch_top: int = 2) -> Dict[str, Any]:
+    """
+    Run multiple independent search queries in parallel.
+    Perfect for: list comparisons, batch lookups, research on N topics at once.
+    
+    Args:
+        queries: List of search queries to run in parallel
+        fetch_top: Number of pages to fetch per query
+    
+    Returns:
+        Dict with results bundles for each query
+    """
+    import concurrent.futures
+    
+    def _one(q: str) -> Dict:
+        res = search_and_fetch(query=q, fetch_top=fetch_top, max_chars_per_page=6000)
+        return {"query": q, "results": res.get("results", [])}
+    
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(len(queries), 6)) as ex:
+        futures = {ex.submit(_one, q): q for q in queries[:6]}  # cap at 6 parallel
+        results = [f.result() for f in concurrent.futures.as_completed(futures)]
+    
+    return {
+        "ok": True,
+        "kind": "multi_search",
+        "count": len(results),
+        "bundles": results,
+        "summary": f"Completed {len(results)} parallel searches"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 11. Fact Check — Cross-source verification
+# ---------------------------------------------------------------------------
+
+def fact_check(claim: str, sources: int = 4) -> Dict[str, Any]:
+    """
+    Verify a claim by fetching N independent sources and detecting conflicts.
+    
+    Args:
+        claim: The claim to verify
+        sources: Number of sources to check (default 4)
+    
+    Returns:
+        Dict with verdict, confidence, and source breakdown
+    """
+    result = search_and_fetch(
+        query=f'"{claim}" fact check verify',
+        max_results=sources * 2,
+        fetch_top=sources,
+        max_chars_per_page=5000
+    )
+    
+    source_verdicts = []
+    for r in result.get("results", []):
+        content = r.get("content", "").lower()
+        
+        # Rudimentary signal detection
+        supports = any(w in content for w in [
+            "confirmed", "true", "verified", "correct", "accurate"
+        ])
+        contradicts = any(w in content for w in [
+            "false", "debunked", "incorrect", "misleading", "wrong", "myth"
+        ])
+        
+        source_verdicts.append({
+            "url": r.get("url", ""),
+            "title": r.get("title", ""),
+            "signal": "supports" if supports and not contradicts
+                     else "contradicts" if contradicts
+                     else "neutral",
+            "excerpt": content[:300]
+        })
+    
+    supports_count = sum(1 for v in source_verdicts if v["signal"] == "supports")
+    contradicts_count = sum(1 for v in source_verdicts if v["signal"] == "contradicts")
+    confidence = round(supports_count / max(len(source_verdicts), 1) * 100)
+    
+    verdict = ("LIKELY TRUE" if supports_count > contradicts_count
+               else "DISPUTED" if contradicts_count > 0
+               else "UNVERIFIED")
+    
+    return {
+        "ok": True,
+        "claim": claim,
+        "verdict": verdict,
+        "confidence_pct": confidence,
+        "sources_checked": len(source_verdicts),
+        "source_breakdown": source_verdicts,
+        "summary": f"Fact check: {verdict} ({confidence}% confidence from {len(source_verdicts)} sources)"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 12. Reddit & Stack Overflow Search
+# ---------------------------------------------------------------------------
+
+def search_reddit(
+    query: str,
+    subreddit: str = None,
+    max_posts: int = 5
+) -> Dict[str, Any]:
+    """
+    Search Reddit via old.reddit.com JSON API (no auth required).
+    
+    Args:
+        query: Search query
+        subreddit: Optional subreddit name (e.g., "python", "programming")
+        max_posts: Maximum number of posts to return
+    
+    Returns:
+        Dict with posts list
+    """
+    base = (f"https://www.reddit.com/r/{subreddit}/search.json" if subreddit
+            else "https://www.reddit.com/search.json")
+    params = {"q": query, "sort": "relevance", "limit": max_posts, "t": "year"}
+    
+    try:
+        resp = requests.get(
+            base,
+            params=params,
+            headers={"User-Agent": "ANKITA-WebAgent/1.0"},
+            timeout=15
+        )
+        resp.raise_for_status()
+        data = resp.json()
+        
+        posts = []
+        for child in data.get("data", {}).get("children", [])[:max_posts]:
+            p = child.get("data", {})
+            posts.append({
+                "title": p.get("title", ""),
+                "subreddit": p.get("subreddit", ""),
+                "score": p.get("score", 0),
+                "url": "https://reddit.com" + p.get("permalink", ""),
+                "body": p.get("selftext", "")[:500],
+                "comments": p.get("num_comments", 0),
+            })
+        
+        return {
+            "ok": True,
+            "query": query,
+            "subreddit": subreddit,
+            "posts": posts,
+            "count": len(posts),
+            "summary": f"Found {len(posts)} Reddit posts for '{query}'"
+        }
+    
+    except Exception as e:
+        # Fallback: search DuckDuckGo with site:reddit.com
+        log.warning("[Reddit] API failed, falling back to web search: %s", e)
+        return search_and_fetch(f"{query} site:reddit.com", fetch_top=3)
+
+
+def search_stackoverflow(query: str, max_results: int = 5) -> Dict[str, Any]:
+    """
+    Search Stack Overflow via their public API (no key needed for basic use).
+    
+    Args:
+        query: Search query
+        max_results: Maximum number of results
+    
+    Returns:
+        Dict with Stack Overflow results
+    """
+    try:
+        resp = requests.get(
+            "https://api.stackexchange.com/2.3/search/advanced",
+            params={
+                "q": query,
+                "site": "stackoverflow",
+                "pagesize": max_results,
+                "order": "desc",
+                "sort": "votes",
+                "filter": "withbody"
+            },
+            timeout=10
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        
+        results = []
+        for i in items:
+            results.append({
+                "title": i["title"],
+                "score": i["score"],
+                "url": i["link"],
+                "answered": i["is_answered"],
+                "body": re.sub(r'<[^>]+>', '', i.get("body", ""))[:400]
+            })
+        
+        return {
+            "ok": True,
+            "query": query,
+            "results": results,
+            "count": len(results),
+            "summary": f"Found {len(results)} Stack Overflow answers for '{query}'"
+        }
+    
+    except Exception as err:
+        return {"ok": False, "query": query, "error": str(err)}
+
+
+# ---------------------------------------------------------------------------
+# 13. Image Search — Web image search + download
+# ---------------------------------------------------------------------------
+
+def image_search(
+    query: str,
+    max_results: int = 5,
+    download: bool = False
+) -> Dict[str, Any]:
+    """
+    Search for images on the web via DuckDuckGo Images API.
+    
+    Args:
+        query: Image search query
+        max_results: Maximum number of images to return
+        download: If True, downloads the top result to Desktop
+    
+    Returns:
+        Dict with image results
+    """
+    results = []
+    
+    # Try ddgs first (new package), then old duckduckgo_search
+    for _pkg, _cls in [("ddgs", "DDGS"), ("duckduckgo_search", "DDGS")]:
+        try:
+            import importlib
+            mod = importlib.import_module(_pkg)
+            DDGSCls = getattr(mod, _cls)
+            with DDGSCls() as ddgs:
+                results = list(ddgs.images(query, max_results=max_results))
+            if results:
+                break
+        except Exception:
+            continue
+    
+    images = []
+    for r in results[:max_results]:
+        images.append({
+            "title": r.get("title", ""),
+            "url": r.get("image", ""),
+            "thumbnail": r.get("thumbnail", ""),
+            "source": r.get("url", "")
+        })
+    
+    if download and images:
+        img_url = images[0]["url"]
+        try:
+            img_resp = requests.get(img_url, timeout=15, headers=_REAL_BROWSER_HEADERS)
+            ext = img_url.split(".")[-1].split("?")[0][:4] or "jpg"
+            safe_name = re.sub(r'[^\w]', '_', query[:30])
+            save_path = Path.home() / "Desktop" / f"{safe_name}.{ext}"
+            save_path.write_bytes(img_resp.content)
+            images[0]["downloaded_to"] = str(save_path)
+        except Exception as e:
+            images[0]["download_error"] = str(e)
+    
+    return {
+        "ok": True,
+        "query": query,
+        "images": images,
+        "count": len(images),
+        "summary": f"Found {len(images)} images for '{query}'"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 14. Summarise URL — TL;DR any link
+# ---------------------------------------------------------------------------
+
+def summarise_url(
+    url: str,
+    style: str = "bullets",
+    max_bullets: int = 7
+) -> Dict[str, Any]:
+    """
+    Fetch a URL and produce a targeted summary.
+    
+    Args:
+        url: URL to summarise
+        style: Summary style - "bullets" | "tldr" | "eli5" | "key_stats" | "pros_cons"
+        max_bullets: Number of bullet points (for bullets style)
+    
+    Returns:
+        Dict with content and instruction for LLM to synthesize
+    """
+    page = fetch_page_content(url, max_chars=20000)
+    if not page.get("ok"):
+        return {"ok": False, "url": url, "error": page.get("error", "Fetch failed")}
+    
+    content = page["content"][:15000]
+    
+    style_prompts = {
+        "bullets": f"Summarise the following article in exactly {max_bullets} bullet points. Be specific and include key facts, numbers, and names.",
+        "tldr": "Write a 2-3 sentence TL;DR of this article. Be direct, no fluff.",
+        "eli5": "Explain this article like I'm 5 years old, in simple plain English.",
+        "key_stats": "Extract ONLY the key numbers, statistics, and data points from this article. Format as a bulleted list.",
+        "pros_cons": "Extract the pros and cons mentioned in this content. Two lists: Pros ✅ and Cons ❌."
+    }
+    
+    title = page.get("content", "")[:100].split('\n')[0]
+    
+    return {
+        "ok": True,
+        "url": url,
+        "style": style,
+        "content_for_llm": content,
+        "instruction": style_prompts.get(style, style_prompts["bullets"]),
+        "title": title,
+        "summary": f"Fetched {url} for {style} summary"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 15. Trending Topics — What's hot right now
+# ---------------------------------------------------------------------------
+
+def trending_topics(category: str = "general", region: str = "US") -> Dict[str, Any]:
+    """
+    Fetch what's trending right now across multiple sources.
+    
+    Args:
+        category: "general" | "tech" | "finance" | "sports" | "entertainment" | "science"
+        region: Region code (default "US")
+    
+    Returns:
+        Dict with trending topics from multiple sources
+    """
+    results = {"category": category, "region": region, "sources": {}}
+    
+    # Hacker News Top Stories (no auth)
+    try:
+        hn_resp = requests.get(
+            "https://hacker-news.firebaseio.com/v0/topstories.json",
+            timeout=8
+        )
+        hn_resp.raise_for_status()
+        top_ids = hn_resp.json()[:10]
+        hn_stories = []
+        
+        for story_id in top_ids[:5]:
+            item = requests.get(
+                f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json",
+                timeout=5
+            ).json()
+            hn_stories.append({
+                "title": item.get("title", ""),
+                "url": item.get("url", ""),
+                "score": item.get("score", 0),
+                "comments": item.get("descendants", 0)
+            })
+        
+        results["sources"]["hacker_news"] = hn_stories
+    except Exception:
+        pass
+    
+    # Reddit r/popular (no auth)
+    try:
+        reddit_resp = requests.get(
+            "https://www.reddit.com/r/popular.json?limit=10",
+            headers={"User-Agent": "ANKITA/1.0"},
+            timeout=10
+        )
+        reddit_resp.raise_for_status()
+        reddit_data = reddit_resp.json()
+        
+        posts = []
+        for c in reddit_data["data"]["children"][:5]:
+            posts.append({
+                "title": c["data"]["title"],
+                "subreddit": c["data"]["subreddit"],
+                "score": c["data"]["score"],
+                "url": "https://reddit.com" + c["data"]["permalink"]
+            })
+        
+        results["sources"]["reddit_popular"] = posts
+    except Exception:
+        pass
+    
+    # Fallback: search news for trending
+    if not results["sources"]:
+        news = search_news(f"trending {category} today", max_results=8, include_urls=True)
+        results["sources"]["news_search"] = news.get("results", [])
+    
+    return {
+        "ok": True,
+        **results,
+        "summary": f"Trending topics in {category}"
+    }
+
+
+# ---------------------------------------------------------------------------
+# 16. Web to Dataset — Research → Structured CSV/JSON
+# ---------------------------------------------------------------------------
+
+def web_to_dataset(
+    query: str,
+    columns: List[str] = None,
+    max_rows: int = 20,
+    output_format: str = "json"
+) -> Dict[str, Any]:
+    """
+    Research a topic and extract structured data rows from web results.
+    
+    Args:
+        query: Research query
+        columns: List of column names for the dataset
+        max_rows: Maximum number of rows to extract
+        output_format: "json" or "csv"
+    
+    Returns:
+        Dict with content and extraction instruction for LLM
+    """
+    columns = columns or ["Name", "Description", "Key Fact", "Source"]
+    
+    # Fetch 5 pages of content
+    result = search_and_fetch(query=query, fetch_top=5, max_chars_per_page=8000)
+    all_content = "\n\n".join(
+        f"[SOURCE: {r.get('title', '')}]\n{r.get('content', '')[:3000]}"
+        for r in result.get("results", [])
+    )
+    
+    # Return content + structured extraction instruction for LLM
+    instruction = (
+        f"From the following web content, extract up to {max_rows} data rows.\n"
+        f"Columns: {columns}\n"
+        f"Output ONLY a JSON array of objects with these exact keys. "
+        f"Each row must have all {len(columns)} columns. "
+        f"If a value is unknown, use null. No extra text. Just the JSON array."
+    )
+    
+    return {
+        "ok": True,
+        "query": query,
+        "columns": columns,
+        "max_rows": max_rows,
+        "output_format": output_format,
+        "content_for_llm": all_content[:20000],
+        "extraction_instruction": instruction,
+        "summary": f"Researched '{query}' for dataset extraction"
+    }
+
+
+# ---------------------------------------------------------------------------
+# Helper classes for HTML parsing
+# ---------------------------------------------------------------------------
+
+from html.parser import HTMLParser
+
+class _DuckResultParser(HTMLParser):
+    """Minimal HTML parser for DuckDuckGo search results."""
+    def __init__(self):
+        super().__init__()
+        self.results = []
+        self._in_result = False
+        self._current_title = ""
+        self._current_url = ""
+    
+    def handle_starttag(self, tag, attrs):
+        attrs_dict = dict(attrs)
+        if tag == "a" and attrs_dict.get("class") == "result__a":
+            self._in_result = True
+            self._current_url = attrs_dict.get("href", "")
+    
+    def handle_data(self, data):
+        if self._in_result:
+            self._current_title += data.strip() + " "
+    
+    def handle_endtag(self, tag):
+        if tag == "a" and self._in_result:
+            self._in_result = False
+            if self._current_title and self._current_url:
+                self.results.append({
+                    "title": self._current_title.strip(),
+                    "url": self._current_url
+                })
+            self._current_title = ""
+            self._current_url = ""
+
+
+def _base_result(title: str, url: str, snippet: str) -> Dict[str, Any]:
+    """Create a base search result dict."""
+    return {
+        "title": title,
+        "url": url,
+        "snippet": snippet,
+        "domain": _extract_domain(url)
+    }
