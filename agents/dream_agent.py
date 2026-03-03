@@ -50,6 +50,63 @@ class DreamAgent:
     when the idle threshold is crossed.
     """
 
+    def _generate_dynamic_query(self, memory_store: "MemoryStore", session_id: str) -> str:
+        """
+        Generate a dynamic query based on time of day and recent activity.
+        
+        Returns a contextual query string instead of the hardcoded generic one.
+        """
+        from datetime import datetime
+        import random
+        
+        hour = datetime.now().hour
+        
+        # Time-based focus
+        if 6 <= hour < 12:
+            time_focus = "morning tasks goals plans priorities"
+        elif 12 <= hour < 18:
+            time_focus = "work progress challenges blockers"
+        elif 18 <= hour < 22:
+            time_focus = "accomplishments learnings insights"
+        else:
+            time_focus = "reflections ideas improvements"
+        
+        # Try to extract topics from recent memories
+        try:
+            recent = memory_store.search(query="recent", n=5, session_id=session_id)
+            if recent:
+                # Extract keywords from recent memories
+                topics = []
+                for mem in recent[:3]:
+                    text = mem.get("text", "").lower()
+                    # Extract potential topics (simple keyword extraction)
+                    words = text.split()
+                    # Look for technical terms, project names, etc.
+                    for word in words:
+                        if len(word) > 5 and word.isalpha():
+                            topics.append(word)
+                
+                if topics:
+                    # Use most common topics
+                    from collections import Counter
+                    common = Counter(topics).most_common(3)
+                    topic_str = " ".join([t[0] for t in common])
+                    return f"{topic_str} {time_focus}"
+        except Exception:
+            pass
+        
+        # Fallback: vary the generic query with some randomness
+        focus_areas = [
+            "problems struggles challenges",
+            "projects tasks work",
+            "ideas insights discoveries",
+            "questions uncertainties blockers",
+            "progress achievements wins"
+        ]
+        
+        selected_focus = random.choice(focus_areas)
+        return f"{selected_focus} {time_focus}"
+
     def synthesize(
         self,
         memory_store: "MemoryStore",
@@ -68,11 +125,17 @@ class DreamAgent:
             The epiphany string, or None if generation failed.
         """
         # ------------------------------------------------------------------
-        # 1. Retrieve recent memories
+        # 1. Generate dynamic query based on time and recent activity
+        # ------------------------------------------------------------------
+        query = self._generate_dynamic_query(memory_store, session_id)
+        print(f"[DreamAgent] Using dynamic query: '{query}'", flush=True)
+        
+        # ------------------------------------------------------------------
+        # 2. Retrieve recent memories
         # ------------------------------------------------------------------
         try:
             results = memory_store.search(
-                query="recent work tasks ideas problems struggles projects",
+                query=query,
                 n=n_memories,
                 session_id=session_id,
             )
@@ -81,7 +144,7 @@ class DreamAgent:
             # Fallback: try without session filter if scoped search fails
             try:
                 results = memory_store.search(
-                    query="recent work tasks ideas problems struggles projects",
+                    query=query,
                     n=n_memories,
                 )
             except Exception as _e2:

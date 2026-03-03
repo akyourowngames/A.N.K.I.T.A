@@ -170,25 +170,75 @@ _SYNTHESIZER_PROMPT = (
 )
 
 
-def _inject_memory(messages: List[Dict[str, Any]]) -> None:
+def _inject_memory(messages: List[Dict[str, Any]], session_id: Optional[str] = None) -> None:
     """
-    Hippocampus Injection â€” prepend the long-term memory block to the system prompt.
+    Hippocampus Injection — prepend the long-term memory block to the system prompt.
 
     This runs before EVERY specialist agent so they all share the same persistent
     context without needing to explicitly call recall().
 
-    Only injects if .ankita/memory.json is non-empty (avoids useless padding).
-    """
-    memory_block = format_memory_block()
-    if not memory_block:
-        return  # vault is empty â€” nothing to inject
+    UNIFIED MEMORY: Combines both memory systems:
+    1. JSON Vault (explicit facts) - from format_memory_block()
+    2. ChromaDB (semantic memories) - from memory.search()
 
+    Args:
+        messages: The message list to inject memory into
+        session_id: Optional session ID for ChromaDB semantic search
+    """
+    # Get explicit facts from JSON vault
+    vault_block = format_memory_block()
+    
+    # Get semantic memories from ChromaDB if session_id provided
+    chromadb_block = ""
+    if session_id:
+        try:
+            import memory as mem
+            # Extract recent context from messages for better semantic search
+            recent_context = _extract_recent_context(messages)
+            results = mem.search(session_id, query=recent_context, n=3, ttl_days=30)
+            
+            if results:
+                chromadb_lines = ["RECENT CONTEXT:"]
+                for r in results:
+                    # Format: "- [timestamp] content"
+                    content_preview = r.get("content", "")[:100]
+                    chromadb_lines.append(f"- {content_preview}")
+                chromadb_block = "\n".join(chromadb_lines)
+        except Exception as e:
+            print(f"[_inject_memory] ChromaDB search failed: {e}", flush=True)
+    
+    # Combine both memory sources
+    memory_parts = []
+    if vault_block:
+        memory_parts.append(vault_block)
+    if chromadb_block:
+        memory_parts.append(chromadb_block)
+    
+    if not memory_parts:
+        return  # No memory to inject
+    
+    memory_block = "\n\n".join(memory_parts)
+    
+    # Token guard: cap at ~500 tokens (roughly 650 words)
+    words = memory_block.split()
+    if len(words) > 650:
+        memory_block = " ".join(words[:650]) + "\n... [memory truncated]"
+    
+    # Inject into system message
     if messages and messages[0].get("role") == "system":
         original = messages[0].get("content", "")
         messages[0]["content"] = f"{original}\n\n{memory_block}"
     else:
-        # No system message yet â€” insert one at the front
+        # No system message yet — insert one at the front
         messages.insert(0, {"role": "system", "content": memory_block})
+
+
+def _extract_recent_context(messages: List[Dict[str, Any]], max_chars: int = 200) -> str:
+    """Extract recent conversation context for semantic memory search."""
+    # Get last 3 user messages
+    user_messages = [m.get("content", "") for m in messages[-10:] if m.get("role") == "user"]
+    recent = " ".join(user_messages[-3:])
+    return recent[:max_chars] if recent else "recent conversation"
 
 
 _DEEP_MODE_TASK_KEYWORDS = {
