@@ -26,13 +26,92 @@ def resolve_safe_path(workspace_root: Path, raw_path: str) -> Path:
     return candidate
 
 
+# Dangerous system paths that should NEVER be touched
+_DANGEROUS_PATHS = {
+    "C:\\Windows\\System32",
+    "C:\\Windows\\SysWOW64",
+    "/etc",
+    "/sys",
+    "/proc",
+    "/boot",
+    "/dev",
+}
+
+
+def resolve_any_path(raw_path: str) -> Path:
+    """
+    Resolve a path with FULL PC ACCESS - no workspace restriction.
+    
+    Used by FileAgent for unrestricted file operations across the entire PC.
+    
+    Rules:
+    - Absolute paths → use directly
+    - Paths starting with ~ → expand to home directory
+    - Relative paths → resolve against user's home directory (NOT workspace)
+    - Environment variables (%DESKTOP%, %USERPROFILE%, etc.) → expand automatically
+    - SAFETY: Block genuinely dangerous system paths (Windows\\System32, /etc, /sys, /proc)
+    
+    Args:
+        raw_path: The path string to resolve
+        
+    Returns:
+        Resolved Path object
+        
+    Raises:
+        ValueError: If path is empty or targets a dangerous system directory
+    """
+    if not isinstance(raw_path, str) or not raw_path.strip():
+        raise ValueError("path must be a non-empty string")
+    
+    # Expand environment variables first (%DESKTOP%, %USERPROFILE%, etc.)
+    expanded = os.path.expandvars(raw_path)
+    
+    # Convert to Path object
+    candidate = Path(expanded)
+    
+    # If absolute, use it directly
+    if candidate.is_absolute():
+        resolved = candidate.resolve()
+    # If starts with ~, expand to home
+    elif expanded.startswith("~"):
+        resolved = Path(expanded).expanduser().resolve()
+    # Otherwise, resolve against home directory (not workspace)
+    else:
+        resolved = (Path.home() / expanded).resolve()
+    
+    # SAFETY CHECK: Block dangerous system paths
+    resolved_str = str(resolved)
+    for dangerous in _DANGEROUS_PATHS:
+        if resolved_str.startswith(dangerous):
+            raise ValueError(
+                f"Access denied: {raw_path} targets protected system directory {dangerous}. "
+                "FileAgent cannot modify OS internals."
+            )
+    
+    return resolved
+
+
 def to_rel(workspace_root: Path, path: Path) -> str:
     return str(path.relative_to(workspace_root)).replace("\\", "/")
 
 
-def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200) -> Dict[str, Any]:
+def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    List files/directories.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to list (relative or absolute)
+        max_entries: Maximum number of entries to return
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
     limit = max(1, min(int(max_entries), 1000))
-    root = resolve_safe_path(workspace_root, path)
+    
+    if unrestricted:
+        root = resolve_any_path(path)
+    else:
+        root = resolve_safe_path(workspace_root, path)
+    
     if not root.exists():
         raise FileNotFoundError(f"path not found: {path}")
 
@@ -40,7 +119,7 @@ def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200) ->
     if root.is_file():
         st = root.stat()
         return {
-            "entries": [{"path": to_rel(workspace_root, root), "type": "file", "size": st.st_size}],
+            "entries": [{"path": str(root) if unrestricted else to_rel(workspace_root, root), "type": "file", "size": st.st_size}],
             "truncated": False,
         }
 
@@ -49,7 +128,7 @@ def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200) ->
         current_path = Path(current)
         for d in sorted(dirnames):
             p = current_path / d
-            entries.append({"path": to_rel(workspace_root, p), "type": "dir"})
+            entries.append({"path": str(p) if unrestricted else to_rel(workspace_root, p), "type": "dir"})
             if len(entries) >= limit:
                 return {"entries": entries, "truncated": True}
         for f in sorted(filenames):
@@ -58,7 +137,7 @@ def list_files(workspace_root: Path, path: str = ".", max_entries: int = 200) ->
                 size = p.stat().st_size
             except OSError:
                 size = None
-            entries.append({"path": to_rel(workspace_root, p), "type": "file", "size": size})
+            entries.append({"path": str(p) if unrestricted else to_rel(workspace_root, p), "type": "file", "size": size})
             if len(entries) >= limit:
                 return {"entries": entries, "truncated": True}
     return {"entries": entries, "truncated": False}
@@ -82,8 +161,20 @@ def _detect_encoding(raw: bytes) -> str:
     return "latin-1"  # guaranteed to decode any byte sequence
 
 
-def read_file(workspace_root: Path, path: str) -> Dict[str, Any]:
-    target = resolve_safe_path(workspace_root, path)
+def read_file(workspace_root: Path, path: str, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Read a text file.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to file (relative or absolute)
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
     if not target.exists() or not target.is_file():
         raise FileNotFoundError(f"file not found: {path}")
 
@@ -100,14 +191,29 @@ def read_file(workspace_root: Path, path: str) -> Dict[str, Any]:
     raw = target.read_bytes()
     encoding = _detect_encoding(raw)
     text = raw.decode(encoding, errors="replace")
-    return {"path": to_rel(workspace_root, target), "content": text, "encoding": encoding}
+    return {"path": str(target) if unrestricted else to_rel(workspace_root, target), "content": text, "encoding": encoding}
 
 
-def search_text(workspace_root: Path, query: str, path: str = ".", max_results: int = 100) -> Dict[str, Any]:
+def search_text(workspace_root: Path, query: str, path: str = ".", max_results: int = 100, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Search for text in files.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        query: Text to search for
+        path: Directory to search in
+        max_results: Maximum number of results
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
     q = str(query).strip()
     if not q:
         raise ValueError("query is required")
-    root = resolve_safe_path(workspace_root, path)
+    
+    if unrestricted:
+        root = resolve_any_path(path)
+    else:
+        root = resolve_safe_path(workspace_root, path)
+    
     if not root.exists():
         raise FileNotFoundError(f"path not found: {path}")
 
@@ -140,7 +246,8 @@ def search_text(workspace_root: Path, query: str, path: str = ".", max_results: 
         try:
             for idx, line in enumerate(file_path.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
                 if q in line:
-                    matches.append(f"{to_rel(workspace_root, file_path)}:{idx}:{line}")
+                    path_str = str(file_path) if unrestricted else to_rel(workspace_root, file_path)
+                    matches.append(f"{path_str}:{idx}:{line}")
                     if len(matches) >= limit:
                         return {"matches": matches, "truncated": True, "engine": "python"}
         except OSError:
@@ -237,8 +344,22 @@ def edit_file(
     return {"path": to_rel(workspace_root, target), "replacements": count}
 
 
-def delete_path(workspace_root: Path, path: str, recursive: bool = False, missing_ok: bool = False) -> Dict[str, Any]:
-    target = resolve_safe_path(workspace_root, path)
+def delete_path(workspace_root: Path, path: str, recursive: bool = False, missing_ok: bool = False, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Delete a file or directory.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to delete
+        recursive: Allow deleting directories
+        missing_ok: Don't error if path doesn't exist
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
     if not target.exists():
         if missing_ok:
             return {"path": path, "deleted": False, "reason": "not_found"}
@@ -248,10 +369,10 @@ def delete_path(workspace_root: Path, path: str, recursive: bool = False, missin
         if not recursive:
             raise IsADirectoryError("target is a directory; set recursive=true")
         shutil.rmtree(target)
-        return {"path": to_rel(workspace_root, target), "deleted": True, "type": "dir"}
+        return {"path": str(target) if unrestricted else to_rel(workspace_root, target), "deleted": True, "type": "dir"}
 
     target.unlink()
-    return {"path": to_rel(workspace_root, target), "deleted": True, "type": "file"}
+    return {"path": str(target) if unrestricted else to_rel(workspace_root, target), "deleted": True, "type": "file"}
 
 
 def rename_path(workspace_root: Path, path: str, new_name: str, overwrite: bool = False) -> Dict[str, Any]:
@@ -275,9 +396,24 @@ def rename_path(workspace_root: Path, path: str, new_name: str, overwrite: bool 
     return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest)}
 
 
-def move_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False) -> Dict[str, Any]:
-    source = resolve_safe_path(workspace_root, src)
-    dest = resolve_safe_path(workspace_root, dst)
+def move_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Move/rename a file or directory.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        src: Source path
+        dst: Destination path
+        overwrite: Allow overwriting existing destination
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        source = resolve_any_path(src)
+        dest = resolve_any_path(dst)
+    else:
+        source = resolve_safe_path(workspace_root, src)
+        dest = resolve_safe_path(workspace_root, dst)
+    
     if not source.exists():
         raise FileNotFoundError(f"path not found: {src}")
     if dest.exists() and not overwrite:
@@ -289,12 +425,32 @@ def move_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False)
         else:
             dest.unlink()
     shutil.move(str(source), str(dest))
-    return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest)}
+    
+    if unrestricted:
+        return {"from": str(source), "to": str(dest)}
+    else:
+        return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest)}
 
 
-def copy_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False, recursive: bool = False) -> Dict[str, Any]:
-    source = resolve_safe_path(workspace_root, src)
-    dest = resolve_safe_path(workspace_root, dst)
+def copy_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False, recursive: bool = False, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Copy a file or directory.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        src: Source path
+        dst: Destination path
+        overwrite: Allow overwriting existing destination
+        recursive: Allow copying directories
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        source = resolve_any_path(src)
+        dest = resolve_any_path(dst)
+    else:
+        source = resolve_safe_path(workspace_root, src)
+        dest = resolve_safe_path(workspace_root, dst)
+    
     if not source.exists():
         raise FileNotFoundError(f"path not found: {src}")
     if dest.exists() and not overwrite:
@@ -307,12 +463,18 @@ def copy_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False,
         if dest.exists() and overwrite:
             shutil.rmtree(dest)
         shutil.copytree(source, dest)
-        return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest), "type": "dir"}
+        if unrestricted:
+            return {"from": str(source), "to": str(dest), "type": "dir"}
+        else:
+            return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest), "type": "dir"}
 
     if dest.exists() and overwrite:
         dest.unlink()
     shutil.copy2(source, dest)
-    return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest), "type": "file"}
+    if unrestricted:
+        return {"from": str(source), "to": str(dest), "type": "file"}
+    else:
+        return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest), "type": "file"}
 
 
 def make_dir(workspace_root: Path, path: str, parents: bool = True, exist_ok: bool = True) -> Dict[str, Any]:
@@ -321,13 +483,25 @@ def make_dir(workspace_root: Path, path: str, parents: bool = True, exist_ok: bo
     return {"path": to_rel(workspace_root, target), "created": True}
 
 
-def file_info(workspace_root: Path, path: str) -> Dict[str, Any]:
-    target = resolve_safe_path(workspace_root, path)
+def file_info(workspace_root: Path, path: str, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Get file/directory metadata.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to inspect
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
     if not target.exists():
         raise FileNotFoundError(f"path not found: {path}")
     st = target.stat()
     return {
-        "path": to_rel(workspace_root, target),
+        "path": str(target) if unrestricted else to_rel(workspace_root, target),
         "type": "dir" if target.is_dir() else "file",
         "size": st.st_size,
         "mtime": st.st_mtime,

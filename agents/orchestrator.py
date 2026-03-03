@@ -496,7 +496,7 @@ def _run_specialist(
             try:
                 # Inject runtime so visual_click can call LLM vision API
                 execute_tool_call._runtime = runtime  # type: ignore[attr-defined]
-                result = execute_tool_call(tc, workspace_root=workspace_root)
+                result = execute_tool_call(tc, workspace_root=workspace_root, agent_name=specialist.name)
 
                 # Check if this tool returned image data (capture_screen / read_screen_context).
                 # execute_tool_call wraps the inner result as {"ok": True, "result": {...}},

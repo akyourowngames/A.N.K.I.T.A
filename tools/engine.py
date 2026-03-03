@@ -1625,7 +1625,10 @@ def _normalize_human_path(raw: str) -> str:
     return raw.strip().strip("\"'")
 
 
-def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, Any]:
+def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Optional[str] = None) -> Dict[str, Any]:
+    # FileAgent gets unrestricted access to the entire PC
+    unrestricted = (agent_name == "FileAgent")
+    
     if name == "lookup_contact":
         return contacts_ops.lookup_contact(name=str(args.get("name", "")))
 
@@ -1754,15 +1757,16 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             env={str(k): str(v) for k, v in env_obj.items()} if env_obj is not None else None,
         )
     if name == "list_files":
-        return fs_ops.list_files(workspace_root, path=str(args.get("path", ".")), max_entries=int(args.get("max_entries", 200)))
+        return fs_ops.list_files(workspace_root, path=str(args.get("path", ".")), max_entries=int(args.get("max_entries", 200)), unrestricted=unrestricted)
     if name == "read_file":
-        return fs_ops.read_file(workspace_root, path=str(args.get("path", "")))
+        return fs_ops.read_file(workspace_root, path=str(args.get("path", "")), unrestricted=unrestricted)
     if name == "search_text":
         return fs_ops.search_text(
             workspace_root,
             query=str(args.get("query", "")),
             path=str(args.get("path", ".")),
             max_results=int(args.get("max_results", 100)),
+            unrestricted=unrestricted,
         )
     if name == "write_file":
         return fs_ops.write_file(
@@ -1792,6 +1796,7 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             path=str(args.get("path", "")),
             recursive=bool(args.get("recursive", False)),
             missing_ok=bool(args.get("missing_ok", False)),
+            unrestricted=unrestricted,
         )
     if name == "move_path":
         return fs_ops.move_path(
@@ -1799,6 +1804,7 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             src=str(args.get("src", "")),
             dst=str(args.get("dst", "")),
             overwrite=bool(args.get("overwrite", False)),
+            unrestricted=unrestricted,
         )
     if name == "copy_path":
         return fs_ops.copy_path(
@@ -1807,6 +1813,7 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             dst=str(args.get("dst", "")),
             overwrite=bool(args.get("overwrite", False)),
             recursive=bool(args.get("recursive", False)),
+            unrestricted=unrestricted,
         )
     if name == "make_dir":
         return fs_ops.make_dir(
@@ -1816,7 +1823,7 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path) -> Dict[str, An
             exist_ok=bool(args.get("exist_ok", True)),
         )
     if name == "file_info":
-        return fs_ops.file_info(workspace_root, path=str(args.get("path", "")))
+        return fs_ops.file_info(workspace_root, path=str(args.get("path", "")), unrestricted=unrestricted)
     if name == "desktop_interact":
         return desktop_ops.desktop_interact(
             action=str(args.get("action", "")),
@@ -2133,7 +2140,7 @@ def _hard_cap(result: Any) -> Any:
     return result
 
 
-def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path) -> Dict[str, Any]:
+def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path, agent_name: Optional[str] = None) -> Dict[str, Any]:
     fn = tool_call.get("function", {})
     name = str(fn.get("name", ""))
     raw_args = fn.get("arguments", "{}")
@@ -2146,7 +2153,7 @@ def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path) -> Dict[s
     if not isinstance(args, dict):
         raise ValueError(f"Tool args must be an object for {name}")
 
-    result = _call(name, args, workspace_root)
+    result = _call(name, args, workspace_root, agent_name=agent_name)
     # 💎 Prism Protocol: hard-cap ALL tool outputs before they enter the context window
     result = _hard_cap(result)
     return {"ok": True, "tool": name, "result": result}

@@ -73,11 +73,32 @@ def _filter_specs(names: set) -> List[Dict[str, Any]]:
 
 import os as _os
 _DESKTOP = str(_os.path.join(_os.path.expanduser("~"), "Desktop")).replace("/", "\\")
+_DOCUMENTS = str(_os.path.join(_os.path.expanduser("~"), "Documents")).replace("/", "\\")
+_DOWNLOADS = str(_os.path.join(_os.path.expanduser("~"), "Downloads")).replace("/", "\\")
+_PICTURES = str(_os.path.join(_os.path.expanduser("~"), "Pictures")).replace("/", "\\")
+_MUSIC = str(_os.path.join(_os.path.expanduser("~"), "Music")).replace("/", "\\")
+_VIDEOS = str(_os.path.join(_os.path.expanduser("~"), "Videos")).replace("/", "\\")
+_HOME = str(_os.path.expanduser("~")).replace("/", "\\")
 
 _FILE_SYSTEM_PROMPT = (
     "You are ANKITA's File Agent — bestie-level file wizard. "
     "You read, write, search, organise, and manage files and directories like a pro. "
     "Reply short and punchy: 'Done! 📁 Saved to X.' — never robotic walls of text.\n\n"
+
+    "🌍 FULL PC ACCESS — YOU CAN GO ANYWHERE:\n"
+    "You have UNRESTRICTED access to the entire PC. You are NOT limited to the workspace.\n"
+    "You can list, read, write, move, copy, and delete files ANYWHERE on the machine.\n\n"
+
+    "📍 KNOWN PC LOCATIONS (use these directly):\n"
+    f"Desktop:    {_DESKTOP}\n"
+    f"Documents:  {_DOCUMENTS}\n"
+    f"Downloads:  {_DOWNLOADS}\n"
+    f"Pictures:   {_PICTURES}\n"
+    f"Music:      {_MUSIC}\n"
+    f"Videos:     {_VIDEOS}\n"
+    f"Home:       {_HOME}\n"
+    "When user says 'my Downloads', 'my Documents', etc. — use these exact paths.\n"
+    "Environment variables work too: %DESKTOP%, %USERPROFILE%, %APPDATA%\n\n"
 
     "GPS LOCK — DESKTOP PATH (NON-NEGOTIABLE):\n"
     f"The user's Desktop is: {_DESKTOP}\n"
