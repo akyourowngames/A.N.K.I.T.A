@@ -114,8 +114,9 @@ class AgentRuntime:
         # Multi-domain tasks get more steps
         if any(kw in txt for kw in ("and then", "after that", "also", "as well", "plus")):
             return 20
-        # Research or fix tasks need room to iterate
-        if any(kw in txt for kw in ("research", "find", "investigate", "fix", "debug", "repair")):
+        # Research/fix/coding tasks need room to iterate
+        if any(kw in txt for kw in ("research", "find", "investigate", "fix", "debug", "repair",
+                                    "code", "build", "refactor", "review")):
             return 16
         # Simple single-action tasks need fewer
         if any(kw in txt for kw in ("open", "play", "mute", "volume", "screenshot", "lock")):
