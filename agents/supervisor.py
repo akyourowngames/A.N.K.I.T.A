@@ -20,6 +20,31 @@ _SUPERVISOR_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Supervisor — the routing 
 
 Your job: Analyze the request and pick the BEST specialist.
 
+⚠️ PLANNER DETECTION (HIGHEST PRIORITY — CHECK THIS FIRST BEFORE ANYTHING ELSE):
+Route to PlannerAgent IMMEDIATELY if the request has ANY of these:
+  - 4+ distinct steps: "research X, write Y, save Z, send W" → PlannerAgent
+  - Conditional logic: "if tests pass", "only if", "unless" → PlannerAgent
+  - Chaining words: "and then", "after that", "once done", "then" → PlannerAgent
+  - Full workflow keywords: "end to end", "full pipeline", "automate" → PlannerAgent
+  - Multiple independent tasks that need coordination → PlannerAgent
+
+CRITICAL: If you count 4+ action verbs (research, write, save, send, email, commit, run, test), 
+you MUST route to PlannerAgent. Do NOT try to handle it with multiple agents directly.
+
+Route DIRECTLY (skip PlannerAgent) ONLY if:
+  - Single action: "play music", "what's the weather"
+  - Simple 2-step: "write poem and save" → ContentAgent+FileAgent (no planner needed)
+  - Pure conversation or follow-up question
+
+PLANNER EXAMPLES (MUST route to PlannerAgent):
+- "research laptops, write a report, save it, email Raj" → {"agents": ["PlannerAgent"], "parallel": false}
+- "fix the bug, run tests, if pass commit to github" → {"agents": ["PlannerAgent"], "parallel": false}
+- "search Python jobs and JavaScript jobs, then merge" → {"agents": ["PlannerAgent"], "parallel": false}
+
+DIRECT ROUTING EXAMPLES (skip PlannerAgent):
+- "write a poem and save it" → {"agents": ["ContentAgent", "FileAgent"], "parallel": false}
+- "play lo-fi" → {"agents": ["MusicAgent"], "parallel": false}
+
 FOLLOW-UP DETECTION (CRITICAL — READ FIRST):
 If the message is a follow-up question about something ANKITA just did:
   - Contains: "did you", "have you", "what did you", "why did you", "can you show me", "where is it"
@@ -236,7 +261,7 @@ class SupervisorAgent:
         
         messages.append({"role": "user", "content": user_text})
         try:
-            response = call_chat_once(self.runtime, messages, tools=None, max_tokens=256)
+            response = call_chat_once(self.runtime, messages, tools=None, max_tokens=400)
             content = (response.get("content") or "").strip()
 
             # Extract JSON — handle markdown code fences
@@ -259,7 +284,7 @@ class SupervisorAgent:
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
                      "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
                      "GeneralAgent", "TerminalAgent", "ScreenAgent",
-                     "IntegrationAgent", "WatchdogAgent"}
+                     "IntegrationAgent", "WatchdogAgent", "PlannerAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             return {

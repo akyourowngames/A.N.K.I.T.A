@@ -1056,6 +1056,12 @@ ScreenAgent       = SpecialistAgent("ScreenAgent",       _SCREEN_TOOLS,       _S
 IntegrationAgent  = SpecialistAgent("IntegrationAgent",  _INTEGRATION_TOOLS,  _INTEGRATION_SYSTEM_PROMPT)
 WatchdogAgent     = SpecialistAgent("WatchdogAgent",     _WATCHDOG_TOOLS,     _WATCHDOG_SYSTEM_PROMPT)
 
+# Import PlannerAgent
+from agents.planner import PlannerAgent as _PlannerAgentClass
+
+# Create PlannerAgent instance (no tools — pure reasoning agent)
+PlannerAgent = SpecialistAgent("PlannerAgent", set(), _PlannerAgentClass().system_prompt)
+
 # Map name → instance for lookup
 SPECIALIST_MAP: Dict[str, SpecialistAgent] = {
     "FileAgent":        FileAgent,
@@ -1071,4 +1077,5 @@ SPECIALIST_MAP: Dict[str, SpecialistAgent] = {
     "ScreenAgent":      ScreenAgent,
     "IntegrationAgent": IntegrationAgent,
     "WatchdogAgent":    WatchdogAgent,
+    "PlannerAgent":     PlannerAgent,
 }

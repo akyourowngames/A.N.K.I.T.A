@@ -1,4 +1,4 @@
-﻿"""
+"""
 Orchestrator for A.N.K.I.T.A multi-agent system.
 
 Implements the Fan-Out / Fan-In parallel execution pattern:
@@ -75,6 +75,10 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
     "MusicAgent":   ("TerminalAgent",
                      "MusicAgent failed. Try launching the music app or file directly via execute_shell: "
                      "Start-Process 'spotify:' or Start-Process 'wmplayer.exe'."),
+    "PlannerAgent": ("GeneralAgent",
+                     "PlannerAgent failed to produce a plan. "
+                     "Handle this request directly as best you can, "
+                     "completing all implied steps yourself."),
 }
 
 
@@ -767,6 +771,10 @@ class Orchestrator:
         if agent_names == ["GeneralAgent"]:
             return self._run_general(user_text, messages)
 
+        # PLANNER AGENT: intercept and execute planned tasks
+        if agent_names == ["PlannerAgent"]:
+            return self._run_planned_task(user_text, messages)
+
         # Override lazy GeneralAgent routing: if the Supervisor chose only GeneralAgent
         # but the user text clearly maps to a specialist, re-route to the right agent.
 
@@ -1042,3 +1050,188 @@ class Orchestrator:
         if not messages or messages[-1].get("content") != user_text:
             messages.append({"role": "user", "content": user_text})
         messages.append({"role": "assistant", "content": reply})
+
+    def _run_planned_task(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
+        """
+        Execute a planned multi-step task using PlannerAgent.
+        
+        Workflow:
+        1. Call PlannerAgent to generate a structured JSON plan
+        2. Parse the plan and validate it
+        3. Execute steps sequentially, respecting dependencies
+        4. Handle conditionals and parallel execution
+        5. Synthesize final result
+        """
+        import time as _time
+        
+        # Step 1: Call PlannerAgent to generate the plan
+        planner_specialist = SPECIALIST_MAP.get("PlannerAgent")
+        if not planner_specialist:
+            return "❌ PlannerAgent not available."
+        
+        # Extract clean conversation history for context
+        conversation_history = _extract_clean_history(messages, max_turns=6)
+        
+        # Build messages for PlannerAgent
+        planner_messages = planner_specialist.make_messages(user_text, history=conversation_history)
+        
+        try:
+            response = call_chat_once(self.runtime, planner_messages, tools=None, max_tokens=1500)
+            plan_content = (response.get("content") or "").strip()
+        except Exception as err:
+            return f"❌ PlannerAgent failed: {err}"
+        
+        # Step 2: Parse the JSON plan
+        try:
+            # Extract JSON from markdown code fences if present
+            import re as _re
+            json_match = _re.search(r"```(?:json)?\s*([\s\S]*?)```", plan_content)
+            if json_match:
+                plan_json_str = json_match.group(1).strip()
+            else:
+                # Try to find the first {...} block
+                brace_match = _re.search(r"\{[\s\S]*\}", plan_content)
+                if brace_match:
+                    plan_json_str = brace_match.group(0)
+                else:
+                    plan_json_str = plan_content
+            
+            plan = json.loads(plan_json_str)
+            goal = plan.get("goal", "")
+            steps = plan.get("steps", [])
+            
+            if not steps:
+                return "❌ PlannerAgent produced an empty plan."
+            
+        except json.JSONDecodeError as err:
+            return f"❌ Failed to parse plan JSON: {err}\n\nPlan output:\n{plan_content[:500]}"
+        
+        # Step 3: Log the plan to audit
+        try:
+            audit_path = self.workspace_root / ".ankita" / "audit.jsonl"
+            audit_path.parent.mkdir(parents=True, exist_ok=True)
+            plan_entry = {
+                "type": "plan",
+                "ts": _time.time(),
+                "user_request": user_text,
+                "goal": goal,
+                "plan": plan,
+                "steps_count": len(steps),
+            }
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(plan_entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass  # Audit failures must never crash the main flow
+        
+        # Step 4: Show the plan to the user (optional but great UX)
+        plan_preview_lines = [f"📋 Plan: {len(steps)} steps"]
+        for step in steps:
+            step_id = step.get("id", "?")
+            agent = step.get("agent", "?")
+            task_preview = step.get("task", "")[:60]
+            plan_preview_lines.append(f"  {step_id}. {agent} → {task_preview}...")
+        plan_preview = "\n".join(plan_preview_lines)
+        print(f"\n{plan_preview}\n", flush=True)
+        
+        # Step 5: Execute steps sequentially
+        step_results: Dict[int, Dict[str, Any]] = {}
+        steps_executed = 0
+        steps_skipped = 0
+        start_time = _time.time()
+        
+        for step in steps:
+            step_id = step.get("id")
+            agent_name = step.get("agent")
+            task = step.get("task")
+            depends_on = step.get("depends_on", [])
+            condition = step.get("condition")
+            
+            # Check dependencies
+            for dep_id in depends_on:
+                if dep_id not in step_results:
+                    return f"❌ Step {step_id} depends on step {dep_id} which hasn't completed yet."
+                if not step_results[dep_id].get("ok", False):
+                    return f"❌ Step {step_id} depends on step {dep_id} which failed."
+            
+            # Evaluate condition if present
+            if condition:
+                # Simple condition evaluation: check if previous step succeeded
+                # Format: "only if step N exit_code == 0" or "only if step N succeeded"
+                condition_met = True
+                for dep_id in depends_on:
+                    dep_result = step_results.get(dep_id, {})
+                    if not dep_result.get("ok", False):
+                        condition_met = False
+                        break
+                
+                if not condition_met:
+                    print(f"Step {step_id}/{len(steps)} — [CONDITION: {condition} ❌] — SKIPPED", flush=True)
+                    steps_skipped += 1
+                    continue
+            
+            # Execute the step
+            print(f"Step {step_id}/{len(steps)} — {agent_name}: {task[:60]}...", flush=True)
+            
+            specialist = SPECIALIST_MAP.get(agent_name)
+            if not specialist:
+                return f"❌ Agent {agent_name} not found for step {step_id}."
+            
+            # Build prior context from previous steps
+            prior_context_parts = []
+            for dep_id in depends_on:
+                dep_result = step_results.get(dep_id, {})
+                dep_agent = dep_result.get("agent", "PreviousAgent")
+                dep_reply = dep_result.get("reply", "")
+                if dep_reply:
+                    artifacts = _extract_artifacts(dep_reply)
+                    context_block = _build_prior_context_block(dep_agent, dep_reply, artifacts)
+                    prior_context_parts.append(context_block)
+            
+            prior_context = "\n\n".join(prior_context_parts) if prior_context_parts else None
+            
+            # Run the specialist
+            result = _run_specialist(
+                specialist, task, self.runtime, self.workspace_root,
+                prior_context=prior_context,
+                conversation_history=conversation_history,
+            )
+            
+            step_results[step_id] = result
+            steps_executed += 1
+            
+            # Show result preview
+            reply_preview = (result.get("reply", "") or "")[:80]
+            status = "✅" if result.get("ok", True) else "❌"
+            print(f"  {status} {reply_preview}", flush=True)
+            
+            # If step failed and no HYDRA backup, stop execution
+            if not result.get("ok", True):
+                return f"❌ Step {step_id} failed: {result.get('reply', 'Unknown error')}"
+        
+        # Step 6: Synthesize final result
+        total_time_ms = int((_time.time() - start_time) * 1000)
+        
+        # Update audit with execution results
+        try:
+            plan_entry["steps_executed"] = steps_executed
+            plan_entry["steps_skipped"] = steps_skipped
+            plan_entry["total_time_ms"] = total_time_ms
+            with audit_path.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(plan_entry, ensure_ascii=False) + "\n")
+        except Exception:
+            pass
+        
+        # Collect all step results for synthesis
+        all_results = list(step_results.values())
+        
+        if len(all_results) == 1:
+            # Single step - return directly
+            reply = all_results[0].get("reply", "")
+            self._append_to_messages(messages, user_text, reply)
+            return reply
+        
+        # Multiple steps - synthesize
+        reply = self._synthesize(user_text, all_results)
+        self._append_to_messages(messages, user_text, reply)
+        return reply
+
