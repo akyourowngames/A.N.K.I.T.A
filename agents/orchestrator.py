@@ -671,37 +671,6 @@ class Orchestrator:
 
         # Override lazy GeneralAgent routing: if the Supervisor chose only GeneralAgent
         # but the user text clearly maps to a specialist, re-route to the right agent.
-        _ACTION_OVERRIDES = {
-            "play_music": ({"play", "song", "music", "listen", "lofi", "lo-fi"}, ["MusicAgent"]),
-            "stop_music": ({"stop music", "pause music"}, ["MusicAgent"]),
-            "screenshot": ({"screenshot", "screen capture", "take a screenshot"}, ["SystemAgent"]),
-            "launch_app": ({"open notepad", "launch", "open app", "start app"}, ["SystemAgent"]),
-            # ASSEMBLY LINE: write tasks â†’ ContentAgent (writes) + FileAgent (saves)
-            "write_and_save_content": ({"write a", "draft a", "generate a", "create a report",
-                               "write an essay", "write a poem", "write a script",
-                               "write a song", "write a paragraph", "write an email",
-                               "write a letter", "write a story", "write a summary"}, ["ContentAgent", "FileAgent"]),
-            "search_web": ({"search for", "google", "look up", "find info"}, ["WebAgent"]),
-            "execute_shell": ({"ping ", "ipconfig", "netstat", "tasklist", "whoami",
-                               "git status", "git log", "git pull", "git push",
-                               "run git", "run script", "terminal command",
-                               "shell command", "what is my ip", "my ip address",
-                               "show processes", "running processes"}, ["TerminalAgent"]),
-            "capture_screen": ({"what's on my screen", "what is on my screen",
-                                 "what does my screen show", "read the error on screen",
-                                 "read my screen", "look at my screen", "see my screen",
-                                 "what's on screen", "screen show", "screen says",
-                                 "click the", "click on the", "visual click",
-                                 "click button", "click submit", "click deploy",
-                                 "read error on screen", "what error", "error on screen"}, ["ScreenAgent"]),
-        }
-        text_lower = user_text.lower()
-        if agent_names == ["GeneralAgent"]:
-            for _tool, (keywords, reroute_agents) in _ACTION_OVERRIDES.items():
-                if any(kw in text_lower for kw in keywords):
-                    agent_names = reroute_agents
-                    parallel = False
-                    break
 
         # WATCHDOG AGENT: intercept and execute WATCHDOG_ACTION commands
         if agent_names == ["WatchdogAgent"]:
