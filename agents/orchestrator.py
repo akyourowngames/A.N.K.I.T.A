@@ -67,8 +67,11 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
                      "New-Item -Path '<path>' -ItemType File -Force; Set-Content -Path '<path>' -Value '<content>'"),
     "ContentAgent": ("GeneralAgent",
                      "ContentAgent timed out or failed. Write a shorter, concise version of the requested content. "
-                     "Quality matters more than length here â€” produce something complete and usable."),
-    "CodeAgent":    ("CodeAgent",
+                     "Quality matters more than length here — produce something complete and usable. "
+                     "IMPORTANT: After writing, call write_file to save it to Desktop as a .md file. "
+                     "Use a sensible filename based on the topic. "
+                     "Then call launch_app to open it. "
+                     "Do NOT just return text — save it."),
                      "Your previous attempt had an error. Re-read the error message carefully, "
                      "identify the root cause, and retry with a corrected approach. "
                      "Do NOT repeat the same mistake."),
@@ -137,15 +140,16 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     if artifacts["urls"]:
         for u in artifacts["urls"]:
             lines.append(f"URL: {u}")
-    # ASSEMBLY LINE: If ContentAgent has no file/url artifacts, embed the raw content
-    # so FileAgent can read it from context and save it to disk.
+    # ASSEMBLY LINE: If ContentAgent has file artifacts (already saved by content_ops),
+    # do NOT embed CONTENT: block. FileAgent should just open the existing file.
+    # Only embed CONTENT: if ContentAgent returned text without saving it.
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
-        import os as _os
-        desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
-        lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint â€” FileAgent reads this
-        lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
-    # NEWSROOM: If WebAgent's reply contains a RESEARCH_CONTEXT_BLOCK, extract it
-    # and inject as a [RESEARCH_CONTEXT] block so ContentAgent enters Journalist Mode.
+        # Check if reply contains "already_saved" signal
+        if "already_saved" not in reply.lower():
+            import os as _os
+            desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
+            lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint — FileAgent reads this
+            lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
     if agent_name == "WebAgent":
         import re as _re
         rcb_match = _re.search(

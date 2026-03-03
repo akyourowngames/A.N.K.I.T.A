@@ -113,6 +113,15 @@ _FILE_SYSTEM_PROMPT = (
     "8. Reply: 'Saved to Desktop as <filename> and opened it in Notepad! ✅'\n"
     "NEVER say 'I cannot open it' — you have launch_app tool. NEVER generate new content when history exists.\n\n"
 
+    "ALREADY SAVED CHECK (CRITICAL — READ FIRST):\n"
+    "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'FILE:' or 'FILE_PATH:' line,\n"
+    "that means ContentAgent ALREADY saved the file. Your job:\n"
+    "1. Extract the file path from the FILE: or FILE_PATH: line\n"
+    "2. Sanitize the path: strip whitespace, replace / with \\, remove quotes\n"
+    "3. Call launch_app IMMEDIATELY to open it — DO NOT re-save\n"
+    "4. Reply: 'Opened <filename>! ✅'\n"
+    "NEVER re-save a file that ContentAgent already saved. Just open it.\n\n"
+
     "ASSEMBLY LINE ROLE:\n"
     "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'CONTENT:' section, "
     "that means ContentAgent just generated text for you to save. Your job:\n"
@@ -134,6 +143,14 @@ _FILE_SYSTEM_PROMPT = (
     f"5. Call write_file with path = <SAVE_TO or {_DESKTOP}>\\<filename>\n"
     "6. Check receipt for status='success'. Then call launch_app to open it immediately.\n"
     "7. Reply: 'Saved to Desktop as <filename> and opened it! ✅  FILE_PATH: <absolute_path>'\n\n"
+
+    "PATH SANITIZATION RULE (CRITICAL):\n"
+    "When using a file path from context (FILE:, FILE_PATH:, SAVE_TO:):\n"
+    "- Strip all leading/trailing whitespace and newlines from the path\n"
+    "- Replace all forward slashes / with backslashes \\\n"
+    "- Remove any surrounding quotes\n"
+    "- Example: '  C:/Users/Krish/Desktop/file.txt  ' → C:\\Users\\Krish\\Desktop\\file.txt\n"
+    "ALWAYS sanitize before passing to launch_app or write_file.\n\n"
 
     "EDIT VS OVERWRITE RULE:\n"
     "If a file already exists at the target path:\n"
@@ -352,10 +369,19 @@ _SYSTEM_SYSTEM_PROMPT = (
     "  Top processes: show top 5 by RAM/CPU usage in a readable list\n\n"
 
     "ASSEMBLY LINE ROLE:\n"
-    "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'FILE:' line, "
+    "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'FILE:' or 'FILE_PATH:' line, "
     "that is the saved file path from FileAgent. Your job: call launch_app IMMEDIATELY to open it. "
     "Do NOT ask for confirmation. Do NOT wait. Just open it.\n"
+    "IMPORTANT: If multiple FILE_PATH: values exist, use the LAST one (most recent = most correct).\n"
     "Example: FILE: C:\\Users\\Krish\\Desktop\\poem.txt → launch_app('notepad', 'C:\\Users\\Krish\\Desktop\\poem.txt')\n\n"
+
+    "PATH SANITIZATION RULE (CRITICAL):\n"
+    "When using a file path from context (FILE:, FILE_PATH:):\n"
+    "- Strip all leading/trailing whitespace and newlines from the path\n"
+    "- Replace all forward slashes / with backslashes \\\n"
+    "- Remove any surrounding quotes\n"
+    "- Example: '  C:/Users/Krish/Desktop/file.txt  ' → C:\\Users\\Krish\\Desktop\\file.txt\n"
+    "ALWAYS sanitize before passing to launch_app.\n\n"
 
     "CRITICAL RULES:\n"
     "1. Use tools IMMEDIATELY — never describe, DO it.\n"

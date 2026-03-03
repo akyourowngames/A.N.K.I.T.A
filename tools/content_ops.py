@@ -437,9 +437,15 @@ def write_and_save_content(
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    filename = f"{_safe_filename(topic)}_{_safe_filename(format_clean)}_{timestamp}.txt"
+    
+    # Detect file extension based on format type
+    ext = ".md" if format_clean in ("report", "essay", "article", "analysis", "summary", "proposal", "plan", "pitch deck") else ".txt"
+    
+    filename = f"{_safe_filename(topic)}_{_safe_filename(format_clean)}_{timestamp}{ext}"
     file_path = dest_dir / filename
-    absolute_path = str(file_path.resolve())
+    
+    # Normalize path to use backslashes on Windows
+    absolute_path = str(file_path.resolve()).replace("/", "\\")
 
     # ------------------------------------------------------------------
     # 5. Save the generated content + write audit log entry
@@ -471,6 +477,7 @@ def write_and_save_content(
         "path": absolute_path,
         "absolute_path": absolute_path,
         "FILE_PATH": absolute_path,        # picked up by _extract_artifacts
+        "already_saved": True,             # Signal to FileAgent: don't re-save
         "bytes": byte_count,
         "filename": filename,
         "topic": topic_clean,
