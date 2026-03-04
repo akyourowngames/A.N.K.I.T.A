@@ -382,7 +382,11 @@ def main() -> None:
                 session_id = f"telegram-{chat_id}"
                 
                 # Update orchestrator session_id for ContextAgent v2
-                orchestrator.set_session_id(session_id)
+                # Pass session_log instance so ContextAgent can access it directly
+                if chat_id in session_logs:
+                    orchestrator.set_session_id(session_id, session_logs[chat_id])
+                else:
+                    orchestrator.set_session_id(session_id)
 
                 # Ensure session exists — restore from vault if available
                 if chat_id not in sessions:

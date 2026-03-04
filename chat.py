@@ -49,7 +49,8 @@ def main() -> None:
     session_id = "cli-session"
     
     # Attach memory to orchestrator for ContextAgent v2
-    orchestrator.attach_memory(memory, session_id)
+    # Pass session_log instance so ContextAgent can access it directly
+    orchestrator.attach_memory(memory, session_id, session_log)
     
     # Session log (JSON sliding window for fast recent message access)
     from session_log import SessionLog

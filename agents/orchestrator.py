@@ -837,14 +837,16 @@ class Orchestrator:
         # 0. CONTEXT AGENT: Extract context from conversation history BEFORE routing
         context_block = None
         try:
-            # v2: pass memory_store + session_id so ContextAgent can pull from
-            # ChromaDB when session messages are thin (e.g. after a restart)
+            # v2: pass memory_store + session_id + session_log so ContextAgent can pull from
+            # all three sources (session messages, SessionLog JSON, ChromaDB)
             _mem_store = getattr(self, "_memory_store", None)
             _session_id = getattr(self, "_session_id", None)
+            _session_log = getattr(self, "_session_log", None)
             context_result = self.context_agent.extract(
                 user_text, messages,
                 memory_store=_mem_store,
                 session_id=_session_id,
+                session_log=_session_log,
             )
             if context_result and context_result.get("context_block"):
                 context_block = context_result["context_block"]
@@ -1381,13 +1383,16 @@ class Orchestrator:
         self._append_to_messages(messages, user_text, reply)
         return reply
 
-    def attach_memory(self, memory_store: Any, session_id: str = "default") -> None:
-        """Inject MemoryStore so ContextAgent can pull from ChromaDB."""
+    def attach_memory(self, memory_store: Any, session_id: str = "default", session_log: Any = None) -> None:
+        """Inject MemoryStore and SessionLog so ContextAgent can pull from both."""
         self._memory_store = memory_store
         self._session_id = session_id
+        self._session_log = session_log
 
-    def set_session_id(self, session_id: str) -> None:
-        """Update session ID (called when chat_id changes in Telegram)."""
+    def set_session_id(self, session_id: str, session_log: Any = None) -> None:
+        """Update session ID and optionally SessionLog (called when chat_id changes in Telegram)."""
         self._session_id = session_id
+        if session_log is not None:
+            self._session_log = session_log
 
 

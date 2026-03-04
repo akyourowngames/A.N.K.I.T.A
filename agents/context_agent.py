@@ -33,6 +33,16 @@ This is especially critical for:
 - Pronouns: "it", "that", "this", "the file", "the task"
 - Follow-ups: "is it done?", "did you do it?", "what happened?"
 
+STALENESS RULE (CRITICAL):
+If the last 2 user messages are clearly about a DIFFERENT topic than pending_offer:
+  → Set pending_offer to null
+  → Set is_confirmation to false  
+  → Set active_task to the CURRENT topic, not the old one
+
+Example: pending_offer was "install Speedtest CLI" but user just said 
+"play me a haryanvi song" then "open notepad" → CLEAR the speedtest context entirely.
+The user has moved on. Do not carry stale offers forward.
+
 OUTPUT FORMAT (strict JSON, nothing else):
 {
   "active_agent": "TerminalAgent",
@@ -160,15 +170,17 @@ class ContextAgent:
         messages: List[Dict[str, Any]],
         memory_store: Any = None,
         session_id: Optional[str] = None,
+        session_log: Any = None,
     ) -> Optional[Dict[str, Any]]:
         """
-        Main entry point. Pulls context from session messages + ChromaDB.
+        Main entry point. Pulls context from session messages + SessionLog + ChromaDB.
 
         Args:
             user_text:    Current user message
             messages:     Session message list (may be short after restart)
             memory_store: MemoryStore instance (optional, for ChromaDB lookup)
             session_id:   Session ID for scoped memory search
+            session_log:  SessionLog instance (optional, for JSON log lookup)
 
         Returns:
             {"context_block": str, "context_data": dict} or None
@@ -184,7 +196,7 @@ class ContextAgent:
 
         # Build the conversation text for analysis
         conversation_lines = self._build_conversation_text(
-            messages, memory_store, session_id, user_text
+            messages, memory_store, session_id, user_text, session_log
         )
 
         if not conversation_lines:
@@ -241,7 +253,8 @@ class ContextAgent:
         lines: List[str] = []
 
         # --- Source 1: Session messages (current runtime) ---
-        clean = self._extract_clean(messages, max_turns=8)
+        # Reduced from 8 to 4 to prevent stale context bleeding
+        clean = self._extract_clean(messages, max_turns=4)
         for msg in clean:
             role = msg.get("role", "?").capitalize()
             content = str(msg.get("content", ""))[:400]
@@ -398,7 +411,7 @@ class ContextAgent:
     # ------------------------------------------------------------------
 
     def _extract_clean(
-        self, messages: List[Dict[str, Any]], max_turns: int = 8
+        self, messages: List[Dict[str, Any]], max_turns: int = 4
     ) -> List[Dict[str, Any]]:
         """Extract last N clean user/assistant turns (no system/tool/base64)."""
         clean = []
@@ -412,6 +425,9 @@ class ContextAgent:
             if isinstance(content, str) and (
                 "base64" in content or len(content) > 8000
             ):
+                continue
+            # Skip compressed summary messages — they cause context bleeding
+            if role == "assistant" and isinstance(content, str) and len(content) > 800 and "summary" in content.lower():
                 continue
             if role in ("user", "assistant") and isinstance(content, str) and content.strip():
                 clean.append({"role": role, "content": content})

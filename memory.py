@@ -37,6 +37,7 @@ class MemoryStore:
     """
 
     def __init__(self, workspace_root: Path, collection_name: str = "ankita_memory") -> None:
+        self.workspace_root = workspace_root  # Store for ContextAgent access
         self.enabled = HAS_CHROMADB
         self._client: Any = None
         self._col: Any = None
