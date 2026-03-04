@@ -194,6 +194,188 @@ def read_file(workspace_root: Path, path: str, unrestricted: bool = False) -> Di
     return {"path": str(target) if unrestricted else to_rel(workspace_root, target), "content": text, "encoding": encoding}
 
 
+def read_rich_file(workspace_root: Path, path: str, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Read and extract text from rich file formats (PDF, DOCX, XLSX, images, etc.).
+    
+    Supported formats:
+    - PDF: Extracts text using PyMuPDF (fitz)
+    - DOCX: Extracts text using python-docx
+    - XLSX/CSV: Returns formatted table using openpyxl/csv
+    - PPTX: Extracts slide text using python-pptx
+    - Images (JPG/PNG): Describes using vision API
+    - ZIP: Lists contents
+    - Plain text: Falls back to read_file
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to file (relative or absolute)
+        unrestricted: If True, allows access outside workspace (for FileAgent)
+    
+    Returns:
+        Dict with 'path', 'content', 'format', and optional 'error' or 'install_hint'
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
+    if not target.exists() or not target.is_file():
+        raise FileNotFoundError(f"file not found: {path}")
+    
+    ext = target.suffix.lower()
+    result = {
+        "path": str(target) if unrestricted else to_rel(workspace_root, target),
+        "format": ext[1:] if ext else "unknown"
+    }
+    
+    # PDF extraction
+    if ext == ".pdf":
+        try:
+            import fitz  # PyMuPDF
+            doc = fitz.open(str(target))
+            text_parts = []
+            for page_num, page in enumerate(doc, 1):
+                text = page.get_text()
+                if text.strip():
+                    text_parts.append(f"--- Page {page_num} ---\n{text}")
+            doc.close()
+            content = "\n\n".join(text_parts)
+            result["content"] = content[:10000] + ("\n\n[truncated: content too long]" if len(content) > 10000 else "")
+            result["pages"] = len(text_parts)
+            return result
+        except ImportError:
+            result["error"] = "PyMuPDF not installed"
+            result["install_hint"] = "To read PDF files, install: pip install PyMuPDF"
+            return result
+        except Exception as e:
+            result["error"] = f"Failed to read PDF: {str(e)}"
+            return result
+    
+    # DOCX extraction
+    if ext == ".docx":
+        try:
+            from docx import Document
+            doc = Document(str(target))
+            paragraphs = [p.text for p in doc.paragraphs if p.text.strip()]
+            content = "\n\n".join(paragraphs)
+            result["content"] = content[:10000] + ("\n\n[truncated: content too long]" if len(content) > 10000 else "")
+            result["paragraphs"] = len(paragraphs)
+            return result
+        except ImportError:
+            result["error"] = "python-docx not installed"
+            result["install_hint"] = "To read DOCX files, install: pip install python-docx"
+            return result
+        except Exception as e:
+            result["error"] = f"Failed to read DOCX: {str(e)}"
+            return result
+    
+    # XLSX extraction
+    if ext in (".xlsx", ".xls"):
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(str(target), read_only=True, data_only=True)
+            sheets_data = []
+            for sheet_name in wb.sheetnames[:5]:  # Max 5 sheets
+                sheet = wb[sheet_name]
+                rows = []
+                for row in list(sheet.iter_rows(values_only=True))[:100]:  # Max 100 rows per sheet
+                    row_str = " | ".join(str(cell) if cell is not None else "" for cell in row)
+                    if row_str.strip():
+                        rows.append(row_str)
+                if rows:
+                    sheets_data.append(f"=== Sheet: {sheet_name} ===\n" + "\n".join(rows))
+            wb.close()
+            content = "\n\n".join(sheets_data)
+            result["content"] = content[:10000] + ("\n\n[truncated: content too long]" if len(content) > 10000 else "")
+            result["sheets"] = len(sheets_data)
+            return result
+        except ImportError:
+            result["error"] = "openpyxl not installed"
+            result["install_hint"] = "To read XLSX files, install: pip install openpyxl"
+            return result
+        except Exception as e:
+            result["error"] = f"Failed to read XLSX: {str(e)}"
+            return result
+    
+    # CSV extraction
+    if ext == ".csv":
+        try:
+            import csv
+            with open(target, 'r', encoding='utf-8', errors='replace') as f:
+                reader = csv.reader(f)
+                rows = []
+                for i, row in enumerate(reader):
+                    if i >= 100:  # Max 100 rows
+                        break
+                    row_str = " | ".join(row)
+                    if row_str.strip():
+                        rows.append(row_str)
+            content = "\n".join(rows)
+            result["content"] = content[:10000] + ("\n\n[truncated: content too long]" if len(content) > 10000 else "")
+            result["rows"] = len(rows)
+            return result
+        except Exception as e:
+            result["error"] = f"Failed to read CSV: {str(e)}"
+            return result
+    
+    # PPTX extraction
+    if ext == ".pptx":
+        try:
+            from pptx import Presentation
+            prs = Presentation(str(target))
+            slides_text = []
+            for i, slide in enumerate(prs.slides, 1):
+                text_parts = []
+                for shape in slide.shapes:
+                    if hasattr(shape, "text") and shape.text.strip():
+                        text_parts.append(shape.text)
+                if text_parts:
+                    slides_text.append(f"--- Slide {i} ---\n" + "\n".join(text_parts))
+            content = "\n\n".join(slides_text)
+            result["content"] = content[:10000] + ("\n\n[truncated: content too long]" if len(content) > 10000 else "")
+            result["slides"] = len(slides_text)
+            return result
+        except ImportError:
+            result["error"] = "python-pptx not installed"
+            result["install_hint"] = "To read PPTX files, install: pip install python-pptx"
+            return result
+        except Exception as e:
+            result["error"] = f"Failed to read PPTX: {str(e)}"
+            return result
+    
+    # Image description (requires vision API - placeholder for now)
+    if ext in (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".webp"):
+        result["content"] = f"[Image file: {target.name}]\nTo describe images, use the vision tools (capture_screen, read_screen_context) or open the file."
+        result["note"] = "Image description requires vision API integration"
+        return result
+    
+    # ZIP contents listing
+    if ext == ".zip":
+        try:
+            import zipfile
+            with zipfile.ZipFile(str(target), 'r') as zf:
+                files = zf.namelist()[:100]  # Max 100 files
+                content = "ZIP Contents:\n" + "\n".join(f"  - {f}" for f in files)
+                if len(zf.namelist()) > 100:
+                    content += f"\n\n[... and {len(zf.namelist()) - 100} more files]"
+                result["content"] = content
+                result["files"] = len(zf.namelist())
+                return result
+        except Exception as e:
+            result["error"] = f"Failed to read ZIP: {str(e)}"
+            return result
+    
+    # Plain text fallback - use regular read_file
+    if ext in (".txt", ".md", ".py", ".js", ".ts", ".json", ".xml", ".html", ".css", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".log", ".sh", ".bat", ".ps1"):
+        return read_file(workspace_root, path, unrestricted=unrestricted)
+    
+    # Unknown format
+    result["error"] = f"Unsupported file format: {ext}"
+    result["note"] = "Supported formats: PDF, DOCX, XLSX, CSV, PPTX, ZIP, and plain text files"
+    return result
+
+
 def search_text(workspace_root: Path, query: str, path: str = ".", max_results: int = 100, unrestricted: bool = False) -> Dict[str, Any]:
     """
     Search for text in files.

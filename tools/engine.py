@@ -541,6 +541,18 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "read_rich_file",
+            "description": "Read and extract text from rich file formats (PDF, DOCX, XLSX, CSV, PPTX, images, ZIP). Auto-detects format and extracts readable content. Use this for non-plain-text files.",
+            "parameters": {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_text",
             "description": "Search text in workspace files.",
             "parameters": {
@@ -1912,6 +1924,8 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         return fs_ops.list_files(workspace_root, path=str(args.get("path", ".")), max_entries=int(args.get("max_entries", 200)), unrestricted=unrestricted)
     if name == "read_file":
         return fs_ops.read_file(workspace_root, path=str(args.get("path", "")), unrestricted=unrestricted)
+    if name == "read_rich_file":
+        return fs_ops.read_rich_file(workspace_root, path=str(args.get("path", "")), unrestricted=unrestricted)
     if name == "search_text":
         return fs_ops.search_text(
             workspace_root,

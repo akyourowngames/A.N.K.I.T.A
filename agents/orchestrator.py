@@ -143,9 +143,15 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
         "--- PREVIOUS AGENT OUTPUT ---",
         f"[{agent_name}]: {reply.strip()}",
     ]
+    
+    # DOUBLE-OPEN FIX: Check if FileAgent already opened the file
+    file_already_opened = agent_name == "FileAgent" and ("opened" in reply.lower() or "launch_app" in reply.lower())
+    
     if artifacts["files"]:
-        for f in artifacts["files"]:
-            lines.append(f"FILE: {f}")
+        # If FileAgent already opened the file, don't pass FILE_PATH to next agent
+        if not file_already_opened:
+            for f in artifacts["files"]:
+                lines.append(f"FILE: {f}")
     if artifacts["urls"]:
         for u in artifacts["urls"]:
             lines.append(f"URL: {u}")

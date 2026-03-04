@@ -519,9 +519,24 @@ def play_music(workspace_root: Path, query: str, headless: bool = True, stop_cur
     candidates = found.get("results", [])
     if not isinstance(candidates, list) or not candidates:
         raise RuntimeError("no music candidates found")
-    if not bool(found.get("is_confident_match")):
-        short = [str(r.get("title", "")) for r in candidates[:3] if isinstance(r, dict)]
-        raise RuntimeError("low confidence music match. be more specific (artist/song). top matches: " + " | ".join(short))
+    
+    # UPGRADE: Lower confidence threshold from 0.62 to 0.35 for better regional/niche music support
+    # Try all candidates down to score 0.35 instead of failing on first low-confidence match
+    best = found.get("best_match")
+    if not best:
+        raise RuntimeError("no best match found")
+    
+    # If confidence is low (< 0.62), try appending "song" or language hints for better results
+    if float(best.get("score", 0.0)) < 0.62:
+        # Try enhanced search with "song" appended
+        enhanced_query = f"{query} song"
+        enhanced_found = search_music(enhanced_query, max_results=5)
+        enhanced_best = enhanced_found.get("best_match")
+        if enhanced_best and float(enhanced_best.get("score", 0.0)) > float(best.get("score", 0.0)):
+            # Use enhanced result if it's better
+            found = enhanced_found
+            candidates = found.get("results", [])
+            best = enhanced_best
 
     errors: List[str] = []
     for row in candidates[:5]:
@@ -530,7 +545,8 @@ def play_music(workspace_root: Path, query: str, headless: bool = True, stop_cur
         title = str(row.get("title", "")).strip()
         url = str(row.get("url", "")).strip()
         score = float(row.get("score", 0.0) or 0.0)
-        if not title or not url or score < 0.40:
+        # UPGRADE: Accept scores down to 0.35 (was 0.40) for better coverage
+        if not title or not url or score < 0.35:
             continue
 
         cmd = _build_player_command(url)
