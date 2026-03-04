@@ -2063,6 +2063,10 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         )
     if name == "forget":
         return memory_ops.forget(text=str(args.get("text", "")))
+    if name == "memory_consolidate":
+        return memory_ops.memory_consolidate(
+            similarity_threshold=float(args.get("similarity_threshold", 0.85)),
+        )
     if name == "capture_webcam":
         return desktop_ops.capture_webcam(
             camera_index=int(args.get("camera_index", 0)),

@@ -25,6 +25,7 @@ _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
 from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
+from .context_agent import ContextAgent
 
 _MAX_TOOL_STEPS = 20
 
@@ -826,6 +827,7 @@ class Orchestrator:
         self.runtime = runtime
         self.workspace_root = workspace_root
         self.supervisor = SupervisorAgent(runtime)
+        self.context_agent = ContextAgent(runtime)
 
     def run(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
         """

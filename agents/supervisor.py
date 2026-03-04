@@ -159,8 +159,35 @@ SPECIALIST PRIORITY RULE:
 - figma/design file/design comments/client feedback/hex code/button colour → IntegrationAgent
 - GeneralAgent ONLY for pure conversation or genuinely ambiguous with NO real-world actions.
 
+CONFIDENCE SCORING (UPGRADE 13 — CRITICAL):
+You MUST include a confidence score (0.0 to 1.0) in your routing decision.
+This represents how certain you are that you picked the RIGHT agent(s).
+
+Confidence Guidelines:
+  0.90-1.00: Crystal clear, unambiguous request. Single obvious agent.
+             Example: "play music" → MusicAgent (0.95)
+  0.75-0.89: Clear request, confident routing, minor ambiguity possible.
+             Example: "write a poem" → ContentAgent+FileAgent (0.85)
+  0.60-0.74: Moderate confidence, request could map to 2 possible agents.
+             Example: "check my system" → SystemAgent or TerminalAgent (0.70)
+  0.40-0.59: Low confidence, ambiguous request, multiple valid interpretations.
+             Example: "help me with this" → unclear context (0.50)
+  0.00-0.39: Very uncertain, request is vague or contradictory.
+             Example: "do something" → no clear action (0.30)
+
+DUAL ROUTING PROTOCOL:
+When confidence < 0.65, the Orchestrator will activate DUAL ROUTING:
+  - Run BOTH the primary agent AND a fallback agent
+  - Synthesize results from both
+  - This eliminates wrong-agent errors on ambiguous requests
+
+Example with dual routing:
+  Request: "show me the code"
+  Could be: ScreenAgent (screenshot of code on screen) OR FileAgent (read code file)
+  Output: {"agents": ["ScreenAgent", "FileAgent"], "parallel": true, "confidence": 0.60, "reasoning": "Ambiguous - could mean screen capture or file read, running both"}
+
 Respond ONLY with valid JSON:
-{"agents": ["AgentName"], "parallel": false, "reasoning": "..."}
+{"agents": ["AgentName"], "parallel": false, "confidence": 0.85, "reasoning": "..."}
 
 Examples:
 - "write a poem" → {"agents": ["ContentAgent", "FileAgent"], "parallel": false, "reasoning": "ContentAgent writes, FileAgent saves — assembly line"}
@@ -261,8 +288,11 @@ class SupervisorAgent:
         except Exception:
             pass
 
+        # Build system prompt with injected patterns at the top
+        system_prompt = (_injected + "\n\n" + _SUPERVISOR_SYSTEM_PROMPT) if _injected else _SUPERVISOR_SYSTEM_PROMPT
+        
         messages = [
-            {"role": "system", "content": (_injected + _SUPERVISOR_SYSTEM_PROMPT) if _injected else _SUPERVISOR_SYSTEM_PROMPT},
+            {"role": "system", "content": system_prompt},
         ]
         
         # Inject conversation history if provided (last 4 turns for context)
@@ -297,10 +327,20 @@ class SupervisorAgent:
                      "IntegrationAgent", "WatchdogAgent", "PlannerAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
+            # Extract confidence score (UPGRADE 13)
+            confidence = float(parsed.get("confidence", 0.75))  # Default to 0.75 if not provided
+            
+            # Validate confidence range
+            if confidence < 0.0:
+                confidence = 0.0
+            elif confidence > 1.0:
+                confidence = 1.0
+
             return {
                 "agents": agents,
                 "parallel": bool(parsed.get("parallel", False)),  # Default sequential for safety
                 "reasoning": str(parsed.get("reasoning", "")),
+                "confidence": confidence,
             }
         except Exception as err:
-            return {"agents": ["GeneralAgent"], "parallel": False, "reasoning": f"fallback ({err})"}
+            return {"agents": ["GeneralAgent"], "parallel": False, "reasoning": f"fallback ({err})", "confidence": 0.5}

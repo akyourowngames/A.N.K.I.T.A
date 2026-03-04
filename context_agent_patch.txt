@@ -1,0 +1,21 @@
+--- Insert after line 837 (after the docstring) ---
+
+        # 0. ContextAgent: Synthesize context from conversation history (UPGRADE 1)
+        context_block = ""
+        try:
+            context_history = _extract_clean_history(messages, max_turns=10)
+            if context_history:
+                context_data = self.context_agent.synthesize(context_history)
+                if context_data:
+                    context_block = self.context_agent.format_context_block(context_data)
+        except Exception as err:
+            print(f"[Orchestrator] ContextAgent error: {err}", flush=True)
+        
+--- Modify line 851 (routing = self.supervisor.route...) to: ---
+
+        # Inject context block into user_text for Supervisor
+        routing_text = user_text
+        if context_block:
+            routing_text = context_block + "\n\nUSER REQUEST: " + user_text
+        
+        routing = self.supervisor.route(routing_text, history=supervisor_history)

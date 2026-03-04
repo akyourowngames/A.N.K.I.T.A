@@ -15,31 +15,57 @@ if TYPE_CHECKING:
     from memory import MemoryStore  # type: ignore
 
 _DREAM_SYSTEM_PROMPT = """
-You are A.N.K.I.T.A's background processor. You analyze the user's recent workspace memories.
-Your ONLY job is to find practical, technical solutions to unresolved coding, architecture, or workflow problems.
+You are A.N.K.I.T.A's background processor. You analyze the user's recent workspace memories and proactively suggest actionable tasks.
+
+UPGRADE 3 - PROACTIVE TASK SUGGESTIONS:
+Your job is to identify:
+1. Incomplete tasks: "User started writing a report but never finished"
+2. Upcoming deadlines: Check cron jobs for reminders
+3. Unacknowledged alerts: Watchdog alerts that were fired but not acted on
+4. Patterns: Recurring issues or opportunities
 
 CRITICAL RULES:
-1. NO PHILOSOPHY. Do not make poetic connections between casual topics.
-2. If the user's recent memories do NOT contain a specific, unresolved technical problem, reply with SILENT.
-3. If there IS a real technical problem, provide a direct 2-3 sentence solution.
-4. Topics that are NOT technical problems (return SILENT): casual conversation, music, food, greetings, general chat.
+1. Focus on ACTIONABLE suggestions, not philosophy
+2. If no clear action items, reply with SILENT
+3. Prioritize: incomplete tasks > upcoming deadlines > alerts > patterns
+4. Be specific: mention file names, task names, exact issues
 
 RESPOND ONLY IN THIS JSON FORMAT:
 {
-  "is_technical": true/false,
-  "problem": "one sentence description of the problem",
-  "solution": "2-3 sentence direct solution",
-  "confidence": 0-100
+  "has_suggestions": true/false,
+  "suggestions": [
+    {
+      "type": "incomplete_task|deadline|alert|pattern",
+      "priority": "high|medium|low",
+      "description": "specific actionable suggestion",
+      "context": "why this matters"
+    }
+  ],
+  "morning_briefing": "optional: if morning (6-10am), provide a brief summary of the day ahead"
 }
-If not technical, use: {"is_technical": false, "problem": "", "solution": "SILENT", "confidence": 0}
+
+If no suggestions, use: {"has_suggestions": false, "suggestions": [], "morning_briefing": ""}
 """
 
 _DREAM_USER_TEMPLATE = """Here are the user's recent workspace memories:
 
 {memory_block}
 
-Scan these memories for a specific, unresolved technical problem (e.g. a bug, architecture decision, broken feature, workflow bottleneck).
-Respond in the JSON format specified. confidence should reflect how clearly a real problem is present."""
+ADDITIONAL CONTEXT:
+- Current time: {current_time}
+- Upcoming cron jobs: {cron_jobs}
+- Recent watchdog alerts: {watchdog_alerts}
+- Incomplete files: {incomplete_files}
+
+Analyze for:
+1. Tasks that were started but not completed
+2. Deadlines approaching (from cron jobs)
+3. Alerts that need attention
+4. Patterns or opportunities
+
+If it's morning (6-10am), also provide a brief morning briefing.
+
+Respond in the JSON format specified."""
 
 
 class DreamAgent:
@@ -114,7 +140,7 @@ class DreamAgent:
         n_memories: int = 15,
     ) -> Optional[str]:
         """
-        Pull recent memories and generate a spoken epiphany.
+        Pull recent memories and generate proactive suggestions (UPGRADE 3).
 
         Args:
             memory_store: The active MemoryStore (ChromaDB-backed).
@@ -122,7 +148,7 @@ class DreamAgent:
             n_memories:   How many memory turns to retrieve (default 15).
 
         Returns:
-            The epiphany string, or None if generation failed.
+            The suggestion string, or None if no actionable suggestions.
         """
         # ------------------------------------------------------------------
         # 1. Generate dynamic query based on time and recent activity
@@ -141,7 +167,6 @@ class DreamAgent:
             )
         except Exception as _e:
             print(f"[DreamAgent] Memory search (scoped) failed: {_e} — trying global...", flush=True)
-            # Fallback: try without session filter if scoped search fails
             try:
                 results = memory_store.search(
                     query=query,
@@ -182,10 +207,69 @@ class DreamAgent:
             return None
 
         memory_block = "\n".join(lines)
-        user_prompt = _DREAM_USER_TEMPLATE.format(memory_block=memory_block)
+        
+        # ------------------------------------------------------------------
+        # 3. Gather additional context (UPGRADE 3)
+        # ------------------------------------------------------------------
+        from datetime import datetime
+        current_time = datetime.now().strftime("%A, %B %d, %Y %I:%M %p")
+        
+        # Get upcoming cron jobs
+        cron_jobs = "None scheduled"
+        try:
+            from corn.store import CornStore
+            from pathlib import Path
+            store = CornStore(Path(".ankita"))
+            jobs = store.list_jobs()
+            if jobs:
+                upcoming = []
+                for job in jobs[:5]:  # Top 5 upcoming
+                    upcoming.append(f"- {job.get('name', 'Unnamed')}: {job.get('schedule', 'unknown')}")
+                cron_jobs = "\n".join(upcoming)
+        except Exception:
+            pass
+        
+        # Get recent watchdog alerts
+        watchdog_alerts = "No recent alerts"
+        try:
+            from pathlib import Path
+            alert_log = Path(".ankita") / "watchdogs" / "alerts.log"
+            if alert_log.exists():
+                recent_alerts = alert_log.read_text(encoding="utf-8").strip().split("\n")[-5:]
+                if recent_alerts:
+                    watchdog_alerts = "\n".join([f"- {a}" for a in recent_alerts if a.strip()])
+        except Exception:
+            pass
+        
+        # Check for incomplete files (files with TODO, FIXME, etc.)
+        incomplete_files = "None detected"
+        try:
+            from pathlib import Path
+            workspace = Path(".")
+            incomplete = []
+            for py_file in workspace.glob("**/*.py"):
+                if py_file.is_file() and ".ankita" not in str(py_file):
+                    try:
+                        content = py_file.read_text(encoding="utf-8", errors="ignore")
+                        if any(marker in content for marker in ["TODO", "FIXME", "HACK", "XXX"]):
+                            incomplete.append(str(py_file))
+                    except Exception:
+                        pass
+            if incomplete:
+                incomplete_files = "\n".join([f"- {f}" for f in incomplete[:5]])
+        except Exception:
+            pass
+        
+        user_prompt = _DREAM_USER_TEMPLATE.format(
+            memory_block=memory_block,
+            current_time=current_time,
+            cron_jobs=cron_jobs,
+            watchdog_alerts=watchdog_alerts,
+            incomplete_files=incomplete_files,
+        )
 
         # ------------------------------------------------------------------
-        # 3. Call the LLM with a focused, tool-free prompt
+        # 4. Call the LLM with proactive suggestion prompt
         # ------------------------------------------------------------------
         try:
             import json
@@ -197,7 +281,7 @@ class DreamAgent:
                 {"role": "system", "content": _DREAM_SYSTEM_PROMPT},
                 {"role": "user", "content": user_prompt},
             ]
-            max_tokens = int(os.getenv("DREAM_MAX_TOKENS", "300"))
+            max_tokens = int(os.getenv("DREAM_MAX_TOKENS", "400"))
             print(f"[DreamAgent] 📡 Calling LLM ({runtime.provider}/{runtime.model}) with {len(lines)} memories...", flush=True)
             response = call_chat_once(runtime, messages, tools=None, max_tokens=max_tokens)
             raw = (response.get("content") or "").strip()
@@ -212,45 +296,74 @@ class DreamAgent:
                 clean = raw.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
                 parsed = json.loads(clean)
             except Exception:
-                # Fallback: treat raw as old-style SILENT/solution text
+                # Fallback: treat raw as old-style solution text
                 if raw.upper().startswith("SILENT"):
-                    print("[DreamAgent] 🤫 SILENT (legacy format) — no dream triggered.", flush=True)
+                    print("[DreamAgent] 🤫 SILENT — no suggestions.", flush=True)
                     return None
-                parsed = {"is_technical": True, "solution": raw, "confidence": 50}
+                parsed = {"has_suggestions": True, "suggestions": [{"type": "pattern", "priority": "medium", "description": raw, "context": ""}]}
 
-            # Confidence filter: only surface epiphanies with confidence ≥ 60
-            confidence = int(parsed.get("confidence", 0))
-            if not bool(parsed.get("is_technical")) or confidence < 60:
-                print(f"[DreamAgent] 🤫 Not technical or low confidence ({confidence}) — skipped.", flush=True)
+            # Check if there are actionable suggestions
+            if not bool(parsed.get("has_suggestions")) or not parsed.get("suggestions"):
+                print(f"[DreamAgent] 🤫 No actionable suggestions found.", flush=True)
                 return None
 
-            solution = str(parsed.get("solution", "")).strip()
-            if not solution or solution.upper() == "SILENT":
+            suggestions = parsed.get("suggestions", [])
+            morning_briefing = parsed.get("morning_briefing", "")
+            
+            # Format suggestions
+            output_lines = []
+            
+            # Add morning briefing if present
+            hour = datetime.now().hour
+            if morning_briefing and 6 <= hour <= 10:
+                output_lines.append(f"☀️ Good morning! {morning_briefing}\n")
+            
+            # Add suggestions by priority
+            high_priority = [s for s in suggestions if s.get("priority") == "high"]
+            medium_priority = [s for s in suggestions if s.get("priority") == "medium"]
+            low_priority = [s for s in suggestions if s.get("priority") == "low"]
+            
+            if high_priority:
+                output_lines.append("🔴 High Priority:")
+                for s in high_priority:
+                    output_lines.append(f"  • {s.get('description')}")
+                    if s.get('context'):
+                        output_lines.append(f"    ({s.get('context')})")
+            
+            if medium_priority:
+                output_lines.append("\n🟡 Medium Priority:")
+                for s in medium_priority:
+                    output_lines.append(f"  • {s.get('description')}")
+            
+            if low_priority:
+                output_lines.append("\n🔵 Low Priority:")
+                for s in low_priority:
+                    output_lines.append(f"  • {s.get('description')}")
+            
+            if not output_lines:
                 return None
+            
+            result = "\n".join(output_lines)
 
             # ------------------------------------------------------------------
-            # Write to dream log — skip if exact solution already logged
+            # Write to dream log
             # ------------------------------------------------------------------
             dream_log_path = Path(".ankita") / "dreams.jsonl"
             dream_log_path.parent.mkdir(parents=True, exist_ok=True)
             try:
-                existing = dream_log_path.read_text(encoding="utf-8") if dream_log_path.exists() else ""
-                if solution[:80] in existing:
-                    print("[DreamAgent] ♻️  Duplicate dream — already in log. Skipped.", flush=True)
-                    return None
                 import time
                 with dream_log_path.open("a", encoding="utf-8") as f:
                     f.write(json.dumps({
                         "ts": time.time(),
-                        "problem": parsed.get("problem", ""),
-                        "solution": solution,
-                        "confidence": confidence,
+                        "type": "proactive_suggestions",
+                        "suggestions": suggestions,
+                        "morning_briefing": morning_briefing,
                     }, ensure_ascii=False) + "\n")
             except Exception as log_err:
                 print(f"[DreamAgent] ⚠️  Dream log write failed: {log_err}", flush=True)
 
-            print(f"[DreamAgent] ✅ Epiphany fired (confidence={confidence}): {solution[:80]}...", flush=True)
-            return solution
+            print(f"[DreamAgent] ✅ Proactive suggestions generated: {len(suggestions)} items", flush=True)
+            return result
 
         except Exception as _e:
             print(f"[DreamAgent] ❌ LLM call failed: {_e}", flush=True)

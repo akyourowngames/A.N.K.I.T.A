@@ -489,3 +489,88 @@ def format_memory_block() -> str:
 
     lines.append("------------------------")
     return "\n".join(lines)
+
+
+
+def memory_consolidate(similarity_threshold: float = 0.85) -> Dict[str, Any]:
+    """
+    Consolidate memory store by removing duplicate/similar memories (UPGRADE 14).
+    
+    This is called by DreamAgent during idle time to clean up the memory vault.
+    
+    Process:
+    1. Load all memories from memory.json
+    2. Group by semantic similarity using fuzzy matching
+    3. For each group, keep the most recent/complete entry, remove duplicates
+    4. Return stats: duplicates_removed, memories_before, memories_after
+    
+    Args:
+        similarity_threshold: Fuzzy similarity threshold (0.85 = 85% similar)
+    
+    Returns:
+        {"duplicates_removed": int, "memories_before": int, "memories_after": int, "status": str}
+    """
+    with _LOCK:
+        data = _load_memory()
+        
+        total_before = sum(
+            len(v) if isinstance(v, list) else len(v)
+            for v in data.values()
+        )
+        
+        if total_before < 5:
+            return {
+                "duplicates_removed": 0,
+                "memories_before": total_before,
+                "memories_after": total_before,
+                "status": "Not enough memories to consolidate (need at least 5)"
+            }
+        
+        duplicates_removed = 0
+        
+        # Process each list-based category
+        for category, items in data.items():
+            if not isinstance(items, list) or len(items) < 2:
+                continue
+            
+            # Track which indices to keep
+            to_keep = []
+            seen_similar = set()
+            
+            for i, item in enumerate(items):
+                if i in seen_similar:
+                    continue
+                
+                # Check if this item is similar to any we're keeping
+                is_duplicate = False
+                for keep_idx in to_keep:
+                    if _fuzzy_similar(item, items[keep_idx]) >= similarity_threshold:
+                        # This is a duplicate of something we're already keeping
+                        is_duplicate = True
+                        seen_similar.add(i)
+                        duplicates_removed += 1
+                        break
+                
+                if not is_duplicate:
+                    to_keep.append(i)
+            
+            # Rebuild the list with only non-duplicates
+            if len(to_keep) < len(items):
+                data[category] = [items[i] for i in to_keep]
+                print(f"[Memory] 🧹 Consolidated [{category}]: {len(items)} → {len(to_keep)} (removed {len(items) - len(to_keep)} duplicates)", flush=True)
+        
+        # Save consolidated memory
+        if duplicates_removed > 0:
+            _save_memory(data)
+        
+        total_after = sum(
+            len(v) if isinstance(v, list) else len(v)
+            for v in data.values()
+        )
+        
+        return {
+            "duplicates_removed": duplicates_removed,
+            "memories_before": total_before,
+            "memories_after": total_after,
+            "status": f"Consolidated successfully - removed {duplicates_removed} duplicates" if duplicates_removed > 0 else "No duplicates found"
+        }

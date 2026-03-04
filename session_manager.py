@@ -295,7 +295,16 @@ class SessionManager:
         )
 
     def _call_llm_for_summary(self, transcript: str) -> str:
-        """Call the LLM to produce a short summary paragraph of the transcript."""
+        """
+        Call the LLM to produce an intelligent summary (UPGRADE 11).
+        
+        Instead of basic truncation, this extracts:
+        - Active tasks and their status
+        - Key decisions made
+        - File paths mentioned
+        - Agent actions taken
+        - Important context for future turns
+        """
         if self.runtime is None:
             return "(summary unavailable — no LLM runtime attached)"
 
@@ -306,16 +315,39 @@ class SessionManager:
                 {
                     "role": "system",
                     "content": (
-                        "You are a concise archivist. Summarise the following conversation "
-                        "excerpt into ONE short paragraph (max 120 words). Capture the key "
-                        "topics discussed, decisions made, and any files or tasks involved. "
-                        "Write in past tense, third person."
+                        "You are A.N.K.I.T.A's Memory Compressor. Summarize this conversation excerpt into a compact context block.\n\n"
+                        "Extract and preserve:\n"
+                        "- Active tasks: what was being worked on, current status\n"
+                        "- Key decisions: choices made, approaches selected\n"
+                        "- File paths: any files created, edited, or referenced\n"
+                        "- Agent actions: which agents were used and what they did\n"
+                        "- Important context: facts needed for future turns\n\n"
+                        "Format as a structured block (max 200 words):\n"
+                        "```\n"
+                        "CONTEXT SUMMARY:\n"
+                        "Active Tasks: <list>\n"
+                        "Files: <paths>\n"
+                        "Decisions: <key choices>\n"
+                        "Status: <current state>\n"
+                        "```\n\n"
+                        "Write in past tense. Be specific with file paths and task names. "
+                        "Omit pleasantries and filler. Focus on actionable context."
                     ),
                 },
-                {"role": "user", "content": transcript},
+                {"role": "user", "content": f"Summarize this conversation:\n\n{transcript}"},
             ]
-            result = call_chat_once(self.runtime, summary_msgs, tools=None, max_tokens=256)
-            return (result.get("content") or "").strip() or "(empty summary)"
+            result = call_chat_once(self.runtime, summary_msgs, tools=None, max_tokens=300)
+            summary = (result.get("content") or "").strip()
+            
+            if not summary:
+                return "(empty summary)"
+            
+            # Ensure summary is compact
+            if len(summary) > 1000:
+                summary = summary[:1000] + "..."
+            
+            return summary
+            
         except Exception as err:
             print(f"[SessionManager] ⚠️  LLM summary failed: {err}", flush=True)
             return f"(summary error: {err})"

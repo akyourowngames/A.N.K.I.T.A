@@ -173,3 +173,127 @@ class MemoryStore:
             role = hit["meta"].get("role", "?")
             lines.append(f"  {role}: {hit['text']}")
         return "\n".join(lines)
+
+    def consolidate(self, similarity_threshold: float = 0.85) -> Dict[str, Any]:
+        """
+        Memory consolidation: merge duplicate/similar memories (UPGRADE 14).
+        
+        This runs during DreamAgent idle time to clean up the memory store.
+        
+        Process:
+        1. Fetch all memories
+        2. Group by semantic similarity (cosine distance < threshold)
+        3. For each group, keep the most recent entry, delete the rest
+        4. Return stats: duplicates_removed, memories_before, memories_after
+        
+        Args:
+            similarity_threshold: Cosine similarity threshold (0.85 = 85% similar)
+        
+        Returns:
+            {"duplicates_removed": int, "memories_before": int, "memories_after": int}
+        """
+        if not self.enabled:
+            return {"duplicates_removed": 0, "memories_before": 0, "memories_after": 0}
+        
+        try:
+            count_before = self._col.count()
+            if count_before < 10:
+                # Not enough memories to consolidate
+                return {"duplicates_removed": 0, "memories_before": count_before, "memories_after": count_before}
+            
+            # Fetch all memories
+            all_data = self._col.get(include=["documents", "metadatas"])
+            ids = all_data.get("ids", [])
+            docs = all_data.get("documents", [])
+            metas = all_data.get("metadatas", [])
+            
+            if not ids or not docs:
+                return {"duplicates_removed": 0, "memories_before": count_before, "memories_after": count_before}
+            
+            # Build list of (id, doc, ts) tuples
+            memories = []
+            for i, (doc_id, doc, meta) in enumerate(zip(ids, docs, metas)):
+                ts = float(meta.get("ts", 0))
+                memories.append({"id": doc_id, "doc": doc, "ts": ts, "meta": meta})
+            
+            # Sort by timestamp (newest first)
+            memories.sort(key=lambda x: x["ts"], reverse=True)
+            
+            # Track which IDs to delete
+            to_delete = set()
+            
+            # For each memory, check if it's similar to any newer memory
+            for i in range(len(memories)):
+                if memories[i]["id"] in to_delete:
+                    continue  # Already marked for deletion
+                
+                # Query for similar memories
+                try:
+                    res = self._col.query(
+                        query_texts=[memories[i]["doc"]],
+                        n_results=min(10, count_before),
+                    )
+                    
+                    similar_ids = res.get("ids", [[]])[0] or []
+                    distances = res.get("distances", [[]])[0] or []
+                    
+                    for sim_id, dist in zip(similar_ids, distances):
+                        if sim_id == memories[i]["id"]:
+                            continue  # Skip self
+                        
+                        # If very similar (distance < 1 - threshold)
+                        similarity = 1.0 - float(dist)
+                        if similarity >= similarity_threshold:
+                            # Find which memory is older
+                            sim_mem = next((m for m in memories if m["id"] == sim_id), None)
+                            if sim_mem and sim_mem["ts"] < memories[i]["ts"]:
+                                # sim_mem is older, mark it for deletion
+                                to_delete.add(sim_id)
+                            elif sim_mem and sim_mem["ts"] > memories[i]["ts"]:
+                                # current memory is older, mark it for deletion
+                                to_delete.add(memories[i]["id"])
+                                break
+                
+                except Exception as query_err:
+                    print(f"[MemoryStore] ⚠️  Consolidation query error: {query_err}", flush=True)
+                    continue
+            
+            # Delete duplicates
+            if to_delete:
+                try:
+                    self._col.delete(ids=list(to_delete))
+                    print(f"[MemoryStore] 🧹 Consolidated: removed {len(to_delete)} duplicate memories", flush=True)
+                except Exception as del_err:
+                    print(f"[MemoryStore] ❌ Delete failed during consolidation: {del_err}", flush=True)
+            
+            count_after = self._col.count()
+            
+            return {
+                "duplicates_removed": len(to_delete),
+                "memories_before": count_before,
+                "memories_after": count_after,
+            }
+        
+        except Exception as err:
+            print(f"[MemoryStore] ❌ consolidate() failed: {err}", flush=True)
+            return {"duplicates_removed": 0, "memories_before": 0, "memories_after": 0}
+    
+    def get_stats(self) -> Dict[str, Any]:
+        """
+        Get memory store statistics.
+        
+        Returns:
+            {"total_memories": int, "enabled": bool, "ttl_days": int}
+        """
+        if not self.enabled:
+            return {"total_memories": 0, "enabled": False, "ttl_days": self._TTL_DAYS}
+        
+        try:
+            count = self._col.count()
+            return {
+                "total_memories": count,
+                "enabled": True,
+                "ttl_days": self._TTL_DAYS,
+            }
+        except Exception:
+            return {"total_memories": 0, "enabled": False, "ttl_days": self._TTL_DAYS}
