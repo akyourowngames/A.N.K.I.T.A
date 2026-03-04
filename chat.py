@@ -44,6 +44,16 @@ def main() -> None:
 
     # Vector memory
     memory = MemoryStore(workspace_root=WORKSPACE_ROOT)
+    
+    # Session ID for CLI
+    session_id = "cli-session"
+    
+    # Attach memory to orchestrator for ContextAgent v2
+    orchestrator.attach_memory(memory, session_id)
+    
+    # Session log (JSON sliding window for fast recent message access)
+    from session_log import SessionLog
+    session_log = SessionLog(WORKSPACE_ROOT, session_id)
 
     # ── Session Manager (Black Box / Flight Recorder) ✈️ ──────────────────────
     session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)
@@ -83,7 +93,6 @@ def main() -> None:
     else:
         messages = base_messages
 
-    session_id = "cli-session"
     session_label = f"RESTORED ({len(restored_history)} msgs)" if restored_history else "NEW"
 
     # Now that session_id is set, attach memory properly
@@ -242,6 +251,7 @@ def main() -> None:
 
         # ── Save user turn to session vault ───────────────────────────────────
         session.add_message("user", user_text)
+        session_log.append("user", user_text)
 
         # Inject relevant memories as context
         mem_context = memory.format_memory_context(user_text, n=4)
@@ -257,12 +267,13 @@ def main() -> None:
             continue
 
         # send_fn: called from background drone thread when reply is ready
-        def _print_reply(text: str, _session_id: str = session_id, _iid_ref: List = _last_iid) -> None:
+        def _print_reply(text: str, _session_id: str = session_id, _iid_ref: List = _last_iid, _slog: "SessionLog" = session_log) -> None:
             if not text:
                 return
             print(f"\nA.N.K.I.T.A: {text}\n\nYou: ", end="", flush=True)
             try:
                 memory.add(_session_id, "assistant", text)
+                _slog.append("assistant", text)
                 proactive.set_last_interaction()
                 # Sync last interaction ID from FeedbackEngine so implicit feedback
                 # detection ("good"/"bad") targets the correct orchestrator interaction

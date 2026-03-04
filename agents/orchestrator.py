@@ -837,12 +837,20 @@ class Orchestrator:
         # 0. CONTEXT AGENT: Extract context from conversation history BEFORE routing
         context_block = None
         try:
-            context_result = self.context_agent.extract(user_text, messages)
+            # v2: pass memory_store + session_id so ContextAgent can pull from
+            # ChromaDB when session messages are thin (e.g. after a restart)
+            _mem_store = getattr(self, "_memory_store", None)
+            _session_id = getattr(self, "_session_id", None)
+            context_result = self.context_agent.extract(
+                user_text, messages,
+                memory_store=_mem_store,
+                session_id=_session_id,
+            )
             if context_result and context_result.get("context_block"):
                 context_block = context_result["context_block"]
-                print(f"[ContextAgent] Extracted context: {context_block[:100]}...", flush=True)
+                print(f"[ContextAgent] ✅ Context:\n{context_block}", flush=True)
         except Exception as ctx_err:
-            print(f"[ContextAgent] Failed to extract context: {ctx_err}", flush=True)
+            print(f"[ContextAgent] Failed: {ctx_err}", flush=True)
         
         # 1. Supervisor routes the request
         # Generate an interaction ID for FeedbackEngine tracking
@@ -1372,4 +1380,14 @@ class Orchestrator:
         reply = self._synthesize(user_text, all_results)
         self._append_to_messages(messages, user_text, reply)
         return reply
+
+    def attach_memory(self, memory_store: Any, session_id: str = "default") -> None:
+        """Inject MemoryStore so ContextAgent can pull from ChromaDB."""
+        self._memory_store = memory_store
+        self._session_id = session_id
+
+    def set_session_id(self, session_id: str) -> None:
+        """Update session ID (called when chat_id changes in Telegram)."""
+        self._session_id = session_id
+
 

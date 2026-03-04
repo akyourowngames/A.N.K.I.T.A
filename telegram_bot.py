@@ -134,6 +134,13 @@ def main() -> None:
 
     # Vector memory (shared across all Telegram chats — scoped by session_id per chat)
     memory = MemoryStore(workspace_root=WORKSPACE_ROOT)
+    
+    # Attach memory to orchestrator for ContextAgent v2
+    orchestrator.attach_memory(memory, "telegram-default")
+    
+    # Session logs (JSON sliding window for fast recent message access)
+    from session_log import SessionLog
+    session_logs: Dict[int, SessionLog] = {}  # chat_id → SessionLog
 
     # Corn scheduler
     runner: Optional[CornRunner] = None
@@ -373,6 +380,9 @@ def main() -> None:
                 # Track last active chat for proactive event routing
                 last_active_chat_id = chat_id
                 session_id = f"telegram-{chat_id}"
+                
+                # Update orchestrator session_id for ContextAgent v2
+                orchestrator.set_session_id(session_id)
 
                 # Ensure session exists — restore from vault if available
                 if chat_id not in sessions:
@@ -394,6 +404,9 @@ def main() -> None:
                             pass
                     else:
                         sessions[chat_id] = base
+                    
+                    # Initialize SessionLog for this chat
+                    session_logs[chat_id] = SessionLog(WORKSPACE_ROOT, session_id)
 
                 # Update proactive engine to use this chat's real session_id
                 # so DreamAgent searches the correct ChromaDB memories
@@ -512,18 +525,22 @@ def main() -> None:
                 _msg_id_for_drone = msg_id
 
                 _sm_for_drone = tg_session_managers.get(chat_id)
+                _slog_for_drone = session_logs.get(chat_id)
 
                 def _drone_reply(
                     note: str,
                     _cid: int = _chat_id_for_drone,
                     _sid: str = _session_id_for_drone,
                     _sm: "SessionManager | None" = _sm_for_drone,
+                    _slog: "SessionLog | None" = _slog_for_drone,
                 ) -> None:
                     """Called from drone thread when reply is ready — sends to Telegram."""
                     if not note:
                         return
                     try:
                         memory.add(_sid, "assistant", note)
+                        if _slog is not None:
+                            _slog.append("assistant", note)
                         send_text(bot_token, _cid, note)
                         # ── Save to session vault + compress if needed ─────────
                         if _sm is not None:
@@ -534,6 +551,8 @@ def main() -> None:
 
                 # Save user message now (reply saved in _drone_reply when it arrives)
                 memory.add(session_id, "user", text)
+                if chat_id in session_logs:
+                    session_logs[chat_id].append("user", text)
                 if chat_id in tg_session_managers:
                     tg_session_managers[chat_id].add_message("user", text)
 

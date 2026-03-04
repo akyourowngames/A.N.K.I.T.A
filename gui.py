@@ -500,6 +500,9 @@ class AnkitaWindow(QMainWindow):
         self.memory._client = None
         self.memory._col = None
         self.session_id = "gui-session"
+        
+        # Attach memory to orchestrator for ContextAgent v2 (even if disabled)
+        self.orchestrator.attach_memory(self.memory, self.session_id)
 
         # â”€â”€ Session Manager (Black Box / Flight Recorder) âœˆï¸ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
         self.session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)

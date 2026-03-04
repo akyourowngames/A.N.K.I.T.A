@@ -1,140 +1,311 @@
 """
-agents/context_agent.py
-=======================
-ContextAgent — The Memory Synthesizer
+agents/context_agent.py  — UPGRADED v2
+=======================================
+ContextAgent — The Conversation Brain
 
-Runs BEFORE the Supervisor on every message to extract context from conversation history.
-Builds a CONTEXT_BLOCK that helps the Supervisor make better routing decisions.
-
-Purpose:
---------
-When user says "finish that" after a long coding session, the Supervisor has no idea what "that" is.
-ContextAgent reads the last 10 turns, extracts entities (names, files, URLs, tasks), and injects
-a clean CONTEXT_BLOCK into the Supervisor's routing decision.
-
-Example Output:
---------------
-CONTEXT: user was debugging main.py, last error was ModuleNotFoundError at line 47, last agent was CodeAgent
+What's new vs v1:
+  1. Pulls from BOTH session messages AND ChromaDB memory — works even after restarts
+  2. Detects pending offers ("Want me to X?") as a dedicated field
+  3. Outputs COMMAND-GRADE context that FORCES supervisor routing decisions
+  4. max_tokens bumped to 400 — no more truncated JSON
+  5. Confirmation detection built-in — "yeah pls" resolves to concrete action + agent
 """
 
 from __future__ import annotations
 
+import time
 from typing import Any, Dict, List, Optional
 
 from llm import LLMRuntime, call_chat_once
 
 
-_CONTEXT_AGENT_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Context Synthesizer.
+# ---------------------------------------------------------------------------
+# System prompt — v2: command-grade output
+# ---------------------------------------------------------------------------
 
-Your job: Analyze the last 10 conversation turns and extract a compact CONTEXT_BLOCK.
+_CONTEXT_AGENT_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Conversation Brain.
 
-Extract:
-  - active_agent: Which agent was last working (CodeAgent, FileAgent, WebAgent, etc.)
-  - active_file: Which file was being edited/read (if any)
-  - active_task: What task was being performed (debugging, writing, searching, etc.)
-  - last_result: What was the outcome (success, error, partial completion)
-  - pending_follow_up: What the user likely wants to do next
+Your job: Read the conversation and produce a COMMAND-GRADE context block that
+FORCES the Supervisor to make the correct routing decision.
 
-Output format (JSON):
+This is especially critical for:
+- Short confirmations: "yes", "yeah pls", "sure", "ok", "do it", "go ahead"
+- Pronouns: "it", "that", "this", "the file", "the task"
+- Follow-ups: "is it done?", "did you do it?", "what happened?"
+
+OUTPUT FORMAT (strict JSON, nothing else):
 {
-  "active_agent": "CodeAgent",
+  "active_agent": "TerminalAgent",
   "active_file": "main.py",
-  "active_task": "debugging ModuleNotFoundError",
-  "last_result": "error at line 47",
-  "pending_follow_up": "fix the import error",
-  "entities": ["main.py", "ModuleNotFoundError", "line 47"]
+  "active_task": "installing Ookla Speedtest CLI",
+  "last_result": "ANKITA offered to install it but hasn't done it yet",
+  "pending_offer": "install Ookla Speedtest CLI using winget",
+  "pending_offer_agent": "TerminalAgent",
+  "pending_follow_up": "run the install command",
+  "is_confirmation": true,
+  "confirmation_resolves_to": "TerminalAgent should run: winget install Ookla.Speedtest.CLI",
+  "entities": ["Speedtest CLI", "winget", "internet speed"],
+  "last_user_intent": "user wants to test internet speed"
 }
 
-Rules:
-- Keep it SHORT — max 200 tokens total
-- Extract ONLY facts from the conversation, never hallucinate
-- If no clear context, return minimal JSON with nulls
-- Focus on the MOST RECENT activity (last 2-3 turns)
-- Identify pronouns: "that", "it", "this" → what do they refer to?
+FIELD DEFINITIONS:
+- active_agent: which specialist was last working (CodeAgent/FileAgent/TerminalAgent/etc)
+- active_file: file path being worked on (null if none)
+- active_task: what was being done in plain English
+- last_result: what actually happened — was it completed, pending, or offered?
+- pending_offer: CRITICAL — if ANKITA said "want me to X?" or "shall I X?" — put X here VERBATIM
+- pending_offer_agent: which agent should fulfill the pending offer
+- pending_follow_up: what should happen next
+- is_confirmation: true if current user message is a yes/ok/sure/yeah/go ahead confirmation
+- confirmation_resolves_to: if is_confirmation=true, EXACTLY what should be done and by which agent
+- entities: key nouns from the conversation (tools, files, topics, names)
+- last_user_intent: one sentence of what the user ultimately wants
 
-Examples:
+RULES:
+- NEVER return null for pending_offer if ANKITA asked a yes/no question in the last 2 turns
+- ALWAYS set is_confirmation=true for: yes, yeah, sure, ok, yep, do it, go ahead, yeah pls,
+  go for it, sounds good, please, fine, ok do it, of course, absolutely, definitely
+- If is_confirmation=true, confirmation_resolves_to MUST be filled — never leave it null
+- max 400 tokens total — be concise but complete
+- Extract from the LAST 2-3 turns primarily, not old history
+
+EXAMPLES:
+
+Conversation:
+  ANKITA: "I didn't install it yet. Want me to handle it? Say the word."
+  User: "yeah pls"
+
+Output:
+{
+  "active_agent": "TerminalAgent",
+  "active_file": null,
+  "active_task": "installing Ookla Speedtest CLI",
+  "last_result": "not installed yet — ANKITA offered to install",
+  "pending_offer": "install Ookla Speedtest CLI",
+  "pending_offer_agent": "TerminalAgent",
+  "pending_follow_up": "run winget install Ookla.Speedtest.CLI",
+  "is_confirmation": true,
+  "confirmation_resolves_to": "TerminalAgent should run: winget install Ookla.Speedtest.CLI",
+  "entities": ["Speedtest CLI", "winget", "Ookla"],
+  "last_user_intent": "user wants to install speedtest CLI tool"
+}
 
 Conversation:
   User: "fix the bug in main.py"
-  Assistant: "Found a NameError on line 47. The variable 'config' is not defined."
+  ANKITA: "Found NameError on line 47 — config is not defined."
   User: "finish that"
 
 Output:
 {
   "active_agent": "CodeAgent",
   "active_file": "main.py",
-  "active_task": "fixing NameError",
-  "last_result": "identified error at line 47",
-  "pending_follow_up": "apply the fix to main.py",
-  "entities": ["main.py", "line 47", "NameError", "config"]
+  "active_task": "fixing NameError in main.py",
+  "last_result": "error identified at line 47 but not fixed yet",
+  "pending_offer": null,
+  "pending_offer_agent": null,
+  "pending_follow_up": "apply the fix to main.py line 47",
+  "is_confirmation": false,
+  "confirmation_resolves_to": null,
+  "entities": ["main.py", "line 47", "NameError", "config"],
+  "last_user_intent": "user wants the NameError fixed in main.py"
 }
 
 Conversation:
   User: "write a poem about dogs"
-  Assistant: "Here's a poem about dogs... [poem text]"
+  ANKITA: "Here's a poem: Dogs are loyal..."
   User: "save it"
 
 Output:
 {
-  "active_agent": "ContentAgent",
+  "active_agent": "FileAgent",
   "active_file": null,
-  "active_task": "writing poem about dogs",
-  "last_result": "poem generated successfully",
-  "pending_follow_up": "save the poem to a file",
-  "entities": ["poem", "dogs"]
-}
-
-Conversation:
-  User: "what's the weather"
-  Assistant: "It's 72°F and sunny in your area."
-  User: "thanks"
-
-Output:
-{
-  "active_agent": "GeneralAgent",
-  "active_file": null,
-  "active_task": "weather query",
-  "last_result": "provided weather information",
-  "pending_follow_up": null,
-  "entities": ["weather", "72°F", "sunny"]
+  "active_task": "saving the dogs poem",
+  "last_result": "poem was written and shown but not saved",
+  "pending_offer": null,
+  "pending_offer_agent": null,
+  "pending_follow_up": "save the poem to a file on Desktop",
+  "is_confirmation": false,
+  "confirmation_resolves_to": null,
+  "entities": ["poem", "dogs"],
+  "last_user_intent": "user wants the poem saved to disk"
 }
 """
 
 
 class ContextAgent:
     """
-    Lightweight context synthesizer that runs before Supervisor routing.
-    Extracts entities and task context from recent conversation history.
+    Upgraded ContextAgent v2.
+
+    Key improvements:
+    - Reads from BOTH session messages AND ChromaDB (works after restarts)
+    - Detects pending offers and confirmation intent
+    - Produces command-grade output that forces Supervisor routing
+    - 400 token budget (was 200)
     """
 
     def __init__(self, runtime: LLMRuntime) -> None:
         self.runtime = runtime
+        # Cache: avoid re-running within 10 seconds for same input
+        self._cache: Optional[Dict[str, Any]] = None
+        self._cache_ts: float = 0.0
+        self._cache_key: str = ""
 
-    def synthesize(self, history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    # ------------------------------------------------------------------
+    # Primary method: called by orchestrator.run() before Supervisor
+    # ------------------------------------------------------------------
+
+    def extract(
+        self,
+        user_text: str,
+        messages: List[Dict[str, Any]],
+        memory_store: Any = None,
+        session_id: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
         """
-        Analyze conversation history and extract context.
+        Main entry point. Pulls context from session messages + ChromaDB.
 
         Args:
-            history: Last N conversation turns (user/assistant messages)
+            user_text:    Current user message
+            messages:     Session message list (may be short after restart)
+            memory_store: MemoryStore instance (optional, for ChromaDB lookup)
+            session_id:   Session ID for scoped memory search
 
         Returns:
-            Context dict with active_agent, active_file, active_task, etc.
-            Returns None if history is too short or analysis fails.
+            {"context_block": str, "context_data": dict} or None
         """
-        if not history or len(history) < 2:
+        # Cache check — don't re-run within 10s for same user_text
+        cache_key = f"{user_text[:80]}:{len(messages)}"
+        if (
+            self._cache is not None
+            and cache_key == self._cache_key
+            and (time.time() - self._cache_ts) < 10.0
+        ):
+            return self._cache
+
+        # Build the conversation text for analysis
+        conversation_lines = self._build_conversation_text(
+            messages, memory_store, session_id, user_text
+        )
+
+        if not conversation_lines:
             return None
 
-        # Take last 10 turns (5 user + 5 assistant exchanges)
-        recent = history[-10:]
+        context_data = self._call_llm(conversation_lines, user_text)
+        if not context_data:
+            return None
 
-        # Build a compact summary for the LLM
-        conversation_text = []
-        for msg in recent:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", "")[:500]  # Truncate long messages
-            conversation_text.append(f"{role.capitalize()}: {content}")
+        context_block = self.format_context_block(context_data)
+        result = {"context_block": context_block, "context_data": context_data}
 
-        prompt = "Analyze this conversation and extract context:\n\n" + "\n".join(conversation_text)
+        # Cache result
+        self._cache = result
+        self._cache_ts = time.time()
+        self._cache_key = cache_key
+
+        return result
+
+    # ------------------------------------------------------------------
+    # Legacy method kept for backward compatibility
+    # ------------------------------------------------------------------
+
+    def synthesize(self, history: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """Legacy method. Prefer extract() for new code."""
+        if not history or len(history) < 2:
+            return None
+        lines = []
+        for msg in history[-10:]:
+            role = msg.get("role", "unknown").capitalize()
+            content = str(msg.get("content", ""))[:400]
+            lines.append(f"{role}: {content}")
+        return self._call_llm(lines, "")
+
+    # ------------------------------------------------------------------
+    # Build conversation text — merges session + ChromaDB
+    # ------------------------------------------------------------------
+
+    def _build_conversation_text(
+        self,
+        messages: List[Dict[str, Any]],
+        memory_store: Any,
+        session_id: Optional[str],
+        user_text: str,
+    ) -> List[str]:
+        """
+        Build conversation lines from three sources (in priority order):
+        1. Recent session messages (last 8 turns from current session)
+        2. SessionLog (last 20 messages from JSON log - survives restarts)
+        3. ChromaDB semantic memory (if session messages + log < 4 turns)
+
+        This means context works even after bot restarts or fresh sessions.
+        """
+        lines: List[str] = []
+
+        # --- Source 1: Session messages (current runtime) ---
+        clean = self._extract_clean(messages, max_turns=8)
+        for msg in clean:
+            role = msg.get("role", "?").capitalize()
+            content = str(msg.get("content", ""))[:400]
+            lines.append(f"{role}: {content}")
+
+        # --- Source 2: SessionLog (JSON sliding window - fast, always works) ---
+        # If session messages are thin, pull from SessionLog first before ChromaDB
+        if len(clean) < 4:
+            try:
+                from session_log import SessionLog
+                from pathlib import Path
+                # Infer workspace_root from memory_store if available
+                workspace_root = getattr(memory_store, "workspace_root", Path.cwd())
+                if session_id:
+                    session_log = SessionLog(workspace_root, session_id)
+                    log_messages = session_log.recent(20)
+                    if log_messages:
+                        log_lines = ["[FROM SESSION LOG (recent conversation):]"]
+                        for msg in log_messages:
+                            role = msg.get("role", "?").capitalize()
+                            content = str(msg.get("content", ""))[:300]
+                            log_lines.append(f"  {role}: {content}")
+                        # Prepend log before session lines
+                        lines = log_lines + lines
+            except Exception as log_err:
+                print(f"[ContextAgent] SessionLog read failed: {log_err}", flush=True)
+
+        # --- Source 3: ChromaDB — semantic search (only if still thin) ---
+        # If we have fewer than 4 total turns after session + log, pull from ChromaDB
+        if len(clean) < 4 and memory_store is not None:
+            try:
+                # Search for memories relevant to current message
+                hits = memory_store.search(
+                    query=user_text or "recent conversation",
+                    n=6,
+                    session_id=session_id,
+                )
+                if hits:
+                    memory_lines = ["[FROM MEMORY (previous sessions):]"]
+                    for hit in hits:
+                        role = hit.get("meta", {}).get("role", "?").capitalize()
+                        text = str(hit.get("text", ""))[:300]
+                        memory_lines.append(f"  {role}: {text}")
+                    # Prepend memory before session lines
+                    lines = memory_lines + lines
+            except Exception as mem_err:
+                print(f"[ContextAgent] Memory search failed: {mem_err}", flush=True)
+
+        # Always append the current user message so LLM sees what triggered this
+        if user_text:
+            lines.append(f"User (NOW): {user_text}")
+
+        return lines
+
+    # ------------------------------------------------------------------
+    # LLM call
+    # ------------------------------------------------------------------
+
+    def _call_llm(self, conversation_lines: List[str], user_text: str) -> Optional[Dict[str, Any]]:
+        """Run the LLM and parse JSON output."""
+        import json
+        import re
+
+        prompt = "Analyze this conversation and extract context:\n\n" + "\n".join(conversation_lines)
 
         try:
             response = call_chat_once(
@@ -144,109 +315,106 @@ class ContextAgent:
                     {"role": "user", "content": prompt},
                 ],
                 tools=None,
-                max_tokens=200,
+                max_tokens=400,  # v1 had 200 — too small, caused truncated JSON
             )
 
-            content = (response.get("content") or "").strip()
+            raw = (response.get("content") or "").strip()
 
-            # Parse JSON from response
-            import json
-            import re
-
-            # Try to extract JSON from markdown code fence
-            json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", content)
+            # Extract JSON — handle markdown fences
+            json_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", raw)
             if json_match:
                 json_str = json_match.group(1).strip()
             else:
-                # Try to find raw JSON object
-                json_match = re.search(r"\{[\s\S]*\}", content)
-                if json_match:
-                    json_str = json_match.group(0)
-                else:
-                    return None
+                json_match = re.search(r"\{[\s\S]*\}", raw)
+                json_str = json_match.group(0) if json_match else None
 
-            context = json.loads(json_str)
-            return context
+            if not json_str:
+                return None
+
+            return json.loads(json_str)
 
         except Exception as err:
-            print(f"[ContextAgent] Error synthesizing context: {err}", flush=True)
+            print(f"[ContextAgent] LLM call failed: {err}", flush=True)
             return None
 
-    def extract(self, user_text: str, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """
-        Extract context from conversation history (wrapper for synthesize).
-        
-        Args:
-            user_text: Current user message
-            messages: Full conversation history
-            
-        Returns:
-            Dict with 'context_block' key containing formatted context string
-        """
-        context = self.synthesize(messages)
-        if not context:
-            return None
-            
-        context_block = self.format_context_block(context)
-        return {
-            "context_block": context_block,
-            "context_data": context
-        }
+    # ------------------------------------------------------------------
+    # Format context block — command-grade output for Supervisor
+    # ------------------------------------------------------------------
 
     def format_context_block(self, context: Dict[str, Any]) -> str:
         """
-        Format context dict into a text block for injection into Supervisor prompt.
+        Produce a COMMAND-GRADE context block.
 
-        Args:
-            context: Context dict from synthesize()
-
-        Returns:
-            Formatted text block
+        This is injected into the Supervisor's routing prompt and must
+        FORCE the correct routing decision — not just inform it.
         """
         if not context:
             return ""
 
-        lines = ["## CONVERSATION CONTEXT (from ContextAgent):"]
+        lines = ["╔══ CONVERSATION CONTEXT (ContextAgent) ══╗"]
 
-        if context.get("active_agent"):
-            lines.append(f"  - Last active agent: {context['active_agent']}")
-
-        if context.get("active_file"):
-            lines.append(f"  - Working on file: {context['active_file']}")
-
+        # Core state
         if context.get("active_task"):
-            lines.append(f"  - Current task: {context['active_task']}")
-
+            lines.append(f"  ACTIVE TASK  : {context['active_task']}")
+        if context.get("active_agent"):
+            lines.append(f"  LAST AGENT   : {context['active_agent']}")
+        if context.get("active_file"):
+            lines.append(f"  ACTIVE FILE  : {context['active_file']}")
         if context.get("last_result"):
-            lines.append(f"  - Last result: {context['last_result']}")
+            lines.append(f"  LAST RESULT  : {context['last_result']}")
+        if context.get("last_user_intent"):
+            lines.append(f"  USER INTENT  : {context['last_user_intent']}")
 
+        # Pending offer — highest priority
+        if context.get("pending_offer"):
+            lines.append(f"  PENDING OFFER: ANKITA offered to → {context['pending_offer']}")
+        if context.get("pending_offer_agent"):
+            lines.append(f"  OFFER AGENT  : {context['pending_offer_agent']}")
         if context.get("pending_follow_up"):
-            lines.append(f"  - User likely wants to: {context['pending_follow_up']}")
+            lines.append(f"  NEXT ACTION  : {context['pending_follow_up']}")
 
+        # Confirmation — FORCE routing
+        if context.get("is_confirmation"):
+            lines.append(f"")
+            lines.append(f"  ⚡ CONFIRMATION DETECTED ⚡")
+            lines.append(f"  The user just said YES to a pending offer.")
+            if context.get("confirmation_resolves_to"):
+                lines.append(f"  → ROUTE TO: {context['confirmation_resolves_to']}")
+            if context.get("pending_offer_agent"):
+                lines.append(f"  → DO NOT route to GeneralAgent")
+                lines.append(f"  → MUST route to: {context['pending_offer_agent']}")
+
+        # Entities
         if context.get("entities"):
-            entities = ", ".join(context["entities"][:5])  # Max 5 entities
-            lines.append(f"  - Key entities: {entities}")
+            lines.append(f"  ENTITIES     : {', '.join(context['entities'][:6])}")
 
-        lines.append("")  # Trailing newline
+        lines.append("╚══════════════════════════════════════╝")
+        lines.append("")
+
         return "\n".join(lines)
-    def extract(self, user_text: str, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-        """
-        Extract context from conversation history (wrapper for synthesize).
 
-        Args:
-            user_text: Current user message
-            messages: Full conversation history
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
 
-        Returns:
-            Dict with 'context_block' key containing formatted context string
-        """
-        context = self.synthesize(messages)
-        if not context:
-            return None
-
-        context_block = self.format_context_block(context)
-        return {
-            "context_block": context_block,
-            "context_data": context
-        }
-
+    def _extract_clean(
+        self, messages: List[Dict[str, Any]], max_turns: int = 8
+    ) -> List[Dict[str, Any]]:
+        """Extract last N clean user/assistant turns (no system/tool/base64)."""
+        clean = []
+        for msg in reversed(messages):
+            role = msg.get("role")
+            content = msg.get("content")
+            if role in ("system", "tool"):
+                continue
+            if isinstance(content, list):
+                continue
+            if isinstance(content, str) and (
+                "base64" in content or len(content) > 8000
+            ):
+                continue
+            if role in ("user", "assistant") and isinstance(content, str) and content.strip():
+                clean.append({"role": role, "content": content})
+            if len(clean) >= max_turns:
+                break
+        return list(reversed(clean))
