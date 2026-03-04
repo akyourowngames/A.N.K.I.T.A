@@ -1,4 +1,5 @@
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -338,6 +339,42 @@ _MAX_OUTPUT_LINES = 500
 _KEEP_HEAD_LINES = 200
 _KEEP_TAIL_LINES = 50
 
+# ─────────────────────────────────────────────────────────────────────────────
+# TERMINAL SESSION STATE — persistent CWD + environment across commands
+# ─────────────────────────────────────────────────────────────────────────────
+_TERMINAL_SESSION = {
+    "cwd": str(Path.home()),
+    "env_overrides": {},
+    "last_exit_code": 0,
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SMART TIMEOUT TIERS — auto-detect command type and adjust timeout
+# ─────────────────────────────────────────────────────────────────────────────
+_TIMEOUT_TIERS = {
+    # Quick diagnostics
+    "quick": (10, ["ping", "ipconfig", "whoami", "pwd", "hostname", "date", "time"]),
+    # Git operations
+    "git": (30, ["git status", "git log", "git diff", "git add", "git commit", "git branch"]),
+    # Package install
+    "install": (300, ["pip install", "npm install", "yarn install", "yarn add", "pnpm install", "cargo install"]),
+    # Build commands
+    "build": (600, ["npm run build", "yarn build", "cargo build", "make", "mvn package", "gradle build", "docker build"]),
+    # Test runners
+    "test": (180, ["pytest", "jest", "npm test", "yarn test", "go test", "cargo test", "mvn test"]),
+    # Docker operations
+    "docker": (600, ["docker build", "docker pull", "docker run", "docker-compose"]),
+}
+
+
+def _detect_timeout(command: str) -> int:
+    """Auto-detect appropriate timeout based on command type."""
+    cmd_lower = command.lower()
+    for tier_name, (timeout, keywords) in _TIMEOUT_TIERS.items():
+        if any(kw in cmd_lower for kw in keywords):
+            return timeout
+    return 60  # Default upgraded from 15s
+
 
 def _truncate_output_lines(text: str) -> str:
     """
@@ -358,14 +395,18 @@ def _truncate_output_lines(text: str) -> str:
     )
 
 
-def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
+def execute_shell_command(command: str, timeout: int | None = None, cwd: str | None = None) -> Dict[str, Any]:
     """
     Execute any PowerShell/CMD command system-wide and return its output.
 
-    Unlike run_command(), this is NOT workspace-sandboxed — it runs in the
-    user's home directory and can reach any system path (ping, ipconfig, git, etc.).
+    Unlike run_command(), this is NOT workspace-sandboxed — it can reach any system path.
+    
+    Args:
+        command: The shell command to execute
+        timeout: Max seconds to wait (auto-detected if None, max 600)
+        cwd: Working directory for the command (defaults to session CWD or home)
 
-    Safety: hard 15-second timeout + block list of destructive commands.
+    Safety: smart timeout + block list of destructive commands + session state.
     """
     cmd = str(command or "").strip()
     if not cmd:
@@ -382,7 +423,55 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
                 "exit_code": -1,
             }
 
-    timeout_sec = max(1, min(int(timeout), 60))
+    # Smart timeout detection
+    if timeout is None:
+        timeout_sec = _detect_timeout(cmd)
+    else:
+        timeout_sec = max(1, min(int(timeout), 600))  # Max 10 minutes
+
+    # Working directory resolution
+    if cwd:
+        # Expand environment variables in path
+        expanded_cwd = os.path.expandvars(cwd)
+        target_cwd = Path(expanded_cwd).resolve()
+        if not target_cwd.exists() or not target_cwd.is_dir():
+            return {
+                "ok": False,
+                "output": "",
+                "error": f"Working directory does not exist or is not a directory: {cwd}",
+                "exit_code": -1,
+            }
+        working_dir = str(target_cwd)
+        # Update session CWD if command is 'cd'
+        if cmd_lower.startswith("cd ") or cmd_lower == "cd":
+            _TERMINAL_SESSION["cwd"] = working_dir
+    else:
+        # Use session CWD
+        working_dir = _TERMINAL_SESSION["cwd"]
+
+    # Detect session state changes from command
+    # cd command updates session CWD
+    if cmd_lower.startswith("cd "):
+        cd_target = cmd[3:].strip().strip('"').strip("'")
+        if cd_target:
+            expanded_target = os.path.expandvars(cd_target)
+            if os.path.isabs(expanded_target):
+                new_cwd = Path(expanded_target).resolve()
+            else:
+                new_cwd = (Path(working_dir) / expanded_target).resolve()
+            if new_cwd.exists() and new_cwd.is_dir():
+                _TERMINAL_SESSION["cwd"] = str(new_cwd)
+                working_dir = str(new_cwd)
+
+    # Detect environment variable sets (PowerShell: $env:X = Y)
+    env_match = re.match(r'\$env:(\w+)\s*=\s*["\']?(.+?)["\']?$', cmd, re.IGNORECASE)
+    if env_match:
+        var_name, var_value = env_match.groups()
+        _TERMINAL_SESSION["env_overrides"][var_name] = var_value.strip('"').strip("'")
+
+    # Build environment with session overrides
+    final_env = os.environ.copy()
+    final_env.update(_TERMINAL_SESSION["env_overrides"])
 
     # On Windows, wrap in PowerShell so all cmds work naturally
     if os.name == "nt":
@@ -398,16 +487,22 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
             timeout=timeout_sec,
             shell=False,
             check=False,
-            cwd=str(Path.home()),  # run from home — not workspace-sandboxed
+            cwd=working_dir,
+            env=final_env,
         )
         output = _truncate_output_lines((result.stdout or "").strip())
         error = (result.stderr or "").strip()
+        
+        # Update session state
+        _TERMINAL_SESSION["last_exit_code"] = result.returncode
+        
         if result.returncode == 0:
             return {
                 "ok": True,
                 "output": output if output else "(No output)",
                 "error": error,
                 "exit_code": result.returncode,
+                "cwd": working_dir,
             }
         else:
             return {
@@ -415,6 +510,7 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
                 "output": output,
                 "error": error if error else f"Command exited with code {result.returncode}",
                 "exit_code": result.returncode,
+                "cwd": working_dir,
             }
     except subprocess.TimeoutExpired:
         return {
@@ -422,6 +518,7 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
             "output": "",
             "error": f"Command '{cmd}' timed out after {timeout_sec} seconds.",
             "exit_code": -1,
+            "cwd": working_dir,
         }
     except Exception as e:
         return {
@@ -429,6 +526,7 @@ def execute_shell_command(command: str, timeout: int = 15) -> Dict[str, Any]:
             "output": "",
             "error": f"Execution failed: {e}",
             "exit_code": -1,
+            "cwd": working_dir,
         }
 
 
@@ -527,3 +625,415 @@ def terminate_app(
             "stdout": (res.stdout or "").strip(),
         }
     raise FileNotFoundError(f"running app/process not found: {target}")
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GIT INTELLIGENCE — git_op tool for smart git workflows
+# ─────────────────────────────────────────────────────────────────────────────
+
+def git_op(action: str, message: str | None = None, branch: str | None = None, path: str | None = None, confirm: bool = False) -> Dict[str, Any]:
+    """
+    Smart git wrapper with proper error handling and structured output.
+    
+    Args:
+        action: Git operation (status, log, diff, add, commit, push, pull, branch, stash, reset)
+        message: Commit message (required for commit action)
+        branch: Branch name (for branch/push/pull actions)
+        path: Repository path (defaults to session CWD)
+        confirm: Required for destructive actions (reset, force push)
+        
+    Returns:
+        Dict with structured git data
+    """
+    # Determine working directory
+    if path:
+        repo_path = Path(os.path.expandvars(path)).resolve()
+    else:
+        repo_path = Path(_TERMINAL_SESSION["cwd"])
+    
+    if not repo_path.exists() or not repo_path.is_dir():
+        return {"ok": False, "error": f"Path does not exist: {repo_path}"}
+    
+    # Check if it's a git repo
+    git_check = execute_shell_command("git rev-parse --git-dir", cwd=str(repo_path))
+    if not git_check["ok"]:
+        return {"ok": False, "error": f"Not a git repository: {repo_path}"}
+    
+    # Execute git action
+    if action == "status":
+        result = execute_shell_command("git status --short", cwd=str(repo_path))
+        if result["ok"]:
+            lines = [l for l in result["output"].split("\n") if l.strip()]
+            modified = [l for l in lines if l.startswith(" M") or l.startswith("M ")]
+            untracked = [l for l in lines if l.startswith("??")]
+            staged = [l for l in lines if l.startswith("A ") or l.startswith("M ")]
+            return {
+                "ok": True,
+                "action": "status",
+                "modified": len(modified),
+                "untracked": len(untracked),
+                "staged": len(staged),
+                "files": lines,
+                "summary": f"{len(modified)} modified, {len(untracked)} untracked, {len(staged)} staged",
+            }
+        return result
+    
+    elif action == "log":
+        count = 15
+        result = execute_shell_command(f"git log --oneline --graph --decorate -n {count}", cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "log",
+                "commits": result["output"],
+                "count": len([l for l in result["output"].split("\n") if l.strip()]),
+            }
+        return result
+    
+    elif action == "diff":
+        result = execute_shell_command("git diff --stat", cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "diff",
+                "summary": result["output"],
+            }
+        return result
+    
+    elif action == "add":
+        result = execute_shell_command("git add -A", cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "add",
+                "message": "All changes staged",
+            }
+        return result
+    
+    elif action == "commit":
+        if not message:
+            return {"ok": False, "error": "Commit message is required"}
+        # Escape quotes in message
+        safe_message = message.replace('"', '\\"')
+        result = execute_shell_command(f'git commit -m "{safe_message}"', cwd=str(repo_path))
+        if result["ok"]:
+            # Get the commit hash
+            hash_result = execute_shell_command("git log --oneline -1", cwd=str(repo_path))
+            return {
+                "ok": True,
+                "action": "commit",
+                "message": message,
+                "commit": hash_result["output"] if hash_result["ok"] else "unknown",
+            }
+        return result
+    
+    elif action == "push":
+        # Get current branch if not specified
+        if not branch:
+            branch_result = execute_shell_command("git branch --show-current", cwd=str(repo_path))
+            if branch_result["ok"]:
+                branch = branch_result["output"].strip()
+            else:
+                return {"ok": False, "error": "Could not determine current branch"}
+        
+        result = execute_shell_command(f"git push origin {branch}", cwd=str(repo_path))
+        if not result["ok"] and "no upstream branch" in result["error"].lower():
+            # Try with --set-upstream
+            result = execute_shell_command(f"git push --set-upstream origin {branch}", cwd=str(repo_path))
+        
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "push",
+                "branch": branch,
+                "message": f"Pushed to origin/{branch}",
+            }
+        return result
+    
+    elif action == "pull":
+        if not branch:
+            branch_result = execute_shell_command("git branch --show-current", cwd=str(repo_path))
+            if branch_result["ok"]:
+                branch = branch_result["output"].strip()
+        
+        cmd = f"git pull --rebase origin {branch}" if branch else "git pull --rebase"
+        result = execute_shell_command(cmd, cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "pull",
+                "branch": branch or "current",
+                "message": "Pulled latest changes",
+            }
+        return result
+    
+    elif action == "branch":
+        result = execute_shell_command("git branch -a", cwd=str(repo_path))
+        if result["ok"]:
+            branches = [l.strip() for l in result["output"].split("\n") if l.strip()]
+            current = [b for b in branches if b.startswith("*")]
+            return {
+                "ok": True,
+                "action": "branch",
+                "branches": branches,
+                "current": current[0].replace("* ", "") if current else "unknown",
+            }
+        return result
+    
+    elif action == "stash":
+        timestamp = int(time.time())
+        stash_msg = f"ankita-stash-{timestamp}"
+        result = execute_shell_command(f'git stash push -m "{stash_msg}"', cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "stash",
+                "message": f"Stashed changes as: {stash_msg}",
+            }
+        return result
+    
+    elif action == "reset":
+        if not confirm:
+            return {
+                "ok": False,
+                "error": "Reset is destructive. Set confirm=True to proceed.",
+                "warning": "This will undo the last commit but keep changes staged.",
+            }
+        result = execute_shell_command("git reset --soft HEAD~1", cwd=str(repo_path))
+        if result["ok"]:
+            return {
+                "ok": True,
+                "action": "reset",
+                "message": "Last commit undone (changes kept staged)",
+            }
+        return result
+    
+    else:
+        return {"ok": False, "error": f"Unknown git action: {action}"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROCESS MANAGEMENT — process_op tool for background processes
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Store background processes started this session
+_BACKGROUND_PROCESSES: Dict[str, Dict[str, Any]] = {}
+
+
+def process_op(action: str, command: str | None = None, name: str | None = None, port: int | None = None, pid: int | None = None) -> Dict[str, Any]:
+    """
+    Process management tool for starting, stopping, and checking processes.
+    
+    Args:
+        action: Operation (start_background, list_background, kill_background, is_running, port_check)
+        command: Command to run (for start_background)
+        name: Process name/label (for start_background, kill_background, is_running)
+        port: Port number (for port_check)
+        pid: Process ID (for kill_background, is_running)
+        
+    Returns:
+        Dict with process information
+    """
+    if action == "start_background":
+        if not command:
+            return {"ok": False, "error": "command is required for start_background"}
+        if not name:
+            name = f"proc_{int(time.time())}"
+        
+        # Start process detached
+        cwd = _TERMINAL_SESSION["cwd"]
+        env = os.environ.copy()
+        env.update(_TERMINAL_SESSION["env_overrides"])
+        
+        try:
+            if os.name == "nt":
+                # Windows: use CREATE_NEW_PROCESS_GROUP to detach
+                proc = subprocess.Popen(
+                    ["powershell", "-NoProfile", "-Command", command],
+                    cwd=cwd,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS,
+                )
+            else:
+                proc = subprocess.Popen(
+                    ["/bin/sh", "-c", command],
+                    cwd=cwd,
+                    env=env,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                    stdin=subprocess.DEVNULL,
+                    start_new_session=True,
+                )
+            
+            _BACKGROUND_PROCESSES[name] = {
+                "pid": proc.pid,
+                "command": command,
+                "started": time.time(),
+                "cwd": cwd,
+            }
+            
+            return {
+                "ok": True,
+                "action": "start_background",
+                "name": name,
+                "pid": proc.pid,
+                "command": command,
+                "message": f"Started background process '{name}' (PID {proc.pid})",
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"Failed to start process: {e}"}
+    
+    elif action == "list_background":
+        # Clean up dead processes
+        for proc_name in list(_BACKGROUND_PROCESSES.keys()):
+            proc_info = _BACKGROUND_PROCESSES[proc_name]
+            try:
+                # Check if process is still running
+                if os.name == "nt":
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {proc_info['pid']}", "/NH"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    if str(proc_info['pid']) not in result.stdout:
+                        del _BACKGROUND_PROCESSES[proc_name]
+                else:
+                    os.kill(proc_info['pid'], 0)  # Signal 0 just checks if process exists
+            except (OSError, subprocess.SubprocessError):
+                del _BACKGROUND_PROCESSES[proc_name]
+        
+        return {
+            "ok": True,
+            "action": "list_background",
+            "count": len(_BACKGROUND_PROCESSES),
+            "processes": [
+                {
+                    "name": n,
+                    "pid": p["pid"],
+                    "command": p["command"],
+                    "uptime_seconds": int(time.time() - p["started"]),
+                }
+                for n, p in _BACKGROUND_PROCESSES.items()
+            ],
+        }
+    
+    elif action == "kill_background":
+        if not name and not pid:
+            return {"ok": False, "error": "name or pid is required for kill_background"}
+        
+        # Find process
+        target_pid = None
+        target_name = None
+        
+        if name and name in _BACKGROUND_PROCESSES:
+            target_pid = _BACKGROUND_PROCESSES[name]["pid"]
+            target_name = name
+        elif pid:
+            for n, p in _BACKGROUND_PROCESSES.items():
+                if p["pid"] == pid:
+                    target_pid = pid
+                    target_name = n
+                    break
+        
+        if not target_pid:
+            return {"ok": False, "error": f"Background process not found: {name or pid}"}
+        
+        # Kill process
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(target_pid), "/F", "/T"], check=True)
+            else:
+                os.kill(target_pid, 9)  # SIGKILL
+            
+            if target_name:
+                del _BACKGROUND_PROCESSES[target_name]
+            
+            return {
+                "ok": True,
+                "action": "kill_background",
+                "name": target_name,
+                "pid": target_pid,
+                "message": f"Killed background process '{target_name}' (PID {target_pid})",
+            }
+        except Exception as e:
+            return {"ok": False, "error": f"Failed to kill process: {e}"}
+    
+    elif action == "is_running":
+        if not name and not pid:
+            return {"ok": False, "error": "name or pid is required for is_running"}
+        
+        # Check if process is running
+        if name and name in _BACKGROUND_PROCESSES:
+            proc_info = _BACKGROUND_PROCESSES[name]
+            try:
+                if os.name == "nt":
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {proc_info['pid']}", "/NH"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    running = str(proc_info['pid']) in result.stdout
+                else:
+                    os.kill(proc_info['pid'], 0)
+                    running = True
+            except (OSError, subprocess.SubprocessError):
+                running = False
+                del _BACKGROUND_PROCESSES[name]
+            
+            return {
+                "ok": True,
+                "action": "is_running",
+                "name": name,
+                "pid": proc_info['pid'],
+                "running": running,
+            }
+        elif pid:
+            try:
+                if os.name == "nt":
+                    result = subprocess.run(
+                        ["tasklist", "/FI", f"PID eq {pid}", "/NH"],
+                        capture_output=True,
+                        text=True,
+                    )
+                    running = str(pid) in result.stdout
+                else:
+                    os.kill(pid, 0)
+                    running = True
+            except (OSError, subprocess.SubprocessError):
+                running = False
+            
+            return {
+                "ok": True,
+                "action": "is_running",
+                "pid": pid,
+                "running": running,
+            }
+        else:
+            return {"ok": False, "error": "Process not found"}
+    
+    elif action == "port_check":
+        if port is None:
+            return {"ok": False, "error": "port is required for port_check"}
+        
+        # Check what's using the port
+        if os.name == "nt":
+            result = execute_shell_command(f"netstat -ano | Select-String ':{port}'")
+        else:
+            result = execute_shell_command(f"lsof -i :{port}")
+        
+        if result["ok"]:
+            in_use = bool(result["output"].strip())
+            return {
+                "ok": True,
+                "action": "port_check",
+                "port": port,
+                "in_use": in_use,
+                "details": result["output"] if in_use else "Port is free",
+            }
+        return result
+    
+    else:
+        return {"ok": False, "error": f"Unknown process action: {action}"}

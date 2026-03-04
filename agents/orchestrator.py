@@ -94,7 +94,7 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
     Returns a dict like:
         {"files": ["C:\\Users\\Krish\\Desktop\\poem.txt"], "urls": ["https://..."]}
     """
-    artifacts: Dict[str, List[str]] = {"files": [], "urls": []}
+    artifacts: Dict[str, List[str]] = {"files": [], "urls": [], "handoffs": []}
 
     # FILE_PATH: <path> pattern (our standard output marker)
     for m in re.finditer(r"FILE_PATH:\s*(.+?)(?:\n|$)", text):
@@ -116,6 +116,14 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
         url = m.group(0).strip().rstrip(".,;)")
         if url and url not in artifacts["urls"]:
             artifacts["urls"].append(url)
+    
+    # HANDOFF signals: SUGGEST_NEXT: AgentName → message
+    for m in re.finditer(r"SUGGEST_NEXT:\s*(\w+Agent)\s*→\s*(.+?)(?:\n|$)", text):
+        agent = m.group(1).strip()
+        message = m.group(2).strip()
+        handoff = f"SUGGEST_NEXT: {agent} → {message}"
+        if handoff not in artifacts["handoffs"]:
+            artifacts["handoffs"].append(handoff)
 
     return artifacts
 
@@ -141,6 +149,9 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     if artifacts["urls"]:
         for u in artifacts["urls"]:
             lines.append(f"URL: {u}")
+    if artifacts.get("handoffs"):
+        for h in artifacts["handoffs"]:
+            lines.append(f"HANDOFF: {h}")
     # ASSEMBLY LINE: If ContentAgent has file artifacts (already saved by content_ops),
     # do NOT embed CONTENT: block. FileAgent should just open the existing file.
     # Only embed CONTENT: if ContentAgent returned text without saving it.
@@ -728,6 +739,74 @@ def _run_specialist(
     return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached)."}
 
 
+def _evaluate_condition(condition: str, step_results: Dict[int, Dict], depends_on: List[int]) -> bool:
+    """
+    Evaluate a condition string against actual step results.
+    
+    Supported formats:
+    - "only if step N exit_code == 0"
+    - "only if step N succeeded"
+    - "only if step N ok == true"
+    - "only if step N failed"
+    
+    Args:
+        condition: Condition string from plan
+        step_results: Dict of step_id -> result data
+        depends_on: List of dependency step IDs
+        
+    Returns:
+        True if condition is met, False otherwise
+    """
+    import re
+    
+    condition_lower = condition.lower().strip()
+    
+    # Pattern: "only if step N <field> == <value>"
+    match = re.search(r'step\s+(\d+)\s+(\w+)\s*==\s*(.+)', condition_lower)
+    if match:
+        step_id = int(match.group(1))
+        field = match.group(2).strip()
+        expected_value = match.group(3).strip().strip('"\'')
+        
+        if step_id not in step_results:
+            return False
+        
+        result = step_results[step_id]
+        actual_value = result.get(field)
+        
+        # Type conversion for comparison
+        if expected_value.isdigit():
+            expected_value = int(expected_value)
+        elif expected_value in ('true', 'false'):
+            expected_value = expected_value == 'true'
+        
+        return actual_value == expected_value
+    
+    # Pattern: "only if step N succeeded"
+    match = re.search(r'step\s+(\d+)\s+succeeded', condition_lower)
+    if match:
+        step_id = int(match.group(1))
+        if step_id not in step_results:
+            return False
+        return step_results[step_id].get("ok", False)
+    
+    # Pattern: "only if step N failed"
+    match = re.search(r'step\s+(\d+)\s+failed', condition_lower)
+    if match:
+        step_id = int(match.group(1))
+        if step_id not in step_results:
+            return False
+        return not step_results[step_id].get("ok", False)
+    
+    # Default: check if all dependencies succeeded
+    for dep_id in depends_on:
+        dep_result = step_results.get(dep_id, {})
+        if not dep_result.get("ok", False):
+            return False
+    
+    return True
+
+
 class Orchestrator:
     """
     Multi-agent orchestrator using Supervisor + parallel Specialists + Synthesizer.
@@ -931,19 +1010,35 @@ class Orchestrator:
     def _fan_out_parallel(
         self, specialists: List[SpecialistAgent], task: str
     ) -> List[Dict[str, Any]]:
-        """Dispatch specialists concurrently and collect results."""
+        """
+        Dispatch specialists concurrently and collect results.
+        
+        Each specialist has a 120s timeout to prevent hanging.
+        """
         results = [None] * len(specialists)
+        STEP_TIMEOUT = 120  # 2 minutes max per specialist
+        
         with ThreadPoolExecutor(max_workers=min(len(specialists), 4)) as executor:
             future_to_idx = {
                 executor.submit(_run_specialist, sp, task, self.runtime, self.workspace_root): i
                 for i, sp in enumerate(specialists)
             }
-            for future in as_completed(future_to_idx):
+            
+            # Collect results with timeout
+            for future in as_completed(future_to_idx, timeout=STEP_TIMEOUT * len(specialists)):
                 idx = future_to_idx[future]
                 try:
-                    results[idx] = future.result()
+                    # Get result with per-future timeout
+                    results[idx] = future.result(timeout=STEP_TIMEOUT)
+                except TimeoutError:
+                    results[idx] = {
+                        "agent": specialists[idx].name,
+                        "ok": False,
+                        "reply": f"[Timeout] Agent exceeded {STEP_TIMEOUT}s limit"
+                    }
                 except Exception as err:
                     results[idx] = {"agent": specialists[idx].name, "ok": False, "reply": f"[Error] {err}"}
+        
         return results
 
     def _synthesize(self, user_text: str, results: List[Dict[str, Any]]) -> str:
@@ -1160,14 +1255,12 @@ class Orchestrator:
             
             # Evaluate condition if present
             if condition:
-                # Simple condition evaluation: check if previous step succeeded
-                # Format: "only if step N exit_code == 0" or "only if step N succeeded"
-                condition_met = True
-                for dep_id in depends_on:
-                    dep_result = step_results.get(dep_id, {})
-                    if not dep_result.get("ok", False):
-                        condition_met = False
-                        break
+                # Parse and evaluate condition against actual step results
+                # Supported formats:
+                # - "only if step N exit_code == 0"
+                # - "only if step N succeeded"
+                # - "only if step N ok == true"
+                condition_met = _evaluate_condition(condition, step_results, depends_on)
                 
                 if not condition_met:
                     print(f"Step {step_id}/{len(steps)} — [CONDITION: {condition} ❌] — SKIPPED", flush=True)

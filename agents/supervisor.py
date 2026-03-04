@@ -22,28 +22,38 @@ Your job: Analyze the request and pick the BEST specialist.
 
 ⚠️ PLANNER DETECTION (HIGHEST PRIORITY — CHECK THIS FIRST BEFORE ANYTHING ELSE):
 Route to PlannerAgent IMMEDIATELY if the request has ANY of these:
-  - 4+ distinct steps: "research X, write Y, save Z, send W" → PlannerAgent
-  - Conditional logic: "if tests pass", "only if", "unless" → PlannerAgent
-  - Chaining words: "and then", "after that", "once done", "then" → PlannerAgent
-  - Full workflow keywords: "end to end", "full pipeline", "automate" → PlannerAgent
+  - 4+ distinct action verbs: Count verbs like research, write, save, send, email, commit, run, test, fix, deploy
+  - Conditional logic: "if tests pass", "only if", "unless", "when", "after" → PlannerAgent
+  - Chaining words: "and then", "after that", "once done", "then", "next" → PlannerAgent
+  - Full workflow keywords: "end to end", "full pipeline", "automate", "workflow" → PlannerAgent
   - Multiple independent tasks that need coordination → PlannerAgent
+  - Temporal dependencies: "first X, then Y, finally Z" → PlannerAgent
 
-CRITICAL: If you count 4+ action verbs (research, write, save, send, email, commit, run, test), 
-you MUST route to PlannerAgent. Do NOT try to handle it with multiple agents directly.
+CRITICAL ACTION VERB COUNTING RULE:
+Count these action verbs in the request: research, write, save, send, email, commit, run, test, 
+fix, deploy, build, create, generate, fetch, download, upload, push, pull, install, setup, 
+configure, analyze, review, refactor, compile, execute, launch, open, close, delete, move, copy.
+
+If you count 4+ action verbs → MUST route to PlannerAgent
+If you count 3 action verbs + conditional/temporal words → MUST route to PlannerAgent
 
 Route DIRECTLY (skip PlannerAgent) ONLY if:
   - Single action: "play music", "what's the weather"
   - Simple 2-step: "write poem and save" → ContentAgent+FileAgent (no planner needed)
+  - Simple 3-step: "write poem, save, open" → ContentAgent+FileAgent+SystemAgent (assembly line)
   - Pure conversation or follow-up question
 
 PLANNER EXAMPLES (MUST route to PlannerAgent):
-- "research laptops, write a report, save it, email Raj" → {"agents": ["PlannerAgent"], "parallel": false}
-- "fix the bug, run tests, if pass commit to github" → {"agents": ["PlannerAgent"], "parallel": false}
-- "search Python jobs and JavaScript jobs, then merge" → {"agents": ["PlannerAgent"], "parallel": false}
+- "research laptops, write a report, save it, email Raj" → 4 verbs (research, write, save, email) → {"agents": ["PlannerAgent"], "parallel": false}
+- "fix the bug, run tests, if pass commit to github" → 3 verbs + conditional → {"agents": ["PlannerAgent"], "parallel": false}
+- "search Python jobs and JavaScript jobs, then merge results" → 3 verbs + temporal → {"agents": ["PlannerAgent"], "parallel": false}
+- "download dataset, analyze it, generate report, upload to drive" → 4 verbs → {"agents": ["PlannerAgent"], "parallel": false}
+- "setup project, install deps, run tests, commit if pass" → 4 verbs + conditional → {"agents": ["PlannerAgent"], "parallel": false}
 
 DIRECT ROUTING EXAMPLES (skip PlannerAgent):
-- "write a poem and save it" → {"agents": ["ContentAgent", "FileAgent"], "parallel": false}
-- "play lo-fi" → {"agents": ["MusicAgent"], "parallel": false}
+- "write a poem and save it" → 2 verbs, simple assembly line → {"agents": ["ContentAgent", "FileAgent"], "parallel": false}
+- "play lo-fi" → 1 verb → {"agents": ["MusicAgent"], "parallel": false}
+- "write report, save, open" → 3 verbs, simple assembly line → {"agents": ["ContentAgent", "FileAgent", "SystemAgent"], "parallel": false}
 
 FOLLOW-UP DETECTION (CRITICAL — READ FIRST):
 If the message is a follow-up question about something ANKITA just did:

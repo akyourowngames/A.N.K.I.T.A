@@ -477,10 +477,28 @@ def copy_path(workspace_root: Path, src: str, dst: str, overwrite: bool = False,
         return {"from": to_rel(workspace_root, source), "to": to_rel(workspace_root, dest), "type": "file"}
 
 
-def make_dir(workspace_root: Path, path: str, parents: bool = True, exist_ok: bool = True) -> Dict[str, Any]:
-    target = resolve_safe_path(workspace_root, path)
+def make_dir(workspace_root: Path, path: str, parents: bool = True, exist_ok: bool = True, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Create a directory.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Directory path to create
+        parents: Create parent directories if needed
+        exist_ok: Don't error if directory already exists
+        unrestricted: If True, allows creation outside workspace (for FileAgent)
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
     target.mkdir(parents=bool(parents), exist_ok=bool(exist_ok))
-    return {"path": to_rel(workspace_root, target), "created": True}
+    
+    if unrestricted:
+        return {"path": str(target), "created": True, "absolute_path": str(target)}
+    else:
+        return {"path": to_rel(workspace_root, target), "created": True}
 
 
 def file_info(workspace_root: Path, path: str, unrestricted: bool = False) -> Dict[str, Any]:
@@ -874,3 +892,315 @@ def _find_subsequence(lines: List[str], pattern: List[str], start: int) -> int |
         if [ln.rstrip() for ln in lines[i : i + len(pattern)]] == [p.rstrip() for p in pattern]:
             return i
     return None
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PHASE 2 TOOLS — Advanced FileAgent capabilities
+# ─────────────────────────────────────────────────────────────────────────────
+
+def pc_search(query: str, file_types: List[str] = None, max_results: int = 50) -> Dict[str, Any]:
+    """
+    Search for files across the entire PC by name pattern.
+    
+    Args:
+        query: Search pattern (supports wildcards like *.txt)
+        file_types: Optional list of extensions to filter (e.g. ['.pdf', '.docx'])
+        max_results: Maximum number of results to return
+        
+    Returns:
+        Dict with list of matching file paths
+    """
+    import glob
+    
+    results = []
+    search_locations = [
+        Path.home() / "Desktop",
+        Path.home() / "Documents",
+        Path.home() / "Downloads",
+        Path.home() / "Pictures",
+    ]
+    
+    for location in search_locations:
+        if not location.exists():
+            continue
+        
+        try:
+            # Search recursively
+            pattern = f"**/*{query}*" if not query.startswith("*") else f"**/{query}"
+            for path in location.glob(pattern):
+                if len(results) >= max_results:
+                    break
+                
+                # Filter by file type if specified
+                if file_types and path.suffix.lower() not in [ft.lower() for ft in file_types]:
+                    continue
+                
+                results.append({
+                    "path": str(path),
+                    "name": path.name,
+                    "size": path.stat().st_size if path.is_file() else 0,
+                    "modified": path.stat().st_mtime if path.exists() else 0,
+                })
+        except (PermissionError, OSError):
+            continue
+    
+    return {
+        "query": query,
+        "count": len(results),
+        "results": results[:max_results],
+        "truncated": len(results) > max_results,
+    }
+
+
+def trash_path(workspace_root: Path, path: str, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Move a file or directory to the recycle bin instead of permanent deletion.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Path to move to trash
+        unrestricted: If True, allows trashing files outside workspace
+        
+    Returns:
+        Dict with status
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
+    if not target.exists():
+        raise FileNotFoundError(f"path not found: {path}")
+    
+    # Use send2trash library if available, otherwise use OS-specific commands
+    try:
+        import send2trash
+        send2trash.send2trash(str(target))
+        return {
+            "path": str(target),
+            "trashed": True,
+            "method": "send2trash",
+        }
+    except ImportError:
+        # Fallback to OS-specific commands
+        if os.name == "nt":
+            # Windows: use PowerShell to move to recycle bin
+            import subprocess
+            cmd = f'Add-Type -AssemblyName Microsoft.VisualBasic; [Microsoft.VisualBasic.FileIO.FileSystem]::DeleteFile("{target}", "OnlyErrorDialogs", "SendToRecycleBin")'
+            result = subprocess.run(
+                ["powershell", "-Command", cmd],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0:
+                return {
+                    "path": str(target),
+                    "trashed": True,
+                    "method": "powershell",
+                }
+            else:
+                raise RuntimeError(f"Failed to trash: {result.stderr}")
+        else:
+            # Unix: move to ~/.local/share/Trash
+            trash_dir = Path.home() / ".local" / "share" / "Trash" / "files"
+            trash_dir.mkdir(parents=True, exist_ok=True)
+            dest = trash_dir / target.name
+            shutil.move(str(target), str(dest))
+            return {
+                "path": str(target),
+                "trashed": True,
+                "method": "unix_trash",
+                "trash_location": str(dest),
+            }
+
+
+def disk_analysis(workspace_root: Path, path: str = ".", unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Analyze disk usage by directory.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        path: Directory to analyze
+        unrestricted: If True, allows analyzing directories outside workspace
+        
+    Returns:
+        Dict with disk usage breakdown
+    """
+    if unrestricted:
+        target = resolve_any_path(path)
+    else:
+        target = resolve_safe_path(workspace_root, path)
+    
+    if not target.is_dir():
+        raise ValueError(f"path is not a directory: {path}")
+    
+    def get_dir_size(dir_path: Path) -> int:
+        """Calculate total size of directory."""
+        total = 0
+        try:
+            for item in dir_path.rglob("*"):
+                if item.is_file():
+                    try:
+                        total += item.stat().st_size
+                    except (PermissionError, OSError):
+                        pass
+        except (PermissionError, OSError):
+            pass
+        return total
+    
+    # Analyze immediate subdirectories
+    subdirs = []
+    total_size = 0
+    
+    try:
+        for item in target.iterdir():
+            if item.is_dir():
+                size = get_dir_size(item)
+                subdirs.append({
+                    "name": item.name,
+                    "path": str(item),
+                    "size_bytes": size,
+                    "size_mb": round(size / (1024 * 1024), 2),
+                })
+                total_size += size
+            elif item.is_file():
+                size = item.stat().st_size
+                total_size += size
+    except (PermissionError, OSError) as e:
+        return {"error": f"Permission denied: {e}"}
+    
+    # Sort by size descending
+    subdirs.sort(key=lambda x: x["size_bytes"], reverse=True)
+    
+    return {
+        "path": str(target),
+        "total_size_bytes": total_size,
+        "total_size_mb": round(total_size / (1024 * 1024), 2),
+        "total_size_gb": round(total_size / (1024 * 1024 * 1024), 2),
+        "subdirectories": subdirs[:20],  # Top 20 largest
+        "count": len(subdirs),
+    }
+
+
+def diff_files(workspace_root: Path, file1: str, file2: str, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Compare two text files and show differences.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        file1: First file path
+        file2: Second file path
+        unrestricted: If True, allows comparing files outside workspace
+        
+    Returns:
+        Dict with diff output
+    """
+    if unrestricted:
+        path1 = resolve_any_path(file1)
+        path2 = resolve_any_path(file2)
+    else:
+        path1 = resolve_safe_path(workspace_root, file1)
+        path2 = resolve_safe_path(workspace_root, file2)
+    
+    if not path1.exists():
+        raise FileNotFoundError(f"file1 not found: {file1}")
+    if not path2.exists():
+        raise FileNotFoundError(f"file2 not found: {file2}")
+    
+    # Read files
+    try:
+        with open(path1, "r", encoding="utf-8") as f:
+            lines1 = f.readlines()
+    except UnicodeDecodeError:
+        return {"error": f"file1 is not a text file: {file1}"}
+    
+    try:
+        with open(path2, "r", encoding="utf-8") as f:
+            lines2 = f.readlines()
+    except UnicodeDecodeError:
+        return {"error": f"file2 is not a text file: {file2}"}
+    
+    # Generate unified diff
+    import difflib
+    diff = list(difflib.unified_diff(
+        lines1,
+        lines2,
+        fromfile=str(path1),
+        tofile=str(path2),
+        lineterm="",
+    ))
+    
+    # Count changes
+    additions = sum(1 for line in diff if line.startswith("+") and not line.startswith("+++"))
+    deletions = sum(1 for line in diff if line.startswith("-") and not line.startswith("---"))
+    
+    return {
+        "file1": str(path1),
+        "file2": str(path2),
+        "identical": len(diff) == 0,
+        "additions": additions,
+        "deletions": deletions,
+        "diff": "\n".join(diff[:500]),  # Limit to 500 lines
+        "truncated": len(diff) > 500,
+    }
+
+
+def bulk_op(workspace_root: Path, operation: str, paths: List[str], destination: str = None, unrestricted: bool = False) -> Dict[str, Any]:
+    """
+    Perform batch operations on multiple files.
+    
+    Args:
+        workspace_root: Workspace root for safe path resolution
+        operation: Operation to perform (move, copy, delete, trash)
+        paths: List of file paths to operate on
+        destination: Destination directory (for move/copy operations)
+        unrestricted: If True, allows operations outside workspace
+        
+    Returns:
+        Dict with operation results
+    """
+    if operation not in ("move", "copy", "delete", "trash"):
+        raise ValueError(f"Invalid operation: {operation}. Must be one of: move, copy, delete, trash")
+    
+    if operation in ("move", "copy") and not destination:
+        raise ValueError(f"destination is required for {operation} operation")
+    
+    results = []
+    succeeded = 0
+    failed = 0
+    
+    for path_str in paths:
+        try:
+            if operation == "delete":
+                result = delete_path(workspace_root, path_str, recursive=True, unrestricted=unrestricted)
+                results.append({"path": path_str, "status": "deleted", "ok": True})
+                succeeded += 1
+            elif operation == "trash":
+                result = trash_path(workspace_root, path_str, unrestricted=unrestricted)
+                results.append({"path": path_str, "status": "trashed", "ok": True})
+                succeeded += 1
+            elif operation == "move":
+                # Construct full destination path with filename
+                filename = Path(path_str).name
+                dest_path = str(Path(destination) / filename)
+                result = move_path(workspace_root, path_str, dest_path, overwrite=True, unrestricted=unrestricted)
+                results.append({"path": path_str, "status": "moved", "destination": dest_path, "ok": True})
+                succeeded += 1
+            elif operation == "copy":
+                # Construct full destination path with filename
+                filename = Path(path_str).name
+                dest_path = str(Path(destination) / filename)
+                result = copy_path(workspace_root, path_str, dest_path, overwrite=True, recursive=True, unrestricted=unrestricted)
+                results.append({"path": path_str, "status": "copied", "destination": dest_path, "ok": True})
+                succeeded += 1
+        except Exception as e:
+            results.append({"path": path_str, "status": "failed", "error": str(e), "ok": False})
+            failed += 1
+    
+    return {
+        "operation": operation,
+        "total": len(paths),
+        "succeeded": succeeded,
+        "failed": failed,
+        "results": results,
+    }

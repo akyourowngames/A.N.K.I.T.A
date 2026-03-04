@@ -418,7 +418,8 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "Use this for: ping, ipconfig, git commands, dir, python scripts, netstat, "
                 "tasklist, whoami, curl, or any CLI command. "
                 "NOT sandboxed to workspace — can reach any system path. "
-                "Has a hard timeout (default 15s). Destructive commands are blocked."
+                "Smart timeout (auto-detected based on command type, max 600s). Destructive commands are blocked. "
+                "Supports persistent session state (cwd, environment variables)."
             ),
             "parameters": {
                 "type": "object",
@@ -429,7 +430,11 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     },
                     "timeout": {
                         "type": "integer",
-                        "description": "Max seconds to wait before killing the command (default 15, max 60)",
+                        "description": "Max seconds to wait before killing the command (auto-detected if not specified, max 600)",
+                    },
+                    "cwd": {
+                        "type": "string",
+                        "description": "Working directory for the command. Defaults to session CWD (initially user home). Use absolute paths or environment variables like %USERPROFILE%.",
                     },
                 },
                 "required": ["command"],
@@ -452,6 +457,61 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "env": {"type": "object"},
                 },
                 "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "git_op",
+            "description": (
+                "Smart git wrapper with proper error handling and structured output. "
+                "Actions: status (show changes), log (recent commits), diff (changes summary), "
+                "add (stage all), commit (with message), push (to origin), pull (from origin), "
+                "branch (list branches), stash (save work), reset (undo last commit). "
+                "Auto-detects repo, handles errors, returns structured data."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["status", "log", "diff", "add", "commit", "push", "pull", "branch", "stash", "reset"],
+                        "description": "Git operation to perform",
+                    },
+                    "message": {"type": "string", "description": "Commit message (required for commit action)"},
+                    "branch": {"type": "string", "description": "Branch name (for branch/push/pull actions)"},
+                    "path": {"type": "string", "description": "Repository path (defaults to session CWD)"},
+                    "confirm": {"type": "boolean", "description": "Required for destructive actions (reset)"},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "process_op",
+            "description": (
+                "Process management for starting, stopping, and checking processes. "
+                "Actions: start_background (run detached process), list_background (show running), "
+                "kill_background (stop process), is_running (check if alive), port_check (what's using port). "
+                "Tracks background processes started this session."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["start_background", "list_background", "kill_background", "is_running", "port_check"],
+                        "description": "Process operation to perform",
+                    },
+                    "command": {"type": "string", "description": "Command to run (for start_background)"},
+                    "name": {"type": "string", "description": "Process name/label (for start_background, kill_background, is_running)"},
+                    "port": {"type": "integer", "description": "Port number (for port_check)"},
+                    "pid": {"type": "integer", "description": "Process ID (for kill_background, is_running)"},
+                },
+                "required": ["action"],
             },
         },
     },
@@ -643,6 +703,81 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "type": "object",
                 "properties": {"patch": {"type": "string"}},
                 "required": ["patch"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "pc_search",
+            "description": "Search for files across the entire PC by name pattern. Searches Desktop, Documents, Downloads, Pictures.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search pattern (supports wildcards like *.txt)"},
+                    "file_types": {"type": "array", "items": {"type": "string"}, "description": "Optional list of extensions to filter (e.g. ['.pdf', '.docx'])"},
+                    "max_results": {"type": "integer", "description": "Maximum number of results to return (default 50)"},
+                },
+                "required": ["query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "trash_path",
+            "description": "Move a file or directory to the recycle bin instead of permanent deletion. Safer than delete_path.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to move to trash"},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "disk_analysis",
+            "description": "Analyze disk usage by directory. Shows size breakdown of subdirectories.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Directory to analyze (default '.')"},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "diff_files",
+            "description": "Compare two text files and show differences in unified diff format.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "file1": {"type": "string", "description": "First file path"},
+                    "file2": {"type": "string", "description": "Second file path"},
+                },
+                "required": ["file1", "file2"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "bulk_op",
+            "description": "Perform batch operations on multiple files (move, copy, delete, trash).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "operation": {"type": "string", "enum": ["move", "copy", "delete", "trash"], "description": "Operation to perform"},
+                    "paths": {"type": "array", "items": {"type": "string"}, "description": "List of file paths to operate on"},
+                    "destination": {"type": "string", "description": "Destination directory (required for move/copy)"},
+                },
+                "required": ["operation", "paths"],
             },
         },
     },
@@ -1742,7 +1877,8 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
     if name == "execute_shell":
         return terminal_ops.execute_shell_command(
             command=str(args.get("command", "")),
-            timeout=int(args.get("timeout", 15)),
+            timeout=int(args.get("timeout")) if args.get("timeout") is not None else None,
+            cwd=str(args.get("cwd")) if args.get("cwd") is not None else None,
         )
     if name == "run_command":
         env = args.get("env")
@@ -1755,6 +1891,22 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             timeout_ms=int(args.get("timeout_ms", 20000)),
             use_shell=bool(args.get("use_shell", False)),
             env={str(k): str(v) for k, v in env_obj.items()} if env_obj is not None else None,
+        )
+    if name == "git_op":
+        return terminal_ops.git_op(
+            action=str(args.get("action", "")),
+            message=str(args.get("message")) if args.get("message") else None,
+            branch=str(args.get("branch")) if args.get("branch") else None,
+            path=str(args.get("path")) if args.get("path") else None,
+            confirm=bool(args.get("confirm", False)),
+        )
+    if name == "process_op":
+        return terminal_ops.process_op(
+            action=str(args.get("action", "")),
+            command=str(args.get("command")) if args.get("command") else None,
+            name=str(args.get("name")) if args.get("name") else None,
+            port=int(args.get("port")) if args.get("port") is not None else None,
+            pid=int(args.get("pid")) if args.get("pid") is not None else None,
         )
     if name == "list_files":
         return fs_ops.list_files(workspace_root, path=str(args.get("path", ".")), max_entries=int(args.get("max_entries", 200)), unrestricted=unrestricted)
@@ -1821,9 +1973,43 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             path=str(args.get("path", "")),
             parents=bool(args.get("parents", True)),
             exist_ok=bool(args.get("exist_ok", True)),
+            unrestricted=unrestricted,
         )
     if name == "file_info":
         return fs_ops.file_info(workspace_root, path=str(args.get("path", "")), unrestricted=unrestricted)
+    if name == "pc_search":
+        return fs_ops.pc_search(
+            query=str(args.get("query", "")),
+            file_types=args.get("file_types"),
+            max_results=int(args.get("max_results", 50)),
+        )
+    if name == "trash_path":
+        return fs_ops.trash_path(
+            workspace_root,
+            path=str(args.get("path", "")),
+            unrestricted=unrestricted,
+        )
+    if name == "disk_analysis":
+        return fs_ops.disk_analysis(
+            workspace_root,
+            path=str(args.get("path", ".")),
+            unrestricted=unrestricted,
+        )
+    if name == "diff_files":
+        return fs_ops.diff_files(
+            workspace_root,
+            file1=str(args.get("file1", "")),
+            file2=str(args.get("file2", "")),
+            unrestricted=unrestricted,
+        )
+    if name == "bulk_op":
+        return fs_ops.bulk_op(
+            workspace_root,
+            operation=str(args.get("operation", "")),
+            paths=args.get("paths", []),
+            destination=str(args.get("destination")) if args.get("destination") else None,
+            unrestricted=unrestricted,
+        )
     if name == "desktop_interact":
         return desktop_ops.desktop_interact(
             action=str(args.get("action", "")),

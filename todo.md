@@ -1,511 +1,585 @@
-# 🧠 PlannerAgent — Full Implementation Plan
-### "The Brain That Thinks Before Ankita Acts"
+# TerminalAgent Upgrade Plan
+### Full Polish + New Powers + Agent Cooperation
 
 ---
 
-## The Problem It Solves
+## Implementation Review First
 
-Right now Ankita's Supervisor reads a request and instantly picks agents — in 256 tokens, with no deep thinking. For simple tasks this is perfect. For complex multi-step tasks it breaks because:
+### PlannerAgent Review ✅
 
-- It under-routes (picks 1 agent when 4 are needed)
-- It doesn't detect dependencies ("save it" only works AFTER "write it")
-- It can't handle conditionals ("only send if tests pass")
-- It has no awareness of what "done" actually means for the full request
+**What's working well:**
+- JSON plan generation with `depends_on`, `condition`, `artifacts_out` — exactly right
+- `_run_planned_task()` in orchestrator with step-by-step execution
+- HYDRA fallback to GeneralAgent on plan failure
+- Plan preview output (the 📋 display)
+- Audit trail entries per plan
 
-PlannerAgent fixes this by adding a **dedicated thinking layer** that sits between the Supervisor and the Orchestrator — only activating when a task genuinely needs it.
+**Issues found:**
 
----
+**Issue 1 — Supervisor still failing multi-step detection (from your test output)**
+Test showed requests like "research laptops, write a report, save it, email Raj" routed to `['WebAgent', 'ContentAgent', 'FileAgent', 'CommsAgent']` instead of `['PlannerAgent']`. The Supervisor is doing the right thing (chaining agents) but bypassing PlannerAgent entirely. Root cause: the Supervisor prompt's chain detection examples are too similar to the existing assembly-line examples. The LLM sees 4 agents and thinks "I already know how to chain these" and skips PlannerAgent. Fix: make the trigger rule explicitly count action verbs — if 3+ distinct agents are needed AND task has conditional/temporal language → force PlannerAgent.
 
-## Architecture: Where PlannerAgent Lives
+**Issue 2 — Conditional evaluation is text-based, not result-based**
+When a step has `condition: "only if step 2 exit_code == 0"`, the orchestrator needs to actually CHECK `step_results[2]["exit_code"]`. If it's doing string matching on the condition text, it'll always pass. Verify the condition evaluator reads real result data, not just the condition string.
 
-```
-User Request
-     │
-     ▼
-┌─────────────────┐
-│   Supervisor    │  ← still the first gate (fast, cheap)
-│  (256 tokens)   │  detects: "is this multi-step?"
-└────────┬────────┘
-         │
-    Multi-step?
-    ┌────┴─────┐
-   YES         NO
-    │           │
-    ▼           ▼
-┌──────────┐  [existing specialist routing — unchanged]
-│ Planner  │
-│  Agent   │  ← NEW: dedicated thinking agent
-│(1500 tok)│  reads full request, outputs structured PLAN
-└────┬─────┘
-     │
-     ▼ PLAN: [{agent, task, depends_on, condition}]
-     │
-     ▼
-┌─────────────────────────────┐
-│       Orchestrator          │
-│  _run_plan() — NEW method   │  executes plan step by step
-│  respects depends_on order  │  handles conditionals
-│  passes baton between steps │
-└─────────────────────────────┘
-```
+**Issue 3 — Parallel steps need a timeout guard**
+When two steps run in parallel via `_fan_out_parallel()`, if one hangs (e.g. a slow API call), it blocks the entire plan indefinitely. Add a per-step timeout of 120s max for planned tasks.
 
 ---
 
-## Part 1 — Supervisor Changes (`agents/supervisor.py`)
+### FileAgent Upgrade Review ✅
 
-### What Changes
-The Supervisor gets one new job: detect if a request needs planning. If yes, return `"agents": ["PlannerAgent"]`. That's it. It doesn't plan itself — it just knows when to hand off.
+**Phase 1 (Full PC Access) — Solid:**
+- `resolve_any_path()` correctly implemented with env var expansion
+- `unrestricted=True` flag passed through engine → fs_ops cleanly
+- All 7 operations updated: list_files, read_file, search_text, move_path, copy_path, delete_path, file_info
+- `_KNOWN_PATHS` injected into prompt — correct
 
-### Multi-Step Detection Triggers
+**Issues found:**
 
-The Supervisor routes to PlannerAgent when the request contains ANY of:
+**Issue 1 — `make_dir` still uses `resolve_safe_path`**
+Looking at the code, `make_dir` was NOT updated to accept `unrestricted=True`. So `mkdir C:\Users\Krish\Reports` will fail with "path escapes workspace." Fix: add `unrestricted` param to `make_dir`.
 
-**Explicit chaining words:**
-- "and then", "after that", "once done", "then", "finally", "also", "next"
+**Issue 2 — Phase 2 tools not yet implemented**
+`pc_search`, `trash_path`, `read_rich_file`, `disk_analysis`, `diff_files`, `bulk_op` are all still pending per the IMPLEMENTATION_SUMMARY. This is fine — Phase 1 was the priority. These are next.
 
-**Implicit multi-step verbs (3+ distinct action verbs):**
-- research + write + save + send = 4 verbs → PlannerAgent
-- search + open = 2 verbs → still direct routing (not complex enough)
+**Issue 3 — HANDOFF signal not yet wired in orchestrator**
+The `_extract_artifacts()` function doesn't yet read `HANDOFF:` lines. FileAgent's cooperation protocol is incomplete until this is added.
 
-**Conditional language:**
-- "if", "only if", "only when", "unless", "depending on"
-
-**Reference words that imply a prior step:**
-- "save it", "send it", "open it", "run it", "commit it" in the same sentence as a production verb
-
-**Explicit planning keywords:**
-- "plan", "steps", "workflow", "pipeline", "end to end", "full flow", "automate"
-
-### Supervisor Prompt Addition
-
-Add this section to `_SUPERVISOR_SYSTEM_PROMPT`:
-
-```
-PLANNER DETECTION (CHECK FIRST):
-Route to PlannerAgent if the request:
-  - Has 3+ distinct action verbs (research + write + save + send)
-  - Contains chaining words: "and then", "after that", "then", "once done"
-  - Contains conditionals: "if tests pass", "only if", "unless"
-  - Is a full workflow: "end to end", "full pipeline", "automate this"
-  - Has 4+ implied steps when read carefully
-
-Route DIRECTLY (skip PlannerAgent) if:
-  - Single clear action: "play music", "what's the weather", "open Chrome"
-  - Two-step assembly line already handled: "write poem and save" → ContentAgent+FileAgent
-  - Pure conversation or follow-up
-
-EXAMPLES:
-- "research laptops, write a report, save it, email Raj" → PlannerAgent (4 steps)
-- "fix the bug, run tests, if pass commit to github" → PlannerAgent (conditional)
-- "write a poem and save it" → ContentAgent+FileAgent (simple, no planner needed)
-- "play lo-fi" → MusicAgent (single step)
-```
-
-### Token Budget
-Raise Supervisor max_tokens from **256 → 400**. The extra 144 tokens gives it room to reason about whether planning is needed without slowing it down.
+**Issue 4 — Double-save bug from ContentAgent still exists**
+The `already_saved` flag fix and the `_build_prior_context_block()` change were in the Bug Fix Plan but the IMPLEMENTATION_SUMMARY doesn't mention them as done. Confirm these are implemented or they'll keep creating two files.
 
 ---
 
-## Part 2 — PlannerAgent (`agents/planner.py`) — New File
+## TerminalAgent — Current State Assessment
 
-### What It Is
-A standalone agent with a single purpose: read the full user request + conversation history and output a structured execution plan as JSON.
+### What It Has
+- `execute_shell` — PowerShell system-wide, 15s timeout, blocked patterns
+- `run_command` — workspace-sandboxed process runner with env injection
+- `list_files`, `read_file` — basic file access
+- Output guardrails — 500 line limit, head+tail truncation
+- Blocked patterns: del /s, rm -rf, format c:, shutdown /s, etc.
 
-It does NOT execute anything. It does NOT call tools. It only thinks and plans.
+### What's Missing / Broken
 
-### Its System Prompt (The Brain)
+**Missing 1 — No working directory control**
+TerminalAgent always runs from `Path.home()`. If user says "run this in my project folder" or "git status in C:\repos\myapp", there's no way to change the working directory for `execute_shell`. It just runs from home every time.
 
+**Missing 2 — No multi-command chaining**
+User says "cd into my project, activate venv, then run tests." TerminalAgent runs each as a separate subprocess — the `cd` has no effect on the next call. No session state between commands.
+
+**Missing 3 — No environment variable management**
+Can't set `$env:NODE_ENV=production` and have it persist for the next command. Can't read what env vars are currently set.
+
+**Missing 4 — No process management**
+Can't start a background process (e.g. a dev server) and then interact with it later. Can't check if a process is running, get its PID, or kill a specific process by name — only by exact process name via SystemAgent.
+
+**Missing 5 — No git intelligence**
+Git commands work (`git status`, `git log`) but TerminalAgent has no git-aware workflows. User says "show me what changed" and it runs raw `git diff` dumping everything. No smart formatting of git output.
+
+**Missing 6 — No output parsing / insight**
+TerminalAgent dumps raw output. User runs `netstat -an` and gets a wall of text. Nobody parses it to say "3 ports are listening, 1 established connection to 142.250.x.x (Google)." The output goes nowhere useful.
+
+**Missing 7 — No long-running command support**
+`execute_shell` has a 15-second hard timeout. Running `npm install`, `pip install -r requirements.txt`, `docker build`, or `pytest` on a large project will always timeout. No way to run something longer.
+
+**Missing 8 — No piped command builder**
+User says "find all Python files modified today" — TerminalAgent has to manually construct the right PowerShell pipeline. No smart command building from natural language intent.
+
+**Missing 9 — No command history / recall**
+Every TerminalAgent invocation starts fresh. No memory of what commands were run, what succeeded, what the current project directory is.
+
+**Missing 10 — Timeout is fixed at 15s, not configurable**
+The `timeout` param exists in the tool spec but the prompt never mentions it. Complex commands always hit the wall.
+
+---
+
+## The Upgrade Plan
+
+---
+
+### Upgrade 1 — Working Directory Control (The Foundation)
+
+**Problem:** `execute_shell` always runs from `Path.home()`. No CWD control.
+
+**Fix: `tools/terminal_ops.py`**
+
+Add `cwd` parameter to `execute_shell_command()`:
+- Accept an optional `cwd` path string
+- Validate it exists and is a directory before running
+- Use it as the subprocess `cwd` instead of `Path.home()`
+- Apply `resolve_any_path()` (from FileAgent upgrade) for full PC access — not workspace-jailed
+
+**Update `tools/engine.py` tool spec:**
+Add `cwd` parameter to `execute_shell` spec:
 ```
-You are A.N.K.I.T.A's PlannerAgent — the mission architect.
-
-Your ONLY job: decompose a complex request into a precise, ordered execution plan.
-
-You output a JSON plan. Nothing else.
-
-AVAILABLE AGENTS AND WHAT THEY DO:
-- WebAgent: search, research, compare, fact-check, scrape, Reddit, StackOverflow
-- ContentAgent: write essays, reports, emails, poems, scripts, any text content  
-- FileAgent: read, write, edit, save, delete files. Opens files after saving.
-- SystemAgent: launch apps, control volume/wifi/bluetooth, take screenshots
-- CodeAgent: write code, fix bugs, run code, git operations, refactor
-- TerminalAgent: raw shell commands, ping, curl, git, tasklist
-- CommsAgent: send WhatsApp messages
-- CronAgent: schedule tasks, set reminders, recurring jobs
-- MusicAgent: play/pause/search music
-- ScreenAgent: visual tasks, click elements, read screen
-- IntegrationAgent: Google Sheets, YouTube, Figma
-- WatchdogAgent: monitor pages, track prices, watch files
-
-PLAN FORMAT:
-Output ONLY valid JSON:
-{
-  "goal": "one sentence describing what the user ultimately wants",
-  "steps": [
-    {
-      "id": 1,
-      "agent": "WebAgent",
-      "task": "search for best budget laptops under 50000 INR, get top 5 with specs",
-      "depends_on": [],
-      "condition": null,
-      "artifacts_out": ["search_results"]
-    },
-    {
-      "id": 2,
-      "agent": "ContentAgent", 
-      "task": "write a comparison report from the search results",
-      "depends_on": [1],
-      "condition": null,
-      "artifacts_out": ["report_text"]
-    },
-    {
-      "id": 3,
-      "agent": "FileAgent",
-      "task": "save the comparison report as laptop_report.md on Desktop",
-      "depends_on": [2],
-      "condition": null,
-      "artifacts_out": ["file_path"]
-    },
-    {
-      "id": 4,
-      "agent": "CommsAgent",
-      "task": "send laptop_report.md to Raj on WhatsApp",
-      "depends_on": [3],
-      "condition": null,
-      "artifacts_out": []
-    }
-  ]
+"cwd": {
+    "type": "string",
+    "description": "Working directory for the command. Defaults to user home. Use absolute paths."
 }
-
-RULES:
-1. Each step's task must be SPECIFIC — include what data to pass from previous steps
-2. depends_on = list of step IDs that must complete before this one runs
-3. condition = null for unconditional, or a string like "only if step 2 exit_code == 0"
-4. artifacts_out = what this step produces that the next step needs
-5. Never plan more than 8 steps
-6. Never include unnecessary steps — minimum steps to achieve the goal
-7. If two steps have NO dependency between them, they can run in parallel (same depends_on value)
-8. Always end the plan — never leave the user's ultimate goal unfinished
 ```
 
-### Token Budget
-PlannerAgent gets **1500 tokens** — generous enough to reason carefully about complex multi-step tasks. This is a one-time cost before execution begins.
-
-### Input to PlannerAgent
-- Full user request text
-- Last 6 turns of conversation history (same `_extract_clean_history` already used everywhere)
-- Current context: any files open, any previous results in this session
+**TerminalAgent prompt addition:**
+```
+WORKING DIRECTORY RULE:
+If user mentions a project, folder, or repo path:
+→ Always set cwd to that path in execute_shell
+→ Example: "git status in my ANKITA project" → execute_shell("git status", cwd="C:\...\A.N.K.I.T.A")
+→ REMEMBER the working directory — use recall("current terminal cwd") at session start
+→ If user says "stay in this folder" → remember("current terminal cwd", path)
+```
 
 ---
 
-## Part 3 — Orchestrator Changes (`agents/orchestrator.py`)
+### Upgrade 2 — Session State (Persistent CWD + Environment)
 
-### 3A — Detect PlannerAgent Routing
+**Problem:** Each command runs in isolation. `cd` doesn't persist. Env vars don't carry over.
 
-In `Orchestrator.run()`, after Supervisor returns routing:
+**New concept: Terminal Session**
 
-```
-if agent_names == ["PlannerAgent"]:
-    return self._run_planned_task(user_text, messages)
-```
-
-### 3B — New Method: `_run_planned_task()`
-
-This is the main new piece of the orchestrator. Here's the complete logic in plain English:
-
-**Step 1 — Call PlannerAgent**
-Make an LLM call to PlannerAgent with the full user text + conversation history. Get back the JSON plan. Parse it. Log it to audit.
-
-**Step 2 — Show the plan to the user (optional but great UX)**
-Before executing, print a brief human-readable preview:
-```
-📋 Plan: 4 steps
-  1. WebAgent → search laptops
-  2. ContentAgent → write report  
-  3. FileAgent → save report
-  4. CommsAgent → send to Raj
-```
-This makes Ankita feel transparent and intelligent, not like a black box.
-
-**Step 3 — Build the execution queue**
-Sort steps by `depends_on`. Steps with empty `depends_on` can start immediately. Steps that depend on others wait.
-
-**Step 4 — Execute step by step**
-For each step in order:
-- Look up the agent from SPECIALIST_MAP
-- Build the task string: step's `task` field + inject artifacts from prior completed steps
-- Run it through the existing `_run_specialist()` (reuse everything: BATON PASS, TELEPATHY, HYDRA, Token Guardian — all of it still works)
-- Extract artifacts from the result
-- Store artifacts in a `step_results` dict keyed by step ID
-- If the step has a `condition` — evaluate it before running the next step
-
-**Step 5 — Condition Evaluation**
-When a step has `condition: "only if step 2 exit_code == 0"`:
-- Check the prior step's result for success/failure
-- If condition is NOT met — skip the step, log why, continue to next
-- Tell the user which step was skipped and why
-
-**Step 6 — Fan-In at the end**
-After all steps complete, call the existing `_synthesize()` with all results to produce one clean final reply to the user.
-
-### 3C — Artifact Injection Between Plan Steps
-
-When step 3 (FileAgent) runs, it needs the output of step 2 (ContentAgent). The orchestrator handles this by building a rich task string for each step:
+Add a lightweight in-memory session store to `terminal_ops.py`:
 
 ```
-Original task: "save the comparison report as laptop_report.md on Desktop"
-
-Enriched task (what actually gets sent to FileAgent):
-"save the comparison report as laptop_report.md on Desktop
-
-[STEP 2 OUTPUT - ContentAgent]:
---- PREVIOUS AGENT OUTPUT ---
-[ContentAgent]: Here is the comparison report...
-CONTENT:
-# Best Budget Laptops Under 50K INR
-...
-:END_CONTENT
---- END CONTEXT ---"
+_TERMINAL_SESSION = {
+    "cwd": str(Path.home()),
+    "env_overrides": {},
+    "last_exit_code": 0,
+}
 ```
 
-This is exactly the same `_build_prior_context_block()` that already exists — PlannerAgent just chains it across more steps, not just 2-3.
+**Commands that modify session state:**
+- `cd <path>` → updates `_TERMINAL_SESSION["cwd"]`
+- `$env:X = Y` or `export X=Y` → adds to `_TERMINAL_SESSION["env_overrides"]`
+- `set X=Y` → same
 
-### 3D — Parallel Step Support
+Before every `execute_shell` call, merge `_TERMINAL_SESSION["env_overrides"]` into the subprocess env, and use `_TERMINAL_SESSION["cwd"]` as default if no explicit cwd is passed.
 
-When two steps have the same `depends_on` value, they can run in parallel. Reuse the existing `_fan_out_parallel()` with `ThreadPoolExecutor`. No new code needed — just group steps by their `depends_on` level and call the right execution path.
-
-Example:
-```json
-Step 3: agent=FileAgent, depends_on=[2]
-Step 4: agent=CommsAgent, depends_on=[2]  ← same depends_on = parallel
+**TerminalAgent prompt addition:**
 ```
-Steps 3 and 4 both depend on step 2 but not on each other → run them simultaneously.
+SESSION AWARENESS:
+You have a persistent terminal session within this conversation.
+- "cd into Documents" → execute_shell("cd Documents") → session cwd updates
+- "set NODE_ENV to production" → execute_shell("$env:NODE_ENV='production'") → persists for next command
+- "what's my current directory?" → execute_shell("pwd") or "Get-Location"
+- After cd, all subsequent commands run from the new directory automatically
+```
 
 ---
 
-## Part 4 — Escalation Matrix Update (`agents/orchestrator.py`)
+### Upgrade 3 — Smart Timeout Control
 
-Add PlannerAgent to the HYDRA fallback chain. If PlannerAgent fails to produce a valid plan (JSON parse error, empty response, LLM error):
+**Problem:** 15s timeout kills `npm install`, `pytest`, `docker build`.
 
+**Fix: `tools/terminal_ops.py`**
+
+Make timeout smarter — detect the command type and auto-adjust:
+
+**Timeout tiers:**
+| Command type | Auto-timeout |
+|---|---|
+| Quick diagnostics (ping, ipconfig, whoami, pwd) | 10s |
+| Git operations (status, log, diff, add, commit) | 30s |
+| Package install (pip install, npm install, yarn) | 300s (5 min) |
+| Build commands (npm run build, cargo build, make) | 600s (10 min) |
+| Test runners (pytest, jest, go test) | 180s (3 min) |
+| Docker (build, pull, run) | 600s (10 min) |
+| Default | 60s (upgraded from 15s) |
+
+**Auto-detection logic:** keyword match on the command string before running. Check for `pip install`, `npm install`, `yarn`, `cargo build`, `docker`, `pytest`, `jest`, `mvn`, `gradle`.
+
+**Explicit override still works:** user can say "run with 5 minute timeout" → pass `timeout=300`.
+
+**TerminalAgent prompt addition:**
 ```
-"PlannerAgent": ("GeneralAgent", 
-    "PlannerAgent failed to produce a plan. 
-     Handle this request directly as best you can,
-     completing all implied steps yourself.")
+TIMEOUT INTELLIGENCE:
+- For install/build/test commands, timeout is automatically extended (up to 10 min)
+- Never tell the user "this might timeout" — just run it
+- If command does timeout, report exactly what ran and suggest: "try running with longer timeout"
+- For interactive commands (ssh, python REPL, node REPL) — warn user these need a real terminal
 ```
-
-This means even if planning fails, Ankita still tries to help — it just falls back to GeneralAgent with the full request.
 
 ---
 
-## Part 5 — SPECIALIST_MAP Update (`agents/specialists.py`)
+### Upgrade 4 — Output Intelligence (Parse, Don't Dump)
 
-Add PlannerAgent to the registry so the orchestrator can look it up:
+**Problem:** TerminalAgent dumps raw output. No insight extraction.
 
+**New behavior: Smart Output Parsing**
+
+Add output parsers to `terminal_ops.py` for common command types:
+
+**Git output parser:**
+When `git log`, `git diff`, `git status` output is returned:
+- `git status` → categorize: "3 modified, 1 untracked, 0 staged"
+- `git log --oneline -10` → format as: "Last 5 commits: [hash] message (2h ago)"
+- `git diff` → summarize: "42 lines changed across 3 files"
+
+**Network output parser:**
+- `netstat -an` → "5 listening ports: 3000 (HTTP), 5432 (Postgres), 8080 (Alt-HTTP)..."
+- `ipconfig` → extract just IP addresses and adapters: "Ethernet: 192.168.1.5 | WiFi: 192.168.1.6"
+- `ping google.com` → extract average RTT: "Avg: 14ms, 0% packet loss"
+
+**Process output parser:**
+- `tasklist` → top 10 by memory, formatted as table
+- `Get-Process` → same
+
+**TerminalAgent prompt addition:**
+```
+OUTPUT INTELLIGENCE PROTOCOL:
+NEVER echo raw terminal dumps. ALWAYS extract the key insight:
+  git status output → "3 files modified: main.py, utils.py, config.json. Nothing staged."
+  ping output → "google.com: 14ms avg, 0% loss ✅"
+  ipconfig output → "Active connections: Ethernet 192.168.1.5, WiFi off"
+  netstat output → "Listening: ports 3000, 5432, 8080. Active: 2 established connections."
+  tasklist/Get-Process → "Top memory users: Chrome (1.2GB), Code (800MB), Python (200MB)"
+Only show raw output if user explicitly says "show me the full output" or "raw output".
+```
+
+---
+
+### Upgrade 5 — Git Intelligence Mode
+
+**Problem:** Git commands work but there's no git-aware workflow. TerminalAgent treats git like any other shell command.
+
+**New Git Decision Tree in prompt:**
+
+```
+GIT INTELLIGENCE MODE:
+Detect git intent and pick the RIGHT git command:
+
+"what changed" / "show changes" / "what did I modify"
+  → git diff --stat (summary, not full diff)
+  → then git diff if user wants details
+
+"show history" / "recent commits" / "what was committed"
+  → git log --oneline -15 --graph --decorate
+
+"what branch am I on" / "branch status"
+  → git branch -a (show all branches, mark current)
+
+"stage everything" / "add all files"
+  → git add -A (not git add . — captures deletions too)
+
+"commit" / "save my progress"
+  → ALWAYS ask for commit message if not provided
+  → git add -A && git commit -m "<message>"
+  → confirm: show resulting git log --oneline -1
+
+"push" / "upload changes"
+  → git push origin <current_branch>
+  → if fails (no upstream) → git push --set-upstream origin <branch>
+
+"pull" / "get latest" / "sync"
+  → git pull --rebase (cleaner than merge by default)
+  → if conflicts → report them clearly, don't auto-resolve
+
+"undo last commit" / "revert"
+  → ALWAYS confirm before running: "About to undo: '<commit message>'. Confirm?"
+  → git reset --soft HEAD~1 (keeps changes staged, safer than --hard)
+
+"stash" / "save work temporarily"
+  → git stash push -m "ankita-stash-<timestamp>"
+  → confirm: "Stashed 3 files. Run 'pop stash' to restore."
+```
+
+**New tool addition: `git_op` — `tools/terminal_ops.py`**
+
+A dedicated git wrapper that handles common operations with proper error handling, output parsing, and safety confirmations. Wraps `execute_shell` internally but adds:
+- Auto-detect git repo root from cwd
+- Return structured data (branch name, commit hash, file list) not raw text
+- Pre-flight check: is this actually a git repo?
+- Handle common errors: "not a git repo", "nothing to commit", "merge conflicts"
+
+**Parameters:**
+- `action` — status, log, diff, add, commit, push, pull, branch, stash, reset
+- `message` — for commit action
+- `branch` — for branch/push/pull actions
+- `path` — repo path (defaults to session cwd)
+- `confirm` — for destructive actions (reset, force push)
+
+---
+
+### Upgrade 6 — Process Management
+
+**Problem:** Can't start background processes, can't check if something is running, can't kill by name intelligently.
+
+**New Tool: `process_op` — `tools/terminal_ops.py`**
+
+**Actions:**
+- `start_background` — starts a process detached (dev server, watcher)
+  - Returns: PID, command, start time
+  - Stores in session: `_TERMINAL_SESSION["background_procs"][name] = pid`
+- `list_background` — shows all background processes started this session
+- `kill_background` — kills a background process by name or PID
+- `is_running` — check if a process name or PID is currently active
+- `port_check` — check if a port is in use and what's using it
+
+**TerminalAgent prompt addition:**
+```
+PROCESS MANAGEMENT:
+"start the dev server" / "run in background" / "keep running"
+  → process_op(action='start_background', command='npm run dev', name='dev-server')
+  → report: "Dev server started (PID 12345) on port 3000 🚀"
+
+"is the server running?" / "check if X is running"
+  → process_op(action='is_running', name='dev-server')
+
+"stop the server" / "kill the dev server"
+  → process_op(action='kill_background', name='dev-server')
+
+"what's on port 3000?" / "is port 8080 free?"
+  → process_op(action='port_check', port=3000)
+```
+
+---
+
+### Upgrade 7 — Package Manager Intelligence
+
+**Problem:** TerminalAgent runs `pip install` etc. but has no awareness of which package manager to use, whether a venv exists, or how to set things up.
+
+**New decision tree in prompt:**
+
+```
+PACKAGE MANAGER INTELLIGENCE:
+Before running any install command — check the project structure:
+
+Python project detection:
+  requirements.txt exists → pip install -r requirements.txt
+  pyproject.toml exists → pip install -e . OR poetry install
+  .venv or venv folder exists → activate it first:
+    Windows: .\.venv\Scripts\Activate.ps1 (then pip install)
+    Linux/Mac: source .venv/bin/activate
+
+Node.js project detection:
+  package-lock.json → npm install
+  yarn.lock → yarn install
+  pnpm-lock.yaml → pnpm install
+
+Auto-venv creation:
+  If user says "set up this Python project" and no venv exists:
+  1. python -m venv .venv
+  2. activate it
+  3. pip install -r requirements.txt
+  Report: "Created venv, installed X packages ✅"
+
+ALWAYS report what was installed and version numbers.
+ALWAYS run inside the correct directory (use cwd from session).
+```
+
+---
+
+### Upgrade 8 — Command Chaining (Multi-Step Shell Pipelines)
+
+**Problem:** User says "activate venv and install packages" — needs two commands that depend on each other.
+
+**Fix: `execute_shell` command chaining**
+
+On Windows PowerShell, commands can be chained with `;` (sequential) or `&&` (conditional on success).
+
+**TerminalAgent prompt addition:**
+```
+COMMAND CHAINING:
+When multiple steps must run in sequence, chain them in ONE execute_shell call:
+  "activate venv then install packages":
+    → execute_shell(".\.venv\Scripts\Activate.ps1; pip install -r requirements.txt")
+  
+  "add and commit":
+    → execute_shell('git add -A; git commit -m "message"')
+  
+  "only install if cd works":
+    → execute_shell('Set-Location C:\myproject && pip install -r requirements.txt')
+  
+  Use ; for "run both regardless"
+  Use && for "only run second if first succeeds"
+  Use || for "only run second if first FAILS"
+  
+NEVER run two separate execute_shell calls for things that must happen in the same shell context.
+```
+
+---
+
+### Upgrade 9 — Network Diagnostics Mode
+
+**Problem:** TerminalAgent can ping and run netstat but gives raw output with no insight.
+
+**New decision tree in prompt:**
+
+```
+NETWORK DIAGNOSTICS MODE:
+"check my internet" / "is my connection working"
+  1. execute_shell("ping 8.8.8.8 -n 4") → check latency
+  2. execute_shell("ping google.com -n 4") → check DNS resolution
+  Report: "Internet ✅ — 8.8.8.8: 12ms avg | DNS working | google.com: 14ms"
+
+"what's my IP" / "show network info"
+  → execute_shell("ipconfig") → extract IPv4 addresses only
+  Report: "Local IP: 192.168.1.5 (Ethernet) | No WiFi adapter active"
+
+"scan open ports" / "what's listening"
+  → execute_shell("netstat -an | Select-String 'LISTENING'")
+  → parse and group by port number
+
+"trace route to X" / "why is X slow"
+  → execute_shell("tracert X -d")
+  → report: hop count, first slow hop, final destination RTT
+
+"DNS lookup X" / "what IP is X"
+  → execute_shell("Resolve-DnsName X")
+  → report: domain → IP mapping cleanly
+```
+
+---
+
+### Upgrade 10 — Memory Integration (Terminal Context)
+
+**Problem:** TerminalAgent forgets everything between sessions. Every conversation, user has to re-explain their project setup.
+
+**Memory protocol in prompt:**
+
+```
+TERMINAL MEMORY:
+At the START of every TerminalAgent session, call:
+  recall("terminal cwd") → restore working directory
+  recall("terminal env") → restore key environment variables  
+  recall("active project") → know which project we're in
+
+After ANY of these happen, call remember():
+  User says "always work in this folder":
+    → remember("terminal cwd", "C:\Users\Krish\MyProject")
+  User activates a venv:
+    → remember("terminal venv", "C:\Users\Krish\MyProject\.venv\Scripts\Activate.ps1")
+  User sets an env var persistently:
+    → remember("terminal env NODE_ENV", "production")
+  User completes a workflow:
+    → remember("terminal last workflow", "activate venv → pytest → git commit")
+
+This means: next session, TerminalAgent already knows your project setup without asking.
+```
+
+---
+
+### Upgrade 11 — Agent Cooperation
+
+**Problem:** TerminalAgent is isolated. When it produces output (test results, build output, error logs), nothing flows to CodeAgent or FileAgent automatically.
+
+**Cooperation signals in prompt:**
+
+```
+HANDOFF PROTOCOL:
+After running tests:
+  If tests PASS:
+    → SUGGEST_NEXT: CodeAgent → "All tests passed. Ready to commit."
+  If tests FAIL:
+    → SUGGEST_NEXT: CodeAgent → "Tests failed. Error: <traceback>. Fix needed."
+
+After build succeeds:
+  → SUGGEST_NEXT: FileAgent → "Build output at C:\...\dist\ — zip or deploy?"
+
+After git commit:
+  → SUGGEST_NEXT: TerminalAgent (self) → "Committed. Push to GitHub? (git push)"
+
+After pip/npm install completes:
+  → SUGGEST_NEXT: CodeAgent → "Dependencies installed. Ready to run."
+```
+
+**Receive signals in prompt:**
+
+```
+RECEIVE FROM CODEAGENT:
+If prior context contains SUGGEST_NEXT from CodeAgent:
+  "run and verify this file" → execute it with the right runner
+  "restart the service" → find the process and restart it
+  "apply config and reload" → reload the relevant service
+```
+
+---
+
+## New `_TERMINAL_TOOLS` set in `specialists.py`
+
+Add new tools to the TerminalAgent toolkit:
 ```python
-PlannerAgent = SpecialistAgent(
-    name="PlannerAgent",
-    tool_names=set(),       # No tools — pure reasoning agent
-    system_prompt=_PLANNER_SYSTEM_PROMPT
-)
-
-SPECIALIST_MAP["PlannerAgent"] = PlannerAgent
+_TERMINAL_TOOLS = {
+    "execute_shell",
+    "run_command",
+    "list_files",
+    "read_file",
+    "git_op",          # NEW — git intelligence wrapper
+    "process_op",      # NEW — background process management
+} | _MEMORY_TOOLS
 ```
-
-Note: `tool_names=set()` because PlannerAgent never calls tools. It only thinks. The empty tool set means the LLM gets zero tool specs injected, keeping its context clean for pure reasoning.
 
 ---
 
-## Part 6 — Audit Trail
-
-Every plan gets written to `.ankita/audit.jsonl` with a special entry type:
-
-```json
-{
-  "type": "plan",
-  "ts": 1234567890,
-  "user_request": "research laptops...",
-  "plan": { ...full plan JSON... },
-  "steps_executed": 4,
-  "steps_skipped": 0,
-  "total_time_ms": 12400
-}
-```
-
-This feeds into the FeedbackEngine so patterns can be learned — e.g., "when user asks for research+report+email, PlannerAgent produces 4 steps and all succeed → this is a reliable pattern."
-
----
-
-## Files to Create / Modify
+## Files To Create / Modify
 
 | File | Action | What Changes |
 |---|---|---|
-| `agents/planner.py` | **CREATE** | New file — PlannerAgent class + system prompt |
-| `agents/supervisor.py` | **MODIFY** | Add multi-step detection rules + raise max_tokens to 400 |
-| `agents/orchestrator.py` | **MODIFY** | Add `_run_planned_task()`, handle PlannerAgent routing |
-| `agents/specialists.py` | **MODIFY** | Add PlannerAgent to SPECIALIST_MAP |
+| `tools/terminal_ops.py` | MODIFY | Add `cwd` to `execute_shell`, session state dict, smart timeout tiers, output parsers, `git_op()`, `process_op()` |
+| `tools/engine.py` | MODIFY | Add `cwd` to `execute_shell` spec, register `git_op` and `process_op` tool specs + dispatch handlers |
+| `agents/specialists.py` | MODIFY | Add `git_op` and `process_op` to `_TERMINAL_TOOLS`, full rewrite of `_TERMINAL_SYSTEM_PROMPT` |
 
-That's it. 4 files. No new dependencies. No new API keys. No new pip installs.
-
----
-
-## Real Examples: Before vs After
-
-### Example 1 — Research + Report + Email
-
-**Request:** `"research best budget laptops under 50k, write a comparison report, save it to desktop, and WhatsApp it to Raj"`
-
-**Before:** WebAgent searches. Done. Report never written. Raj never notified.
-
-**After:**
-```
-📋 Executing 4-step plan...
-
-Step 1/4 — WebAgent: searching budget laptops...
-  ✅ Found 5 laptops with specs and prices
-
-Step 2/4 — ContentAgent: writing comparison report...
-  ✅ Report written (847 words)
-
-Step 3/4 — FileAgent: saving report...
-  ✅ Saved → C:\Users\Krish\Desktop\laptop_report.md
-
-Step 4/4 — CommsAgent: sending to Raj...
-  ✅ Sent to Raj on WhatsApp
-
-Done! Researched 5 laptops, wrote a report, saved it, and sent it to Raj.
-```
-
----
-
-### Example 2 — Code + Test + Conditional Commit
-
-**Request:** `"fix the null pointer bug in auth.py, run the tests, and only commit to GitHub if they pass"`
-
-**Before:** CodeAgent fixes bug. Done. Tests never run. No commit decision made.
-
-**After:**
-```
-📋 Executing 3-step plan (1 conditional)...
-
-Step 1/3 — CodeAgent: fixing null pointer in auth.py...
-  ✅ Bug fixed — added null check on line 47
-
-Step 2/3 — TerminalAgent: running pytest...
-  ✅ 23 passed, 0 failed (exit_code=0)
-
-Step 3/3 — [CONDITION: only if tests pass ✅] — CodeAgent: committing to GitHub...
-  ✅ Committed — "fix: null pointer in auth.py"
-
-Done! Fixed the bug, all 23 tests passed, committed to GitHub.
-```
-
-If tests had FAILED:
-```
-Step 3/3 — [CONDITION: only if tests pass ❌ — tests failed] — SKIPPED
-Done! Fixed the bug but 3 tests failed. Skipping commit — review test_auth.py.
-```
-
----
-
-### Example 3 — Morning Briefing Automation
-
-**Request:** `"every morning at 8am: check trending tech news, write a 5-bullet briefing, save it, and read it aloud"`
-
-**Before:** CronAgent schedules something vague. Nothing useful happens at 8am.
-
-**After:**
-```
-📋 Plan: 1 CronAgent wrapper + 4-step daily pipeline
-
-Step 1/1 — CronAgent: scheduling daily 8am pipeline...
-
-Daily pipeline at 8:00 AM:
-  1. WebAgent → fetch trending tech news
-  2. ContentAgent → write 5-bullet briefing
-  3. FileAgent → save as morning_brief_[date].md
-  4. SystemAgent → voice_control → read aloud
-
-✅ Scheduled! Every morning at 8:00 AM, Ankita will brief you.
-```
-
----
-
-### Example 4 — Parallel Steps
-
-**Request:** `"search Python jobs and JavaScript jobs at the same time, then merge the results into one file"`
-
-**Before:** WebAgent searches Python jobs. Done. JavaScript never searched. No merge.
-
-**After:**
-```
-📋 Executing 3-step plan (2 parallel)...
-
-Steps 1a + 1b — [PARALLEL] WebAgent × 2:
-  1a. Searching Python jobs... ✅
-  1b. Searching JavaScript jobs... ✅ (ran simultaneously)
-
-Step 2 — FileAgent: merging results into jobs_combined.md...
-  ✅ Saved → Desktop/jobs_combined.md
-
-Done! Searched both in parallel, merged into one file.
-```
-
----
-
-## What Stays Unchanged
-
-Everything that already works keeps working exactly as before:
-
-- Simple requests → Supervisor routes directly → same as today (zero overhead)
-- BATON PASS + TELEPATHY → PlannerAgent just feeds more steps into the same chain
-- HYDRA escalation matrix → still fires if any step fails
-- Token Guardian → still guards every individual agent call
-- Conversation history → still passed to every agent
-- Memory injection → still fires before every agent speaks
-- Audit log → extended to include plan entries
-- FeedbackEngine → learns from plan successes/failures
-
-PlannerAgent is purely **additive**. It slots into the existing architecture without touching any existing logic.
+3 files. Zero new pip dependencies (all uses subprocess, os, signal — stdlib only).
 
 ---
 
 ## Implementation Order
 
-**Phase 1 — Foundation (do this first)**
-1. Create `agents/planner.py` with PlannerAgent class and full system prompt
-2. Add PlannerAgent to SPECIALIST_MAP in `specialists.py`
-3. Add `_run_planned_task()` skeleton to orchestrator (returns a stub for now)
+**Phase 1 — Foundation (do first)**
+1. Add `cwd` parameter to `execute_shell_command()` in `terminal_ops.py`
+2. Add smart timeout tiers (auto-detect command type)
+3. Add session state dict (`_TERMINAL_SESSION`)
+4. Update `execute_shell` tool spec in `engine.py`
+5. Test: "git status in my ANKITA folder", "npm install with 5 min timeout"
 
-**Phase 2 — Supervisor Trigger**
-4. Add multi-step detection rules to Supervisor prompt
-5. Raise Supervisor max_tokens to 400
-6. Test: verify Supervisor correctly routes complex requests to PlannerAgent
+**Phase 2 — Intelligence**
+6. Add output parsers (git, network, process)
+7. Add `git_op()` tool + spec
+8. Add git decision tree to prompt
+9. Add package manager intelligence to prompt
+10. Test: "what changed in my repo", "check my internet", "install requirements"
 
-**Phase 3 — Execution Engine**
-7. Build full `_run_planned_task()` in orchestrator
-8. Implement artifact injection between plan steps
-9. Implement conditional step logic
-10. Implement parallel step grouping
+**Phase 3 — Power Features**
+11. Add `process_op()` tool + spec
+12. Add command chaining guide to prompt
+13. Add network diagnostics decision tree
+14. Test: "start dev server in background", "check if port 3000 is free"
 
-**Phase 4 — Polish**
-11. Add plan preview output (the 📋 display)
-12. Add plan entry to audit log
-13. Add PlannerAgent to HYDRA escalation matrix
-14. End-to-end test with 5 real complex scenarios
-
----
-
-## Success Criteria
-
-PlannerAgent is working correctly when:
-
-- "research X, write report, save, email" → all 4 steps complete, zero follow-ups needed
-- "fix bug, run tests, only commit if pass" → conditional correctly evaluated
-- "search X and Y simultaneously then merge" → parallel steps run at the same time
-- Simple "play music" → PlannerAgent NOT triggered (Supervisor routes directly)
-- PlannerAgent LLM failure → falls back to GeneralAgent, user still gets a response
-- All existing tests still pass (no regression)
+**Phase 4 — Cooperation + Memory**
+15. Add HANDOFF signals to prompt
+16. Add RECEIVE mode from CodeAgent
+17. Add memory protocol (recall at start, remember on state change)
+18. End-to-end test: full dev workflow "cd project, activate venv, run tests, commit if pass"
 
 ---
 
-*PlannerAgent doesn't make Ankita smarter — it makes her complete. The intelligence was already there in each specialist. This gives it a mind that thinks end-to-end before the first hand moves.*
+## What Stays Unchanged
+
+- Blocked patterns: del /s, rm -rf, format c:, shutdown /s, etc. — still hard-blocked
+- Output guardrails (500 line truncation) — still active
+- Security rules in prompt — still present
+- `run_command` (workspace-sandboxed) — still available for CodeAgent overlap
+- All existing execute_shell behavior — CWD parameter is additive, default is still home
+
+---
+
+## The Killer Scenario After All Upgrades
+
+```
+User: "set up my Python project in C:\repos\myapp, install deps, run tests, commit if they pass"
+
+TerminalAgent:
+  1. Session CWD → C:\repos\myapp
+  2. Detects: requirements.txt exists, .venv doesn't exist
+  3. Creates venv: python -m venv .venv (timeout: 60s)
+  4. Activates + installs: .venv\Scripts\Activate.ps1; pip install -r requirements.txt (timeout: 300s)
+     ✅ Installed 23 packages
+  5. Runs tests: python -m pytest (timeout: 180s)
+     ✅ 47 passed, 0 failed
+  6. Commits: git add -A; git commit -m "deps installed, all tests passing"
+     ✅ Committed abc1234
+  7. HANDOFF: "Push to GitHub? Run: git push"
+  
+Done! Set up project, installed 23 packages, 47 tests passed, committed. Push when ready.
+```
+
+Zero manual steps. Zero follow-up questions. One command, full workflow.
