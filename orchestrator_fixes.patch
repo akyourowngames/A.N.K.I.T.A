@@ -1,0 +1,54 @@
+--- a/agents/orchestrator.py
++++ b/agents/orchestrator.py
+@@ -832,7 +832,22 @@ class Orchestrator:
+     def run(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
+         """
+         Full orchestration pipeline:
+-          Supervisor → [Fan-Out specialist(s)] → Synthesizer → reply
++          ContextAgent → Supervisor → [Fan-Out specialist(s)] → Synthesizer → reply
+         """
++        # 0. CONTEXT AGENT: Extract context from conversation history BEFORE routing
++        context_block = None
++        try:
++            context_result = self.context_agent.extract(user_text, messages)
++            if context_result and context_result.get("context_block"):
++                context_block = context_result["context_block"]
++                print(f"[ContextAgent] Extracted context: {context_block[:100]}...", flush=True)
++        except Exception as ctx_err:
++            print(f"[ContextAgent] Failed to extract context: {ctx_err}", flush=True)
++        
+         # 1. Supervisor routes the request
+         # Generate an interaction ID for FeedbackEngine tracking
+@@ -846,10 +861,29 @@ class Orchestrator:
+ 
+         # Extract clean history for supervisor routing context
+         supervisor_history = _extract_clean_history(messages, max_turns=4)
+-        routing = self.supervisor.route(user_text, history=supervisor_history)
++        
++        # Inject context block into supervisor routing if available
++        routing_text = user_text
++        if context_block:
++            routing_text = f"{context_block}\n\nUser request: {user_text}"
++        
++        routing = self.supervisor.route(routing_text, history=supervisor_history)
+         agent_names: List[str] = routing["agents"]
+         parallel: bool = routing["parallel"]
+         reasoning: str = routing.get("reasoning", "")
++        confidence: float = routing.get("confidence", 1.0)  # UPGRADE 13: Read confidence score
++        
++        # DUAL ROUTING PROTOCOL: If confidence < 0.65, run both primary and fallback
++        if confidence < 0.65 and len(agent_names) == 1:
++            primary = agent_names[0]
++            fallback_map = {
++                "FileAgent": "TerminalAgent",
++                "WebAgent": "GeneralAgent",
++                "SystemAgent": "TerminalAgent",
++                "CodeAgent": "TerminalAgent",
++                "MusicAgent": "GeneralAgent",
++            }
++            if primary in fallback_map:
++                fallback_agent = fallback_map[primary]
++                agent_names.append(fallback_agent)
++                print(f"[DualRouting] Low confidence ({confidence:.2f}) - adding fallback: {fallback_agent}", flush=True)
+ 
+         # Record routing decision in FeedbackEngine

@@ -377,10 +377,19 @@ def queue_music(workspace_root: Path, query: str) -> Dict[str, Any]:
     if not q:
         raise ValueError("query is required")
     found = search_music(q, max_results=5)
-    best = found.get("best_match")
-    if not best or not bool(found.get("is_confident_match")):
-        candidates = [str(r.get("title", "")) for r in found.get("results", [])[:3]]
-        raise RuntimeError(f"Low confidence match. Top: {' | '.join(candidates)}")
+    
+    # UPGRADE: Try all candidates down to 0.35 score instead of failing on first low match
+    best = None
+    candidates = found.get("results", [])
+    for candidate in candidates:
+        score = float(candidate.get("score", 0.0))
+        if score >= 0.35:  # Lower threshold from 0.62 to 0.35
+            best = candidate
+            break
+    
+    if not best:
+        candidate_names = [str(r.get("title", "")) for r in candidates[:3]]
+        raise RuntimeError(f"No confident match found (all < 0.35). Top: {' | '.join(candidate_names)}")
     with _queue_lock:
         queue = _load_queue(workspace_root)
         entry = {
