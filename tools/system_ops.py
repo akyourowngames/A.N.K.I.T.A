@@ -575,3 +575,62 @@ def system_control(
     if op == "screenshot" and ok:
         out["path"] = res["stdout"]
     return out
+
+
+def _press_combo(vks: list[int]) -> None:
+    keybd = ctypes.windll.user32.keybd_event
+    for vk in vks:
+        keybd(vk, 0, 0, 0)
+        time.sleep(0.01)
+    for vk in reversed(vks):
+        keybd(vk, 0, 2, 0)
+        time.sleep(0.01)
+
+
+def window_layout(action: str) -> Dict[str, Any]:
+    _ensure_windows()
+    op = str(action or "").strip().lower()
+    vk_win = 0x5B
+    vk = {"left": 0x25, "up": 0x26, "right": 0x27, "down": 0x28, "d": 0x44}
+
+    if op in {"snap_left", "left"}:
+        _press_combo([vk_win, vk["left"]])
+        return {"kind": "window_layout", "ok": True, "action": op, "message": "Snapped active window left."}
+    if op in {"snap_right", "right"}:
+        _press_combo([vk_win, vk["right"]])
+        return {"kind": "window_layout", "ok": True, "action": op, "message": "Snapped active window right."}
+    if op in {"snap_up", "maximize"}:
+        _press_combo([vk_win, vk["up"]])
+        return {"kind": "window_layout", "ok": True, "action": op, "message": "Maximized active window."}
+    if op in {"snap_down", "minimize"}:
+        _press_combo([vk_win, vk["down"]])
+        return {"kind": "window_layout", "ok": True, "action": op, "message": "Minimized/restored active window."}
+    if op in {"focus_mode", "show_desktop"}:
+        _press_combo([vk_win, vk["d"]])
+        return {"kind": "window_layout", "ok": True, "action": op, "message": "Focus mode enabled (show desktop)."}
+    if op in {"tile_windows", "tile"}:
+        r = _run_powershell("(New-Object -ComObject Shell.Application).TileVertically()")
+        return {
+            "kind": "window_layout",
+            "ok": (r["exit_code"] == 0),
+            "action": op,
+            "message": "Tiled windows vertically." if r["exit_code"] == 0 else "",
+            "stderr": r["stderr"],
+            "exit_code": r["exit_code"],
+        }
+    if op in {"cascade_windows", "cascade"}:
+        r = _run_powershell("(New-Object -ComObject Shell.Application).CascadeWindows()")
+        return {
+            "kind": "window_layout",
+            "ok": (r["exit_code"] == 0),
+            "action": op,
+            "message": "Cascaded open windows." if r["exit_code"] == 0 else "",
+            "stderr": r["stderr"],
+            "exit_code": r["exit_code"],
+        }
+    return {
+        "kind": "window_layout",
+        "ok": False,
+        "action": op,
+        "error": "Unsupported action. Use snap_left, snap_right, snap_up, snap_down, focus_mode, tile_windows, or cascade_windows.",
+    }

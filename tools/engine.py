@@ -1639,6 +1639,10 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": "Folder path for zip_folder action.",
                     },
+                    "path": {
+                        "type": "string",
+                        "description": "Alias for folder_path/directory (prompt compatibility).",
+                    },
                     "source": {
                         "type": "string",
                         "description": "Source path for quick_backup action.",
@@ -1654,6 +1658,35 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "dry_run": {
                         "type": "boolean",
                         "description": "Dry run mode for smart_cleanup (default true).",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "window_layout",
+            "description": (
+                "Window layout controls: snap active window left/right/up/down, enable focus mode "
+                "(show desktop), tile windows, or cascade windows."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": [
+                            "snap_left",
+                            "snap_right",
+                            "snap_up",
+                            "snap_down",
+                            "focus_mode",
+                            "tile_windows",
+                            "cascade_windows",
+                        ],
+                        "description": "The window layout action to perform.",
                     },
                 },
                 "required": ["action"],
@@ -2340,11 +2373,16 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         return sync_ops.file_sync(
             action=str(args.get("action", "")),
             runtime=_runtime,
-            folder_path=str(args.get("folder_path", "")),
+            folder_path=str(args.get("folder_path") or args.get("path") or ""),
             source=str(args.get("source", "")),
             destination=str(args.get("destination")) if args.get("destination") else None,
-            directory=str(args.get("directory", "")),
+            directory=str(args.get("directory") or args.get("path") or ""),
             dry_run=bool(args.get("dry_run", True)),
+        )
+    
+    if name == "window_layout":
+        return system_ops.window_layout(
+            action=str(args.get("action", "")),
         )
     
     if name == "maps_op":

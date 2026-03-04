@@ -32,7 +32,8 @@ _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_conte
 
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_interact",
                  "read_file", "search_text", "execute_shell", "run_command",
-                 "camera_control", "app_manager", "voice_control", "system_health"} | _MEMORY_TOOLS
+                 "camera_control", "app_manager", "voice_control", "system_health",
+                 "file_sync", "window_layout", "process_op", "capture_webcam"} | _MEMORY_TOOLS
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music", 
                 "queue_music", "show_queue", "clear_queue", "play_next_in_queue", 
