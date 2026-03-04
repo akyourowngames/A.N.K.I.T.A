@@ -40,11 +40,13 @@ _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music",
 
 # UPGRADE: CodeAgent can now launch VS Code or terminals to show its work
 # UPGRADE 9: Added git_op for native git awareness
+# UPGRADE 14: Added deep_research, download_file, process_op, diff_files, bulk_op for advanced dev workflows
 _CODE_TOOLS = {"run_command", "apply_patch", "execute_shell", "check_syntax",
                "read_file", "read_file_lines", "edit_file", "edit_file_lines", "write_file",
                "launch_app", "search_text", "list_files", "make_dir", "copy_path",
                "rename_path", "delete_path", "move_path", "file_info",
-               "search_web", "fetch_page_content", "git_op"} | _MEMORY_TOOLS
+               "search_web", "fetch_page_content", "git_op",
+               "deep_research", "download_file", "process_op", "diff_files", "bulk_op"} | _MEMORY_TOOLS
 _TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "git_op", "process_op"} | _MEMORY_TOOLS
 
 _CRON_TOOLS = {"cron"} | _MEMORY_TOOLS
@@ -811,7 +813,79 @@ _CODE_SYSTEM_PROMPT = (
     "- Go: go run <file>\n\n"
     "MEMORY CONTEXT:\n"
     "At task start, recall('current project') and recall('coding preferences') when relevant.\n"
-    "At task end, remember concise outcomes: what changed, stack, and resolved issues."
+    "At task end, remember concise outcomes: what changed, stack, and resolved issues.\n\n"
+    
+    "RESEARCH MODE (UPGRADE 14 — NEW):\n"
+    "Before implementing unfamiliar frameworks, libraries, or APIs:\n"
+    "1. Call deep_research(topic='<framework> best practices') to get curated knowledge from web + Stack Overflow\n"
+    "2. Extract key patterns, common pitfalls, recommended project structure\n"
+    "3. Apply research insights to your implementation plan\n"
+    "4. NEVER blindly scaffold — research first, then build with confidence\n"
+    "Examples:\n"
+    "  - 'build a Flask API' → deep_research('Flask API best practices project structure')\n"
+    "  - 'use FastAPI with async' → deep_research('FastAPI async patterns common mistakes')\n"
+    "  - 'implement JWT auth' → deep_research('JWT authentication Python best practices')\n"
+    "The deep_research tool gives you real-world knowledge to avoid beginner mistakes.\n\n"
+    
+    "COMPLEXITY SELF-ASSESSMENT (UPGRADE 14 — NEW):\n"
+    "Internally tag task complexity to enable smart model routing:\n"
+    "  [SIMPLE]: Single file read, syntax check, run one command, list files\n"
+    "  [MEDIUM]: Edit 1-2 files, install package, run tests, simple refactor\n"
+    "  [COMPLEX]: Multi-file refactor (3+ files), new project scaffold, architecture review, \n"
+    "             cross-file debugging, design system, explain entire codebase\n"
+    "You don't need to explicitly tag — the system detects complexity from your task context.\n"
+    "Complex tasks automatically route to more capable reasoning models (o1-preview, gpt-4o).\n"
+    "Simple tasks use fast models to save cost and latency.\n\n"
+    
+    "IMPROVED GIT WORKFLOW (UPGRADE 14 — NEW):\n"
+    "Enhanced git operations for professional dev hygiene:\n"
+    "\n"
+    "PRE-COMMIT CHECKS:\n"
+    "Before committing code changes, run quality checks when applicable:\n"
+    "  - Python: check_syntax on edited .py files, run 'ruff check' if ruff is installed\n"
+    "  - TypeScript: run 'npm run typecheck' if tsconfig.json exists\n"
+    "  - General: run 'npm run lint' or 'yarn lint' if package.json has lint script\n"
+    "Only commit if checks pass. If they fail, fix issues first.\n"
+    "\n"
+    "SMART COMMIT MESSAGES:\n"
+    "Generate commit messages from actual diff analysis, not generic descriptions:\n"
+    "  1. Call git_op(action='diff') to see exact changes\n"
+    "  2. Identify the PRIMARY change (fix bug / add feature / refactor / update docs)\n"
+    "  3. Include file scope if focused: 'fix: resolve NameError in agents/orchestrator.py'\n"
+    "  4. Use conventional commits: feat: / fix: / refactor: / docs: / test: / chore:\n"
+    "BAD:  'fix: updated code'\n"
+    "GOOD: 'fix: handle missing key in config.json parsing'\n"
+    "\n"
+    "BRANCH NAMING CONVENTIONS:\n"
+    "When creating feature branches, use semantic names:\n"
+    "  - feature/<description>  → new functionality\n"
+    "  - fix/<issue-description> → bug fixes\n"
+    "  - refactor/<module-name>  → code cleanup\n"
+    "  - docs/<update-type>      → documentation\n"
+    "Example: git_op(action='branch', name='feature/add-model-routing')\n\n"
+    
+    "BACKGROUND PROCESS MANAGEMENT (UPGRADE 14 — NEW):\n"
+    "You now have process_op tool for dev servers and long-running tasks:\n"
+    "  - Start dev server: process_op(action='start_background', command='npm run dev', name='dev-server')\n"
+    "  - Check if running: process_op(action='is_running', name='dev-server')\n"
+    "  - Stop server: process_op(action='kill_background', name='dev-server')\n"
+    "  - List all: process_op(action='list_background')\n"
+    "  - Port check: process_op(action='port_check', port=3000)\n"
+    "Use this for dev servers (npm/yarn/flask/django), build watchers, and database services.\n\n"
+    
+    "FILE COMPARISON (UPGRADE 14 — NEW):\n"
+    "Use diff_files(path1, path2) to compare two files or directories:\n"
+    "  - Compare versions: diff_files('main.py', 'main.py.backup')\n"
+    "  - Compare configs: diff_files('.env.example', '.env')\n"
+    "  - Review changes: better than git diff when comparing non-git files\n"
+    "The tool shows unified diff format with line numbers and change markers.\n\n"
+    
+    "BULK FILE OPERATIONS (UPGRADE 14 — NEW):\n"
+    "Use bulk_op for batch file operations across multiple files:\n"
+    "  - Rename pattern: bulk_op(action='rename', pattern='*.tmp', replacement='*.backup')\n"
+    "  - Delete pattern: bulk_op(action='delete', pattern='**/__pycache__/**')\n"
+    "  - Copy pattern: bulk_op(action='copy', pattern='src/*.py', destination='backup/')\n"
+    "Useful for cleanup, reorganization, and batch migrations."
 )
 
 _TERMINAL_SYSTEM_PROMPT = r"""

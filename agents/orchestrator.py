@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 
 from llm import LLMRuntime, call_chat_once
 from llm.client import build_vision_runtime_from_env, call_chat_with_image
+from llm.agent_router import get_agent_runtime, detect_task_complexity
 from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages, _estimate_tokens
 
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
@@ -269,10 +270,23 @@ def _run_specialist(
     """Run a single specialist agent to completion and return its result.
 
     Args:
-        prior_context: 'Telepathy' block from previous agent â€” injected directly
+        prior_context: 'Telepathy' block from previous agent — injected directly
                        into the specialist's system prompt so it knows what happened
                        before it woke up. No hunting through text needed.
     """
+    # UPGRADE 14: Smart model routing for CodeAgent based on task complexity
+    # Detect complexity and use appropriate model tier (simple/medium/complex)
+    if specialist.name == "CodeAgent":
+        complexity = detect_task_complexity(task, agent_name="CodeAgent")
+        specialist_runtime = get_agent_runtime("CodeAgent", runtime, complexity)
+        if specialist_runtime.model != runtime.model:
+            print(
+                f"[ModelRouter] CodeAgent: {complexity.upper()} task → routing to {specialist_runtime.model}",
+                flush=True,
+            )
+    else:
+        specialist_runtime = runtime
+    
     messages = specialist.make_messages(task, history=conversation_history)
 
     # ── SANITIZE MESSAGES: strip any image_url blocks that leaked from prior turns ──
@@ -305,7 +319,7 @@ def _run_specialist(
         max_tokens = _DEEP_MODE_MAX_TOKENS
         print(f"[Orchestrator] ContentAgent DEEP MODE - max_tokens boosted to {max_tokens}", flush=True)
     else:
-        max_tokens = runtime.max_tokens
+        max_tokens = specialist_runtime.max_tokens
 
     # ── VISION FOLLOW-UP CACHE ─────────────────────────────────────────────
     # If the user is asking a describe/analyse follow-up (no new tool needed)
@@ -328,7 +342,7 @@ def _run_specialist(
         # Use call_chat_with_image() — isolated API call with ONLY image + prompt.
         # Never inject raw image into messages (causes "too massive" context overflow).
         try:
-            _vision_rt = build_vision_runtime_from_env(runtime)
+            _vision_rt = build_vision_runtime_from_env(specialist_runtime)
             _cache_desc = call_chat_with_image(
                 _vision_rt,
                 f"The user asks: {task}\nDescribe what you see in this image, focusing on the user's question.",
@@ -376,7 +390,7 @@ def _run_specialist(
                 flush=True,
             )
         try:
-            response = call_chat_once(runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
+            response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
         except Exception as err:
             # ðŸ’Ž Prism Protocol â€” 400 / context_length_exceeded recovery
             err_str = str(err).lower()
@@ -409,7 +423,7 @@ def _run_specialist(
                         flush=True,
                     )
                     try:
-                        response = call_chat_once(runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
+                        response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
                     except Exception as retry_err:
                         return {
                             "agent": specialist.name,
@@ -569,8 +583,8 @@ def _run_specialist(
                 "gpt-4-turbo", "o1", "claude", "gemini",
             }
             # Copilot + any gpt-4 variant → always vision capable (Copilot only serves gpt-4 family)
-            _model_lower = runtime.model.lower()
-            _model_supports_vision = runtime.provider == "copilot" and (
+            _model_lower = specialist_runtime.model.lower()
+            _model_supports_vision = specialist_runtime.provider == "copilot" and (
                 any(vm in _model_lower for vm in _VISION_CAPABLE_MODELS)
                 or "gpt-4" in _model_lower  # catch any gpt-4.x variant not in the set above
             )
@@ -641,7 +655,7 @@ def _run_specialist(
             # call_chat_with_image() sends a fresh, minimal request: just the image
             # and one text prompt. The text description is then injected into the
             # main messages so the chat model can reason about it.
-            vision_runtime = build_vision_runtime_from_env(runtime)
+            vision_runtime = build_vision_runtime_from_env(specialist_runtime)
             _is_vision_capable = (
                 vision_runtime.provider == "copilot"
                 and (
@@ -659,7 +673,7 @@ def _run_specialist(
                     return {"agent": specialist.name, "ok": True, "reply": final_desc}
             else:
                 # No vision runtime available — tell user clearly
-                provider_label = f"{runtime.provider}/{runtime.model}"
+                provider_label = f"{specialist_runtime.provider}/{specialist_runtime.model}"
                 return {
                     "agent": specialist.name,
                     "ok": True,
