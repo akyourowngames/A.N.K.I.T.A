@@ -646,7 +646,6 @@ def search_price(query: str) -> Dict[str, Any]:
     if not coin_id:
         for key, cg_id in _COINGECKO_IDS.items():
             # Match if the key appears as a complete word in the query
-            import re
             if re.search(r'\b' + re.escape(key) + r'\b', q.lower()):
                 coin_id = cg_id
                 break

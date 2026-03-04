@@ -2,6 +2,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from typing import List, Optional
 
 from dotenv import load_dotenv
 
@@ -10,9 +11,8 @@ from agents import Orchestrator
 from agents.hive import HiveMind
 from corn import CornRunner
 from llm import build_runtime_from_env
-from memory import MemoryStore
 from proactive import ProactiveEngine
-from session_manager import SessionManager
+from memory import get_memory_manager
 
 WORKSPACE_ROOT = Path.cwd().resolve()
 
@@ -33,6 +33,15 @@ def main() -> None:
     load_dotenv()
     runtime = build_runtime_from_env()
 
+    # Memory system — init singleton, anchor root, attach runtime
+    memory = get_memory_manager(WORKSPACE_ROOT)
+    memory.attach_runtime(runtime)
+    try:
+        from agent_runtime import set_memory_root
+        set_memory_root(WORKSPACE_ROOT)
+    except Exception:
+        pass
+
     # Multi-agent orchestrator (uses Supervisor + Specialists + Synthesizer)
     use_multi_agent = _env_bool("ANKITA_MULTI_AGENT", True)
     orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
@@ -42,22 +51,8 @@ def main() -> None:
     from tools.feedback_engine import init_engine as _init_fb
     feedback_engine = _init_fb(workspace_root=WORKSPACE_ROOT, llm_runtime=runtime)
 
-    # Vector memory
-    memory = MemoryStore(workspace_root=WORKSPACE_ROOT)
-    
     # Session ID for CLI
     session_id = "cli-session"
-    
-    # Attach memory to orchestrator for ContextAgent v2
-    # Pass session_log instance so ContextAgent can access it directly
-    orchestrator.attach_memory(memory, session_id, session_log)
-    
-    # Session log (JSON sliding window for fast recent message access)
-    from session_log import SessionLog
-    session_log = SessionLog(WORKSPACE_ROOT, session_id)
-
-    # ── Session Manager (Black Box / Flight Recorder) ✈️ ──────────────────────
-    session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)
 
     # Corn scheduler
     runner: CornRunner | None = None
@@ -84,20 +79,8 @@ def main() -> None:
     # Hive Mind — async background task manager
     hive = HiveMind(orchestrator=orchestrator, agent_runtime=agent, use_multi_agent=use_multi_agent)
 
-    # ── Resurrection Protocol 🧟 ───────────────────────────────────────────────
-    # Build fresh system-prompt messages, then overlay any saved history on top.
-    base_messages = new_session()
-    restored_history = session.load()
-
-    if restored_history:
-        messages = session.build_restored_messages(base_messages)
-    else:
-        messages = base_messages
-
-    session_label = f"RESTORED ({len(restored_history)} msgs)" if restored_history else "NEW"
-
-    # Now that session_id is set, attach memory properly
-    proactive.attach_memory(memory, session_id)
+    # Build fresh system-prompt messages
+    messages = new_session()
 
     print("\n╔══════════════════════════════════════╗")
     print("║   A.N.K.I.T.A  — SYSTEM ACTIVE       ║")
@@ -108,20 +91,14 @@ def main() -> None:
     print(f"  Max tokens  : {max_tokens_label}")
     print(f"  Workspace   : {WORKSPACE_ROOT}")
     print(f"  Multi-agent : {'ON' if use_multi_agent else 'OFF'}")
-    print(f"  Memory      : {'ON (ChromaDB)' if memory.enabled else 'OFF (chromadb not installed)'}")
     print(f"  Proactive   : ON")
     print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
     print(f"  Hive Mind   : ON 🐝")
-    print(f"  Session     : {session_label} ✈️")
-    print("\n  Commands: /exit  /reset  /agents on|off  /memory  /hive  /watchdogs  /reauth github  /github status  show <id>")
+    print("\n  Commands: /exit  /reset  /agents on|off  /hive  /watchdogs  /reauth github  /github status  show <id>")
     print("─" * 42 + "\n")
 
-    if session.restored:
-        print("🧠 A.N.K.I.T.A: Session restored — I remember where we left off.\n")
-
     # Background thread: drains proactive events every 5 seconds even while
-    # input("You: ") is blocking. This is how DreamState epiphanies get printed
-    # without needing the user to press Enter first.
+    # input("You: ") is blocking.
     _stop_event_watcher = threading.Event()
 
     def _event_watcher() -> None:
@@ -132,10 +109,6 @@ def main() -> None:
                     epiphany_text = event.data.get("text", event.message)
                     if epiphany_text:
                         print(f"\n\n✨ [A.N.K.I.T.A — Dream] {epiphany_text}\n\nYou: ", end="", flush=True)
-                        try:
-                            memory.add(session_id, "assistant", epiphany_text)
-                        except Exception:
-                            pass
                 elif event.kind == "content_request":
                     suggested_prompt = event.data.get("suggested_prompt", "")
                     if suggested_prompt:
@@ -152,7 +125,6 @@ def main() -> None:
                                     messages=new_session(),
                                 )
                             print(f"\n[ANKITA] {content_reply}\n\nYou: ", end="", flush=True)
-                            memory.add(session_id, "assistant", content_reply)
                         except Exception as _err:
                             print(f"\n[ANKITA] Content generation error: {_err}\n\nYou: ", end="", flush=True)
                 else:
@@ -185,31 +157,13 @@ def main() -> None:
             break
 
         if user_text.lower() == "/reset":
-            messages = new_session()
-            session.clear()
+            messages = new_session("")
             print("Conversation reset.\n")
             continue
 
         if user_text.lower() in ("/agents on", "/agents off"):
             use_multi_agent = user_text.lower() == "/agents on"
             print(f"Multi-agent mode: {'ON' if use_multi_agent else 'OFF'}\n")
-            continue
-
-        if user_text.lower() == "/memory":
-            # Show the persistent JSON vault (long-term memory)
-            from tools.memory_ops import recall, format_memory_block
-            block = format_memory_block()
-            if block:
-                print(f"\n{block}\n")
-            else:
-                print("\n[Memory vault is empty. Say 'remember that...' to add memories.]\n")
-            # Also show recent ChromaDB vector memories
-            hits = memory.search("recent", n=5)
-            if hits:
-                print("Recent session memories (ChromaDB):")
-                for h in hits:
-                    print(f"  [{h['meta'].get('role','?')}] {h['text'][:120]}")
-            print()
             continue
 
         if user_text.lower() == "/hive":
@@ -242,23 +196,12 @@ def main() -> None:
 
         if user_text.lower().startswith("show "):
             # Smart Fallback Protocol: only intercept if a real task ID exists.
-            # "Show me my clipboard" → pass to agent. "show a1b2" → task report.
             task_id = user_text[5:].strip()
             task_report = hive.get_result(task_id)
             if task_report and "No task found" not in task_report and "Error" not in task_report:
                 print(f"\n{task_report}\n")
                 continue
-            # No real task found → fall through to agent (don't intercept)
-
-        # ── Save user turn to session vault ───────────────────────────────────
-        session.add_message("user", user_text)
-        session_log.append("user", user_text)
-
-        # Inject relevant memories as context
-        mem_context = memory.format_memory_context(user_text, n=4)
-        if mem_context and messages:
-            # Insert memory as a temporary system message before user turn
-            messages.append({"role": "system", "content": mem_context})
+            # No real task found → fall through to agent
 
         # Detect implicit feedback ("good", "👍", etc.) before treating as new query
         _impl_fb = feedback_engine.detect_implicit_feedback(user_text, _last_iid[0])
@@ -268,57 +211,36 @@ def main() -> None:
             continue
 
         # send_fn: called from background drone thread when reply is ready
-        def _print_reply(text: str, _session_id: str = session_id, _iid_ref: List = _last_iid, _slog: "SessionLog" = session_log) -> None:
+        def _print_reply(text: str, _session_id: str = session_id, _iid_ref: List = _last_iid) -> None:
             if not text:
                 return
             print(f"\nA.N.K.I.T.A: {text}\n\nYou: ", end="", flush=True)
             try:
-                memory.add(_session_id, "assistant", text)
-                _slog.append("assistant", text)
                 proactive.set_last_interaction()
-                # Sync last interaction ID from FeedbackEngine so implicit feedback
-                # detection ("good"/"bad") targets the correct orchestrator interaction
                 try:
                     from tools.feedback_engine import get_instance as _fb_get
                     _fb = _fb_get()
                     if _fb:
-                        # Use the most recently completed interaction logged to disk
                         from tools.feedback_engine import _load_jsonl, _INSTANCE as _fb_inst
                         if _fb_inst is not None:
                             recent = _load_jsonl(_fb_inst._interactions_path, max_lines=1)
                             if recent:
                                 _iid_ref[0] = recent[-1].get("id")
                             elif _iid_ref[0] is None:
-                                # Fallback: create a new record for this response
                                 _iid_ref[0] = _fb.new_interaction()
                                 _fb.record_interaction(_iid_ref[0], "", text)
                 except Exception:
                     pass
-                # ── Save assistant reply to session vault ──────────────────
-                session.add_message("assistant", text)
-                # ── Compress if history is getting long (background thread) ─
-                threading.Thread(
-                    target=session.compress_if_needed,
-                    daemon=True,
-                    name="SessionCompressor",
-                ).start()
             except Exception:
                 pass
 
         try:
             ack = hive.delegate(user_text, messages, send_fn=_print_reply)
             if ack:
-                # Heavy task — print the "Started 🐝" acknowledgement immediately
                 print(f"\nA.N.K.I.T.A: {ack}\n\nYou: ", end="", flush=True)
-            # For normal tasks: reply comes asynchronously via _print_reply
-            # Input loop continues immediately — fully non-blocking ✅
         except Exception as err:
             print(f"Assistant [Error]: {err}\n")
         continue
-
-        # Store turn in vector memory  (unreachable — kept for reference)
-        memory.add(session_id, "user", user_text)
-        memory.add(session_id, "assistant", "")
 
     _stop_event_watcher.set()
     proactive.stop()

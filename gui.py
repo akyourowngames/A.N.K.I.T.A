@@ -32,9 +32,7 @@ from agents import Orchestrator
 from agents.hive import HiveMind
 from corn import CornRunner
 from llm import build_runtime_from_env
-from memory import MemoryStore
 from proactive import ProactiveEngine
-from session_manager import SessionManager
 import voice_web
 
 WORKSPACE_ROOT = Path.cwd().resolve()
@@ -83,10 +81,13 @@ class AskWorker(QThread):
 
     def run(self) -> None:
         try:
-            reply = self.agent.process_user_text(user_text=self.user_text, messages=self.messages)
+            reply = self.agent.process_user_text(
+                user_text=self.user_text, messages=self.messages, interface="gui"
+            )
             self.done.emit(reply or "(empty response)", "")
         except Exception as err:
             self.done.emit("", str(err))
+
 
 
 class _OrchestratorWorker(QThread):
@@ -489,29 +490,16 @@ class AnkitaWindow(QMainWindow):
         self.orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
         self.use_multi_agent = _env_bool("ANKITA_MULTI_AGENT", True)
 
-        # Self-improvement feedback engine
-        from tools.feedback_engine import init_engine as _init_fb
-        self.feedback_engine = _init_fb(workspace_root=WORKSPACE_ROOT, llm_runtime=runtime)
-        self._last_fb_iid: Optional[str] = None  # last interaction ID for feedback
-        # MemoryStore (ChromaDB) crashes on Windows when Qt is running due to
-        # SQLite C extension conflicts. Disabled in GUI mode.
-        self.memory = MemoryStore.__new__(MemoryStore)
-        self.memory.enabled = False
-        self.memory._client = None
-        self.memory._col = None
         self.session_id = "gui-session"
-        
-        # Attach memory to orchestrator for ContextAgent v2 (even if disabled)
-        self.orchestrator.attach_memory(self.memory, self.session_id)
 
-        # â”€â”€ Session Manager (Black Box / Flight Recorder) âœˆï¸ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-        self.session = SessionManager(workspace_root=WORKSPACE_ROOT, runtime=runtime)
-        restored_history = self.session.load()
-        base_messages = new_session()
-        if restored_history:
-            self.messages = self.session.build_restored_messages(base_messages)
-        else:
-            self.messages = base_messages
+        self.messages = new_session()
+
+        # Attach MemoryManager runtime so fact extraction works from GUI
+        try:
+            from memory import get_memory_manager
+            get_memory_manager(WORKSPACE_ROOT).attach_runtime(runtime)
+        except Exception:
+            pass
 
         self.worker: AskWorker | None = None
         self.voice_worker: VoiceCallWorker | None = None
@@ -627,10 +615,7 @@ class AnkitaWindow(QMainWindow):
         self.hotkey_toggle_requested.connect(self._toggle_voice_by_hotkey)
 
         # Startup messages
-        if self.session.restored:
-            self._append("System", f"🎉 Session restored — {len(restored_history)} messages loaded. I remember where we left off 🎉")
-        else:
-            self._append("System", "ANKITA ready.")
+        self._append("System", "ANKITA ready.")
         if not HAS_AUDIO_STACK:
             self._append("System", "Voice unavailable — install numpy + sounddevice")
 
@@ -782,11 +767,6 @@ class AnkitaWindow(QMainWindow):
             if event.kind == "dream_epiphany":
                 epiphany_text = event.data.get("text", event.message)
                 if epiphany_text:
-                    # Store in vector memory so ANKITA remembers she said this
-                    try:
-                        self.memory.add(self.session_id, "assistant", epiphany_text)
-                    except Exception:
-                        pass
                     # Speak via Sarvam TTS in a daemon thread
                     api_key = os.getenv("SARVAM_API_KEY", "").strip()
                     if api_key:

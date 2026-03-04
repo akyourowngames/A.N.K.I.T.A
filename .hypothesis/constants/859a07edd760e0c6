@@ -1,0 +1,4 @@
+# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\youtube_ops.py
+# hypothesis_version: 6.151.6
+
+[100, 'alphabetical', 'channel', 'channelId', 'channelTitle', 'channel_id', 'contentDetails', 'count', 'date', 'description', 'error', 'id', 'itemCount', 'items', 'kind', 'maxResults', 'message', 'order', 'part', 'playlist', 'playlistId', 'playlist_id', 'playlists', 'privacyStatus', 'private', 'published', 'publishedAt', 'q', 'resourceId', 'snippet', 'snippet,status', 'status', 'subscriptions', 'success', 'title', 'type', 'url', 'v3', 'video', 'videoId', 'video_count', 'video_id', 'video_url', 'videos', 'videos_added', 'youtube', 'youtube#video']

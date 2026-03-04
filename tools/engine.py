@@ -9,7 +9,6 @@ from . import cron_ops
 from . import deep_research as deep_research_mod
 from . import desktop_ops
 from . import fs_ops
-from . import memory_ops
 from . import music_ops
 from . import realtime_search
 from . import system_ops
@@ -998,78 +997,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             },
         },
     },
-    {
-        "type": "function",
-        "function": {
-            "name": "remember",
-            "description": (
-                "Save a permanent memory to the long-term vault. "
-                "Use when the user says 'remember that X', 'my name is Y', "
-                "'I prefer Z', or 'note that W'. "
-                "This persists forever — survives restarts."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The fact, preference, or note to remember.",
-                    },
-                    "category": {
-                        "type": "string",
-                        "enum": ["user_profile", "facts", "projects", "preferences", "people", "locations"],
-                        "description": (
-                            "Where to store it. "
-                            "'user_profile' for personal info (name, preferences), "
-                            "'facts' for general facts, "
-                            "'projects' for project names and descriptions."
-                        ),
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "recall",
-            "description": (
-                "Search long-term memory for stored facts or preferences. "
-                "Use when you need to look up something the user told Ankita to remember, "
-                "or when answering a question that might depend on known user preferences."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {
-                        "type": "string",
-                        "description": "Keyword to search for. Omit to retrieve ALL memories.",
-                    },
-                },
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "forget",
-            "description": (
-                "Delete a specific memory from the long-term vault. "
-                "Use when the user says 'forget that X' or 'delete the memory about Y'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "text": {
-                        "type": "string",
-                        "description": "The exact text of the memory to delete.",
-                    },
-                },
-                "required": ["text"],
-            },
-        },
-    },
+
     {
         "type": "function",
         "function": {
@@ -1839,7 +1767,10 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                             "type": "object",
                             "properties": {
                                 "heading": {"type": "string"},
-                                "content": {"type": ["string", "object", "array"]},
+                                "content": {
+                                    "type": "string",
+                                    "description": "Section content (text, JSON string for tables/lists, or code)"
+                                },
                                 "type": {
                                     "type": "string",
                                     "enum": ["text", "table", "list", "code"],
@@ -2187,21 +2118,6 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         )
     if name == "apply_patch":
         return fs_ops.apply_patch(workspace_root, patch=str(args.get("patch", "")))
-    if name == "remember":
-        return memory_ops.remember(
-            text=str(args.get("text", "")),
-            category=str(args.get("category", "facts")),
-        )
-    if name == "recall":
-        return memory_ops.recall(
-            query=str(args.get("query")) if args.get("query") else None,
-        )
-    if name == "forget":
-        return memory_ops.forget(text=str(args.get("text", "")))
-    if name == "memory_consolidate":
-        return memory_ops.memory_consolidate(
-            similarity_threshold=float(args.get("similarity_threshold", 0.85)),
-        )
     if name == "capture_webcam":
         return desktop_ops.capture_webcam(
             camera_index=int(args.get("camera_index", 0)),

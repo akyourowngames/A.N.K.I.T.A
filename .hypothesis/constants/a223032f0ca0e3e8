@@ -1,0 +1,4 @@
+# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\auth_manager.py
+# hypothesis_version: 6.151.6
+
+[900, '.ankita', 'Accept', 'Content-Type', 'FIGMA_ACCESS_TOKEN', 'GH_TOKEN', 'GITHUB_TOKEN', 'GOOGLE_CLIENT_ID', 'GOOGLE_CLIENT_SECRET', 'Iv1.b507a08c87ecfe98', 'access_denied', 'access_token', 'application/json', 'auth_uri', 'client_id', 'client_secret', 'client_secret*.json', 'consent', 'credentials', 'device_code', 'error', 'expired_token', 'expires_in', 'figma', 'github', 'google', 'grant_type', 'http://localhost', 'installed', 'interval', 'offline', 'redirect_uris', 'refresh_token', 'repo read:user', 'scope', 'slow_down', 'time', 'token', 'token_uri', 'tokens.json', 'updated_at', 'user_code', 'utf-8', 'verification_uri', 'web', '─', '✅ Figma token saved!']

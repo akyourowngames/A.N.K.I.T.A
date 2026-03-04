@@ -1,0 +1,4 @@
+# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\corn\schedule.py
+# hypothesis_version: 6.151.6
+
+[1000.0, 366, 1000, '*', '+00:00', ',', '-', '/', 'Z', 'anchorMs', 'anchor_ms', 'at', 'cron', 'empty cron field', 'every', 'everyMs', 'every_ms', 'expr', 'kind', 'step must be > 0']

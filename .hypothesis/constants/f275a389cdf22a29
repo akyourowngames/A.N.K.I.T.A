@@ -1,0 +1,4 @@
+# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\contacts_ops.py
+# hypothesis_version: 6.151.6
+
+['+', '[\\s\\-\\(\\)]', '^\\+\\d{7,15}$', '_', '_comment', 'contacts', 'contacts.json', 'count', 'data', 'error', 'name', 'ok', 'phone', 'utf-8']

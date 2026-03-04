@@ -504,7 +504,12 @@ def call_chat_once(
     }
     if isinstance(max_tokens, int) and max_tokens > 0:
         if runtime.provider == "copilot":
-            payload["max_completion_tokens"] = max_tokens
+            # GitHub Copilot API has a limit on max_completion_tokens
+            # Cap it at 4096 to avoid 400 errors
+            capped_tokens = min(max_tokens, 4096)
+            if capped_tokens != max_tokens:
+                print(f"[LLM] Capping max_completion_tokens from {max_tokens} to {capped_tokens} for Copilot API", flush=True)
+            payload["max_completion_tokens"] = capped_tokens
         else:
             payload["max_tokens"] = max_tokens
     if tools:
@@ -539,7 +544,16 @@ def call_chat_once(
                 time.sleep(2 ** attempt)
                 continue
             raise
-        except requests.HTTPError:
+        except requests.HTTPError as http_err:
+            # Add detailed error logging for 400 errors
+            if response.status_code == 400:
+                try:
+                    error_data = response.json()
+                    error_msg = error_data.get("error", {}).get("message", str(http_err))
+                    print(f"[LLM] 400 Bad Request: {error_msg}", flush=True)
+                    print(f"[LLM] Request payload: model={payload.get('model')}, max_tokens={payload.get('max_tokens')}, max_completion_tokens={payload.get('max_completion_tokens')}", flush=True)
+                except Exception:
+                    pass
             raise  # Don't retry non-retryable HTTP errors
     # Should never reach here, but satisfy type checker
     raise RuntimeError("call_chat_once: exhausted retries")

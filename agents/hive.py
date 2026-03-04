@@ -197,19 +197,24 @@ class HiveMind:
         
         # Zero-latency bypass for obvious greetings — no LLM call needed
         if t in _ZERO_LATENCY_INSTANT:
-            return self._run_immediate(user_input, self._trim_instant_context(messages))
+            # Use trimmed context for LLM call, but reply is delivered via send_fn for consistency
+            self._spawn_drone(user_input, messages, send_fn, announce=False)
+            return ""
         
         # LLM classification for everything else
         mode = _classify_task(user_input.strip())
 
         if mode == "instant":
-            return self._run_immediate(user_input, self._trim_instant_context(messages))
+            self._spawn_drone(user_input, messages, send_fn, announce=False)
+            return ""
         elif mode == "heavy":
             # Heavy: return "Started" immediately, full result via send_fn later
-            return self._spawn_drone(user_input, list(messages), send_fn, announce=True)
+            # Pass the REAL messages list — orchestrator.run() will append to it
+            return self._spawn_drone(user_input, messages, send_fn, announce=True)
         else:  # "normal"
             # Normal: spawn silently, result comes via send_fn
-            self._spawn_drone(user_input, list(messages), send_fn, announce=False)
+            # Pass the REAL messages list so history accumulates
+            self._spawn_drone(user_input, messages, send_fn, announce=False)
             return ""  # caller gets nothing — reply arrives via send_fn
 
     def check_notifications(self) -> List[str]:
@@ -349,14 +354,15 @@ class HiveMind:
                     # Emit progress during execution
                     self.update_progress(task_id, "Processing with orchestrator...", 25)
                     result = self.orchestrator.run(user_input, messages)
-                    # orchestrator.run() may return a dict {"reply": "..."} or a plain string
+                    # orchestrator.run() already appends to messages via _append_to_messages
                     if isinstance(result, dict):
                         task.result = result.get("reply", str(result))
                     else:
                         task.result = str(result)
                 elif self.agent_runtime:
                     self.update_progress(task_id, "Processing with agent runtime...", 25)
-                    task.result = self.agent_runtime.process_user_text(user_input, list(messages))
+                    task.result = self.agent_runtime.process_user_text(user_input, messages)
+                    # process_user_text already appends user+assistant to messages
                 else:
                     task.result = "[HiveMind] No runtime available."
                 

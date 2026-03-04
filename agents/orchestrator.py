@@ -19,13 +19,11 @@ from typing import Any, Dict, List, Optional
 from llm import LLMRuntime, call_chat_once
 from llm.client import build_vision_runtime_from_env, call_chat_with_image
 from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages, _estimate_tokens
-from tools.memory_ops import format_memory_block
 
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
 from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
-from .context_agent import ContextAgent
 
 _MAX_TOOL_STEPS = 20
 
@@ -197,75 +195,7 @@ _SYNTHESIZER_PROMPT = (
 )
 
 
-def _inject_memory(messages: List[Dict[str, Any]], session_id: Optional[str] = None) -> None:
-    """
-    Hippocampus Injection — prepend the long-term memory block to the system prompt.
 
-    This runs before EVERY specialist agent so they all share the same persistent
-    context without needing to explicitly call recall().
-
-    UNIFIED MEMORY: Combines both memory systems:
-    1. JSON Vault (explicit facts) - from format_memory_block()
-    2. ChromaDB (semantic memories) - from memory.search()
-
-    Args:
-        messages: The message list to inject memory into
-        session_id: Optional session ID for ChromaDB semantic search
-    """
-    # Get explicit facts from JSON vault
-    vault_block = format_memory_block()
-    
-    # Get semantic memories from ChromaDB if session_id provided
-    chromadb_block = ""
-    if session_id:
-        try:
-            import memory as mem
-            # Extract recent context from messages for better semantic search
-            recent_context = _extract_recent_context(messages)
-            results = mem.search(session_id, query=recent_context, n=3, ttl_days=30)
-            
-            if results:
-                chromadb_lines = ["RECENT CONTEXT:"]
-                for r in results:
-                    # Format: "- [timestamp] content"
-                    content_preview = r.get("content", "")[:100]
-                    chromadb_lines.append(f"- {content_preview}")
-                chromadb_block = "\n".join(chromadb_lines)
-        except Exception as e:
-            print(f"[_inject_memory] ChromaDB search failed: {e}", flush=True)
-    
-    # Combine both memory sources
-    memory_parts = []
-    if vault_block:
-        memory_parts.append(vault_block)
-    if chromadb_block:
-        memory_parts.append(chromadb_block)
-    
-    if not memory_parts:
-        return  # No memory to inject
-    
-    memory_block = "\n\n".join(memory_parts)
-    
-    # Token guard: cap at ~500 tokens (roughly 650 words)
-    words = memory_block.split()
-    if len(words) > 650:
-        memory_block = " ".join(words[:650]) + "\n... [memory truncated]"
-    
-    # Inject into system message
-    if messages and messages[0].get("role") == "system":
-        original = messages[0].get("content", "")
-        messages[0]["content"] = f"{original}\n\n{memory_block}"
-    else:
-        # No system message yet — insert one at the front
-        messages.insert(0, {"role": "system", "content": memory_block})
-
-
-def _extract_recent_context(messages: List[Dict[str, Any]], max_chars: int = 200) -> str:
-    """Extract recent conversation context for semantic memory search."""
-    # Get last 3 user messages
-    user_messages = [m.get("content", "") for m in messages[-10:] if m.get("role") == "user"]
-    recent = " ".join(user_messages[-3:])
-    return recent[:max_chars] if recent else "recent conversation"
 
 
 _DEEP_MODE_TASK_KEYWORDS = {
@@ -422,9 +352,6 @@ def _run_specialist(
                 "role": "user",
                 "content": f"[Vision follow-up failed: {_cache_vision_err}]",
             })
-
-    # ðŸ§  HIPPOCAMPUS INJECTION â€” every agent sees long-term memory before speaking
-    _inject_memory(messages)
 
     # TELEPATHY: inject prior context into the system message so the agent
     # starts with full awareness of what previous agents did/produced.
@@ -827,36 +754,32 @@ class Orchestrator:
         self.runtime = runtime
         self.workspace_root = workspace_root
         self.supervisor = SupervisorAgent(runtime)
-        self.context_agent = ContextAgent(runtime)
+        # Attach runtime to MemoryManager so fact extraction + summarization work
+        try:
+            from memory import get_memory_manager
+            get_memory_manager(workspace_root).attach_runtime(runtime)
+        except Exception:
+            pass
 
     def run(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
         """
         Full orchestration pipeline:
           ContextAgent -> Supervisor -> [Fan-Out specialist(s)] -> Synthesizer -> reply
         """
-        # 0. CONTEXT AGENT: Extract context from conversation history BEFORE routing
-        context_block = None
+        print(f"[Orchestrator.run] ENTRY: user_text='{user_text[:80]}'", flush=True)
+        print(f"[Orchestrator] Starting Supervisor routing for: {user_text[:50]}...", flush=True)
+
+        # ── MEMORY: Inject/refresh long-term context into messages ──────────
         try:
-            # v2: pass memory_store + session_id + session_log so ContextAgent can pull from
-            # all three sources (session messages, SessionLog JSON, ChromaDB)
-            _mem_store = getattr(self, "_memory_store", None)
-            _session_id = getattr(self, "_session_id", None)
-            _session_log = getattr(self, "_session_log", None)
-            context_result = self.context_agent.extract(
-                user_text, messages,
-                memory_store=_mem_store,
-                session_id=_session_id,
-                session_log=_session_log,
-            )
-            if context_result and context_result.get("context_block"):
-                context_block = context_result["context_block"]
-                print(f"[ContextAgent] ✅ Context:\n{context_block}", flush=True)
-        except Exception as ctx_err:
-            print(f"[ContextAgent] Failed: {ctx_err}", flush=True)
-        
+            from memory import get_memory_manager
+            _mem = get_memory_manager(self.workspace_root)
+            _mem.inject_into_messages(messages, user_query=user_text)
+        except Exception:
+            pass
         # 1. Supervisor routes the request
         # Generate an interaction ID for FeedbackEngine tracking
         _interaction_id: Optional[str] = None
+        _fb_eng = None
         try:
             from tools.feedback_engine import get_instance as _get_fb
             _fb_eng = _get_fb()
@@ -865,15 +788,11 @@ class Orchestrator:
         except Exception:
             pass
 
-        # Extract clean history for supervisor routing context
         supervisor_history = _extract_clean_history(messages, max_turns=4)
-        
-        # Inject context block into supervisor routing if available
         routing_text = user_text
-        if context_block:
-            routing_text = f"{context_block}\n\nUser request: {user_text}"
         
         routing = self.supervisor.route(routing_text, history=supervisor_history)
+        print(f"[Supervisor] Routed to: {routing.get('agents', [])} (parallel={routing.get('parallel', False)})", flush=True)
         agent_names: List[str] = routing["agents"]
         parallel: bool = routing["parallel"]
         reasoning: str = routing.get("reasoning", "")
@@ -942,11 +861,23 @@ class Orchestrator:
         if len(results) == 1:
             reply = results[0].get("reply", "")
             self._append_to_messages(messages, user_text, reply)
+            # Save assistant reply to memory
+            try:
+                from memory import get_memory_manager
+                get_memory_manager(self.workspace_root).save("assistant", reply, interface="orchestrator")
+            except Exception:
+                pass
             return reply
 
         # 4. Synthesize multiple results
         reply = self._synthesize(user_text, results)
         self._append_to_messages(messages, user_text, reply)
+        # Save synthesized reply to memory
+        try:
+            from memory import get_memory_manager
+            get_memory_manager(self.workspace_root).save("assistant", reply, interface="orchestrator")
+        except Exception:
+            pass
         return reply
 
     def _run_sequential_with_context(
@@ -1112,17 +1043,27 @@ class Orchestrator:
             return combined
 
     def _run_general(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
-        """Fallback: use full AgentRuntime-style loop with all tools."""
-        from agent_runtime import AgentRuntime
-        # Reuse the same runtime; create a temp AgentRuntime
-        agent = AgentRuntime(runtime=self.runtime, workspace_root=self.workspace_root)
-        messages.append({"role": "user", "content": user_text})
-        try:
-            return agent.run_turn(messages, tools=TOOL_SPECS)
-        except Exception as err:
-            if messages and messages[-1].get("role") == "user":
-                messages.pop()
-            return f"[Error] {err}"
+            """Fallback: use full AgentRuntime-style loop with all tools."""
+            print(f"[Orchestrator._run_general] Starting with user_text: {user_text[:100]}...", flush=True)
+            from agent_runtime import AgentRuntime
+            agent = AgentRuntime(runtime=self.runtime, workspace_root=self.workspace_root)
+            messages.append({"role": "user", "content": user_text})
+            try:
+                result = agent.run_turn(messages, tools=TOOL_SPECS)
+                # Save assistant reply to memory
+                try:
+                    from memory import get_memory_manager
+                    get_memory_manager(self.workspace_root).save("assistant", result, interface="orchestrator")
+                except Exception:
+                    pass
+                print(f"[Orchestrator._run_general] Completed successfully", flush=True)
+                return result
+            except Exception as err:
+                print(f"[Orchestrator._run_general] Error: {err}", flush=True)
+                if messages and messages[-1].get("role") == "user":
+                    messages.pop()
+                return f"[Error] {err}"
+
 
     def _run_watchdog_agent(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
         """
@@ -1382,17 +1323,5 @@ class Orchestrator:
         reply = self._synthesize(user_text, all_results)
         self._append_to_messages(messages, user_text, reply)
         return reply
-
-    def attach_memory(self, memory_store: Any, session_id: str = "default", session_log: Any = None) -> None:
-        """Inject MemoryStore and SessionLog so ContextAgent can pull from both."""
-        self._memory_store = memory_store
-        self._session_id = session_id
-        self._session_log = session_log
-
-    def set_session_id(self, session_id: str, session_log: Any = None) -> None:
-        """Update session ID and optionally SessionLog (called when chat_id changes in Telegram)."""
-        self._session_id = session_id
-        if session_log is not None:
-            self._session_log = session_log
 
 

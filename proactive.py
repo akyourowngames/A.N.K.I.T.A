@@ -94,8 +94,6 @@ class ProactiveEngine:
         # Idle / DreamState tracking
         self._last_interaction: float = time.time()  # epoch seconds
         self._dream_pending: bool = False             # True while dream is queued or synthesizing
-        self._memory_store: Optional[Any] = None     # injected by caller after init
-        self._session_id: str = "default"            # injected by caller
 
         # Sentinel (Screen-watching idle alert) tracking
         self._sentinel_triggered: bool = False       # True once sentinel fires; reset when user returns
@@ -155,18 +153,6 @@ class ProactiveEngine:
         """
         self._runtime = runtime
 
-    def attach_memory(self, memory_store: Any, session_id: str = "default") -> None:
-        """
-        Attach the MemoryStore so the DreamAgent can retrieve ChromaDB memories.
-
-        Call this once after both ProactiveEngine and MemoryStore are initialized.
-
-        Args:
-            memory_store: The active MemoryStore instance.
-            session_id:   The current chat session ID.
-        """
-        self._memory_store = memory_store
-        self._session_id = session_id
 
     # ------------------------------------------------------------------
     # Background loop
@@ -362,14 +348,8 @@ class ProactiveEngine:
         idle_threshold = float(os.getenv("ANKITA_IDLE_SECONDS", "3600"))
 
         idle_sec = time.time() - self._last_interaction
-        print(f"[DreamAgent] Idle: {idle_sec:.1f}s / threshold: {idle_threshold}s  memory={'attached' if self._memory_store else 'MISSING'}", flush=True)
-
-        if idle_sec < idle_threshold:
-            return  # Not idle long enough yet
-
-        if self._memory_store is None:
-            print(f"[DreamAgent] ⚠️  No memory store attached — cannot synthesize.", flush=True)
-            return  # No memory attached — skip silently
+        # DreamAgent currently disabled - needs new memory system
+        return 
 
         print(f"[DreamAgent] 🌙 Idle threshold crossed! Spawning DreamSynthesis thread...", flush=True)
 

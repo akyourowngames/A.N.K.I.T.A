@@ -7,12 +7,8 @@ have missed, and synthesises a short spoken epiphany that ANKITA delivers
 autonomously — no user input required.
 """
 from __future__ import annotations
-
 import os
-from typing import TYPE_CHECKING, Optional
-
-if TYPE_CHECKING:
-    from memory import MemoryStore  # type: ignore
+from typing import Optional
 
 _DREAM_SYSTEM_PROMPT = """
 You are A.N.K.I.T.A's background processor. You analyze the user's recent workspace memories and proactively suggest actionable tasks.
@@ -76,7 +72,7 @@ class DreamAgent:
     when the idle threshold is crossed.
     """
 
-    def _generate_dynamic_query(self, memory_store: "MemoryStore", session_id: str) -> str:
+    def _generate_dynamic_query(self) -> str:
         """
         Generate a dynamic query based on time of day and recent activity.
         
@@ -135,75 +131,63 @@ class DreamAgent:
 
     def synthesize(
         self,
-        memory_store: "MemoryStore",
-        session_id: str,
         n_memories: int = 15,
     ) -> Optional[str]:
         """
-        Pull recent memories and generate proactive suggestions (UPGRADE 3).
+        Dream cycle entry point — called by ProactiveEngine at idle.
 
-        Args:
-            memory_store: The active MemoryStore (ChromaDB-backed).
-            session_id:   Current session ID for scoped retrieval.
-            n_memories:   How many memory turns to retrieve (default 15).
+        1. Runs MemoryManager.run_dream_cycle() to:
+           - Compress recent turns into a session summary
+           - Extract long-term facts from that summary
+        2. Then generates ANKITA's proactive suggestion output from the
+           compressed facts (actionable items, patterns, deadlines).
 
-        Returns:
-            The suggestion string, or None if no actionable suggestions.
+        Returns the suggestion string or None if nothing useful.
         """
-        # ------------------------------------------------------------------
-        # 1. Generate dynamic query based on time and recent activity
-        # ------------------------------------------------------------------
-        query = self._generate_dynamic_query(memory_store, session_id)
-        print(f"[DreamAgent] Using dynamic query: '{query}'", flush=True)
-        
-        # ------------------------------------------------------------------
-        # 2. Retrieve recent memories
-        # ------------------------------------------------------------------
+        # ── Step 1: Run the memory compression + fact extraction cycle ──────
+        summary: Optional[str] = None
         try:
-            results = memory_store.search(
-                query=query,
-                n=n_memories,
-                session_id=session_id,
-            )
-        except Exception as _e:
-            print(f"[DreamAgent] Memory search (scoped) failed: {_e} — trying global...", flush=True)
-            try:
-                results = memory_store.search(
-                    query=query,
-                    n=n_memories,
-                )
-            except Exception as _e2:
-                print(f"[DreamAgent] Memory search (global) also failed: {_e2}", flush=True)
-                return None
+            from memory import get_memory_manager
+            _mem = get_memory_manager()
+            summary = _mem.run_dream_cycle(interface="dream")
+            if summary:
+                print(f"[DreamAgent] 🧠 Memory dream cycle complete — summary: {summary[:80]}...", flush=True)
+        except Exception as _mem_exc:
+            print(f"[DreamAgent] ⚠️  Memory dream cycle error: {_mem_exc}", flush=True)
 
-        print(f"[DreamAgent] Memory results: {len(results) if results else 0} entries found.", flush=True)
+        # ── Step 2: Build proactive suggestions from recent JSONL turns ──────
+        try:
+            from memory import get_memory_manager
+            _mem = get_memory_manager()
+            recent_turns = _mem._summarizer.load_recent_turns(n_memories)
+        except Exception:
+            recent_turns = []
+
+        if not recent_turns:
+            print("[DreamAgent] ⚠️  No recent turns to dream about.", flush=True)
+            return None
+
+        # Format turns for the LLM
+        for t in recent_turns:
+            role = "User" if t.get("role") == "user" else "Ankita"
+            text = t.get("content", "").strip()
+            if text:
+                lines.append(f"({role}): {text[:300]}")
+        print(f"[DreamAgent] Loaded {len(recent_turns)} recent turns for dream cycle.", flush=True)
 
         # Trigger FeedbackEngine self-analysis during idle cycle
         try:
             from tools.feedback_engine import get_instance as _get_fb
             _fb = _get_fb()
             if _fb is not None:
-                _fb_summary = _fb.analyze_recent(memories=results)
+                _fb_summary = _fb.analyze_recent(memories=recent_turns)
                 if _fb_summary:
                     print(f"[DreamAgent] {_fb_summary}", flush=True)
         except Exception as _fb_exc:
             print(f"[DreamAgent] FeedbackEngine analyze error: {_fb_exc}", flush=True)
 
-        if not results:
-            print(f"[DreamAgent] ⚠️  No memories in ChromaDB yet — nothing to dream about.", flush=True)
-            return None
-
-        # ------------------------------------------------------------------
-        # 2. Format the memory block
-        # ------------------------------------------------------------------
-        lines = []
-        for i, mem in enumerate(results, 1):
-            role = mem.get("meta", {}).get("role", "unknown")
-            text = mem.get("text", "").strip()
-            if text:
-                lines.append(f"[{i}] ({role}): {text}")
-
         if not lines:
+            print("[DreamAgent] ⚠️  No content in recent turns — nothing to dream about.", flush=True)
             return None
 
         memory_block = "\n".join(lines)

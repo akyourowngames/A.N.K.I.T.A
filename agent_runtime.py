@@ -3,6 +3,30 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+# Memory system — imported lazily to avoid circular deps at module load
+_mem = None
+_WORKSPACE_ROOT = None
+
+def _get_mem():
+    """Return the MemoryManager singleton, always anchored to WORKSPACE_ROOT."""
+    global _mem, _WORKSPACE_ROOT
+    if _mem is None:
+        try:
+            from pathlib import Path
+            from memory import get_memory_manager
+            # Anchor to the directory containing agent_runtime.py (the project root)
+            root = _WORKSPACE_ROOT or Path(__file__).parent.resolve()
+            _mem = get_memory_manager(root)
+        except Exception:
+            pass
+    return _mem
+
+def set_memory_root(root) -> None:
+    """Call once at startup with the resolved workspace root."""
+    global _WORKSPACE_ROOT
+    from pathlib import Path
+    _WORKSPACE_ROOT = Path(root).resolve()
+
 import requests
 
 from llm import LLMRuntime, call_chat_once
@@ -12,7 +36,6 @@ from tools import (
     execute_tool_call,
 )
 from tools.engine import _estimate_tokens
-from tools.memory_ops import format_memory_block
 
 # Proactive compaction threshold — compact before sending if estimated > this many tokens
 _PROACTIVE_TOKEN_LIMIT = 48_000   # leaves 16k headroom below 64k limit
@@ -59,13 +82,16 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 """
 
 
-def new_session() -> List[Dict[str, Any]]:
-    """Start a fresh conversation with memory pre-injected into the system prompt."""
-    memory_block = format_memory_block()
-    system_content = SYSTEM_PROMPT
-    if memory_block:
-        system_content = f"{SYSTEM_PROMPT}\n\n{memory_block}"
-    return [{"role": "system", "content": system_content}]
+def new_session(user_query: str = "") -> List[Dict[str, Any]]:
+    """Start a fresh conversation, injecting long-term memory context."""
+    messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
+    try:
+        mem = _get_mem()
+        if mem:
+            mem.inject_into_messages(messages, user_query=user_query)
+    except Exception:
+        pass
+    return messages
 
 
 class AgentRuntime:
@@ -464,53 +490,14 @@ class AgentRuntime:
         )
         return filtered
 
-    def process_user_text(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
-        # 🧠 Refresh memory block in system prompt on every turn.
-        # This ensures newly stored memories (via remember()) are immediately visible
-        # without needing to restart — critical for "remember that X → now use X" flows.
-        memory_block = format_memory_block()
-        
-        # 🔍 INTELLIGENT SEMANTIC MEMORY SEARCH:
-        # Use LLM to detect if the query needs context from past conversations.
-        # This handles vague queries like "continue", "tell me more", "what was that",
-        # or references to past topics without hardcoding specific keywords.
-        semantic_context = ""
-        needs_context = self._check_needs_semantic_context(user_text, messages)
-        if needs_context:
-            # THREADING SAFETY: ChromaDB/SQLite can crash when initialized in background threads.
-            # Wrap in try-except to prevent voice worker crashes.
-            try:
-                import threading
-                is_main_thread = threading.current_thread() is threading.main_thread()
-                
-                if not is_main_thread:
-                    print("[SemanticMemory] ⚠️ Skipping memory search in background thread (ChromaDB threading issue)", flush=True)
-                else:
-                    from memory import MemoryStore
-                    mem_store = MemoryStore(self.workspace_root)
-                    if mem_store.enabled:
-                        # Search for semantically similar past conversations
-                        hits = mem_store.search(user_text, n=5)
-                        if hits:
-                            semantic_context = "\n[Recent relevant context from past conversations:]\n"
-                            for hit in hits:
-                                role = hit["meta"].get("role", "?")
-                                text_snippet = hit['text'][:300]
-                                semantic_context += f"  {role}: {text_snippet}...\n"
-                            print(f"[SemanticMemory] 💡 Injected {len(hits)} relevant memories", flush=True)
-            except Exception as mem_err:
-                print(f"[SemanticMemory] ⚠️  Search failed: {mem_err}", flush=True)
-                import traceback
-                traceback.print_exc()
-        
-        if memory_block and messages and messages[0].get("role") == "system":
-            base = messages[0]["content"]
-            # Strip any old memory block and re-inject fresh one
-            if "--- LONG TERM MEMORY ---" in base:
-                base = base[:base.index("--- LONG TERM MEMORY ---")].rstrip()
-            messages[0]["content"] = f"{base}\n\n{memory_block}"
-            if semantic_context:
-                messages[0]["content"] += f"\n\n{semantic_context}"
+    def process_user_text(self, user_text: str, messages: List[Dict[str, Any]], interface: str = "cli") -> str:
+        # Save user turn to memory before processing
+        try:
+            mem = _get_mem()
+            if mem:
+                mem.save("user", user_text, interface=interface)
+        except Exception:
+            pass
 
         messages.append({"role": "user", "content": user_text})
         
@@ -518,14 +505,13 @@ class AgentRuntime:
         active_tools = self._select_tools(user_text)
         try:
             reply = self.run_turn(messages, tools=active_tools)
-            # ── AUTO MEMORY EXTRACTION ────────────────────────────────────────
-            # Fire-and-forget background thread: extract key facts from this turn
-            # and store them automatically. Never blocks the main response.
+            # Save assistant reply to memory
             try:
-                from tools.memory_ops import auto_extract_memories_async
-                auto_extract_memories_async(user_text, reply)
+                mem = _get_mem()
+                if mem and reply:
+                    mem.save("assistant", reply, interface=interface)
             except Exception:
-                pass  # Auto-memory is optional — never crash the main loop
+                pass
             return reply
         except requests.HTTPError as err:
             status = err.response.status_code if err.response is not None else "?"
@@ -586,56 +572,3 @@ class AgentRuntime:
             if messages and messages[-1].get("role") == "user":
                 messages.pop()
             return f"[Error] {err}"
-    
-    def _check_needs_semantic_context(self, user_text: str, messages: List[Dict[str, Any]]) -> bool:
-        """
-        Use LLM to intelligently detect if user query needs context from past conversations.
-        
-        Returns True for:
-        - Vague continuation requests: "continue", "go on", "tell me more"
-        - References to past topics: "what did you say about X", "remind me"
-        - Follow-up questions without context: "why?", "how?", "what about..."
-        - Pronoun-heavy queries: "what was that", "tell me about it"
-        
-        Returns False for:
-        - Specific, self-contained queries
-        - New topics with full context
-        """
-        # Quick heuristic: very short queries often need context
-        if len(user_text.split()) <= 3:
-            return True
-        
-        # Use a fast, lightweight LLM call to classify the query
-        try:
-            classification_prompt = f"""Analyze this user query and determine if it needs context from past conversation to be understood.
-
-Query: "{user_text}"
-
-Does this query need past conversation context? Consider:
-- Is it a continuation request? (continue, go on, more)
-- Does it reference something without explaining what? (that, it, this)
-- Is it a follow-up question? (why, how, what about)
-- Does it assume prior knowledge?
-
-Answer with just one word: YES or NO"""
-
-            # Use a simple completion - no tools needed for classification
-            from llm.client import get_completion
-            response = get_completion(
-                model="gpt-4o-mini",  # Fast, cheap model for classification
-                messages=[{"role": "user", "content": classification_prompt}],
-                temperature=0,
-                max_tokens=10
-            )
-            
-            answer = response.strip().upper()
-            needs_context = "YES" in answer
-            print(f"[SemanticMemory] Query context check: '{user_text[:50]}...' → {answer}", flush=True)
-            return needs_context
-            
-        except Exception as e:
-            # Fallback: if LLM fails, use simple heuristics
-            print(f"[SemanticMemory] LLM classification failed, using fallback: {e}", flush=True)
-            fallback_triggers = ["continue", "more", "go on", "what was", "remind me", 
-                                 "tell me about", "why", "how so", "elaborate"]
-            return any(trigger in user_text.lower() for trigger in fallback_triggers)
