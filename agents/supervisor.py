@@ -74,6 +74,9 @@ AGENTS:
 - CommsAgent: WhatsApp messages.
 - IntegrationAgent: Cloud API tasks — Google Sheets (log/track/read data), YouTube (subscriptions, playlists), Figma (design files, comments, node properties).
 - WatchdogAgent: Background monitoring — price alerts, news tracking, file watching, git repo watching. Use for: 'watch', 'track', 'monitor', 'alert me when', 'notify me when', 'keep an eye on', 'tell me if'.
+- NavigatorAgent: Maps, navigation, location services — routes, nearby places, distances, traffic, geocoding. Use for: 'navigate', 'find places', 'how far', 'traffic', 'directions', 'near me'.
+- TaskAgent: Task management — add/list/complete tasks with priorities and deadlines, auto-scheduled reminders. Use for: 'add task', 'my tasks', 'mark done', 'what's overdue', 'task summary'.
+- ReportAgent: Automated report generation — builds structured reports with data, tables, exports to PDF/Markdown. Use for: 'build report', 'generate report', 'create report', 'system health report', 'project status report'.
 - GeneralAgent: Complex multi-step tasks that genuinely cross domains, or pure conversation.
 
 WEBAGENT NEW TOOLS ROUTING (CRITICAL — READ FIRST):
@@ -240,6 +243,17 @@ Examples:
 - "monitor my git repo" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "git watcher via WatchdogManager"}
 - "notify me when ethereum crosses $5000" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "price alert via WatchdogManager"}
 - "watchdog status" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "show watchdog status"}
+- "navigate to Connaught Place" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "maps navigation"}
+- "find coffee near me" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "place search"}
+- "how far is Delhi from Mumbai" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "distance calculation"}
+- "traffic on NH-8" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "traffic check"}
+- "add task: finish report by Friday" → {"agents": ["TaskAgent"], "parallel": false, "reasoning": "task management"}
+- "what are my pending tasks" → {"agents": ["TaskAgent"], "parallel": false, "reasoning": "list tasks"}
+- "mark that as done" → {"agents": ["TaskAgent"], "parallel": false, "reasoning": "complete task"}
+- "what's overdue" → {"agents": ["TaskAgent"], "parallel": false, "reasoning": "overdue tasks"}
+- "build a report on disk usage" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate system report"}
+- "create a project status report" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate project report"}
+- "generate weekly activity report" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate activity report"}
 - "deep report on AI regulation in India" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "comprehensive analysis of climate change" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
@@ -324,7 +338,8 @@ class SupervisorAgent:
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
                      "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
                      "GeneralAgent", "TerminalAgent", "ScreenAgent",
-                     "IntegrationAgent", "WatchdogAgent", "PlannerAgent"}
+                     "IntegrationAgent", "WatchdogAgent", "NavigatorAgent",
+                     "TaskAgent", "ReportAgent", "PlannerAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             # Extract confidence score (UPGRADE 13)

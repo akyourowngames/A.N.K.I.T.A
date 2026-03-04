@@ -24,6 +24,9 @@ from . import app_manager
 from . import voice_ops
 from . import health_ops
 from . import sync_ops
+from . import maps_ops
+from . import task_ops
+from . import report_ops
 
 
 TOOL_SPECS: List[Dict[str, Any]] = [
@@ -1729,6 +1732,138 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "maps_op",
+            "description": (
+                "Maps and navigation operations: get routes, search places, calculate distances, "
+                "check traffic, geocode addresses. Supports Google Maps API and OpenStreetMap fallback."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["navigate", "search_places", "distance", "traffic", "geocode", "reverse_geocode"],
+                        "description": "The maps operation to perform.",
+                    },
+                    "origin": {
+                        "type": "string",
+                        "description": "Starting location (address or coordinates).",
+                    },
+                    "destination": {
+                        "type": "string",
+                        "description": "Ending location (address or coordinates).",
+                    },
+                    "query": {
+                        "type": "string",
+                        "description": "Search query for places or geocoding.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["driving", "walking", "bicycling", "transit"],
+                        "description": "Travel mode (default: driving).",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "task_op",
+            "description": (
+                "Task management: add tasks with priorities and deadlines, list/filter tasks, "
+                "mark complete, get overdue tasks, view summary. Auto-schedules cron reminders."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["add", "list", "update", "complete", "delete", "overdue", "summary"],
+                        "description": "The task operation to perform.",
+                    },
+                    "title": {
+                        "type": "string",
+                        "description": "Task description/title.",
+                    },
+                    "priority": {
+                        "type": "string",
+                        "enum": ["low", "medium", "high", "urgent"],
+                        "description": "Task priority (default: medium).",
+                    },
+                    "deadline": {
+                        "type": "string",
+                        "description": "Deadline in natural format (e.g., 'Friday', '2024-12-25', 'in 3 days').",
+                    },
+                    "tags": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of tags for categorization.",
+                    },
+                    "status": {
+                        "type": "string",
+                        "enum": ["pending", "in_progress", "done", "cancelled"],
+                        "description": "Task status (default: pending).",
+                    },
+                    "task_id": {
+                        "type": "string",
+                        "description": "Task ID for update/complete/delete operations.",
+                    },
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_pdf",
+            "description": (
+                "Generate structured reports with sections, tables, and charts. "
+                "Exports to PDF or Markdown format. Saves to Desktop by default."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "title": {
+                        "type": "string",
+                        "description": "Report title.",
+                    },
+                    "sections": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "heading": {"type": "string"},
+                                "content": {"type": ["string", "object", "array"]},
+                                "type": {
+                                    "type": "string",
+                                    "enum": ["text", "table", "list", "code"],
+                                    "description": "Section content type.",
+                                },
+                                "language": {"type": "string", "description": "Language for code blocks."},
+                            },
+                        },
+                        "description": "List of report sections.",
+                    },
+                    "output_path": {
+                        "type": "string",
+                        "description": "Output file path (defaults to Desktop with timestamp).",
+                    },
+                    "format": {
+                        "type": "string",
+                        "enum": ["pdf", "md"],
+                        "description": "Output format (default: pdf).",
+                    },
+                },
+                "required": ["title", "sections"],
+            },
+        },
+    },
 ]
 
 
@@ -2294,6 +2429,34 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             destination=str(args.get("destination")) if args.get("destination") else None,
             directory=str(args.get("directory", "")),
             dry_run=bool(args.get("dry_run", True)),
+        )
+    
+    if name == "maps_op":
+        return maps_ops.maps_op(
+            action=str(args.get("action", "")),
+            origin=str(args.get("origin")) if args.get("origin") else None,
+            destination=str(args.get("destination")) if args.get("destination") else None,
+            query=str(args.get("query")) if args.get("query") else None,
+            mode=str(args.get("mode", "driving")),
+        )
+    
+    if name == "task_op":
+        return task_ops.task_op(
+            action=str(args.get("action", "")),
+            title=str(args.get("title")) if args.get("title") else None,
+            priority=str(args.get("priority", "medium")),
+            deadline=str(args.get("deadline")) if args.get("deadline") else None,
+            tags=args.get("tags") if isinstance(args.get("tags"), list) else None,
+            status=str(args.get("status", "pending")),
+            task_id=str(args.get("task_id")) if args.get("task_id") else None,
+        )
+    
+    if name == "generate_pdf":
+        return report_ops.generate_pdf(
+            title=str(args.get("title", "")),
+            sections=args.get("sections", []),
+            output_path=str(args.get("output_path")) if args.get("output_path") else None,
+            format=str(args.get("format", "pdf")),
         )
 
     raise ValueError(f"Unknown tool: {name}")

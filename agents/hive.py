@@ -108,6 +108,8 @@ class DroneTask:
     start_time: float = field(default_factory=time.time)
     end_time: Optional[float] = None
     task_type: str = "heavy"
+    progress: str = ""            # Current progress message
+    progress_percent: int = 0     # Progress percentage (0-100)
 
     @property
     def elapsed(self) -> str:
@@ -155,6 +157,7 @@ class HiveMind:
         self._completed: Dict[str, DroneTask] = {}    # finished drones (kept for recall)
         self._lock = threading.Lock()
         self._notify_queue: queue.Queue[str] = queue.Queue()
+        self._progress_queue: queue.Queue[Dict[str, Any]] = queue.Queue()  # Progress updates
 
     # ------------------------------------------------------------------
     # Public API
@@ -218,6 +221,30 @@ class HiveMind:
             except queue.Empty:
                 break
         return notes
+    
+    def get_progress_updates(self) -> List[Dict[str, Any]]:
+        """Drain all pending progress updates (non-blocking)."""
+        updates: List[Dict[str, Any]] = []
+        while True:
+            try:
+                updates.append(self._progress_queue.get_nowait())
+            except queue.Empty:
+                break
+        return updates
+    
+    def update_progress(self, task_id: str, message: str, percent: int = 0) -> None:
+        """Update progress for a running task."""
+        with self._lock:
+            task = self._active.get(task_id)
+            if task:
+                task.progress = message
+                task.progress_percent = percent
+                self._progress_queue.put({
+                    "task_id": task_id,
+                    "message": message,
+                    "percent": percent,
+                    "elapsed": task.elapsed
+                })
 
     def get_result(self, task_id: str) -> str:
         """Retrieve the result of a drone task by ID."""
@@ -313,8 +340,14 @@ class HiveMind:
         def worker() -> None:
             task.status = "running"
             task.start_time = time.time()
+            
+            # Emit initial progress
+            self.update_progress(task_id, "Starting task...", 0)
+            
             try:
                 if self.use_multi_agent and self.orchestrator:
+                    # Emit progress during execution
+                    self.update_progress(task_id, "Processing with orchestrator...", 25)
                     result = self.orchestrator.run(user_input, messages)
                     # orchestrator.run() may return a dict {"reply": "..."} or a plain string
                     if isinstance(result, dict):
@@ -322,13 +355,19 @@ class HiveMind:
                     else:
                         task.result = str(result)
                 elif self.agent_runtime:
+                    self.update_progress(task_id, "Processing with agent runtime...", 25)
                     task.result = self.agent_runtime.process_user_text(user_input, list(messages))
                 else:
                     task.result = "[HiveMind] No runtime available."
+                
+                self.update_progress(task_id, "Finalizing...", 90)
                 task.status = "done"
+                self.update_progress(task_id, "Complete!", 100)
+                
             except Exception as err:
                 task.status = "error"
                 task.error = str(err)
+                self.update_progress(task_id, f"Error: {str(err)}", 0)
             finally:
                 task.end_time = time.time()
                 # Move to completed
