@@ -287,6 +287,8 @@ class VoiceCallWorker(QThread):
         if not HAS_AUDIO_STACK:
             self.error.emit("Voice deps missing: pip install numpy sounddevice")
             return
+        
+        print("[VoiceCallWorker] Starting voice loop...", flush=True)
         while self.running:
             try:
                 self.status.emit("Listening...")
@@ -309,26 +311,49 @@ class VoiceCallWorker(QThread):
 
                 if not transcript:
                     continue
+                
+                print(f"[VoiceCallWorker] Heard: {transcript}", flush=True)
                 self.heard.emit(transcript)
 
                 self.status.emit("Thinking...")
                 reply_text = self.agent.process_user_text(
                     user_text=transcript, messages=self.messages)
+                
+                if not reply_text:
+                    print("[VoiceCallWorker] ⚠️ Empty reply from agent", flush=True)
+                    self.error.emit("Agent returned empty response")
+                    continue
+                
+                print(f"[VoiceCallWorker] Reply: {reply_text[:100]}...", flush=True)
                 self.replied.emit(reply_text)
 
                 self.status.emit("Speaking...")
-                tts = voice_web._sarvam_tts(
-                    api_key=self.api_key, text=reply_text, lang_code=detected_lang)
-                audio_b64 = voice_web._extract_audio_b64(tts)
-                self._play_wav_b64(audio_b64)
+                try:
+                    tts = voice_web._sarvam_tts(
+                        api_key=self.api_key, text=reply_text, lang_code=detected_lang)
+                    audio_b64 = voice_web._extract_audio_b64(tts)
+                    if audio_b64:
+                        self._play_wav_b64(audio_b64)
+                    else:
+                        print("[VoiceCallWorker] ⚠️ No audio data from TTS", flush=True)
+                except Exception as tts_err:
+                    print(f"[VoiceCallWorker] TTS/playback error: {tts_err}", flush=True)
+                    self.error.emit(f"TTS failed: {tts_err}")
+                    # Continue listening even if TTS fails
             except requests.HTTPError as err:
                 status = err.response.status_code if err.response is not None else "?"
                 body = err.response.text[:400] if err.response is not None else str(err)
+                print(f"[VoiceCallWorker] HTTP error {status}: {body}", flush=True)
                 self.error.emit(f"HTTP {status}: {body}")
                 time.sleep(0.8)
             except Exception as err:
+                print(f"[VoiceCallWorker] Unexpected error: {err}", flush=True)
+                import traceback
+                traceback.print_exc()
                 self.error.emit(str(err))
                 time.sleep(0.5)
+        
+        print("[VoiceCallWorker] Voice loop ended.", flush=True)
         self.status.emit("Stopped.")
 
 
@@ -1047,6 +1072,7 @@ class AnkitaWindow(QMainWindow):
             self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
             self.voice_worker.status.connect(lambda s: self.status_label.setText(s))
             self.voice_worker.error.connect(lambda e: self._append("Voice [Error]", e))
+            self.voice_worker.finished.connect(self._on_voice_worker_finished)
             # Set flag so WakeWordListener backs off while VoiceCallWorker holds the mic
             self._voice_active_flag.set()
             self.voice_worker.start()
@@ -1058,6 +1084,15 @@ class AnkitaWindow(QMainWindow):
         """Called internally (e.g. hotkey toggle)."""
         if self.voice_worker is not None and self.voice_worker.isRunning():
             self.on_voice_toggle()
+    
+    def _on_voice_worker_finished(self) -> None:
+        """Called when voice worker thread finishes (normally or due to crash)."""
+        print("[GUI] Voice worker finished", flush=True)
+        self._voice_active_flag.clear()
+        self.voice_btn.setText("🎤 Listen")
+        self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
+        if self.status_label.text() not in ["Ready.", "Stopped."]:
+            self.status_label.setText("Voice stopped.")
 
     def on_voice_start(self) -> None:
         """Called internally (e.g. hotkey toggle)."""

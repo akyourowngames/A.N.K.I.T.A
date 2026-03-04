@@ -893,7 +893,7 @@ class Orchestrator:
 
         # Single GeneralAgent â†’ just use the full agent runtime (cheaper, faster)
         if agent_names == ["GeneralAgent"]:
-            return self._run_general(user_text, messages)
+            return self._run_general(routing_text, messages)
 
         # PLANNER AGENT: intercept and execute planned tasks
         if agent_names == ["PlannerAgent"]:
@@ -908,7 +908,7 @@ class Orchestrator:
 
         specialists = [SPECIALIST_MAP[n] for n in agent_names if n in SPECIALIST_MAP]
         if not specialists:
-            return self._run_general(user_text, messages)
+            return self._run_general(routing_text, messages)
 
         # TIME LORD: Force sequential if a producerâ†’consumer dependency is detected.
         # ASSEMBLY LINE: ContentAgent produces text â†’ FileAgent saves â†’ SystemAgent opens.

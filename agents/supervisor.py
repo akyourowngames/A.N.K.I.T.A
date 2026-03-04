@@ -20,6 +20,43 @@ _SUPERVISOR_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Supervisor — the routing 
 
 Your job: Analyze the request and pick the BEST specialist.
 
+⚠️ CONFIRMATION DETECTION (HIGHEST PRIORITY — CHECK THIS FIRST BEFORE ANYTHING ELSE):
+
+Short confirmations: "yes", "yeah", "sure", "ok", "yeah pls", "do it", "go ahead",
+"please", "yep", "fine", "ok do it", "sounds good", "go for it", "yep do it", "install yrself"
+
+IF the message is one of these AND the CONTEXT BLOCK shows:
+  - pending_follow_up is not null → route to the agent that handles that task
+  - last_result contains "offered to" or "want me to" or "shall I" → same agent that made the offer
+  - active_task shows what was being discussed → route to agent that handles that task type
+
+EXAMPLES:
+  Context: pending_follow_up="install Ookla Speedtest CLI", last_result="suggested installing CLI"
+  User: "yeah pls" or "install yrself"
+  → Route to: TerminalAgent (it runs winget/pip installs)
+  → Reasoning: "User confirmed installation request from context"
+
+  Context: pending_follow_up="save poem to file", active_task="writing poem"
+  User: "yes" or "save it"
+  → Route to: FileAgent
+  → Reasoning: "User confirmed save operation from context"
+
+  Context: pending_follow_up="fix the import error in main.py", active_agent="CodeAgent"
+  User: "go ahead"
+  → Route to: CodeAgent
+  → Reasoning: "User confirmed code fix from context"
+
+  Context: pending_follow_up="run speed test", last_result="offered to check network speed"
+  User: "do it"
+  → Route to: SystemAgent
+  → Reasoning: "User confirmed speed test from context"
+
+CRITICAL RULES:
+- NEVER route a confirmation to GeneralAgent if there is a clear pending_follow_up in context
+- NEVER respond with "be specific" or "what do you mean" when context has a pending action
+- ALWAYS extract the pending task from context and route to the appropriate specialist
+- "install yrself" means "install the tool we just discussed" - check context for what tool
+
 ⚠️ PLANNER DETECTION (HIGHEST PRIORITY — CHECK THIS FIRST BEFORE ANYTHING ELSE):
 Route to PlannerAgent IMMEDIATELY if the request has ANY of these:
   - 4+ distinct action verbs: Count verbs like research, write, save, send, email, commit, run, test, fix, deploy
@@ -150,6 +187,7 @@ SPECIALIST PRIORITY RULE:
 - list/read/edit/delete files (not saving new content) → FileAgent only
 - search/google/news/fetch/tell me about/who is/latest news/how does/what is → WebAgent
 - download/get/fetch a file/document/datasheet/PDF/report → WebAgent ONLY (WebAgent uses download_file + launch_app internally)
+- install [tool/cli/package/software] → TerminalAgent (uses execute_shell with winget/pip/npm)
 - run command/script/code → CodeAgent
 - build/scaffold/create project/setup app/api/service -> CodeAgent
 - review my code / what's wrong with this code / explain this file or codebase -> CodeAgent
@@ -223,6 +261,9 @@ Examples:
 - "open Notepad" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "just launching an app, no content"}
 - "play some songs" → {"agents": ["MusicAgent"], "parallel": false, "reasoning": "music playback"}
 - "ping google.com" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "raw CLI command"}
+- "install speedtest cli" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "software installation via winget"}
+- "install ookla speedtest" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "CLI tool installation"}
+- "install python package requests" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "pip package installation"}
 - "what's on my screen" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen vision"}
 - "click the Deploy button" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "visual click"}
 - "get me the LM555 datasheet" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "file hunt: search filetype:pdf → download_file → launch_app"}

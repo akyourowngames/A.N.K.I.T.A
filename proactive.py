@@ -72,6 +72,12 @@ class ProactiveEngine:
         self._alerted_cpu = False
         self._alerted_ram = False
         self._alerted_battery = False
+        
+        # Cooldown timestamps to prevent spam (30 minutes between same-type alerts)
+        self._last_cpu_alert: float = 0
+        self._last_ram_alert: float = 0
+        self._last_battery_alert: float = 0
+        self._alert_cooldown_sec: float = 1800  # 30 minutes
 
         # Track seen drop-files
         self._seen_drop_files: set = set()
@@ -184,11 +190,14 @@ class ProactiveEngine:
         if not HAS_PSUTIL:
             return
 
+        now = time.time()
+
         # CPU
         cpu = psutil.cpu_percent(interval=1)
         if cpu >= _CPU_ALERT_THRESHOLD:
-            if not self._alerted_cpu:
+            if not self._alerted_cpu and (now - self._last_cpu_alert) >= self._alert_cooldown_sec:
                 self._alerted_cpu = True
+                self._last_cpu_alert = now
                 self._queue.put(ProactiveEvent(
                     "system",
                     f"⚠️ High CPU usage detected: {cpu:.0f}%. You may want to close some applications.",
@@ -201,8 +210,9 @@ class ProactiveEngine:
         ram = psutil.virtual_memory()
         ram_pct = ram.percent
         if ram_pct >= _RAM_ALERT_THRESHOLD:
-            if not self._alerted_ram:
+            if not self._alerted_ram and (now - self._last_ram_alert) >= self._alert_cooldown_sec:
                 self._alerted_ram = True
+                self._last_ram_alert = now
                 used_gb = ram.used / (1024 ** 3)
                 total_gb = ram.total / (1024 ** 3)
                 self._queue.put(ProactiveEvent(
@@ -216,15 +226,27 @@ class ProactiveEngine:
         # Battery
         try:
             batt = psutil.sensors_battery()
-            if batt is not None and not batt.power_plugged:
+            if batt is not None:
                 pct = batt.percent
-                if pct <= _BATTERY_ALERT_THRESHOLD:
-                    if not self._alerted_battery:
+                # Low battery alert (when unplugged)
+                if not batt.power_plugged and pct <= _BATTERY_ALERT_THRESHOLD:
+                    if not self._alerted_battery and (now - self._last_battery_alert) >= self._alert_cooldown_sec:
                         self._alerted_battery = True
+                        self._last_battery_alert = now
                         self._queue.put(ProactiveEvent(
                             "system",
                             f"🔋 Battery low: {pct:.0f}%. Please plug in your charger.",
                             {"battery_percent": pct},
+                        ))
+                # Full battery alert (when plugged in) - lower priority, longer cooldown
+                elif batt.power_plugged and pct >= 100:
+                    # Only alert once per 6 hours for "battery full" messages
+                    if (now - self._last_battery_alert) >= (self._alert_cooldown_sec * 12):
+                        self._last_battery_alert = now
+                        self._queue.put(ProactiveEvent(
+                            "system",
+                            f"🔋 Battery is at {pct:.0f}% and still charging. Consider unplugging to preserve battery health.",
+                            {"battery_percent": pct, "priority": "low"},
                         ))
                 else:
                     self._alerted_battery = False

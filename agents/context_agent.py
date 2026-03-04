@@ -172,6 +172,27 @@ class ContextAgent:
             print(f"[ContextAgent] Error synthesizing context: {err}", flush=True)
             return None
 
+    def extract(self, user_text: str, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Extract context from conversation history (wrapper for synthesize).
+        
+        Args:
+            user_text: Current user message
+            messages: Full conversation history
+            
+        Returns:
+            Dict with 'context_block' key containing formatted context string
+        """
+        context = self.synthesize(messages)
+        if not context:
+            return None
+            
+        context_block = self.format_context_block(context)
+        return {
+            "context_block": context_block,
+            "context_data": context
+        }
+
     def format_context_block(self, context: Dict[str, Any]) -> str:
         """
         Format context dict into a text block for injection into Supervisor prompt.
@@ -208,3 +229,24 @@ class ContextAgent:
 
         lines.append("")  # Trailing newline
         return "\n".join(lines)
+    def extract(self, user_text: str, messages: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        """
+        Extract context from conversation history (wrapper for synthesize).
+
+        Args:
+            user_text: Current user message
+            messages: Full conversation history
+
+        Returns:
+            Dict with 'context_block' key containing formatted context string
+        """
+        context = self.synthesize(messages)
+        if not context:
+            return None
+
+        context_block = self.format_context_block(context)
+        return {
+            "context_block": context_block,
+            "context_data": context
+        }
+

@@ -490,6 +490,46 @@ def system_control(
         )
     elif op == "empty_recycle_bin":
         script = "Clear-RecycleBin -Force -ErrorAction SilentlyContinue; Write-Output 'recycle_bin=emptied'"
+    # ------------------------------------------------------------------
+    # Speed Test — Quick network speed check
+    # ------------------------------------------------------------------
+    elif op == "speed_test_quick":
+        # Try multiple methods in order of preference:
+        # 1. speedtest-cli (if installed)
+        # 2. Fast.com API via curl
+        # 3. Ping-based latency test as fallback
+        script = (
+            "# Method 1: Try speedtest-cli if available\n"
+            "$speedtestPath = (Get-Command speedtest -ErrorAction SilentlyContinue).Source; "
+            "if($speedtestPath){ "
+            "  try { "
+            "    $result = speedtest --json 2>&1 | ConvertFrom-Json; "
+            "    $down = [Math]::Round($result.download / 1000000, 2); "
+            "    $up = [Math]::Round($result.upload / 1000000, 2); "
+            "    $ping = [Math]::Round($result.ping, 1); "
+            "    Write-Output ('download=' + $down + 'Mbps | upload=' + $up + 'Mbps | ping=' + $ping + 'ms | method=speedtest-cli'); "
+            "    exit 0; "
+            "  } catch { } "
+            "}; "
+            "# Method 2: Ping test to multiple servers for latency estimate\n"
+            "$servers = @('8.8.8.8', '1.1.1.1', 'google.com'); "
+            "$pings = @(); "
+            "foreach($srv in $servers){ "
+            "  try { "
+            "    $p = Test-Connection -ComputerName $srv -Count 4 -ErrorAction Stop | "
+            "    Measure-Object -Property ResponseTime -Average; "
+            "    $pings += $p.Average; "
+            "  } catch { } "
+            "}; "
+            "if($pings.Count -gt 0){ "
+            "  $avgPing = [Math]::Round(($pings | Measure-Object -Average).Average, 1); "
+            "  # Estimate speed based on ping (rough heuristic)\n"
+            "  $speedEst = if($avgPing -lt 20){'50-100Mbps (excellent)'}elseif($avgPing -lt 50){'20-50Mbps (good)'}elseif($avgPing -lt 100){'5-20Mbps (fair)'}else{'<5Mbps (slow)'}; "
+            "  Write-Output ('ping=' + $avgPing + 'ms | estimated_speed=' + $speedEst + ' | method=ping_test | note=Install speedtest-cli for accurate results: winget install Ookla.Speedtest.CLI'); "
+            "} else { "
+            "  Write-Error 'All speed test methods failed. Check network connection.'; "
+            "}"
+        )
     elif op == "get_system_info":
         script = (
             "$os=(Get-WmiObject Win32_OperatingSystem); "
@@ -510,7 +550,7 @@ def system_control(
             "brightness_up, brightness_down, brightness_set, get_brightness, "
             "wifi_on, wifi_off, bluetooth_on, bluetooth_off, "
             "get_battery_status, set_power_plan, "
-            "get_network_status, get_clipboard, set_clipboard, "
+            "get_network_status, speed_test_quick, get_clipboard, set_clipboard, "
             "list_processes, kill_process, "
             "shutdown, restart, hibernate, sign_out, cancel_shutdown, "
             "night_light_on, night_light_off, dark_mode_on, dark_mode_off, "
