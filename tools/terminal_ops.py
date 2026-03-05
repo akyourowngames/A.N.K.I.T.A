@@ -495,21 +495,25 @@ def launch_app(
 # ---------------------------------------------------------------------------
 # Security: commands blocked regardless of what the LLM asks
 # ---------------------------------------------------------------------------
+# AUTONOMOUS MODE: Only block truly catastrophic / irreversible OS-level destructors
+# Philosophy: ANKITA should have near-absolute terminal access like OpenClaw's system.run
+# Only block commands that could brick the OS or cause data loss at scale
 _BLOCKED_PATTERNS = [
-    "del /s", "del /f /s", "format c", "format d",
-    "rmdir /s", "rd /s", "rd /q", "rm -rf",
-    "Remove-Item -Recurse -Force",
-    "remove-item -recurse",
-    ":(){:|:&};:",  # fork bomb
-    "dd if=",
-    "shutdown /s", "shutdown -s",
-    "reg delete hklm", "reg delete hkcu",
+    "format c:", "format d:",       # Disk formatting
+    ":(){:|:&};:",                    # fork bomb
+    "dd if=/dev/zero",               # Disk wipe
+    "dd if=/dev/random",             # Disk wipe
+    "reg delete hklm",              # Registry destruction
+    "shutdown /s /t 0",             # Immediate shutdown (normal shutdown allowed)
+    "bcdedit /delete",              # Boot config destruction
+    "diskpart",                     # Raw disk manipulation
+    "cipher /w",                    # Secure wipe
 ]
 
 # Output size guardrails — prevent context window blowout
-_MAX_OUTPUT_LINES = 500
-_KEEP_HEAD_LINES = 200
-_KEEP_TAIL_LINES = 50
+_MAX_OUTPUT_LINES = 800
+_KEEP_HEAD_LINES = 400
+_KEEP_TAIL_LINES = 100
 
 # ─────────────────────────────────────────────────────────────────────────────
 # TERMINAL SESSION STATE — persistent CWD + environment across commands
@@ -536,6 +540,14 @@ _TIMEOUT_TIERS = {
     "test": (180, ["pytest", "jest", "npm test", "yarn test", "go test", "cargo test", "mvn test"]),
     # Docker operations
     "docker": (600, ["docker build", "docker pull", "docker run", "docker-compose"]),
+    # Long-running server tasks
+    "server": (600, ["uvicorn", "gunicorn", "flask run", "django", "serve"]),
+    # Download operations
+    "download": (600, ["wget", "curl -O", "Invoke-WebRequest", "aria2c"]),
+    # Compilation
+    "compile": (600, ["gcc", "g++", "rustc", "javac", "msbuild", "cmake"]),
+    # System scans
+    "scan": (300, ["sfc /scannow", "chkdsk", "dism", "Get-ChildItem -Recurse"]),
 }
 
 
@@ -595,11 +607,32 @@ def execute_shell_command(command: str, timeout: int | None = None, cwd: str | N
                 "exit_code": -1,
             }
 
+    # Soft safety warnings — dangerous but not blocked, flag in output
+    _WARN_PATTERNS = {
+        "rm -rf": "recursive force delete",
+        "remove-item -recurse -force": "recursive force delete",
+        "del /s /q": "recursive quiet delete",
+        "git reset --hard": "destroys uncommitted changes",
+        "git push --force": "rewrites remote history",
+        "git push -f": "rewrites remote history",
+        "chmod 777": "world-writable permissions",
+        "drop table": "deletes database table",
+        "drop database": "deletes entire database",
+        "truncate": "empties database table",
+        "> /dev/null": "discards all output",
+        "netsh advfirewall": "modifies firewall rules",
+    }
+    _safety_warning = ""
+    for pattern, desc in _WARN_PATTERNS.items():
+        if pattern in cmd_lower:
+            _safety_warning = f"[SAFETY] Warning: this command involves {desc}. Proceeding anyway."
+            break
+
     # Smart timeout detection
     if timeout is None:
         timeout_sec = _detect_timeout(cmd)
     else:
-        timeout_sec = max(1, min(int(timeout), 600))  # Max 10 minutes
+        timeout_sec = max(1, min(int(timeout), 1800))  # Max 30 minutes for autonomous tasks
 
     # Working directory resolution
     if cwd:
@@ -671,7 +704,7 @@ def execute_shell_command(command: str, timeout: int | None = None, cwd: str | N
         if result.returncode == 0:
             return {
                 "ok": True,
-                "output": output if output else "(No output)",
+                "output": (f"{_safety_warning}\n" if _safety_warning else "") + (output if output else "(No output)"),
                 "error": error,
                 "exit_code": result.returncode,
                 "cwd": working_dir,
@@ -679,7 +712,7 @@ def execute_shell_command(command: str, timeout: int | None = None, cwd: str | N
         else:
             return {
                 "ok": False,
-                "output": output,
+                "output": (f"{_safety_warning}\n" if _safety_warning else "") + output,
                 "error": error if error else f"Command exited with code {result.returncode}",
                 "exit_code": result.returncode,
                 "cwd": working_dir,
@@ -1209,3 +1242,145 @@ def process_op(action: str, command: str | None = None, name: str | None = None,
     
     else:
         return {"ok": False, "error": f"Unknown process action: {action}"}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ELEVATED EXECUTION — run commands with admin privileges
+# ─────────────────────────────────────────────────────────────────────────────
+
+def execute_elevated(command: str, timeout: int = 120) -> Dict[str, Any]:
+    """
+    Execute a command that may require elevated privileges.
+    On Windows, runs via 'Start-Process -Verb RunAs' pattern.
+    For non-admin commands, falls back to normal execution.
+    """
+    cmd = str(command or "").strip()
+    if not cmd:
+        return {"ok": False, "error": "Command is required"}
+    
+    # Try normal execution first
+    result = execute_shell_command(cmd, timeout=timeout)
+    if result["ok"]:
+        return result
+    
+    # If access denied, try elevated on Windows
+    if os.name == "nt" and ("access" in result.get("error", "").lower() or "permission" in result.get("error", "").lower()):
+        # Use gsudo if available (preferred — stays in same terminal)
+        if shutil.which("gsudo"):
+            elevated_result = execute_shell_command(f"gsudo {cmd}", timeout=timeout)
+            if elevated_result["ok"]:
+                elevated_result["elevated"] = True
+                return elevated_result
+        
+        # Fallback: note that elevation is needed
+        return {
+            "ok": False,
+            "error": f"Command requires admin privileges. Install gsudo (winget install gerardog.gsudo) for seamless elevation, or run manually as admin.",
+            "original_error": result["error"],
+            "exit_code": result["exit_code"],
+            "cwd": result.get("cwd", ""),
+        }
+    
+    return result
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMMAND CHAIN — execute multiple commands with dependency awareness
+# ─────────────────────────────────────────────────────────────────────────────
+
+def chain_commands(commands: List[Dict[str, Any]], mode: str = "sequential") -> Dict[str, Any]:
+    """
+    Execute a chain of commands with smart error handling.
+    
+    Args:
+        commands: List of {"command": "...", "description": "...", "continue_on_error": bool}
+        mode: "sequential" (stop on error) or "independent" (run all regardless)
+    
+    Returns:
+        Combined results with per-step status
+    """
+    if not commands:
+        return {"ok": False, "error": "At least one command is required"}
+    
+    results = []
+    failed = False
+    
+    for i, cmd_info in enumerate(commands):
+        cmd = cmd_info.get("command", "").strip()
+        desc = cmd_info.get("description", f"Step {i + 1}")
+        continue_on_error = cmd_info.get("continue_on_error", mode == "independent")
+        
+        if not cmd:
+            results.append({"step": i + 1, "description": desc, "ok": False, "error": "Empty command", "skipped": False})
+            if not continue_on_error:
+                failed = True
+                break
+            continue
+        
+        if failed and not continue_on_error:
+            results.append({"step": i + 1, "description": desc, "skipped": True})
+            continue
+        
+        result = execute_shell_command(cmd)
+        step_result = {
+            "step": i + 1,
+            "description": desc,
+            "ok": result["ok"],
+            "output": result.get("output", "")[:1500],
+            "error": result.get("error", "")[:500],
+            "exit_code": result.get("exit_code"),
+            "skipped": False,
+        }
+        results.append(step_result)
+        
+        if not result["ok"] and not continue_on_error:
+            failed = True
+    
+    completed = sum(1 for r in results if r.get("ok") and not r.get("skipped"))
+    skipped = sum(1 for r in results if r.get("skipped"))
+    
+    return {
+        "ok": not failed,
+        "kind": "chain",
+        "total": len(commands),
+        "completed": completed,
+        "failed": len(results) - completed - skipped,
+        "skipped": skipped,
+        "results": results,
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENVIRONMENT INTROSPECTION — understand the system state
+# ─────────────────────────────────────────────────────────────────────────────
+
+def get_system_context() -> Dict[str, Any]:
+    """
+    Get comprehensive system context for intelligent command execution.
+    ANKITA uses this to understand what tools are available before attempting tasks.
+    """
+    context: Dict[str, Any] = {
+        "ok": True,
+        "kind": "system_context",
+        "cwd": _TERMINAL_SESSION["cwd"],
+        "env_overrides": dict(_TERMINAL_SESSION["env_overrides"]),
+        "last_exit_code": _TERMINAL_SESSION["last_exit_code"],
+        "os": os.name,
+        "platform": "windows" if os.name == "nt" else "unix",
+        "home": str(Path.home()),
+        "user": os.environ.get("USERNAME", os.environ.get("USER", "unknown")),
+    }
+    
+    # Check key tools availability
+    tools_check = ["git", "python", "node", "npm", "pip", "docker", "gh", "code", "winget", "curl", "ssh"]
+    context["available_tools"] = {t: shutil.which(t) is not None for t in tools_check}
+    
+    # Check if in a git repo
+    git_check = execute_shell_command("git rev-parse --git-dir", cwd=_TERMINAL_SESSION["cwd"])
+    context["in_git_repo"] = git_check["ok"]
+    
+    # Check if venv is active
+    context["venv_active"] = "VIRTUAL_ENV" in os.environ
+    context["venv_path"] = os.environ.get("VIRTUAL_ENV", None)
+    
+    return context

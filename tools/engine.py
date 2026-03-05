@@ -28,6 +28,9 @@ from . import maps_ops
 from . import task_ops
 from . import report_ops
 from . import image_gen_ops
+from . import autonomous_ops
+from . import integration_hub
+from . import cognitive_ops
 
 
 from .specs import TOOL_SPECS  # noqa: F401 — schemas live in tools/specs.py
@@ -258,6 +261,182 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             port=int(args.get("port")) if args.get("port") is not None else None,
             pid=int(args.get("pid")) if args.get("pid") is not None else None,
         )
+
+    # ── Autonomous Ops ────────────────────────────────────────────────────
+    if name == "discover_tools":
+        return autonomous_ops.discover_tools()
+    if name == "auto_install_tool":
+        return autonomous_ops.auto_install_tool(
+            tool_name=str(args.get("tool_name", "")),
+            prefer_manager=str(args.get("prefer_manager")) if args.get("prefer_manager") else None,
+        )
+    if name == "auto_install_python_package":
+        return autonomous_ops.auto_install_python_package(
+            package=str(args.get("package", "")),
+        )
+    if name == "generate_and_run_script":
+        return autonomous_ops.generate_and_run_script(
+            description=str(args.get("description", "")),
+            language=str(args.get("language", "powershell")),
+            script_content=str(args.get("script_content", "")),
+            args=args.get("args"),
+        )
+    if name == "execute_pipeline":
+        return autonomous_ops.execute_pipeline(
+            steps=args.get("steps", []),
+            stop_on_error=bool(args.get("stop_on_error", True)),
+        )
+    if name == "environment_setup":
+        return autonomous_ops.environment_setup(
+            project_type=str(args.get("project_type", "auto")),
+            project_path=str(args.get("project_path")) if args.get("project_path") else None,
+        )
+    if name == "system_audit":
+        return autonomous_ops.system_audit()
+    if name == "execute_elevated":
+        return terminal_ops.execute_elevated(
+            command=str(args.get("command", "")),
+            timeout=int(args.get("timeout", 120)),
+        )
+    if name == "chain_commands":
+        return terminal_ops.chain_commands(
+            commands=args.get("commands", []),
+            mode=str(args.get("mode", "sequential")),
+        )
+    if name == "get_system_context":
+        return terminal_ops.get_system_context()
+
+    # ── Integration Hub ───────────────────────────────────────────────────
+    if name == "github_op":
+        return integration_hub.github_op(
+            action=str(args.get("action", "")),
+            repo=str(args.get("repo")) if args.get("repo") else None,
+            title=str(args.get("title")) if args.get("title") else None,
+            body=str(args.get("body")) if args.get("body") else None,
+            branch=str(args.get("branch")) if args.get("branch") else None,
+            label=str(args.get("label")) if args.get("label") else None,
+            query=str(args.get("query")) if args.get("query") else None,
+            number=int(args.get("number")) if args.get("number") is not None else None,
+            path=str(args.get("path")) if args.get("path") else None,
+            extra_args=str(args.get("extra_args")) if args.get("extra_args") else None,
+        )
+    if name == "docker_op":
+        return integration_hub.docker_op(
+            action=str(args.get("action", "")),
+            image=str(args.get("image")) if args.get("image") else None,
+            container=str(args.get("container")) if args.get("container") else None,
+            command=str(args.get("command")) if args.get("command") else None,
+            ports=str(args.get("ports")) if args.get("ports") else None,
+            volumes=str(args.get("volumes")) if args.get("volumes") else None,
+            env_vars=args.get("env_vars") if isinstance(args.get("env_vars"), dict) else None,
+            compose_file=str(args.get("compose_file")) if args.get("compose_file") else None,
+            extra_args=str(args.get("extra_args")) if args.get("extra_args") else None,
+        )
+    if name == "ssh_op":
+        return integration_hub.ssh_op(
+            action=str(args.get("action", "")),
+            host=str(args.get("host")) if args.get("host") else None,
+            command=str(args.get("command")) if args.get("command") else None,
+            user=str(args.get("user")) if args.get("user") else None,
+            key_path=str(args.get("key_path")) if args.get("key_path") else None,
+            port=int(args.get("port", 22)),
+            local_path=str(args.get("local_path")) if args.get("local_path") else None,
+            remote_path=str(args.get("remote_path")) if args.get("remote_path") else None,
+        )
+    if name == "api_test":
+        return integration_hub.api_test(
+            method=str(args.get("method", "GET")),
+            url=str(args.get("url", "")),
+            headers=args.get("headers") if isinstance(args.get("headers"), dict) else None,
+            body=str(args.get("body")) if args.get("body") else None,
+            auth=str(args.get("auth")) if args.get("auth") else None,
+            timeout=int(args.get("timeout", 30)),
+        )
+    if name == "db_query":
+        return integration_hub.db_query(
+            engine=str(args.get("engine", "")),
+            query=str(args.get("query", "")),
+            database=str(args.get("database")) if args.get("database") else None,
+            host=str(args.get("host")) if args.get("host") else None,
+            port=int(args.get("port")) if args.get("port") is not None else None,
+            user=str(args.get("user")) if args.get("user") else None,
+            password=str(args.get("password")) if args.get("password") else None,
+        )
+    if name == "service_op":
+        return integration_hub.service_op(
+            action=str(args.get("action", "")),
+            name=str(args.get("name")) if args.get("name") else None,
+            command=str(args.get("command")) if args.get("command") else None,
+            schedule=str(args.get("schedule")) if args.get("schedule") else None,
+        )
+
+    # ── Cognitive Ops ─────────────────────────────────────────────────────
+    if name == "resolve_error":
+        return cognitive_ops.resolve_error(
+            error_text=str(args.get("error_text", "")),
+            command=str(args.get("command", "")),
+            context=str(args.get("context", "")),
+        )
+    if name == "smart_retry":
+        return cognitive_ops.smart_retry(
+            command=str(args.get("command", "")),
+            max_retries=int(args.get("max_retries", 3)),
+            timeout=int(args.get("timeout", 60)),
+            cwd=str(args.get("cwd")) if args.get("cwd") else None,
+            auto_fix=bool(args.get("auto_fix", True)),
+        )
+    if name == "workspace_scan":
+        return cognitive_ops.workspace_scan(
+            path=str(args.get("path")) if args.get("path") else None,
+        )
+    if name == "plan_and_execute":
+        return cognitive_ops.plan_and_execute(
+            goal=str(args.get("goal", "")),
+            steps=args.get("steps", []),
+            stop_on_error=bool(args.get("stop_on_error", False)),
+            verify_command=str(args.get("verify_command")) if args.get("verify_command") else None,
+            cwd=str(args.get("cwd")) if args.get("cwd") else None,
+        )
+    if name == "code_analysis":
+        return cognitive_ops.code_analysis(
+            path=str(args.get("path", ".")),
+            focus=str(args.get("focus", "all")),
+        )
+    if name == "project_scaffold":
+        return cognitive_ops.project_scaffold(
+            template=str(args.get("template", "")),
+            name=str(args.get("name", "")),
+            path=str(args.get("path")) if args.get("path") else None,
+            auto_setup=bool(args.get("auto_setup", True)),
+        )
+    if name == "self_extend":
+        return cognitive_ops.self_extend(
+            name=str(args.get("name", "")),
+            description=str(args.get("description", "")),
+            code=str(args.get("code", "")),
+        )
+    if name == "execute_extension":
+        return cognitive_ops.execute_extension(
+            name=str(args.get("name", "")),
+            args=args.get("args") if isinstance(args.get("args"), dict) else None,
+        )
+    if name == "process_watch":
+        return cognitive_ops.process_watch(
+            command=str(args.get("command", "")),
+            duration=int(args.get("duration", 60)),
+            success_pattern=str(args.get("success_pattern")) if args.get("success_pattern") else None,
+            failure_pattern=str(args.get("failure_pattern")) if args.get("failure_pattern") else None,
+            capture_last=int(args.get("capture_last", 50)),
+        )
+    if name == "translate_command":
+        return cognitive_ops.translate_command(
+            command=str(args.get("command", "")),
+            from_platform=str(args.get("from_platform", "linux")),
+            to_platform=str(args.get("to_platform")) if args.get("to_platform") else None,
+        )
+    if name == "list_extensions":
+        return cognitive_ops.list_extensions()
+
     if name == "list_files":
         return fs_ops.list_files(workspace_root, path=str(args.get("path", ".")), max_entries=int(args.get("max_entries", 200)), unrestricted=unrestricted)
     if name == "read_file":
@@ -709,6 +888,27 @@ def _hard_cap(result: Any) -> Any:
     return result
 
 
+def _enrich_error(name: str, error: str) -> str:
+    """Add actionable recovery hints to tool errors for the LLM."""
+    e = error.lower()
+    hints = []
+    if "permission" in e or "access" in e or "denied" in e:
+        hints.append("Try: execute_elevated() or smart_retry() with auto_fix=True")
+    if "not found" in e or "no such file" in e:
+        hints.append("Check path exists. Try: list_files() to verify, or make_dir() first")
+    if "modulenotfounderror" in e or "no module named" in e:
+        hints.append("Try: auto_install_python_package() or smart_retry() which auto-installs")
+    if "timeout" in e or "timed out" in e:
+        hints.append("Increase timeout or try: smart_retry() which handles retries adaptively")
+    if "connection" in e or "network" in e or "dns" in e:
+        hints.append("Network issue. Try again or use resolve_error() for diagnosis")
+    if "json" in e and ("decode" in e or "parse" in e):
+        hints.append("Invalid JSON in args. Re-check the arguments format carefully")
+    if not hints:
+        hints.append("Try: resolve_error(error_text=<this error>) for diagnosis and fixes")
+    return error + " | HINTS: " + "; ".join(hints)
+
+
 def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path, agent_name: Optional[str] = None) -> Dict[str, Any]:
     fn = tool_call.get("function", {})
     name = str(fn.get("name", ""))
@@ -722,9 +922,15 @@ def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path, agent_nam
     if not isinstance(args, dict):
         raise ValueError(f"Tool args must be an object for {name}")
 
-    result = _call(name, args, workspace_root, agent_name=agent_name)
+    try:
+        result = _call(name, args, workspace_root, agent_name=agent_name)
+    except Exception as exc:
+        return {"ok": False, "tool": name, "error": _enrich_error(name, str(exc))}
     # 💎 Prism Protocol: hard-cap ALL tool outputs before they enter the context window
     result = _hard_cap(result)
+    # If the tool itself returned an error dict, enrich it
+    if isinstance(result, dict) and result.get("ok") is False and "error" in result:
+        result["error"] = _enrich_error(name, str(result["error"]))
     return {"ok": True, "tool": name, "result": result}
 
 

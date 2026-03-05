@@ -28,13 +28,22 @@ def _score(query: str, title: str, snippet: str = "", duration_sec: Optional[int
     q_tokens = set(_tokenize(q))
     b_tokens = set(_tokenize(blob))
     overlap = (len(q_tokens & b_tokens) / max(1, len(q_tokens))) if q_tokens else 0.0
-    penalty_terms = {"slowed", "reverb", "nightcore", "sped", "remix", "8d", "bass boosted", "lofi", "live"}
+    penalty_terms = {"slowed", "reverb", "nightcore", "sped", "8d", "bass boosted"}
+    # Only penalize unwanted variants — remix/lofi/live are often what users WANT
+    soft_penalty_terms = {"remix", "lofi", "live", "cover", "acoustic"}
     penalty = 0.0
     for t in penalty_terms:
         if t in blob and t not in q:
-            penalty += 0.08
+            penalty += 0.10
+    for t in soft_penalty_terms:
+        if t in blob and t not in q:
+            penalty += 0.03  # mild preference for original, but don't kill remixes
     if "official" in blob:
         penalty -= 0.05
+    # Boost: user explicitly requested a variant (e.g. "lofi remix")
+    for t in soft_penalty_terms | penalty_terms:
+        if t in q and t in blob:
+            penalty -= 0.04  # reward matching user intent
     if duration_sec is not None and duration_sec > 0:
         if duration_sec < 60 and "short" not in q and "reel" not in q:
             penalty += 0.25

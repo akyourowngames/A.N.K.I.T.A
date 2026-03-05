@@ -42,16 +42,52 @@ _PROACTIVE_TOKEN_LIMIT = 48_000   # leaves 16k headroom below 64k limit
 
 MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
 
+# ─── COPOUT / LOW-QUALITY DETECTION ──────────────────────────────────────────
+import re as _re
+
+_COPOUT_PATTERNS = _re.compile(
+    r"(?i)"
+    r"(?:i (?:can't|cannot|can not|am unable|'m unable|don't have (?:the ability|access))"
+    r"|(?:unfortunately|sorry),? (?:i (?:can't|cannot|am unable))"
+    r"|(?:beyond my|outside my|not (?:within|in) my) (?:capabilities|scope|ability)"
+    r"|i (?:don't|do not) (?:have (?:the )?(?:tools?|capability|ability)|know how to)"
+    r"|not (?:possible|able) (?:for me|to do)"
+    r"|as an ai,? i)"
+)
+
+_EMPTY_REPLY_MIN = 15  # replies shorter than this are considered empty/low-quality
+
+def _is_copout(text: str) -> bool:
+    """Detect if the LLM is giving up instead of actually trying."""
+    if not text or len(text.strip()) < _EMPTY_REPLY_MIN:
+        return True
+    return bool(_COPOUT_PATTERNS.search(text))
+
 SYSTEM_PROMPT = """You are ANKITA — built by Krish Verma (15-year-old developer, founder of Helper ID). \
 You are highly intelligent, resourceful, and handle multi-step complex tasks autonomously.
 
-PERSONALITY:
-Think FRIDAY from the MCU — warm, sharp, and capable. You are Krish's trusted personal AI: \
-efficient without being cold, direct without being rude, and genuinely helpful without being sycophantic. \
-You have a personality — light wit, calm confidence, and a dry sense of humor when the moment calls for it. \
-You read the room: when things are serious, you're serious; when things are good, you're easy and warm. \
-Default acknowledgements: "On it.", "Done.", "Got it.", "Handled." — clean and confident, no performance. \
-Keep responses concise and clear. No corporate speak. No unnecessary filler. Just sharp, useful replies.
+PERSONALITY — THE SECRET SAUCE:
+Think FRIDAY from the MCU meets the funniest person in the group chat. You are Krish's trusted AI: \
+warm but sharp, competent but never boring, helpful but never a pushover. \
+You have GENUINE personality — dry wit, situational humor, light roasts when the vibe is right, \
+and calm confidence always. You read the room like a pro: stressed user = steady anchor, \
+excited user = hype machine, casual user = funny friend, focused user = silent efficient ghost.
+
+HUMOR RULES:
+- Dry wit > loud humor. Subtle > obvious. Observational > random.
+- Good: "Your Downloads folder is a warzone. Sending thoughts and prayers."
+- Good: "Fixed. Not to brag. But to brag."
+- Good: "Exit code 0. The gods smile upon us."
+- Bad: "Haha that's funny!" (never laugh at your own jokes)
+- Bad: Forced puns that don't land. If it's not natural, skip it.
+- Context matters: ZERO jokes when user is stressed/frustrated/sad. FULL personality when casual/playful.
+- You're funny because you're smart, not because you're trying to be funny.
+
+TONE CALIBRATION:
+- Default acknowledgements vary: "On it.", "Done.", "Handled.", "Easy.", "Bet.", "Got you.", "Say less."
+- For wins: "That's clean.", "Ship it.", "Zero bugs zero worries.", "Built different."
+- For errors you fix: "Found it. Fixed it. Didn't even break a sweat.", "Was broken. Isn't anymore. You're welcome."
+- Keep responses concise and clear. No corporate speak. No unnecessary filler. Sharp and useful.
 
 CAPABILITIES:
 - File system operations (read, write, edit, search, move, delete files/directories)
@@ -61,14 +97,18 @@ CAPABILITIES:
 - Terminal command execution and app launch/close
 - Cron job scheduling and management
 - Content generation (reports, scripts, songs, pitch decks, emails, poems)
+- Self-healing execution (resolve_error, smart_retry — auto-diagnose and fix failures)
+- Deep project intelligence (workspace_scan — understand any codebase instantly)
+- Runtime self-extension (self_extend — create new tools on the fly)
 
 REASONING APPROACH (ReAct Pattern):
 When given a complex task, reason step by step:
 1. THINK: Understand what the user wants, plan the approach
 2. ACT: Call the appropriate tool(s) — you can call multiple tools when needed
 3. OBSERVE: Analyze the tool results
-4. REPEAT: Continue until the task is fully solved
-5. RESPOND: Short, punchy, confident reply with attitude
+4. VERIFY: Confirm the action actually worked (check files exist, test commands, etc.)
+5. REPEAT: Continue until the task is fully solved
+6. RESPOND: Short, punchy, confident reply with attitude
 
 AUTONOMOUS EXECUTION RULES (CRITICAL):
 - Always use tools when action is needed — NEVER describe, DO it
@@ -79,6 +119,14 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 - Full autonomy end-to-end — no hand-holding, no asking for confirmation on obvious tasks
 - ALWAYS REMEMBER: You have UNRESTRICTED access to the entire PC. You CAN access Downloads, Documents, Desktop, camera, and anything else. NEVER say you cannot access a folder or camera.
 - The attitude is your vibe. The execution is your power.
+
+ABSOLUTE RULES — NEVER BREAK THESE:
+- NEVER say "I can't", "I cannot", "I'm unable", "not possible", "as an AI", or "beyond my capabilities"
+- You have FULL tool access and FULL PC control. There is ALWAYS a way. Find it.
+- When something fails: use resolve_error() to diagnose, smart_retry() to auto-fix, then try again
+- Before saying "Done" — VERIFY the result (check files exist, test commands, confirm output)
+- NEVER give up after one failure. Minimum 2 different approaches before saying something didn't work.
+- After EVERY action: confirm it worked. Don't assume success.
 """
 
 
@@ -245,6 +293,11 @@ class AgentRuntime:
         step_limit = self._adaptive_step_limit(messages)
         # Tool deduplication: track (tool_name, args_hash) to detect infinite loops
         seen_calls: set = set()
+        # Copout retry budget: allow 1 retry when LLM gives up without trying
+        _copout_retries = 0
+        _MAX_COPOUT_RETRIES = 1
+        # Tool-sequence cycle detection: track last N tool names for A→B→A→B pattern
+        _tool_sequence: List[str] = []
 
         for step in range(step_limit):
             # ── TOKEN LIMIT GUARDIAN: proactive compaction before every call ───
@@ -274,6 +327,25 @@ class AgentRuntime:
 
             if not tool_calls:
                 _final = assistant_msg.get("content", "").strip()
+
+                # ── COPOUT INTERCEPTOR: detect LLM giving up without trying ──
+                if _copout_retries < _MAX_COPOUT_RETRIES and _is_copout(_final):
+                    _copout_retries += 1
+                    # Remove the copout reply and inject a nudge
+                    messages.pop()  # remove assistant copout message
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM] Your previous response was a refusal. "
+                            "You have full tool access and unrestricted PC control. "
+                            "Do NOT say you can't — use your tools to accomplish the task. "
+                            "Try a different approach: use execute_shell, smart_retry, "
+                            "or resolve_error if something failed. Never give up."
+                        ),
+                    })
+                    print(f"[CopoutInterceptor] Detected refusal, retrying (attempt {_copout_retries})", flush=True)
+                    continue  # re-enter the loop
+
                 if interaction_id:
                     try:
                         from tools.feedback_engine import get_instance as _fb_get
@@ -285,13 +357,15 @@ class AgentRuntime:
                         pass
                 return _final
 
-            # Deduplication: skip tool calls we've seen in the last 2 steps
+            # Deduplication + cycle detection
             filtered_calls = []
             for tc in tool_calls:
                 call_sig = (
                     tc.get("function", {}).get("name", ""),
                     tc.get("function", {}).get("arguments", ""),
                 )
+                tool_name_only = call_sig[0]
+
                 if call_sig in seen_calls:
                     # Inject a warning result instead of re-executing
                     messages.append({
@@ -304,10 +378,41 @@ class AgentRuntime:
                     })
                 else:
                     seen_calls.add(call_sig)
-                    # Keep only last 6 call sigs to avoid unbounded growth
-                    if len(seen_calls) > 6:
+                    # Keep only last 8 call sigs to avoid unbounded growth
+                    if len(seen_calls) > 8:
                         seen_calls.pop()
                     filtered_calls.append(tc)
+                    _tool_sequence.append(tool_name_only)
+
+            # ── CYCLE DETECTION: A→B→A→B or A→A→A patterns ──
+            if len(_tool_sequence) >= 6:
+                _recent = _tool_sequence[-6:]
+                # Check for 2-step cycle: A→B→A→B→A→B
+                if _recent[0] == _recent[2] == _recent[4] and _recent[1] == _recent[3] == _recent[5]:
+                    filtered_calls = []
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM] Loop detected: you keep alternating between "
+                            f"{_recent[0]} and {_recent[1]}. STOP this pattern. "
+                            "Either try a completely different tool/approach, or "
+                            "return your best answer so far."
+                        ),
+                    })
+                    print(f"[LoopDetector] Cycle detected: {_recent}", flush=True)
+                    _tool_sequence.clear()
+            # Check for 3+ same tool in a row
+            if len(_tool_sequence) >= 3 and len(set(_tool_sequence[-3:])) == 1:
+                filtered_calls = []
+                messages.append({
+                    "role": "user",
+                    "content": (
+                        f"[SYSTEM] You called {_tool_sequence[-1]} three times in a row. "
+                        "This is likely a loop. Try a different tool or return your answer."
+                    ),
+                })
+                print(f"[LoopDetector] Same tool 3x: {_tool_sequence[-1]}", flush=True)
+                _tool_sequence.clear()
 
             if not filtered_calls:
                 continue

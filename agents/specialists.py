@@ -40,7 +40,11 @@ _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_conte
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_interact",
                  "read_file", "search_text", "execute_shell", "run_command",
                  "camera_control", "app_manager", "voice_control", "system_health",
-                 "file_sync", "window_layout", "process_op", "capture_webcam"} | _MEMORY_TOOLS
+                 "file_sync", "window_layout", "process_op", "capture_webcam",
+                 "system_audit", "discover_tools", "auto_install_tool",
+                 "execute_elevated", "service_op", "get_system_context",
+                 "resolve_error", "smart_retry", "process_watch",
+                 "translate_command"} | _MEMORY_TOOLS
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music", 
                 "queue_music", "show_queue", "clear_queue", "play_next_in_queue", 
@@ -49,13 +53,30 @@ _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music",
 # UPGRADE: CodeAgent can now launch VS Code or terminals to show its work
 # UPGRADE 9: Added git_op for native git awareness
 # UPGRADE 14: Added deep_research, download_file, process_op, diff_files, bulk_op for advanced dev workflows
+# UPGRADE 15: Added autonomous ops for self-sufficient development
 _CODE_TOOLS = {"run_command", "apply_patch", "execute_shell", "check_syntax",
                "read_file", "read_file_lines", "edit_file", "edit_file_lines", "write_file",
                "launch_app", "search_text", "list_files", "make_dir", "copy_path",
                "rename_path", "delete_path", "move_path", "file_info",
                "search_web", "fetch_page_content", "git_op",
-               "deep_research", "download_file", "process_op", "diff_files", "bulk_op"} | _MEMORY_TOOLS
-_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "git_op", "process_op", "fast_file_search"} | _MEMORY_TOOLS
+               "deep_research", "download_file", "process_op", "diff_files", "bulk_op",
+               "auto_install_tool", "auto_install_python_package", "generate_and_run_script",
+               "execute_pipeline", "environment_setup", "github_op",
+               "resolve_error", "smart_retry", "workspace_scan", "plan_and_execute",
+               "code_analysis", "project_scaffold", "self_extend", "execute_extension"} | _MEMORY_TOOLS
+_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "git_op",
+                   "process_op", "fast_file_search",
+                   # Autonomous ops — full system control like OpenClaw
+                   "discover_tools", "auto_install_tool", "auto_install_python_package",
+                   "generate_and_run_script", "execute_pipeline", "environment_setup",
+                   "system_audit", "execute_elevated", "chain_commands", "get_system_context",
+                   # Integration hub — GitHub, Docker, SSH, API, DB, Services
+                   "github_op", "docker_op", "ssh_op", "api_test", "db_query",
+                   "service_op",
+                   # Cognitive ops — self-healing, intelligence, self-extension
+                   "resolve_error", "smart_retry", "workspace_scan", "plan_and_execute",
+                   "code_analysis", "project_scaffold", "self_extend", "execute_extension",
+                   "process_watch", "translate_command", "list_extensions"} | _MEMORY_TOOLS
 
 _CRON_TOOLS = {"cron"} | _MEMORY_TOOLS
 
@@ -68,8 +89,11 @@ _COMMS_TOOLS = {"send_whatsapp", "lookup_contact", "add_contact", "remove_contac
 # UPGRADE: ScreenAgent gets full vision + interaction
 _SCREEN_TOOLS = {"capture_screen", "read_screen_context", "visual_click", "system_control", "desktop_interact", "capture_webcam", "read_file"}
 
-# Cloud / Integration tools — Google Sheets, YouTube, Figma
-_INTEGRATION_TOOLS = {"sheets_op", "youtube_op", "figma_op"} | _MEMORY_TOOLS
+# Cloud / Integration tools — Google Sheets, YouTube, Figma + DevOps integrations
+_INTEGRATION_TOOLS = {"sheets_op", "youtube_op", "figma_op",
+                      "github_op", "docker_op", "ssh_op", "api_test",
+                      "db_query", "service_op",
+                      "process_watch", "workspace_scan"} | _MEMORY_TOOLS
 
 # WatchdogAgent has no direct tools — it calls WatchdogManager via Python import
 _WATCHDOG_TOOLS: set = set()

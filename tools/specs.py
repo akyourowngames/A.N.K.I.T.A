@@ -1914,5 +1914,644 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             },
         },
     },
+
+    # ───────────────────────────────────────────────────────────────────────
+    # AUTONOMOUS OPS — self-sufficient terminal agent tools
+    # ───────────────────────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "discover_tools",
+            "description": (
+                "Scan the system for available CLI tools, runtimes, package managers, "
+                "and dev tools. Returns categorized availability report. Use before "
+                "attempting tasks to know what's available."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "auto_install_tool",
+            "description": (
+                "Automatically install a CLI tool or package using the best available "
+                "package manager (winget, choco, scoop, pip, npm, cargo). Knows 80+ tools. "
+                "Example: auto_install_tool('ffmpeg') or auto_install_tool('docker')."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool_name": {
+                        "type": "string",
+                        "description": "Name of the tool to install, e.g. 'ffmpeg', 'docker', 'nodejs'.",
+                    },
+                    "prefer_manager": {
+                        "type": "string",
+                        "enum": ["winget", "choco", "scoop", "pip", "npm", "cargo"],
+                        "description": "Preferred package manager. Auto-detected if omitted.",
+                    },
+                },
+                "required": ["tool_name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "auto_install_python_package",
+            "description": (
+                "Install a Python package via pip. Handles common name mismatches "
+                "(e.g. 'cv2' → 'opencv-python', 'PIL' → 'Pillow'). Uses active venv if available."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "package": {
+                        "type": "string",
+                        "description": "Python package name or import name, e.g. 'requests', 'cv2', 'sklearn'.",
+                    },
+                },
+                "required": ["package"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "generate_and_run_script",
+            "description": (
+                "Generate a script (PowerShell, Python, Bash, Batch, Node, or TypeScript) "
+                "and execute it. For complex multi-step tasks that need more than a one-liner. "
+                "The script is saved to a temp file and executed with proper interpreter."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "description": {
+                        "type": "string",
+                        "description": "What the script does — for logging and audit.",
+                    },
+                    "language": {
+                        "type": "string",
+                        "enum": ["powershell", "python", "bash", "batch", "node", "typescript"],
+                        "description": "Script language. Default: powershell.",
+                    },
+                    "script_content": {
+                        "type": "string",
+                        "description": "The full script source code to execute.",
+                    },
+                    "args": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional command-line arguments to pass to the script.",
+                    },
+                },
+                "required": ["description", "script_content"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_pipeline",
+            "description": (
+                "Execute a multi-step command pipeline sequentially. Each step runs in order. "
+                "Stops on first error by default. Use for complex workflows like: "
+                "clone repo → install deps → run tests → build → deploy."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "command": {"type": "string", "description": "Shell command to run."},
+                                "description": {"type": "string", "description": "What this step does."},
+                            },
+                            "required": ["command"],
+                        },
+                        "description": "List of pipeline steps to execute.",
+                    },
+                    "stop_on_error": {
+                        "type": "boolean",
+                        "description": "Stop pipeline on first failure. Default: true.",
+                    },
+                },
+                "required": ["steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "environment_setup",
+            "description": (
+                "Auto-detect and set up a development environment. Scans the project directory, "
+                "detects the stack (Python/Node/Rust/Go/Java/C++), installs dependencies, "
+                "and configures the environment. Works for most project types."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "project_type": {
+                        "type": "string",
+                        "enum": ["python", "node", "rust", "go", "java", "cpp", "auto"],
+                        "description": "Project type. Use 'auto' for auto-detection.",
+                    },
+                    "project_path": {
+                        "type": "string",
+                        "description": "Path to the project root. Defaults to current directory.",
+                    },
+                },
+                "required": ["project_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "system_audit",
+            "description": (
+                "Run a comprehensive system audit — OS info, hardware, disk usage, "
+                "network status, installed runtimes, running processes. "
+                "Use to understand the system before making decisions."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_elevated",
+            "description": (
+                "Execute a command that may require admin/elevated privileges. "
+                "Tries normal execution first, then escalates via gsudo if available. "
+                "For system-level operations that need admin rights."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {
+                        "type": "string",
+                        "description": "The command to execute with elevated privileges.",
+                    },
+                    "timeout": {
+                        "type": "integer",
+                        "description": "Timeout in seconds. Default: 120.",
+                    },
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "chain_commands",
+            "description": (
+                "Execute a chain of commands with smart error handling. "
+                "Supports sequential (stop on error) and independent (run all) modes. "
+                "Each step has its own description and optional continue_on_error flag."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "commands": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "command": {"type": "string", "description": "Shell command."},
+                                "description": {"type": "string", "description": "Step description."},
+                                "continue_on_error": {"type": "boolean", "description": "Continue if this step fails."},
+                            },
+                            "required": ["command"],
+                        },
+                        "description": "List of commands to execute.",
+                    },
+                    "mode": {
+                        "type": "string",
+                        "enum": ["sequential", "independent"],
+                        "description": "Execution mode. Default: sequential.",
+                    },
+                },
+                "required": ["commands"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_system_context",
+            "description": (
+                "Get comprehensive system context — current directory, available tools, "
+                "git repo status, venv status, OS info. "
+                "Call this first to understand what you're working with."
+            ),
+            "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+
+    # ───────────────────────────────────────────────────────────────────────
+    # INTEGRATION HUB — external service integrations
+    # ───────────────────────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "github_op",
+            "description": (
+                "GitHub operations via the gh CLI. Manage repos, PRs, issues, releases, "
+                "workflows, gists, and search. Requires gh CLI installed and authenticated. "
+                "Actions: repo_view, repo_clone, pr_list, pr_create, pr_view, pr_merge, "
+                "pr_checkout, issue_list, issue_create, issue_close, issue_view, "
+                "release_list, release_create, workflow_list, workflow_run, "
+                "gist_create, gist_list, search_repos, search_code, api."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "description": "GitHub action to perform.",
+                    },
+                    "repo": {"type": "string", "description": "Repository in 'owner/name' format."},
+                    "title": {"type": "string", "description": "Title for PRs, issues, releases."},
+                    "body": {"type": "string", "description": "Body text for PRs, issues, gists."},
+                    "branch": {"type": "string", "description": "Branch name for PRs."},
+                    "label": {"type": "string", "description": "Label for filtering issues/PRs."},
+                    "query": {"type": "string", "description": "Search query."},
+                    "number": {"type": "integer", "description": "PR or issue number."},
+                    "path": {"type": "string", "description": "File path for gists or clone target."},
+                    "extra_args": {"type": "string", "description": "Additional gh CLI flags."},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "docker_op",
+            "description": (
+                "Docker container and image management. "
+                "Actions: ps, ps_all, images, run, stop, rm, logs, exec, pull, "
+                "build, inspect, stats, compose_up, compose_down, system_prune, network_ls."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Docker action to perform."},
+                    "image": {"type": "string", "description": "Docker image name."},
+                    "container": {"type": "string", "description": "Container name or ID."},
+                    "command": {"type": "string", "description": "Command for exec or run."},
+                    "ports": {"type": "string", "description": "Port mapping, e.g. '8080:80'."},
+                    "volumes": {"type": "string", "description": "Volume mount, e.g. './data:/app/data'."},
+                    "env_vars": {
+                        "type": "object",
+                        "description": "Environment variables as key-value pairs.",
+                    },
+                    "compose_file": {"type": "string", "description": "Path to docker-compose.yml."},
+                    "extra_args": {"type": "string", "description": "Additional docker flags."},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "ssh_op",
+            "description": (
+                "SSH and SCP operations for remote server management. "
+                "Actions: run (execute remote command), copy_to (SCP upload), "
+                "copy_from (SCP download), test (test connectivity)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "SSH action: run, copy_to, copy_from, test."},
+                    "host": {"type": "string", "description": "Remote hostname or IP."},
+                    "command": {"type": "string", "description": "Command to execute remotely."},
+                    "user": {"type": "string", "description": "SSH username."},
+                    "key_path": {"type": "string", "description": "Path to SSH private key."},
+                    "port": {"type": "integer", "description": "SSH port. Default: 22."},
+                    "local_path": {"type": "string", "description": "Local file path for SCP."},
+                    "remote_path": {"type": "string", "description": "Remote file path for SCP."},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "api_test",
+            "description": (
+                "Test API endpoints using curl. Supports GET, POST, PUT, PATCH, DELETE "
+                "with custom headers, body, and auth. Returns status, headers, and body."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "method": {
+                        "type": "string",
+                        "enum": ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"],
+                        "description": "HTTP method. Default: GET.",
+                    },
+                    "url": {"type": "string", "description": "The URL to test."},
+                    "headers": {
+                        "type": "object",
+                        "description": "HTTP headers as key-value pairs.",
+                    },
+                    "body": {"type": "string", "description": "Request body (JSON string)."},
+                    "auth": {"type": "string", "description": "Auth header value, e.g. 'Bearer token123'."},
+                    "timeout": {"type": "integer", "description": "Request timeout in seconds. Default: 30."},
+                },
+                "required": ["url"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "db_query",
+            "description": (
+                "Execute database queries via CLI tools. "
+                "Supports sqlite, postgres, mysql, and redis. "
+                "Uses sqlite3, psql, mysql, or redis-cli under the hood."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "engine": {
+                        "type": "string",
+                        "enum": ["sqlite", "postgres", "mysql", "redis"],
+                        "description": "Database engine.",
+                    },
+                    "query": {"type": "string", "description": "SQL query or Redis command."},
+                    "database": {"type": "string", "description": "Database name or file path (for sqlite)."},
+                    "host": {"type": "string", "description": "Database host. Default: localhost."},
+                    "port": {"type": "integer", "description": "Database port."},
+                    "user": {"type": "string", "description": "Database user."},
+                    "password": {"type": "string", "description": "Database password."},
+                },
+                "required": ["engine", "query"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "service_op",
+            "description": (
+                "Windows service and scheduled task management. "
+                "Actions: list_services, start_service, stop_service, restart_service, "
+                "service_status, list_tasks, create_task, delete_task, list_startup."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "description": "Service action to perform."},
+                    "name": {"type": "string", "description": "Service or task name."},
+                    "command": {"type": "string", "description": "Command for scheduled task."},
+                    "schedule": {"type": "string", "description": "Schedule for task (e.g. 'DAILY', 'HOURLY')."},
+                },
+                "required": ["action"],
+            },
+        },
+    },
+
+    # ── Cognitive Ops ─────────────────────────────────────────────────────
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_error",
+            "description": (
+                "Analyze an error message against a pattern database of 25+ known error types. "
+                "Returns diagnosis, category, and actionable fix suggestions. "
+                "Use BEFORE retrying — understand WHY it failed."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "error_text": {"type": "string", "description": "The error output (stderr, exception, etc.)"},
+                    "command": {"type": "string", "description": "The command that produced the error."},
+                    "context": {"type": "string", "description": "Additional context (project type, directory, etc.)"},
+                },
+                "required": ["error_text"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "smart_retry",
+            "description": (
+                "Execute a command with intelligent self-healing retry. On failure: "
+                "analyzes error, auto-installs missing deps, tries elevated execution, "
+                "adapts the command, and retries. Returns full attempt history."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Command to execute with retry logic."},
+                    "max_retries": {"type": "integer", "description": "Max retry attempts (default 3)."},
+                    "timeout": {"type": "integer", "description": "Timeout per attempt in seconds (default 60)."},
+                    "cwd": {"type": "string", "description": "Working directory for execution."},
+                    "auto_fix": {"type": "boolean", "description": "Whether to auto-fix errors between retries (default true)."},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "workspace_scan",
+            "description": (
+                "Deep-scan a project directory and return comprehensive intelligence: "
+                "tech stack, frameworks, dependencies, git state, CI/CD config, Docker setup, "
+                "entry points, code stats, config files, environment variables. "
+                "Call this BEFORE working on any project to understand it."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to scan (defaults to current directory)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "plan_and_execute",
+            "description": (
+                "Execute a multi-step plan with self-healing retry on each step. "
+                "Unlike execute_pipeline, this auto-retries failed steps, analyzes errors, "
+                "installs missing deps, and runs a verification command at the end. "
+                "Use for complex multi-step goals."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "goal": {"type": "string", "description": "High-level objective description."},
+                    "steps": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "command": {"type": "string"},
+                                "description": {"type": "string"},
+                                "retries": {"type": "integer"},
+                                "timeout": {"type": "integer"},
+                            },
+                        },
+                        "description": "List of steps to execute.",
+                    },
+                    "stop_on_error": {"type": "boolean", "description": "Abort plan on first unrecoverable failure (default false)."},
+                    "verify_command": {"type": "string", "description": "Command to verify overall success."},
+                    "cwd": {"type": "string", "description": "Working directory for all commands."},
+                },
+                "required": ["goal", "steps"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "code_analysis",
+            "description": (
+                "Analyze code quality, security, and dependencies. "
+                "Uses ruff, mypy, pip-audit, npm audit when available, "
+                "plus built-in security scanning for hardcoded secrets, "
+                "eval/exec, pickle, unsafe patterns. "
+                "Focus: all, security, dependencies, quality, complexity."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path to analyze."},
+                    "focus": {"type": "string", "description": "Analysis focus: all, security, dependencies, quality, complexity."},
+                },
+                "required": ["path"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "project_scaffold",
+            "description": (
+                "Create a full project from a template. "
+                "Templates: python-api (FastAPI), python-cli (Typer), "
+                "node-api (Express+TypeScript), react-app (Vite), static-site. "
+                "Creates files, installs deps, initializes git."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "template": {"type": "string", "description": "Template name: python-api, python-cli, node-api, react-app, static-site."},
+                    "name": {"type": "string", "description": "Project name."},
+                    "path": {"type": "string", "description": "Where to create the project (default: ~/Projects/<name>)."},
+                    "auto_setup": {"type": "boolean", "description": "Auto-install dependencies (default true)."},
+                },
+                "required": ["template", "name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "self_extend",
+            "description": (
+                "Create a new tool at runtime by writing a Python function. "
+                "ANKITA can extend itself — like OpenClaw's Skills system. "
+                "The code is saved to disk and available in future sessions."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Tool function name (snake_case)."},
+                    "description": {"type": "string", "description": "What the tool does."},
+                    "code": {"type": "string", "description": "Python source code defining the function."},
+                },
+                "required": ["name", "description", "code"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "execute_extension",
+            "description": "Execute a runtime-created tool extension.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string", "description": "Extension function name."},
+                    "args": {"type": "object", "description": "Keyword arguments to pass."},
+                },
+                "required": ["name"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "process_watch",
+            "description": (
+                "Start a process, watch its output for patterns, return when matched. "
+                "Perfect for waiting on servers ('listening on port'), builds ('Build succeeded'), "
+                "or deployments. Kills the process after pattern match or timeout."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Command to run and watch."},
+                    "duration": {"type": "integer", "description": "Max seconds to watch (default 60)."},
+                    "success_pattern": {"type": "string", "description": "Regex — return success when matched."},
+                    "failure_pattern": {"type": "string", "description": "Regex — return failure when matched."},
+                    "capture_last": {"type": "integer", "description": "Lines of output to keep (default 50)."},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "translate_command",
+            "description": (
+                "Translate a command between platforms (Linux/Mac ↔ Windows). "
+                "Maps 40+ common commands: ls→Get-ChildItem, grep→Select-String, "
+                "apt install→winget install, systemctl→Get-Service, etc."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Command to translate."},
+                    "from_platform": {"type": "string", "description": "Source platform: linux, mac, windows (default: linux)."},
+                    "to_platform": {"type": "string", "description": "Target platform (default: auto-detect current OS)."},
+                },
+                "required": ["command"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_extensions",
+            "description": "List all runtime tool extensions ANKITA has created via self_extend().",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+                "required": [],
+            },
+        },
+    },
 ]
 

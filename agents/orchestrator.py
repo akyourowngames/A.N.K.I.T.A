@@ -377,8 +377,23 @@ def _run_specialist(
     # Personality: inject current session mood directive into specialist messages
     _mood_context = ""
     try:
-        from tools.personality_engine import get_mood_tracker
-        _mood_context = get_mood_tracker().get_personality_directive()
+        from tools.personality_engine import get_mood_tracker, get_humor_line
+        _tracker = get_mood_tracker()
+        _mood_context = _tracker.get_personality_directive()
+        # Inject humor hint for the specialist if mood allows
+        _agent_type_map = {
+            "CodeAgent": "code", "FileAgent": "files", "TerminalAgent": "terminal",
+            "MusicAgent": "music", "WebAgent": "search", "SystemAgent": "system",
+            "TaskAgent": "task", "CommsAgent": "comms", "CronAgent": "cron",
+            "NavigatorAgent": "navigation", "ImageAgent": "image",
+            "WatchdogAgent": "watchdog", "IntegrationAgent": "integration",
+            "ContentAgent": "general", "ReportAgent": "general", "ScreenAgent": "system",
+            "GeneralAgent": "general", "PlannerAgent": "general",
+        }
+        _humor_key = _agent_type_map.get(specialist.name, "general")
+        _humor = get_humor_line(_humor_key, _tracker.current_state().primary)
+        if _humor:
+            _mood_context += f"\n[HUMOR HINT — weave naturally, don't force]: {_humor}"
     except Exception:
         pass
 
@@ -1221,12 +1236,25 @@ class Orchestrator:
             # to a backup agent with a Post-Mortem Injection context prompt.
             # Capped at 1 retry per agent to prevent infinite loops.
             reply = result.get("reply", "")
+            _reply_lower = reply.lower() if reply else ""
             agent_failed = (
                 not result.get("ok", True)
                 or reply.startswith("[Error]")
                 or "Tool not found" in reply
                 or "Permission denied" in reply
-                or "timed out" in reply.lower()
+                or "timed out" in _reply_lower
+                # ── Copout detection: LLM gave up instead of using tools ──
+                or (len(reply.strip()) < 15 and not reply.strip().startswith("Done"))
+                or "i can't" in _reply_lower
+                or "i cannot" in _reply_lower
+                or "i'm unable" in _reply_lower
+                or "i am unable" in _reply_lower
+                or "not possible for me" in _reply_lower
+                or "beyond my capabilities" in _reply_lower
+                or "outside my scope" in _reply_lower
+                or "as an ai" in _reply_lower
+                or "i don't have the ability" in _reply_lower
+                or "i don't have access" in _reply_lower
             )
             if agent_failed and sp.name in _ESCALATION_MATRIX:
                 backup_name, failure_note = _ESCALATION_MATRIX[sp.name]
