@@ -321,7 +321,7 @@ Output JSON only:"""
         
         return prompt
     
-    def _format_memories(self, memories: List[Dict[str, Any]]) -> str:
+    def _format_memories(self, _memories: List[Dict[str, Any]]) -> str:
         return "(Memory system currently being rebuilt)"
     
     def _format_tasks(self, tasks: List[Dict[str, Any]]) -> str:

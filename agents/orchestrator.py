@@ -25,7 +25,7 @@ from .content_contract import parse_content_payload, validate_content_payload, e
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
 from .supervisor import SupervisorAgent
-from .communication_protocol import AgentMessage, MessageType, MessagePriority, COMMUNICATION_HUB, COORDINATOR
+from .communication_protocol import AgentMessage, MessageType, MessagePriority, COMMUNICATION_HUB
 from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
@@ -1127,7 +1127,6 @@ class Orchestrator:
         # 2b. Handoff chain: run any agent-suggested follow-ups sequentially
         extra_results = self._run_handoff_chain(
             results=results,
-            base_task=user_text,
             conversation_history=_extract_clean_history(messages, max_turns=6),
         )
         if extra_results:
@@ -1292,7 +1291,6 @@ class Orchestrator:
     def _run_handoff_chain(
         self,
         results: List[Dict[str, Any]],
-        base_task: str,
         conversation_history: List[Dict[str, Any]],
     ) -> List[Dict[str, Any]]:
         """Run agent-suggested handoffs after initial fan-out results."""

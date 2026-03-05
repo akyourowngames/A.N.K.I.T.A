@@ -180,7 +180,7 @@ class DreamAgent:
             from tools.feedback_engine import get_instance as _get_fb
             _fb = _get_fb()
             if _fb is not None:
-                _fb_summary = _fb.analyze_recent(memories=recent_turns)
+                _fb_summary = _fb.analyze_recent(recent_turns)
                 if _fb_summary:
                     print(f"[DreamAgent] {_fb_summary}", flush=True)
         except Exception as _fb_exc:

@@ -18,7 +18,6 @@ from typing import Any, Dict, List, Optional
 _MISSING_LIBS = False
 try:
     from googleapiclient.discovery import build
-    from googleapiclient.errors import HttpError
 except ImportError:
     _MISSING_LIBS = True
 

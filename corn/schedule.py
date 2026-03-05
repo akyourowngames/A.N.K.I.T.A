@@ -1,5 +1,5 @@
 from datetime import datetime, timedelta, timezone
-from typing import Dict, Iterable, Optional, Set
+from typing import Dict, Optional, Set
 
 
 def _parse_iso_ms(text: str) -> Optional[int]:

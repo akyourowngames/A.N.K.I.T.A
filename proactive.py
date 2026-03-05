@@ -651,50 +651,7 @@ class ProactiveEngine:
 
         idle_sec = time.time() - self._last_interaction
         # DreamAgent currently disabled - needs new memory system
-        return 
-
-        print(f"[DreamAgent] 🌙 Idle threshold crossed! Spawning DreamSynthesis thread...", flush=True)
-
-        # Mark as pending so we don't spawn duplicate threads
-        self._dream_pending = True
-
-        memory_store = self._memory_store
-        session_id = self._session_id
-
-        def _synthesize() -> None:
-            print(f"[DreamAgent] 🧠 Synthesizing epiphany from memory (session={session_id})...", flush=True)
-            try:
-                from agents.dream_agent import DreamAgent  # type: ignore
-                agent = DreamAgent()
-                epiphany = agent.synthesize(
-                    memory_store=memory_store,
-                    session_id=session_id,
-                )
-                if epiphany:
-                    print(f"[DreamAgent] ✅ Epiphany generated: {epiphany[:80]}...", flush=True)
-                    idle_hrs = idle_sec / 3600
-                    idle_label = (
-                        f"{idle_hrs:.1f} hours" if idle_hrs >= 1
-                        else f"{idle_sec / 60:.0f} minutes"
-                    )
-                    self._queue.put(ProactiveEvent(
-                        "dream_epiphany",
-                        epiphany,
-                        {
-                            "text": epiphany,
-                            "idle_seconds": idle_sec,
-                            "idle_label": idle_label,
-                        },
-                    ))
-                else:
-                    print(f"[DreamAgent] ⚠️  No epiphany returned (empty or None) — will retry next cycle.", flush=True)
-                    # No epiphany generated — reset so it can try next cycle
-                    self._dream_pending = False
-            except Exception as _e:
-                print(f"[DreamAgent] ❌ Exception in synthesis: {_e}", flush=True)
-                self._dream_pending = False  # Allow retry on next idle check
-
-        threading.Thread(target=_synthesize, daemon=True, name="DreamSynthesis").start()
+        return
 
     def _check_sentinel(self) -> None:
         """

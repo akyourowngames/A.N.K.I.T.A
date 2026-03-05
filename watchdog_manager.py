@@ -338,7 +338,7 @@ class WatchdogManager:
 
         return results
 
-    def _write_default_config(self, config_name: str, watcher_class=None) -> None:
+    def _write_default_config(self, config_name: str, _watcher_class=None) -> None:
         """Write a sensible default config file so the user can customise it."""
         defaults: Dict[str, Any] = {
             "price_config": {

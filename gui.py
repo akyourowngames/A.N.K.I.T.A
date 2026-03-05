@@ -1,6 +1,4 @@
 import base64
-import asyncio
-import audioop
 import io
 import os
 import subprocess
@@ -14,7 +12,7 @@ from typing import Any, Dict, List
 
 import requests
 from dotenv import load_dotenv
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QTimer
+from PyQt5.QtCore import QThread, pyqtSignal, QTimer
 from PyQt5.QtGui import QFont
 from PyQt5.QtWidgets import (
     QApplication,
@@ -24,7 +22,6 @@ from PyQt5.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTextEdit,
     QTextBrowser,
     QVBoxLayout,
     QWidget,

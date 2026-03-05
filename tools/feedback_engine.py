@@ -306,7 +306,7 @@ class FeedbackEngine:
     # DreamAgent analysis
     # ------------------------------------------------------------------
 
-    def analyze_recent(self, memories: Optional[List[Any]] = None) -> Optional[str]:
+    def analyze_recent(self, _memories: Optional[List[Any]] = None) -> Optional[str]:
         """
         Called by DreamAgent during idle cycle.
         Uses LLM to distill lessons from recent interactions + explicit feedback.
