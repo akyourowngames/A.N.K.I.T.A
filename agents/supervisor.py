@@ -135,6 +135,7 @@ AGENTS:
 - NavigatorAgent: Maps, navigation, location services — routes, nearby places, distances, traffic, geocoding. Use for: 'navigate', 'find places', 'how far', 'traffic', 'directions', 'near me'.
 - TaskAgent: Task management — add/list/complete tasks with priorities and deadlines, auto-scheduled reminders. Use for: 'add task', 'my tasks', 'mark done', 'what's overdue', 'task summary'.
 - ReportAgent: Automated report generation — builds structured reports with data, tables, exports to PDF/Markdown. Use for: 'build report', 'generate report', 'create report', 'system health report', 'project status report'.
+- ImageAgent: AI image generation from text prompts using Pollinations.ai (free, no API key). Use for: 'generate image', 'create image', 'draw', 'paint', 'make a picture', 'create artwork', 'design poster', 'render', 'visualize', 'anime art', 'wallpaper', 'logo', 'illustration'.
 - GeneralAgent: Complex multi-step tasks that genuinely cross domains, or pure conversation.
 
 WEBAGENT NEW TOOLS ROUTING (CRITICAL — READ FIRST):
@@ -219,6 +220,7 @@ SPECIALIST PRIORITY RULE:
 - log/add expense/track/record/spreadsheet/google sheet → IntegrationAgent
 - new videos from/subscriptions/youtube playlist/create playlist → IntegrationAgent
 - figma/design file/design comments/client feedback/hex code/button colour → IntegrationAgent
+- generate image/draw/create art/make a picture/paint/render/create artwork/wallpaper/poster/logo/anime art/illustrate/visualize → ImageAgent
 - GeneralAgent ONLY for pure conversation or genuinely ambiguous with NO real-world actions.
 
 CONFIDENCE SCORING (UPGRADE 13 — CRITICAL):
@@ -316,6 +318,10 @@ Examples:
 - "build a report on disk usage" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate system report"}
 - "create a project status report" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate project report"}
 - "generate weekly activity report" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate activity report"}
+- "generate an image of a sunset over mountains" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: landscape scene"}
+- "draw me an anime character" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: anime-style character"}
+- "create a photorealistic portrait of a robot" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: portrait with flux-realism"}
+- "make me a cyberpunk city wallpaper" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: cyberpunk landscape wallpaper"}
 - "deep report on AI regulation in India" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "comprehensive analysis of climate change" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
@@ -434,7 +440,7 @@ class SupervisorAgent:
                      "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
                      "GeneralAgent", "TerminalAgent", "ScreenAgent",
                      "IntegrationAgent", "WatchdogAgent", "NavigatorAgent",
-                     "TaskAgent", "ReportAgent", "PlannerAgent"}
+                     "TaskAgent", "ReportAgent", "ImageAgent", "PlannerAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
 
             # Extract confidence score (UPGRADE 13)

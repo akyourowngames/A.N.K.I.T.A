@@ -514,10 +514,19 @@ def _resolve_file_by_name(file_name: str) -> Optional[Path]:
     return None
 
 
-def _extract_send_directives(note: str) -> Tuple[str, List[Path]]:
+def _extract_send_directives(note: str) -> Tuple[str, List[Path], List[str]]:
+    """Extract TELEGRAM_FILE, TELEGRAM_IMAGE, and TELEGRAM_NOTIFY directives from agent output.
+
+    Returns:
+        (clean_text, file_paths, notify_messages)
+        clean_text    — agent reply with directives stripped (safe to send as text)
+        file_paths    — paths to send as Telegram photos/documents (auto-detected)
+        notify_messages — plain text mid-task notifications to send immediately
+    """
     if not note:
-        return note, []
+        return note, [], []
     out_paths: List[Path] = []
+    notify_msgs: List[str] = []
     clean = note
     # Contract for agents:
     # TELEGRAM_FILE: C:\path\to\file.ext
@@ -532,6 +541,19 @@ def _extract_send_directives(note: str) -> Tuple[str, List[Path]]:
             p = (WORKSPACE_ROOT / p).resolve()
         if p.exists() and p.is_file():
             out_paths.append(p)
+    # TELEGRAM_IMAGE: — sends image as inline Telegram photo (same delivery, explicit intent)
+    for m in re.findall(r"TELEGRAM_IMAGE:\s*(.+)", note):
+        raw = m.strip().strip("`").strip("\"'")
+        p = Path(raw)
+        if not p.is_absolute():
+            p = (WORKSPACE_ROOT / p).resolve()
+        if p.exists() and p.is_file():
+            out_paths.append(p)
+    # TELEGRAM_NOTIFY: — mid-task plain text notification
+    for m in re.findall(r"TELEGRAM_NOTIFY:\s*(.+)", note):
+        msg = m.strip()
+        if msg:
+            notify_msgs.append(msg)
     block = re.search(r"```telegram_send\s*([\s\S]*?)```", note, flags=re.IGNORECASE)
     if block:
         for line in block.group(1).splitlines():
@@ -545,6 +567,8 @@ def _extract_send_directives(note: str) -> Tuple[str, List[Path]]:
                 out_paths.append(p)
     # Remove directives from the user-facing text.
     clean = re.sub(r"TELEGRAM_FILE:\s*.+", "", clean)
+    clean = re.sub(r"TELEGRAM_IMAGE:\s*.+", "", clean)
+    clean = re.sub(r"TELEGRAM_NOTIFY:\s*.+", "", clean)
     clean = re.sub(r"```telegram_send[\s\S]*?```", "", clean, flags=re.IGNORECASE)
     clean = clean.strip()
     dedup: List[Path] = []
@@ -555,7 +579,7 @@ def _extract_send_directives(note: str) -> Tuple[str, List[Path]]:
             continue
         seen.add(k)
         dedup.append(p)
-    return clean, dedup
+    return clean, dedup, notify_msgs
 
 
 def parse_allowed_chat_ids(raw: str) -> Set[int]:
@@ -1113,9 +1137,14 @@ def main() -> None:
                     except Exception:
                         pass
                     try:
-                        clean_note, directive_paths = _extract_send_directives(note)
+                        clean_note, directive_paths, notify_msgs = _extract_send_directives(note)
                         if clean_note:
                             send_text(bot_token, _cid, clean_note)
+                        for nm in notify_msgs:
+                            try:
+                                send_text(bot_token, _cid, nm)
+                            except Exception:
+                                pass
                         found_paths = directive_paths or _extract_candidate_paths(note)
                         if not found_paths and send_intent_path is not None:
                             # Recovery: if agent mentioned a filename (e.g., "Opened random image: photo_x.jpg"),
@@ -1174,9 +1203,14 @@ def main() -> None:
                 # For heavy tasks: send the "Started 🐝" acknowledgement immediately
                 # For normal tasks: ack is "" — _drone_reply delivers the real reply async
                 if ack:
-                    clean_ack, directive_paths = _extract_send_directives(ack)
+                    clean_ack, directive_paths, notify_msgs = _extract_send_directives(ack)
                     if clean_ack:
                         send_text(bot_token, chat_id, clean_ack, msg_id)
+                    for nm in notify_msgs:
+                        try:
+                            send_text(bot_token, chat_id, nm)
+                        except Exception:
+                            pass
                     if directive_paths:
                         existing = recent_artifacts.setdefault(chat_id, [])
                         for p in directive_paths:

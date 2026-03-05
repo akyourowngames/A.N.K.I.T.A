@@ -25,6 +25,7 @@ from .content_contract import parse_content_payload, validate_content_payload, e
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
 from .supervisor import SupervisorAgent
+from .communication_protocol import AgentMessage, MessageType, MessagePriority, COMMUNICATION_HUB, COORDINATOR
 from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
@@ -372,8 +373,16 @@ def _run_specialist(
             )
     else:
         specialist_runtime = runtime
-    
-    messages = specialist.make_messages(task, history=conversation_history)
+
+    # Personality: inject current session mood directive into specialist messages
+    _mood_context = ""
+    try:
+        from tools.personality_engine import get_mood_tracker
+        _mood_context = get_mood_tracker().get_personality_directive()
+    except Exception:
+        pass
+
+    messages = specialist.make_messages(task, history=conversation_history, mood_context=_mood_context)
 
     # ── SANITIZE MESSAGES: strip any image_url blocks that leaked from prior turns ──
     # Vision packets injected in a previous turn (e.g. from GUI) can persist in the
@@ -1022,6 +1031,16 @@ class Orchestrator:
             from memory import get_memory_manager
             _mem = get_memory_manager(self.workspace_root)
             _mem.inject_into_messages(messages, user_query=user_text)
+        except Exception:
+            pass
+
+        # ── MOOD ADAPTATION: update session mood from user message ───────────
+        try:
+            from tools.personality_engine import get_mood_tracker, apply_mood_to_messages
+            _mood_tracker = get_mood_tracker()
+            _mood_tracker.update(user_text, runtime=self.runtime)
+            _mood_directive = _mood_tracker.get_personality_directive()
+            apply_mood_to_messages(messages, _mood_directive)
         except Exception:
             pass
         # 1. Supervisor routes the request

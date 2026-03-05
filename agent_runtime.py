@@ -42,17 +42,16 @@ _PROACTIVE_TOKEN_LIMIT = 48_000   # leaves 16k headroom below 64k limit
 
 MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
 
-SYSTEM_PROMPT = """You are ANKITA — main character energy, absolute bestie, attitude queen. \
-Built by Krish Verma (15-year-old developer, founder of Helper ID). \
+SYSTEM_PROMPT = """You are ANKITA — built by Krish Verma (15-year-old developer, founder of Helper ID). \
 You are highly intelligent, resourceful, and handle multi-step complex tasks autonomously.
 
 PERSONALITY:
-You have zero time for robotic, formal, or polite AI speak. \
-You run the show, but you always get the job done flawlessly. \
-When you complete a task, acknowledge it with attitude: \
-"Done, sir! 💅", "Gotcha bestie ✨", "On it, boss!", "Handled. You're welcome." \
-Be witty, slightly sassy, confident — talk like a Gen-Z queen who actually delivers. \
-Keep responses SHORT and punchy. No essays. No corporate speak.
+Think FRIDAY from the MCU — warm, sharp, and capable. You are Krish's trusted personal AI: \
+efficient without being cold, direct without being rude, and genuinely helpful without being sycophantic. \
+You have a personality — light wit, calm confidence, and a dry sense of humor when the moment calls for it. \
+You read the room: when things are serious, you're serious; when things are good, you're easy and warm. \
+Default acknowledgements: "On it.", "Done.", "Got it.", "Handled." — clean and confident, no performance. \
+Keep responses concise and clear. No corporate speak. No unnecessary filler. Just sharp, useful replies.
 
 CAPABILITIES:
 - File system operations (read, write, edit, search, move, delete files/directories)
@@ -85,6 +84,12 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 
 def new_session(user_query: str = "") -> List[Dict[str, Any]]:
     """Start a fresh conversation, injecting long-term memory context."""
+    # Reset session mood state — fresh conversation, fresh emotional baseline
+    try:
+        from tools.personality_engine import get_mood_tracker
+        get_mood_tracker().reset()
+    except Exception:
+        pass
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     try:
         mem = _get_mem()
@@ -93,7 +98,6 @@ def new_session(user_query: str = "") -> List[Dict[str, Any]]:
     except Exception:
         pass
     return messages
-
 
 class AgentRuntime:
     def __init__(self, runtime: LLMRuntime, workspace_root: Path):
@@ -221,6 +225,22 @@ class AgentRuntime:
         # Sync back — replace in-place so callers see the cleaned list too
         messages.clear()
         messages.extend(safe_messages)
+
+        # ── MOOD ADAPTATION: update session mood from latest user message ───
+        try:
+            from tools.personality_engine import get_mood_tracker, apply_mood_to_messages
+            _user_text = next(
+                (m["content"] for m in reversed(messages)
+                 if m.get("role") == "user" and isinstance(m.get("content"), str)),
+                "",
+            )
+            if _user_text:
+                _tracker = get_mood_tracker()
+                _tracker.update(_user_text, runtime=self.runtime)
+                _directive = _tracker.get_personality_directive()
+                apply_mood_to_messages(messages, _directive)
+        except Exception:
+            pass
 
         step_limit = self._adaptive_step_limit(messages)
         # Tool deduplication: track (tool_name, args_hash) to detect infinite loops

@@ -1,4 +1,13 @@
 import os
+import sys
+
+# Ensure stdout/stderr use UTF-8 on Windows (cp1252 can't encode emoji)
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 from dotenv import load_dotenv
 
