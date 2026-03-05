@@ -135,6 +135,56 @@ class MemoryManager:
             # ── LLM-based extraction (throttled, runs in non-daemon thread) ───
             self._extract_facts_async(content, interface)
 
+    def remember(self, fact: str, interface: str = "tool") -> dict:
+        """Persist one explicit fact immediately."""
+        text = (fact or "").strip()
+        if not text:
+            return {"ok": False, "error": "Empty fact"}
+        fact_id = self._facts.upsert_fact(text, confidence=0.95, interface=interface)
+        if fact_id and self._vectors.available:
+            self._vectors.upsert(
+                fact_id=fact_id,
+                text=text,
+                metadata={"interface": interface, "confidence": 0.95},
+            )
+        return {"ok": bool(fact_id), "id": fact_id, "fact": text}
+
+    def recall(self, query: str = "", limit: int = 8) -> list[dict]:
+        """Retrieve relevant facts by query, or recent facts if query is empty."""
+        n = max(1, min(int(limit), 50))
+        q = (query or "").strip()
+
+        if q:
+            if self._vectors.available:
+                semantic = self._vectors.search(q, n_results=n)
+                if semantic:
+                    return [{"fact": f, "source": "vector"} for f in semantic[:n]]
+            return self._facts.search_keyword(q, limit=n)
+
+        return self._facts.recent_facts(limit=n)
+
+    def forget(self, query: str, limit: int = 20) -> dict:
+        """Delete matching facts from SQLite and vector index."""
+        q = (query or "").strip()
+        if not q:
+            return {"ok": False, "error": "Query required"}
+
+        n = max(1, min(int(limit), 100))
+        matches = self._facts.find_by_query(q, limit=n)
+        if not matches:
+            return {"ok": True, "deleted": 0, "matches": []}
+
+        ids = [str(r.get("id", "")) for r in matches if r.get("id")]
+        facts = [str(r.get("fact", "")) for r in matches]
+        deleted = self._facts.delete_by_ids(ids)
+        vector_deleted = self._vectors.delete(ids) if ids else 0
+        return {
+            "ok": True,
+            "deleted": deleted,
+            "vector_deleted": vector_deleted,
+            "matches": facts,
+        }
+
     def build_context(self, user_query: str = "") -> str:
         """
         Build a formatted memory context string to inject as a system message.

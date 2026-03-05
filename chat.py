@@ -69,6 +69,9 @@ def main() -> None:
     proactive.attach_runtime(runtime)
     proactive.start()
 
+    from tools.notification_router import NotificationRouter
+    notification_router = NotificationRouter(WORKSPACE_ROOT)
+
     # Watchdog system — always-on 24/7 monitoring
     from watchdog_manager import WatchdogManager
     global watchdog_mgr  # expose as module global so orchestrator can reach it
@@ -105,6 +108,10 @@ def main() -> None:
         while not _stop_event_watcher.is_set():
             events = proactive.get_pending_events()
             for event in events:
+                result = notification_router.route_notification(event)
+                if not result.get("delivered") or "cli" not in result.get("channels", []):
+                    continue
+                formatted = result.get("formatted_messages", {}).get("cli", event.message)
                 if event.kind == "dream_epiphany":
                     epiphany_text = event.data.get("text", event.message)
                     if epiphany_text:
@@ -128,7 +135,7 @@ def main() -> None:
                         except Exception as _err:
                             print(f"\n[ANKITA] Content generation error: {_err}\n\nYou: ", end="", flush=True)
                 else:
-                    print(f"\n\n[ANKITA] {event.message}\n\nYou: ", end="", flush=True)
+                    print(f"\n\n[ANKITA] {formatted}\n\nYou: ", end="", flush=True)
             # Drain Hive Mind drone completion notifications
             for note in hive.check_notifications():
                 print(f"\n\n{note}\n\nYou: ", end="", flush=True)

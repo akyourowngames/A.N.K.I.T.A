@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from proactive_models import ProactiveEvent
+
 try:
     import psutil  # type: ignore
 
@@ -33,19 +35,6 @@ _RAM_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_RAM_THRESHOLD", "88"))
 _BATTERY_ALERT_THRESHOLD = float(os.getenv("PROACTIVE_BATTERY_THRESHOLD", "15"))
 # NOTE: _IDLE_THRESHOLD_SEC is intentionally NOT read here at module level,
 # because load_dotenv() runs after import. It is read lazily inside _check_idle().
-
-
-class ProactiveEvent:
-    """A single proactive notification from the background engine."""
-
-    def __init__(self, kind: str, message: str, data: Optional[Dict[str, Any]] = None) -> None:
-        self.kind = kind  # "system", "cron", "drop_file", "custom"
-        self.message = message
-        self.data = data or {}
-        self.ts = time.time()
-
-    def __repr__(self) -> str:
-        return f"<ProactiveEvent kind={self.kind!r} message={self.message[:60]!r}>"
 
 
 class ProactiveEngine:
@@ -67,6 +56,10 @@ class ProactiveEngine:
         self._queue: queue.Queue[ProactiveEvent] = queue.Queue()
         self._stop_event = threading.Event()
         self._thread: Optional[threading.Thread] = None
+
+        # Persistent proactive state (.ankita/state/proactive_state.json)
+        self._state_path = self.workspace_root / ".ankita" / "state" / "proactive_state.json"
+        self._proactive_state: Dict[str, Any] = self._load_state()
 
         # Thresholds for system alerts (avoid repeated alerts)
         self._alerted_cpu = False
@@ -99,6 +92,264 @@ class ProactiveEngine:
         self._sentinel_triggered: bool = False       # True once sentinel fires; reset when user returns
         self._runtime: Optional[Any] = None          # LLM runtime injected by caller
 
+        # Morning briefing: only one thread at a time, don't re-run same day
+        self._morning_briefing_pending: bool = False
+
+        # ── Proactive Intelligence Components (Steps 5, 7, 9) ──────────────
+        # IntentionEngine — refreshes intent.json every 6 hours
+        self._intent_refresh_pending: bool = False
+        try:
+            from tools.intention_engine import IntentionEngine  # type: ignore
+            self._intention_engine = IntentionEngine(workspace_root)
+        except Exception:
+            self._intention_engine = None  # type: ignore
+
+        # BehavioralPatternLearner — analyses patterns weekly (Sunday 22:00-23:00)
+        self._pattern_analysis_pending: bool = False
+        try:
+            from tools.behavioral_pattern_learner import BehavioralPatternLearner  # type: ignore
+            self._pattern_learner = BehavioralPatternLearner(workspace_root)
+        except Exception:
+            self._pattern_learner = None  # type: ignore
+
+        # AnticipatoryActionSystem — pre-fetches likely actions each poll cycle
+        self._last_anticipatory_run: float = 0.0
+        try:
+            from tools.anticipatory_action_system import AnticipatoryActionSystem  # type: ignore
+            self._anticipatory = AnticipatoryActionSystem(workspace_root)
+        except Exception:
+            self._anticipatory = None  # type: ignore
+
+        # AutoExecutor (Step 8) — Class A/B/C autonomous background actions
+        try:
+            from agents.auto_executor import AutoExecutor  # type: ignore
+            self._auto_executor = AutoExecutor(workspace_root)
+        except Exception:
+            self._auto_executor = None  # type: ignore
+
+        # InsightSynthesizer (Step 12) — 12h insight generation
+        self._insight_synthesis_pending: bool = False
+        try:
+            from agents.insight_synthesizer import InsightSynthesizer  # type: ignore
+            self._insight_synthesizer = InsightSynthesizer(workspace_root)
+        except Exception:
+            self._insight_synthesizer = None  # type: ignore
+
+    # ------------------------------------------------------------------
+    # Persistent state helpers
+    # ------------------------------------------------------------------
+
+    def _load_state(self) -> Dict[str, Any]:
+        """
+        Load persistent proactive state from disk.
+
+        Schema (keys may be extended over time):
+            - last_morning_briefing_date: str | None (YYYY-MM-DD)
+            - last_intent_refresh: float (epoch seconds)
+            - last_pattern_analysis: float (epoch seconds)
+            - last_insight_synthesis: float (epoch seconds)
+            - delivered_notification_ids: list[str]
+            - dnd_active: bool
+        """
+        state_dir = self.workspace_root / ".ankita" / "state"
+        try:
+            state_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            # If we cannot create the directory, fall back to in-memory only state.
+            pass
+
+        default_state: Dict[str, Any] = {
+            "last_morning_briefing_date": None,
+            "last_intent_refresh": 0.0,
+            "last_pattern_analysis": 0.0,
+            "last_insight_synthesis": 0.0,
+            "delivered_notification_ids": [],
+            "dnd_active": False,
+            # Cached value of ANKITA_DND_HOURS at startup (e.g. "22:00-08:00,13:00-14:00")
+            "dnd_hours": os.getenv("ANKITA_DND_HOURS", "").strip(),
+        }
+
+        try:
+            if self._state_path.exists():
+                raw = self._state_path.read_text(encoding="utf-8")
+                loaded = json.loads(raw) if raw.strip() else {}
+                if isinstance(loaded, dict):
+                    # Merge any known keys from disk over defaults
+                    default_state.update(loaded)
+        except Exception:
+            # Corrupt or unreadable state file — ignore and start fresh
+            pass
+
+        # Normalise types
+        if not isinstance(default_state.get("delivered_notification_ids"), list):
+            default_state["delivered_notification_ids"] = []
+        if not isinstance(default_state.get("last_intent_refresh"), (int, float)):
+            default_state["last_intent_refresh"] = 0.0
+        if not isinstance(default_state.get("last_pattern_analysis"), (int, float)):
+            default_state["last_pattern_analysis"] = 0.0
+        if not isinstance(default_state.get("last_insight_synthesis"), (int, float)):
+            default_state["last_insight_synthesis"] = 0.0
+        if not isinstance(default_state.get("dnd_active"), bool):
+            default_state["dnd_active"] = bool(default_state.get("dnd_active"))
+
+        # Persist a clean copy back to disk so future readers have a valid file.
+        self._save_state(default_state)
+        return default_state
+
+    def _save_state(self, state: Optional[Dict[str, Any]] = None) -> None:
+        """Persist the current proactive state to disk (best-effort, non-fatal)."""
+        if state is None:
+            state = self._proactive_state
+
+        try:
+            self._state_path.parent.mkdir(parents=True, exist_ok=True)
+            tmp_path = self._state_path.with_suffix(self._state_path.suffix + ".tmp")
+            tmp_path.write_text(json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp_path.replace(self._state_path)
+        except Exception:
+            # Persistence failures must never crash the engine loop.
+            pass
+
+    def update_state(self, **updates: Any) -> None:
+        """
+        Update in-memory proactive state and persist it.
+
+        Example:
+            engine.update_state(last_intent_refresh=time.time())
+        """
+        self._proactive_state.update(updates)
+        self._save_state()
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return a shallow copy of the current proactive state."""
+        return dict(self._proactive_state)
+
+    # ------------------------------------------------------------------
+    # Morning briefing (first boot of day)
+    # ------------------------------------------------------------------
+
+    def _check_morning_briefing(self) -> None:
+        """
+        If it's a new day since last_morning_briefing_date, generate and push
+        a morning briefing once. Runs in a daemon thread so the poll loop doesn't block.
+        """
+        from datetime import datetime as _dt
+        today_ymd = _dt.now().strftime("%Y-%m-%d")
+        last = self._proactive_state.get("last_morning_briefing_date")
+        if last == today_ymd:
+            return
+        if self._runtime is None or self._morning_briefing_pending:
+            return
+
+        self._morning_briefing_pending = True
+        runtime = self._runtime
+        workspace_root = self.workspace_root
+
+        def _do_briefing() -> None:
+            try:
+                from agents.morning_agent import generate_briefing  # type: ignore
+
+                # Load intent.json
+                intent = {}
+                intent_path = workspace_root / ".ankita" / "state" / "intent.json"
+                if intent_path.exists():
+                    try:
+                        intent = json.loads(intent_path.read_text(encoding="utf-8"))
+                        if not isinstance(intent, dict):
+                            intent = {}
+                    except Exception:
+                        pass
+
+                # Tasks summary
+                tasks_summary = ""
+                try:
+                    from tools.task_ops import task_op  # type: ignore
+                    r = task_op(action="list")
+                    if r.get("status") == "success":
+                        tasks = r.get("tasks", [])
+                        pending = [t for t in tasks if t.get("status") in ("pending", "in_progress")]
+                        overdue_r = task_op(action="overdue")
+                        overdue = overdue_r.get("tasks", []) if overdue_r.get("status") == "success" else []
+                        if pending or overdue:
+                            parts = []
+                            if overdue:
+                                parts.append(f"{len(overdue)} overdue")
+                            if pending:
+                                parts.append(f"{len(pending)} pending")
+                            tasks_summary = "Tasks: " + ", ".join(parts) + ". " + " ".join(
+                                t.get("title", "")[:50] for t in (overdue[:2] + pending[:2])
+                            )
+                except Exception:
+                    pass
+
+                # Watchdog status
+                watchdog_state = ""
+                try:
+                    from watchdog_manager import get_instance  # type: ignore
+                    mgr = get_instance()
+                    if mgr is not None:
+                        watchdog_state = mgr.status()
+                except Exception:
+                    pass
+
+                # System stats (disk, battery)
+                system_stats = {}
+                if HAS_PSUTIL:
+                    try:
+                        disk = psutil.disk_usage(str(workspace_root))
+                        system_stats["disk_pct"] = round(disk.percent, 0)
+                    except Exception:
+                        pass
+                    try:
+                        batt = psutil.sensors_battery()
+                        if batt is not None:
+                            system_stats["battery_pct"] = batt.percent
+                            system_stats["battery_plugged"] = batt.power_plugged
+                    except Exception:
+                        pass
+
+                # Cron due today (simplified: just next few jobs from corn)
+                cron_today = []
+                try:
+                    corn_file = workspace_root / ".ankita" / "corn" / "jobs.json"
+                    if corn_file.exists():
+                        data = json.loads(corn_file.read_text(encoding="utf-8"))
+                        jobs = data if isinstance(data, list) else []
+                        for j in jobs[:5]:
+                            if isinstance(j, dict) and j.get("enabled", True):
+                                name = j.get("name", j.get("id", "task"))
+                                cron_today.append(name)
+                except Exception:
+                    pass
+
+                briefing = generate_briefing(
+                    runtime=runtime,
+                    intent=intent,
+                    tasks_summary=tasks_summary or None,
+                    watchdog_state=watchdog_state or None,
+                    system_stats=system_stats or None,
+                    cron_today=cron_today or None,
+                )
+                if briefing:
+                    self._queue.put(
+                        ProactiveEvent(
+                            kind="morning_briefing",
+                            message=briefing,
+                            data={"text": briefing},
+                            priority="high",
+                            urgency="immediate",
+                            interruptible=True,
+                        )
+                    )
+                    self.update_state(last_morning_briefing_date=today_ymd)
+                    print("[ProactiveEngine] Morning briefing sent.", flush=True)
+            except Exception as e:
+                print(f"[ProactiveEngine] Morning briefing failed: {e}", flush=True)
+            finally:
+                self._morning_briefing_pending = False
+
+        threading.Thread(target=_do_briefing, daemon=True, name="MorningBriefing").start()
+
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             print("[ProactiveEngine] Already running — skipping start.", flush=True)
@@ -107,6 +358,13 @@ class ProactiveEngine:
         self._thread = threading.Thread(target=self._run, daemon=True, name="ProactiveEngine")
         self._thread.start()
         print(f"[ProactiveEngine] Thread launched. is_alive={self._thread.is_alive()}", flush=True)
+        # Inject queue reference into AnticipatoryActionSystem for environment events
+        if self._anticipatory is not None:
+            try:
+                from tools.anticipatory_action_system import _set_proactive_queue  # type: ignore
+                _set_proactive_queue(self._queue)
+            except Exception:
+                pass
 
     def stop(self) -> None:
         self._stop_event.set()
@@ -125,7 +383,7 @@ class ProactiveEngine:
 
     def push_custom(self, message: str, data: Optional[Dict[str, Any]] = None) -> None:
         """Manually push a custom event (e.g. from cron worker)."""
-        self._queue.put(ProactiveEvent("custom", message, data))
+        self._queue.put(ProactiveEvent(kind="custom", message=message, data=data or {}))
 
     def set_last_interaction(self, ts: Optional[float] = None) -> None:
         """
@@ -152,6 +410,22 @@ class ProactiveEngine:
             runtime: The active LLMRuntime instance.
         """
         self._runtime = runtime
+        # Propagate runtime to intelligence components that need LLM access
+        if self._intention_engine is not None:
+            try:
+                self._intention_engine.attach_runtime(runtime)
+            except Exception:
+                pass
+        if self._pattern_learner is not None:
+            try:
+                self._pattern_learner.attach_runtime(runtime)
+            except Exception:
+                pass
+        if self._insight_synthesizer is not None:
+            try:
+                self._insight_synthesizer.attach_runtime(runtime)
+            except Exception:
+                pass
 
 
     # ------------------------------------------------------------------
@@ -162,12 +436,19 @@ class ProactiveEngine:
         print(f"[ProactiveEngine] Started. Poll interval: {self.interval_sec}s", flush=True)
         while not self._stop_event.is_set():
             try:
+                self._check_morning_briefing()
                 self._check_system_resources()
                 self._check_drop_files()
                 self._check_cron_overdue()
                 self._check_raw_ideas()
                 self._check_idle()
                 self._check_sentinel()
+                # ── Proactive Intelligence Components ─────────────────────
+                self._check_intention_engine()   # Step 5: 6-hour intent refresh
+                self._check_pattern_learner()    # Step 7: weekly pattern analysis
+                self._check_anticipatory()       # Step 9: pre-fetch likely actions
+                self._check_auto_executor()      # Step 8: Class A/B/C actions
+                self._check_insight_synthesizer()  # Step 12: 12h insight generation
             except Exception as _e:
                 print(f"[ProactiveEngine] ERROR in poll cycle: {_e}", flush=True)
             self._stop_event.wait(timeout=self.interval_sec)
@@ -188,6 +469,8 @@ class ProactiveEngine:
                     "system",
                     f"⚠️ High CPU usage detected: {cpu:.0f}%. You may want to close some applications.",
                     {"cpu_percent": cpu},
+                    priority="high",
+                    urgency="immediate",
                 ))
         else:
             self._alerted_cpu = False
@@ -205,6 +488,8 @@ class ProactiveEngine:
                     "system",
                     f"⚠️ RAM usage is high: {ram_pct:.0f}% ({used_gb:.1f}/{total_gb:.1f} GB used).",
                     {"ram_percent": ram_pct},
+                    priority="high",
+                    urgency="immediate",
                 ))
         else:
             self._alerted_ram = False
@@ -223,6 +508,8 @@ class ProactiveEngine:
                             "system",
                             f"🔋 Battery low: {pct:.0f}%. Please plug in your charger.",
                             {"battery_percent": pct},
+                            priority="high",
+                            urgency="immediate",
                         ))
                 # Full battery alert (when plugged in) - lower priority, longer cooldown
                 elif batt.power_plugged and pct >= 100:
@@ -232,7 +519,9 @@ class ProactiveEngine:
                         self._queue.put(ProactiveEvent(
                             "system",
                             f"🔋 Battery is at {pct:.0f}% and still charging. Consider unplugging to preserve battery health.",
-                            {"battery_percent": pct, "priority": "low"},
+                            {"battery_percent": pct},
+                            priority="low",
+                            urgency="next_session",
                         ))
                 else:
                     self._alerted_battery = False
@@ -259,7 +548,15 @@ class ProactiveEngine:
                     else:
                         msg = text[:500]
                         data = {}
-                    self._queue.put(ProactiveEvent("drop_file", msg, data))
+                    self._queue.put(
+                        ProactiveEvent(
+                            kind="drop_file",
+                            message=msg,
+                            data=data,
+                            priority="medium",
+                            urgency="next_idle",
+                        )
+                    )
                     # Remove after processing
                     try:
                         fpath.unlink()
@@ -312,23 +609,28 @@ class ProactiveEngine:
                     f"Generating a {detected_format} about '{detected_topic}' now."
                 )
 
-                self._queue.put(ProactiveEvent(
-                    "content_request",
-                    message,
-                    {
-                        "file_path": str(fpath),
-                        "file_name": fpath.name,
-                        "topic": detected_topic,
-                        "format_type": detected_format,
-                        "raw_text": raw_text[:2000],   # Cap preview; agent reads full file
-                        "suggested_prompt": (
-                            f"Write a {detected_format} about '{detected_topic}'. "
-                            f"Use these rough notes as context: {raw_text[:1000]}"
-                            if raw_text else
-                            f"Write a {detected_format} about '{detected_topic}' and save it to the Desktop."
-                        ),
-                    },
-                ))
+                self._queue.put(
+                    ProactiveEvent(
+                        kind="content_request",
+                        message=message,
+                        data={
+                            "file_path": str(fpath),
+                            "file_name": fpath.name,
+                            "topic": detected_topic,
+                            "format_type": detected_format,
+                            "raw_text": raw_text[:2000],   # Cap preview; agent reads full file
+                            "suggested_prompt": (
+                                f"Write a {detected_format} about '{detected_topic}'. "
+                                f"Use these rough notes as context: {raw_text[:1000]}"
+                                if raw_text else
+                                f"Write a {detected_format} about '{detected_topic}' and save it to the Desktop."
+                            ),
+                        },
+                        priority="medium",
+                        urgency="next_idle",
+                        interruptible=True,
+                    )
+                )
         except Exception:
             pass
 
@@ -505,22 +807,180 @@ class ProactiveEngine:
                 reply = reply.strip()
                 print(f"[Sentinel] 💬 Ankita says: {reply}", flush=True)
 
-                self._queue.put(ProactiveEvent(
-                    "sentinel",
-                    reply,
-                    {
-                        "idle_seconds": idle_sec,
-                        "idle_label": idle_label,
-                        "screen_path": screen.get("path", ""),
-                        "text": reply,
-                    },
-                ))
+                self._queue.put(
+                    ProactiveEvent(
+                        kind="sentinel",
+                        message=reply,
+                        data={
+                            "idle_seconds": idle_sec,
+                            "idle_label": idle_label,
+                            "screen_path": screen.get("path", ""),
+                            "text": reply,
+                        },
+                        priority="high",
+                        urgency="immediate",
+                        interruptible=True,
+                    )
+                )
 
             except Exception as _e:
                 print(f"[Sentinel] ❌ Exception in sentinel task: {_e}", flush=True)
                 self._sentinel_triggered = False  # Allow retry
 
         threading.Thread(target=_sentinel_task, daemon=True, name="SentinelTask").start()
+
+    # ------------------------------------------------------------------
+    # Proactive Intelligence Component checks (Steps 5, 7, 9)
+    # ------------------------------------------------------------------
+
+    def _check_intention_engine(self) -> None:
+        """
+        Refresh the daily intent model every 6 hours.
+
+        Spawns a daemon thread to call IntentionEngine.generate_intent_model()
+        and writes intent.json to .ankita/state/. The Supervisor reads this
+        file on every route() call to inject intent context.
+        """
+        if self._intention_engine is None:
+            return
+        if self._intent_refresh_pending:
+            return
+        if self._runtime is None:
+            return
+
+        last_refresh = float(self._proactive_state.get("last_intent_refresh", 0.0))
+        _SIX_HOURS = 6 * 3600
+        if (time.time() - last_refresh) < _SIX_HOURS:
+            return
+
+        self._intent_refresh_pending = True
+        engine = self._intention_engine
+
+        def _do_intent() -> None:
+            try:
+                print("[ProactiveEngine] 🧭 Refreshing intent model...", flush=True)
+                engine.generate_intent_model()
+                self.update_state(last_intent_refresh=time.time())
+                print("[ProactiveEngine] ✅ Intent model refreshed.", flush=True)
+            except Exception as _e:
+                print(f"[ProactiveEngine] ⚠️  Intent refresh failed: {_e}", flush=True)
+            finally:
+                self._intent_refresh_pending = False
+
+        threading.Thread(target=_do_intent, daemon=True, name="IntentRefresh").start()
+
+    def _check_pattern_learner(self) -> None:
+        """
+        Run weekly behavioral pattern analysis on Sunday 22:00-23:00.
+
+        Spawns a daemon thread to call BehavioralPatternLearner.analyze_patterns()
+        and writes behavioral_model.json. Also checks a 7-day cooldown so we
+        only run this once per week even if the engine restarts.
+        """
+        if self._pattern_learner is None:
+            return
+        if self._pattern_analysis_pending:
+            return
+        if self._runtime is None:
+            return
+
+        # Guard: only run weekly (7 days)
+        last_analysis = float(self._proactive_state.get("last_pattern_analysis", 0.0))
+        _SEVEN_DAYS = 7 * 24 * 3600
+        if (time.time() - last_analysis) < _SEVEN_DAYS:
+            return
+
+        # Additional guard: only run Sunday 22:00-23:00
+        if not self._pattern_learner.should_run_analysis():
+            return
+
+        self._pattern_analysis_pending = True
+        learner = self._pattern_learner
+
+        def _do_analysis() -> None:
+            try:
+                print("[ProactiveEngine] 🧠 Running weekly pattern analysis...", flush=True)
+                learner.analyze_patterns()
+                self.update_state(last_pattern_analysis=time.time())
+                print("[ProactiveEngine] ✅ Behavioral model updated.", flush=True)
+            except Exception as _e:
+                print(f"[ProactiveEngine] ⚠️  Pattern analysis failed: {_e}", flush=True)
+            finally:
+                self._pattern_analysis_pending = False
+
+        threading.Thread(target=_do_analysis, daemon=True, name="PatternAnalysis").start()
+
+    def _check_anticipatory(self) -> None:
+        """
+        Run one anticipatory pre-fetch cycle (low-risk read-only actions).
+
+        Rate-limited to at most once every 5 minutes so it doesn't hammer
+        the filesystem every polling tick.
+        """
+        if self._anticipatory is None:
+            return
+
+        _FIVE_MIN = 300.0
+        if (time.time() - self._last_anticipatory_run) < _FIVE_MIN:
+            return
+
+        self._last_anticipatory_run = time.time()
+        idle_hours = (time.time() - self._last_interaction) / 3600.0
+        anticipatory = self._anticipatory
+
+        try:
+            anticipatory.run_anticipatory_cycle(idle_time_hours=idle_hours)
+        except Exception as _e:
+            print(f"[ProactiveEngine] ⚠️  Anticipatory cycle failed: {_e}", flush=True)
+
+    def _check_auto_executor(self) -> None:
+        """
+        Step 8: AutoExecutor Class A/B/C tick.
+
+        Called every polling cycle. Rate-limited internally by AutoExecutor
+        cooldown table. No additional rate-limiting here — the executor is
+        already cheap when cooldowns are active (all guards return early).
+        """
+        if self._auto_executor is None:
+            return
+        try:
+            self._auto_executor.tick(self)
+        except Exception as _e:
+            print(f"[ProactiveEngine] ⚠️  AutoExecutor tick failed: {_e}", flush=True)
+
+    def _check_insight_synthesizer(self) -> None:
+        """
+        Step 12: Generate and emit proactive insights every 12 hours.
+
+        Spawns a daemon thread to avoid blocking the poll loop.
+        """
+        if self._insight_synthesizer is None:
+            return
+        if self._insight_synthesis_pending:
+            return
+        if self._runtime is None:
+            return
+
+        _TWELVE_HOURS = 12 * 3600
+        last_synthesis = float(self._proactive_state.get("last_insight_synthesis", 0.0))
+        if (time.time() - last_synthesis) < _TWELVE_HOURS:
+            return
+
+        self._insight_synthesis_pending = True
+        synthesizer = self._insight_synthesizer
+
+        def _do_insights() -> None:
+            try:
+                print("[ProactiveEngine] 💡 Running insight synthesis...", flush=True)
+                synthesizer.run_and_emit(self)
+                self.update_state(last_insight_synthesis=time.time())
+                print("[ProactiveEngine] ✅ Insights emitted.", flush=True)
+            except Exception as _e:
+                print(f"[ProactiveEngine] ⚠️  Insight synthesis failed: {_e}", flush=True)
+            finally:
+                self._insight_synthesis_pending = False
+
+        threading.Thread(target=_do_insights, daemon=True, name="InsightSynthesis").start()
 
     def _check_cron_overdue(self) -> None:
         """Check if any cron jobs are significantly overdue."""
@@ -547,10 +1007,15 @@ class ProactiveEngine:
                 if overdue_ms >= overdue_threshold_ms:
                     name = job.get("name", job.get("id", "unknown"))
                     mins = overdue_ms / 60000
-                    self._queue.put(ProactiveEvent(
-                        "cron",
-                        f"🕐 Scheduled task '{name}' is {mins:.0f} min overdue.",
-                        {"job_id": job.get("id"), "overdue_ms": overdue_ms},
-                    ))
+                    self._queue.put(
+                        ProactiveEvent(
+                            kind="cron",
+                            message=f"🕐 Scheduled task '{name}' is {mins:.0f} min overdue.",
+                            data={"job_id": job.get("id"), "overdue_ms": overdue_ms},
+                            priority="medium",
+                            urgency="next_idle",
+                            interruptible=True,
+                        )
+                    )
         except Exception:
             pass

@@ -179,3 +179,36 @@ class FactStore:
     def count(self) -> int:
         with self._conn() as conn:
             return conn.execute("SELECT COUNT(*) FROM facts").fetchone()[0]
+
+    def delete_by_ids(self, ids: List[str]) -> int:
+        """Delete facts by ID. Returns number of deleted rows."""
+        ids = [i for i in ids if i]
+        if not ids:
+            return 0
+        placeholders = ",".join("?" for _ in ids)
+        with self._conn() as conn:
+            cur = conn.execute(f"DELETE FROM facts WHERE id IN ({placeholders})", ids)
+            conn.commit()
+            return int(cur.rowcount or 0)
+
+    def find_by_query(self, query: str, limit: int = 20) -> List[Dict]:
+        """Find candidate facts for forget() using FTS/LIKE ranking."""
+        q = (query or "").strip()
+        if not q:
+            return []
+
+        # First pass: semantic-ish keyword search
+        rows = self.search_keyword(q, limit=limit)
+        if rows:
+            return rows
+
+        # Fallback: strict substring match
+        with self._conn() as conn:
+            like = f"%{q.lower()}%"
+            rows2 = conn.execute(
+                "SELECT id, fact, confidence, interface, timestamp FROM facts "
+                "WHERE lower(fact) LIKE ? "
+                "ORDER BY confidence DESC, timestamp DESC LIMIT ?",
+                (like, limit),
+            ).fetchall()
+        return [dict(r) for r in rows2]

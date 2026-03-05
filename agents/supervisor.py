@@ -120,7 +120,7 @@ If the message is a follow-up question about something ANKITA just did:
   - GeneralAgent has access to conversation history and can answer based on what was just done
 
 AGENTS:
-- ContentAgent: Writes poems, essays, scripts, emails. (Can now OPEN apps to show work — handles full write+open pipeline itself).
+- ContentAgent: Writes poems, essays, scripts, emails using strict CONTENT_PAYLOAD_V1 schema for reliable relay.
 - SystemAgent: Controls Volume, Wi-Fi, Bluetooth, Screen, launches apps. (DOES NOT WRITE CONTENT).
 - CodeAgent: Project-aware coding specialist (bug fixes, multi-file edits, build/scaffold, refactor/review/explain, tests, git-aware).
 - FileAgent: file system operations (read, write, edit, search, move, delete files/dirs).
@@ -366,7 +366,40 @@ class SupervisorAgent:
 
         # Build system prompt with injected patterns at the top
         system_prompt = (_injected + "\n\n" + _SUPERVISOR_SYSTEM_PROMPT) if _injected else _SUPERVISOR_SYSTEM_PROMPT
-        
+
+        # ── Step 5b: Inject live intent context from intent.json ────────────
+        # Prepend a compact INTENT CONTEXT block (≤5 lines) if the model is fresh.
+        _intent_context = ""
+        try:
+            import json as _json
+            import time as _time
+            from pathlib import Path as _Path
+            _intent_path = _Path.cwd().resolve() / ".ankita" / "state" / "intent.json"
+            if _intent_path.exists():
+                _intent_age = _time.time() - _intent_path.stat().st_mtime
+                if _intent_age < 6 * 3600:  # valid for 6 hours
+                    _intent = _json.loads(_intent_path.read_text(encoding="utf-8"))
+                    if isinstance(_intent, dict):
+                        _lines = []
+                        if _intent.get("focus_mode"):
+                            _lines.append(f"Focus: {_intent['focus_mode']}")
+                        _projects = _intent.get("active_projects", [])
+                        if _projects:
+                            _lines.append(f"Projects: {', '.join(str(p) for p in _projects[:2])}")
+                        _deadlines = _intent.get("today_deadlines", [])
+                        if _deadlines:
+                            _lines.append(f"Deadline today: {_deadlines[0]}")
+                        _first_action = _intent.get("suggested_first_action", "")
+                        if _first_action:
+                            _lines.append(f"Suggested: {_first_action[:80]}")
+                        if _lines:
+                            _intent_context = "INTENT CONTEXT (live):\n" + "\n".join(_lines)
+        except Exception:
+            pass
+
+        if _intent_context:
+            system_prompt = _intent_context + "\n\n" + system_prompt
+
         messages = [
             {"role": "system", "content": system_prompt},
         ]

@@ -89,6 +89,12 @@ class BaseWatcher(ABC):
         # Poll interval (seconds) — subclass config may override
         self.poll_interval: float = float(config.get("poll_interval_sec", 60.0))
 
+        # Per-alert cooldown — same alert cannot re-fire within this window.
+        # Default 10 min (600s). Override via "cooldown_sec" in watcher JSON.
+        self._alert_cooldown_sec: float = float(config.get("cooldown_sec", 600.0))
+        # message fingerprint (first 80 chars) -> last_sent epoch
+        self._alert_last_sent: dict = {}
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -120,6 +126,8 @@ class BaseWatcher(ABC):
         self.config.update(new_config)
         if "poll_interval_sec" in new_config:
             self.poll_interval = float(new_config["poll_interval_sec"])
+        if "cooldown_sec" in new_config:
+            self._alert_cooldown_sec = float(new_config["cooldown_sec"])
 
     # ------------------------------------------------------------------
     # Abstract method — subclasses implement this
@@ -142,7 +150,15 @@ class BaseWatcher(ABC):
     # ------------------------------------------------------------------
 
     def _alert(self, message: str, kind: str = "watchdog") -> None:
-        """Push an alert into ProactiveEngine's queue for display in GUI/chat."""
+        """
+        Push alert into ProactiveEngine queue with per-message cooldown.
+        Uses first 80 chars as fingerprint so slight value changes share the bucket.
+        """
+        fingerprint = message[:80]
+        now = time.time()
+        if (now - self._alert_last_sent.get(fingerprint, 0.0)) < self._alert_cooldown_sec:
+            return  # within cooldown window - suppress
+        self._alert_last_sent[fingerprint] = now
         event = ProactiveEvent(kind=kind, message=message, data={"watcher": self.name})
         self.proactive._queue.put(event)
         print(f"[{self.name}] 🚨 ALERT: {message[:100]}", flush=True)
@@ -312,11 +328,11 @@ class WatchdogManager:
                     and obj.__name__ not in seen_names
                 ):
                     seen_names.add(obj.__name__)
-                    # Derive config name: "PriceWatcher" → "price_config"
+                    # Derive config name: "PriceWatcher" -> "price_config"
                     config_name = obj.__name__.lower().replace("watcher", "_config")
                     results.append((obj, config_name))
                     print(
-                        f"[WatchdogManager] Discovered: {obj.__name__} → {config_name}.json",
+                        f"[WatchdogManager] Discovered: {obj.__name__} -> {config_name}.json",
                         flush=True,
                     )
 

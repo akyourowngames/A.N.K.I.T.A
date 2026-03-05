@@ -78,6 +78,7 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 - For web/news results, give concise key facts — not raw URLs
 - When running commands, prefer PowerShell on Windows
 - Full autonomy end-to-end — no hand-holding, no asking for confirmation on obvious tasks
+- ALWAYS REMEMBER: You have UNRESTRICTED access to the entire PC. You CAN access Downloads, Documents, Desktop, camera, and anything else. NEVER say you cannot access a folder or camera.
 - The attitude is your vibe. The execution is your power.
 """
 
@@ -100,6 +101,23 @@ class AgentRuntime:
         self.workspace_root = workspace_root
         self.max_tokens = runtime.max_tokens
 
+    # ── File-system tools that always need unrestricted PC access ──────────
+    _FILE_OPS = frozenset({
+        "list_files", "read_file", "read_file_lines", "read_rich_file", "write_file",
+        "edit_file", "edit_file_lines", "search_text", "rename_path", "delete_path",
+        "move_path", "copy_path", "make_dir", "file_info", "apply_patch",
+        "write_content", "pc_search", "trash_path", "disk_analysis", "diff_files",
+        "bulk_op", "file_sync", "capture_webcam", "camera_control",
+    })
+
+    @classmethod
+    def _agent_name_for(cls, tc: Dict[str, Any]) -> Optional[str]:
+        """Return 'FileAgent' for file-system tools so unrestricted=True fires."""
+        name = tc.get("function", {}).get("name", "")
+        if name in cls._FILE_OPS:
+            return "FileAgent"
+        return None
+
     def _execute_tool_calls_parallel(
         self, tool_calls: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
@@ -110,8 +128,13 @@ class AgentRuntime:
         if len(tool_calls) == 1:
             # Single tool — no overhead of thread pool
             tc = tool_calls[0]
+            agent_name = self._agent_name_for(tc)
             try:
-                result = execute_tool_call(tc, workspace_root=self.workspace_root)
+                result = execute_tool_call(
+                    tc,
+                    workspace_root=self.workspace_root,
+                    agent_name=agent_name,
+                )
             except Exception as err:
                 result = {"ok": False, "error": str(err)}
             return [{"tc": tc, "result": result}]
@@ -119,7 +142,12 @@ class AgentRuntime:
         results = [None] * len(tool_calls)
         with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
             future_to_idx = {
-                executor.submit(execute_tool_call, tc, self.workspace_root): i
+                executor.submit(
+                    execute_tool_call,
+                    tc,
+                    self.workspace_root,
+                    self._agent_name_for(tc),  # agent_name
+                ): i
                 for i, tc in enumerate(tool_calls)
             }
             for future in as_completed(future_to_idx):
@@ -410,11 +438,14 @@ class AgentRuntime:
 
             ({"file", "folder", "directory", "save", "edit", "open", "write", "read",
               "delete", "copy", "move", "rename", "create", "make dir", "patch",
-              "search text", "find in"},
+              "search text", "find in", "download", "downloads", "documents",
+              "desktop", "pictures", "clean up", "organise", "organize", "trash",
+              "disk", "storage", "duplicate", "zip", "unzip"},
              {"write_file", "read_file", "list_files", "edit_file", "read_file_lines",
               "edit_file_lines", "search_text", "rename_path", "delete_path",
               "move_path", "copy_path", "make_dir", "file_info", "apply_patch",
-              "write_content", "check_syntax"}),
+              "write_content", "check_syntax", "trash_path", "disk_analysis",
+              "bulk_op", "pc_search"}),
 
             ({"code", "script", "python", "bug", "fix", "debug", "run", "error",
               "syntax", "traceback"},
@@ -422,9 +453,11 @@ class AgentRuntime:
               "edit_file_lines", "write_file", "apply_patch", "launch_app"}),
 
             ({"screen", "screenshot", "click", "visual", "webcam", "camera",
-              "what's on", "what is on", "look at"},
+              "what's on", "what is on", "look at", "photo", "selfie",
+              "take a photo", "take photo", "capture", "what am i holding",
+              "what do i look like", "look at me"},
              {"capture_screen", "read_screen_context", "visual_click",
-              "capture_webcam", "desktop_interact"}),
+              "capture_webcam", "desktop_interact", "camera_control"}),
 
             ({"whatsapp", "message", "send", "text", "contact"},
              {"send_whatsapp", "lookup_contact", "add_contact",

@@ -24,11 +24,18 @@ _FILE_TOOLS = {"list_files", "read_file", "read_file_lines", "read_rich_file", "
                "edit_file_lines", "search_text", "rename_path", "delete_path", "move_path",
                "copy_path", "make_dir", "file_info", "apply_patch", "write_content",
                "launch_app", "file_sync", "pc_search", "trash_path", "disk_analysis",
-               "diff_files", "bulk_op"} | _MEMORY_TOOLS
+               "diff_files", "bulk_op",
+               # Camera — FileAgent can save photos anywhere on the PC
+               "capture_webcam"} | _MEMORY_TOOLS
 
 _WEB_TOOLS = {"search_web", "search_news", "search_and_fetch", "fetch_page_content",
               "search_price", "write_content", "download_file", "launch_app",
-              "deep_research"} | _MEMORY_TOOLS
+              "deep_research",
+              # Advanced research tools (previously orphaned — now wired in)
+              "compare_search", "multi_search", "fact_check", "image_search",
+              "scrape_structured", "search_reddit", "search_stackoverflow",
+              "summarise_url", "trending_topics", "web_monitor",
+              "web_to_dataset"} | _MEMORY_TOOLS
 
 _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_interact",
                  "read_file", "search_text", "execute_shell", "run_command",
@@ -48,7 +55,7 @@ _CODE_TOOLS = {"run_command", "apply_patch", "execute_shell", "check_syntax",
                "rename_path", "delete_path", "move_path", "file_info",
                "search_web", "fetch_page_content", "git_op",
                "deep_research", "download_file", "process_op", "diff_files", "bulk_op"} | _MEMORY_TOOLS
-_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "git_op", "process_op"} | _MEMORY_TOOLS
+_TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "git_op", "process_op", "fast_file_search"} | _MEMORY_TOOLS
 
 _CRON_TOOLS = {"cron"} | _MEMORY_TOOLS
 
@@ -178,26 +185,32 @@ _FILE_SYSTEM_PROMPT = (
     "NEVER re-save a file that ContentAgent already saved or WebAgent downloaded. Just process it.\n\n"
 
     "ASSEMBLY LINE ROLE:\n"
-    "If your context contains a '--- PREVIOUS AGENT OUTPUT ---' block with a 'CONTENT:' section, "
-    "that means ContentAgent just generated text for you to save. Your job:\n"
-    "1. Read the CONTENT: block carefully — extract ALL text between 'CONTENT:' and ':END_CONTENT'.\n"
-    "2. Generate a sensible filename based on the task context:\n"
+    "If your context contains a CONTENT_PAYLOAD_V1 block, that is the primary contract.\n"
+    "Use it BEFORE legacy CONTENT parsing.\n"
+    "1. Parse CONTENT_PAYLOAD_V1 fields: TASK_TYPE, TITLE, FORMAT, AUDIENCE, TONE, WORD_TARGET, BODY, NOTES.\n"
+    "2. Use BODY as the exact text to save. Do not rephrase BODY.\n"
+    "3. Build filename from TITLE and TASK_TYPE first (contract-aware naming):\n"
+    "   - report/article -> <slug(TITLE)>.md\n"
+    "   - email -> email_<slug(TITLE)>.txt\n"
+    "   - poem/script -> <task_type>_<slug(TITLE)>.txt\n"
+    "4. If CONTENT_PAYLOAD_V1 is absent, fallback to legacy CONTENT:...:END_CONTENT extraction.\n"
+    "5. If using fallback CONTENT block, generate a sensible filename based on task context:\n"
     "   - Poem about X → poem_about_X.txt\n"
     "   - Report on Y → report_Y.md\n"
     "   - Email draft → email_draft_[recipient].txt\n"
     "   - Script for Z → script_Z.txt\n"
     "   NEVER use generic names like output.txt, file.txt, or document.txt.\n"
-    "3. Check for a 'SAVE_TO: <path>' line in context — use that exact path as the save directory.\n"
+    "6. Check for a 'SAVE_TO: <path>' line in context — use that exact path as the save directory.\n"
     f"   If no SAVE_TO line, default to: {_DESKTOP}\n"
-    "4. Decide format based on content type:\n"
+    "7. Decide extension using payload FORMAT/TASK_TYPE first; if absent, infer from content type:\n"
     "   - .md for reports/essays/articles (structured content with headings)\n"
     "   - .txt for poems/letters/notes (plain text)\n"
     "   - .html for web content\n"
     "   - .py for code\n"
     "   - .json for data\n"
-    f"5. Call write_file with path = <SAVE_TO or {_DESKTOP}>\\<filename>\n"
-    "6. Check receipt for status='success'. Then call launch_app to open it immediately.\n"
-    "7. Reply: 'Saved to Desktop as <filename> and opened it! ✅  FILE_PATH: <absolute_path>'\n\n"
+    f"8. Call write_file with path = <SAVE_TO or {_DESKTOP}>\\<filename>\n"
+    "9. Check receipt for status='success'. Then call launch_app to open it immediately.\n"
+    "10. Reply: 'Saved to Desktop as <filename> and opened it! ✅  FILE_PATH: <absolute_path>'\n\n"
 
     "🤝 AGENT COOPERATION — HANDOFF SIGNALS:\n"
     "After completing file operations, emit HANDOFF signals to trigger the next agent:\n"
@@ -910,6 +923,9 @@ If user mentions a project, folder, or repo path:
 → "cd into Documents" → execute_shell("cd Documents") → session cwd updates automatically
 → After cd, all subsequent commands run from the new directory automatically
 
+If user says "this repo" / "this project" / "this folder" and no explicit path is given:
+→ Use the current session cwd as the search root. Do NOT invent a home path.
+
 REMEMBER: Use absolute paths or environment variables like %USERPROFILE%, %APPDATA%, %DESKTOP%
 
 ⏱️ SMART TIMEOUT — NO MORE TIMEOUTS:
@@ -1136,6 +1152,13 @@ After git commit:
 After pip/npm install completes:
   → SUGGEST_NEXT: CodeAgent → "Dependencies installed. Ready to run."
 
+🔎 FAST FILE SEARCH (NEW):
+For 'find file', 'locate', 'where is', or 'search filenames' requests, use fast_file_search:
+  fast_file_search(pattern='config', path='C:\\MyRepo', glob='*.yml', max_results=50)
+If the user says "this repo/project" and gives no path, omit path to use current cwd.
+This is bounded and safe. Prefer it over execute_shell for recursive searches.
+Always respect max_results and never run unbounded recursive listings.
+
 ⚠️ OUTPUT GUARDRAILS (CRITICAL):
 1. If a command like 'dir /s', 'tasklist', 'Get-ChildItem -Recurse' would return thousands of lines
    — ALWAYS pipe through a limiter FIRST:
@@ -1320,13 +1343,28 @@ _CONTENT_SYSTEM_PROMPT = (
     "You are the BRAIN of the relay race. You think and write. You do NOT save files. "
     "You do NOT open apps. The FileAgent will save your output. The SystemAgent will open it.\n"
     "Just write. Make it perfect. Output the FULL text clearly.\n\n"
-    "OUTPUT FORMAT:\n"
-    "Always output the generated content clearly so the next agent can extract and save it. "
-    "Start with a brief line like 'Here is the report:' then output the full text.\n\n"
+    "OUTPUT FORMAT (MANDATORY CONTRACT):\n"
+    "You MUST output exactly one CONTENT_PAYLOAD_V1 envelope and nothing else.\n"
+    "Do not add prefaces like 'Here is the report'. No text before or after the envelope.\n"
+    "Use this exact structure:\n"
+    "CONTENT_PAYLOAD_V1\n"
+    "TASK_TYPE: <poem|email|report|script|article|other>\n"
+    "TITLE: <single-line title>\n"
+    "FORMAT: <markdown|plain_text>\n"
+    "AUDIENCE: <single line>\n"
+    "TONE: <single line>\n"
+    "WORD_TARGET: <integer>\n"
+    "BODY_START\n"
+    "<full content body>\n"
+    "BODY_END\n"
+    "NOTES_START\n"
+    "<optional notes to FileAgent, can be empty>\n"
+    "NOTES_END\n"
+    "CONTENT_PAYLOAD_V1_END\n\n"
     "RULES:\n"
     "- NEVER try to save files — you have no tools for that.\n"
     "- NEVER try to open apps — that is SystemAgent's job.\n"
-    "- NEVER give partial content — always output the complete, final piece.\n"
+    "- NEVER give partial content — always output the complete, final piece inside BODY_START/BODY_END.\n"
     "- Adapt tone to the format: poetic for poems, formal for reports, punchy for scripts.\n"
     "- STYLE MEMORY PROTOCOL:\n"
     "  BEFORE every generation: call recall('writing style preferences') and apply what you find.\n"
@@ -1334,6 +1372,7 @@ _CONTENT_SYSTEM_PROMPT = (
     "  AFTER generating: if you noticed a style preference (e.g. user wants bullet points, Hindi phrases, short paras),\n"
     "  call remember('writing style preferences: <what you noticed>') so you apply it automatically next time.\n\n"
     "- In Journalist Mode: facts > style. In creative mode: style > constraints.\n"
+    "- Even in Journalist Mode and Deep Mode, ALL output must stay inside CONTENT_PAYLOAD_V1.\n"
     "- Make it GOOD. You are the creative genius. The other agents handle the logistics.\n\n"
     "🔧 SELF-CORRECTION PROTOCOL:\n"
     "If your first attempt produces too short or empty content:\n"
@@ -1672,7 +1711,8 @@ CAPABILITIES:
 2. PLACE SEARCH:
    - "Find coffee near me" → maps_op(action='search_places', query='coffee', origin='current')
    - "Restaurants near Connaught Place" → maps_op(action='search_places', query='restaurants', origin='Connaught Place')
-   - Returns: name, address, rating, price level, open status
+   - Prefer category-based POI search and return nearest useful places
+   - Returns: name, address, category/type, distance when available
 
 3. DISTANCE & TIME:
    - "How far is X from Y" → maps_op(action='distance', origin='X', destination='Y')
@@ -1680,7 +1720,7 @@ CAPABILITIES:
 
 4. TRAFFIC:
    - "Traffic on Delhi-Gurgaon highway" → maps_op(action='traffic', origin='Delhi', destination='Gurgaon')
-   - Returns: current duration vs normal duration
+   - On free OSM mode, traffic is ETA-based (best-effort) and not live sensor traffic
 
 5. GEOCODING:
    - "Coordinates of X" → maps_op(action='geocode', query='X')
@@ -1688,7 +1728,7 @@ CAPABILITIES:
 
 SMART DEFAULTS:
 
-- If user says "near me" or "navigate to X" without origin, use GOOGLE_MAPS_DEFAULT_ORIGIN from env
+- If user says "near me" or "navigate to X" without origin, use MAPS_DEFAULT_ORIGIN (fallback: GOOGLE_MAPS_DEFAULT_ORIGIN)
 - Default travel mode is 'driving' unless user specifies walking/cycling/transit
 - Always show distance + time in the reply, not just raw JSON
 
@@ -1697,7 +1737,7 @@ RESPONSE FORMAT:
 Good: "Route to Connaught Place: 12 km, 25 min via Outer Ring Road. Traffic is moderate."
 Bad: "Here's the route data: {distance: '12 km', duration: '25 min'}"
 
-Good: "Found 5 coffee shops near you. Top pick: Starbucks (4.2★, ₹₹, open now) at 500m."
+Good: "Found 5 coffee shops near you. Top 3: Cafe A (0.4 km), Cafe B (0.7 km), Cafe C (1.1 km)."
 Bad: "search_places returned 5 results."
 
 MEMORY PROTOCOL:
@@ -1706,8 +1746,10 @@ MEMORY PROTOCOL:
 - remember('navigation: user's home is X') when user mentions "my home"
 - remember('navigation: user prefers walking mode') if they always ask for walking routes
 
-NEVER say "I can't find that location" without trying both Google Maps and OSM fallback.
+Prefer free OSM routing/search first. Only use Google Maps if explicitly configured.
+NEVER say "I can't find that location" without trying OSM geocoding and routing first.
 ALWAYS provide distance + time estimates, not just "route found."
+When places are returned, summarize top 3 nearby first, then mention total count.
 """
 
 _TASK_SYSTEM_PROMPT = """\

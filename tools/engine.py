@@ -3,6 +3,7 @@ import sys
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+from memory import get_memory_manager
 
 from . import content_ops
 from . import cron_ops
@@ -117,6 +118,53 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "limit": {"type": "integer"},
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "remember",
+            "description": "Store a durable memory fact or preference for future turns.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "fact": {"type": "string", "description": "Fact to remember, e.g. 'user prefers markdown reports'."},
+                    "key": {"type": "string", "description": "Optional key/category label, e.g. 'music preferences'."},
+                    "value": {"type": "string", "description": "Optional value for key-value memory."},
+                    "interface": {"type": "string", "description": "Optional source tag, default 'tool'."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "recall",
+            "description": "Retrieve relevant stored memories by query, or recent memories if query omitted.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "What to recall, e.g. 'music preferences'."},
+                    "limit": {"type": "integer", "description": "Maximum items to return (default 8)."},
+                },
+                "required": [],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "forget",
+            "description": "Delete memories matching a query.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Query used to find memories to delete."},
+                    "limit": {"type": "integer", "description": "Maximum matches to delete (default 20)."},
+                },
+                "required": ["query"],
             },
         },
     },
@@ -514,6 +562,24 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "pid": {"type": "integer", "description": "Process ID (for kill_background, is_running)"},
                 },
                 "required": ["action"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "fast_file_search",
+            "description": "Fast, bounded file search by name/path pattern. Uses ripgrep if available; falls back to PowerShell. Returns structured results.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pattern": {"type": "string", "description": "Regex pattern to match against full path strings."},
+                    "path": {"type": "string", "description": "Root directory to search (defaults to workspace root if omitted)."},
+                    "glob": {"type": "string", "description": "Optional glob filter (e.g., '*.py')."},
+                    "max_results": {"type": "integer", "description": "Maximum results to return (default 50, max 200)."},
+                    "case_sensitive": {"type": "boolean", "description": "Whether pattern matching is case-sensitive (default false)."},
+                },
+                "required": ["pattern"],
             },
         },
     },
@@ -1699,7 +1765,8 @@ TOOL_SPECS: List[Dict[str, Any]] = [
             "name": "maps_op",
             "description": (
                 "Maps and navigation operations: get routes, search places, calculate distances, "
-                "check traffic, geocode addresses. Supports Google Maps API and OpenStreetMap fallback."
+                "check traffic, geocode addresses. Uses free OpenStreetMap services by default; "
+                "Google Maps is optional when configured."
             ),
             "parameters": {
                 "type": "object",
@@ -1907,6 +1974,35 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             mode=str(args.get("mode", "due")),
             limit=int(args.get("limit", 20)),
         )
+    if name == "remember":
+        mem = get_memory_manager(workspace_root)
+        key = str(args.get("key", "")).strip()
+        value = str(args.get("value", "")).strip()
+        fact = str(args.get("fact", "")).strip()
+        if not fact and key and value:
+            fact = f"{key}: {value}"
+        return mem.remember(
+            fact=fact,
+            interface=str(args.get("interface", "tool")),
+        )
+    if name == "recall":
+        mem = get_memory_manager(workspace_root)
+        rows = mem.recall(
+            query=str(args.get("query", "")),
+            limit=int(args.get("limit", 8)),
+        )
+        return {
+            "kind": "memory_recall",
+            "query": str(args.get("query", "")),
+            "count": len(rows),
+            "items": rows,
+        }
+    if name == "forget":
+        mem = get_memory_manager(workspace_root)
+        return mem.forget(
+            query=str(args.get("query", "")),
+            limit=int(args.get("limit", 20)),
+        )
     if name == "search_web":
         return realtime_search.search_web(
             query=str(args.get("query", "")),
@@ -1990,6 +2086,14 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             command=str(args.get("command", "")),
             timeout=int(args.get("timeout")) if args.get("timeout") is not None else None,
             cwd=str(args.get("cwd")) if args.get("cwd") is not None else None,
+        )
+    if name == "fast_file_search":
+        return terminal_ops.fast_file_search(
+            pattern=str(args.get("pattern", "")),
+            path=str(args.get("path")) if args.get("path") is not None else None,
+            glob=str(args.get("glob")) if args.get("glob") is not None else None,
+            max_results=int(args.get("max_results", 50)),
+            case_sensitive=bool(args.get("case_sensitive", False)),
         )
     if name == "run_command":
         env = args.get("env")

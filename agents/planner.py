@@ -28,6 +28,9 @@ AVAILABLE AGENTS AND WHAT THEY DO:
 - ScreenAgent: visual tasks, click elements, read screen
 - IntegrationAgent: Google Sheets, YouTube, Figma
 - WatchdogAgent: monitor pages, track prices, watch files
+- NavigatorAgent: maps navigation, route planning, distance and traffic checks
+- TaskAgent: create/list/update/complete tasks and deadlines
+- ReportAgent: generate structured operational or status reports
 
 PLAN FORMAT:
 Output ONLY valid JSON:

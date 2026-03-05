@@ -10,6 +10,7 @@ Embedding:  ChromaDB's built-in default (all-MiniLM-L6-v2 via sentence-transform
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import List, Optional
 
@@ -22,6 +23,17 @@ _chroma_available: Optional[bool] = None
 def _try_import_chroma():
     global _chroma_available
     if _chroma_available is not None:
+        return _chroma_available
+    # Chroma's embedding stack (onnxruntime) is unstable on some Windows setups.
+    # Keep semantic memory opt-in there; SQLite memory remains fully functional.
+    env_override = os.getenv("ANKITA_ENABLE_CHROMA", "").strip().lower()
+    if env_override in {"0", "false", "no", "off"}:
+        _chroma_available = False
+        logger.info("[VectorStore] Chroma disabled via ANKITA_ENABLE_CHROMA.")
+        return _chroma_available
+    if os.name == "nt" and env_override not in {"1", "true", "yes", "on"}:
+        _chroma_available = False
+        logger.info("[VectorStore] Chroma disabled by default on Windows; set ANKITA_ENABLE_CHROMA=1 to enable.")
         return _chroma_available
     try:
         import chromadb  # noqa: F401
@@ -54,10 +66,7 @@ class VectorStore:
                     name="ankita_facts",
                     metadata={"hnsw:space": "cosine"},
                 )
-                logger.info(
-                    "[VectorStore] ChromaDB ready — %d facts indexed.",
-                    self._collection.count(),
-                )
+                logger.info("[VectorStore] ChromaDB ready.")
             except Exception as exc:
                 logger.warning("[VectorStore] ChromaDB init failed (%s) — SQLite fallback active.", exc)
                 self._client = None
@@ -116,10 +125,7 @@ class VectorStore:
         if not self.available:
             return []
         try:
-            count = self._collection.count()
-            if count == 0:
-                return []
-            n = min(n_results, count)
+            n = max(1, int(n_results))
             results = self._collection.query(
                 query_texts=[query],
                 n_results=n,
@@ -140,7 +146,6 @@ class VectorStore:
     def count(self) -> int:
         if not self.available:
             return 0
-        try:
-            return self._collection.count()
-        except Exception:
-            return 0
+        # Avoid direct count() calls; in some Windows setups they can crash
+        # the process inside chromadb's native bindings.
+        return -1

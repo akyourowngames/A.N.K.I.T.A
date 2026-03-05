@@ -24,6 +24,77 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 
+# ---------------------------------------------------------------------------
+# Module-level helpers used by _manage_environment
+# ---------------------------------------------------------------------------
+
+# Module-level queue reference — set by ProactiveEngine.start()
+# so _manage_environment can push events without a circular import.
+_PROACTIVE_QUEUE_REF: Any = None
+
+
+def _set_proactive_queue(q: Any) -> None:
+    """Called by ProactiveEngine to inject a queue reference."""
+    global _PROACTIVE_QUEUE_REF
+    _PROACTIVE_QUEUE_REF = q
+
+
+def _push_proactive_event(event: Any) -> None:
+    """Push a ProactiveEvent into the engine queue if available."""
+    if _PROACTIVE_QUEUE_REF is not None:
+        try:
+            _PROACTIVE_QUEUE_REF.put(event)
+        except Exception:
+            pass
+
+
+def _hour_in_range(hour: int, time_range: str) -> bool:
+    """
+    Return True if `hour` falls within `time_range` (format: "HH:MM-HH:MM").
+
+    Args:
+        hour: Integer hour (0-23)
+        time_range: Range string like "09:00-12:00"
+    """
+    try:
+        start_str, end_str = time_range.split("-")
+        start_hour = int(start_str.split(":")[0])
+        end_hour = int(end_str.split(":")[0])
+        if start_hour <= end_hour:
+            return start_hour <= hour < end_hour
+        # Overnight range (e.g. "22:00-02:00")
+        return hour >= start_hour or hour < end_hour
+    except (ValueError, AttributeError):
+        return False
+
+
+def _log_auto_action(state_dir: Path, cls: str, action: str, desc: str) -> None:
+    """Append to auto_actions_log.json (best-effort)."""
+    try:
+        log_file = state_dir / "auto_actions_log.json"
+        entry = {
+            "timestamp": datetime.now().isoformat(),
+            "class": cls,
+            "action": action,
+            "description": desc[:200],
+        }
+        log: List[Dict[str, Any]] = []
+        if log_file.exists():
+            try:
+                raw = log_file.read_text(encoding="utf-8")
+                loaded = json.loads(raw)
+                if isinstance(loaded, list):
+                    log = loaded
+            except Exception:
+                pass
+        log.append(entry)
+        if len(log) > 200:
+            log = log[-200:]
+        log_file.write_text(json.dumps(log, indent=2, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
 class AnticipatoryActionSystem:
     """
     Pre-executes low-risk actions based on behavioral and intent models.
@@ -533,6 +604,90 @@ class AnticipatoryActionSystem:
             # Only pre-fetch if not already cached
             if not self.get_cached_action("watchdog_summary"):
                 self._prefetch_watchdog_summary()
+
+        # Step 11: Environment management (deep_work music + health reminder)
+        self._manage_environment(intent_model, behavioral_model)
+
+    def _manage_environment(
+        self,
+        intent_model: Optional[Dict[str, Any]],
+        behavioral_model: Dict[str, Any],
+    ) -> None:
+        """
+        Step 11: Environment management based on focus_mode and coding time.
+
+        Rules:
+          1. focus_mode == "deep_work" → suggest lofi music (once per session, low priority).
+          2. Continuous active coding > 2h → emit a health/break reminder (medium priority).
+
+        All suggestions are emitted as ProactiveEvents via a lightweight
+        module-level _proactive_queue probe, logged to auto_actions_log.json.
+        """
+        now = datetime.now()
+        _HEALTH_KEY = "health_reminder"
+        _MUSIC_KEY = "deep_work_music"
+
+        # --- Guard: only emit each nudge once per 2 hours via cache ---
+        health_entry = self._cache.get(_HEALTH_KEY)
+        music_entry = self._cache.get(_MUSIC_KEY)
+
+        # 1. Deep-work music suggestion
+        focus_mode = (intent_model or {}).get("focus_mode", "")
+        if focus_mode == "deep_work":
+            if not (music_entry and self._is_cache_fresh(music_entry)):
+                try:
+                    from proactive_models import ProactiveEvent  # type: ignore
+                    msg = (
+                        "🎵 Deep-work mode detected. Want me to start some lofi music "
+                        "to keep you in flow? (say 'play lofi')"
+                    )
+                    _push_proactive_event(ProactiveEvent(
+                        kind="auto_action",
+                        message=msg,
+                        data={"action": "deep_work_music"},
+                        priority="low",
+                        urgency="next_idle",
+                        interruptible=False,
+                    ))
+                    self._cache_action(_MUSIC_KEY, {"suggested": True})
+                    _log_auto_action(self.state_dir, "A", "deep_work_music", msg)
+                    print("[AnticipatoryActionSystem] 🎵 Deep-work music suggestion emitted.", flush=True)
+                except Exception as _e:
+                    print(f"[AnticipatoryActionSystem] ⚠️  Music suggestion failed: {_e}", flush=True)
+
+        # 2. Health/break reminder after 2h of continuous work
+        peak_coding_hours = behavioral_model.get("peak_coding_hours", [])
+        current_hour = now.hour
+        in_peak = any(
+            _hour_in_range(current_hour, r) for r in peak_coding_hours
+        )
+
+        if in_peak and not (health_entry and self._is_cache_fresh(health_entry)):
+            # Rate-limit: TTL of 2 hours for health reminder
+            try:
+                from proactive_models import ProactiveEvent  # type: ignore
+                msg = (
+                    "🧘 You've been coding for a while. Time for a short break — "
+                    "stand up, stretch, and grab some water! 💧"
+                )
+                _push_proactive_event(ProactiveEvent(
+                    kind="auto_action",
+                    message=msg,
+                    data={"action": "health_reminder"},
+                    priority="medium",
+                    urgency="next_idle",
+                    interruptible=False,
+                ))
+                self._cache[_HEALTH_KEY] = {
+                    "cached_at": now.isoformat(),
+                    "ttl_sec": 7200,  # 2 hours
+                    "data": {"reminded": True},
+                }
+                self._save_cache()
+                _log_auto_action(self.state_dir, "B", "health_reminder", msg)
+                print("[AnticipatoryActionSystem] 🧘 Health reminder emitted.", flush=True)
+            except Exception as _e:
+                print(f"[AnticipatoryActionSystem] ⚠️  Health reminder failed: {_e}", flush=True)
     
     def clear_cache(self) -> None:
         """

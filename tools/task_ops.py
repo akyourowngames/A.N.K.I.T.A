@@ -62,6 +62,8 @@ def task_op(
             return _get_overdue_tasks()
         elif action == "summary":
             return _get_summary()
+        elif action == "predict_deadlines":
+            return _predict_deadlines()
         else:
             return {"status": "error", "error": f"Unknown action: {action}"}
     
@@ -365,4 +367,144 @@ def _get_summary() -> Dict[str, Any]:
         "by_status": by_status,
         "by_priority": by_priority,
         "overdue": overdue_count
+    }
+
+
+# ---------------------------------------------------------------------------
+# Step 10: Deadline Cascade Predictor
+# ---------------------------------------------------------------------------
+
+# Empirical duration estimates per priority (in hours).
+# These are starting heuristics; they will be tuned by BehavioralPatternLearner
+# output once a behavioral_model.json is available.
+_BASE_DURATION_HOURS: Dict[str, float] = {
+    "urgent": 1.5,
+    "high": 3.0,
+    "medium": 6.0,
+    "low": 12.0,
+}
+
+
+def estimate_task_duration(
+    title: str,
+    tags: Optional[List[str]] = None,
+    priority: str = "medium",
+) -> float:
+    """
+    Estimate how many hours a task will take, given its title, tags,
+    and priority.
+
+    Checks behavioral_model.json for user-specific averages first;
+    falls back to priority-based heuristics.
+
+    Returns:
+        Estimated duration in hours (float ≥ 0.5).
+    """
+    # Try to load user's empirical averages from behavioral model
+    try:
+        behavioral_model_path = Path.home() / ".ankita" / "state" / "behavioral_model.json"
+        if behavioral_model_path.exists():
+            model = json.loads(behavioral_model_path.read_text(encoding="utf-8"))
+            if isinstance(model, dict):
+                type_durations: Dict[str, float] = model.get("average_durations_hours", {})
+                # Classify task type from priority / tags
+                tag_set = set(t.lower() for t in (tags or []))
+                if "code" in tag_set or "dev" in tag_set:
+                    if "code" in type_durations:
+                        return max(0.5, float(type_durations["code"]))
+                if "write" in tag_set or "content" in tag_set or "blog" in tag_set:
+                    if "write" in type_durations:
+                        return max(0.5, float(type_durations["write"]))
+                if "research" in tag_set or "search" in tag_set:
+                    if "search" in type_durations:
+                        return max(0.5, float(type_durations["search"]))
+    except Exception:
+        pass
+
+    return max(0.5, _BASE_DURATION_HOURS.get(priority.lower(), 6.0))
+
+
+def _predict_deadlines() -> Dict[str, Any]:
+    """
+    Deadline cascade predictor — identify tasks likely to slip.
+
+    For each pending/in-progress task with a deadline, computes:
+        remaining_hours = deadline - now
+        duration_estimate = estimate_task_duration(title, tags, priority)
+        slack_hours = remaining_hours - duration_estimate
+        at_risk = slack_hours < 2
+
+    Returns a ranked list of at-risk tasks with recommendations.
+
+    Usage:
+        result = task_op(action="predict_deadlines")
+    """
+    tasks = _load_tasks()
+    now = datetime.now()
+
+    predictions: List[Dict[str, Any]] = []
+
+    for task in tasks:
+        if task.get("status") not in ("pending", "in_progress"):
+            continue
+        if not task.get("deadline"):
+            continue
+
+        try:
+            deadline_dt = datetime.strptime(task["deadline"], "%Y-%m-%d %H:%M")
+        except (ValueError, TypeError):
+            continue
+
+        remaining_hours = (deadline_dt - now).total_seconds() / 3600.0
+        if remaining_hours < 0:
+            # Already overdue — the overdue action handles this
+            continue
+
+        priority = task.get("priority", "medium")
+        tags = task.get("tags", [])
+        title = task.get("title", "")
+
+        duration_est = estimate_task_duration(title, tags, priority)
+        slack_hours = remaining_hours - duration_est
+        at_risk = slack_hours < 2.0  # Less than 2h of runway
+
+        if at_risk:
+            # Generate a short recommendation
+            if slack_hours < 0:
+                recommendation = (
+                    f"Start immediately — you need ~{duration_est:.0f}h but have only "
+                    f"{remaining_hours:.0f}h remaining."
+                )
+            elif slack_hours < 1:
+                recommendation = (
+                    f"Very tight — only {slack_hours:.1f}h slack. Begin now."
+                )
+            else:
+                recommendation = (
+                    f"{slack_hours:.1f}h slack remaining. Consider starting soon."
+                )
+
+            predictions.append({
+                "id": task["id"],
+                "title": title,
+                "deadline": task["deadline"],
+                "priority": priority,
+                "remaining_hours": round(remaining_hours, 1),
+                "estimated_duration_hours": round(duration_est, 1),
+                "slack_hours": round(slack_hours, 1),
+                "at_risk": at_risk,
+                "recommendation": recommendation,
+            })
+
+    # Sort: most at-risk (least slack) first
+    predictions.sort(key=lambda x: x["slack_hours"])
+
+    return {
+        "status": "success",
+        "at_risk_count": len(predictions),
+        "predictions": predictions,
+        "message": (
+            f"{len(predictions)} task(s) at risk of missing their deadlines."
+            if predictions else "All deadlines look healthy — no tasks at risk."
+        ),
     }

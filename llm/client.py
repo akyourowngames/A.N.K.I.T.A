@@ -17,8 +17,11 @@ GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_DEVICE_TOKEN_URL = "https://github.com/login/oauth/access_token"
 GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 
+GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
+
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
 DEFAULT_COPILOT_MODEL = "gpt-4o"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_MAX_TOKENS = 2048  # 120 was far too low — tool call JSON alone can exceed 300 tokens
 _HTTP = requests.Session()
 
@@ -244,8 +247,24 @@ def _exchange_github_to_copilot_token(github_token: str, cache_file: Path) -> Di
 
 def build_runtime_from_env() -> LLMRuntime:
     provider = os.getenv("LLM_PROVIDER", "groq").strip().lower() or "groq"
-    max_tokens_raw = _env_first("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "COPILOT_MAX_TOKENS")
+    max_tokens_raw = _env_first("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "COPILOT_MAX_TOKENS", "GEMINI_MAX_TOKENS")
     max_tokens = _parse_max_tokens(max_tokens_raw or "auto")
+
+    if provider == "gemini":
+        api_key = os.getenv("GEMINI_API_KEY", "").strip()
+        if not api_key:
+            print("Error: GEMINI_API_KEY is not set.")
+            print("Set it in .env or shell env.")
+            sys.exit(1)
+        model = os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL).strip() or DEFAULT_GEMINI_MODEL
+        base_url = os.getenv("GEMINI_BASE_URL", GEMINI_BASE_URL).strip() or GEMINI_BASE_URL
+        return LLMRuntime(
+            provider="gemini",
+            model=model,
+            api_key=api_key,
+            base_url=base_url.rstrip("/"),
+            max_tokens=max_tokens,
+        )
 
     if provider == "groq":
         api_key = os.getenv("GROQ_API_KEY", "").strip()
@@ -310,7 +329,7 @@ def build_runtime_from_env() -> LLMRuntime:
             max_tokens=max_tokens,
         )
 
-    print(f"Error: unsupported LLM_PROVIDER '{provider}'. Use 'groq' or 'copilot'.")
+    print(f"Error: unsupported LLM_PROVIDER '{provider}'. Use 'groq', 'copilot', or 'gemini'.")
     sys.exit(1)
 
 
@@ -351,8 +370,8 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
         except Exception as _ve:
             print(f"[VisionRuntime] ⚠️  VISION_PROVIDER=copilot build failed: {_ve}", flush=True)
 
-    # 2. Main runtime already supports vision (copilot/gpt-4o)
-    if main_runtime.provider == "copilot":
+    # 2. Main runtime already supports vision (copilot/gpt-4o, gemini)
+    if main_runtime.provider in ("copilot", "gemini"):
         print(
             f"[VisionRuntime] ✅ Using main runtime for vision: {main_runtime.provider}/{main_runtime.model}",
             flush=True,

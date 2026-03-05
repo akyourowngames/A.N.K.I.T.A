@@ -322,6 +322,41 @@ def desktop_interact(
 # VISION — Screenshot capture (mss: fast, no flash, no UAC prompt)
 # ---------------------------------------------------------------------------
 
+def _is_near_black_image(img: "_PILImage.Image") -> bool:
+    try:
+        extrema = img.getextrema()  # [(min,max), (min,max), (min,max)]
+        if not extrema:
+            return False
+        max_r = extrema[0][1]
+        max_g = extrema[1][1]
+        max_b = extrema[2][1]
+        min_r = extrema[0][0]
+        min_g = extrema[1][0]
+        min_b = extrema[2][0]
+        return (
+            max_r <= 5 and max_g <= 5 and max_b <= 5
+            and (max_r - min_r) < 3
+            and (max_g - min_g) < 3
+            and (max_b - min_b) < 3
+        )
+    except Exception:
+        return False
+
+
+def _is_near_black_bytes(data: bytes) -> bool:
+    try:
+        if not data:
+            return False
+        sample = data[::1000]
+        if not sample:
+            return False
+        max_v = max(sample)
+        min_v = min(sample)
+        return max_v <= 5 and (max_v - min_v) < 3
+    except Exception:
+        return False
+
+
 def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[str, Any]:
     """
     Capture the screen using MSS (fast, no flash).
@@ -342,12 +377,6 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
 
     try:
         with mss.mss() as sct:
-            # Clamp monitor index to valid range
-            if monitor > len(sct.monitors) - 1:
-                monitor = 1
-
-            sct_img = sct.grab(sct.monitors[monitor])
-
             # Resolve save path
             if save_path:
                 file_path = Path(save_path).resolve()
@@ -357,37 +386,58 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
                 temp_dir.mkdir(parents=True, exist_ok=True)
                 file_path = temp_dir / f"screenshot_{int(time.time())}.png"
 
-            orig_w, orig_h = sct_img.width, sct_img.height
+            # Try requested monitor first, then fallbacks for blank captures
+            max_idx = len(sct.monitors) - 1
+            preferred = monitor if 0 <= monitor <= max_idx else 1
+            candidates = [preferred, 0, 1, 2]
+            seen = set()
+            for mon in candidates:
+                if mon in seen:
+                    continue
+                seen.add(mon)
+                if mon < 0 or mon > max_idx:
+                    continue
+                sct_img = sct.grab(sct.monitors[mon])
+                orig_w, orig_h = sct_img.width, sct_img.height
 
-            if _PILImage is not None:
-                # Save FULL resolution PNG to disk — visual_click needs this for
-                # pixel-accurate coordinate detection.
-                img = _PILImage.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
-                img.save(str(file_path), format="PNG", optimize=True)
-                final_resolution = f"{orig_w}x{orig_h}"
-                scale_x = 1.0
-                scale_y = 1.0
+                if _PILImage is not None:
+                    img = _PILImage.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
+                    if _is_near_black_image(img):
+                        continue
+                    img.save(str(file_path), format="PNG", optimize=True)
+                    final_resolution = f"{orig_w}x{orig_h}"
+                    scale_x = 1.0
+                    scale_y = 1.0
 
-                # For LLM vision analysis: create a SEPARATE downscaled JPEG.
-                # Full-res PNG base64 (1920×1080) = 3-5MB → hits Copilot payload limit.
-                # 960px wide JPEG @ q60 = ~80-150KB → safe for vision API.
-                _MAX_VIS_W = 960
-                vis_img = img.copy()
-                if orig_w > _MAX_VIS_W:
-                    _vis_h = int(orig_h * _MAX_VIS_W / orig_w)
-                    vis_img = img.resize((_MAX_VIS_W, _vis_h), _PILImage.LANCZOS)
-                from io import BytesIO as _BytesIO
-                _vis_buf = _BytesIO()
-                vis_img.save(_vis_buf, format="JPEG", quality=60)
-                b64_data = base64.b64encode(_vis_buf.getvalue()).decode("utf-8")
-                vis_resolution = f"{vis_img.width}x{vis_img.height}"
-                print(
-                    f"[ScreenCapture] Full PNG saved ({orig_w}x{orig_h}). "
-                    f"Vision b64: {vis_resolution} JPEG @ q60 = {len(b64_data)//1024}KB",
-                    flush=True,
-                )
-            else:
+                    _MAX_VIS_W = 960
+                    vis_img = img.copy()
+                    if orig_w > _MAX_VIS_W:
+                        _vis_h = int(orig_h * _MAX_VIS_W / orig_w)
+                        vis_img = img.resize((_MAX_VIS_W, _vis_h), _PILImage.LANCZOS)
+                    from io import BytesIO as _BytesIO
+                    _vis_buf = _BytesIO()
+                    vis_img.save(_vis_buf, format="JPEG", quality=60)
+                    b64_data = base64.b64encode(_vis_buf.getvalue()).decode("utf-8")
+                    vis_resolution = f"{vis_img.width}x{vis_img.height}"
+                    print(
+                        f"[ScreenCapture] Full PNG saved ({orig_w}x{orig_h}). "
+                        f"Vision b64: {vis_resolution} JPEG @ q60 = {len(b64_data)//1024}KB",
+                        flush=True,
+                    )
+                    return {
+                        "ok": True,
+                        "path": str(file_path),
+                        "base64": b64_data,           # downscaled JPEG for LLM vision (small)
+                        "base64_mime": "image/jpeg",   # hint for call_chat_with_image()
+                        "resolution": vis_resolution,  # resolution of the b64 image
+                        "original_resolution": f"{orig_w}x{orig_h}",  # full-res (for visual_click)
+                        "scale_x": scale_x,
+                        "scale_y": scale_y,
+                    }
+
                 # --- Fallback: raw MSS PNG (no Pillow available) ---
+                if _is_near_black_bytes(sct_img.rgb):
+                    continue
                 mss.tools.to_png(sct_img.rgb, sct_img.size, output=str(file_path))
                 final_resolution = f"{orig_w}x{orig_h}"
                 vis_resolution = final_resolution
@@ -395,16 +445,24 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
                 scale_y = 1.0
                 with open(file_path, "rb") as f:
                     b64_data = base64.b64encode(f.read()).decode("utf-8")
+                return {
+                    "ok": True,
+                    "path": str(file_path),
+                    "base64": b64_data,
+                    "base64_mime": "image/jpeg",
+                    "resolution": vis_resolution,
+                    "original_resolution": f"{orig_w}x{orig_h}",
+                    "scale_x": scale_x,
+                    "scale_y": scale_y,
+                }
 
             return {
-                "ok": True,
+                "ok": False,
+                "error": (
+                    "Screen capture appears blank (near-black) on all tested monitors. "
+                    "This often happens in headless/locked sessions. Unlock the display and try again."
+                ),
                 "path": str(file_path),
-                "base64": b64_data,           # downscaled JPEG for LLM vision (small)
-                "base64_mime": "image/jpeg",   # hint for call_chat_with_image()
-                "resolution": vis_resolution,  # resolution of the b64 image
-                "original_resolution": f"{orig_w}x{orig_h}",  # full-res (for visual_click)
-                "scale_x": scale_x,
-                "scale_y": scale_y,
             }
 
     except Exception as err:
@@ -428,8 +486,33 @@ def read_screen_context(image_path: str) -> Dict[str, Any]:
     if not p.exists():
         return {"ok": False, "error": f"File not found: {image_path}"}
     try:
+        if _PILImage is not None:
+            try:
+                img = _PILImage.open(str(p))
+                img = img.convert("RGB")
+                if _is_near_black_image(img):
+                    return {
+                        "ok": False,
+                        "error": (
+                            "Screen context image appears blank (near-black). "
+                            "This often happens in headless/locked sessions."
+                        ),
+                        "path": str(p.resolve()),
+                    }
+            except Exception:
+                pass
         with open(p, "rb") as f:
-            b64_data = base64.b64encode(f.read()).decode("utf-8")
+            raw = f.read()
+        if _is_near_black_bytes(raw):
+            return {
+                "ok": False,
+                "error": (
+                    "Screen context image appears blank (near-black). "
+                    "This often happens in headless/locked sessions."
+                ),
+                "path": str(p.resolve()),
+            }
+        b64_data = base64.b64encode(raw).decode("utf-8")
         return {"ok": True, "base64": b64_data, "path": str(p.resolve())}
     except Exception as err:
         return {"ok": False, "error": str(err)}
@@ -694,10 +777,22 @@ def capture_webcam(camera_index: int = 0, save_path: Optional[str] = None) -> Di
 
     cap = None
     try:
-        # 1. Open camera
-        cap = cv2.VideoCapture(camera_index)
+        # 1. Open camera — try DirectShow backend first (more reliable on Windows)
+        cap = cv2.VideoCapture(camera_index, cv2.CAP_DSHOW)
         if not cap.isOpened():
-            return {"ok": False, "error": f"Could not open camera {camera_index}. Is it in use by another app?"}
+            # Try again without DirectShow hint
+            cap.release()
+            cap = cv2.VideoCapture(camera_index)
+        if not cap.isOpened():
+            return {
+                "ok": False,
+                "error": (
+                    f"Camera {camera_index} could not be opened. "
+                    "This usually means: (1) another app like Teams/Zoom is using it — "
+                    "close those apps and try again, or (2) no webcam is connected. "
+                    "Try camera_index=1 if you have a second camera."
+                ),
+            }
 
         # 2. INSTANT SNAP — one dummy read to flush the stale buffer frame,
         #    then one real read for the actual photo (no 15-frame warmup needed)

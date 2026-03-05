@@ -2,7 +2,7 @@
 Orchestrator for A.N.K.I.T.A multi-agent system.
 
 Implements the Fan-Out / Fan-In parallel execution pattern:
-  1. Supervisor routes request â†’ list of specialist agents
+  1. Supervisor routes request -> list of specialist agents
   2. Fan-Out: dispatch agents concurrently (ThreadPoolExecutor)
   3. Fan-In: collect results, synthesize a single cohesive response
 
@@ -20,6 +20,7 @@ from llm import LLMRuntime, call_chat_once
 from llm.client import build_vision_runtime_from_env, call_chat_with_image
 from llm.agent_router import get_agent_runtime, detect_task_complexity
 from tools.engine import execute_tool_call, TOOL_SPECS, compact_messages, _estimate_tokens
+from .content_contract import parse_content_payload, validate_content_payload, extract_body
 
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
@@ -27,6 +28,13 @@ from .supervisor import SupervisorAgent
 from .specialists import SPECIALIST_MAP, SpecialistAgent
 
 _MAX_TOOL_STEPS = 20
+_MAX_HANDOFF_STEPS = 6
+_CONTENT_PAYLOAD_STATS: Dict[str, int] = {
+    "total": 0,
+    "schema_valid_first_pass": 0,
+    "schema_repaired": 0,
+    "schema_fallback_legacy": 0,
+}
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VISION CACHE — remembers the last captured image for 60 seconds so
@@ -49,10 +57,10 @@ _VISION_FOLLOWUP_KEYWORDS = {
 # Tools that can capture images — only these should trigger vision cache
 _VISION_TOOL_NAMES = {"capture_webcam", "capture_screen", "read_screen_context", "visual_click"}
 
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-# HYDRA PROTOCOL â€” Escalation Matrix ðŸ‰
-# Maps (primary_agent) â†’ (backup_agent_name, context_note_for_backup)
-# â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+# -----------------------------------------------------------------------------
+# HYDRA PROTOCOL - Escalation Matrix 
+# Maps (primary_agent) -> (backup_agent_name, context_note_for_backup)
+# -----------------------------------------------------------------------------
 _ESCALATION_MATRIX: Dict[str, tuple] = {
     "SystemAgent":  ("TerminalAgent",
                      "SystemAgent tried and FAILED. Use raw PowerShell/CMD via execute_shell to achieve the same goal. "
@@ -88,7 +96,7 @@ _ESCALATION_MATRIX: Dict[str, tuple] = {
 
 def _extract_artifacts(text: str) -> Dict[str, List[str]]:
     """
-    'Baton Pass' â€” sniff an agent's reply for artifacts (file paths, URLs)
+    'Baton Pass' - sniff an agent's reply for artifacts (file paths, URLs)
     so the Orchestrator can hand them explicitly to the next agent.
 
     Returns a dict like:
@@ -117,38 +125,39 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
         if url and url not in artifacts["urls"]:
             artifacts["urls"].append(url)
     
-    # HANDOFF signals: SUGGEST_NEXT: AgentName → message
-    for m in re.finditer(r"SUGGEST_NEXT:\s*(\w+Agent)\s*→\s*(.+?)(?:\n|$)", text):
-        agent = m.group(1).strip()
-        message = m.group(2).strip()
-        handoff = f"SUGGEST_NEXT: {agent} → {message}"
+    # HANDOFF signals: SUGGEST_NEXT: AgentName → message OR HANDOFF: AgentName → message
+    for m in re.finditer(r"(SUGGEST_NEXT|HANDOFF):\s*(\w+Agent)\s*→\s*(.+?)(?:\n|$)", text):
+        label = m.group(1).strip()
+        agent = m.group(2).strip()
+        message = m.group(3).strip()
+        handoff = f"{label}: {agent} → {message}"
         if handoff not in artifacts["handoffs"]:
             artifacts["handoffs"].append(handoff)
 
     return artifacts
 
 
+def _slugify_filename(value: str, default: str = "content_output") -> str:
+    s = (value or "").strip().lower()
+    s = re.sub(r"[^a-z0-9]+", "_", s).strip("_")
+    return s[:80] or default
+
+
 def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str, List[str]]) -> str:
     """
-    'Telepathy' â€” build a clean, labeled context block to inject into the
-    next agent's brain so it knows exactly what the previous agent did.
-
-    ASSEMBLY LINE UPGRADE: If ContentAgent produced text but no file artifacts,
-    include the full CONTENT: block so FileAgent can extract and save it.
-
-    NEWSROOM UPGRADE: If WebAgent produced a RESEARCH_CONTEXT_BLOCK (from deep_research),
-    inject it as a [RESEARCH_CONTEXT] block into ContentAgent so it enters Journalist Mode.
+    Build a clean context block for next agent handoff.
+    For ContentAgent, prefer structured CONTENT_PAYLOAD_V1 and emit deterministic
+    fields plus legacy CONTENT block for backward compatibility.
     """
-    lines = [
-        "--- PREVIOUS AGENT OUTPUT ---",
-        f"[{agent_name}]: {reply.strip()}",
-    ]
-    
-    # DOUBLE-OPEN FIX: Check if FileAgent already opened the file
+    lines = ["--- PREVIOUS AGENT OUTPUT ---"]
+    if agent_name == "ContentAgent":
+        lines.append(f"[{agent_name}]: content generated")
+    else:
+        lines.append(f"[{agent_name}]: {reply.strip()}")
+
     file_already_opened = agent_name == "FileAgent" and ("opened" in reply.lower() or "launch_app" in reply.lower())
-    
+
     if artifacts["files"]:
-        # If FileAgent already opened the file, don't pass FILE_PATH to next agent
         if not file_already_opened:
             for f in artifacts["files"]:
                 lines.append(f"FILE: {f}")
@@ -158,16 +167,40 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     if artifacts.get("handoffs"):
         for h in artifacts["handoffs"]:
             lines.append(f"HANDOFF: {h}")
-    # ASSEMBLY LINE: If ContentAgent has file artifacts (already saved by content_ops),
-    # do NOT embed CONTENT: block. FileAgent should just open the existing file.
-    # Only embed CONTENT: if ContentAgent returned text without saving it.
+
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
-        # Check if reply contains "already_saved" signal
         if "already_saved" not in reply.lower():
             import os as _os
             desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
-            lines.append(f"SAVE_TO: {desktop}")   # GPS Lock hint — FileAgent reads this
-            lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
+            lines.append(f"SAVE_TO: {desktop}")
+            payload = parse_content_payload(reply)
+            ok, errors = validate_content_payload(payload)
+            if ok and payload is not None:
+                task_type = str(payload.get("task_type", "other")).strip().lower() or "other"
+                title = str(payload.get("title", "untitled")).strip() or "untitled"
+                fmt = str(payload.get("format", "plain_text")).strip().lower() or "plain_text"
+                tone = str(payload.get("tone", "")).strip()
+                audience = str(payload.get("audience", "")).strip()
+                word_target = str(payload.get("word_target", "")).strip()
+                notes = str(payload.get("notes", "")).strip()
+                body = extract_body(payload)
+                ext = ".md" if fmt == "markdown" or task_type in {"report", "article"} else ".txt"
+                lines.append("CONTENT_SCHEMA: CONTENT_PAYLOAD_V1")
+                lines.append(f"TASK_TYPE: {task_type}")
+                lines.append(f"TITLE: {title}")
+                lines.append(f"FORMAT: {fmt}")
+                lines.append(f"AUDIENCE: {audience}")
+                lines.append(f"TONE: {tone}")
+                lines.append(f"WORD_TARGET: {word_target}")
+                lines.append(f"FILENAME_HINT: {_slugify_filename(title, default=task_type)}{ext}")
+                if notes:
+                    lines.append(f"CONTENT_NOTES: {notes}")
+                lines.append(f"CONTENT:\n{body}\n:END_CONTENT")
+            else:
+                if errors:
+                    lines.append(f"CONTENT_SCHEMA_ERRORS: {'; '.join(errors)}")
+                lines.append(f"CONTENT:\n{reply.strip()}\n:END_CONTENT")
+
     if agent_name == "WebAgent":
         import re as _re
         rcb_match = _re.search(
@@ -181,6 +214,59 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
     lines.append("--- END CONTEXT ---")
     return "\n".join(lines)
 
+
+def _validate_or_repair_content_payload(
+    specialist_runtime: LLMRuntime,
+    messages: List[Dict[str, Any]],
+    reply: str,
+    max_tokens: int,
+) -> Dict[str, Any]:
+    payload = parse_content_payload(reply)
+    ok, errors = validate_content_payload(payload)
+    if ok:
+        return {
+            "reply": reply,
+            "content_payload_valid": True,
+            "content_payload_errors": [],
+            "content_payload_repaired": False,
+        }
+
+    repair_prompt = (
+        "Your previous output did not match CONTENT_PAYLOAD_V1. "
+        "Return ONLY one valid CONTENT_PAYLOAD_V1 envelope and nothing else.\n"
+        f"Validation errors: {errors}\n"
+        "Preserve user intent and keep content quality."
+    )
+    fix_messages = list(messages) + [
+        {"role": "assistant", "content": reply},
+        {"role": "user", "content": repair_prompt},
+    ]
+    try:
+        fixed = call_chat_once(specialist_runtime, fix_messages, tools=None, max_tokens=max_tokens)
+        repaired_reply = (fixed.get("content") or "").strip()
+        repaired_payload = parse_content_payload(repaired_reply)
+        repaired_ok, repaired_errors = validate_content_payload(repaired_payload)
+        if repaired_ok:
+            return {
+                "reply": repaired_reply,
+                "content_payload_valid": True,
+                "content_payload_errors": [],
+                "content_payload_repaired": True,
+            }
+        return {
+            "reply": reply,
+            "content_payload_valid": False,
+            "content_payload_errors": repaired_errors,
+            "content_payload_repaired": False,
+        }
+    except Exception as repair_err:
+        return {
+            "reply": reply,
+            "content_payload_valid": False,
+            "content_payload_errors": [*errors, f"repair_failed: {repair_err}"],
+            "content_payload_repaired": False,
+        }
+
 _SYNTHESIZER_PROMPT = (
     "You are A.N.K.I.T.A's Synthesizer. You receive outputs from specialist agents that executed tasks. "
     "Your ONLY job is to confirm what was done in ONE brief sentence.\n\n"
@@ -189,9 +275,9 @@ _SYNTHESIZER_PROMPT = (
     "(no paragraphs, scripts, songs, emails, or any generated text in your reply).\n"
     "2. NEVER apologize or say 'it seems there was an issue' if the agent outputs show tools succeeded.\n"
     "3. NEVER offer manual alternatives like 'you can copy this yourself' or 'open it manually'.\n"
-    "4. If actions succeeded â†’ ONE confirmation sentence. "
-    "Example: 'Done â€” written the paragraph, opened it in Notepad, and started your music.'\n"
-    "5. If a genuine error occurred (explicitly marked as failed) â†’ ONE sentence stating what failed.\n"
+    "4. If actions succeeded -> ONE confirmation sentence. "
+    "Example: 'Done - written the paragraph, opened it in Notepad, and started your music.'\n"
+    "5. If a genuine error occurred (explicitly marked as failed) -> ONE sentence stating what failed.\n"
     "6. You are a STATUS REPORTER, not a content displayer or a chatbot. Be terse."
 )
 
@@ -376,23 +462,23 @@ def _run_specialist(
         }
 
     for _ in range(_MAX_TOOL_STEPS):
-        # â”€â”€ TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call â”€â”€
+        # -- TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call --
         estimated = _estimate_tokens(messages)
         if estimated > _ORCHESTRATOR_TOKEN_LIMIT:
             print(
-                f"[TokenGuardian/{specialist.name}] âš ï¸  ~{estimated:,} tokens â€” compactingâ€¦",
+                f"[TokenGuardian/{specialist.name}] [WARN]  ~{estimated:,} tokens - compacting...",
                 flush=True,
             )
             trimmed = compact_messages(messages)
             messages = trimmed
             print(
-                f"[TokenGuardian/{specialist.name}] âœ… Compacted to ~{_estimate_tokens(messages):,} tokens.",
+                f"[TokenGuardian/{specialist.name}] [OK] Compacted to ~{_estimate_tokens(messages):,} tokens.",
                 flush=True,
             )
         try:
             response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
         except Exception as err:
-            # ðŸ’Ž Prism Protocol â€” 400 / context_length_exceeded recovery
+            # [PRISM] Prism Protocol - 400 / context_length_exceeded recovery
             err_str = str(err).lower()
             is_payload_err = (
                 "400" in err_str
@@ -419,7 +505,7 @@ def _run_specialist(
                         break
                 if trimmed:
                     print(
-                        f"[Prism/{specialist.name}] ðŸ’Ž Context overflow â€” trimmed last tool msg, retrying...",
+                        f"[Prism/{specialist.name}] [PRISM] Context overflow - trimmed last tool msg, retrying...",
                         flush=True,
                     )
                     try:
@@ -429,7 +515,7 @@ def _run_specialist(
                             "agent": specialist.name,
                             "ok": False,
                             "reply": (
-                                "âš ï¸ The data returned was too large for me to process. "
+                                "[WARN] The data returned was too large for me to process. "
                                 "Please try a more specific request, a smaller date range, or fewer items."
                             ),
                         }
@@ -446,7 +532,38 @@ def _run_specialist(
         })
 
         if not tool_calls:
-            return {"agent": specialist.name, "ok": True, "reply": (response.get("content") or "").strip()}
+            reply = (response.get("content") or "").strip()
+            if specialist.name == "ContentAgent":
+                _CONTENT_PAYLOAD_STATS["total"] += 1
+                checked = _validate_or_repair_content_payload(
+                    specialist_runtime=specialist_runtime,
+                    messages=messages,
+                    reply=reply,
+                    max_tokens=max_tokens,
+                )
+                if checked["content_payload_valid"] and checked["content_payload_repaired"]:
+                    _CONTENT_PAYLOAD_STATS["schema_repaired"] += 1
+                elif checked["content_payload_valid"]:
+                    _CONTENT_PAYLOAD_STATS["schema_valid_first_pass"] += 1
+                else:
+                    _CONTENT_PAYLOAD_STATS["schema_fallback_legacy"] += 1
+
+                print(
+                    "[ContentPayload] total={total} first_pass={schema_valid_first_pass} "
+                    "repaired={schema_repaired} fallback={schema_fallback_legacy}".format(
+                        **_CONTENT_PAYLOAD_STATS
+                    ),
+                    flush=True,
+                )
+                return {
+                    "agent": specialist.name,
+                    "ok": True,
+                    "reply": checked["reply"],
+                    "content_payload_valid": checked["content_payload_valid"],
+                    "content_payload_errors": checked["content_payload_errors"],
+                    "content_payload_repaired": checked["content_payload_repaired"],
+                }
+            return {"agent": specialist.name, "ok": True, "reply": reply}
 
         # --- VISION INJECTION: collect image payloads from vision tools ---
         vision_packets: List[Dict[str, Any]] = []
@@ -755,6 +872,120 @@ def _evaluate_condition(condition: str, step_results: Dict[int, Dict], depends_o
     return True
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PROACTIVE INTELLIGENCE HELPERS (Steps 6, 7a)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _classify_interaction(agent_names: List[str], user_text: str) -> str:
+    """
+    Classify an interaction type for behavioral fingerprint recording.
+
+    Returns one of: "code", "write", "search", "system", "general"
+    """
+    import re as _re
+    agent_set = set(agent_names)
+    if "CodeAgent" in agent_set:
+        return "code"
+    if "ContentAgent" in agent_set:
+        return "write"
+    if "WebAgent" in agent_set:
+        return "search"
+    if agent_set & {"SystemAgent", "TerminalAgent", "FileAgent"}:
+        return "system"
+    # Heuristic on user text
+    _text_lower = user_text.lower()
+    if _re.search(r'\b(code|debug|fix|refactor|write.*function|class|def |import )\b', _text_lower):
+        return "code"
+    if _re.search(r'\b(write|draft|essay|poem|blog|script|content)\b', _text_lower):
+        return "write"
+    if _re.search(r'\b(search|find|look up|google|research|what is|who is)\b', _text_lower):
+        return "search"
+    if _re.search(r'\b(run|execute|install|open|launch|start|stop|kill|terminal)\b', _text_lower):
+        return "system"
+    return "general"
+
+
+def _check_and_append_proactive_tail(
+    reply: str, user_text: str, workspace_root: Path
+) -> str:
+    """
+    Step 6: Conversational Proactive Tail.
+
+    Appends a short (1–2 sentence) context-aware follow-up hint to the reply
+    based on pure rule-based checks. NO LLM call. Returns the reply unchanged
+    if no condition is met.
+
+    Priority (first match wins):
+      1. Any undelivered high/critical watchdog alert
+      2. Task deadline within 2 hours
+      3. CodeAgent output contains fixed/error keywords → offer test run
+      4. TerminalAgent output contains install/installed → offer to launch it
+    """
+    try:
+        tail = ""
+        reply_lower = reply.lower()
+
+        # 1. Watchdog alerts
+        try:
+            from watchdog_manager import get_instance as _wdget  # type: ignore
+            _wdmgr = _wdget()
+            if _wdmgr is not None and hasattr(_wdmgr, "_pending_events"):
+                _alerts = [
+                    e for e in getattr(_wdmgr, "_pending_events", [])
+                    if getattr(e, "priority", "") in ("high", "critical")
+                ]
+                if _alerts:
+                    tail = f"\n\n⚠️ **Heads up** — {_alerts[0].message}"
+        except Exception:
+            pass
+
+        if tail:
+            return reply + tail
+
+        # 2. Deadline within 2 hours
+        try:
+            from datetime import datetime as _dt
+            from tools.task_ops import task_op as _task_op  # type: ignore
+            _r = _task_op(action="list")
+            if _r.get("status") == "success":
+                for _t in _r.get("tasks", []):
+                    if _t.get("status") in ("pending", "in_progress") and _t.get("deadline"):
+                        try:
+                            _dl = _dt.strptime(_t["deadline"], "%Y-%m-%d %H:%M")
+                            _mins_left = (_dl - _dt.now()).total_seconds() / 60
+                            if 0 < _mins_left <= 120:
+                                tail = (
+                                    f"\n\n⏰ By the way, **{_t['title']}** is due in "
+                                    f"{int(_mins_left)} minutes."
+                                )
+                                break
+                        except Exception:
+                            pass
+        except Exception:
+            pass
+
+        if tail:
+            return reply + tail
+
+        # 3. Code fix/error heuristic
+        _code_fixed = any(k in reply_lower for k in ("fixed", "bug fixed", "error resolved", "patched"))
+        _code_error = any(k in reply_lower for k in ("error", "traceback", "exception"))
+        if _code_fixed or _code_error:
+            tail = "\n\nWant me to run the tests to verify?"
+
+        if tail:
+            return reply + tail
+
+        # 4. Terminal install heuristic
+        if any(k in reply_lower for k in ("installed", "successfully installed", "setup complete")):
+            tail = "\n\nWant me to launch it now?"
+
+    except Exception:
+        pass
+
+    return reply + tail if tail else reply
+
+
 class Orchestrator:
     """
     Multi-agent orchestrator using Supervisor + parallel Specialists + Synthesizer.
@@ -780,6 +1011,9 @@ class Orchestrator:
         Full orchestration pipeline:
           ContextAgent -> Supervisor -> [Fan-Out specialist(s)] -> Synthesizer -> reply
         """
+        import time as _time
+        _start_ts = _time.time()  # Step 7a: track interaction duration
+
         print(f"[Orchestrator.run] ENTRY: user_text='{user_text[:80]}'", flush=True)
         print(f"[Orchestrator] Starting Supervisor routing for: {user_text[:50]}...", flush=True)
 
@@ -834,7 +1068,7 @@ class Orchestrator:
             except Exception:
                 pass
 
-        # Single GeneralAgent â†’ just use the full agent runtime (cheaper, faster)
+        # Single GeneralAgent -> just use the full agent runtime (cheaper, faster)
         if agent_names == ["GeneralAgent"]:
             return self._run_general(routing_text, messages)
 
@@ -853,14 +1087,14 @@ class Orchestrator:
         if not specialists:
             return self._run_general(routing_text, messages)
 
-        # TIME LORD: Force sequential if a producerâ†’consumer dependency is detected.
-        # ASSEMBLY LINE: ContentAgent produces text â†’ FileAgent saves â†’ SystemAgent opens.
-        # All three are in a strict dependency chain â€” always sequential.
+        # TIME LORD: Force sequential if a producer->consumer dependency is detected.
+        # ASSEMBLY LINE: ContentAgent produces text -> FileAgent saves -> SystemAgent opens.
+        # All three are in a strict dependency chain - always sequential.
         _EXTERNAL_PRODUCERS = {"ContentAgent", "FileAgent", "WebAgent"}
         _CONSUMERS = {"FileAgent", "SystemAgent", "CodeAgent"}
         agent_name_set = set(agent_names)
         if (_EXTERNAL_PRODUCERS & agent_name_set) and (_CONSUMERS & agent_name_set):
-            parallel = False  # override Supervisor â€” baton must be passed sequentially
+            parallel = False  # override Supervisor - baton must be passed sequentially
 
         # 2. Fan-Out: run specialists (parallel or sequential)
         results: List[Dict[str, Any]] = []
@@ -870,6 +1104,15 @@ class Orchestrator:
             # Store messages for history extraction
             self.messages = messages
             results = self._run_sequential_with_context(specialists, user_text)
+
+        # 2b. Handoff chain: run any agent-suggested follow-ups sequentially
+        extra_results = self._run_handoff_chain(
+            results=results,
+            base_task=user_text,
+            conversation_history=_extract_clean_history(messages, max_turns=6),
+        )
+        if extra_results:
+            results.extend(extra_results)
 
         # 3. Fan-In: if only one result, return it directly
         if len(results) == 1:
@@ -881,6 +1124,20 @@ class Orchestrator:
                 get_memory_manager(self.workspace_root).save("assistant", reply, interface="orchestrator")
             except Exception:
                 pass
+            # Step 7a: Record behavioral fingerprint
+            try:
+                import time as _time
+                from tools.behavioral_pattern_learner import BehavioralPatternLearner  # type: ignore
+                BehavioralPatternLearner(self.workspace_root).record_fingerprint(
+                    interaction_type=_classify_interaction(agent_names, user_text),
+                    duration_sec=int(_time.time() - _start_ts),
+                    tools_used=agent_names,
+                    context=user_text[:120],
+                )
+            except Exception:
+                pass
+            # Step 6: Append proactive tail
+            reply = _check_and_append_proactive_tail(reply, user_text, self.workspace_root)
             return reply
 
         # 4. Synthesize multiple results
@@ -892,6 +1149,20 @@ class Orchestrator:
             get_memory_manager(self.workspace_root).save("assistant", reply, interface="orchestrator")
         except Exception:
             pass
+        # Step 7a: Record behavioral fingerprint
+        try:
+            import time as _time2
+            from tools.behavioral_pattern_learner import BehavioralPatternLearner  # type: ignore
+            BehavioralPatternLearner(self.workspace_root).record_fingerprint(
+                interaction_type=_classify_interaction(agent_names, user_text),
+                duration_sec=int(_time2.time() - _start_ts),
+                tools_used=agent_names,
+                context=user_text[:120],
+            )
+        except Exception:
+            pass
+        # Step 6: Append proactive tail
+        reply = _check_and_append_proactive_tail(reply, user_text, self.workspace_root)
         return reply
 
     def _run_sequential_with_context(
@@ -903,7 +1174,7 @@ class Orchestrator:
         - BATON PASS: Orchestrator sniffs artifacts (file paths, URLs) from each
           agent's reply and hands them explicitly to the next agent.
         - TELEPATHY: Prior context is injected directly into the next agent's
-          system prompt â€” not just appended to the task. The agent *knows* what
+          system prompt - not just appended to the task. The agent *knows* what
           happened before it even reads the task.
         - TIME LORD: Sequential execution guarantees producers finish before
           consumers start. Files exist before they are opened.
@@ -914,14 +1185,20 @@ class Orchestrator:
         # Extract clean conversation history for context continuity
         conversation_history = _extract_clean_history(self.messages, max_turns=6) if hasattr(self, "messages") else []
 
-        for sp in specialists:
+        queue: List[tuple[SpecialistAgent, Optional[str]]] = [(sp, None) for sp in specialists]
+        seen_handoffs: set = set()
+        idx = 0
+        while idx < len(queue):
+            sp, task_override = queue[idx]
+            idx += 1
+            current_task = task_override or task
             result = _run_specialist(
-                sp, task, self.runtime, self.workspace_root,
+                sp, current_task, self.runtime, self.workspace_root,
                 prior_context=prior_context_block,
                 conversation_history=conversation_history,
             )
 
-            # â”€â”€ HYDRA PROTOCOL: Error Interceptor ðŸ‰ â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+            # -- HYDRA PROTOCOL: Error Interceptor  -------------------------
             # If the agent failed, look up the Escalation Matrix and reroute
             # to a backup agent with a Post-Mortem Injection context prompt.
             # Capped at 1 retry per agent to prevent infinite loops.
@@ -938,11 +1215,11 @@ class Orchestrator:
                 backup_sp = SPECIALIST_MAP.get(backup_name)
                 if backup_sp and backup_sp.name != sp.name or (backup_sp and backup_sp.name == sp.name):
                     print(
-                        f"[Hydra] âš¡ {sp.name} failed â†’ rerouting to {backup_name}",
+                        f"[Hydra] [WARN] {sp.name} failed -> rerouting to {backup_name}",
                         flush=True,
                     )
                     post_mortem = (
-                        f"SYSTEM ALERT â€” HYDRA REROUTE:\n"
+                        f"SYSTEM ALERT - HYDRA REROUTE:\n"
                         f"Original request: {task}\n"
                         f"{sp.name} already tried and failed with: {reply[:300]}\n\n"
                         f"BACKUP MISSION: {failure_note}\n"
@@ -969,11 +1246,84 @@ class Orchestrator:
                 prior_context_block = _build_prior_context_block(
                     result.get("agent", sp.name), reply, artifacts
                 )
+                # HANDOFF CHAIN: enqueue suggested next agents (sequential)
+                for handoff in artifacts.get("handoffs", []):
+                    parsed = self._parse_handoff(handoff)
+                    if not parsed:
+                        continue
+                    agent_name, handoff_task = parsed
+                    if not handoff_task:
+                        continue
+                    key = (agent_name, handoff_task.strip().lower())
+                    if key in seen_handoffs:
+                        continue
+                    if len(seen_handoffs) >= _MAX_HANDOFF_STEPS:
+                        break
+                    next_sp = SPECIALIST_MAP.get(agent_name)
+                    if not next_sp:
+                        continue
+                    seen_handoffs.add(key)
+                    queue.append((next_sp, handoff_task))
 
             # AUDIT LOG: record agent name, tools used, and artifacts to .ankita/audit.jsonl
             self._write_audit(sp.name, result)
 
         return results
+
+    def _run_handoff_chain(
+        self,
+        results: List[Dict[str, Any]],
+        base_task: str,
+        conversation_history: List[Dict[str, Any]],
+    ) -> List[Dict[str, Any]]:
+        """Run agent-suggested handoffs after initial fan-out results."""
+        extra: List[Dict[str, Any]] = []
+        seen: set = set()
+        for r in results:
+            reply = r.get("reply", "") or ""
+            if not reply:
+                continue
+            artifacts = _extract_artifacts(reply)
+            if not artifacts.get("handoffs"):
+                continue
+            prior_context_block = _build_prior_context_block(r.get("agent", "Agent"), reply, artifacts)
+            for handoff in artifacts.get("handoffs", []):
+                parsed = self._parse_handoff(handoff)
+                if not parsed:
+                    continue
+                agent_name, handoff_task = parsed
+                if not handoff_task:
+                    continue
+                key = (agent_name, handoff_task.strip().lower())
+                if key in seen:
+                    continue
+                if len(seen) >= _MAX_HANDOFF_STEPS:
+                    return extra
+                next_sp = SPECIALIST_MAP.get(agent_name)
+                if not next_sp:
+                    continue
+                seen.add(key)
+                extra.append(
+                    _run_specialist(
+                        next_sp,
+                        handoff_task,
+                        self.runtime,
+                        self.workspace_root,
+                        prior_context=prior_context_block,
+                        conversation_history=conversation_history,
+                    )
+                )
+        return extra
+
+    @staticmethod
+    def _parse_handoff(handoff: str) -> Optional[tuple[str, str]]:
+        """Parse SUGGEST_NEXT/HANDOFF lines into (agent_name, task)."""
+        m = re.search(r"(SUGGEST_NEXT|HANDOFF):\s*(\w+Agent)\s*→\s*(.+)$", handoff)
+        if not m:
+            return None
+        agent_name = m.group(2).strip()
+        task = m.group(3).strip()
+        return (agent_name, task)
 
     def _write_audit(self, agent_name: str, result: Dict[str, Any]) -> None:
         """Write a structured audit entry to .ankita/audit.jsonl for traceability."""
@@ -987,6 +1337,9 @@ class Orchestrator:
                 "reply_preview": (result.get("reply", "") or "")[:120],
                 "tools_used": result.get("tools_used", []),
                 "artifacts": _extract_artifacts(result.get("reply", "") or ""),
+                "content_payload_valid": result.get("content_payload_valid"),
+                "content_payload_errors": result.get("content_payload_errors", []),
+                "content_payload_repaired": result.get("content_payload_repaired"),
             }
             with audit_path.open("a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
@@ -1089,9 +1442,9 @@ class Orchestrator:
 
         specialist = SPECIALIST_MAP.get("WatchdogAgent")
         if specialist is None:
-            return "âŒ WatchdogAgent not found."
+            return "[ERROR] WatchdogAgent not found."
 
-        # Get LLM response (WatchdogAgent has no tools â€” pure text output)
+        # Get LLM response (WatchdogAgent has no tools - pure text output)
         msg = specialist.make_messages(user_text)
         try:
             response = call_chat_once(self.runtime, msg, tools=None, max_tokens=512)
@@ -1102,7 +1455,7 @@ class Orchestrator:
         # Parse WATCHDOG_ACTION from LLM reply
         action_match = _re.search(r"WATCHDOG_ACTION:\s*(.+?)(?:\n|$)", llm_reply)
         if not action_match:
-            # No action found â€” just return the LLM reply as-is
+            # No action found - just return the LLM reply as-is
             self._append_to_messages(messages, user_text, llm_reply)
             return llm_reply
 
@@ -1116,7 +1469,7 @@ class Orchestrator:
             import watchdog_manager as _wdm
             mgr = _wdm.get_instance()
             if mgr is None:
-                action_result = "âš ï¸ WatchdogManager not running yet â€” start ANKITA first."
+                action_result = "[WARN] WatchdogManager not running yet - start ANKITA first."
             elif action == "add_price_alert" and len(parts) >= 4:
                 symbol, condition_type, value = parts[1], parts[2], float(parts[3])
                 action_result = mgr.add_price_alert(symbol, condition_type, value)
@@ -1134,11 +1487,11 @@ class Orchestrator:
             elif action == "stop" and len(parts) >= 2:
                 watcher_name = parts[1]
                 mgr.unregister(watcher_name)
-                action_result = f"âœ… Stopped watcher: {watcher_name}"
+                action_result = f"[OK] Stopped watcher: {watcher_name}"
             else:
-                action_result = f"âš ï¸ Unknown watchdog action: {action}"
+                action_result = f"[WARN] Unknown watchdog action: {action}"
         except Exception as exc:
-            action_result = f"âŒ Watchdog error: {exc}"
+            action_result = f"[ERROR] Watchdog error: {exc}"
 
         # Build final reply: strip the raw WATCHDOG_ACTION line, append result
         friendly = _re.sub(r"WATCHDOG_ACTION:.*?(?:\n|$)", "", llm_reply).strip()

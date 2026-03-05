@@ -1,6 +1,9 @@
-﻿import base64
+import base64
+import asyncio
+import audioop
 import io
 import os
+import subprocess
 import sys
 import tempfile
 import threading
@@ -139,10 +142,10 @@ class VoiceCallWorker(QThread):
     status = pyqtSignal(str)
     error = pyqtSignal(str)
 
-    def __init__(self, agent: AgentRuntime, messages: List[Dict[str, Any]],
+    def __init__(self, orchestrator: Any, messages: List[Dict[str, Any]],
                  api_key: str, lang_code: str):
         super().__init__()
-        self.agent = agent
+        self.orchestrator = orchestrator
         self.messages = messages
         self.api_key = api_key
         self.lang_code = lang_code
@@ -152,6 +155,8 @@ class VoiceCallWorker(QThread):
         self.silence_rms = float(os.getenv("VOICE_GUI_SILENCE_RMS", "450"))
         self.stt_provider = os.getenv("VOICE_STT_PROVIDER", "speech_recognition").strip().lower()
         self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
+        self._playback_stop = threading.Event()
+        self._playback_proc = None
 
         # Resolve microphone device index
         # Priority: .env VOICE_GUI_DEVICE_INDEX > Realtek mic > OS default input
@@ -221,6 +226,24 @@ class VoiceCallWorker(QThread):
 
     def stop(self) -> None:
         self.running = False
+        self.interrupt_speaking()
+
+    def interrupt_speaking(self) -> None:
+        """Immediately stop current TTS playback (if any)."""
+        self._playback_stop.set()
+        if os.name == "nt":
+            try:
+                import winsound
+                winsound.PlaySound(None, 0)
+            except Exception:
+                pass
+            return
+        proc = self._playback_proc
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
 
     def _record_chunk_wav(self) -> bytes | None:
         frames = int(self.sample_rate * self.chunk_sec)
@@ -270,15 +293,51 @@ class VoiceCallWorker(QThread):
         raw = base64.b64decode(audio_b64)
         fd, path = tempfile.mkstemp(suffix=".wav")
         os.close(fd)
+        self._playback_stop.clear()
         try:
             with open(path, "wb") as f:
                 f.write(raw)
             if os.name == "nt":
                 import winsound
-                winsound.PlaySound(path, winsound.SND_FILENAME)
+                # Async playback allows interrupt_speaking() to cut speech instantly.
+                winsound.PlaySound(path, winsound.SND_FILENAME | winsound.SND_ASYNC)
+                duration_sec = 0.0
+                try:
+                    with wave.open(io.BytesIO(raw), "rb") as wf:
+                        rate = float(wf.getframerate() or 0)
+                        frames = float(wf.getnframes() or 0)
+                        if rate > 0:
+                            duration_sec = frames / rate
+                except Exception:
+                    duration_sec = 0.0
+
+                start = time.monotonic()
+                while self.running and not self._playback_stop.is_set():
+                    if duration_sec > 0 and (time.monotonic() - start) >= (duration_sec + 0.15):
+                        break
+                    time.sleep(0.05)
+                try:
+                    winsound.PlaySound(None, 0)
+                except Exception:
+                    pass
             else:
-                os.system(f'afplay "{path}" >/dev/null 2>&1 || true')
+                self._playback_proc = subprocess.Popen(
+                    ["afplay", path],
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL,
+                )
+                while self.running and not self._playback_stop.is_set():
+                    if self._playback_proc.poll() is not None:
+                        break
+                    time.sleep(0.05)
+                if self._playback_proc.poll() is None:
+                    self._playback_proc.terminate()
+                    try:
+                        self._playback_proc.wait(timeout=0.6)
+                    except Exception:
+                        pass
         finally:
+            self._playback_proc = None
             try:
                 os.remove(path)
             except Exception:
@@ -317,7 +376,7 @@ class VoiceCallWorker(QThread):
                 self.heard.emit(transcript)
 
                 self.status.emit("Thinking...")
-                reply_text = self.agent.process_user_text(
+                reply_text = self.orchestrator.run(
                     user_text=transcript, messages=self.messages)
                 
                 if not reply_text:
@@ -502,7 +561,7 @@ class AnkitaWindow(QMainWindow):
             pass
 
         self.worker: AskWorker | None = None
-        self.voice_worker: VoiceCallWorker | None = None
+        self.voice_worker: Any = None
         self._content_worker: _ContentRequestWorker | None = None
         self._pending_user_text: str = ""
         self.hotkey_listener = None
@@ -528,6 +587,9 @@ class AnkitaWindow(QMainWindow):
         self.proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
         self.proactive.attach_runtime(runtime)  # Required for Sentinel screen-watch to function
         self.proactive.start()
+
+        from tools.notification_router import NotificationRouter
+        self.notification_router = NotificationRouter(WORKSPACE_ROOT)
 
         # Watchdog system â€” always-on 24/7 monitoring
         from watchdog_manager import WatchdogManager
@@ -616,6 +678,7 @@ class AnkitaWindow(QMainWindow):
 
         # Startup messages
         self._append("System", "ANKITA ready.")
+        self._append("System", "Voice backend: sarvam")
         if not HAS_AUDIO_STACK:
             self._append("System", "Voice unavailable — install numpy + sounddevice")
 
@@ -741,62 +804,144 @@ class AnkitaWindow(QMainWindow):
     # Proactive tick
     # -----------------------------------------------------------------------
 
+    # ------------------------------------------------------------------
+    # Sarvam TTS helper for proactive events (speaks without user input)
+    # ------------------------------------------------------------------
+
+    # Busy flag: only one proactive TTS plays at a time
+    _proactive_tts_busy: bool = False
+
+    def _speak_proactive(self, text: str, max_chars: int = 220) -> None:
+        """
+        Speak a proactive message via Sarvam TTS without any user input.
+
+        Only one proactive speech plays at a time (_proactive_tts_busy guard).
+        If ANKITA is already speaking a proactive message the new one is dropped
+        so notifications don't queue up and play one after another for minutes.
+
+        Smart truncation cuts at the nearest sentence boundary within max_chars.
+        """
+        api_key = os.getenv("SARVAM_API_KEY", "").strip()
+        if not api_key or not text:
+            return
+        # Drop if already speaking — avoid TTS pile-up on notification floods
+        if self.__class__._proactive_tts_busy:
+            print(f"[GUI][ProactiveTTS] Busy — dropping: {text[:60]}", flush=True)
+            return
+
+        # Smart truncation: cut at last sentence boundary within max_chars
+        speak_text = text.strip()
+        if len(speak_text) > max_chars:
+            cut = speak_text[:max_chars]
+            for sep in (".", "!", "?"):
+                idx = cut.rfind(sep)
+                if idx > max_chars // 2:
+                    cut = cut[: idx + 1]
+                    break
+            speak_text = cut.strip()
+
+        lang = getattr(self, "voice_lang_code", None) or "en-IN"
+
+        def _do_tts(txt: str = speak_text, lng: str = lang) -> None:
+            self.__class__._proactive_tts_busy = True
+            try:
+                tts_resp = voice_web._sarvam_tts(api_key=api_key, text=txt, lang_code=lng)
+                audio_b64 = voice_web._extract_audio_b64(tts_resp)
+                if not audio_b64:
+                    return
+                raw = base64.b64decode(audio_b64)
+                fd, wav_path = tempfile.mkstemp(suffix=".wav")
+                os.close(fd)
+                try:
+                    with open(wav_path, "wb") as f:
+                        f.write(raw)
+                    if os.name == "nt":
+                        import winsound
+                        winsound.PlaySound(wav_path, winsound.SND_FILENAME)
+                    else:
+                        os.system(f'afplay "{wav_path}" >/dev/null 2>&1 || true')
+                finally:
+                    try:
+                        os.remove(wav_path)
+                    except Exception:
+                        pass
+            except Exception as _tts_err:
+                print(f"[GUI][ProactiveTTS] Error: {_tts_err}", flush=True)
+            finally:
+                self.__class__._proactive_tts_busy = False
+
+        import threading as _pt
+        _pt.Thread(target=_do_tts, daemon=True, name="ProactiveTTS").start()
+
     def _on_proactive_tick(self) -> None:
         # Drain Hive Mind drone completion notifications
         if self.hive is not None:
             for note in self.hive.check_notifications():
-                self._append("ðŸ Hive", note)
+                self._append("🐝 Hive", note)
 
         for event in self.proactive.get_pending_events():
+            result = self.notification_router.route_notification(event)
+            if not result.get("delivered") or "gui" not in result.get("channels", []):
+                continue
+            formatted = result.get("formatted_messages", {}).get("gui", event.message)
 
             # ------------------------------------------------------------------
-            # Sentinel (idle screen-watch alert) â€” show with ðŸ‘ï¸ prefix
+            # Sentinel — idle screen-watch alert
             # ------------------------------------------------------------------
             if event.kind == "sentinel":
                 sentinel_text = event.data.get("text", event.message)
                 idle_label = event.data.get("idle_label", "a while")
                 if sentinel_text:
                     self._append("🧠 Sentinel", f"You've been away for {idle_label}:\n\n{sentinel_text}")
+                    self._speak_proactive(sentinel_text)  # 🔊 auto-speak
                 continue
 
-            self._append("A.N.K.I.T.A", event.message)
+            # ------------------------------------------------------------------
+            # Morning briefing — longer TTS allowance for more content
+            # ------------------------------------------------------------------
+            if event.kind == "morning_briefing":
+                briefing_text = event.data.get("text", event.message)
+                if briefing_text:
+                    self._append("☀️ Morning", briefing_text)
+                    self._speak_proactive(briefing_text, max_chars=300)  # 🔊 auto-speak
+                continue
+
+            # Display the formatted message in chat for all remaining kinds
+            self._append("A.N.K.I.T.A", formatted)
 
             # ------------------------------------------------------------------
-            # DreamState epiphany â€” auto-inject reply + TTS, no user input needed
+            # Per-kind TTS — ANKITA speaks all proactive events automatically
             # ------------------------------------------------------------------
             if event.kind == "dream_epiphany":
                 epiphany_text = event.data.get("text", event.message)
                 if epiphany_text:
-                    # Speak via Sarvam TTS in a daemon thread
-                    api_key = os.getenv("SARVAM_API_KEY", "").strip()
-                    if api_key:
-                        try:
-                            lang = self.voice_lang_code or "en-IN"
-                            tts = voice_web._sarvam_tts(
-                                api_key=api_key, text=epiphany_text, lang_code=lang)
-                            audio_b64 = voice_web._extract_audio_b64(tts)
-                            import threading as _t
-                            def _play_dream(b64: str = audio_b64) -> None:
-                                raw = base64.b64decode(b64)
-                                fd, path = tempfile.mkstemp(suffix=".wav")
-                                os.close(fd)
-                                try:
-                                    with open(path, "wb") as f:
-                                        f.write(raw)
-                                    if os.name == "nt":
-                                        import winsound
-                                        winsound.PlaySound(path, winsound.SND_FILENAME)
-                                    else:
-                                        os.system(f'afplay "{path}" >/dev/null 2>&1 || true')
-                                finally:
-                                    try:
-                                        os.remove(path)
-                                    except Exception:
-                                        pass
-                            _t.Thread(target=_play_dream, daemon=True).start()
-                        except Exception as tts_err:
-                            self._append("System", f"[Dream TTS error: {tts_err}]")
-                continue  # No further processing needed for dream_epiphany
+                    self._speak_proactive(epiphany_text)  # 🔊
+                continue
+
+            if event.kind == "system":
+                # Battery / CPU / RAM alert — speak immediately (high urgency)
+                self._speak_proactive(event.message)
+                continue
+
+            if event.kind == "auto_action":
+                # AutoExecutor Class B events (battery low, stale downloads, health reminder)
+                self._speak_proactive(event.message)
+                continue
+
+            if event.kind == "insight":
+                # InsightSynthesizer 12h insights — ANKITA proactively shares them
+                self._speak_proactive(event.message)
+                continue
+
+            if event.kind == "cron":
+                # Overdue cron job alert
+                self._speak_proactive(event.message)
+                continue
+
+            if event.kind == "drop_file":
+                # User dropped an idea file — announce it
+                self._speak_proactive(event.message)
+                continue
 
             if event.kind == "content_request":
                 suggested_prompt = event.data.get("suggested_prompt", "")
@@ -817,39 +962,17 @@ class AnkitaWindow(QMainWindow):
                         return
                     self._append("A.N.K.I.T.A", reply)
                     self.memory.add(self.session_id, "assistant", reply)
-                    api_key = os.getenv("SARVAM_API_KEY", "").strip()
-                    if api_key:
-                        try:
-                            lang = self.voice_lang_code or "en-IN"
-                            tts = voice_web._sarvam_tts(
-                                api_key=api_key, text=reply, lang_code=lang)
-                            audio_b64 = voice_web._extract_audio_b64(tts)
-                            import threading
-                            def _play() -> None:
-                                import base64 as _b64, tempfile as _tf, os as _os
-                                raw = _b64.b64decode(audio_b64)
-                                fd, path = _tf.mkstemp(suffix=".wav")
-                                _os.close(fd)
-                                try:
-                                    with open(path, "wb") as f:
-                                        f.write(raw)
-                                    if _os.name == "nt":
-                                        import winsound
-                                        winsound.PlaySound(path, winsound.SND_FILENAME)
-                                    else:
-                                        _os.system(f'afplay "{path}" >/dev/null 2>&1 || true')
-                                finally:
-                                    try:
-                                        _os.remove(path)
-                                    except Exception:
-                                        pass
-                            threading.Thread(target=_play, daemon=True).start()
-                        except Exception as tts_err:
-                            self._append("System", f"TTS error: {tts_err}")
+                    self._speak_proactive(reply)  # 🔊 speak auto-generated content too
 
                 worker.done.connect(_on_content_done)
                 worker.start()
                 self._content_worker = worker
+                continue
+
+            # Generic fallback — speak any unrecognised proactive event kind
+            self._speak_proactive(formatted)
+
+
 
     # -----------------------------------------------------------------------
     # Chat actions
@@ -1026,6 +1149,7 @@ class AnkitaWindow(QMainWindow):
     def on_voice_toggle(self) -> None:
         if self.voice_worker is not None and self.voice_worker.isRunning():
             # Stop listening â€” clear the flag so WakeWordListener can resume
+            self.voice_worker.interrupt_speaking()
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
             self._voice_active_flag.clear()
@@ -1033,7 +1157,7 @@ class AnkitaWindow(QMainWindow):
             self.voice_btn.setStyleSheet(self._btn_style("#4a2a6a", "#5f3a8a"))
             self.status_label.setText("Ready.")
         else:
-            # Start listening
+            # Start listening with Sarvam backend
             if not HAS_AUDIO_STACK:
                 QMessageBox.warning(self, "Voice unavailable",
                                     "Install: pip install numpy sounddevice")
@@ -1044,7 +1168,7 @@ class AnkitaWindow(QMainWindow):
                 return
             lang = self.voice_lang_code or "en-IN"
             self.voice_worker = VoiceCallWorker(
-                self.agent, self.messages, api_key=api_key, lang_code=lang)
+                self.orchestrator, self.messages, api_key=api_key, lang_code=lang)
             mic_label = self.voice_worker.mic_name
             if any(kw in mic_label for kw in ("invalid", "fallback", "auto (")):
                 self._append("System", f"⚠️ Mic fallback: {mic_label}. Check VOICE_GUI_DEVICE_INDEX in .env")
@@ -1138,3 +1262,5 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+

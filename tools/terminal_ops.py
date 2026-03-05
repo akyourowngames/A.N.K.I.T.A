@@ -53,6 +53,178 @@ def _trim_output(text: str, limit: int = 12000) -> Dict[str, Any]:
     return {"text": f"{head}\n... [truncated] ...\n{tail}", "truncated": True}
 
 
+def _normalize_search_root(raw_path: str | None) -> Dict[str, Any]:
+    if not raw_path:
+        return {"ok": True, "path": str(Path.cwd().resolve())}
+    expanded = os.path.expandvars(str(raw_path)).strip().strip('"').strip("'")
+    target = Path(expanded).resolve()
+    if not target.exists() or not target.is_dir():
+        return {"ok": False, "error": f"Search path does not exist or is not a directory: {raw_path}"}
+    return {"ok": True, "path": str(target)}
+
+
+def _compile_pattern(pattern: str, case_sensitive: bool) -> Dict[str, Any]:
+    try:
+        flags = 0 if case_sensitive else re.IGNORECASE
+        return {"ok": True, "regex": re.compile(pattern, flags)}
+    except re.error as err:
+        return {"ok": False, "error": f"Invalid search pattern: {err}"}
+
+
+def _safe_max_results(value: int | None) -> int:
+    try:
+        n = int(value or 50)
+    except Exception:
+        n = 50
+    return max(1, min(n, 200))
+
+
+def fast_file_search(
+    pattern: str,
+    path: str | None = None,
+    glob: str | None = None,
+    max_results: int = 50,
+    case_sensitive: bool = False,
+) -> Dict[str, Any]:
+    """
+    Fast file search with bounded output. Uses ripgrep if available, otherwise PowerShell fallback.
+
+    Returns:
+        {
+            "ok": bool,
+            "kind": "fast_file_search",
+            "root": "<absolute path>",
+            "pattern": "<pattern>",
+            "glob": "<glob or None>",
+            "case_sensitive": bool,
+            "max_results": int,
+            "matches_found": int,
+            "truncated": bool,
+            "results": [<absolute paths>],
+            "error": "<error msg>" (if ok is False)
+        }
+    """
+    if not pattern or not str(pattern).strip():
+        return {
+            "ok": False,
+            "kind": "fast_file_search",
+            "error": "pattern is required",
+        }
+
+    root_res = _normalize_search_root(path)
+    if not root_res.get("ok"):
+        return {
+            "ok": False,
+            "kind": "fast_file_search",
+            "error": root_res["error"],
+        }
+    root = root_res["path"]
+
+    pat_res = _compile_pattern(str(pattern), case_sensitive)
+    if not pat_res.get("ok"):
+        return {
+            "ok": False,
+            "kind": "fast_file_search",
+            "error": pat_res["error"],
+        }
+    regex = pat_res["regex"]
+    limit = _safe_max_results(max_results)
+
+    def _record_hits(candidates: List[str]) -> Dict[str, Any]:
+        matches: List[str] = []
+        count = 0
+        for p in candidates:
+            if not p:
+                continue
+            if regex.search(p):
+                count += 1
+                if len(matches) < limit:
+                    matches.append(p)
+        return {
+            "matches_found": count,
+            "results": matches,
+            "truncated": count > len(matches),
+        }
+
+    rg_path = shutil.which("rg")
+    if rg_path:
+        args = [rg_path, "--files"]
+        if glob:
+            args.extend(["-g", str(glob)])
+        args.append(root)
+        try:
+            proc = subprocess.run(
+                args,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            if proc.returncode not in (0, 1):
+                return {
+                    "ok": False,
+                    "kind": "fast_file_search",
+                    "error": (proc.stderr or "").strip() or "rg failed",
+                }
+            lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+            hits = _record_hits(lines)
+            return {
+                "ok": True,
+                "kind": "fast_file_search",
+                "root": root,
+                "pattern": pattern,
+                "glob": glob,
+                "case_sensitive": case_sensitive,
+                "max_results": limit,
+                "matches_found": hits["matches_found"],
+                "truncated": hits["truncated"],
+                "results": hits["results"],
+            }
+        except Exception as err:
+            return {
+                "ok": False,
+                "kind": "fast_file_search",
+                "error": f"rg execution failed: {err}",
+            }
+
+    # PowerShell fallback: Get-ChildItem with optional -Filter for glob
+    filter_clause = f"-Filter '{glob}'" if glob else ""
+    cmd = f"Get-ChildItem -Path '{root}' -Recurse -File {filter_clause} | Select-Object -ExpandProperty FullName"
+    try:
+        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        proc = subprocess.run(
+            argv,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        if proc.returncode not in (0, 1):
+            return {
+                "ok": False,
+                "kind": "fast_file_search",
+                "error": (proc.stderr or "").strip() or "PowerShell search failed",
+            }
+        lines = [ln.strip() for ln in (proc.stdout or "").splitlines() if ln.strip()]
+        hits = _record_hits(lines)
+        return {
+            "ok": True,
+            "kind": "fast_file_search",
+            "root": root,
+            "pattern": pattern,
+            "glob": glob,
+            "case_sensitive": case_sensitive,
+            "max_results": limit,
+            "matches_found": hits["matches_found"],
+            "truncated": hits["truncated"],
+            "results": hits["results"],
+        }
+    except Exception as err:
+        return {
+            "ok": False,
+            "kind": "fast_file_search",
+            "error": f"PowerShell search failed: {err}",
+        }
+
+
 def _candidate_app_names(raw: str) -> List[str]:
     value = str(raw or "").strip()
     if not value:
