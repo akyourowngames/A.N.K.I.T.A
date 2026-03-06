@@ -326,6 +326,39 @@ TOOL_SPECS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "pause_music",
+            "description": "Pause the currently playing music without stopping it.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resume_music",
+            "description": "Resume paused music playback.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "music_volume",
+            "description": "Set the music/system volume level (0-100).",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "level": {
+                        "type": "integer",
+                        "description": "Volume level from 0 (mute) to 100 (max).",
+                    },
+                },
+                "required": ["level"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "search_price",
             "description": (
                 "Fast, reliable price fetcher for crypto and stocks. "
@@ -843,21 +876,29 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "function": {
             "name": "desktop_interact",
             "description": (
-                "Interact directly with the OS using keyboard input. "
-                "Use this to type text, press shortcuts, hit enter, or physically drive the UI. "
+                "Interact directly with the OS using keyboard and mouse input. "
+                "Use this to type text, press shortcuts, click, scroll, drag, or physically drive the UI. "
                 "NEVER ask the user to type it themselves — call this instead. "
                 "ALWAYS pass the `focus` parameter when you know which app you are targeting "
                 "(e.g. 'Notepad', 'Chrome') — this prevents typing into the wrong window. "
                 "Actions: "
                 "'type_text' — types the given text into the focused window; "
-                "'press_shortcut' — presses a key combo like 'ctrl+c', 'enter', 'win+d', 'alt+f4', 'ctrl+shift+esc'."
+                "'press_shortcut' — presses a key combo like 'ctrl+c', 'enter', 'win+d', 'alt+f4'; "
+                "'mouse_click' — click at x,y coordinates (text='500, 300') or current position; "
+                "'mouse_right_click' — right-click at x,y; "
+                "'mouse_double_click' — double-click at x,y; "
+                "'mouse_move' — move mouse to x,y (text='500, 300'); "
+                "'scroll' — scroll up/down (text=positive for up, negative for down, e.g. '-5'); "
+                "'drag' — drag from (x1,y1) to (x2,y2) (text='100,200,500,400'); "
+                "'mouse_position' — get current mouse x,y coordinates."
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["type_text", "press_shortcut"],
+                        "enum": ["type_text", "press_shortcut", "mouse_click", "mouse_right_click",
+                                 "mouse_double_click", "mouse_move", "scroll", "drag", "mouse_position"],
                         "description": "The interaction type.",
                     },
                     "text": {
@@ -2152,6 +2193,53 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                 "Call this first to understand what you're working with."
             ),
             "parameters": {"type": "object", "properties": {}, "required": []},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "kill_process_tree",
+            "description": "Kill a process and ALL its child processes by PID. More thorough than kill_process.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "pid": {"type": "integer", "description": "Process ID to kill (with all children)."},
+                },
+                "required": ["pid"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "port_scan",
+            "description": "Scan local ports to find which ones are listening and what process owns them.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "start": {"type": "integer", "description": "Start of port range (default 1)."},
+                    "end": {"type": "integer", "description": "End of port range (default 1024)."},
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "env_op",
+            "description": (
+                "Manage environment variables. "
+                "Actions: 'get' (read one var), 'set' (write var), 'list' (all vars), 'path' (show PATH entries)."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {"type": "string", "enum": ["get", "set", "list", "path"]},
+                    "name": {"type": "string", "description": "Variable name (for get/set)."},
+                    "value": {"type": "string", "description": "Value to set (for set action)."},
+                },
+                "required": ["action"],
+            },
         },
     },
 

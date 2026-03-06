@@ -1,8 +1,14 @@
 """
-Voice operations for ANKITA - Text-to-Speech with LLM-enhanced natural speech.
+Voice operations for ANKITA - TTS and Speech-to-Text (STT) via Groq Whisper.
 """
+import os
 import subprocess
+from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+import requests
+from dotenv import load_dotenv
+
 from llm.client import LLMRuntime, call_chat_once
 
 
@@ -143,3 +149,79 @@ def voice_control(action: str, runtime: Optional[LLMRuntime] = None, **kwargs) -
     
     else:
         return {"ok": False, "error": f"Unknown voice action: {action}"}
+
+
+# ---------------------------------------------------------------------------
+# Speech-to-Text — Groq Whisper (supports 97+ languages)
+# ---------------------------------------------------------------------------
+
+# Groq Whisper endpoint (OpenAI-compatible)
+_GROQ_WHISPER_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+_WHISPER_MODEL = "whisper-large-v3-turbo"
+
+# Supported extensions for Whisper
+_WHISPER_EXTENSIONS = {".ogg", ".oga", ".mp3", ".mp4", ".m4a", ".wav", ".webm", ".flac"}
+
+
+def transcribe_audio(
+    file_path: Path,
+    language: Optional[str] = None,
+) -> Dict[str, Any]:
+    """Transcribe an audio file to text using Groq Whisper.
+
+    Args:
+        file_path: Path to audio file (ogg, mp3, wav, m4a, webm, flac).
+        language: Optional ISO-639-1 code (e.g. 'en', 'hi', 'es').
+                  If omitted Whisper auto-detects the language.
+
+    Returns:
+        {"ok": True, "text": "...", "language": "..."} on success,
+        {"ok": False, "error": "..."} on failure.
+    """
+    load_dotenv()
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        return {"ok": False, "error": "GROQ_API_KEY not set — cannot transcribe audio."}
+
+    fp = Path(file_path)
+    if not fp.exists() or not fp.is_file():
+        return {"ok": False, "error": f"Audio file not found: {fp}"}
+
+    if fp.suffix.lower() not in _WHISPER_EXTENSIONS:
+        return {"ok": False, "error": f"Unsupported audio format: {fp.suffix}"}
+
+    try:
+        headers = {"Authorization": f"Bearer {api_key}"}
+        data: Dict[str, str] = {
+            "model": _WHISPER_MODEL,
+            "response_format": "verbose_json",
+        }
+        if language:
+            data["language"] = language
+
+        with fp.open("rb") as fh:
+            files = {"file": (fp.name, fh, "audio/ogg")}
+            resp = requests.post(
+                _GROQ_WHISPER_URL,
+                headers=headers,
+                data=data,
+                files=files,
+                timeout=120,
+            )
+
+        if resp.status_code != 200:
+            return {"ok": False, "error": f"Whisper API {resp.status_code}: {resp.text[:300]}"}
+
+        result = resp.json()
+        transcript = result.get("text", "").strip()
+        detected_lang = result.get("language", "unknown")
+
+        if not transcript:
+            return {"ok": False, "error": "Whisper returned empty transcript."}
+
+        return {"ok": True, "text": transcript, "language": detected_lang}
+
+    except requests.Timeout:
+        return {"ok": False, "error": "Whisper API timed out."}
+    except Exception as exc:
+        return {"ok": False, "error": f"Transcription failed: {exc}"}

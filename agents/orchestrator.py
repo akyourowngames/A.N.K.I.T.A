@@ -485,6 +485,14 @@ def _run_specialist(
             "content": messages[0]["content"] + "\n\n" + prior_context,
         }
 
+    # ── CASCADING OVERFLOW RECOVERY (OpenClaw-inspired) ────────────────────
+    # Tier 1: Proactive compact before LLM call (already exists)
+    # Tier 2: On 400/context_overflow → trim tool results + retry
+    # Tier 3: On second failure → LLM-summarize old messages + retry
+    # Tier 4: On third failure → emergency compact (keep tail only)
+    _overflow_attempts = 0
+    _MAX_OVERFLOW_ATTEMPTS = 3
+
     for _ in range(_MAX_TOOL_STEPS):
         # -- TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call --
         estimated = _estimate_tokens(messages)
@@ -493,7 +501,7 @@ def _run_specialist(
                 f"[TokenGuardian/{specialist.name}] [WARN]  ~{estimated:,} tokens - compacting...",
                 flush=True,
             )
-            trimmed = compact_messages(messages)
+            trimmed = compact_messages(messages, runtime=specialist_runtime)
             messages = trimmed
             print(
                 f"[TokenGuardian/{specialist.name}] [OK] Compacted to ~{_estimate_tokens(messages):,} tokens.",
@@ -501,8 +509,8 @@ def _run_specialist(
             )
         try:
             response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
+            _overflow_attempts = 0  # Reset on success
         except Exception as err:
-            # [PRISM] Prism Protocol - 400 / context_length_exceeded recovery
             err_str = str(err).lower()
             is_payload_err = (
                 "400" in err_str
@@ -512,41 +520,59 @@ def _run_specialist(
                 or "request too large" in err_str
                 or "maximum context" in err_str
             )
-            if is_payload_err:
-                # Find the last tool message and replace its content with a slim placeholder
-                trimmed = False
+            if not is_payload_err:
+                return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
+
+            _overflow_attempts += 1
+            print(
+                f"[CascadeRecovery/{specialist.name}] Overflow attempt {_overflow_attempts}/{_MAX_OVERFLOW_ATTEMPTS}",
+                flush=True,
+            )
+
+            if _overflow_attempts == 1:
+                # Tier 2: Truncate ALL tool messages to slim placeholders
+                _truncated_any = False
                 for i in range(len(messages) - 1, -1, -1):
                     if messages[i].get("role") == "tool":
-                        messages[i] = {
-                            **messages[i],
-                            "content": (
-                                '[Tool output was too large and has been removed. '
-                                'Tell the user: "The result was too big to process. '
-                                'Please ask for a smaller range or more specific query."]'
-                            ),
-                        }
-                        trimmed = True
-                        break
-                if trimmed:
-                    print(
-                        f"[Prism/{specialist.name}] [PRISM] Context overflow - trimmed last tool msg, retrying...",
-                        flush=True,
-                    )
-                    try:
-                        response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
-                    except Exception as retry_err:
-                        return {
-                            "agent": specialist.name,
-                            "ok": False,
-                            "reply": (
-                                "[WARN] The data returned was too large for me to process. "
-                                "Please try a more specific request, a smaller date range, or fewer items."
-                            ),
-                        }
-                else:
-                    return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
+                        content = messages[i].get("content", "")
+                        if isinstance(content, str) and len(content) > 500:
+                            messages[i] = {
+                                **messages[i],
+                                "content": content[:500] + "\n[TRUNCATED — result too large]",
+                            }
+                            _truncated_any = True
+                if _truncated_any:
+                    print(f"[CascadeRecovery/{specialist.name}] Tier 2: Truncated tool messages", flush=True)
+                    continue  # Retry the loop iteration
+
+            if _overflow_attempts == 2:
+                # Tier 3: LLM-powered summarization of old context
+                messages = compact_messages(messages, runtime=specialist_runtime)
+                print(f"[CascadeRecovery/{specialist.name}] Tier 3: LLM summarization applied", flush=True)
+                continue
+
+            if _overflow_attempts >= _MAX_OVERFLOW_ATTEMPTS:
+                # Tier 4: Emergency — keep only system + last 6 messages
+                system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+                tail = messages[-6:]
+                messages = ([system_msg] if system_msg else []) + [{
+                    "role": "system",
+                    "content": "[EMERGENCY] Context overflow recovery — older context dropped.",
+                }] + tail
+                print(f"[CascadeRecovery/{specialist.name}] Tier 4: Emergency compact", flush=True)
+                try:
+                    response = call_chat_once(specialist_runtime, messages, tools=specialist.tool_specs, max_tokens=max_tokens)
+                except Exception as final_err:
+                    return {
+                        "agent": specialist.name,
+                        "ok": False,
+                        "reply": (
+                            "[WARN] Context overflow after 3 recovery attempts. "
+                            "Please try a more specific request."
+                        ),
+                    }
             else:
-                return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
+                continue
 
         tool_calls = response.get("tool_calls") or []
         messages.append({
@@ -1056,8 +1082,10 @@ class Orchestrator:
             _mood_tracker.update(user_text, runtime=self.runtime)
             _mood_directive = _mood_tracker.get_personality_directive()
             apply_mood_to_messages(messages, _mood_directive)
-        except Exception:
-            pass
+            _ms = _mood_tracker.current_state()
+            print(f"[Personality/Orchestrator] mood={_ms.primary} intensity={_ms.intensity:.2f}", flush=True)
+        except Exception as _pe_err:
+            print(f"[Personality/Orchestrator] ⚠️  Error: {_pe_err}", flush=True)
         # 1. Supervisor routes the request
         # Generate an interaction ID for FeedbackEngine tracking
         _interaction_id: Optional[str] = None

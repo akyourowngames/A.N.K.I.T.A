@@ -15,6 +15,7 @@ Install:
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import re
@@ -86,6 +87,40 @@ class _RateLimiter:
             self._calls.append(time.time())
 
 _rate_limiter = _RateLimiter(max_calls=50, period=60.0)
+
+# ---------------------------------------------------------------------------
+# Search result cache — avoids redundant API calls for identical queries
+# ---------------------------------------------------------------------------
+_search_cache: Dict[str, Any] = {}
+_cache_lock = threading.Lock()
+_CACHE_TTL_SEC = 300  # 5-minute TTL for search results
+
+
+def _cache_key(prefix: str, query: str, **extra: Any) -> str:
+    """Build a deterministic cache key from function name + query + extras."""
+    raw = f"{prefix}|{query.strip().lower()}|{sorted(extra.items())}"
+    return hashlib.md5(raw.encode()).hexdigest()
+
+
+def _cache_get(key: str) -> Optional[Dict[str, Any]]:
+    """Retrieve a cached result if still valid. Returns None on miss."""
+    with _cache_lock:
+        entry = _search_cache.get(key)
+        if entry and time.time() - entry["_ts"] < _CACHE_TTL_SEC:
+            return entry["data"]
+        if entry:
+            del _search_cache[key]
+        return None
+
+
+def _cache_set(key: str, data: Any) -> None:
+    """Store a result in the cache. Evicts old entries if cache grows too large."""
+    with _cache_lock:
+        # Evict oldest if cache exceeds 200 entries
+        if len(_search_cache) > 200:
+            oldest_key = min(_search_cache, key=lambda k: _search_cache[k]["_ts"])
+            del _search_cache[oldest_key]
+        _search_cache[key] = {"_ts": time.time(), "data": data}
 
 # ---------------------------------------------------------------------------
 # Dynamic CoinGecko coin list — fetched once, then cached to disk
@@ -219,6 +254,14 @@ def search_web(
         raise ValueError("query is required")
 
     limit = max(1, min(int(max_results), 50))  # increased cap from 20 → 50
+
+    # Check cache first
+    ck = _cache_key("search_web", q, limit=limit)
+    cached = _cache_get(ck)
+    if cached is not None:
+        cached["cache_hit"] = True
+        return cached
+
     results: List[Dict[str, Any]] = []
 
     # Apply rate limiting before any external call
@@ -240,13 +283,15 @@ def search_web(
                     item["url"] = r.get("href", "")
                 results.append(item)
         if results:
-            return {
+            _out = {
                 "kind": "web_search",
                 "engine": "ddgs-api",
                 "query": q,
                 "results": results,
                 "count": len(results),
             }
+            _cache_set(ck, _out)
+            return _out
     except Exception:
         pass  # Fall through
 
@@ -266,13 +311,15 @@ def search_web(
                     item["url"] = r.get("href", "")
                 results.append(item)
         if results:
-            return {
+            _out = {
                 "kind": "web_search",
                 "engine": "duckduckgo-api",
                 "query": q,
                 "results": results,
                 "count": len(results),
             }
+            _cache_set(ck, _out)
+            return _out
     except Exception:
         pass  # Fall through
 
@@ -291,13 +338,15 @@ def search_web(
                 item["url"] = row["url"]
             results.append(item)
         if results:
-            return {
+            _out = {
                 "kind": "web_search",
                 "engine": "duckduckgo-html",
                 "query": q,
                 "include_urls": bool(include_urls),
                 "results": results,
             }
+            _cache_set(ck, _out)
+            return _out
     except Exception:
         pass  # Fall through
 
@@ -319,13 +368,15 @@ def search_web(
                         item["url"] = clean_url
                     results.append(item)
             if results:
-                return {
+                _out = {
                     "kind": "web_search",
                     "engine": "google-udm14",
                     "query": q,
                     "include_urls": bool(include_urls),
                     "results": results,
                 }
+                _cache_set(ck, _out)
+                return _out
     except Exception:
         pass
 

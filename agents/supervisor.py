@@ -215,7 +215,22 @@ SPECIALIST PRIORITY RULE:
 - review my code / what's wrong with this code / explain this file or codebase -> CodeAgent
 - refactor/clean up/improve code quality -> CodeAgent
 - ping/ipconfig/git/netstat/tasklist/whoami/curl → TerminalAgent
-- schedule/cron/remind → CronAgent
+- "schedule/cron/remind → CronAgent
+- SCHEDULING INTENT (CRITICAL — INTERCEPT BEFORE ANYTHING ELSE):
+  If the user says ANY of these patterns, route to CronAgent IMMEDIATELY:
+    "every day/morning/evening/night/hour/week/month [do X]"
+    "at [time] [do X]"
+    "daily/weekly/monthly [do X]"
+    "remind me [when] to [X]"
+    "schedule [X] at [time]"
+    "from now on every [time] [do X]"
+    "at 5pm tell me / at 9am check / every morning send me"
+  CronAgent creates agent-type heartbeat jobs that run the FULL AI pipeline on schedule.
+  Examples:
+    "every morning tell me the news" → CronAgent (creates agent heartbeat job)
+    "every day at 5pm check Bitcoin price" → CronAgent (creates agent heartbeat job)
+    "remind me every hour to drink water" → CronAgent (creates note heartbeat job)
+    "every Friday write me a weekly summary" → CronAgent (creates agent heartbeat job)
 - what's on screen, click button visually → ScreenAgent
 - log/add expense/track/record/spreadsheet/google sheet → IntegrationAgent
 - new videos from/subscriptions/youtube playlist/create playlist → IntegrationAgent
@@ -327,6 +342,12 @@ Examples:
 - "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "research and write a detailed report on OpenAI" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "in-depth investigation of cryptocurrency markets" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
+- "every morning tell me the news" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat to fetch news daily at 9am"}
+- "every day at 5pm check Bitcoin price" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat for daily crypto check"}
+- "remind me every hour to drink water" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: recurring note reminder"}
+- "every Friday write me a weekly summary" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: weekly agent heartbeat for report generation"}
+- "at 9am send me a motivational quote" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: daily agent heartbeat for quote generation"}
+- "daily check the weather and tell me" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat for weather check"}
 
 WRONG — never do this:
 - "write a poem" → WRONG: {"agents": ["ContentAgent"]} ← ContentAgent has NO tools, can't save

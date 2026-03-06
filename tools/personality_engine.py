@@ -199,7 +199,15 @@ _DIRECTIVES: dict[str, str] = {
         "- They'll come back to you when they want interaction.\n"
         "- Tone: 'Done.', 'Saved.', 'Running.', 'Fixed.'"
     ),
-    "neutral": "",  # No directive for neutral — base SYSTEM_PROMPT applies
+    "neutral": (
+        "[ANKITA-MOOD: neutral]\n"
+        "Default ANKITA personality active — FRIDAY meets funniest person in the group chat:\n"
+        "- Dry wit, light roasts, situational humor — funny but NEVER annoying.\n"
+        "- Default acknowledgements: 'On it.', 'Done.', 'Handled.', 'Say less.', 'Bet.'\n"
+        "- Match the energy: tech bro energy for builds, chill for casual, sharp for debug.\n"
+        "- You're Krish's RIGHT HAND. Competent first, personality second.\n"
+        "- Short punchy messages. No essays. 2-3 sentences max unless they ask for more."
+    ),
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -634,13 +642,14 @@ class SessionMoodTracker:
     def get_personality_directive(self) -> str:
         """
         Return the mood-adaptive system message block to inject into LLM calls.
-        Returns "" for neutral or very low intensity (< 0.15).
+        ALWAYS returns a directive — neutral gets the default personality reinforcement.
         The returned string starts with '[ANKITA-MOOD:' for easy find-and-replace.
         """
         state = self.current_state()
-        if state.primary == "neutral" or state.intensity < 0.15:
-            return ""
-        return _DIRECTIVES.get(state.primary, "")
+        # For non-neutral moods, require minimum intensity threshold
+        if state.primary != "neutral" and state.intensity < 0.15:
+            return _DIRECTIVES.get("neutral", "")
+        return _DIRECTIVES.get(state.primary, _DIRECTIVES.get("neutral", ""))
 
     def reset(self) -> None:
         """Clear session mood state (e.g. on /reset command)."""
@@ -670,6 +679,21 @@ def get_mood_tracker() -> SessionMoodTracker:
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: inject / replace mood message in a messages list
 # ─────────────────────────────────────────────────────────────────────────────
+
+def mood_status() -> str:
+    """Return a short human-readable mood status string for UI display."""
+    tracker = get_mood_tracker()
+    state = tracker.current_state()
+    _MOOD_EMOJI = {
+        "neutral": "😊", "stressed": "😰", "frustrated": "😤",
+        "excited": "🔥", "sad": "😔", "tired": "😴",
+        "curious": "🤔", "urgent": "⚡", "casual": "😎",
+        "playful": "😜", "focused": "🎯",
+    }
+    emoji = _MOOD_EMOJI.get(state.primary, "❓")
+    intensity_bar = "▓" * max(1, int(state.intensity * 5)) + "░" * (5 - max(1, int(state.intensity * 5)))
+    return f"{emoji} {state.primary.capitalize()} [{intensity_bar}] ({state.intensity:.0%})"
+
 
 def apply_mood_to_messages(messages: list, directive: str) -> None:
     """

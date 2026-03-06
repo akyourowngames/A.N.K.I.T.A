@@ -1384,3 +1384,103 @@ def get_system_context() -> Dict[str, Any]:
     context["venv_path"] = os.environ.get("VIRTUAL_ENV", None)
     
     return context
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PROCESS TREE — kill a process and all its children
+# ─────────────────────────────────────────────────────────────────────────────
+
+def kill_process_tree(pid: int) -> Dict[str, Any]:
+    """Kill a process and all its child processes by PID."""
+    if os.name == "nt":
+        result = execute_shell_command(f"taskkill /PID {int(pid)} /T /F")
+    else:
+        result = execute_shell_command(f"kill -9 -{int(pid)} 2>/dev/null || kill -9 {int(pid)}")
+    return {
+        "ok": result.get("ok", False),
+        "kind": "kill_tree",
+        "pid": pid,
+        "output": result.get("output", ""),
+        "error": result.get("error", ""),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PORT SCANNER — check which ports are in use
+# ─────────────────────────────────────────────────────────────────────────────
+
+def port_scan(start: int = 1, end: int = 1024) -> Dict[str, Any]:
+    """Scan a range of local ports and return which ones are listening."""
+    start = max(1, min(int(start), 65535))
+    end = max(start, min(int(end), 65535))
+    if os.name == "nt":
+        script = (
+            f"Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue | "
+            f"Where-Object {{ $_.LocalPort -ge {start} -and $_.LocalPort -le {end} }} | "
+            f"Select-Object LocalPort, OwningProcess | Sort-Object LocalPort | "
+            f"ForEach-Object {{ Write-Output ('' + $_.LocalPort + ':' + $_.OwningProcess) }}"
+        )
+        result = execute_shell_command(f"powershell -NoProfile -Command \"{script}\"")
+    else:
+        result = execute_shell_command(f"ss -tlnp sport ge :{start} and sport le :{end}")
+    
+    ports = []
+    if result.get("ok") and result.get("output"):
+        for line in result["output"].splitlines():
+            line = line.strip()
+            if ":" in line:
+                parts = line.split(":")
+                try:
+                    ports.append({"port": int(parts[0]), "pid": int(parts[1]) if len(parts) > 1 else 0})
+                except ValueError:
+                    pass
+    return {
+        "ok": True,
+        "kind": "port_scan",
+        "range": f"{start}-{end}",
+        "listening": ports,
+        "count": len(ports),
+    }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ENVIRONMENT VARIABLE OPS — get/set/list env vars
+# ─────────────────────────────────────────────────────────────────────────────
+
+def env_op(action: str, name: str = "", value: str = "") -> Dict[str, Any]:
+    """Get, set, or list environment variables.
+    
+    Actions: get, set, list, path (show PATH entries)
+    """
+    action = str(action or "").strip().lower()
+    
+    if action == "get":
+        if not name:
+            return {"ok": False, "error": "name is required for get"}
+        val = os.environ.get(name)
+        return {"ok": val is not None, "kind": "env_get", "name": name, "value": val}
+    
+    elif action == "set":
+        if not name:
+            return {"ok": False, "error": "name is required for set"}
+        os.environ[name] = value
+        _TERMINAL_SESSION["env_overrides"][name] = value
+        return {"ok": True, "kind": "env_set", "name": name, "value": value}
+    
+    elif action == "list":
+        # Return only non-sensitive env vars (filter out keys, tokens, passwords)
+        sensitive_patterns = {"key", "token", "secret", "password", "pwd", "auth", "credential"}
+        safe_vars = {}
+        for k, v in sorted(os.environ.items()):
+            if any(p in k.lower() for p in sensitive_patterns):
+                safe_vars[k] = "***REDACTED***"
+            else:
+                safe_vars[k] = v[:200] if len(v) > 200 else v
+        return {"ok": True, "kind": "env_list", "count": len(safe_vars), "variables": safe_vars}
+    
+    elif action == "path":
+        sep = ";" if os.name == "nt" else ":"
+        entries = os.environ.get("PATH", "").split(sep)
+        return {"ok": True, "kind": "env_path", "entries": entries, "count": len(entries)}
+    
+    return {"ok": False, "error": f"Unknown env action: {action}. Use: get, set, list, path"}

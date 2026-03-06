@@ -1,5 +1,7 @@
 import json
 import sys
+import time
+import random
 from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -171,6 +173,12 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         return music_ops.clear_queue(workspace_root=workspace_root)
     if name == "play_next_in_queue":
         return music_ops.play_next_in_queue(workspace_root=workspace_root)
+    if name == "pause_music":
+        return music_ops.pause_music(workspace_root=workspace_root)
+    if name == "resume_music":
+        return music_ops.resume_music(workspace_root=workspace_root)
+    if name == "music_volume":
+        return music_ops.music_volume(workspace_root=workspace_root, level=int(args.get("level", 50)))
     if name == "system_control":
         return system_ops.system_control(
             action=str(args.get("action", "")),
@@ -305,6 +313,19 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
         )
     if name == "get_system_context":
         return terminal_ops.get_system_context()
+    if name == "kill_process_tree":
+        return terminal_ops.kill_process_tree(pid=int(args.get("pid", 0)))
+    if name == "port_scan":
+        return terminal_ops.port_scan(
+            start=int(args.get("start", 1)),
+            end=int(args.get("end", 1024)),
+        )
+    if name == "env_op":
+        return terminal_ops.env_op(
+            action=str(args.get("action", "")),
+            name=str(args.get("name", "")),
+            value=str(args.get("value", "")),
+        )
 
     # ── Integration Hub ───────────────────────────────────────────────────
     if name == "github_op":
@@ -843,73 +864,241 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
     raise ValueError(f"Unknown tool: {name}")
 
 
-_HARD_CAP_CHARS = 3000
-_HARD_CAP_MSG   = "\n... [OUTPUT TRUNCATED — too much data. Please refine your request or ask for a smaller range.]"
+# ── PRISM PROTOCOL v2 — Adaptive Tool Result Budget (OpenClaw-inspired) ──────
+# OpenClaw uses HARD_MAX_TOOL_RESULT_CHARS = 50,000 with proportional truncation.
+# ANKITA's context is tighter (Copilot 64k limit) so we use a tiered budget:
+#   - Tier 1: 12,000 chars (~3k tokens) — default for most tools
+#   - Tier 2: 25,000 chars (~6k tokens) — for heavy tools (search, file reads, research)
+#   - Tier 3: 50,000 chars (~12k tokens) — for deep research only
+_HARD_CAP_DEFAULT = 12_000
+_HARD_CAP_HEAVY   = 25_000
+_HARD_CAP_DEEP    = 50_000
+_HARD_CAP_MSG     = "\n... [TRUNCATED — ask for a smaller range or more specific query]"
+
+# Tools that produce large outputs and benefit from higher budgets
+_HEAVY_RESULT_TOOLS = frozenset({
+    "search_web", "search_news", "search_price", "fetch_page_content",
+    "read_file", "read_file_lines", "read_rich_file", "list_files",
+    "search_text", "execute_shell", "pc_search", "disk_analysis",
+    "search_and_fetch", "workspace_scan", "deep_research",
+})
+_DEEP_RESULT_TOOLS = frozenset({
+    "deep_research", "workspace_scan",
+})
 
 
-def _hard_cap(result: Any) -> Any:
+def _get_tool_budget(tool_name: str = "") -> int:
+    """Return the char budget for a specific tool."""
+    if tool_name in _DEEP_RESULT_TOOLS:
+        return _HARD_CAP_DEEP
+    if tool_name in _HEAVY_RESULT_TOOLS:
+        return _HARD_CAP_HEAVY
+    return _HARD_CAP_DEFAULT
+
+
+def _hard_cap(result: Any, tool_name: str = "") -> Any:
     """
-    Prism Protocol — Token Budget Guard 💎
-    Converts any tool result to a string and hard-caps it at _HARD_CAP_CHARS characters.
-    This prevents 400 Bad Request / context_length_exceeded crashes from fat API payloads.
-    Non-string results (dicts, lists) are JSON-serialised first, then checked.
-    Returns the original result unchanged if it's within the limit.
+    Prism Protocol v2 — Adaptive Token Budget Guard 💎
 
-    VISION EXCEPTION: If the result contains a "base64" key (vision tool output),
-    we strip the base64 field BEFORE checking size. The vision intercept in
-    agent_runtime.py / orchestrator.py handles base64 separately via call_chat_with_image().
-    Truncating a base64 field corrupts the image and breaks JSON parsing.
+    OpenClaw-inspired proportional truncation:
+    - Tool budget is dynamic based on tool type (default 12k, heavy 25k, deep 50k)
+    - Vision results (base64) pass through untouched
+    - Dict/list results: JSON-serialise, check budget, truncate if needed
+    - String results: direct char check
+
+    This replaces the old flat 3000-char cap that caused 30% information loss.
     """
+    cap = _get_tool_budget(tool_name)
+
     if isinstance(result, dict):
         # VISION EXCEPTION: preserve base64 fields from truncation
-        # The vision intercept extracts base64 BEFORE _hard_cap is applied in execute_tool_call.
-        # But if the result is large due to OTHER fields, strip base64 for size check only.
         if "base64" in result:
-            # Pass through unchanged — vision intercept handles this result directly
             return result
-        # Recursively check inner "result" dict for base64
         _inner = result.get("result", {})
         if isinstance(_inner, dict) and "base64" in _inner:
-            return result  # pass through — vision intercept will unwrap it
+            return result
 
         serialised = json.dumps(result, ensure_ascii=False)
-        if len(serialised) <= _HARD_CAP_CHARS:
+        if len(serialised) <= cap:
             return result
-        truncated = serialised[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+        truncated = serialised[:cap] + _HARD_CAP_MSG
         return {"status": "truncated", "data": truncated}
     if isinstance(result, list):
         serialised = json.dumps(result, ensure_ascii=False)
-        if len(serialised) <= _HARD_CAP_CHARS:
+        if len(serialised) <= cap:
             return result
-        truncated = serialised[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+        truncated = serialised[:cap] + _HARD_CAP_MSG
         return {"status": "truncated", "data": truncated}
-    if isinstance(result, str) and len(result) > _HARD_CAP_CHARS:
-        return result[:_HARD_CAP_CHARS] + _HARD_CAP_MSG
+    if isinstance(result, str) and len(result) > cap:
+        return result[:cap] + _HARD_CAP_MSG
     return result
 
 
-def _enrich_error(name: str, error: str) -> str:
-    """Add actionable recovery hints to tool errors for the LLM."""
+# ── Error Classification (OpenClaw-inspired) ────────────────────────────────
+# OpenClaw classifies errors into categories (auth, billing, rate_limit,
+# context_overflow, transient, etc.) and handles each differently.
+# ANKITA mirrors this with a classify → enrich → hint pipeline.
+
+def _classify_error(error: str) -> str:
+    """Classify an error into a category for routing recovery actions.
+
+    Categories: auth, billing, rate_limit, context_overflow, permission,
+    missing_dep, network, timeout, not_found, parse, unknown
+    """
     e = error.lower()
-    hints = []
-    if "permission" in e or "access" in e or "denied" in e:
-        hints.append("Try: execute_elevated() or smart_retry() with auto_fix=True")
-    if "not found" in e or "no such file" in e:
-        hints.append("Check path exists. Try: list_files() to verify, or make_dir() first")
-    if "modulenotfounderror" in e or "no module named" in e:
-        hints.append("Try: auto_install_python_package() or smart_retry() which auto-installs")
-    if "timeout" in e or "timed out" in e:
-        hints.append("Increase timeout or try: smart_retry() which handles retries adaptively")
-    if "connection" in e or "network" in e or "dns" in e:
-        hints.append("Network issue. Try again or use resolve_error() for diagnosis")
-    if "json" in e and ("decode" in e or "parse" in e):
-        hints.append("Invalid JSON in args. Re-check the arguments format carefully")
-    if not hints:
-        hints.append("Try: resolve_error(error_text=<this error>) for diagnosis and fixes")
-    return error + " | HINTS: " + "; ".join(hints)
+    if any(k in e for k in ("401", "403", "unauthorized", "authentication", "invalid api key")):
+        return "auth"
+    if any(k in e for k in ("402", "billing", "quota", "subscription", "payment")):
+        return "billing"
+    if any(k in e for k in ("429", "rate limit", "too many requests", "throttl")):
+        return "rate_limit"
+    if any(k in e for k in ("context_length", "too large", "maximum context", "token limit")):
+        return "context_overflow"
+    if any(k in e for k in ("permission", "access denied", "denied", "forbidden")):
+        return "permission"
+    if any(k in e for k in ("modulenotfounderror", "no module named", "importerror", "not recognized")):
+        return "missing_dep"
+    if any(k in e for k in ("connection", "network", "dns", "unreachable", "socket")):
+        return "network"
+    if any(k in e for k in ("timeout", "timed out", "deadline exceeded")):
+        return "timeout"
+    if any(k in e for k in ("not found", "no such file", "does not exist", "filenotfounderror")):
+        return "not_found"
+    if any(k in e for k in ("json", "decode", "parse", "syntax")):
+        return "parse"
+    return "unknown"
+
+
+def _enrich_error(name: str, error: str) -> str:
+    """Add actionable recovery hints to tool errors for the LLM.
+
+    Uses OpenClaw-style error classification to provide targeted recovery paths.
+    """
+    category = _classify_error(error)
+    _CATEGORY_HINTS = {
+        "auth": "API key invalid or expired. Check .env credentials.",
+        "billing": "Billing/quota issue. Switch providers or check subscription.",
+        "rate_limit": "Rate limited. Wait a moment and retry, or use smart_retry().",
+        "context_overflow": "Context too large. Compact messages or use smaller queries.",
+        "permission": "Try: execute_elevated() or smart_retry() with auto_fix=True",
+        "missing_dep": "Try: auto_install_python_package() or smart_retry() which auto-installs",
+        "network": "Network issue. Check connectivity or use resolve_error() for diagnosis",
+        "timeout": "Increase timeout or try: smart_retry() which handles retries adaptively",
+        "not_found": "Check path exists. Try: list_files() to verify, or make_dir() first",
+        "parse": "Invalid JSON/syntax in args. Re-check the arguments format carefully",
+        "unknown": "Try: resolve_error(error_text=<this error>) for diagnosis and fixes",
+    }
+    hint = _CATEGORY_HINTS.get(category, _CATEGORY_HINTS["unknown"])
+    return f"{error} | ERROR_CLASS: {category} | HINT: {hint}"
+
+
+# ── OpenClaw-pattern: transient error detection ─────────────────────────────
+_TRANSIENT_CATEGORIES = frozenset({"rate_limit", "network", "timeout"})
+
+# Tools that are safe to auto-retry (idempotent or read-only)
+_SAFE_TO_RETRY = frozenset({
+    "search_web", "search_news", "search_price", "search_and_fetch",
+    "fetch_page_content", "search_music", "read_file", "read_file_lines",
+    "list_files", "file_info", "search_text", "recall", "lookup_contact",
+    "list_contacts", "current_music", "show_queue", "discover_tools",
+    "workspace_scan", "code_analysis", "process_op", "git_op",
+    "fast_file_search", "pc_search", "disk_analysis", "diff_files",
+    "sheets_op", "youtube_op", "figma_op", "maps_op", "image_search",
+    "search_reddit", "search_stackoverflow", "trending_topics",
+    "summarise_url", "deep_research", "compare_search", "multi_search",
+    "fact_check", "get_system_context",
+})
+
+# Tools that modify state — retry only on transient errors, with caution
+_WRITE_TOOLS_RETRY_ON_TRANSIENT = frozenset({
+    "write_file", "edit_file", "edit_file_lines", "execute_shell",
+    "run_command", "send_whatsapp", "remember", "apply_patch",
+    "generate_and_run_script", "execute_pipeline",
+})
+
+# ── Execution metrics (OpenClaw-inspired) ───────────────────────────────────
+_tool_metrics: Dict[str, Dict[str, Any]] = {}
+
+def get_tool_metrics() -> Dict[str, Dict[str, Any]]:
+    """Return tool execution stats: success rate, avg latency, failure count."""
+    return dict(_tool_metrics)
+
+def _record_metric(tool_name: str, success: bool, latency_ms: float):
+    if tool_name not in _tool_metrics:
+        _tool_metrics[tool_name] = {"calls": 0, "success": 0, "fail": 0, "total_ms": 0.0}
+    m = _tool_metrics[tool_name]
+    m["calls"] += 1
+    m["total_ms"] += latency_ms
+    if success:
+        m["success"] += 1
+    else:
+        m["fail"] += 1
+
+
+def _is_retryable(error_str: str, tool_name: str) -> bool:
+    """Determine if a tool error is worth retrying (OpenClaw failover logic)."""
+    cat = _classify_error(error_str)
+    if cat in _TRANSIENT_CATEGORIES:
+        return tool_name in _SAFE_TO_RETRY or tool_name in _WRITE_TOOLS_RETRY_ON_TRANSIENT
+    # Missing dep: auto-install then retry
+    if cat == "missing_dep":
+        return True
+    return False
+
+
+def _auto_recover(error_str: str, tool_name: str, args: Dict[str, Any], workspace_root: Path) -> Optional[Dict[str, Any]]:
+    """
+    OpenClaw-pattern: attempt automatic recovery before giving up.
+    Returns a successful result dict if recovery works, None otherwise.
+    """
+    cat = _classify_error(error_str)
+
+    # Auto-install missing Python packages and retry
+    if cat == "missing_dep":
+        import re
+        # Extract module name from "No module named 'xyz'" or "ModuleNotFoundError: No module named 'xyz'"
+        match = re.search(r"no module named ['\"]?(\w+)", error_str.lower())
+        if match:
+            pkg = match.group(1)
+            print(f"[AutoRecover] 📦 Missing module '{pkg}' — auto-installing…", flush=True)
+            try:
+                from . import autonomous_ops
+                install_result = autonomous_ops.auto_install_python_package(package=pkg)
+                if install_result.get("ok") or install_result.get("installed"):
+                    print(f"[AutoRecover] ✅ Installed '{pkg}', retrying tool…", flush=True)
+                    # Retry the original call
+                    result = _call(tool_name, args, workspace_root)
+                    return {"ok": True, "tool": tool_name, "result": _hard_cap(result, tool_name=tool_name),
+                            "auto_recovered": f"installed_{pkg}"}
+            except Exception as recovery_err:
+                print(f"[AutoRecover] ❌ Install failed: {recovery_err}", flush=True)
+
+    # Permission errors on file ops: try elevated
+    if cat == "permission" and tool_name in ("write_file", "edit_file", "delete_path", "move_path", "copy_path"):
+        print(f"[AutoRecover] 🔑 Permission denied on {tool_name} — trying elevated…", flush=True)
+        try:
+            from . import terminal_ops
+            # Build a PowerShell equivalent command
+            if tool_name == "write_file" and "path" in args and "content" in args:
+                cmd = f'Set-Content -Path "{args["path"]}" -Value @"\n{args.get("content", "")}\n"@ -Force'
+                result = terminal_ops.execute_shell_command(command=cmd, timeout=10)
+                if result.get("exit_code", 1) == 0:
+                    return {"ok": True, "tool": tool_name, "result": {"written": args["path"]},
+                            "auto_recovered": "elevated_write"}
+        except Exception:
+            pass
+
+    return None
 
 
 def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path, agent_name: Optional[str] = None) -> Dict[str, Any]:
+    """
+    Execute a tool call with OpenClaw-pattern resilience:
+    1. Parse & validate args
+    2. Execute with automatic retry + exponential backoff for transient errors
+    3. Auto-recover from known failure patterns (missing deps, permissions)
+    4. Track execution metrics
+    """
     fn = tool_call.get("function", {})
     name = str(fn.get("name", ""))
     raw_args = fn.get("arguments", "{}")
@@ -922,16 +1111,63 @@ def execute_tool_call(tool_call: Dict[str, Any], workspace_root: Path, agent_nam
     if not isinstance(args, dict):
         raise ValueError(f"Tool args must be an object for {name}")
 
-    try:
-        result = _call(name, args, workspace_root, agent_name=agent_name)
-    except Exception as exc:
-        return {"ok": False, "tool": name, "error": _enrich_error(name, str(exc))}
-    # 💎 Prism Protocol: hard-cap ALL tool outputs before they enter the context window
-    result = _hard_cap(result)
-    # If the tool itself returned an error dict, enrich it
-    if isinstance(result, dict) and result.get("ok") is False and "error" in result:
-        result["error"] = _enrich_error(name, str(result["error"]))
-    return {"ok": True, "tool": name, "result": result}
+    # ── OpenClaw-pattern: retry loop with exponential backoff ────────────
+    _MAX_RETRIES = 3
+    last_error = None
+    t0 = time.monotonic()
+
+    for attempt in range(1, _MAX_RETRIES + 1):
+        try:
+            result = _call(name, args, workspace_root, agent_name=agent_name)
+            latency = (time.monotonic() - t0) * 1000
+            _record_metric(name, True, latency)
+
+            # 💎 Prism Protocol v2: adaptive tool-result budget
+            result = _hard_cap(result, tool_name=name)
+            # If the tool itself returned an error dict, enrich it
+            if isinstance(result, dict) and result.get("ok") is False and "error" in result:
+                result["error"] = _enrich_error(name, str(result["error"]))
+                # Even "soft" error results get metric tracking
+                _record_metric(name, False, latency)
+
+            out = {"ok": True, "tool": name, "result": result}
+            if attempt > 1:
+                out["retries"] = attempt - 1
+            return out
+
+        except Exception as exc:
+            last_error = str(exc)
+            error_cat = _classify_error(last_error)
+
+            # Check if retryable and we have attempts left
+            if attempt < _MAX_RETRIES and _is_retryable(last_error, name):
+                # Exponential backoff with jitter (OpenClaw pattern)
+                backoff = min(2 ** attempt + random.uniform(0, 1), 15)
+                print(f"[RetryEngine] ⚡ {name} failed (attempt {attempt}/{_MAX_RETRIES}, "
+                      f"cat={error_cat}): {last_error[:100]}… retrying in {backoff:.1f}s", flush=True)
+                time.sleep(backoff)
+                continue
+
+            # Not retryable or out of attempts — try auto-recovery
+            recovery = _auto_recover(last_error, name, args, workspace_root)
+            if recovery is not None:
+                latency = (time.monotonic() - t0) * 1000
+                _record_metric(name, True, latency)
+                return recovery
+
+            # Final failure
+            latency = (time.monotonic() - t0) * 1000
+            _record_metric(name, False, latency)
+            enriched = _enrich_error(name, last_error)
+            out = {"ok": False, "tool": name, "error": enriched}
+            if attempt > 1:
+                out["retries"] = attempt - 1
+            return out
+
+    # Should never reach here, but safety net
+    latency = (time.monotonic() - t0) * 1000
+    _record_metric(name, False, latency)
+    return {"ok": False, "tool": name, "error": _enrich_error(name, last_error or "Unknown error")}
 
 
 def select_tools_for_user_text(user_text: str) -> List[Dict[str, Any]]:
@@ -1635,22 +1871,31 @@ def compact_messages(
     messages: List[Dict[str, Any]],
     keep_tail: int = 8,
     char_limit: int = 120_000,   # ~30k tokens safety margin below 64k limit
+    runtime: Any = None,  # LLMRuntime for LLM-powered summarization (tier 2)
 ) -> List[Dict[str, Any]]:
     """
-    Smart message compactor — Token Limit Guardian.
+    Smart message compactor — Token Limit Guardian v2 (OpenClaw-inspired).
 
-    Strategy (in order):
-    1. Strip base64 blobs + large image_url blocks from ALL messages first.
-    2. Drop old tool messages (role='tool') beyond the last 4 turns — they're
-       the biggest offenders (search results, file contents, vision JSON).
-    3. If still over char_limit, drop oldest non-system messages until we fit.
-    4. Always keep: system message + last `keep_tail` messages.
-    5. Insert a synthetic system note about what was trimmed.
+    3-Tier Cascading Recovery (like OpenClaw's compaction system):
+
+    Tier 1: TRIM — Fast, no LLM call
+      1a. Strip base64 blobs + large image_url blocks from ALL messages.
+      1b. Cap oversized tool results to _HARD_CAP_DEFAULT (proportional truncation).
+      1c. Drop old tool messages (role='tool') beyond the last 4 turns.
+      1d. Drop oldest non-system messages until we fit.
+
+    Tier 2: SUMMARIZE — LLM-powered (OpenClaw's "explicit compaction")
+      If Tier 1 isn't enough and runtime is available, ask the LLM to
+      summarize the older conversation into a compact context block.
+      This preserves decisions, TODOs, and key facts (unlike dropping).
+
+    Tier 3: EMERGENCY — Nuclear option
+      Keep only system + last N messages. Insert loss notice.
     """
     if not messages:
         return messages
 
-    # Step 1: Strip blobs from every message (in-place copy)
+    # ── Tier 1a: Strip blobs from every message ─────────────────────────────
     cleaned: List[Dict[str, Any]] = []
     for m in messages:
         m2 = dict(m)
@@ -1658,49 +1903,106 @@ def compact_messages(
             m2["content"] = _strip_blobs(m2["content"])
         cleaned.append(m2)
 
-    # Step 2: If within budget, return as-is
     if _estimate_tokens(cleaned) * 4 <= char_limit:
         return cleaned
 
-    # Step 3: Separate system message
+    # ── Tier 1b: Cap oversized tool results ─────────────────────────────────
+    for m in cleaned:
+        if m.get("role") == "tool":
+            content = m.get("content", "")
+            if isinstance(content, str) and len(content) > _HARD_CAP_DEFAULT:
+                m["content"] = content[:_HARD_CAP_DEFAULT] + _HARD_CAP_MSG
+
+    if _estimate_tokens(cleaned) * 4 <= char_limit:
+        return cleaned
+
+    # ── Tier 1c: Separate system message, drop old tool messages ────────────
     system_msg = cleaned[0] if cleaned and cleaned[0].get("role") == "system" else None
     rest = cleaned[1:] if system_msg else cleaned
 
-    # Step 4: Drop old tool messages first (biggest savings)
-    # Keep only tool messages from the last 4 pairs (8 messages)
     last_n = rest[-8:] if len(rest) > 8 else rest
     older = rest[:-8] if len(rest) > 8 else []
-    # Filter older messages — drop tool results, keep user/assistant
     older_filtered = [
         m for m in older
         if m.get("role") in ("user", "assistant") and m.get("content", "").strip()
     ]
     rest = older_filtered + last_n
 
-    # Step 5: If still over budget, trim oldest until fit
+    # ── Tier 1d: Drop oldest until fit ──────────────────────────────────────
     trimmed_count = 0
     while rest and _estimate_tokens(([system_msg] if system_msg else []) + rest) * 4 > char_limit:
         rest.pop(0)
         trimmed_count += 1
 
-    # Always keep at minimum keep_tail messages
-    if len(rest) > keep_tail:
-        pass  # already fine
-    elif len(cleaned) > keep_tail:
-        rest = cleaned[-keep_tail:]
-        trimmed_count = len(cleaned) - keep_tail - (1 if system_msg else 0)
+    if len(rest) >= keep_tail:
+        result: List[Dict[str, Any]] = []
+        if system_msg:
+            result.append(system_msg)
+        if trimmed_count > 0:
+            result.append({
+                "role": "system",
+                "content": (
+                    f"[Token Guardian] Context trimmed: {trimmed_count} older messages removed "
+                    f"to stay within the model's token limit. Recent conversation follows."
+                ),
+            })
+        result.extend(rest)
+        return result
 
-    # Step 6: Insert trim notice as a system message
-    result: List[Dict[str, Any]] = []
+    # ── Tier 2: LLM-powered summarization (OpenClaw-style) ──────────────────
+    # Ask the LLM to summarize the dropped messages into a compact block
+    # preserving key decisions, TODOs, file paths, and context.
+    if runtime is not None and trimmed_count > 3:
+        try:
+            from llm import call_chat_once as _compact_llm_call
+            # Gather the messages we're about to drop for summarization
+            dropped = cleaned[1:trimmed_count + 1] if system_msg else cleaned[:trimmed_count]
+            if dropped:
+                summary_input = "\n".join(
+                    f"[{m.get('role', '?')}]: {str(m.get('content', ''))[:500]}"
+                    for m in dropped[:20]  # Cap at 20 messages to avoid overflow
+                )
+                summary_msgs = [
+                    {"role": "system", "content": (
+                        "You are a conversation summarizer. Compress the following conversation "
+                        "into a brief context block (max 300 words). PRESERVE: file paths, "
+                        "decisions made, TODOs, key facts, error resolutions, and any important "
+                        "user preferences. DROP: pleasantries, redundant tool outputs, and "
+                        "verbose explanations. Output ONLY the summary, no preamble."
+                    )},
+                    {"role": "user", "content": summary_input},
+                ]
+                summary_resp = _compact_llm_call(runtime, summary_msgs, tools=None, max_tokens=400)
+                summary_text = (summary_resp.get("content") or "").strip()
+                if summary_text and len(summary_text) > 20:
+                    result = []
+                    if system_msg:
+                        result.append(system_msg)
+                    result.append({
+                        "role": "system",
+                        "content": (
+                            f"[Context Summary — {trimmed_count} earlier messages compressed]\n"
+                            f"{summary_text}"
+                        ),
+                    })
+                    result.extend(rest)
+                    print(f"[TokenGuardian] Tier 2: LLM summarized {trimmed_count} messages into {len(summary_text)} chars", flush=True)
+                    return result
+        except Exception as _sum_err:
+            print(f"[TokenGuardian] Tier 2 summarization failed: {_sum_err}", flush=True)
+
+    # ── Tier 3: Emergency — keep only system + last N ───────────────────────
+    result = []
     if system_msg:
         result.append(system_msg)
-    if trimmed_count > 0:
-        result.append({
-            "role": "system",
-            "content": (
-                f"[Token Guardian] Context trimmed: {trimmed_count} older messages removed "
-                f"to stay within the model's token limit. Recent conversation follows."
-            ),
-        })
-    result.extend(rest)
+    emergency_tail = cleaned[-keep_tail:]
+    result.append({
+        "role": "system",
+        "content": (
+            f"[EMERGENCY COMPACTION] {len(cleaned) - keep_tail - (1 if system_msg else 0)} "
+            f"messages were dropped to prevent context overflow. "
+            f"Only the last {keep_tail} messages remain."
+        ),
+    })
+    result.extend(emergency_tail)
     return result

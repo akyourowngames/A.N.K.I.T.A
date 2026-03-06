@@ -576,3 +576,128 @@ def call_chat_once(
             raise  # Don't retry non-retryable HTTP errors
     # Should never reach here, but satisfy type checker
     raise RuntimeError("call_chat_once: exhausted retries")
+
+
+# ── STREAMING API (OpenClaw-inspired) ───────────────────────────────────────
+# Enables real-time token-by-token delivery instead of waiting for full response.
+# Used by telegram_bot, gui, and voice_web for progressive output.
+
+from typing import Callable, Generator
+
+
+def call_chat_stream(
+    runtime: LLMRuntime,
+    messages: List[Dict[str, Any]],
+    tools: Optional[List[Dict[str, Any]]],
+    max_tokens: Optional[int],
+    on_token: Optional[Callable[[str], None]] = None,
+) -> Dict[str, Any]:
+    """
+    Streaming version of call_chat_once.
+
+    Calls the LLM with stream=True and yields tokens in real-time via on_token callback.
+    Returns the same format as call_chat_once (full assembled message dict).
+
+    Falls back to call_chat_once if streaming fails or provider doesn't support it.
+    """
+    url = f"{runtime.base_url}/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {runtime.api_key}",
+        "Content-Type": "application/json",
+        "Accept": "text/event-stream",
+    }
+    if runtime.provider == "copilot":
+        headers["Editor-Version"] = "vscode/1.96.2"
+        headers["User-Agent"] = "GitHubCopilotChat/0.26.7"
+        headers["Editor-Plugin-Version"] = "copilot-chat/0.26.7"
+        headers["Copilot-Integration-Id"] = "vscode-chat"
+        headers["OpenAI-Intent"] = "conversation-panel"
+
+    payload: Dict[str, Any] = {
+        "model": runtime.model,
+        "messages": messages,
+        "temperature": 0.2,
+        "stream": True,
+    }
+    if isinstance(max_tokens, int) and max_tokens > 0:
+        if runtime.provider == "copilot":
+            payload["max_completion_tokens"] = min(max_tokens, 4096)
+        else:
+            payload["max_tokens"] = max_tokens
+    if tools:
+        payload["tools"] = tools
+        payload["tool_choice"] = "auto"
+
+    request_timeout = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "45"))
+
+    try:
+        response = _HTTP.post(url, headers=headers, json=payload, timeout=request_timeout, stream=True)
+        response.raise_for_status()
+    except Exception:
+        # Fall back to non-streaming
+        return call_chat_once(runtime, messages, tools, max_tokens)
+
+    # Assemble the full response from SSE chunks
+    content_parts: List[str] = []
+    tool_calls_map: Dict[int, Dict[str, Any]] = {}  # index -> {id, type, function: {name, arguments}}
+
+    try:
+        for line in response.iter_lines(decode_unicode=True):
+            if not line or not line.startswith("data: "):
+                continue
+            data_str = line[6:]
+            if data_str.strip() == "[DONE]":
+                break
+            try:
+                chunk = json.loads(data_str)
+            except json.JSONDecodeError:
+                continue
+
+            choices = chunk.get("choices", [])
+            if not choices:
+                continue
+            delta = choices[0].get("delta", {})
+
+            # Stream text content
+            text_chunk = delta.get("content")
+            if text_chunk:
+                content_parts.append(text_chunk)
+                if on_token:
+                    on_token(text_chunk)
+
+            # Accumulate tool calls
+            tc_deltas = delta.get("tool_calls")
+            if tc_deltas:
+                for tc_delta in tc_deltas:
+                    idx = tc_delta.get("index", 0)
+                    if idx not in tool_calls_map:
+                        tool_calls_map[idx] = {
+                            "id": tc_delta.get("id", ""),
+                            "type": "function",
+                            "function": {"name": "", "arguments": ""},
+                        }
+                    tc_entry = tool_calls_map[idx]
+                    if tc_delta.get("id"):
+                        tc_entry["id"] = tc_delta["id"]
+                    fn_delta = tc_delta.get("function", {})
+                    if fn_delta.get("name"):
+                        tc_entry["function"]["name"] = fn_delta["name"]
+                    if fn_delta.get("arguments"):
+                        tc_entry["function"]["arguments"] += fn_delta["arguments"]
+    except Exception as _stream_err:
+        print(f"[LLM] Stream error: {_stream_err}", flush=True)
+        # If we got partial content, use it; otherwise fall back
+        if not content_parts and not tool_calls_map:
+            return call_chat_once(runtime, messages, tools, max_tokens)
+    finally:
+        response.close()
+
+    # Build the assembled message
+    result: Dict[str, Any] = {
+        "role": "assistant",
+        "content": "".join(content_parts) if content_parts else None,
+    }
+    if tool_calls_map:
+        result["tool_calls"] = [tool_calls_map[i] for i in sorted(tool_calls_map.keys())]
+
+    return result

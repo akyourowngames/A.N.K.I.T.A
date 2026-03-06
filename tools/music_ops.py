@@ -627,3 +627,103 @@ def play_music(workspace_root: Path, query: str, headless: bool = True, stop_cur
         "Install one player stack: (yt-dlp+ffplay) or mpv or vlc. "
         + ("; ".join(errors[:3]) if errors else "")
     )
+
+
+# ---------------------------------------------------------------------------
+# Pause / Resume — cross-player support
+# ---------------------------------------------------------------------------
+
+def pause_music(workspace_root: Path) -> Dict[str, Any]:
+    """Pause the currently playing music. Works via OS-level media key or process signal."""
+    state = _load_state(workspace_root)
+    pid = int(state.get("pid", 0) or 0)
+    if pid <= 0:
+        return {"kind": "music_pause", "paused": False, "reason": "no_active_player"}
+
+    launcher = str(state.get("launcher", "")).lower()
+
+    # mpv supports IPC — send pause toggle command
+    if "mpv" in launcher or shutil.which("mpv"):
+        try:
+            if os.name == "nt":
+                # Send SIGSTOP equivalent on Windows via DebugBreak or suspend thread
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                PROCESS_SUSPEND_RESUME = 0x0800
+                handle = kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
+                if handle:
+                    # NtSuspendProcess via ntdll
+                    ntdll = ctypes.windll.ntdll
+                    ntdll.NtSuspendProcess(handle)
+                    kernel32.CloseHandle(handle)
+                    state["paused"] = True
+                    _save_state(workspace_root, state)
+                    return {"kind": "music_pause", "paused": True, "pid": pid, "method": "suspend"}
+        except Exception:
+            pass
+
+    # Generic: simulate media_play_pause key (works for most players)
+    try:
+        import ctypes
+        VK_MEDIA_PLAY_PAUSE = 0xB3
+        ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
+        state["paused"] = True
+        _save_state(workspace_root, state)
+        return {"kind": "music_pause", "paused": True, "pid": pid, "method": "media_key"}
+    except Exception as err:
+        return {"kind": "music_pause", "paused": False, "error": str(err)}
+
+
+def resume_music(workspace_root: Path) -> Dict[str, Any]:
+    """Resume paused music playback."""
+    state = _load_state(workspace_root)
+    pid = int(state.get("pid", 0) or 0)
+    if pid <= 0:
+        return {"kind": "music_resume", "resumed": False, "reason": "no_active_player"}
+
+    # If we suspended the process, resume it
+    if state.get("paused"):
+        try:
+            if os.name == "nt":
+                import ctypes
+                kernel32 = ctypes.windll.kernel32
+                PROCESS_SUSPEND_RESUME = 0x0800
+                handle = kernel32.OpenProcess(PROCESS_SUSPEND_RESUME, False, pid)
+                if handle:
+                    ntdll = ctypes.windll.ntdll
+                    ntdll.NtResumeProcess(handle)
+                    kernel32.CloseHandle(handle)
+                    state["paused"] = False
+                    _save_state(workspace_root, state)
+                    return {"kind": "music_resume", "resumed": True, "pid": pid, "method": "resume"}
+        except Exception:
+            pass
+
+    # Fallback: media key toggle
+    try:
+        import ctypes
+        VK_MEDIA_PLAY_PAUSE = 0xB3
+        ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 0, 0)
+        ctypes.windll.user32.keybd_event(VK_MEDIA_PLAY_PAUSE, 0, 2, 0)
+        state["paused"] = False
+        _save_state(workspace_root, state)
+        return {"kind": "music_resume", "resumed": True, "pid": pid, "method": "media_key"}
+    except Exception as err:
+        return {"kind": "music_resume", "resumed": False, "error": str(err)}
+
+
+def music_volume(workspace_root: Path, level: int) -> Dict[str, Any]:
+    """Set music playback volume (0-100). Uses Windows master volume as proxy."""
+    level = max(0, min(100, int(level)))
+    try:
+        from . import system_ops
+        result = system_ops.system_control(action="volume_set", amount=level)
+        return {
+            "kind": "music_volume",
+            "set": True,
+            "level": level,
+            "stdout": result.get("stdout", ""),
+        }
+    except Exception as err:
+        return {"kind": "music_volume", "set": False, "error": str(err)}

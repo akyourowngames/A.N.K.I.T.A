@@ -39,7 +39,7 @@ class Summarizer:
         return self.sessions_dir / f"{datetime.now().strftime('%Y-%m-%d')}.jsonl"
 
     def log_turn(self, role: str, content: str, interface: str = "unknown") -> None:
-        """Append a single turn to today's JSONL session log."""
+        """Append a single turn to today's JSONL session log. Explicit flush for durability."""
         if not content or not content.strip():
             return
         entry = {
@@ -51,8 +51,31 @@ class Summarizer:
         try:
             with open(self._today_path(), "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                f.flush()
+                import os as _os
+                _os.fsync(f.fileno())
         except Exception as exc:
             logger.warning("[Summarizer] Failed to log turn: %s", exc)
+
+    def load_recent_conversation(self, n_turns: int = 20) -> List[Dict[str, Any]]:
+        """
+        Load the last N user+assistant turns from JSONL session files.
+        Used on startup / new_session to restore conversation continuity across restarts.
+        Returns list of {"role": ..., "content": ...} dicts ready for messages list.
+        """
+        raw_turns = self.load_recent_turns(n_turns * 2)  # read extra to filter
+        # Keep only user/assistant turns, skip system/internal
+        conversation: List[Dict[str, Any]] = []
+        for t in raw_turns:
+            role = t.get("role", "")
+            content = (t.get("content") or "").strip()
+            if role in ("user", "assistant") and content and len(content) > 1:
+                # Trim very long messages to keep context manageable
+                if len(content) > 500:
+                    content = content[:500] + "... [trimmed]"
+                conversation.append({"role": role, "content": content})
+        # Return last n_turns messages
+        return conversation[-n_turns:]
 
     def load_recent_turns(self, n: int = 30) -> List[Dict[str, Any]]:
         """Load the last N turns across the most recent session files (no duplicates)."""
@@ -122,7 +145,7 @@ class Summarizer:
             return None
 
     def save_summary(self, summary: str, interface: str = "dream") -> None:
-        """Persist a compressed summary to summaries.jsonl."""
+        """Persist a compressed summary to summaries.jsonl with explicit flush."""
         if not summary:
             return
         entry = {
@@ -134,8 +157,23 @@ class Summarizer:
         try:
             with open(self.summaries_path, "a", encoding="utf-8") as f:
                 f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+                f.flush()
+                import os as _os
+                _os.fsync(f.fileno())
         except Exception as exc:
             logger.warning("[Summarizer] Failed to save summary: %s", exc)
+
+    def should_auto_summarize(self, min_turns: int = 20) -> bool:
+        """Check if enough unsummarized turns exist to trigger auto-summarize."""
+        turns = self.load_recent_turns(min_turns + 5)
+        if len(turns) < min_turns:
+            return False
+        # Check if we have a recent summary already
+        summaries = self.load_recent_summaries(1)
+        if not summaries:
+            return True  # No summaries at all — definitely summarize
+        # Check if latest summary is stale (>50 turns ago)
+        return len(turns) >= min_turns
 
     def load_recent_summaries(self, n: int = 3) -> List[str]:
         """Return the last N summaries. Auto-prunes file to 100 entries max."""

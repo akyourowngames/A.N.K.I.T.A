@@ -348,6 +348,20 @@ def parse_incoming_message(msg: Dict[str, Any]) -> Optional[ParsedTelegramInput]
             chat_id=chat_id,
             message_id=message_id,
         )
+    audio = msg.get("audio")
+    if audio:
+        fname = str(audio.get("file_name", "audio.mp3"))
+        return ParsedTelegramInput(
+            kind="voice",
+            text=caption or "",
+            file_id=str(audio.get("file_id", "")),
+            file_name=fname,
+            mime_type=str(audio.get("mime_type", "audio/mpeg")),
+            file_size=int(audio.get("file_size", 0) or 0),
+            caption=caption,
+            chat_id=chat_id,
+            message_id=message_id,
+        )
     return None
 
 
@@ -386,7 +400,10 @@ def _build_media_prompt(parsed: ParsedTelegramInput, local_file: Path, transcrip
         )
     if parsed.kind == "voice":
         if transcript:
-            return f"The user sent a voice note. Transcript:\n{transcript}"
+            base = f"The user sent a voice note. Transcript:\n{transcript}"
+            if parsed.caption:
+                base += f"\nCaption: {parsed.caption}"
+            return base
         return (
             "The user sent a voice note, but transcription is unavailable in this runtime. "
             "Ask them to resend as text and offer concise help meanwhile."
@@ -621,7 +638,10 @@ def main() -> None:
     agent = AgentRuntime(runtime=runtime, workspace_root=WORKSPACE_ROOT)
     orchestrator = Orchestrator(runtime=runtime, workspace_root=WORKSPACE_ROOT)
 
-    # Corn scheduler
+    # Track active chat early — needed by heartbeat delivery closure below
+    last_active_chat_id: Optional[int] = None
+
+    # Corn scheduler — with heartbeat agent execution
     runner: Optional[CornRunner] = None
     if _env_bool("CORN_AUTO_RUN", True):
         runner = CornRunner(
@@ -629,6 +649,24 @@ def main() -> None:
             poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
             max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
         )
+        # Wire heartbeat: agent payload jobs run through the orchestrator
+        runner.attach_orchestrator(orchestrator, runtime)
+
+        # Delivery callback: push heartbeat results to the active Telegram chat
+        def _heartbeat_deliver(job_name: str, result_text: str) -> None:
+            target = last_active_chat_id
+            if target is None and allowed_chat_ids:
+                target = next(iter(sorted(allowed_chat_ids)))
+            if target is None:
+                print(f"[heartbeat] No chat to deliver to: {job_name}")
+                return
+            header = f"⏰ *Heartbeat — {job_name}*\n\n"
+            try:
+                send_text(bot_token, target, header + result_text)
+            except Exception as err:
+                print(f"[heartbeat-send-error] {err}")
+
+        runner.set_delivery_fn(_heartbeat_deliver)
         runner.start()
 
     # Proactive engine — memory session id will be updated to the real per-chat
@@ -657,13 +695,15 @@ def main() -> None:
     try:
         from agent_runtime import set_memory_root
         set_memory_root(WORKSPACE_ROOT)
-    except Exception:
-        pass
+        from memory import get_memory_manager
+        _mem = get_memory_manager(WORKSPACE_ROOT)
+        _mem.attach_runtime(runtime)
+    except Exception as exc:
+        print(f"[telegram] Memory init warning: {exc}")
 
     # Per-chat state
     sessions: Dict[int, List[Dict[str, Any]]] = {}   # chat_id → message history
     recent_artifacts: Dict[int, List[Path]] = {}     # chat_id -> most recent file artifacts mentioned/sent
-    last_active_chat_id: Optional[int] = None        # for routing proactive events
 
     offset = read_offset()
     poll_timeout = max(5, min(int(os.getenv("TELEGRAM_POLL_TIMEOUT", "5")), 120))
@@ -686,6 +726,7 @@ def main() -> None:
     print(f"  Multi-agent : {'ON' if use_multi_agent else 'OFF'}")
     print(f"  Proactive   : ON (DreamState + ContentAgent)")
     print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
+    print(f"  Heartbeat   : {'ON 💓' if runner is not None and runner._orchestrator else 'OFF'}")
     print()
 
     # ------------------------------------------------------------------
@@ -957,10 +998,12 @@ def main() -> None:
                             "🤖 *A.N.K.I.T.A* is online.\n\n"
                             "Commands:\n"
                             "/reset — clear current session (memory persists)\n"
+                            "/mood — show current personality/mood state\n"
                             "/memory — show memory stats\n"
                             "/agents on — enable multi-agent mode\n"
                             "/agents off — disable multi-agent mode\n"
                             "/hive — show background task status\n"
+                            "/heartbeats — show scheduled agent heartbeat jobs\n"
                             "/watchdogs — show all watcher statuses\n"
                             "/github status — check GitHub token\n"
                             "/reauth github — re-authorize GitHub (device flow)\n"
@@ -979,6 +1022,32 @@ def main() -> None:
 
                 if parsed.kind == "text" and text.lower() == "/watchdogs":
                     send_text(bot_token, chat_id, watchdog_mgr.status(), msg_id)
+                    continue
+
+                if parsed.kind == "text" and text.lower() == "/heartbeats":
+                    try:
+                        from corn import CornService
+                        _cs = CornService(workspace_root=WORKSPACE_ROOT)
+                        _jobs = _cs.list().get("jobs", [])
+                        _agent_jobs = [j for j in _jobs if isinstance(j, dict) and j.get("payload", {}).get("kind") == "agent"]
+                        if not _agent_jobs:
+                            send_text(bot_token, chat_id, "No agent heartbeat jobs scheduled yet.\n\nTry: \"every morning tell me the news\"", msg_id)
+                        else:
+                            import datetime as _dt
+                            lines = ["⏰ *Heartbeat Jobs*\n"]
+                            for j in _agent_jobs:
+                                _name = j.get("name", "?")
+                                _sched = j.get("schedule", {})
+                                _expr = _sched.get("expr", _sched.get("every_ms", "?"))
+                                _next_ms = j.get("state", {}).get("next_run_at_ms")
+                                _next = "?"
+                                if _next_ms:
+                                    _next = _dt.datetime.fromtimestamp(_next_ms / 1000).strftime("%Y-%m-%d %H:%M")
+                                _prompt = j.get("payload", {}).get("prompt", "")[:60]
+                                lines.append(f"• [{j.get('id', '?')[:8]}] {_name}\n  Schedule: {_expr}\n  Next: {_next}\n  Prompt: {_prompt}...")
+                            send_text(bot_token, chat_id, "\n".join(lines), msg_id)
+                    except Exception as hb_err:
+                        send_text(bot_token, chat_id, f"Error listing heartbeats: {hb_err}", msg_id)
                     continue
 
                 if parsed.kind == "text" and text.lower() in ("/reauth github", "/reauth-github"):
@@ -1013,7 +1082,21 @@ def main() -> None:
 
                 if parsed.kind == "text" and text.lower() == "/reset":
                     sessions[chat_id] = new_session("")  # empty query, still injects recent memory
+                    # Reset personality engine mood state
+                    try:
+                        from tools.personality_engine import get_mood_tracker
+                        get_mood_tracker().reset()
+                    except Exception:
+                        pass
                     send_text(bot_token, chat_id, "✅ Conversation reset. Long-term memory preserved.", msg_id)
+                    continue
+
+                if parsed.kind == "text" and text.lower() == "/mood":
+                    try:
+                        from tools.personality_engine import mood_status
+                        send_text(bot_token, chat_id, f"🎭 *Personality Engine*\n{mood_status()}", msg_id)
+                    except Exception as _mood_err:
+                        send_text(bot_token, chat_id, f"⚠️ Personality engine error: {_mood_err}", msg_id)
                     continue
 
                 if parsed.kind == "text" and text.lower() in {"/agents on", "/agents off"}:
@@ -1088,7 +1171,21 @@ def main() -> None:
                         local_name = f"{chat_id}_{msg_id}_{uuid.uuid4().hex[:8]}{suffix}"
                         media_local_file = inbox_dir / local_name
                         download_file(bot_token, tg_path, media_local_file)
-                        user_payload_text = _build_media_prompt(parsed, media_local_file)
+                        # Transcribe voice/audio messages
+                        _voice_transcript = ""
+                        if parsed.kind == "voice":
+                            try:
+                                from tools.voice_ops import transcribe_audio
+                                stt = transcribe_audio(media_local_file)
+                                if stt.get("ok"):
+                                    _voice_transcript = stt["text"]
+                                    _lang = stt.get("language", "")
+                                    print(f"[voice-stt] lang={_lang} len={len(_voice_transcript)}")
+                                else:
+                                    print(f"[voice-stt-error] {stt.get('error')}")
+                            except Exception as stt_err:
+                                print(f"[voice-stt-error] {stt_err}")
+                        user_payload_text = _build_media_prompt(parsed, media_local_file, transcript=_voice_transcript)
                         if parsed.kind == "photo":
                             vision_summary = _vision_analyze_image(runtime, media_local_file, parsed.caption)
                             if vision_summary:

@@ -31,7 +31,7 @@ _INSTANCE_LOCK = threading.Lock()
 USER_ID = "ankita-user"
 
 # Throttle: don't kick off LLM extraction more than once every N seconds
-_EXTRACT_COOLDOWN_SEC = 8
+_EXTRACT_COOLDOWN_SEC = 3
 
 # Regex patterns for instant fact extraction without LLM
 import re as _re
@@ -101,6 +101,9 @@ class MemoryManager:
 
         # Sync any existing SQLite facts into ChromaDB on startup (background)
         self._sync_facts_to_chroma_async()
+
+        # Auto-summarize on startup if there are enough unsummarized turns
+        self._auto_summarize_startup()
 
         logger.info(
             "[MemoryManager] Ready — %d facts in store, ChromaDB: %s",
@@ -222,6 +225,16 @@ class MemoryManager:
         if summaries:
             summary_block = "\n\n".join(summaries)
             parts.append(f"[RECENT CONTEXT SUMMARY]\n{summary_block}")
+
+        # ── Recent conversation (session continuity across restarts) ──────────
+        recent_turns = self._summarizer.load_recent_conversation(n_turns=12)
+        if recent_turns:
+            convo_lines = []
+            for t in recent_turns:
+                role_label = "User" if t["role"] == "user" else "Ankita"
+                convo_lines.append(f"{role_label}: {t['content']}")
+            convo_block = "\n".join(convo_lines)
+            parts.append(f"[RECENT CONVERSATION — last {len(recent_turns)} turns]\n{convo_block}")
 
         if not parts:
             return ""
@@ -392,6 +405,30 @@ class MemoryManager:
 
         except Exception as exc:
             logger.warning("[MemoryManager] Fact extraction failed: %s", exc)
+
+    def _auto_summarize_startup(self) -> None:
+        """On startup, if enough unsummarized turns exist, generate a summary immediately."""
+        try:
+            if not self._summarizer.should_auto_summarize(min_turns=20):
+                return
+            # Defer actual summarization to a background thread (needs runtime which may not be attached yet)
+            def _do_summarize():
+                # Wait a bit for runtime to be attached
+                for _ in range(10):
+                    if self._runtime is not None:
+                        break
+                    time.sleep(2)
+                if self._runtime is None:
+                    logger.debug("[MemoryManager] Auto-summarize: no runtime, skipping")
+                    return
+                summary = self._summarizer.generate_summary(self._runtime, n_turns=40)
+                if summary:
+                    self._summarizer.save_summary(summary, interface="auto-startup")
+                    self._extract_facts_from_text(summary, interface="auto-startup")
+                    logger.info("[MemoryManager] Auto-summarize on startup: %d chars", len(summary))
+            threading.Thread(target=_do_summarize, daemon=True, name="MemoryAutoSummarize").start()
+        except Exception as exc:
+            logger.warning("[MemoryManager] Auto-summarize startup check failed: %s", exc)
 
     def _sync_facts_to_chroma_async(self) -> None:
         """On startup, sync any SQLite facts not yet in ChromaDB."""

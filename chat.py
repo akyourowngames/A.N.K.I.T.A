@@ -54,7 +54,7 @@ def main() -> None:
     # Session ID for CLI
     session_id = "cli-session"
 
-    # Corn scheduler
+    # Corn scheduler — with heartbeat agent execution
     runner: CornRunner | None = None
     if _env_bool("CORN_AUTO_RUN", True):
         runner = CornRunner(
@@ -62,6 +62,14 @@ def main() -> None:
             poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
             max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
         )
+        # Wire heartbeat: agent payload jobs run through the orchestrator
+        runner.attach_orchestrator(orchestrator, runtime)
+
+        # CLI delivery: print heartbeat results to the terminal
+        def _heartbeat_deliver_cli(job_name: str, result_text: str) -> None:
+            print(f"\n⏰ [Heartbeat — {job_name}]\n{result_text}\n")
+
+        runner.set_delivery_fn(_heartbeat_deliver_cli)
         runner.start()
 
     # Proactive engine
@@ -97,7 +105,7 @@ def main() -> None:
     print(f"  Proactive   : ON")
     print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
     print(f"  Hive Mind   : ON 🐝")
-    print("\n  Commands: /exit  /reset  /agents on|off  /hive  /watchdogs  /reauth github  /github status  show <id>")
+    print("\n  Commands: /exit  /reset  /mood  /agents on|off  /hive  /watchdogs  /reauth github  /github status  show <id>")
     print("─" * 42 + "\n")
 
     # Background thread: drains proactive events every 5 seconds even while
@@ -165,7 +173,21 @@ def main() -> None:
 
         if user_text.lower() == "/reset":
             messages = new_session("")
+            # Reset personality engine mood state
+            try:
+                from tools.personality_engine import get_mood_tracker
+                get_mood_tracker().reset()
+            except Exception:
+                pass
             print("Conversation reset.\n")
+            continue
+
+        if user_text.lower() == "/mood":
+            try:
+                from tools.personality_engine import mood_status
+                print(f"\n🎭 Personality Engine: {mood_status()}\n")
+            except Exception as _me:
+                print(f"\n⚠️  Personality engine error: {_me}\n")
             continue
 
         if user_text.lower() in ("/agents on", "/agents off"):

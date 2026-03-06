@@ -543,6 +543,100 @@ def system_control(
             "$uptimeStr=('{0}d {1}h {2}m' -f [int]$uptime.TotalDays, $uptime.Hours, $uptime.Minutes); "
             "Write-Output ('os=' + $os.Caption + ' | cpu=' + $cpu + '% | ram=' + $usedRam + '/' + $totalRam + 'GB (' + $ramPct + '%) | uptime=' + $uptimeStr)"
         )
+    # ------------------------------------------------------------------
+    # Startup Apps — list programs that run at Windows boot
+    # ------------------------------------------------------------------
+    elif op == "startup_apps":
+        script = (
+            "$startups = @(); "
+            "Get-CimInstance Win32_StartupCommand -ErrorAction SilentlyContinue | ForEach-Object { "
+            "  $startups += ('{0} | {1}' -f $_.Name, $_.Command) "
+            "}; "
+            "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run' -ErrorAction SilentlyContinue | "
+            "Get-Member -MemberType NoteProperty | Where-Object { $_.Name -notin @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider') } | "
+            "ForEach-Object { $startups += ('HKLM: ' + $_.Name) }; "
+            "Get-ItemProperty 'HKCU:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run' -ErrorAction SilentlyContinue | "
+            "Get-Member -MemberType NoteProperty | Where-Object { $_.Name -notin @('PSPath','PSParentPath','PSChildName','PSDrive','PSProvider') } | "
+            "ForEach-Object { $startups += ('HKCU: ' + $_.Name) }; "
+            "if($startups.Count -eq 0){ Write-Output 'No startup apps found.' } "
+            "else { $startups | ForEach-Object { Write-Output $_ } }"
+        )
+    # ------------------------------------------------------------------
+    # Installed Apps — list installed applications
+    # ------------------------------------------------------------------
+    elif op == "installed_apps":
+        script = (
+            "$apps = @(); "
+            "Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.DisplayName } | Sort-Object DisplayName | "
+            "Select-Object -First 80 | ForEach-Object { "
+            "  $apps += ('{0} | {1}' -f $_.DisplayName, $_.DisplayVersion) "
+            "}; "
+            "Get-ItemProperty 'HKLM:\\SOFTWARE\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*' -ErrorAction SilentlyContinue | "
+            "Where-Object { $_.DisplayName } | Sort-Object DisplayName | "
+            "Select-Object -First 40 | ForEach-Object { "
+            "  $apps += ('{0} | {1}' -f $_.DisplayName, $_.DisplayVersion) "
+            "}; "
+            "$apps = $apps | Sort-Object -Unique | Select-Object -First 100; "
+            "Write-Output ('total=' + $apps.Count); "
+            "$apps | ForEach-Object { Write-Output $_ }"
+        )
+    # ------------------------------------------------------------------
+    # Wallpaper — set desktop wallpaper
+    # ------------------------------------------------------------------
+    elif op == "set_wallpaper":
+        img_path = str(path or "").strip().strip("\"'")
+        if not img_path:
+            raise ValueError("set_wallpaper requires the image path via the 'path' parameter")
+        safe = img_path.replace("'", "''")
+        script = (
+            "Add-Type -TypeDefinition '"
+            "using System; using System.Runtime.InteropServices; "
+            "public class WP { "
+            "[DllImport(\"user32.dll\", CharSet=CharSet.Auto)] "
+            "public static extern int SystemParametersInfo(int uAction, int uParam, string lpvParam, int fuWinIni); }'; "
+            f"[WP]::SystemParametersInfo(0x0014, 0, '{safe}', 0x01 -bor 0x02) | Out-Null; "
+            f"Write-Output 'wallpaper_set={safe}'"
+        )
+    # ------------------------------------------------------------------
+    # Focus Window — bring a window to foreground by title
+    # ------------------------------------------------------------------
+    elif op == "focus_window":
+        title = str(path or "").strip().strip("\"'")
+        if not title:
+            raise ValueError("focus_window requires the window title via the 'path' parameter")
+        safe = title.replace("'", "''")
+        script = (
+            f"$wshell = New-Object -ComObject wscript.shell; "
+            f"$result = $wshell.AppActivate('{safe}'); "
+            f"Write-Output ('focused={safe} | success=' + $result)"
+        )
+    # ------------------------------------------------------------------
+    # Open Windows settings pages
+    # ------------------------------------------------------------------
+    elif op == "open_settings":
+        page = str(path or "display").strip().lower()
+        settings_map = {
+            "display": "ms-settings:display",
+            "sound": "ms-settings:sound",
+            "notifications": "ms-settings:notifications",
+            "power": "ms-settings:powersleep",
+            "battery": "ms-settings:batterysaver",
+            "storage": "ms-settings:storagesense",
+            "bluetooth": "ms-settings:bluetooth",
+            "wifi": "ms-settings:network-wifi",
+            "vpn": "ms-settings:network-vpn",
+            "apps": "ms-settings:appsfeatures",
+            "default_apps": "ms-settings:defaultapps",
+            "taskbar": "ms-settings:taskbar",
+            "personalization": "ms-settings:personalization",
+            "privacy": "ms-settings:privacy",
+            "update": "ms-settings:windowsupdate",
+            "about": "ms-settings:about",
+        }
+        uri = settings_map.get(page, f"ms-settings:{page}")
+        safe_uri = uri.replace("'", "''")
+        script = f"Start-Process '{safe_uri}'; Write-Output 'opened={safe_uri}'"
     else:
         raise ValueError(
             "unsupported action. Supported actions: "
@@ -558,7 +652,9 @@ def system_control(
             "window_minimize_all, window_restore_all, "
             "media_play_pause, media_next, media_prev, "
             "screenshot, open_url, sleep_display, "
-            "empty_recycle_bin, get_system_info"
+            "empty_recycle_bin, get_system_info, "
+            "startup_apps, installed_apps, set_wallpaper, "
+            "focus_window, open_settings"
         )
 
     res = _run_powershell(script)

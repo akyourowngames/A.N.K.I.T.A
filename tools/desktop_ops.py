@@ -310,10 +310,120 @@ def desktop_interact(
                     pass
             return {"ok": False, "error": f"press_shortcut failed: {err}", "log": result_log}
 
+    # ------------------------------------------------------------------
+    # Mouse actions — pyautogui-powered physical mouse control
+    # ------------------------------------------------------------------
+    elif action == "mouse_click":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed. Run: pip install pyautogui", "log": result_log}
+        try:
+            parts = [p.strip() for p in (text or "").split(",")]
+            x = int(parts[0]) if len(parts) >= 1 and parts[0] else None
+            y = int(parts[1]) if len(parts) >= 2 and parts[1] else None
+            if x is not None and y is not None:
+                pyautogui.click(x, y)
+                result_log.append(f"Clicked at ({x}, {y}).")
+            else:
+                pyautogui.click()
+                result_log.append("Clicked at current mouse position.")
+            return {"ok": True, "action": "mouse_click", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"mouse_click failed: {err}", "log": result_log}
+
+    elif action == "mouse_right_click":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            parts = [p.strip() for p in (text or "").split(",")]
+            x = int(parts[0]) if len(parts) >= 1 and parts[0] else None
+            y = int(parts[1]) if len(parts) >= 2 and parts[1] else None
+            if x is not None and y is not None:
+                pyautogui.rightClick(x, y)
+                result_log.append(f"Right-clicked at ({x}, {y}).")
+            else:
+                pyautogui.rightClick()
+                result_log.append("Right-clicked at current mouse position.")
+            return {"ok": True, "action": "mouse_right_click", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"mouse_right_click failed: {err}", "log": result_log}
+
+    elif action == "mouse_double_click":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            parts = [p.strip() for p in (text or "").split(",")]
+            x = int(parts[0]) if len(parts) >= 1 and parts[0] else None
+            y = int(parts[1]) if len(parts) >= 2 and parts[1] else None
+            if x is not None and y is not None:
+                pyautogui.doubleClick(x, y)
+                result_log.append(f"Double-clicked at ({x}, {y}).")
+            else:
+                pyautogui.doubleClick()
+                result_log.append("Double-clicked at current mouse position.")
+            return {"ok": True, "action": "mouse_double_click", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"mouse_double_click failed: {err}", "log": result_log}
+
+    elif action == "mouse_move":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            parts = [p.strip() for p in (text or "").split(",")]
+            if len(parts) < 2:
+                return {"ok": False, "error": "mouse_move needs 'x, y' in text field", "log": result_log}
+            x, y = int(parts[0]), int(parts[1])
+            pyautogui.moveTo(x, y, duration=0.3)
+            result_log.append(f"Moved mouse to ({x}, {y}).")
+            return {"ok": True, "action": "mouse_move", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"mouse_move failed: {err}", "log": result_log}
+
+    elif action == "scroll":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            clicks = int(text or "3")
+            pyautogui.scroll(clicks)  # positive=up, negative=down
+            direction = "up" if clicks > 0 else "down"
+            result_log.append(f"Scrolled {direction} by {abs(clicks)} clicks.")
+            return {"ok": True, "action": "scroll", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"scroll failed: {err}", "log": result_log}
+
+    elif action == "drag":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            parts = [p.strip() for p in (text or "").split(",")]
+            if len(parts) < 4:
+                return {"ok": False, "error": "drag needs 'x1, y1, x2, y2' in text field", "log": result_log}
+            x1, y1, x2, y2 = int(parts[0]), int(parts[1]), int(parts[2]), int(parts[3])
+            pyautogui.moveTo(x1, y1, duration=0.2)
+            pyautogui.mouseDown()
+            pyautogui.moveTo(x2, y2, duration=0.4)
+            pyautogui.mouseUp()
+            result_log.append(f"Dragged from ({x1},{y1}) to ({x2},{y2}).")
+            return {"ok": True, "action": "drag", "result": result_log[-1], "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"drag failed: {err}", "log": result_log}
+
+    elif action == "mouse_position":
+        if pyautogui is None:
+            return {"ok": False, "error": "pyautogui not installed", "log": result_log}
+        try:
+            pos = pyautogui.position()
+            return {"ok": True, "action": "mouse_position", "x": pos.x, "y": pos.y, "result": f"Mouse at ({pos.x}, {pos.y})", "log": result_log}
+        except Exception as err:
+            return {"ok": False, "error": f"mouse_position failed: {err}", "log": result_log}
+
     else:
         return {
             "ok": False,
-            "error": f"Unknown action '{action}'. Use 'type_text' or 'press_shortcut'.",
+            "error": (
+                f"Unknown action '{action}'. Use: "
+                "type_text, press_shortcut, mouse_click, mouse_right_click, "
+                "mouse_double_click, mouse_move, scroll, drag, mouse_position."
+            ),
             "log": result_log,
         }
 

@@ -44,10 +44,12 @@ _SYSTEM_TOOLS = {"system_control", "launch_app", "terminate_app", "desktop_inter
                  "system_audit", "discover_tools", "auto_install_tool",
                  "execute_elevated", "service_op", "get_system_context",
                  "resolve_error", "smart_retry", "process_watch",
-                 "translate_command"} | _MEMORY_TOOLS
+                 "translate_command",
+                 "kill_process_tree", "port_scan", "env_op"} | _MEMORY_TOOLS
 
 _MUSIC_TOOLS = {"play_music", "stop_music", "search_music", "current_music", 
-                "queue_music", "show_queue", "clear_queue", "play_next_in_queue", 
+                "queue_music", "show_queue", "clear_queue", "play_next_in_queue",
+                "pause_music", "resume_music", "music_volume",
                 "system_control"} | _MEMORY_TOOLS
 
 # UPGRADE: CodeAgent can now launch VS Code or terminals to show its work
@@ -76,9 +78,12 @@ _TERMINAL_TOOLS = {"execute_shell", "list_files", "read_file", "run_command", "g
                    # Cognitive ops — self-healing, intelligence, self-extension
                    "resolve_error", "smart_retry", "workspace_scan", "plan_and_execute",
                    "code_analysis", "project_scaffold", "self_extend", "execute_extension",
-                   "process_watch", "translate_command", "list_extensions"} | _MEMORY_TOOLS
+                   "process_watch", "translate_command", "list_extensions",
+                   "kill_process_tree", "port_scan", "env_op"} | _MEMORY_TOOLS
 
-_CRON_TOOLS = {"cron"} | _MEMORY_TOOLS
+# CronAgent needs web search + system context for intelligent heartbeat scheduling
+_CRON_TOOLS = {"cron", "search_web", "search_and_fetch", "search_price",
+               "system_health", "list_files", "read_file"} | _MEMORY_TOOLS
 
 # ASSEMBLY LINE: ContentAgent is now a pure text generator — NO tools.
 # FileAgent saves the output. SystemAgent opens the file.
@@ -101,12 +106,13 @@ _WATCHDOG_TOOLS: set = set()
 # NavigatorAgent — Maps and location intelligence
 _NAVIGATOR_TOOLS = {"maps_op"} | _MEMORY_TOOLS
 
-# TaskAgent — Smart to-do and reminders
-_TASK_TOOLS = {"task_op", "cron"} | _MEMORY_TOOLS
+# TaskAgent — Smart to-do and reminders (cron for auto-deadline reminders)
+_TASK_TOOLS = {"task_op", "cron", "search_web"} | _MEMORY_TOOLS
 
-# ReportAgent — Automated report builder
+# ReportAgent — Automated report builder (cron for scheduled reports)
 _REPORT_TOOLS = {"generate_pdf", "disk_analysis", "git_op", "read_file", "list_files", 
-                 "write_file", "system_health", "search_web", "fetch_page_content"} | _MEMORY_TOOLS
+                 "write_file", "system_health", "search_web", "fetch_page_content",
+                 "cron"} | _MEMORY_TOOLS
 
 # ImageAgent — AI image generation via Pollinations.ai (no API key needed)
 _IMAGE_TOOLS = {"generate_image", "image_search", "search_web"} | _MEMORY_TOOLS

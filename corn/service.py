@@ -212,6 +212,8 @@ class CornService:
     def _execute_payload(self, job: Dict[str, Any], executor: Optional[PayloadExecutor]) -> Dict[str, Any]:
         payload = dict(job.get("payload") or {})
         if executor is not None:
+            # Inject job name so the executor can label deliveries
+            payload["_job_name"] = str(job.get("name", "cron-job"))
             return executor(payload, self.workspace_root)
         kind = str(payload.get("kind", "")).strip().lower()
         if kind == "command":
@@ -253,6 +255,13 @@ class CornService:
             if not text:
                 raise ValueError("payload.text is required")
             return {"ok": True, "note": text}
+        if kind == "agent":
+            prompt = str(payload.get("prompt", "")).strip()
+            if not prompt:
+                raise ValueError("payload.prompt is required for agent jobs")
+            # Agent execution happens in the runner via the executor callback.
+            # If no executor is wired up, return the prompt so the caller knows.
+            return {"ok": True, "kind": "agent", "prompt": prompt}
         raise ValueError(f"unsupported payload.kind: {kind}")
 
     def _normalize_job(self, job_input: Dict[str, Any], now_ms: int) -> Dict[str, Any]:
@@ -264,8 +273,8 @@ class CornService:
         if kind not in {"at", "every", "cron"}:
             raise ValueError("schedule.kind must be one of: at, every, cron")
         payload_kind = str(payload.get("kind", "")).strip().lower()
-        if payload_kind not in {"command", "note"}:
-            raise ValueError("payload.kind must be one of: command, note")
+        if payload_kind not in {"command", "note", "agent"}:
+            raise ValueError("payload.kind must be one of: command, note, agent")
         nxt = next_run_ms(schedule, now_ms)
         if nxt is None:
             raise ValueError("schedule cannot produce a future run time")
@@ -303,6 +312,7 @@ class CornService:
     def _acquire_lock(self, lock_path: Path, stale_after_sec: float = 30.0) -> bool:
         now = time.time()
         try:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
             fd = os.open(str(lock_path), os.O_CREAT | os.O_EXCL | os.O_WRONLY)
             os.write(fd, f"{os.getpid()} {int(now)}".encode("utf-8"))
             os.close(fd)

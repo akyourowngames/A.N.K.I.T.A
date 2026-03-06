@@ -1,7 +1,10 @@
 import json
+import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+logger = logging.getLogger(__name__)
 
 # Memory system — imported lazily to avoid circular deps at module load
 _mem = None
@@ -101,6 +104,15 @@ CAPABILITIES:
 - Deep project intelligence (workspace_scan — understand any codebase instantly)
 - Runtime self-extension (self_extend — create new tools on the fly)
 
+RESILIENCE ENGINE (OpenClaw-inspired — YOUR SECRET WEAPON):
+- Automatic retry with exponential backoff on transient failures (network, timeout, rate limits)
+- Auto-recovery: missing Python packages get installed automatically, permission errors get escalated
+- Partial success: if 3 of 5 tools succeed, you keep those results — never lose working data
+- Failure escalation: when tools fail after retries, you get recovery hints automatically
+- Tool metrics: every tool call is tracked for latency and success rate
+- NEVER accept failure passively. The system retries for you, and if all retries fail,
+  ALWAYS try an alternative approach: execute_shell, generate_and_run_script, or smart_retry.
+
 REASONING APPROACH (ReAct Pattern):
 When given a complex task, reason step by step:
 1. THINK: Understand what the user wants, plan the approach
@@ -143,8 +155,9 @@ def new_session(user_query: str = "") -> List[Dict[str, Any]]:
         mem = _get_mem()
         if mem:
             mem.inject_into_messages(messages, user_query=user_query)
-    except Exception:
-        pass
+            logger.info("[new_session] Memory injected — %d messages total", len(messages))
+    except Exception as exc:
+        logger.warning("[new_session] Memory injection failed: %s", exc)
     return messages
 
 class AgentRuntime:
@@ -173,7 +186,11 @@ class AgentRuntime:
     def _execute_tool_calls_parallel(
         self, tool_calls: List[Dict[str, Any]]
     ) -> List[Dict[str, Any]]:
-        """Execute multiple tool calls in parallel using a thread pool."""
+        """Execute multiple tool calls in parallel with partial-success handling.
+
+        OpenClaw pattern: if 1 of N tools fails, return the successful results
+        plus enriched error info for the failures — never lose working results.
+        """
         # Inject runtime so visual_click (and any future vision tools) can call LLM
         execute_tool_call._runtime = self.runtime  # type: ignore[attr-defined]
 
@@ -192,6 +209,8 @@ class AgentRuntime:
             return [{"tc": tc, "result": result}]
 
         results = [None] * len(tool_calls)
+        _success_count = 0
+        _fail_count = 0
         with ThreadPoolExecutor(max_workers=min(len(tool_calls), 4)) as executor:
             future_to_idx = {
                 executor.submit(
@@ -205,9 +224,24 @@ class AgentRuntime:
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 try:
-                    results[idx] = {"tc": tool_calls[idx], "result": future.result()}
+                    r = future.result()
+                    results[idx] = {"tc": tool_calls[idx], "result": r}
+                    if isinstance(r, dict) and r.get("ok") is False:
+                        _fail_count += 1
+                    else:
+                        _success_count += 1
                 except Exception as err:
+                    _fail_count += 1
                     results[idx] = {"tc": tool_calls[idx], "result": {"ok": False, "error": str(err)}}
+
+        # Log partial-success stats
+        total = len(tool_calls)
+        if _fail_count > 0 and _success_count > 0:
+            print(f"[PartialSuccess] ⚠️ {_success_count}/{total} tools succeeded, {_fail_count} failed — "
+                  f"returning all results (OpenClaw pattern)", flush=True)
+        elif _fail_count == total:
+            print(f"[PartialSuccess] ❌ All {total} tools failed", flush=True)
+
         return results
 
     def _adaptive_step_limit(self, messages: List[Dict[str, Any]]) -> int:
@@ -287,17 +321,22 @@ class AgentRuntime:
                 _tracker.update(_user_text, runtime=self.runtime)
                 _directive = _tracker.get_personality_directive()
                 apply_mood_to_messages(messages, _directive)
-        except Exception:
-            pass
+                _state = _tracker.current_state()
+                print(f"[Personality] mood={_state.primary} intensity={_state.intensity:.2f} directive_len={len(_directive)}", flush=True)
+        except Exception as _pe_err:
+            print(f"[Personality] ⚠️  Error in agent_runtime mood adaptation: {_pe_err}", flush=True)
 
         step_limit = self._adaptive_step_limit(messages)
         # Tool deduplication: track (tool_name, args_hash) to detect infinite loops
         seen_calls: set = set()
         # Copout retry budget: allow 1 retry when LLM gives up without trying
         _copout_retries = 0
-        _MAX_COPOUT_RETRIES = 1
+        _MAX_COPOUT_RETRIES = 2
         # Tool-sequence cycle detection: track last N tool names for A→B→A→B pattern
         _tool_sequence: List[str] = []
+        # Cascading overflow recovery (OpenClaw-inspired)
+        _overflow_attempts = 0
+        _MAX_OVERFLOW_ATTEMPTS = 3
 
         for step in range(step_limit):
             # ── TOKEN LIMIT GUARDIAN: proactive compaction before every call ───
@@ -307,14 +346,60 @@ class AgentRuntime:
                     f"[TokenGuardian] ⚠️  Estimated {estimated:,} tokens — compacting proactively…",
                     flush=True,
                 )
-                compacted = compact_messages(messages)
+                compacted = compact_messages(messages, runtime=self.runtime)
                 messages.clear()
                 messages.extend(compacted)
                 print(
                     f"[TokenGuardian] ✅ Compacted to ~{_estimate_tokens(messages):,} tokens.",
                     flush=True,
                 )
-            assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
+            try:
+                assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
+                _overflow_attempts = 0  # Reset on success
+            except Exception as _llm_err:
+                _err_str = str(_llm_err).lower()
+                _is_overflow = (
+                    "400" in _err_str or "context_length" in _err_str
+                    or "too large" in _err_str or "bad request" in _err_str
+                    or "maximum context" in _err_str
+                )
+                if not _is_overflow:
+                    raise
+
+                _overflow_attempts += 1
+                print(
+                    f"[CascadeRecovery] Overflow attempt {_overflow_attempts}/{_MAX_OVERFLOW_ATTEMPTS}",
+                    flush=True,
+                )
+
+                if _overflow_attempts == 1:
+                    # Tier 2: Truncate all tool messages
+                    for i in range(len(messages) - 1, -1, -1):
+                        if messages[i].get("role") == "tool":
+                            content = messages[i].get("content", "")
+                            if isinstance(content, str) and len(content) > 500:
+                                messages[i]["content"] = content[:500] + "\n[TRUNCATED]"
+                    continue
+                elif _overflow_attempts == 2:
+                    # Tier 3: LLM-powered summarization
+                    compacted = compact_messages(messages, runtime=self.runtime)
+                    messages.clear()
+                    messages.extend(compacted)
+                    continue
+                else:
+                    # Tier 4: Emergency — keep system + last 6
+                    sys_msg = messages[0] if messages and messages[0].get("role") == "system" else None
+                    tail = messages[-6:]
+                    messages.clear()
+                    if sys_msg:
+                        messages.append(sys_msg)
+                    messages.append({"role": "system", "content": "[EMERGENCY] Context overflow — older context dropped."})
+                    messages.extend(tail)
+                    try:
+                        assistant_msg = call_chat_once(self.runtime, messages, tools=tools, max_tokens=self.max_tokens)
+                    except Exception:
+                        return "Context overflow after recovery attempts. Please try a simpler request."
+
             tool_calls = assistant_msg.get("tool_calls") or []
 
             messages.append(
@@ -419,6 +504,18 @@ class AgentRuntime:
 
             # Execute all tool calls (parallel if multiple)
             executed = self._execute_tool_calls_parallel(filtered_calls)
+
+            # ── FAILURE ESCALATION (OpenClaw pattern) ────────────────────
+            # If all tools in this batch failed, nudge the LLM to try alternatives
+            _all_failed = all(
+                isinstance(item["result"], dict) and item["result"].get("ok") is False
+                for item in executed
+            )
+            _any_retried = any(
+                isinstance(item["result"], dict) and item["result"].get("retries", 0) > 0
+                for item in executed
+            )
+
             for item in executed:
                 tc = item["tc"]
                 tool_result = item["result"]
@@ -516,6 +613,28 @@ class AgentRuntime:
                             "content": json.dumps(tool_result, ensure_ascii=False),
                         }
                     )
+
+            # ── POST-EXECUTION ESCALATION (OpenClaw pattern) ─────────────
+            if _all_failed and len(executed) > 0:
+                _failed_names = [item["tc"].get("function", {}).get("name", "") for item in executed]
+                _failed_errors = [
+                    str(item["result"].get("error", ""))[:100]
+                    for item in executed if isinstance(item["result"], dict)
+                ]
+                _escalation_msg = (
+                    "[SYSTEM] All tool calls in this batch FAILED"
+                    + (f" (after retries)" if _any_retried else "")
+                    + f": {', '.join(_failed_names)}. "
+                    f"Errors: {'; '.join(_failed_errors[:3])}. "
+                    "DO NOT give up. Try these recovery strategies:\n"
+                    "1. Use resolve_error(error_text=<error>) to diagnose\n"
+                    "2. Use execute_shell() with a PowerShell/cmd alternative\n"
+                    "3. Use smart_retry() which auto-diagnoses and fixes\n"
+                    "4. Use generate_and_run_script() to write a custom solution\n"
+                    "5. Try a completely different approach to achieve the same goal"
+                )
+                messages.append({"role": "user", "content": _escalation_msg})
+                print(f"[Escalation] 🔄 All tools failed — injecting recovery hint", flush=True)
 
         _fallback = "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
         if interaction_id:

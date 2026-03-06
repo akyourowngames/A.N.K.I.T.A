@@ -56,14 +56,65 @@ Respond ONLY with valid JSON. No explanation. No markdown.
 _ZERO_LATENCY_INSTANT = {"hi", "hey", "hello", "hlo", "ok", "okay", 
                           "thanks", "thank you", "/hive", "/memory", "/reset"}
 
+# ── FAST REGEX CLASSIFIER (OpenClaw-style) ──────────────────────────────────
+# Avoids the 500ms LLM call for 80%+ of requests by pattern-matching first.
+# Only falls back to LLM for truly ambiguous requests.
+import re as _hive_re
+
+_INSTANT_PATTERNS = _hive_re.compile(
+    r"^(?:hi|hey|hello|hlo|ok|okay|yo|sup|thanks?|thank you|bye|good (?:morning|night|evening)|"
+    r"what(?:'s| is) (?:up|good)|who (?:are|r) (?:you|u)|how (?:are|r) (?:you|u)|"
+    r"what time|what date|what day|/\w+)$",
+    _hive_re.IGNORECASE,
+)
+
+_HEAVY_PATTERNS = _hive_re.compile(
+    r"(?:research .* (?:and|then) (?:write|create|build|generate))|"
+    r"(?:deep (?:dive|analysis|research|report))|"
+    r"(?:comprehensive|extensive|thorough|in-depth|10.?page)|"
+    r"(?:batch (?:process|rename|convert|delete))|"
+    r"(?:build (?:a|an|the) (?:full|complete|entire))|"
+    r"(?:write .{30,})|"  # Long write requests are likely heavy
+    r"(?:analyze .*(?:all|entire|every|complete))",
+    _hive_re.IGNORECASE,
+)
+
+_NORMAL_PATTERNS = _hive_re.compile(
+    r"(?:open |close |play |stop |pause |mute |volume |brightness |screenshot|"
+    r"take (?:a |)(?:photo|pic|screenshot|selfie)|scan |check |search |"
+    r"turn (?:on|off) |lock |set |read |write |edit |list |show |tell |"
+    r"what(?:'s| is) (?:my|the)|google |send |wifi |bluetooth )",
+    _hive_re.IGNORECASE,
+)
+
+
+def _fast_classify(text: str) -> Optional[str]:
+    """Fast regex-based classification. Returns mode or None if ambiguous."""
+    t = text.strip()
+    if not t:
+        return "instant"
+    if len(t) < 20 and _INSTANT_PATTERNS.match(t):
+        return "instant"
+    if _HEAVY_PATTERNS.search(t):
+        return "heavy"
+    if _NORMAL_PATTERNS.search(t):
+        return "normal"
+    return None  # Ambiguous — needs LLM
+
 
 @functools.lru_cache(maxsize=256)
 def _classify_task(text: str) -> str:
     """
-    Ask the LLM to classify the task. Returns "instant", "normal", or "heavy".
-    Falls back to "normal" on any error — safe default.
-    LRU cache prevents duplicate API calls for identical inputs.
+    Hybrid classification: fast regex first, LLM fallback for ambiguous cases.
+    OpenClaw-inspired: avoid LLM call overhead for obvious patterns.
     """
+    # Try fast regex classification first (0ms vs 500ms LLM call)
+    fast_result = _fast_classify(text)
+    if fast_result is not None:
+        print(f"[HiveClassifier] '{text[:50]}' → {fast_result} (fast-regex)", flush=True)
+        return fast_result
+
+    # Fall back to LLM for ambiguous requests
     try:
         from llm import build_runtime_from_env, call_chat_once
         
@@ -81,7 +132,7 @@ def _classify_task(text: str) -> str:
         mode = str(parsed.get("mode", "normal")).lower()
 
         if mode in ("instant", "normal", "heavy"):
-            print(f"[HiveClassifier] '{text[:50]}' → {mode} ({parsed.get('reason','')})", flush=True)
+            print(f"[HiveClassifier] '{text[:50]}' → {mode} (llm: {parsed.get('reason','')})", flush=True)
             return mode
     except Exception as e:
         print(f"[HiveClassifier] ⚠️ LLM classify failed: {e} — defaulting to 'normal'", flush=True)
