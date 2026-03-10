@@ -79,12 +79,14 @@ class MemorySystem:
         with open(log_file, 'a', encoding='utf-8') as f:
             f.write(json.dumps(entry, ensure_ascii=False) + '\n')
     
-    def extract_and_save_preferences(self, user_message: str, assistant_response: str):
+    def extract_and_save_preferences(self, user_message: str, assistant_response: str) -> List[str]:
         """
         Automatically extract preferences and important info from conversation
         Uses regex patterns to detect common preference indicators
         """
         extractions = []
+        lowered_message = user_message.lower()
+        compact_fragments = [fragment.strip() for fragment in re.split(r"[,|/]", lowered_message) if fragment.strip()]
         
         # Pattern 1: "My name is X" or "I'm X"
         name_patterns = [
@@ -94,7 +96,7 @@ class MemorySystem:
             r"call me (\w+)"
         ]
         for pattern in name_patterns:
-            match = re.search(pattern, user_message.lower())
+            match = re.search(pattern, lowered_message)
             if match:
                 name = match.group(1).capitalize()
                 extractions.append(("name", f"User's name: {name}"))
@@ -107,7 +109,7 @@ class MemorySystem:
             r"i want ([^.!?]+)"
         ]
         for pattern in preference_patterns:
-            match = re.search(pattern, user_message.lower())
+            match = re.search(pattern, lowered_message)
             if match:
                 pref = match.group(1).strip()
                 extractions.append(("preference", f"Preference: {pref}"))
@@ -119,19 +121,62 @@ class MemorySystem:
             r"i dislike ([^.!?]+)"
         ]
         for pattern in dislike_patterns:
-            match = re.search(pattern, user_message.lower())
+            match = re.search(pattern, lowered_message)
             if match:
                 dislike = match.group(1).strip()
                 extractions.append(("dislike", f"Dislikes: {dislike}"))
+
+        # Pattern 4: Age mentions
+        age_patterns = [
+            r"\bage\s*(?:is|:)?\s*(\d{1,3})\b",
+            r"\bi(?:'m| am)\s+(\d{1,3})\b",
+            r"\b(\d{1,3})\s*(?:years old|yrs old|yrs|yo)\b",
+        ]
+        for pattern in age_patterns:
+            match = re.search(pattern, lowered_message)
+            if match:
+                age = int(match.group(1))
+                if 1 <= age <= 120:
+                    extractions.append(("age", f"Age: {age}"))
+                    break
+
+        for fragment in compact_fragments:
+            if re.fullmatch(r"\d{1,3}", fragment):
+                age = int(fragment)
+                if 1 <= age <= 120:
+                    extractions.append(("age", f"Age: {age}"))
+                    break
+
+        # Pattern 5: Gender mentions
+        gender_map = {
+            "male": "male",
+            "man": "male",
+            "boy": "male",
+            "female": "female",
+            "woman": "female",
+            "girl": "female",
+            "nonbinary": "non-binary",
+            "non-binary": "non-binary",
+        }
+        gender_patterns = [
+            r"\bgender\s*(?:is|:)?\s*(male|female|man|woman|boy|girl|nonbinary|non-binary)\b",
+            r"\b(male|female|man|woman|boy|girl|nonbinary|non-binary)\b",
+        ]
+        for pattern in gender_patterns:
+            match = re.search(pattern, lowered_message)
+            if match:
+                normalized_gender = gender_map[match.group(1)]
+                extractions.append(("gender", f"Gender: {normalized_gender}"))
+                break
         
-        # Pattern 4: Location mentions
+        # Pattern 6: Location mentions
         location_pattern = r"i (?:live|am) (?:in|from|at) ([^.!?]+)"
-        match = re.search(location_pattern, user_message.lower())
+        match = re.search(location_pattern, lowered_message)
         if match:
             location = match.group(1).strip()
             extractions.append(("location", f"Location: {location}"))
         
-        # Pattern 5: Project/work mentions
+        # Pattern 7: Project/work mentions
         project_patterns = [
             r"working on ([^.!?]+)",
             r"building ([^.!?]+)",
@@ -139,30 +184,49 @@ class MemorySystem:
             r"my project (?:is )?([^.!?]+)"
         ]
         for pattern in project_patterns:
-            match = re.search(pattern, user_message.lower())
+            match = re.search(pattern, lowered_message)
             if match:
                 project = match.group(1).strip()
                 extractions.append(("project", f"Project: {project}"))
         
         # Save extractions to preferences file
         if extractions:
-            self._append_to_preferences(extractions)
+            return self._append_to_preferences(extractions)
+
+        return []
     
-    def _append_to_preferences(self, extractions: List[tuple]):
+    def _append_to_preferences(self, extractions: List[tuple]) -> List[str]:
         """Append extracted preferences to preferences.md"""
-        content = self.preferences_file.read_text()
+        content = self.preferences_file.read_text(encoding='utf-8')
+        existing_lines = {
+            line.strip() for line in content.splitlines()
+            if line.strip().startswith("- ")
+        }
+
+        unique_entries = []
+        for _, text in extractions:
+            if not text or not text.strip():
+                continue
+            bullet = f"- {text}"
+            if bullet not in existing_lines:
+                unique_entries.append(text)
+                existing_lines.add(bullet)
+
+        if not unique_entries:
+            return []
         
         # Add timestamp
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M")
         new_entries = f"\n## Extracted on {timestamp}\n\n"
         
-        for category, text in extractions:
+        for text in unique_entries:
             new_entries += f"- {text}\n"
         
         # Append to file
-        self.preferences_file.write_text(content + new_entries)
+        self.preferences_file.write_text(content + new_entries, encoding='utf-8')
+        return unique_entries
     
-    def add_to_memory(self, category: str, content: str):
+    def add_to_memory(self, category: str, content: str) -> bool:
         """
         Manually add content to long-term memory
         
@@ -170,7 +234,11 @@ class MemorySystem:
             category: Section name (e.g., "Important Facts", "Decisions")
             content: Content to add
         """
-        memory_content = self.memory_file.read_text()
+        content = (content or "").strip()
+        if not content:
+            return False
+
+        memory_content = self.memory_file.read_text(encoding='utf-8')
         
         # Find the category section
         category_header = f"## {category}"
@@ -202,7 +270,8 @@ class MemorySystem:
             # Category was last, append
             new_lines.append(new_entry)
         
-        self.memory_file.write_text('\n'.join(new_lines))
+        self.memory_file.write_text('\n'.join(new_lines), encoding='utf-8')
+        return True
     
     def get_recent_context(self, days: int = 2) -> str:
         """
@@ -273,12 +342,13 @@ class MemorySystem:
         
         return '\n'.join(context)
     
-    def search_memory(self, query: str) -> List[str]:
+    def search_memory(self, query: str, include_logs: bool = False) -> List[str]:
         """
-        Simple keyword search across all memory files
+        Search stored memory files, with optional conversation log search
         
         Args:
             query: Search query
+            include_logs: Include daily conversation logs in results
         
         Returns:
             List of matching lines
@@ -293,16 +363,17 @@ class MemorySystem:
                 if query_lower in line.lower():
                     results.append(f"[{md_file.name}] {line.strip()}")
         
-        # Search in recent daily logs
-        for log_file in sorted(self.daily_dir.glob("*.jsonl"), reverse=True)[:7]:
-            with open(log_file, 'r', encoding='utf-8') as f:
-                for line in f:
-                    try:
-                        entry = json.loads(line)
-                        content = entry.get('content', '')
-                        if query_lower in content.lower():
-                            results.append(f"[{log_file.name}] {content[:100]}...")
-                    except:
-                        continue
+        if include_logs:
+            # Search in recent daily logs
+            for log_file in sorted(self.daily_dir.glob("*.jsonl"), reverse=True)[:7]:
+                with open(log_file, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        try:
+                            entry = json.loads(line)
+                            content = entry.get('content', '')
+                            if query_lower in content.lower():
+                                results.append(f"[{log_file.name}] {content[:100]}...")
+                        except:
+                            continue
         
         return results[:10]  # Return top 10 results

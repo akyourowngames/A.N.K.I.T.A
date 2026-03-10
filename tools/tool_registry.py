@@ -9,6 +9,7 @@ from tools.web_fetch_tool import WebFetchTool
 from tools.file_operations_tool import FileOperationsTool
 from tools.gui_automation_tool import GUIAutomationTool
 from tools.window_clipboard_tool import WindowClipboardTool
+from tools.browser_automation_tool import BrowserAutomationTool
 
 
 class ToolRegistry:
@@ -22,7 +23,8 @@ class ToolRegistry:
             "fetch_webpage": WebFetchTool,
             "file_operation": FileOperationsTool,
             "gui_control": GUIAutomationTool,
-            "window_clipboard": WindowClipboardTool
+            "window_clipboard": WindowClipboardTool,
+            "browser_automation": BrowserAutomationTool
         }
     
     def get_all_schemas(self):

@@ -1,0 +1,55 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ANKITA Browser Bridge</title>
+    <link rel="stylesheet" href="popup.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="hero">
+        <h1>ANKITA Browser Bridge</h1>
+        <p>Local Chrome control for the active logged-in browser.</p>
+      </header>
+
+      <section class="panel">
+        <div class="row">
+          <span class="label">Bridge</span>
+          <span id="bridge-url" class="value">loading...</span>
+        </div>
+        <div class="row">
+          <span class="label">Status</span>
+          <span id="bridge-status" class="pill">checking</span>
+        </div>
+        <div class="row">
+          <span class="label">Client</span>
+          <span id="client-id" class="value">-</span>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Active Tab</h2>
+        <div id="active-tab" class="meta">No active tab</div>
+      </section>
+
+      <section class="panel">
+        <h2>Sessions</h2>
+        <div id="sessions" class="meta">No sessions</div>
+      </section>
+
+      <section class="actions">
+        <button id="refresh-btn" type="button">Refresh</button>
+        <button id="reconnect-btn" type="button">Reconnect</button>
+        <button id="attach-btn" type="button">Attach Active Tab</button>
+      </section>
+
+      <section class="panel">
+        <h2>Last Error</h2>
+        <pre id="last-error" class="error-box">None</pre>
+      </section>
+    </main>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

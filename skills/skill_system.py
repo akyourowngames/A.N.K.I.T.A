@@ -169,6 +169,16 @@ class SkillSystem:
             instructions.append(skill['rules'])
         
         return '\n'.join(instructions)
+
+    def _keyword_matches(self, keyword: str, message_lower: str) -> bool:
+        """Match trigger keywords as whole words or phrases, not loose substrings."""
+        cleaned = (keyword or "").strip().lower()
+        if not cleaned:
+            return False
+
+        escaped = re.escape(cleaned).replace(r"\ ", r"\s+")
+        pattern = rf"(?<!\w){escaped}(?!\w)"
+        return bool(re.search(pattern, message_lower))
     
     def match_skill(self, user_message: str) -> Optional[Tuple[str, str]]:
         """
@@ -191,7 +201,7 @@ class SkillSystem:
             
             # Check if any keyword appears in the message
             for keyword in keywords:
-                if keyword and keyword in message_lower:
+                if self._keyword_matches(keyword, message_lower):
                     instructions = self.get_skill_instructions(skill_name)
                     return (skill_name, instructions)
         

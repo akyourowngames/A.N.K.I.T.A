@@ -72,6 +72,45 @@ AUTONOMOUS EXECUTION RULES (CRITICAL):
 """
     return [{"role": "system", "content": SYSTEM_PROMPT}]
 
+
+def _trim_session_messages(messages: List[Dict[str, Any]]) -> None:
+    """Trim in-place to keep system prompt and cap history size."""
+    if not messages:
+        return
+    try:
+        max_messages = int(os.getenv("VOICE_SESSION_MAX_MESSAGES", "32") or 32)
+    except Exception:
+        max_messages = 32
+    try:
+        max_chars = int(os.getenv("VOICE_SESSION_MAX_CHARS", "20000") or 20000)
+    except Exception:
+        max_chars = 20000
+
+    if max_messages <= 0 and max_chars <= 0:
+        return
+
+    sys_msg = messages[0] if isinstance(messages[0], dict) and messages[0].get("role") == "system" else None
+    rest = messages[1:] if sys_msg else list(messages)
+
+    if max_messages > 0 and len(rest) > max_messages:
+        rest = rest[-max_messages:]
+
+    if max_chars > 0:
+        def _msg_len(msg: Dict[str, Any]) -> int:
+            return len(str(msg.get("content", "")))
+
+        total = sum(_msg_len(m) for m in rest) + (_msg_len(sys_msg) if sys_msg else 0)
+        while rest and total > max_chars:
+            total -= _msg_len(rest[0])
+            rest.pop(0)
+
+    messages[:] = ([sys_msg] if sys_msg else []) + rest
+
+
+def _looks_like_context_overflow(text: str) -> bool:
+    lower = (text or "").lower()
+    return "context overflow" in lower or "context length" in lower
+
 WORKSPACE_ROOT = Path.cwd().resolve()
 SARVAM_BASE_URL = "https://api.sarvam.ai"
 _SARVAM_SESSION = requests.Session()
@@ -439,7 +478,16 @@ def main() -> None:
                     if session_id not in sessions:
                         sessions[session_id] = new_session()
                     msgs = sessions[session_id]
+                    _trim_session_messages(msgs)
                 reply_text = agent.run(user_text=transcript, messages=msgs)
+                if _looks_like_context_overflow(reply_text) and _env_bool("VOICE_RESET_ON_OVERFLOW", True):
+                    with sessions_lock:
+                        sessions[session_id] = new_session()
+                        msgs = sessions[session_id]
+                        _trim_session_messages(msgs)
+                    reply_text = agent.run(user_text=transcript, messages=msgs)
+                with sessions_lock:
+                    _trim_session_messages(msgs)
                 spoken_text = prepare_tts_text(reply_text)
                 tts = _sarvam_tts(api_key=api_key, text=spoken_text, lang_code=detected_lang if "-" in detected_lang else tts_lang)
                 audio_b64 = _extract_audio_b64(tts)

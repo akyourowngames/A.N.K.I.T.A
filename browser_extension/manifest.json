@@ -1,0 +1,32 @@
+{
+  "manifest_version": 3,
+  "name": "ANKITA Browser Bridge",
+  "description": "Connects the active Chrome browser to ANKITA over localhost for DOM-aware automation.",
+  "version": "0.1.0",
+  "permissions": [
+    "tabs",
+    "activeTab",
+    "scripting",
+    "storage",
+    "alarms"
+  ],
+  "host_permissions": [
+    "http://127.0.0.1:8766/*",
+    "http://localhost:8766/*",
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_title": "ANKITA Browser Bridge",
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}

@@ -8,9 +8,11 @@ import time
 import sys
 import os
 import importlib
+from pathlib import Path
+from typing import Dict, List
 import requests
 from dotenv import load_dotenv
-from copilot_auth import CopilotAuth
+from llm_provider import build_provider_from_env
 from memory_system import MemorySystem
 from tools.tool_registry import ToolRegistry
 from retry_config import RetryConfig
@@ -19,37 +21,69 @@ from skills.skill_system import SkillSystem
 # Load environment variables
 load_dotenv()
 
+# Windows PowerShell often defaults to cp1252, which breaks the emoji-heavy UI.
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+if hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+
 
 class CopilotChatbot:
-    """Simple chatbot interface for GitHub Copilot with memory and tools"""
-    
-    API_URL = 'https://api.githubcopilot.com/chat/completions'
+    """Simple chatbot interface for selectable LLM providers with memory and tools"""
     
     def __init__(self):
-        self.auth = CopilotAuth()
+        self.provider = build_provider_from_env()
         self.conversation_history = []
         self.memory = MemorySystem()
         self.tool_registry = ToolRegistry()
         self.retry_config = RetryConfig()
         self.skill_system = SkillSystem()
+        self.last_setup_error = ""
     
     def setup(self):
         """Setup authentication and personality"""
-        # Check personality configuration
-        self._check_personality()
-        
-        if self.auth.load_token():
-            print("✅ Loaded existing credentials")
-            if self.test_connection():
-                # Show available skills on startup
-                skills = self.skill_system.list_skills()
-                if skills:
-                    print(f"🎯 Loaded {len(skills)} skills")
-                return True
-            else:
-                print("⚠️  Token expired, re-authenticating...")
-        
-        return self.auth.authenticate() and self.test_connection()
+        self.last_setup_error = ""
+
+        try:
+            # Check personality configuration
+            self._check_personality()
+            self._maybe_start_browser_bridge()
+            
+            if self.provider.load_token():
+                print(f"✅ Loaded existing {self.provider.provider_name} credentials")
+                if self.test_connection():
+                    # Show available skills on startup
+                    skills = self.skill_system.list_skills()
+                    if skills:
+                        print(f"🎯 Loaded {len(skills)} skills")
+                    return True
+                else:
+                    print(f"⚠️  {self.provider.provider_name} credentials failed, re-authenticating...")
+            
+            authenticated = self.provider.authenticate()
+            if not authenticated:
+                self.last_setup_error = f"{self.provider.provider_name} login did not complete successfully"
+                return False
+
+            return self.test_connection()
+        except Exception as e:
+            self.last_setup_error = str(e)
+            print(f"❌ Setup error: {e}")
+            return False
+
+    def _maybe_start_browser_bridge(self):
+        """Start the localhost browser bridge when configured."""
+        autostart = os.getenv("BROWSER_BRIDGE_AUTOSTART", "").strip().lower() in {"1", "true", "yes", "on"}
+        if not autostart:
+            return
+
+        try:
+            from browser_bridge import BrowserBridgeManager
+
+            manager = BrowserBridgeManager.ensure_running()
+            print(f"🌐 Browser bridge ready at http://{manager.host}:{manager.port}")
+        except Exception as exc:
+            print(f"⚠️  Browser bridge did not start: {exc}")
     
     def _check_personality(self):
         """Check if personality is configured, run setup if not"""
@@ -66,23 +100,16 @@ class CopilotChatbot:
     
     def test_connection(self):
         """Test if the token works"""
-        try:
-            response = requests.get(
-                'https://api.githubcopilot.com/models',
-                headers=self.auth.get_headers(),
-                timeout=10
-            )
-            
-            if response.status_code == 200:
-                print("✅ Connection successful!")
-                print(f"🔧 Loaded {len(self.tool_registry.get_tool_names())} tools")
-                return True
-            else:
-                print(f"❌ Connection failed: {response.status_code}")
-                return False
-        except Exception as e:
-            print(f"❌ Connection test failed: {e}")
-            return False
+        ok, message = self.provider.test_connection()
+        if ok:
+            self.last_setup_error = ""
+            print(f"✅ {message}")
+            print(f"🔧 Provider: {self.provider.provider_name} | Model: {self.provider.model}")
+            print(f"🔧 Loaded {len(self.tool_registry.get_tool_names())} tools")
+            return True
+        self.last_setup_error = message
+        print(f"❌ {message}")
+        return False
     
     def get_memory_tools(self):
         """Define memory tools for function calling"""
@@ -97,7 +124,7 @@ class CopilotChatbot:
                         "properties": {
                             "category": {
                                 "type": "string",
-                                "enum": ["name", "preference", "location", "project", "fact"],
+                                "enum": ["name", "age", "gender", "preference", "location", "project", "communication", "fact"],
                                 "description": "Category of information being stored"
                             },
                             "content": {
@@ -135,13 +162,18 @@ class CopilotChatbot:
                 "type": "function",
                 "function": {
                     "name": "search_memory",
-                    "description": "Search through stored memories and conversation history for specific information",
+                    "description": "Search through stored persistent memory for specific information. Conversation logs are excluded unless explicitly requested.",
                     "parameters": {
                         "type": "object",
                         "properties": {
                             "query": {
                                 "type": "string",
                                 "description": "What to search for in memory"
+                            },
+                            "include_logs": {
+                                "type": "boolean",
+                                "description": "Whether to also search recent conversation logs",
+                                "default": False
                             }
                         },
                         "required": ["query"]
@@ -239,17 +271,25 @@ class CopilotChatbot:
         # Memory tools
         if tool_name == "remember_preference":
             category = arguments.get("category", "fact")
-            content = arguments.get("content", "")
+            content = str(arguments.get("content", "")).strip()
+            if not content:
+                return "Error: content is required for remember_preference"
             
             # Map category to preference format
             if category == "name":
                 formatted = f"User's name: {content}"
+            elif category == "age":
+                formatted = f"Age: {content}"
+            elif category == "gender":
+                formatted = f"Gender: {content}"
             elif category == "preference":
                 formatted = f"Preference: {content}"
             elif category == "location":
                 formatted = f"Location: {content}"
             elif category == "project":
                 formatted = f"Project: {content}"
+            elif category == "communication":
+                formatted = f"Communication preference: {content}"
             else:
                 formatted = content
             
@@ -259,15 +299,20 @@ class CopilotChatbot:
         
         elif tool_name == "add_to_long_term_memory":
             category = arguments.get("category", "Important Facts")
-            content = arguments.get("content", "")
+            content = str(arguments.get("content", "")).strip()
+            if not content:
+                return "Error: content is required for add_to_long_term_memory"
             
             # Save to long-term memory
-            self.memory.add_to_memory(category, content)
+            success = self.memory.add_to_memory(category, content)
+            if not success:
+                return "Error: long-term memory content cannot be empty"
             return f"✓ Added to long-term memory ({category}): {content}"
         
         elif tool_name == "search_memory":
             query = arguments.get("query", "")
-            results = self.memory.search_memory(query)
+            include_logs = bool(arguments.get("include_logs", False))
+            results = self.memory.search_memory(query, include_logs=include_logs)
             if results:
                 return "\n".join(results[:5])
             return "No results found"
@@ -292,11 +337,144 @@ class CopilotChatbot:
         # System tools from registry
         else:
             return self.tool_registry.execute_tool(tool_name, arguments)
+
+    def _build_system_content(self, memory_context: str, skills_summary: str,
+                              active_skill_instructions: str,
+                              runtime_mode_instructions: str = "") -> str:
+        """Build the shared ANKITA system prompt used across providers."""
+        system_content_parts = [
+            "You are ANKITA, the user's local assistant inside this workspace.",
+            "Do not present yourself as Codex, ChatGPT, or a generic AI assistant unless the user explicitly asks about the underlying provider.",
+            "Act like ANKITA: capable, proactive, natural, and action-oriented.",
+            "Follow the configured personality in memory/SOUL.md when it is present.",
+            "When a user asks for an action, prefer doing it with ANKITA's local tools instead of only describing steps."
+        ]
+
+        system_content_parts.append(
+            "\nCAPABILITIES:\n"
+            "- Memory tools: remember_preference, add_to_long_term_memory, search_memory, create_skill\n"
+            "- Local system tools: execute_terminal_command, file_operation, gui_control, window_clipboard\n"
+            "- Browser automation: browser_automation for sessions, DOM steps, extraction, screenshots, and uploads\n"
+            "- Web tools: search_web, fetch_webpage\n"
+            "- If the user asks what you can access, answer with these ANKITA capabilities, not generic platform claims"
+        )
+
+        system_content_parts.append(
+            "\nACTION POLICY:\n"
+            "- If the user asks to open an app, run a command, inspect files, search the web, or control windows, do it first when possible\n"
+            "- Use browser_automation for website and browser DOM tasks; use gui_control/window_clipboard only for browser chrome, native dialogs, or desktop fallbacks\n"
+            "- For browser workflows, stop as soon as the requested checkpoint or page state is reached and report the result instead of idling or over-exploring\n"
+            "- Do not say you lack tools if ANKITA already has the needed capability\n"
+            "- Do not tell the user to do the obvious next step themselves when ANKITA can do it"
+        )
+
+        system_content_parts.append(
+            "\nKNOWLEDGE GAPS:\n"
+            "- If you don't know something or lack current information, use 'search_web' tool FIRST\n"
+            "- Never say 'I don't know' without attempting to search\n"
+            "- Search for: current events, recent updates, unfamiliar terms, specific facts\n"
+            "- After searching, synthesize the information in your response"
+        )
+
+        system_content_parts.append(
+            "\nMEMORY SYSTEM:\n"
+            "- Use 'remember_preference' for personal info (name, likes, location, etc.)\n"
+            "- Use 'add_to_long_term_memory' for important facts, decisions, or context that should persist\n"
+            "- When user shares something important, ALWAYS call the appropriate memory function\n"
+            "- If asked whether something was saved, verify against persisted memory, not just chat history"
+        )
+
+        if skills_summary:
+            system_content_parts.append(f"\n{skills_summary}")
+            system_content_parts.append(
+                "\nWhen a skill is activated, follow its instructions precisely. "
+                "Skills combine multiple tools into workflows."
+            )
+
+        if active_skill_instructions:
+            system_content_parts.append(active_skill_instructions)
+
+        if runtime_mode_instructions:
+            system_content_parts.append(runtime_mode_instructions)
+
+        if memory_context:
+            system_content_parts.append(f"\nHere's what you currently know about the user:\n{memory_context}")
+
+        return "\n".join(system_content_parts)
+
+    def _get_runtime_mode_instructions(self, user_message: str) -> str:
+        """Inject high-priority behavior modes inferred from the latest user turn."""
+        lowered = (user_message or "").lower()
+        testing_markers = [
+            "for testing",
+            "testing",
+            "test flow",
+            "test mode",
+            "dummy",
+            "fake",
+            "random",
+            "simulate",
+            "simulation",
+            "dry run",
+        ]
+
+        if any(marker in lowered for marker in testing_markers):
+            return (
+                "\nTEST / SIMULATION MODE:\n"
+                "- The user has indicated this task may use dummy, random, simulated, or test data.\n"
+                "- You may generate realistic placeholder details when needed to keep the workflow moving.\n"
+                "- Prefer doing the test flow instead of stopping for non-essential confirmations.\n"
+                "- Never submit payment, finalize a purchase, or perform irreversible external actions with invented details.\n"
+                "- If a real action cannot be completed safely, do the booking-ready or form-fill simulation and clearly state what was simulated."
+            )
+
+        return ""
+
+    def _build_codex_cli_tool_guide(self) -> str:
+        """Tell the Codex CLI path how to reach ANKITA's local Python tools."""
+        return (
+            "CODEX CLI TOOL BRIDGE:\n"
+            "- To use ANKITA's local tools, run: python ankita_codex_bridge.py <tool_name> '<json arguments>'\n"
+            "- Available tool names: remember_preference, add_to_long_term_memory, search_memory, create_skill, "
+            "execute_terminal_command, search_web, fetch_webpage, file_operation, gui_control, window_clipboard, browser_automation\n"
+            "- Example: python ankita_codex_bridge.py execute_terminal_command '{\"command\":\"notepad\"}'\n"
+            "- Example: python ankita_codex_bridge.py window_clipboard '{\"action\":\"switch_to_window\",\"process\":\"notepad\"}'\n"
+            "- Example: python ankita_codex_bridge.py browser_automation '{\"action\":\"start_session\",\"browser\":\"edge\",\"url\":\"https://example.com\"}'\n"
+            "- Example: python ankita_codex_bridge.py search_web '{\"query\":\"latest OpenAI news\"}'\n"
+            "- If the user's request needs an action, run the bridge command first and then answer with the outcome.\n"
+            "- Do not merely describe the bridge command unless the user specifically asks how it works."
+        )
+
+    def _build_codex_cli_prompt(self, system_content: str) -> str:
+        """Build the Codex CLI prompt with ANKITA context, memory, and tool guidance."""
+        transcript_lines = []
+        for message in self.conversation_history[-10:]:
+            role = str(message.get("role", "")).strip().lower()
+            content = str(message.get("content") or "").strip()
+            if role not in {"user", "assistant"} or not content:
+                continue
+            transcript_lines.append(f"{role.title()}: {content}")
+
+        parts = [
+            system_content,
+            "",
+            self._build_codex_cli_tool_guide(),
+            "",
+            "RECENT CONVERSATION:",
+            "\n".join(transcript_lines) if transcript_lines else "No prior conversation.",
+            "",
+            "Respond as ANKITA. Use ANKITA's local tools when the latest user request requires action.",
+        ]
+
+        return "\n".join(parts).strip()
     
     def chat(self, user_message):
         """Send a message and get response with function calling"""
         # Log user message
         self.memory.log_conversation('user', user_message)
+
+        # Persist obvious user preferences before the model responds so memory claims are real.
+        self.memory.extract_and_save_preferences(user_message, "")
         
         # Add user message to history
         self.conversation_history.append({
@@ -317,53 +495,41 @@ class CopilotChatbot:
             skill_name, skill_instructions = skill_match
             active_skill_instructions = f"\n\n🎯 ACTIVE SKILL: {skill_name}\n{skill_instructions}"
             print(f"\n🎯 Activated skill: {skill_name}")
+
+        runtime_mode_instructions = self._get_runtime_mode_instructions(user_message)
         
+        system_content = self._build_system_content(
+            memory_context=memory_context,
+            skills_summary=skills_summary,
+            active_skill_instructions=active_skill_instructions,
+            runtime_mode_instructions=runtime_mode_instructions
+        )
+
         # Prepare messages with memory context and skills
         messages = []
-        system_content_parts = ["You are a helpful AI assistant with persistent memory and skills."]
-        
-        # Add knowledge gap handling (OpenClaw-style)
-        system_content_parts.append(
-            "\nKNOWLEDGE GAPS:\n"
-            "- If you don't know something or lack current information, use 'search_web' tool FIRST\n"
-            "- Never say 'I don't know' without attempting to search\n"
-            "- Search for: current events, recent updates, unfamiliar terms, specific facts\n"
-            "- After searching, synthesize the information in your response"
-        )
-        
-        # Add memory system instructions
-        system_content_parts.append(
-            "\nMEMORY SYSTEM:\n"
-            "- Use 'remember_preference' for personal info (name, likes, location, etc.)\n"
-            "- Use 'add_to_long_term_memory' for important facts, decisions, or context that should persist\n"
-            "- When user shares something important, ALWAYS call the appropriate memory function"
-        )
-        
-        # Add skills summary (compact list)
-        if skills_summary:
-            system_content_parts.append(f"\n{skills_summary}")
-            system_content_parts.append(
-                "\nWhen a skill is activated, follow its instructions precisely. "
-                "Skills combine multiple tools into workflows."
-            )
-        
-        # Add active skill instructions (full details only when triggered)
-        if active_skill_instructions:
-            system_content_parts.append(active_skill_instructions)
-        
-        # Add memory context
-        if memory_context:
-            system_content_parts.append(f"\nHere's what you currently know about the user:\n{memory_context}")
-        
         messages.append({
             'role': 'system',
-            'content': '\n'.join(system_content_parts)
+            'content': system_content
         })
         messages.extend(self.conversation_history)
+
+        if self.provider.provider_name == 'codex_cli':
+            try:
+                prompt = self._build_codex_cli_prompt(system_content)
+                content = self.provider.run_cli_prompt(prompt, cwd=str(Path.cwd()))
+            except Exception as e:
+                return f"Error: {str(e)}"
+
+            self.memory.log_conversation('assistant', content)
+            self.conversation_history.append({
+                'role': 'assistant',
+                'content': content
+            })
+            return content
         
         # Prepare request with function calling
         payload = {
-            'model': 'gpt-4o',
+            'model': self.provider.model,
             'messages': messages,
             'tools': self.get_all_tools(),
             'tool_choice': 'auto',
@@ -373,8 +539,8 @@ class CopilotChatbot:
         
         try:
             response = requests.post(
-                self.API_URL,
-                headers=self.auth.get_headers(),
+                self.provider.api_url,
+                headers=self.provider.get_headers(),
                 json=payload,
                 timeout=30
             )
@@ -414,31 +580,28 @@ class CopilotChatbot:
                         'content': result
                     })
                 
+                updated_memory_context = self.memory.get_memory_context()
+                updated_skills_summary = self.skill_system.get_skills_summary()
+                updated_system_content = self._build_system_content(
+                    memory_context=updated_memory_context,
+                    skills_summary=updated_skills_summary,
+                    active_skill_instructions=active_skill_instructions,
+                    runtime_mode_instructions=runtime_mode_instructions
+                )
+
                 # Build complete message history for second request
                 # Include system message + all conversation history
                 complete_messages = []
-                if memory_context:
+                if updated_system_content:
                     complete_messages.append({
                         'role': 'system',
-                        'content': (
-                            f"You are a helpful AI assistant with persistent memory.\n\n"
-                            f"KNOWLEDGE GAPS:\n"
-                            f"- If you don't know something or lack current information, use 'search_web' tool FIRST\n"
-                            f"- Never say 'I don't know' without attempting to search\n"
-                            f"- Search for: current events, recent updates, unfamiliar terms, specific facts\n"
-                            f"- After searching, synthesize the information in your response\n\n"
-                            f"MEMORY SYSTEM:\n"
-                            f"- Use 'remember_preference' for personal info (name, likes, location, etc.)\n"
-                            f"- Use 'add_to_long_term_memory' for important facts, decisions, or context that should persist\n"
-                            f"- When user shares something important, ALWAYS call the appropriate memory function\n\n"
-                            f"Here's what you currently know about the user:\n{memory_context}"
-                        )
+                        'content': updated_system_content
                     })
                 complete_messages.extend(self.conversation_history)
                 
                 # Get final response after tool execution
                 final_payload = {
-                    'model': 'gpt-4o',
+                    'model': self.provider.model,
                     'messages': complete_messages,
                     'tools': self.get_all_tools(),
                     'temperature': 0.7,
@@ -446,8 +609,8 @@ class CopilotChatbot:
                 }
                 
                 final_response = requests.post(
-                    self.API_URL,
-                    headers=self.auth.get_headers(),
+                    self.provider.api_url,
+                    headers=self.provider.get_headers(),
                     json=final_payload,
                     timeout=30
                 )
@@ -492,6 +655,7 @@ class CopilotChatbot:
             # List of modules to reload
             modules_to_reload = [
                 'copilot_auth',
+                'llm_provider',
                 'memory_system',
                 'retry_config',
                 'tools.tool_registry',
@@ -510,7 +674,7 @@ class CopilotChatbot:
                     print(f"  ✓ Reloaded {module_name}")
             
             # Reinitialize components with reloaded modules
-            from copilot_auth import CopilotAuth
+            from llm_provider import build_provider_from_env
             from memory_system import MemorySystem
             from tools.tool_registry import ToolRegistry
             from retry_config import RetryConfig
@@ -518,12 +682,8 @@ class CopilotChatbot:
             
             # Keep conversation history but reload everything else
             old_history = self.conversation_history
-            old_auth_token = self.auth.access_token if hasattr(self.auth, 'access_token') else None
             
-            self.auth = CopilotAuth()
-            if old_auth_token:
-                self.auth.access_token = old_auth_token
-            
+            self.provider = build_provider_from_env()
             self.memory = MemorySystem()
             self.tool_registry = ToolRegistry()
             self.retry_config = RetryConfig()
@@ -540,7 +700,7 @@ class CopilotChatbot:
     def run(self):
         """Run interactive chat loop"""
         print("\n" + "=" * 60)
-        print("🤖 GitHub Copilot Chatbot with Memory")
+        print("🤖 ANKITA Chatbot with Memory")
         print("=" * 60)
         print("\nCommands:")
         print("  /clear   - Clear conversation history")
@@ -548,6 +708,7 @@ class CopilotChatbot:
         print("  /memory  - Show memory stats")
         print("  /search  - Search memory")
         print("  /skills  - List available skills")
+        print("  /thinking - Show or set Codex thinking level")
         print("  /quit    - Exit chatbot")
         print("  /help    - Show this help")
         print("\n" + "=" * 60 + "\n")
@@ -580,6 +741,9 @@ class CopilotChatbot:
                     elif user_input == '/skills':
                         self._show_skills()
                         continue
+                    elif user_input == '/thinking' or user_input.startswith('/thinking '):
+                        self._handle_thinking_command(user_input)
+                        continue
                     elif user_input == '/help':
                         print("\nCommands:")
                         print("  /clear   - Clear conversation history")
@@ -587,6 +751,7 @@ class CopilotChatbot:
                         print("  /memory  - Show memory stats")
                         print("  /search  - Search memory")
                         print("  /skills  - List available skills")
+                        print("  /thinking - Show or set Codex thinking level")
                         print("  /quit    - Exit chatbot")
                         print("  /help    - Show this help\n")
                         continue
@@ -660,6 +825,49 @@ class CopilotChatbot:
             print()
         print()
 
+    def _persist_env_setting(self, key: str, value: str) -> None:
+        """Persist a simple key=value pair in the local .env file."""
+        env_path = Path(".env")
+        line = f"{key}={value}"
+
+        if env_path.exists():
+            lines = env_path.read_text(encoding="utf-8").splitlines()
+            updated = False
+            for index, existing in enumerate(lines):
+                if existing.startswith(f"{key}="):
+                    lines[index] = line
+                    updated = True
+                    break
+            if not updated:
+                if lines and lines[-1].strip():
+                    lines.append("")
+                lines.append(line)
+            env_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+        else:
+            env_path.write_text(line + "\n", encoding="utf-8")
+
+    def _handle_thinking_command(self, user_input: str) -> None:
+        """Show or update the Codex reasoning effort."""
+        current_level = self.provider.get_reasoning_effort()
+        if current_level is None:
+            print("\n❌ Thinking level is only available for the Codex CLI provider.\n")
+            return
+
+        parts = user_input.split(maxsplit=1)
+        if len(parts) == 1:
+            print(f"\n🧠 Thinking level: {current_level}")
+            print("   Available levels: low, medium, high, xhigh\n")
+            return
+
+        requested_level = parts[1].strip().lower()
+        if not self.provider.set_reasoning_effort(requested_level):
+            print("\n❌ Invalid thinking level. Use: low, medium, high, xhigh\n")
+            return
+
+        os.environ["CODEX_REASONING_EFFORT"] = requested_level
+        self._persist_env_setting("CODEX_REASONING_EFFORT", requested_level)
+        print(f"\n🧠 Thinking level set to: {requested_level}\n")
+
 
 if __name__ == '__main__':
     bot = CopilotChatbot()
@@ -667,4 +875,4 @@ if __name__ == '__main__':
     if bot.setup():
         bot.run()
     else:
-        print("❌ Authentication failed")
+        print(f"❌ {bot.last_setup_error or 'Authentication failed'}")
