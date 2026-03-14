@@ -1,0 +1,21 @@
+{
+  "session_id": "fd1d41cd-ca0f-43f2-8eac-8b6b83776c83",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Good day, Krish. How may I assist you today?"
+    },
+    {
+      "role": "user",
+      "content": "how are yu"
+    },
+    {
+      "role": "assistant",
+      "content": "I'm functioning within optimal parameters, thank you for inquiring, Krish."
+    }
+  ]
+}

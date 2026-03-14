@@ -1,0 +1,33 @@
+{
+  "session_id": "e53c7e9c-8dae-43f7-98f8-f030207fcf6e",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Good day, Krish. How may I assist you at this rather pleasant hour of 16:00 on a Friday?"
+    },
+    {
+      "role": "user",
+      "content": "on which model are yu working"
+    },
+    {
+      "role": "assistant",
+      "content": "I'm functioning on the basis of our conversation, Krish, without referencing any specific model. Shall we proceed with the topics you'd like to discuss?"
+    },
+    {
+      "role": "user",
+      "content": "what do yu know about me"
+    },
+    {
+      "role": "assistant",
+      "content": "At the moment, Krish, our conversation has just begun, and I don't have any prior knowledge about you. Let's start fresh, shall we? As we converse, I'll learn more about your interests and preferences."
+    },
+    {
+      "role": "user",
+      "content": "elon musk networht"
+    }
+  ]
+}
