@@ -1659,6 +1659,14 @@ async function sendMessage(textOverride) {
                         appendActivity(data.activity);
                         if (activityToggle) activityToggle.style.display = '';
                         if (activityPanel && settings.autoOpenActivity) { activityPanel.classList.add('open'); updatePanelOverlay(); }
+                        
+                        // Close search panel if route is General (not realtime)
+                        if (data.activity.event === 'routing' && data.activity.route === 'general') {
+                            if (searchResultsWidget) {
+                                searchResultsWidget.classList.remove('open');
+                                updatePanelOverlay();
+                            }
+                        }
                     }
 
                     // SEARCH RESULTS — Tavily data (realtime only): show in right-side widget and reveal toggle

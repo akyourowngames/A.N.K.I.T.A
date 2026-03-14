@@ -1,0 +1,29 @@
+{
+  "session_id": "5ce5c009-5eed-4c2c-aec2-b0028405a4a3",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Tell me a fun fact"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "elon musk"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "thnx"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ]
+}

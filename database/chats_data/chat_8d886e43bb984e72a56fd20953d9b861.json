@@ -1,0 +1,37 @@
+{
+  "session_id": "8d886e43-bb98-4e72-a56f-d20953d9b861",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Tell me a fun fact"
+    },
+    {
+      "role": "assistant",
+      "content": "Krish, did you know that there is a species of jellyfish that is immortal, the Turritopsis dohrnii, also known as the \"immortal jellyfish,\" which can transform its body into a younger state through a process called transdifferentiation."
+    },
+    {
+      "role": "user",
+      "content": "bitcoin prive"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "bitcoin price"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "thnx"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ]
+}

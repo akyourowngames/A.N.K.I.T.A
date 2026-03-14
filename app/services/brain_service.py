@@ -19,12 +19,15 @@ _BRAIN_SYSTEM_PROMPT = """You are a query classifier for an AI assistant. Your O
 
 Output EXACTLY one word: either "general" or "realtime".
 
-- general: ONLY questions that are purely from static knowledge, learning data, or conversation. Examples: "Tell me a joke", "What did I ask you before?",
+- general: ONLY questions that are purely from static knowledge, learning data, or conversation. Examples: "Tell me a joke", "What did I ask you before?", "Thanks", "Hello"
 
 - realtime: ALWAYS use realtime for:
   * ANY question about a person (famous or not): "Who is Elon Musk?", "Tell me about [person]", "What is [name] known for?", "Who is that actor?" — the LLM cannot know current facts; web search can.
   * Anything that could have changed: news, weather, stock prices, sports scores, elections, "latest", "current", "today", "recent", "now".
   * Factual lookups where real-time data would be better: events, companies, products, releases, versions.
+  * Follow-up questions about real-time topics: If the previous message was about prices/news/current events and the user asks "what is it", "tell me more", "what about now", etc. -> ALWAYS "realtime"
+
+CRITICAL CONTEXT RULE: Look at the conversation history. If the user previously asked about something that requires real-time data (prices, news, current events), and now asks a follow-up question like "what is it", "what about it", "tell me more" -> ALWAYS route to "realtime" because they're continuing the same topic.
 
 STRONG RULE: If the question is about a person (who, what, tell me about, etc.) -> ALWAYS "realtime". The LLM cannot know current facts; web search can.
 

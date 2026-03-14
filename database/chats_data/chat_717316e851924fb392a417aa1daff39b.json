@@ -1,0 +1,13 @@
+{
+  "session_id": "717316e8-5192-4fb3-92a4-17aa1daff39b",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Tell me a fun fact"
+    },
+    {
+      "role": "assistant",
+      "content": "Krish, did you know that there is a species of jellyfish that is immortal, the Turritopsis dohrnii, also known as the \"immortal jellyfish,\" which can transform its body into a younger state through a process called transdifferentiation."
+    }
+  ]
+}

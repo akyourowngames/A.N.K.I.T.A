@@ -1,0 +1,21 @@
+{
+  "session_id": "fc8d2edc-995b-4b10-87dc-5f12f3931385",
+  "messages": [
+    {
+      "role": "user",
+      "content": "iran vs america"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "thnx"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    }
+  ]
+}
