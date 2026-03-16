@@ -15,22 +15,39 @@ REASONING_REALTIME = "Needs live web search"
 REASONING_DEFAULT = "Brain unavailable; defaulting to realtime"
 REASONING_UNCLEAR = "Unclear; defaulting to realtime"
 
+_REALTIME_KEYWORDS = re.compile(
+    r"\b(latest|current|today|now|price|cost|rate|exchange|"
+    r"weather|forecast|news|headline|score|scores|"
+    r"stock|market|market\s*cap|marketcap|btc|bitcoin|eth|ethereum|"
+    r"crypto|cryptocurrency|forex|usd|eur|inr|"
+    r"what\s+time|time\s+now|timezone)\b",
+    re.IGNORECASE,
+)
+_PERSON_QUERY_HINTS = re.compile(
+    r"\b(who\s+is|tell\s+me\s+about|biography|born|age|net\s+worth)\b",
+    re.IGNORECASE,
+)
+
 _BRAIN_SYSTEM_PROMPT = """You are a query classifier for an AI assistant. Your ONLY job is to decide whether a user's message needs LIVE WEB SEARCH or not.
 
 Output EXACTLY one word: either "general" or "realtime".
 
-- general: ONLY questions that are purely from static knowledge, learning data, or conversation. Examples: "Tell me a joke", "What did I ask you before?",
+- general: ONLY questions that are purely from static knowledge, learning data, or conversation. Examples: "Tell me a joke", "What did I ask you before?", "Thanks", "Hello"
 
 - realtime: ALWAYS use realtime for:
-  * ANY question about a person (famous or not): "Who is Elon Musk?", "Tell me about [person]", "What is [name] known for?", "Who is that actor?" — the LLM cannot know current facts; web search can.
+  * ANY question about a person (famous or not): "Who is Elon Musk?", "Tell me about [person]", "What is [name] known for?", "Who is that actor?" - the LLM cannot know current facts; web search can.
   * Anything that could have changed: news, weather, stock prices, sports scores, elections, "latest", "current", "today", "recent", "now".
   * Factual lookups where real-time data would be better: events, companies, products, releases, versions.
+  * Follow-up questions about real-time topics: If the previous message was about prices/news/current events and the user asks "what is it", "tell me more", "what about now", etc. -> ALWAYS "realtime"
+
+CRITICAL CONTEXT RULE: Look at the conversation history. If the user previously asked about something that requires real-time data (prices, news, current events), and now asks a follow-up question like "what is it", "what about it", "tell me more" -> ALWAYS route to "realtime" because they're continuing the same topic.
 
 STRONG RULE: If the question is about a person (who, what, tell me about, etc.) -> ALWAYS "realtime". The LLM cannot know current facts; web search can.
 
-When in doubt, prefer "realtime" — it's better to search when not needed than to miss current information.
+When in doubt, prefer "realtime" - it's better to search when not needed than to miss current information.
 
 Output ONLY the word. No explanation, no punctuation, no other text."""
+
 
 class BrainService:
     def __init__(self):
@@ -60,14 +77,19 @@ class BrainService:
         chat_history: Optional[List[Tuple[str, str]]] = None,
         key_index: int = 0,
     ) -> Tuple[QueryType, str, int]:
+        msg = (user_message or "").strip()
+        if msg:
+            if _REALTIME_KEYWORDS.search(msg) or _PERSON_QUERY_HINTS.search(msg):
+                return ("realtime", "Heuristic: realtime keyword/person lookup", 0)
+
         if not self._llms:
             return ("realtime", REASONING_DEFAULT, 0)
 
         context_lines = []
         if chat_history:
             for u, a in chat_history[-MAX_CONTEXT_TURNS:]:
-                u_preview = (u or "")[:MAX_MESSAGE_PREVIEW] + ("…" if len(u or "") > MAX_MESSAGE_PREVIEW else "")
-                a_preview = (a or "")[:MAX_MESSAGE_PREVIEW] + ("…" if len(a or "") > MAX_MESSAGE_PREVIEW else "")
+                u_preview = (u or "")[:MAX_MESSAGE_PREVIEW] + ("..." if len(u or "") > MAX_MESSAGE_PREVIEW else "")
+                a_preview = (a or "")[:MAX_MESSAGE_PREVIEW] + ("..." if len(a or "") > MAX_MESSAGE_PREVIEW else "")
                 context_lines.append(f"User: {u_preview}")
                 context_lines.append(f"Assistant: {a_preview}")
         context_block = "\n".join(context_lines) if context_lines else "(No prior conversation)"

@@ -1120,6 +1120,9 @@ function newChat() {
     setGreeting();
     if (searchResultsWidget) searchResultsWidget.classList.remove('open');
     if (searchResultsToggle) searchResultsToggle.style.display = 'none';
+    if (searchResultsQuery) searchResultsQuery.textContent = '';
+    if (searchResultsAnswer) searchResultsAnswer.textContent = '';
+    if (searchResultsList) searchResultsList.innerHTML = '';
     if (activityPanel) activityPanel.classList.remove('open');
     if (settingsPanel) settingsPanel.classList.remove('open');
     if (activityToggle) activityToggle.style.display = 'none';
@@ -1570,6 +1573,13 @@ async function sendMessage(textOverride) {
 
     // Step 5: Reset TTS for this new response and unlock audio (iOS)
     if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
+
+    // Step 5b: Clear stale search results until new realtime results arrive
+    if (searchResultsWidget) { searchResultsWidget.classList.remove('open'); }
+    if (searchResultsToggle) { searchResultsToggle.style.display = 'none'; }
+    if (searchResultsQuery) { searchResultsQuery.textContent = ''; }
+    if (searchResultsAnswer) { searchResultsAnswer.textContent = ''; }
+    if (searchResultsList) { searchResultsList.innerHTML = ''; }
 
     // Step 6: Choose the endpoint based on the current mode
     const endpoint = currentMode === 'jarvis'

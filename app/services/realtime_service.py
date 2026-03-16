@@ -20,6 +20,13 @@ _QUERY_EXTRACTION_PROMPT = (
     "using the conversation history. Output ONLY the search query, nothing else."
 )
 
+_GROUNDING_GUARD_TEMPLATE = (
+    "IMPORTANT: You MUST answer using the web search results provided above. "
+    "Use the AI-SYNTHESIZED ANSWER as your primary answer when it exists. "
+    "Never say you lack current data or mention a knowledge cutoff. "
+    "AI-SYNTHESIZED ANSWER:\n{ai_answer}"
+)
+
 class RealtimeGroqService(GroqService):
     def __init__(self, vector_store_service: VectorStoreService):
         super().__init__(vector_store_service)
@@ -170,18 +177,59 @@ class RealtimeGroqService(GroqService):
             logger.error("Error performing Tavily search: %s", e)
             return ("", None)
 
+    def _format_results_from_payload(self, payload: dict) -> str:
+        if not payload:
+            return ""
+        query = payload.get("query") or ""
+        results = payload.get("results") or []
+        ai_answer = (payload.get("answer") or "").strip()
+
+        parts = [f"--- WEB SEARCH RESULTS FOR: {query} ---\n"]
+        if ai_answer:
+            parts.append(f"AI-SYNTHESIZED ANSWER (use this as your primary source):\n{ai_answer}\n")
+        if results:
+            parts.append("INDIVIDUAL SOURCES:")
+            for i, result in enumerate(results, 1):
+                title = result.get("title", "No title")
+                content = result.get("content", "")
+                url = result.get("url", "")
+                score = result.get("score", 0)
+                parts.append(f"\n[Source {i}] (relevance: {float(score):.2f})")
+                parts.append(f"Title: {title}")
+                if content:
+                    parts.append(f"Content: {content}")
+                if url:
+                    parts.append(f"URL: {url}")
+        parts.append("\n=== END SEARCH RESULTS ===")
+        return "\n".join(parts)
+
+    def _build_grounding_guard(self, payload: Optional[dict]) -> Optional[str]:
+        if not payload:
+            return None
+        ai_answer = (payload.get("answer") or "").strip()
+        if not ai_answer:
+            return None
+        return _GROUNDING_GUARD_TEMPLATE.format(ai_answer=ai_answer)
+
     def get_response(self, question: str, chat_history: Optional[List[tuple]] = None, key_start_index: int = 0) -> str:
         try:
             search_query = self._extract_search_query(question, chat_history)
             logger.info("[REALTIME] Searching Tavily for: %s", search_query)
 
-            formatted_results, _ = self.search_tavily(search_query, num_results=7)
+            formatted_results, payload = self.search_tavily(search_query, num_results=7)
             if formatted_results:
                 logger.info("[REALTIME] Tavily returned results (length: %d chars)", len(formatted_results))
             else:
                 logger.warning("[REALTIME] Tavily returned no results for: %s", search_query)
 
-            extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
+            extra_parts = []
+            if formatted_results:
+                extra_parts.append(escape_curly_braces(formatted_results))
+            guard = self._build_grounding_guard(payload)
+            if guard:
+                extra_parts.append(guard)
+            if not extra_parts:
+                extra_parts = None
             prompt, messages = self._build_prompt_and_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
@@ -238,7 +286,14 @@ class RealtimeGroqService(GroqService):
             if payload:
                 yield {"_search_results": payload}
 
-            extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
+            extra_parts = []
+            if formatted_results:
+                extra_parts.append(escape_curly_braces(formatted_results))
+            guard = self._build_grounding_guard(payload)
+            if guard:
+                extra_parts.append(guard)
+            if not extra_parts:
+                extra_parts = None
             prompt, messages = self._build_prompt_and_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
@@ -262,7 +317,16 @@ class RealtimeGroqService(GroqService):
         key_start_index: int = 0,
     ) -> Iterator[Any]:
         try:
-            extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
+            if not formatted_results and payload:
+                formatted_results = self._format_results_from_payload(payload)
+            extra_parts = []
+            if formatted_results:
+                extra_parts.append(escape_curly_braces(formatted_results))
+            guard = self._build_grounding_guard(payload)
+            if guard:
+                extra_parts.append(guard)
+            if not extra_parts:
+                extra_parts = None
             prompt, messages = self._build_prompt_and_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
