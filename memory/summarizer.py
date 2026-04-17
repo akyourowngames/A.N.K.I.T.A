@@ -1,5 +1,5 @@
 """
-Summarizer — JSONL session logger + DreamAgent compression for A.N.K.I.T.A.
+Summarizer — JSONL session logger + conversation compression for A.N.K.I.T.A.
 
 Responsibilities:
   1. Append every turn (user + assistant) to a daily JSONL file

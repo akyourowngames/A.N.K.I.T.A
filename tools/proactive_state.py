@@ -25,7 +25,6 @@ class ProactiveStatePersistence:
     
     State Structure:
         {
-            "last_morning_briefing_date": "2024-01-15",
             "last_insight_synthesis": "2024-01-15T02:00:00",
             "last_pattern_analysis": "2024-01-14T22:00:00",
             "last_intent_refresh": "2024-01-15T08:00:00",
@@ -41,7 +40,6 @@ class ProactiveStatePersistence:
     """
     
     DEFAULT_STATE: Dict[str, Any] = {
-        "last_morning_briefing_date": None,
         "last_insight_synthesis": None,
         "last_pattern_analysis": None,
         "last_intent_refresh": None,

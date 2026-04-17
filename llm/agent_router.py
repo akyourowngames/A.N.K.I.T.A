@@ -8,7 +8,20 @@ import os
 from dataclasses import replace
 from typing import Optional
 
-from .client import LLMRuntime, build_runtime_from_env
+from .client import (
+    DEFAULT_NVIDIA_CODE_MODEL,
+    DEFAULT_NVIDIA_REASONING_MODEL,
+    LLMRuntime,
+    build_runtime_from_env,
+)
+
+
+def _env_first(*names: str) -> str:
+    for name in names:
+        value = os.getenv(name, "").strip()
+        if value:
+            return value
+    return ""
 
 
 def _parse_bool_env(key: str, default: bool = False) -> bool:
@@ -46,26 +59,72 @@ def get_agent_runtime(
         runtime = get_agent_runtime("CodeAgent", base_runtime, "complex")
         # Returns runtime with model=o1-preview
     """
-    # Only CodeAgent supports routing for now
-    if agent_name != "CodeAgent":
+    reasoning_model = _env_first("PLANNER_MODEL", "REASONING_MODEL", "NVIDIA_REASONING_MODEL")
+    if not reasoning_model and base_runtime.provider == "nvidia":
+        reasoning_model = DEFAULT_NVIDIA_REASONING_MODEL
+
+    if agent_name == "PlannerAgent" and reasoning_model:
+        return replace(base_runtime, model=reasoning_model)
+
+    if agent_name == "SupervisorAgent":
+        # Keep routing cheap by default. Allow env override for teams that want a
+        # dedicated supervisor model, and only escalate to a reasoning model for
+        # clearly complex routing passes.
+        supervisor_model = _env_first("SUPERVISOR_MODEL")
+        if task_complexity == "complex":
+            supervisor_model = _env_first(
+                "SUPERVISOR_REASONING_MODEL",
+                "SUPERVISOR_MODEL",
+                "PLANNER_MODEL",
+                "REASONING_MODEL",
+                "NVIDIA_REASONING_MODEL",
+            )
+        return replace(base_runtime, model=supervisor_model) if supervisor_model else base_runtime
+
+    if agent_name not in {"CodeAgent", "CodeWriterAgent"}:
         return base_runtime
+
+    if agent_name == "CodeWriterAgent":
+        code_model = _env_first(
+            "CODEWRITER_AGENT_MODEL",
+            "NVIDIA_MODEL",
+        )
+        if not code_model and base_runtime.provider == "nvidia":
+            code_model = base_runtime.model or DEFAULT_NVIDIA_MODEL
+    else:
+        code_model = _env_first("CODEAGENT_MODEL", "NVIDIA_CODE_MODEL")
+    if not code_model and base_runtime.provider == "nvidia":
+        code_model = DEFAULT_NVIDIA_CODE_MODEL
     
     # Check if routing is enabled
     routing_enabled = _parse_bool_env("CODEAGENT_ENABLE_ROUTING", default=False)
     if not routing_enabled:
-        return base_runtime
+        return replace(base_runtime, model=code_model) if code_model else base_runtime
     
     # Determine which model to use based on complexity
     model_override = None
     
+    if agent_name == "CodeWriterAgent":
+        simple_env = ("CODEWRITER_AGENT_MODEL_SIMPLE", "CODEWRITER_AGENT_MODEL", "NVIDIA_MODEL")
+        complex_env = (
+            "CODEWRITER_AGENT_MODEL_COMPLEX",
+            "CODEWRITER_AGENT_MODEL",
+            "NVIDIA_REASONING_MODEL",
+            "REASONING_MODEL",
+            "NVIDIA_MODEL",
+        )
+    else:
+        simple_env = ("CODEAGENT_MODEL_SIMPLE",)
+        complex_env = ("CODEAGENT_MODEL_COMPLEX",)
+
     if task_complexity == "simple":
-        model_override = os.getenv("CODEAGENT_MODEL_SIMPLE", "").strip()
+        model_override = _env_first(*simple_env) or code_model
     elif task_complexity == "complex":
-        model_override = os.getenv("CODEAGENT_MODEL_COMPLEX", "").strip()
+        model_override = _env_first(*complex_env) or code_model
     # "medium" or None falls through to base_runtime
     
     if not model_override:
-        return base_runtime
+        return replace(base_runtime, model=code_model) if code_model else base_runtime
     
     # Build new runtime with overridden model
     # Keep same provider, API key, base URL — only change model
@@ -88,7 +147,7 @@ def detect_task_complexity(task: str, agent_name: str = "") -> str:
         - Complex: scaffold, refactor, review, multi-file, architecture, 3+ files mentioned
         - Medium: everything else
     """
-    if agent_name != "CodeAgent":
+    if agent_name not in {"CodeAgent", "CodeWriterAgent"}:
         return "medium"
     
     task_lower = task.lower()

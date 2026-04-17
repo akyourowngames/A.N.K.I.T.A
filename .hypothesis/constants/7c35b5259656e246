@@ -1,0 +1,4 @@
+# file: C:\Users\anime\3D Objects\JAKATA\tools\voice_ops.py
+# hypothesis_version: 6.151.6
+
+[100, 120, 150, 200, 250, '"', "'", '-Command', '-NoProfile', '.flac', '.m4a', '.mp3', '.mp4', '.oga', '.ogg', '.wav', '.webm', 'Authorization', 'GROQ_API_KEY', 'RATE=', 'Speech failed', 'VOLUME=', '`', 'audio/ogg', 'content', 'count', 'emotion', 'error', 'file', 'language', 'list_voices', 'model', 'neutral', 'ok', 'powershell', 'rate', 'rb', 'response_format', 'role', 'speak', 'speak_with_emotion', 'spoke', 'text', 'unknown', 'user', 'verbose_json', 'voices', 'volume']

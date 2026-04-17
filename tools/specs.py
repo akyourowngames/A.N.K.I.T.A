@@ -3,101 +3,61 @@
 Auto-collected by tools/engine.py.
 DO NOT import this directly — use tools.engine.TOOL_SPECS.
 """
+import ctypes
+import os
+from pathlib import Path
 from typing import Any, Dict, List
 
 
+def _known_folder(csidl: int, fallback: str) -> str:
+    if os.name != "nt":
+        return fallback
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        result = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        if result == 0 and buf.value:
+            return buf.value
+    except Exception:
+        pass
+    return fallback
+
+
+_HOME = str(Path.home()).replace("/", "\\")
+_DESKTOP = _known_folder(0x10, str(Path.home() / "Desktop")).replace("/", "\\")
+_DOCUMENTS = _known_folder(0x05, str(Path.home() / "Documents")).replace("/", "\\")
+_DOWNLOADS = str(Path.home() / "Downloads").replace("/", "\\")
+_PICTURES = _known_folder(0x27, str(Path.home() / "Pictures")).replace("/", "\\")
+_MUSIC = _known_folder(0x0D, str(Path.home() / "Music")).replace("/", "\\")
+_VIDEOS = _known_folder(0x0E, str(Path.home() / "Videos")).replace("/", "\\")
+
+
+def _replace_runtime_paths_in_text(text: str) -> str:
+    out = text
+    replacements = {
+        r"C:\Users\anime\Desktop": _DESKTOP,
+        r"C:\Users\anime\Documents": _DOCUMENTS,
+        r"C:\Users\anime\Downloads": _DOWNLOADS,
+        r"C:\Users\anime\Pictures": _PICTURES,
+        r"C:\Users\anime\Music": _MUSIC,
+        r"C:\Users\anime\Videos": _VIDEOS,
+        r"C:\Users\anime": _HOME,
+    }
+    for source, target in sorted(replacements.items(), key=lambda item: len(item[0]), reverse=True):
+        out = out.replace(source, target)
+    return out
+
+
+def _rewrite_spec_strings(value: Any) -> Any:
+    if isinstance(value, str):
+        return _replace_runtime_paths_in_text(value)
+    if isinstance(value, list):
+        return [_rewrite_spec_strings(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _rewrite_spec_strings(item) for key, item in value.items()}
+    return value
+
+
 TOOL_SPECS: List[Dict[str, Any]] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "lookup_contact",
-            "description": "Look up a contact's phone number by name. Use this BEFORE send_whatsapp when the user gives a name instead of a number.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Contact name, e.g. 'Rahul' or 'mom'"},
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "add_contact",
-            "description": "Save a new contact (name + phone number) to the contacts book.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name":  {"type": "string", "description": "Contact name"},
-                    "phone": {"type": "string", "description": "Phone in E.164 format, e.g. '+919876543210'"},
-                },
-                "required": ["name", "phone"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "remove_contact",
-            "description": "Remove a contact from the contacts book by name.",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "name": {"type": "string", "description": "Contact name to remove"},
-                },
-                "required": ["name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "list_contacts",
-            "description": "List all saved contacts with their phone numbers.",
-            "parameters": {"type": "object", "properties": {}, "required": []},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "send_whatsapp",
-            "description": (
-                "Send a WhatsApp message to a phone number using WhatsApp Web + Selenium. "
-                "Uses the user's real Chrome profile so WhatsApp Web is already logged in. "
-                "phone must be in E.164 format e.g. '+919876543210'."
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "phone":   {"type": "string", "description": "Recipient phone in E.164 format, e.g. '+919876543210'"},
-                    "message": {"type": "string", "description": "The message text to send"},
-                    "wait":    {"type": "integer", "description": "Seconds to wait for WhatsApp Web to load (default 10)"},
-                },
-                "required": ["phone", "message"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "cron",
-            "description": "Manage ANKITA cron jobs (status/list/add/update/remove/run/runs/run_due).",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "action": {"type": "string"},
-                    "job": {"type": "object"},
-                    "job_id": {"type": "string"},
-                    "patch": {"type": "object"},
-                    "include_disabled": {"type": "boolean"},
-                    "mode": {"type": "string"},
-                    "limit": {"type": "integer"},
-                },
-                "required": ["action"],
-            },
-        },
-    },
     {
         "type": "function",
         "function": {
@@ -266,7 +226,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                             "kill_process → process name, "
                             "set_power_plan → plan name (balanced/performance/power_saver), "
                             "notify → notification message text, "
-                            "screenshot → optional save path."
+                            "screenshot → optional save path. Prefer omitting this unless the user explicitly asked for a destination."
                         ),
                     },
                 },
@@ -457,7 +417,11 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "launch_app",
-            "description": "Launch a desktop application or command on the local machine.",
+            "description": (
+                "Launch a desktop application or command on the local machine. "
+                "Use this when the user explicitly names an app (for example Notepad, Chrome, VS Code) "
+                "or when a file should be opened in a specific app instead of the system default handler."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -466,6 +430,28 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "cwd": {"type": "string"},
                 },
                 "required": ["app"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "open_path",
+            "description": (
+                "Open a local file or folder with the operating system's default registered handler. "
+                "Use this when the user asks to open an image, screenshot, PDF, document, or folder by path. "
+                "Prefer this over launch_app(explorer, ...) when the goal is to open the file itself. "
+                "If the exact local path is unclear, resolve it first with resolve_local_target."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Absolute or workspace-relative path to the file or folder to open.",
+                    },
+                },
+                "required": ["path"],
             },
         },
     },
@@ -579,7 +565,11 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "type": "function",
         "function": {
             "name": "fast_file_search",
-            "description": "Fast, bounded file search by name/path pattern. Uses ripgrep if available; falls back to PowerShell. Returns structured results.",
+            "description": (
+                "Fast, bounded file search by name/path pattern. Uses ripgrep if available; falls back to PowerShell. "
+                "Use this for explicit filename or path hunting inside a known root. For vague local-path discovery "
+                "across common user folders, prefer resolve_local_target."
+            ),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -590,6 +580,42 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     "case_sensitive": {"type": "boolean", "description": "Whether pattern matching is case-sensitive (default false)."},
                 },
                 "required": ["pattern"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "resolve_local_target",
+            "description": (
+                "Resolve a vague local file or folder reference into ranked real existing paths. "
+                "Use this before open_path or launch_app when the user gives only a filename, partial path, or natural-language hint "
+                "such as 'that screenshot', 'open gateway.py', or 'show the landing page file'. "
+                "Searches common local roots and returns the best real path plus alternatives."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Filename, partial path, or local target hint to resolve.",
+                    },
+                    "roots": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional list of absolute root directories to search first.",
+                    },
+                    "extensions": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "Optional preferred extensions such as ['.png', '.html', '.md'].",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum ranked matches to return (default 10, max 25).",
+                    },
+                },
+                "required": ["query"],
             },
         },
     },
@@ -1532,10 +1558,11 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "function": {
             "name": "write_content",
             "description": (
-                "Generate any type of text content using the LLM and save it to the Desktop. "
+                "Generate document-style content using the LLM and save it to the Desktop. "
                 "Use this when the user asks to 'write', 'draft', 'create', or 'generate' "
-                "content such as a report, script, song, pitch deck, summary, paragraph, essay, "
-                "or any other written format. Returns the file path and a spoken confirmation.\n\n"
+                "content such as a report, essay, letter, email, summary, poem, song, script, or proposal. "
+                "This tool is for documents and prose. Do not use it for landing pages, HTML files, websites, or code artifacts. "
+                "Returns the file path and a spoken confirmation.\n\n"
                 "TWO-SPEED ENGINE (auto-detected from keywords):\n"
                 "  NORMAL mode: concise output matching format norms (poems ~20 lines, emails ~250 words, reports ~800 words).\n"
                 "  DEEP mode: 6000-8000+ words (~10 printed pages) — triggered automatically when topic or format_type "
@@ -1554,7 +1581,7 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                         "type": "string",
                         "description": (
                             "The format of content to produce — e.g. 'report', 'script', 'song', "
-                            "'pitch deck', 'summary', 'paragraph', 'essay', 'email', 'poem'."
+                            "'pitch deck', 'summary', 'paragraph', 'essay', 'email', 'poem', or 'letter'."
                         ),
                     },
                     "extra_context": {
@@ -1567,6 +1594,48 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     },
                 },
                 "required": ["topic", "format_type"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_code_artifact",
+            "description": (
+                "Generate and save a real code or UI artifact using a two-pass NVIDIA pipeline: "
+                "a reasoning model plans the artifact, then a coding model writes the file. "
+                "Use this for landing pages, HTML files, websites, local UI prototypes, scripts, components, "
+                "and other code-first artifacts that should be saved as runnable/viewable files."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "task": {
+                        "type": "string",
+                        "description": "The coding or UI artifact request, e.g. 'Build a landing page for a tea shop with pricing and testimonials'.",
+                    },
+                    "artifact_type": {
+                        "type": "string",
+                        "description": "Optional artifact kind, e.g. 'landing_page', 'html_page', 'website', 'component', 'script', or 'code_file'.",
+                    },
+                    "extra_context": {
+                        "type": "string",
+                        "description": "Optional requirements, notes, content sections, branding hints, or technical constraints.",
+                    },
+                    "output_dir": {
+                        "type": "string",
+                        "description": "Optional absolute path to save the file. Defaults to the user's Desktop.",
+                    },
+                    "filename": {
+                        "type": "string",
+                        "description": "Optional filename to use. If omitted, the tool derives one from the task and plan.",
+                    },
+                    "framework": {
+                        "type": "string",
+                        "description": "Optional framework or stack hint, e.g. 'react', 'vanilla html', 'python', or 'typescript'.",
+                    },
+                },
+                "required": ["task"],
             },
         },
     },
@@ -1918,13 +1987,12 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         "function": {
             "name": "generate_image",
             "description": (
-                "Generate an AI image from a text prompt using Pollinations.ai. "
-                "Free, no API key needed. Saves the result as a PNG to Desktop. "
+                "Generate an AI image from a text prompt using NVIDIA image generation. "
+                "Saves the result as a PNG and returns FILE_PATH for follow-up open/send actions. "
                 "After a successful generation, always emit 'TELEGRAM_IMAGE: <path>' "
                 "so ANKITA auto-delivers the photo inline in Telegram. "
-                "Models: flux (default, best quality), turbo (fast), "
-                "flux-realism (photorealistic), dreamshaper (artistic/fantasy), "
-                "flux-anime (anime/manga), flux-3d (CGI renders)."
+                "The backend model comes from environment configuration. "
+                "Use the optional style hint to shape the look."
             ),
             "parameters": {
                 "type": "object",
@@ -1943,12 +2011,16 @@ TOOL_SPECS: List[Dict[str, Any]] = [
                     },
                     "model": {
                         "type": "string",
-                        "enum": ["flux", "turbo", "flux-realism", "dreamshaper", "flux-anime", "flux-3d"],
-                        "description": "Image model. Default: flux.",
+                        "description": "Optional model hint or legacy alias. Actual provider model is env-driven.",
+                    },
+                    "style": {
+                        "type": "string",
+                        "enum": ["realistic", "anime", "digital-art", "sketch", "cinematic"],
+                        "description": "Optional visual style hint. Default: digital-art.",
                     },
                     "output_path": {
                         "type": "string",
-                        "description": "Optional absolute path to save the image. Defaults to Desktop.",
+                        "description": "Optional absolute path to save the image. Defaults to the workspace screenshots folder.",
                     },
                 },
                 "required": ["prompt"],
@@ -2642,4 +2714,6 @@ TOOL_SPECS: List[Dict[str, Any]] = [
         },
     },
 ]
+
+TOOL_SPECS = _rewrite_spec_strings(TOOL_SPECS)
 

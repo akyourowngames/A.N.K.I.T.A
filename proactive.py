@@ -6,7 +6,6 @@ can display unsolicited alerts — making ANKITA feel truly proactive.
 
 Checks:
   - System resources (CPU, RAM, battery) via psutil (optional)
-  - Due cron jobs
   - Drop-file events in .ankita/proactive_events/ directory
 """
 from __future__ import annotations
@@ -84,16 +83,12 @@ class ProactiveEngine:
         self._raw_ideas_dir.mkdir(parents=True, exist_ok=True)
         self._seen_raw_ideas: set = set()
 
-        # Idle / DreamState tracking
+        # Idle tracking
         self._last_interaction: float = time.time()  # epoch seconds
-        self._dream_pending: bool = False             # True while dream is queued or synthesizing
 
         # Sentinel (Screen-watching idle alert) tracking
         self._sentinel_triggered: bool = False       # True once sentinel fires; reset when user returns
         self._runtime: Optional[Any] = None          # LLM runtime injected by caller
-
-        # Morning briefing: only one thread at a time, don't re-run same day
-        self._morning_briefing_pending: bool = False
 
         # ── Proactive Intelligence Components (Steps 5, 7, 9) ──────────────
         # IntentionEngine — refreshes intent.json every 6 hours
@@ -144,7 +139,6 @@ class ProactiveEngine:
         Load persistent proactive state from disk.
 
         Schema (keys may be extended over time):
-            - last_morning_briefing_date: str | None (YYYY-MM-DD)
             - last_intent_refresh: float (epoch seconds)
             - last_pattern_analysis: float (epoch seconds)
             - last_insight_synthesis: float (epoch seconds)
@@ -159,7 +153,6 @@ class ProactiveEngine:
             pass
 
         default_state: Dict[str, Any] = {
-            "last_morning_briefing_date": None,
             "last_intent_refresh": 0.0,
             "last_pattern_analysis": 0.0,
             "last_insight_synthesis": 0.0,
@@ -224,132 +217,6 @@ class ProactiveEngine:
         """Return a shallow copy of the current proactive state."""
         return dict(self._proactive_state)
 
-    # ------------------------------------------------------------------
-    # Morning briefing (first boot of day)
-    # ------------------------------------------------------------------
-
-    def _check_morning_briefing(self) -> None:
-        """
-        If it's a new day since last_morning_briefing_date, generate and push
-        a morning briefing once. Runs in a daemon thread so the poll loop doesn't block.
-        """
-        from datetime import datetime as _dt
-        today_ymd = _dt.now().strftime("%Y-%m-%d")
-        last = self._proactive_state.get("last_morning_briefing_date")
-        if last == today_ymd:
-            return
-        if self._runtime is None or self._morning_briefing_pending:
-            return
-
-        self._morning_briefing_pending = True
-        runtime = self._runtime
-        workspace_root = self.workspace_root
-
-        def _do_briefing() -> None:
-            try:
-                from agents.morning_agent import generate_briefing  # type: ignore
-
-                # Load intent.json
-                intent = {}
-                intent_path = workspace_root / ".ankita" / "state" / "intent.json"
-                if intent_path.exists():
-                    try:
-                        intent = json.loads(intent_path.read_text(encoding="utf-8"))
-                        if not isinstance(intent, dict):
-                            intent = {}
-                    except Exception:
-                        pass
-
-                # Tasks summary
-                tasks_summary = ""
-                try:
-                    from tools.task_ops import task_op  # type: ignore
-                    r = task_op(action="list")
-                    if r.get("status") == "success":
-                        tasks = r.get("tasks", [])
-                        pending = [t for t in tasks if t.get("status") in ("pending", "in_progress")]
-                        overdue_r = task_op(action="overdue")
-                        overdue = overdue_r.get("tasks", []) if overdue_r.get("status") == "success" else []
-                        if pending or overdue:
-                            parts = []
-                            if overdue:
-                                parts.append(f"{len(overdue)} overdue")
-                            if pending:
-                                parts.append(f"{len(pending)} pending")
-                            tasks_summary = "Tasks: " + ", ".join(parts) + ". " + " ".join(
-                                t.get("title", "")[:50] for t in (overdue[:2] + pending[:2])
-                            )
-                except Exception:
-                    pass
-
-                # Watchdog status
-                watchdog_state = ""
-                try:
-                    from watchdog_manager import get_instance  # type: ignore
-                    mgr = get_instance()
-                    if mgr is not None:
-                        watchdog_state = mgr.status()
-                except Exception:
-                    pass
-
-                # System stats (disk, battery)
-                system_stats = {}
-                if HAS_PSUTIL:
-                    try:
-                        disk = psutil.disk_usage(str(workspace_root))
-                        system_stats["disk_pct"] = round(disk.percent, 0)
-                    except Exception:
-                        pass
-                    try:
-                        batt = psutil.sensors_battery()
-                        if batt is not None:
-                            system_stats["battery_pct"] = batt.percent
-                            system_stats["battery_plugged"] = batt.power_plugged
-                    except Exception:
-                        pass
-
-                # Cron due today (simplified: just next few jobs from corn)
-                cron_today = []
-                try:
-                    corn_file = workspace_root / ".ankita" / "corn" / "jobs.json"
-                    if corn_file.exists():
-                        data = json.loads(corn_file.read_text(encoding="utf-8"))
-                        jobs = data if isinstance(data, list) else []
-                        for j in jobs[:5]:
-                            if isinstance(j, dict) and j.get("enabled", True):
-                                name = j.get("name", j.get("id", "task"))
-                                cron_today.append(name)
-                except Exception:
-                    pass
-
-                briefing = generate_briefing(
-                    runtime=runtime,
-                    intent=intent,
-                    tasks_summary=tasks_summary or None,
-                    watchdog_state=watchdog_state or None,
-                    system_stats=system_stats or None,
-                    cron_today=cron_today or None,
-                )
-                if briefing:
-                    self._queue.put(
-                        ProactiveEvent(
-                            kind="morning_briefing",
-                            message=briefing,
-                            data={"text": briefing},
-                            priority="high",
-                            urgency="immediate",
-                            interruptible=True,
-                        )
-                    )
-                    self.update_state(last_morning_briefing_date=today_ymd)
-                    print("[ProactiveEngine] Morning briefing sent.", flush=True)
-            except Exception as e:
-                print(f"[ProactiveEngine] Morning briefing failed: {e}", flush=True)
-            finally:
-                self._morning_briefing_pending = False
-
-        threading.Thread(target=_do_briefing, daemon=True, name="MorningBriefing").start()
-
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
             print("[ProactiveEngine] Already running — skipping start.", flush=True)
@@ -396,8 +263,7 @@ class ProactiveEngine:
             ts: epoch seconds — defaults to now if not provided.
         """
         self._last_interaction = ts if ts is not None else time.time()
-        # If the user is back, allow a fresh dream and sentinel on the next idle period
-        self._dream_pending = False
+        # If the user is back, allow a fresh sentinel on the next idle period
         self._sentinel_triggered = False
 
     def attach_runtime(self, runtime: Any) -> None:
@@ -436,10 +302,8 @@ class ProactiveEngine:
         print(f"[ProactiveEngine] Started. Poll interval: {self.interval_sec}s", flush=True)
         while not self._stop_event.is_set():
             try:
-                self._check_morning_briefing()
                 self._check_system_resources()
                 self._check_drop_files()
-                self._check_cron_overdue()
                 self._check_raw_ideas()
                 self._check_idle()
                 self._check_sentinel()
@@ -636,21 +500,8 @@ class ProactiveEngine:
 
     def _check_idle(self) -> None:
         """
-        Check if the user has been idle long enough to trigger a DreamState.
-
-        Fires at most once per idle session (reset by set_last_interaction).
-        Runs the DreamAgent in a separate daemon thread so the poll loop
-        never blocks waiting for the LLM.
+        Idle hook reserved for future proactive work.
         """
-        if self._dream_pending:
-            print(f"[DreamAgent] Skipping — dream already pending.", flush=True)
-            return  # Already synthesising or queued — don't pile up dreams
-
-        # Read lazily so load_dotenv() in chat.py/gui.py has already run by now
-        idle_threshold = float(os.getenv("ANKITA_IDLE_SECONDS", "3600"))
-
-        idle_sec = time.time() - self._last_interaction
-        # DreamAgent currently disabled - needs new memory system
         return
 
     def _check_sentinel(self) -> None:
@@ -940,39 +791,5 @@ class ProactiveEngine:
         threading.Thread(target=_do_insights, daemon=True, name="InsightSynthesis").start()
 
     def _check_cron_overdue(self) -> None:
-        """Check if any cron jobs are significantly overdue."""
-        jobs_file = self.workspace_root / ".ankita" / "corn" / "jobs.json"
-        if not jobs_file.exists():
-            return
-        try:
-            data = json.loads(jobs_file.read_text(encoding="utf-8"))
-            jobs = data if isinstance(data, list) else []
-            now_ms = time.time() * 1000
-            overdue_threshold_ms = 5 * 60 * 1000  # 5 minutes overdue
-            for job in jobs:
-                if not isinstance(job, dict):
-                    continue
-                if not job.get("enabled", True):
-                    continue
-                state = job.get("state", {})
-                if not isinstance(state, dict):
-                    continue
-                next_run = state.get("next_run_at_ms")
-                if next_run is None:
-                    continue
-                overdue_ms = now_ms - next_run
-                if overdue_ms >= overdue_threshold_ms:
-                    name = job.get("name", job.get("id", "unknown"))
-                    mins = overdue_ms / 60000
-                    self._queue.put(
-                        ProactiveEvent(
-                            kind="cron",
-                            message=f"🕐 Scheduled task '{name}' is {mins:.0f} min overdue.",
-                            data={"job_id": job.get("id"), "overdue_ms": overdue_ms},
-                            priority="medium",
-                            urgency="next_idle",
-                            interruptible=True,
-                        )
-                    )
-        except Exception:
-            pass
+        """Legacy scheduler hook retained for compatibility."""
+        return

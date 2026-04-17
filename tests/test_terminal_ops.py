@@ -1,5 +1,6 @@
 import tempfile
 from pathlib import Path
+import pytest
 
 from tools import terminal_ops
 
@@ -54,3 +55,44 @@ def test_fast_file_search_case_sensitivity() -> None:
         sensitive = terminal_ops.fast_file_search(pattern="casefile", path=str(root), case_sensitive=True)
         assert sensitive["ok"] is True
         assert str(target) not in sensitive["results"]
+
+
+def test_resolve_local_target_returns_best_existing_path() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        target = root / "screenshots" / "final_landing_page.html"
+        _write(target, "<!DOCTYPE html><html></html>")
+        _write(root / "notes" / "landing_page_notes.md", "# notes")
+
+        result = terminal_ops.resolve_local_target(
+            query="final landing page",
+            roots=[str(root)],
+            extensions=[".html"],
+        )
+
+        assert result["ok"] is True
+        assert result["best_path"] == str(target)
+        assert result["FILE_PATH"] == str(target)
+        assert result["target_kind"] == "file"
+        assert result["results"][0]["path"] == str(target)
+
+
+def test_resolve_local_target_accepts_existing_direct_path() -> None:
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        target = root / "gateway.py"
+        _write(target, "print('ok')")
+
+        result = terminal_ops.resolve_local_target(query=str(target))
+
+        assert result["ok"] is True
+        assert result["best_path"] == str(target)
+        assert result["confidence"] == "high"
+
+
+def test_prepare_launch_args_rejects_fake_local_placeholder() -> None:
+    with pytest.raises(FileNotFoundError):
+        terminal_ops._prepare_launch_args(
+            "chrome.exe",
+            ["file:///C:/path/to/desktop/fake.html"],
+        )

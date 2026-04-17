@@ -3,6 +3,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 import sys
+import requests
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -68,7 +69,7 @@ class LLMClientTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as td:
             cache_path = Path(td) / "cache.json"
-            with patch("llm.client.requests.get", return_value=FakeResponse()) as mock_get:
+            with patch("llm.client._HTTP.get", return_value=FakeResponse()) as mock_get:
                 payload = llm_client._exchange_github_to_copilot_token("gh", cache_path)
             self.assertEqual(payload["token"], "fresh;proxy-ep=proxy.mock.example;")
             self.assertTrue(cache_path.exists())
@@ -93,6 +94,8 @@ class LLMClientTests(unittest.TestCase):
 
     def test_call_chat_once_sets_copilot_headers(self) -> None:
         class FakeResponse:
+            status_code = 200
+
             def raise_for_status(self) -> None:
                 return None
 
@@ -106,7 +109,7 @@ class LLMClientTests(unittest.TestCase):
             base_url="https://api.individual.githubcopilot.com",
             max_tokens=120,
         )
-        with patch("llm.client.requests.post", return_value=FakeResponse()) as mock_post:
+        with patch("llm.client._HTTP.post", return_value=FakeResponse()) as mock_post:
             llm_client.call_chat_once(runtime, [{"role": "user", "content": "hi"}], tools=None, max_tokens=120)
         headers = mock_post.call_args.kwargs["headers"]
         self.assertIn("Editor-Version", headers)
@@ -115,6 +118,8 @@ class LLMClientTests(unittest.TestCase):
 
     def test_call_chat_once_omits_max_tokens_when_auto(self) -> None:
         class FakeResponse:
+            status_code = 200
+
             def raise_for_status(self) -> None:
                 return None
 
@@ -128,11 +133,53 @@ class LLMClientTests(unittest.TestCase):
             base_url="https://api.groq.com/openai/v1",
             max_tokens=None,
         )
-        with patch("llm.client.requests.post", return_value=FakeResponse()) as mock_post:
+        with patch("llm.client._HTTP.post", return_value=FakeResponse()) as mock_post:
             llm_client.call_chat_once(runtime, [{"role": "user", "content": "hi"}], tools=None, max_tokens=None)
         payload = mock_post.call_args.kwargs["json"]
         self.assertNotIn("max_tokens", payload)
         self.assertNotIn("max_completion_tokens", payload)
+
+    def test_call_chat_with_image_falls_back_from_gemini_to_nvidia(self) -> None:
+        class FailResponse:
+            status_code = 500
+
+            def raise_for_status(self) -> None:
+                raise requests.HTTPError("500 Server Error", response=self)
+
+        class SuccessResponse:
+            status_code = 200
+
+            def raise_for_status(self) -> None:
+                return None
+
+            def json(self) -> dict:
+                return {"choices": [{"message": {"content": "vision ok"}}]}
+
+        primary = llm_client.LLMRuntime(
+            provider="gemini",
+            model="gemini-2.0-flash",
+            api_key="g",
+            base_url="https://gemini.example/v1",
+            max_tokens=120,
+        )
+        fallback = llm_client.LLMRuntime(
+            provider="nvidia",
+            model="meta/llama-3.2-11b-vision-instruct",
+            api_key="n",
+            base_url="https://nvidia.example/v1",
+            max_tokens=120,
+        )
+
+        with patch("llm.client._vision_fallback_candidates", return_value=[primary, fallback]):
+            with patch("llm.client._HTTP.post", side_effect=[FailResponse(), SuccessResponse()]) as mock_post:
+                out = llm_client.call_chat_with_image(primary, "describe", "abcd", max_tokens=60, mime_type="image/png")
+
+        self.assertEqual(out, "vision ok")
+        self.assertEqual(mock_post.call_count, 2)
+        first_url = mock_post.call_args_list[0].args[0]
+        second_url = mock_post.call_args_list[1].args[0]
+        self.assertIn("gemini.example", first_url)
+        self.assertIn("nvidia.example", second_url)
 
 
 if __name__ == "__main__":

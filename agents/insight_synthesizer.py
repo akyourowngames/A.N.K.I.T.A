@@ -1,7 +1,7 @@
 """
 InsightSynthesizer for A.N.K.I.T.A — Proactive Intelligence Step 12.
 
-Runs every 12 hours. Analyses recent activity (audit log, tasks, watchdogs)
+Runs every 12 hours. Analyses recent activity (audit log and tasks)
 and generates 1-3 short actionable insights via a single LLM call.
 
 Insights are:
@@ -68,10 +68,6 @@ class InsightSynthesizer:
         task_summary = self._gather_task_summary()
         if task_summary:
             context_blocks.append(f"TASK STATUS:\n{task_summary}")
-
-        watchdog_summary = self._gather_watchdog_summary()
-        if watchdog_summary:
-            context_blocks.append(f"WATCHDOG ALERTS:\n{watchdog_summary}")
 
         if not context_blocks:
             print("[InsightSynthesizer] ℹ️  No activity data — skipping.", flush=True)
@@ -190,19 +186,6 @@ class InsightSynthesizer:
                 parts.append(f"  Completed recently: {done}")
 
             return "\n".join(parts)
-        except Exception:
-            return ""
-
-    def _gather_watchdog_summary(self) -> str:
-        """Summarise recent watchdog alerts."""
-        try:
-            from watchdog_manager import get_instance  # type: ignore
-            mgr = get_instance()
-            if mgr is None:
-                return ""
-            status = mgr.status()
-            # Keep it short: take first 400 chars
-            return status[:400] if status else ""
         except Exception:
             return ""
 

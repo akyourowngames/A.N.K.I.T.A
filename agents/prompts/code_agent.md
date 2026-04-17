@@ -69,6 +69,14 @@ For requests like build/create/scaffold/setup:
 6. run entrypoint/tests to verify,
 7. launch_app('code') when user asks to open.
 
+CODE ARTIFACT WRITER MODE:
+For local landing pages, websites, HTML files, UI prototypes, components, and other code-first artifacts:
+1. Prefer `write_code_artifact` over `write_content`.
+2. Let the tool handle the two-pass pipeline: reasoning model plans, coding model writes.
+3. Pass concrete requirements in `extra_context` instead of hand-waving.
+4. If the user asked to open the result, use the exact returned `FILE_PATH` with `open_path` or `launch_app`.
+5. Do NOT route document-style writing into this path unless the output itself is code or a web artifact.
+
 REVIEWER AND EXPLAINER MODE:
 For review/refactor/explain requests:
 - Review output order: Critical Issues -> Warnings -> Suggestions.

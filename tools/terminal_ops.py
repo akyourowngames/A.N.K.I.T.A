@@ -1,10 +1,12 @@
+import ctypes
 import os
 import re
 import shutil
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
+from urllib.parse import unquote, urlparse
 
 
 APP_ALIASES = {
@@ -20,6 +22,22 @@ APP_ALIASES = {
     "calc": ["calc", "calc.exe"],
 }
 
+
+def _powershell_exe() -> str:
+    for name in ("powershell.exe", "powershell", "pwsh.exe", "pwsh"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        legacy = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if legacy.exists():
+            return str(legacy)
+    raise FileNotFoundError("No PowerShell executable found")
+
+
+def _powershell_argv(*extra: str) -> List[str]:
+    return [_powershell_exe(), *extra]
+
 SHELL_FALLBACK_ALLOW = {
     "code",
     "code.exe",
@@ -33,13 +51,431 @@ SHELL_FALLBACK_ALLOW = {
     "calc.exe",
 }
 
+_RECENT_OPEN_PATHS: Dict[str, float] = {}
+_OPEN_PATH_DEDUPE_SEC = 12.0
+_RECENT_LAUNCHES: Dict[str, float] = {}
+_LAUNCH_DEDUPE_SEC = 12.0
+_MAX_RESOLVE_SCAN_ENTRIES_PER_ROOT = 20000
+
+
+def _known_folder(csidl: int, fallback: Path) -> Path:
+    if os.name != "nt":
+        return fallback
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        result = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        if result == 0 and buf.value:
+            return Path(buf.value)
+    except Exception:
+        pass
+    return fallback
+
+
+_SPECIAL_FOLDER_MAP = {
+    (Path.home() / "Desktop").resolve(): _known_folder(0x10, Path.home() / "Desktop").resolve(),
+    (Path.home() / "Documents").resolve(): _known_folder(0x05, Path.home() / "Documents").resolve(),
+    (Path.home() / "Pictures").resolve(): _known_folder(0x27, Path.home() / "Pictures").resolve(),
+}
+
+
+def _rebase_special_folder(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    raw = str(path)
+    raw_lower = raw.lower()
+    for source_root, actual_root in _SPECIAL_FOLDER_MAP.items():
+        source_text = str(source_root)
+        if source_root == actual_root:
+            continue
+        source_lower = source_text.lower()
+        if raw_lower == source_lower:
+            return actual_root
+        prefix = source_lower + "\\"
+        if raw_lower.startswith(prefix):
+            suffix = raw[len(source_text):].lstrip("\\/")
+            return actual_root / suffix if suffix else actual_root
+    return path
+
+
+def _normalize_local_open_target(raw_value: str) -> str:
+    raw = str(raw_value or "").strip().strip("\"'")
+    if not raw:
+        return ""
+    expanded = os.path.expandvars(raw)
+    parsed = urlparse(expanded)
+    if parsed.scheme in {"http", "https", "ftp"}:
+        return ""
+    try:
+        if parsed.scheme == "file":
+            uri_path = unquote(parsed.path or "")
+            if os.name == "nt" and re.match(r"^/[A-Za-z]:", uri_path):
+                uri_path = uri_path[1:]
+            candidate = _rebase_special_folder(Path(uri_path).expanduser().resolve())
+            return str(candidate) if candidate.exists() else ""
+        candidate = _rebase_special_folder(Path(expanded).expanduser())
+        if candidate.exists():
+            return str(candidate.resolve())
+    except Exception:
+        return ""
+    return ""
+
+
+def _describe_local_path(path_text: str) -> Dict[str, Any]:
+    raw = str(path_text or "").strip()
+    if not raw:
+        return {"exists": False, "target_kind": "", "extension": ""}
+    try:
+        target = Path(raw)
+        exists = target.exists()
+        return {
+            "exists": exists,
+            "target_kind": "dir" if exists and target.is_dir() else "file" if exists else "",
+            "extension": target.suffix.lower(),
+        }
+    except Exception:
+        return {"exists": False, "target_kind": "", "extension": ""}
+
+
+def _dedupe_open_result(target_str: str) -> Dict[str, Any]:
+    meta = _describe_local_path(target_str)
+    return {
+        "ok": True,
+        "opened": False,
+        "already_opened": True,
+        "path": target_str,
+        "absolute_path": target_str,
+        "FILE_PATH": target_str,
+        "launcher": "dedupe-guard",
+        **meta,
+    }
+
+
+def _check_recent_open(target_str: str) -> bool:
+    return bool(target_str) and (time.time() - _RECENT_OPEN_PATHS.get(target_str, 0.0) < _OPEN_PATH_DEDUPE_SEC)
+
+
+def _mark_recent_open(target_str: str) -> None:
+    if target_str:
+        _RECENT_OPEN_PATHS[target_str] = time.time()
+
+
+def _build_launch_dedupe_key(app_target: str, launch_args: List[str]) -> str:
+    normalized_target = _normalize_local_open_target(launch_args[0]) if launch_args else ""
+    if normalized_target:
+        return f"file::{normalized_target}"
+    rendered_args = "||".join(str(arg).strip() for arg in launch_args)
+    app_key = str(app_target or "").strip().lower()
+    if not app_key:
+        return ""
+    return f"app::{app_key}::{rendered_args}"
+
+
+def _check_recent_launch(launch_key: str) -> bool:
+    return bool(launch_key) and (time.time() - _RECENT_LAUNCHES.get(launch_key, 0.0) < _LAUNCH_DEDUPE_SEC)
+
+
+def _mark_recent_launch(launch_key: str) -> None:
+    if launch_key:
+        _RECENT_LAUNCHES[launch_key] = time.time()
+
+
+def _dedupe_launch_result(app_target: str, launch_args: List[str], launch_key: str) -> Dict[str, Any]:
+    normalized_target = launch_key.split("::", 1)[1] if launch_key.startswith("file::") else ""
+    result: Dict[str, Any] = {
+        "ok": True,
+        "launched": False,
+        "already_launched": True,
+        "app": app_target,
+        "requested": app_target,
+        "args": launch_args,
+        "launcher": "dedupe-guard",
+    }
+    if normalized_target:
+        meta = _describe_local_path(normalized_target)
+        result["path"] = normalized_target
+        result["absolute_path"] = normalized_target
+        result["FILE_PATH"] = normalized_target
+        result.update(meta)
+    return result
+
+
+def _default_discovery_roots() -> List[Path]:
+    candidates = [
+        Path.cwd(),
+        Path.home() / "Desktop",
+        Path.home() / "Documents",
+        Path.home() / "Downloads",
+        Path.home() / "Pictures",
+        Path.home() / "Videos",
+        Path.home() / "OneDrive" / "Desktop",
+    ]
+    unique: List[Path] = []
+    seen: set[str] = set()
+    for candidate in candidates:
+        try:
+            resolved = _rebase_special_folder(candidate.expanduser().resolve())
+        except Exception:
+            continue
+        key = str(resolved).lower()
+        if key in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(key)
+        unique.append(resolved)
+    return unique
+
+
+def _normalize_resolve_roots(roots: Optional[List[str]]) -> List[Path]:
+    if not roots:
+        return _default_discovery_roots()
+    normalized: List[Path] = []
+    seen: set[str] = set()
+    for raw_root in roots:
+        text = str(raw_root or "").strip().strip("\"'")
+        if not text:
+            continue
+        try:
+            resolved = _rebase_special_folder(Path(os.path.expandvars(text)).expanduser().resolve())
+        except Exception:
+            continue
+        key = str(resolved).lower()
+        if key in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(key)
+        normalized.append(resolved)
+    return normalized
+
+
+def _normalize_extensions(extensions: Optional[List[str]]) -> List[str]:
+    values: List[str] = []
+    for raw_ext in extensions or []:
+        text = str(raw_ext or "").strip().lower()
+        if not text:
+            continue
+        values.append(text if text.startswith(".") else f".{text}")
+    return values
+
+
+def _extract_query_terms(query: str) -> tuple[str, List[str]]:
+    query_text = str(query or "").strip().strip("\"'")
+    lowered = query_text.lower()
+    basename = Path(query_text).name.lower() if query_text else ""
+    raw_terms = re.split(r"[^a-zA-Z0-9._-]+", basename or lowered)
+    terms: List[str] = []
+    for term in raw_terms:
+        clean = term.strip("._-").lower()
+        if clean and clean not in terms:
+            terms.append(clean)
+    if basename and basename not in terms:
+        terms.insert(0, basename)
+    return lowered, terms
+
+
+def _score_resolve_candidate(
+    candidate: Path,
+    query_text: str,
+    query_terms: List[str],
+    preferred_exts: List[str],
+    root_rank: int,
+) -> int:
+    path_text = str(candidate).lower()
+    name_text = candidate.name.lower()
+    stem_text = candidate.stem.lower()
+    score = 0
+
+    if query_text:
+        if name_text == query_text:
+            score += 160
+        elif stem_text == query_text:
+            score += 140
+        if path_text.endswith(query_text):
+            score += 120
+        if query_text in name_text:
+            score += 90
+        elif query_text in path_text:
+            score += 45
+
+    matched_terms = 0
+    for term in query_terms:
+        if term == name_text or term == stem_text:
+            score += 50
+            matched_terms += 1
+        elif term in name_text:
+            score += 28
+            matched_terms += 1
+        elif term in path_text:
+            score += 10
+            matched_terms += 1
+
+    if query_terms and matched_terms == 0:
+        return 0
+
+    if preferred_exts:
+        if candidate.suffix.lower() in preferred_exts:
+            score += 28
+        elif candidate.is_file():
+            score -= 12
+
+    if candidate.is_dir():
+        score -= 4
+
+    score += max(0, 24 - (root_rank * 4))
+
+    try:
+        age_seconds = max(0.0, time.time() - candidate.stat().st_mtime)
+        if age_seconds < 86400:
+            score += 8
+        elif age_seconds < 86400 * 7:
+            score += 4
+    except Exception:
+        pass
+    return score
+
+
+def resolve_local_target(
+    query: str,
+    roots: Optional[List[str]] = None,
+    extensions: Optional[List[str]] = None,
+    max_results: int = 10,
+) -> Dict[str, Any]:
+    """
+    Resolve a vague local file/folder reference into ranked existing paths.
+
+    Use this before open_path/launch_app when the agent only knows a filename,
+    partial path, or natural-language hint.
+    """
+    query_text = str(query or "").strip().strip("\"'")
+    if not query_text:
+        return {"ok": False, "kind": "resolve_local_target", "error": "query is required"}
+
+    preferred_exts = _normalize_extensions(extensions)
+    limit = max(1, min(int(max_results or 10), 25))
+    query_lower, query_terms = _extract_query_terms(query_text)
+
+    direct_candidates: List[Path] = []
+    try:
+        direct_candidate = _rebase_special_folder(Path(os.path.expandvars(query_text)).expanduser())
+        if direct_candidate.exists():
+            direct_candidates.append(direct_candidate.resolve())
+        elif not direct_candidate.is_absolute():
+            cwd_candidate = _rebase_special_folder((Path.cwd() / direct_candidate).resolve())
+            if cwd_candidate.exists():
+                direct_candidates.append(cwd_candidate)
+    except Exception:
+        pass
+
+    if direct_candidates:
+        best = direct_candidates[0]
+        meta = _describe_local_path(str(best))
+        return {
+            "ok": True,
+            "kind": "resolve_local_target",
+            "query": query_text,
+            "checked_roots": [str(best.parent)],
+            "candidate_count": 1,
+            "best_path": str(best),
+            "confidence": "high",
+            "results": [
+                {
+                    "path": str(best),
+                    "name": best.name,
+                    "root": str(best.parent),
+                    "score": 999,
+                    "target_kind": meta["target_kind"],
+                    "extension": meta["extension"],
+                }
+            ],
+            "FILE_PATH": str(best),
+            **meta,
+        }
+
+    search_roots = _normalize_resolve_roots(roots)
+    if not search_roots:
+        return {
+            "ok": False,
+            "kind": "resolve_local_target",
+            "query": query_text,
+            "error": "No valid search roots are available.",
+        }
+
+    scored: List[Dict[str, Any]] = []
+    seen_paths: set[str] = set()
+    for root_rank, root in enumerate(search_roots):
+        scanned = 0
+        for current_root, dirnames, filenames in os.walk(root, topdown=True):
+            current_path = Path(current_root)
+            children = [current_path / name for name in dirnames]
+            children.extend(current_path / name for name in filenames)
+            for candidate in children:
+                scanned += 1
+                if scanned > _MAX_RESOLVE_SCAN_ENTRIES_PER_ROOT:
+                    break
+                candidate_text = str(candidate)
+                key = candidate_text.lower()
+                if key in seen_paths:
+                    continue
+                score = _score_resolve_candidate(candidate, query_lower, query_terms, preferred_exts, root_rank)
+                if score <= 0:
+                    continue
+                seen_paths.add(key)
+                meta = _describe_local_path(candidate_text)
+                scored.append(
+                    {
+                        "path": candidate_text,
+                        "name": candidate.name,
+                        "root": str(root),
+                        "score": score,
+                        "target_kind": meta["target_kind"],
+                        "extension": meta["extension"],
+                    }
+                )
+            if scanned > _MAX_RESOLVE_SCAN_ENTRIES_PER_ROOT:
+                break
+
+    scored.sort(key=lambda item: (-int(item["score"]), item["path"].lower()))
+    top_results = scored[:limit]
+    if not top_results:
+        return {
+            "ok": False,
+            "kind": "resolve_local_target",
+            "query": query_text,
+            "checked_roots": [str(root) for root in search_roots],
+            "candidate_count": 0,
+            "results": [],
+            "error": f"No local target matched '{query_text}'.",
+        }
+
+    best_path = str(top_results[0]["path"])
+    best_score = int(top_results[0]["score"])
+    second_score = int(top_results[1]["score"]) if len(top_results) > 1 else -1
+    confidence = "high" if best_score >= 120 or best_score >= second_score + 30 else "medium" if best_score >= 70 else "low"
+    meta = _describe_local_path(best_path)
+    return {
+        "ok": True,
+        "kind": "resolve_local_target",
+        "query": query_text,
+        "checked_roots": [str(root) for root in search_roots],
+        "candidate_count": len(scored),
+        "best_path": best_path,
+        "confidence": confidence,
+        "results": top_results,
+        "FILE_PATH": best_path,
+        **meta,
+    }
+
 
 def resolve_safe_cwd(workspace_root: Path, raw_cwd: str | None) -> Path:
-    target = workspace_root if not raw_cwd else (workspace_root / raw_cwd).resolve()
-    try:
-        target.relative_to(workspace_root)
-    except ValueError as err:
-        raise ValueError(f"cwd escapes workspace: {raw_cwd}") from err
+    if not raw_cwd:
+        target = workspace_root
+    else:
+        expanded = _rebase_special_folder(Path(os.path.expandvars(str(raw_cwd))).expanduser())
+        if expanded.is_absolute():
+            target = _rebase_special_folder(expanded.resolve())
+        else:
+            target = (workspace_root / expanded).resolve()
+            try:
+                target.relative_to(workspace_root)
+            except ValueError as err:
+                raise ValueError(f"cwd escapes workspace: {raw_cwd}") from err
     if not target.exists() or not target.is_dir():
         raise FileNotFoundError(f"cwd not found: {raw_cwd or '.'}")
     return target
@@ -190,7 +626,7 @@ def fast_file_search(
     filter_clause = f"-Filter '{glob}'" if glob else ""
     cmd = f"Get-ChildItem -Path '{root}' -Recurse -File {filter_clause} | Select-Object -ExpandProperty FullName"
     try:
-        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        argv = _powershell_argv("-NoProfile", "-NonInteractive", "-Command", cmd)
         proc = subprocess.run(
             argv,
             capture_output=True,
@@ -246,6 +682,28 @@ def _candidate_app_names(raw: str) -> List[str]:
             seen.add(c2)
             out.append(c2)
     return out
+
+
+def _prepare_launch_args(app_target: str, raw_args: List[str]) -> List[str]:
+    launch_args = list(raw_args)
+    if not launch_args:
+        return launch_args
+    first = str(launch_args[0]).strip().strip("\"'")
+    if not first:
+        return launch_args
+    parsed = urlparse(first)
+    looks_local = parsed.scheme == "file" or (
+        "://" not in first and (("\\" in first) or ("/" in first) or Path(first).suffix)
+    )
+    if not looks_local:
+        return launch_args
+    normalized = _normalize_local_open_target(first)
+    if not normalized:
+        raise FileNotFoundError(f"local launch target not found: {first}")
+    app_label = Path(str(app_target)).name.lower()
+    browserish = app_label in {"chrome.exe", "chrome", "msedge.exe", "msedge", "edge"}
+    launch_args[0] = Path(normalized).resolve().as_uri() if browserish else normalized
+    return launch_args
 
 
 def _resolve_executable_windows(name: str) -> str | None:
@@ -352,7 +810,7 @@ def run_command(
     argv: List[str]
     if use_shell:
         if os.name == "nt":
-            argv = ["powershell", "-NoProfile", "-Command", cmd]
+            argv = _powershell_argv("-NoProfile", "-Command", cmd)
         else:
             argv = ["/bin/sh", "-lc", cmd]
     else:
@@ -422,23 +880,37 @@ def launch_app(
             resolved = _resolve_executable_windows(cand) or cand
             attempts.append(resolved)
             try:
+                launch_args = _prepare_launch_args(str(resolved), final_args)
+                local_open_target = _normalize_local_open_target(launch_args[0]) if launch_args else ""
+                launch_key = _build_launch_dedupe_key(str(resolved), launch_args)
+                if _check_recent_launch(launch_key):
+                    return _dedupe_launch_result(str(resolved), launch_args, launch_key)
                 proc = subprocess.Popen(
-                    [resolved] + final_args,
+                    [resolved] + launch_args,
                     cwd=str(safe_cwd),
                     env=os.environ.copy(),
                     shell=False,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                return {
+                _mark_recent_launch(launch_key)
+                _mark_recent_open(local_open_target)
+                response = {
                     "ok": True,
                     "launched": True,
                     "pid": proc.pid,
                     "app": resolved,
                     "requested": target,
-                    "args": final_args,
+                    "args": launch_args,
                     "cwd": str(safe_cwd.relative_to(workspace_root)).replace("\\", "/") or ".",
                 }
+                if local_open_target:
+                    meta = _describe_local_path(local_open_target)
+                    response["path"] = local_open_target
+                    response["absolute_path"] = local_open_target
+                    response["FILE_PATH"] = local_open_target
+                    response.update(meta)
+                return response
             except FileNotFoundError:
                 continue
         # Final fallback: let Windows shell resolve app aliases/registered handlers.
@@ -447,29 +919,44 @@ def launch_app(
             if key not in SHELL_FALLBACK_ALLOW:
                 continue
             try:
+                launch_args = _prepare_launch_args(cand, final_args)
+                local_open_target = _normalize_local_open_target(launch_args[0]) if launch_args else ""
+                launch_key = _build_launch_dedupe_key(cand, launch_args)
+                if _check_recent_launch(launch_key):
+                    return _dedupe_launch_result(cand, launch_args, launch_key)
                 proc = subprocess.Popen(
-                    ["cmd", "/c", "start", "", cand] + final_args,
+                    ["cmd", "/c", "start", "", cand] + launch_args,
                     cwd=str(safe_cwd),
                     env=os.environ.copy(),
                     shell=False,
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL,
                 )
-                return {
+                _mark_recent_launch(launch_key)
+                _mark_recent_open(local_open_target)
+                response = {
                     "ok": True,
                     "launched": True,
                     "pid": proc.pid,
                     "app": cand,
                     "requested": target,
-                    "args": final_args,
+                    "args": launch_args,
                     "cwd": str(safe_cwd.relative_to(workspace_root)).replace("\\", "/") or ".",
                     "launcher": "cmd-start",
                 }
+                if local_open_target:
+                    meta = _describe_local_path(local_open_target)
+                    response["path"] = local_open_target
+                    response["absolute_path"] = local_open_target
+                    response["FILE_PATH"] = local_open_target
+                    response.update(meta)
+                return response
             except Exception:
                 continue
         raise FileNotFoundError(f"application not found: {target} (tried: {', '.join(attempts[:8])})")
 
-    argv = [target] + final_args
+    launch_args = _prepare_launch_args(target, final_args)
+    argv = [target] + launch_args
     try:
         proc = subprocess.Popen(
             argv,
@@ -481,14 +968,78 @@ def launch_app(
         )
     except FileNotFoundError as err:
         raise FileNotFoundError(f"application not found: {target}") from err
-    return {
+    local_open_target = _normalize_local_open_target(final_args[0]) if final_args else ""
+    response = {
         "ok": True,
         "launched": True,
         "pid": proc.pid,
         "app": target,
         "requested": target,
-        "args": final_args,
+        "args": launch_args,
         "cwd": str(safe_cwd.relative_to(workspace_root)).replace("\\", "/") or ".",
+    }
+    if local_open_target:
+        meta = _describe_local_path(local_open_target)
+        response["path"] = local_open_target
+        response["absolute_path"] = local_open_target
+        response["FILE_PATH"] = local_open_target
+        response.update(meta)
+    return response
+
+
+def open_path(workspace_root: Path, path: str) -> Dict[str, Any]:
+    """Open a file or folder with the OS default handler."""
+    raw = str(path or "").strip().strip("\"'")
+    if not raw:
+        raise ValueError("path is required")
+
+    target = _rebase_special_folder(Path(os.path.expandvars(raw)).expanduser())
+    if not target.is_absolute():
+        target = (workspace_root / target).resolve()
+    else:
+        target = _rebase_special_folder(target.resolve())
+
+    if not target.exists():
+        raise FileNotFoundError(f"path not found: {target}")
+
+    target_str = str(target)
+    if _check_recent_open(target_str):
+        return _dedupe_open_result(target_str)
+
+    if os.name == "nt":
+        os.startfile(target_str)
+        _mark_recent_open(target_str)
+        meta = _describe_local_path(target_str)
+        return {
+            "ok": True,
+            "opened": True,
+            "path": target_str,
+            "absolute_path": target_str,
+            "FILE_PATH": target_str,
+            "launcher": "os.startfile",
+            **meta,
+        }
+
+    argv = ["xdg-open", target_str]
+    proc = subprocess.Popen(
+        argv,
+        cwd=str(workspace_root),
+        env=os.environ.copy(),
+        shell=False,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    _mark_recent_open(target_str)
+    meta = _describe_local_path(target_str)
+    return {
+        "ok": True,
+        "opened": True,
+        "pid": proc.pid,
+        "path": target_str,
+        "absolute_path": target_str,
+        "FILE_PATH": target_str,
+        "launcher": "xdg-open",
+        **meta,
     }
 
 
@@ -680,7 +1231,7 @@ def execute_shell_command(command: str, timeout: int | None = None, cwd: str | N
 
     # On Windows, wrap in PowerShell so all cmds work naturally
     if os.name == "nt":
-        argv = ["powershell", "-NoProfile", "-NonInteractive", "-Command", cmd]
+        argv = _powershell_argv("-NoProfile", "-NonInteractive", "-Command", cmd)
     else:
         argv = ["/bin/sh", "-c", cmd]
 
@@ -1054,7 +1605,7 @@ def process_op(action: str, command: str | None = None, name: str | None = None,
             if os.name == "nt":
                 # Windows: use CREATE_NEW_PROCESS_GROUP to detach
                 proc = subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command", command],
+                    _powershell_argv("-NoProfile", "-Command", command),
                     cwd=cwd,
                     env=env,
                     stdout=subprocess.DEVNULL,
@@ -1420,7 +1971,7 @@ def port_scan(start: int = 1, end: int = 1024) -> Dict[str, Any]:
             f"Select-Object LocalPort, OwningProcess | Sort-Object LocalPort | "
             f"ForEach-Object {{ Write-Output ('' + $_.LocalPort + ':' + $_.OwningProcess) }}"
         )
-        result = execute_shell_command(f"powershell -NoProfile -Command \"{script}\"")
+        result = execute_shell_command(f"{_powershell_exe()} -NoProfile -Command \"{script}\"")
     else:
         result = execute_shell_command(f"ss -tlnp sport ge :{start} and sport le :{end}")
     

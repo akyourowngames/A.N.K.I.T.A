@@ -8,7 +8,6 @@ the user requests the action.
 Low-risk actions include:
 - Morning news search (read-only)
 - Git status checks (read-only)
-- Watchdog summary preparation (read-only)
 
 Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6
 """
@@ -393,23 +392,6 @@ class AnticipatoryActionSystem:
         
         return False
     
-    def _should_prefetch_watchdog_summary(
-        self,
-        idle_time_hours: float,
-    ) -> bool:
-        """
-        Check if we should pre-fetch watchdog summary based on idle time.
-        
-        Pre-fetches after 3 hours of idle time.
-        
-        Args:
-            idle_time_hours: Hours since last user activity
-            
-        Returns:
-            True if we should pre-fetch, False otherwise
-        """
-        return idle_time_hours >= 3.0
-    
     def _prefetch_morning_news(self) -> None:
         """
         Pre-fetch morning news (low-risk read-only action).
@@ -520,53 +502,6 @@ class AnticipatoryActionSystem:
                 flush=True,
             )
     
-    def _prefetch_watchdog_summary(self) -> None:
-        """
-        Pre-fetch watchdog summary (low-risk read-only action).
-        
-        Gathers current state of all watchdogs.
-        """
-        try:
-            # Try to get watchdog states
-            from watchdog_manager import get_instance
-            
-            watchdog_mgr = get_instance()
-            if not watchdog_mgr:
-                return
-            
-            summary = {
-                "watchers": {},
-                "total_alerts": 0,
-                "prefetched": True,
-            }
-            
-            for name, watcher in watchdog_mgr._watchers.items():
-                watcher_info = {
-                    "alive": watcher.is_alive(),
-                    "state": watcher.state,
-                }
-                
-                # Count alerts if available
-                if hasattr(watcher, "alerts"):
-                    alert_count = len(watcher.alerts)
-                    watcher_info["alert_count"] = alert_count
-                    summary["total_alerts"] += alert_count
-                
-                summary["watchers"][name] = watcher_info
-            
-            self._cache_action("watchdog_summary", summary)
-            
-            print(
-                f"[AnticipatoryActionSystem] 👁️  Pre-fetched watchdog summary: {len(summary['watchers'])} watchers",
-                flush=True,
-            )
-        
-        except Exception as e:
-            print(
-                f"[AnticipatoryActionSystem] ⚠️  Failed to pre-fetch watchdog summary: {e}",
-                flush=True,
-            )
-    
     def run_anticipatory_cycle(self, idle_time_hours: float = 0.0) -> None:
         """
         Run one cycle of anticipatory action pre-execution.
@@ -575,7 +510,7 @@ class AnticipatoryActionSystem:
         actions and pre-execute them.
         
         Args:
-            idle_time_hours: Hours since last user activity (for watchdog summary)
+            idle_time_hours: Hours since last user activity
         """
         # Load models
         intent_model = self._load_intent_model()
@@ -599,12 +534,6 @@ class AnticipatoryActionSystem:
             if not self.get_cached_action("git_status"):
                 self._prefetch_git_status()
         
-        # Check if we should pre-fetch watchdog summary
-        if self._should_prefetch_watchdog_summary(idle_time_hours):
-            # Only pre-fetch if not already cached
-            if not self.get_cached_action("watchdog_summary"):
-                self._prefetch_watchdog_summary()
-
         # Step 11: Environment management (deep_work music + health reminder)
         self._manage_environment(intent_model, behavioral_model)
 

@@ -3,7 +3,6 @@ Task management operations for A.N.K.I.T.A.
 Persistent to-do list with priorities, deadlines, and status tracking.
 """
 import json
-import os
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -182,29 +181,7 @@ def _add_task(title: str, priority: str, deadline: Optional[str], tags: Optional
     tasks.append(task)
     _save_tasks(tasks)
     
-    # Auto-schedule cron reminder if deadline is set
     reminder_info = None
-    if task["deadline"] and os.getenv("TASK_AGENT_USE_CORN", "true").lower() == "true":
-        try:
-            from tools.cron_ops import cron
-            # Schedule reminder 30 minutes before deadline
-            deadline_dt = datetime.strptime(task["deadline"], "%Y-%m-%d %H:%M")
-            reminder_dt = deadline_dt - timedelta(minutes=30)
-            
-            if reminder_dt > datetime.now():
-                cron_result = cron(
-                    action="add",
-                    job={
-                        "schedule": reminder_dt.strftime("%Y-%m-%d %H:%M"),
-                        "task": f"Reminder: Task '{title}' is due in 30 minutes!",
-                        "repeat": "once"
-                    }
-                )
-                if cron_result.get("status") == "success":
-                    reminder_info = f"Reminder scheduled for {reminder_dt.strftime('%Y-%m-%d %H:%M')}"
-        except:
-            pass
-    
     return {
         "status": "success",
         "task": task,

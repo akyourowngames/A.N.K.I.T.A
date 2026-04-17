@@ -40,6 +40,24 @@ class ContentContractTests(unittest.TestCase):
         ok, _ = validate_content_payload(payload)
         self.assertTrue(ok)
 
+    def test_valid_payload_accepts_richer_document_types(self) -> None:
+        txt = (
+            "CONTENT_PAYLOAD_V1\n"
+            "TASK_TYPE: thank_you_letter\n"
+            "TITLE: Thank You\n"
+            "FORMAT: plain_text\n"
+            "AUDIENCE: hiring manager\n"
+            "TONE: warm and professional\n"
+            "WORD_TARGET: 220\n"
+            "BODY_START\nDear Sarah,\n\nThank you for your time.\n\nBest regards,\nAnkita\nBODY_END\n"
+            "NOTES_START\n\nNOTES_END\n"
+            "CONTENT_PAYLOAD_V1_END"
+        )
+        payload = parse_content_payload(txt)
+        ok, errors = validate_content_payload(payload)
+        self.assertTrue(ok)
+        self.assertEqual(errors, [])
+
     def test_missing_markers(self) -> None:
         payload = parse_content_payload("TASK_TYPE: report\nTITLE: X")
         ok, errors = validate_content_payload(payload)

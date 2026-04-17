@@ -86,7 +86,7 @@ class AutoExecutor:
         """
         Class A: Analyse disk usage once per day (read-only).
 
-        Caches the result so other components (MorningAgent, InsightSynthesizer)
+        Caches the result so other components (for example InsightSynthesizer)
         can read it without re-running the expensive disk scan.
         """
         if not self._is_due("disk_analysis"):

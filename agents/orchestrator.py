@@ -10,7 +10,9 @@ Falls back to the base AgentRuntime if anything goes wrong.
 """
 from __future__ import annotations
 
+import ctypes
 import json
+import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
@@ -24,6 +26,19 @@ from .content_contract import parse_content_payload, validate_content_payload, e
 
 _ORCHESTRATOR_TOKEN_LIMIT = 48_000   # same guardian threshold as agent_runtime
 
+
+def _known_folder(csidl: int, fallback: str) -> str:
+    if os.name != "nt":
+        return fallback
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        result = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        if result == 0 and buf.value:
+            return buf.value
+    except Exception:
+        pass
+    return fallback
+
 from .supervisor import SupervisorAgent
 from .communication_protocol import AgentMessage, MessageType, MessagePriority, COMMUNICATION_HUB
 from .specialists import SPECIALIST_MAP, SpecialistAgent
@@ -36,6 +51,20 @@ _CONTENT_PAYLOAD_STATS: Dict[str, int] = {
     "schema_repaired": 0,
     "schema_fallback_legacy": 0,
 }
+
+_CAPABILITY_REASON_RE = re.compile(
+    r"(?i)\b("
+    r"capabilit(?:y|ies)"
+    r"|available\s+tools"
+    r"|overall\s+(?:abilities|capabilities)"
+    r"|what\s+else\s+can\s+you\s+do"
+    r"|what\s+tools\s+do(?:es)?\s+(?:you|ankita)\s+have"
+    r")\b"
+)
+
+
+def _is_capability_routing_reason(reasoning: str) -> bool:
+    return bool(_CAPABILITY_REASON_RE.search(str(reasoning or "").strip()))
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VISION CACHE — remembers the last captured image for 60 seconds so
@@ -56,7 +85,7 @@ _VISION_FOLLOWUP_KEYWORDS = {
 }
 
 # Tools that can capture images — only these should trigger vision cache
-_VISION_TOOL_NAMES = {"capture_webcam", "capture_screen", "read_screen_context", "visual_click"}
+_VISION_TOOL_NAMES = {"capture_webcam", "read_screen_context", "visual_click"}
 
 # -----------------------------------------------------------------------------
 # HYDRA PROTOCOL - Escalation Matrix 
@@ -104,12 +133,14 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
         {"files": ["C:\\Users\\Krish\\Desktop\\poem.txt"], "urls": ["https://..."]}
     """
     artifacts: Dict[str, List[str]] = {"files": [], "urls": [], "handoffs": []}
+    explicit_files: List[str] = []
 
     # FILE_PATH: <path> pattern (our standard output marker)
     for m in re.finditer(r"FILE_PATH:\s*(.+?)(?:\n|$)", text):
         path = m.group(1).strip()
         if path and path not in artifacts["files"]:
             artifacts["files"].append(path)
+            explicit_files.append(path)
 
     # Bare Windows/Unix absolute paths (e.g. C:\Users\...\file.txt or /home/.../file.txt)
     for m in re.finditer(
@@ -117,6 +148,8 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
         text,
     ):
         path = m.group(1).strip().rstrip(".,;)")
+        if any(explicit == path or explicit.startswith(path + " ") for explicit in explicit_files):
+            continue
         if path and path not in artifacts["files"]:
             artifacts["files"].append(path)
 
@@ -131,10 +164,23 @@ def _extract_artifacts(text: str) -> Dict[str, List[str]]:
         label = m.group(1).strip()
         agent = m.group(2).strip()
         message = m.group(3).strip()
+        if "FILE_PATH" in message and explicit_files:
+            message = message.replace("FILE_PATH", explicit_files[-1])
         handoff = f"{label}: {agent} → {message}"
         if handoff not in artifacts["handoffs"]:
             artifacts["handoffs"].append(handoff)
 
+    return artifacts
+
+
+def _merge_artifacts(reply: str, extra: Optional[Dict[str, List[str]]] = None) -> Dict[str, List[str]]:
+    artifacts = _extract_artifacts(reply or "")
+    if not extra:
+        return artifacts
+    for key in ("files", "urls", "handoffs"):
+        for item in extra.get(key, []):
+            if item and item not in artifacts[key]:
+                artifacts[key].append(item)
     return artifacts
 
 
@@ -167,12 +213,11 @@ def _build_prior_context_block(agent_name: str, reply: str, artifacts: Dict[str,
             lines.append(f"URL: {u}")
     if artifacts.get("handoffs"):
         for h in artifacts["handoffs"]:
-            lines.append(f"HANDOFF: {h}")
+            lines.append(h)
 
     if agent_name == "ContentAgent" and not artifacts["files"] and reply.strip():
         if "already_saved" not in reply.lower():
-            import os as _os
-            desktop = str(_os.path.join(_os.path.expanduser("~"), "Desktop"))
+            desktop = _known_folder(0x10, str(Path.home() / "Desktop"))
             lines.append(f"SAVE_TO: {desktop}")
             payload = parse_content_payload(reply)
             ok, errors = validate_content_payload(payload)
@@ -374,30 +419,7 @@ def _run_specialist(
     else:
         specialist_runtime = runtime
 
-    # Personality: inject current session mood directive into specialist messages
-    _mood_context = ""
-    try:
-        from tools.personality_engine import get_mood_tracker, get_humor_line
-        _tracker = get_mood_tracker()
-        _mood_context = _tracker.get_personality_directive()
-        # Inject humor hint for the specialist if mood allows
-        _agent_type_map = {
-            "CodeAgent": "code", "FileAgent": "files", "TerminalAgent": "terminal",
-            "MusicAgent": "music", "WebAgent": "search", "SystemAgent": "system",
-            "TaskAgent": "task", "CommsAgent": "comms", "CronAgent": "cron",
-            "NavigatorAgent": "navigation", "ImageAgent": "image",
-            "WatchdogAgent": "watchdog", "IntegrationAgent": "integration",
-            "ContentAgent": "general", "ReportAgent": "general", "ScreenAgent": "system",
-            "GeneralAgent": "general", "PlannerAgent": "general",
-        }
-        _humor_key = _agent_type_map.get(specialist.name, "general")
-        _humor = get_humor_line(_humor_key, _tracker.current_state().primary)
-        if _humor:
-            _mood_context += f"\n[HUMOR HINT — weave naturally, don't force]: {_humor}"
-    except Exception:
-        pass
-
-    messages = specialist.make_messages(task, history=conversation_history, mood_context=_mood_context)
+    messages = specialist.make_messages(task, history=conversation_history)
 
     # ── SANITIZE MESSAGES: strip any image_url blocks that leaked from prior turns ──
     # Vision packets injected in a previous turn (e.g. from GUI) can persist in the
@@ -446,7 +468,7 @@ def _run_specialist(
         _cached_b64 = _LAST_VISION_CACHE["b64"]
         _cached_mime = _LAST_VISION_CACHE["mime"]
         print(
-            f"[VisionCache] 🖼️  Using cached image ({_cached_mime}) for follow-up via call_chat_with_image: '{task[:60]}'",
+            f"[VisionCache] Using cached image ({_cached_mime}) for follow-up via call_chat_with_image: '{task[:60]}'",
             flush=True,
         )
         # Use call_chat_with_image() — isolated API call with ONLY image + prompt.
@@ -469,9 +491,9 @@ def _run_specialist(
                 "role": "user",
                 "content": f"[Vision Analysis — cached image]\n{_cache_desc}",
             })
-            print(f"[VisionCache] ✅ Follow-up description ready ({len(_cache_desc)} chars)", flush=True)
+            print(f"[VisionCache] Follow-up description ready ({len(_cache_desc)} chars)", flush=True)
         except Exception as _cache_vision_err:
-            print(f"[VisionCache] ❌ call_chat_with_image failed: {_cache_vision_err}", flush=True)
+            print(f"[VisionCache] call_chat_with_image failed: {_cache_vision_err}", flush=True)
             messages.append({
                 "role": "user",
                 "content": f"[Vision follow-up failed: {_cache_vision_err}]",
@@ -492,6 +514,8 @@ def _run_specialist(
     # Tier 4: On third failure → emergency compact (keep tail only)
     _overflow_attempts = 0
     _MAX_OVERFLOW_ATTEMPTS = 3
+    _forced_tool_retry = False
+    tool_artifacts: Dict[str, List[str]] = {"files": [], "urls": [], "handoffs": []}
 
     for _ in range(_MAX_TOOL_STEPS):
         # -- TOKEN LIMIT GUARDIAN: proactive trim before each specialist LLM call --
@@ -521,6 +545,40 @@ def _run_specialist(
                 or "maximum context" in err_str
             )
             if not is_payload_err:
+                if specialist.name == "SystemAgent" and prior_context:
+                    task_lower = task.lower()
+                    wants_open = any(token in task_lower for token in (" open ", " open it", " open the", " show ", " view ", " launch "))
+                    if not wants_open and task_lower.startswith(("open ", "show ", "view ", "launch ")):
+                        wants_open = True
+                    if wants_open:
+                        try:
+                            from tools.engine import _call as _engine_call
+                            prior_file = ""
+                            for line in reversed(prior_context.splitlines()):
+                                if line.startswith("FILE: ") or line.startswith("FILE_PATH: "):
+                                    prior_file = line.split(":", 1)[1].strip()
+                                    if prior_file:
+                                        break
+                            if prior_file:
+                                open_result = _engine_call(
+                                    "open_path",
+                                    {"path": prior_file},
+                                    workspace_root,
+                                    agent_name=specialist.name,
+                                )
+                                if bool(open_result.get("ok", False)):
+                                    return {
+                                        "agent": specialist.name,
+                                        "ok": True,
+                                        "reply": f"Done - opened the file.\nFILE_PATH: {prior_file}",
+                                        "artifacts": {
+                                            "files": [prior_file],
+                                            "urls": [],
+                                            "handoffs": [],
+                                        },
+                                    }
+                        except Exception as open_err:
+                            print(f"[SystemAgentExceptionFallback] open_path failed: {open_err}", flush=True)
                 return {"agent": specialist.name, "ok": False, "reply": f"[Error] {err}"}
 
             _overflow_attempts += 1
@@ -583,6 +641,120 @@ def _run_specialist(
 
         if not tool_calls:
             reply = (response.get("content") or "").strip()
+            if specialist.name == "SystemAgent":
+                if not _forced_tool_retry:
+                    _forced_tool_retry = True
+                    messages.append({
+                        "role": "system",
+                        "content": (
+                            "You are handling a real system action request. "
+                            "You MUST call an appropriate tool before replying. "
+                            "Do not answer with catchphrases, status lines, or prose until a tool has executed."
+                        ),
+                    })
+                    messages.append({
+                        "role": "user",
+                        "content": f"Retry this same request now by calling a tool: {task}",
+                    })
+                    continue
+
+                try:
+                    from tools.engine import _call as _engine_call, _format_result as _engine_format_result, _parse_local_intent
+
+                    task_lower = task.lower()
+                    wants_open = any(token in task_lower for token in (" open ", " open it", " open the", " show ", " view ", " launch "))
+                    if not wants_open and task_lower.startswith(("open ", "show ", "view ", "launch ")):
+                        wants_open = True
+
+                    if wants_open and prior_context:
+                        prior_file = ""
+                        for line in reversed(prior_context.splitlines()):
+                            if line.startswith("FILE: ") or line.startswith("FILE_PATH: "):
+                                prior_file = line.split(":", 1)[1].strip()
+                                if prior_file:
+                                    break
+                        if prior_file:
+                            open_result = _engine_call(
+                                "open_path",
+                                {"path": prior_file},
+                                workspace_root,
+                                agent_name=specialist.name,
+                            )
+                            if bool(open_result.get("ok", False)):
+                                return {
+                                    "agent": specialist.name,
+                                    "ok": True,
+                                    "reply": f"Done - opened the file.\nFILE_PATH: {prior_file}",
+                                    "artifacts": {
+                                        "files": [prior_file],
+                                        "urls": [],
+                                        "handoffs": [],
+                                    },
+                                }
+
+                    parsed_intent = _parse_local_intent(task, workspace_root)
+                    if parsed_intent:
+                        tool_name, tool_args = parsed_intent
+                        if not str(tool_name).startswith("__"):
+                            fallback_result = _engine_call(
+                                tool_name,
+                                tool_args,
+                                workspace_root,
+                                agent_name=specialist.name,
+                            )
+                            fallback_reply = _engine_format_result(fallback_result)
+                            fallback_ok = bool(fallback_result.get("ok", True))
+                            artifact_path = ""
+                            if isinstance(fallback_result, dict):
+                                artifact_path = str(
+                                    fallback_result.get("FILE_PATH")
+                                    or fallback_result.get("absolute_path")
+                                    or fallback_result.get("path")
+                                    or ""
+                                ).strip()
+                            if fallback_ok and artifact_path and wants_open:
+                                try:
+                                    open_result = _engine_call(
+                                        "open_path",
+                                        {"path": artifact_path},
+                                        workspace_root,
+                                        agent_name=specialist.name,
+                                    )
+                                    if bool(open_result.get("ok", False)):
+                                        fallback_reply = f"Done - took a screenshot and opened it.\nFILE_PATH: {artifact_path}"
+                                    else:
+                                        fallback_reply = (
+                                            f"{fallback_reply}\n"
+                                            f"FILE_PATH: {artifact_path}\n"
+                                            "I saved it, but opening it failed."
+                                        )
+                                except Exception as open_err:
+                                    fallback_reply = (
+                                        f"{fallback_reply}\n"
+                                        f"FILE_PATH: {artifact_path}\n"
+                                        f"I saved it, but opening it failed: {open_err}"
+                                    )
+                            if tool_name == "system_control" and isinstance(fallback_result, dict):
+                                action = str(fallback_result.get("action", "")).strip().lower()
+                                stdout = str(fallback_result.get("stdout", "")).strip()
+                                stderr = str(fallback_result.get("stderr", "")).strip()
+                                if "brightness_unavailable" in stderr:
+                                    fallback_reply = (
+                                        "Software brightness control is not available on this display. "
+                                        "This monitor appears to require its physical brightness buttons."
+                                    )
+                                    fallback_ok = True
+                                elif action.startswith("brightness") and fallback_ok:
+                                    fallback_reply = stdout or "Brightness adjusted."
+                            return {
+                                "agent": specialist.name,
+                                "ok": fallback_ok,
+                                "reply": fallback_reply,
+                                "artifacts": tool_artifacts,
+                            }
+                except Exception as fallback_err:
+                    print(f"[SystemAgentFallback] Local tool fallback failed: {fallback_err}", flush=True)
+
             if specialist.name == "ContentAgent":
                 _CONTENT_PAYLOAD_STATS["total"] += 1
                 checked = _validate_or_repair_content_payload(
@@ -609,11 +781,12 @@ def _run_specialist(
                     "agent": specialist.name,
                     "ok": True,
                     "reply": checked["reply"],
+                    "artifacts": tool_artifacts,
                     "content_payload_valid": checked["content_payload_valid"],
                     "content_payload_errors": checked["content_payload_errors"],
                     "content_payload_repaired": checked["content_payload_repaired"],
                 }
-            return {"agent": specialist.name, "ok": True, "reply": reply}
+            return {"agent": specialist.name, "ok": True, "reply": reply, "artifacts": tool_artifacts}
 
         # --- VISION INJECTION: collect image payloads from vision tools ---
         vision_packets: List[Dict[str, Any]] = []
@@ -623,6 +796,13 @@ def _run_specialist(
                 # Inject runtime so visual_click can call LLM vision API
                 execute_tool_call._runtime = runtime  # type: ignore[attr-defined]
                 result = execute_tool_call(tc, workspace_root=workspace_root, agent_name=specialist.name)
+                if isinstance(result, dict):
+                    for key in ("FILE_PATH", "absolute_path", "path"):
+                        path_value = result.get(key)
+                        if isinstance(path_value, str):
+                            path_text = path_value.strip()
+                            if path_text and Path(path_text).is_absolute() and path_text not in tool_artifacts["files"]:
+                                tool_artifacts["files"].append(path_text)
 
                 # Check if this tool returned image data (capture_screen / read_screen_context).
                 # execute_tool_call wraps the inner result as {"ok": True, "result": {...}},
@@ -693,7 +873,7 @@ def _run_specialist(
                             _vp_b64 = _b64vp.b64encode(_buf_vp.getvalue()).decode("utf-8")
                             _vp_mime = "image/jpeg"
                             print(
-                                f"[VisionPacket] 🗜️  Packet re-compressed to 480px/q50 ({len(_vp_b64):,} chars)",
+                                f"[VisionPacket] Packet re-compressed to 480px/q50 ({len(_vp_b64):,} chars)",
                                 flush=True,
                             )
                         except Exception as _vp_err:
@@ -751,9 +931,14 @@ def _run_specialist(
             }
             # Copilot + any gpt-4 variant → always vision capable (Copilot only serves gpt-4 family)
             _model_lower = specialist_runtime.model.lower()
-            _model_supports_vision = specialist_runtime.provider == "copilot" and (
-                any(vm in _model_lower for vm in _VISION_CAPABLE_MODELS)
-                or "gpt-4" in _model_lower  # catch any gpt-4.x variant not in the set above
+            _model_supports_vision = (
+                (specialist_runtime.provider == "copilot" and (
+                    any(vm in _model_lower for vm in _VISION_CAPABLE_MODELS)
+                    or "gpt-4" in _model_lower
+                ))
+                or (specialist_runtime.provider == "nvidia" and (
+                    "vision" in _model_lower or "-vl" in _model_lower or "llama-4" in _model_lower
+                ))
             )
 
             # Helper: pre-describe each vision packet as plain text via a vision runtime.
@@ -801,14 +986,14 @@ def _run_specialist(
                                 temperature=0.2,
                                 mime_type=vp_mime,
                             )
-                            print(f"[VisionPipeline] ✅ Image described ({len(description)} chars)", flush=True)
+                            print(f"[VisionPipeline] Image described ({len(description)} chars)", flush=True)
                             # Store description on the vision_packets list so the caller can
                             # return it directly without giving GPT-4o another turn to refuse.
                             vp["_description"] = description
                         else:
                             vp["_description"] = "[Image was captured but could not be decoded for vision analysis]"
                     except Exception as vision_err:
-                        print(f"[VisionPipeline] ❌ call_chat_with_image failed: {vision_err}", flush=True)
+                        print(f"[VisionPipeline] call_chat_with_image failed: {vision_err}", flush=True)
                         vp["_description"] = f"[Vision analysis failed: {vision_err}]"
 
             # ── UNIFIED VISION PATH ─────────────────────────────────────────────────
@@ -823,12 +1008,12 @@ def _run_specialist(
             # and one text prompt. The text description is then injected into the
             # main messages so the chat model can reason about it.
             vision_runtime = build_vision_runtime_from_env(specialist_runtime)
+            _vision_model_lower = vision_runtime.model.lower()
             _is_vision_capable = (
-                vision_runtime.provider == "copilot"
-                and (
-                    any(vm in vision_runtime.model.lower() for vm in _VISION_CAPABLE_MODELS)
-                    or "gpt-4" in vision_runtime.model.lower()
-                )
+                (vision_runtime.provider == "copilot"
+                 and (any(vm in _vision_model_lower for vm in _VISION_CAPABLE_MODELS) or "gpt-4" in _vision_model_lower))
+                or (vision_runtime.provider == "nvidia"
+                    and ("vision" in _vision_model_lower or "-vl" in _vision_model_lower or "llama-4" in _vision_model_lower))
             )
             if _is_vision_capable:
                 _describe_vision_packets_as_text(vision_runtime)
@@ -851,7 +1036,7 @@ def _run_specialist(
                     ),
                 }
 
-    return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached)."}
+    return {"agent": specialist.name, "ok": True, "reply": "Task completed (max steps reached).", "artifacts": tool_artifacts}
 
 
 def _evaluate_condition(condition: str, step_results: Dict[int, Dict], depends_on: List[int]) -> bool:
@@ -955,44 +1140,18 @@ def _classify_interaction(agent_names: List[str], user_text: str) -> str:
     return "general"
 
 
-def _check_and_append_proactive_tail(
+def _append_follow_up_hint(
     reply: str, user_text: str, workspace_root: Path
 ) -> str:
-    """
-    Step 6: Conversational Proactive Tail.
-
-    Appends a short (1–2 sentence) context-aware follow-up hint to the reply
-    based on pure rule-based checks. NO LLM call. Returns the reply unchanged
-    if no condition is met.
-
-    Priority (first match wins):
-      1. Any undelivered high/critical watchdog alert
-      2. Task deadline within 2 hours
-      3. CodeAgent output contains fixed/error keywords → offer test run
-      4. TerminalAgent output contains install/installed → offer to launch it
-    """
+    """Append lightweight follow-up hints to a reply when useful."""
     try:
         tail = ""
         reply_lower = reply.lower()
 
-        # 1. Watchdog alerts
-        try:
-            from watchdog_manager import get_instance as _wdget  # type: ignore
-            _wdmgr = _wdget()
-            if _wdmgr is not None and hasattr(_wdmgr, "_pending_events"):
-                _alerts = [
-                    e for e in getattr(_wdmgr, "_pending_events", [])
-                    if getattr(e, "priority", "") in ("high", "critical")
-                ]
-                if _alerts:
-                    tail = f"\n\n⚠️ **Heads up** — {_alerts[0].message}"
-        except Exception:
-            pass
-
         if tail:
             return reply + tail
 
-        # 2. Deadline within 2 hours
+        # 1. Deadline within 2 hours
         try:
             from datetime import datetime as _dt
             from tools.task_ops import task_op as _task_op  # type: ignore
@@ -1075,17 +1234,6 @@ class Orchestrator:
         except Exception:
             pass
 
-        # ── MOOD ADAPTATION: update session mood from user message ───────────
-        try:
-            from tools.personality_engine import get_mood_tracker, apply_mood_to_messages
-            _mood_tracker = get_mood_tracker()
-            _mood_tracker.update(user_text, runtime=self.runtime)
-            _mood_directive = _mood_tracker.get_personality_directive()
-            apply_mood_to_messages(messages, _mood_directive)
-            _ms = _mood_tracker.current_state()
-            print(f"[Personality/Orchestrator] mood={_ms.primary} intensity={_ms.intensity:.2f}", flush=True)
-        except Exception as _pe_err:
-            print(f"[Personality/Orchestrator] ⚠️  Error: {_pe_err}", flush=True)
         # 1. Supervisor routes the request
         # Generate an interaction ID for FeedbackEngine tracking
         _interaction_id: Optional[str] = None
@@ -1132,7 +1280,7 @@ class Orchestrator:
 
         # Single GeneralAgent -> just use the full agent runtime (cheaper, faster)
         if agent_names == ["GeneralAgent"]:
-            return self._run_general(routing_text, messages)
+            return self._run_general(routing_text, messages, routing_reason=reasoning)
 
         # PLANNER AGENT: intercept and execute planned tasks
         if agent_names == ["PlannerAgent"]:
@@ -1141,13 +1289,19 @@ class Orchestrator:
         # Override lazy GeneralAgent routing: if the Supervisor chose only GeneralAgent
         # but the user text clearly maps to a specialist, re-route to the right agent.
 
-        # WATCHDOG AGENT: intercept and execute WATCHDOG_ACTION commands
-        if agent_names == ["WatchdogAgent"]:
-            return self._run_watchdog_agent(user_text, messages)
-
         specialists = [SPECIALIST_MAP[n] for n in agent_names if n in SPECIALIST_MAP]
         if not specialists:
-            return self._run_general(routing_text, messages)
+            return self._run_general(routing_text, messages, routing_reason=reasoning)
+
+        if len(specialists) == 1 and "capabilities" in reasoning.lower():
+            reply = self._run_specialist_capability_query(specialists[0], user_text)
+            self._append_to_messages(messages, user_text, reply)
+            try:
+                from memory import get_memory_manager
+                get_memory_manager(self.workspace_root).save("assistant", reply, interface="orchestrator")
+            except Exception:
+                pass
+            return reply
 
         # TIME LORD: Force sequential if a producer->consumer dependency is detected.
         # ASSEMBLY LINE: ContentAgent produces text -> FileAgent saves -> SystemAgent opens.
@@ -1197,8 +1351,8 @@ class Orchestrator:
                 )
             except Exception:
                 pass
-            # Step 6: Append proactive tail
-            reply = _check_and_append_proactive_tail(reply, user_text, self.workspace_root)
+            # Step 6: Append follow-up hint
+            reply = _append_follow_up_hint(reply, user_text, self.workspace_root)
             return reply
 
         # 4. Synthesize multiple results
@@ -1222,8 +1376,8 @@ class Orchestrator:
             )
         except Exception:
             pass
-        # Step 6: Append proactive tail
-        reply = _check_and_append_proactive_tail(reply, user_text, self.workspace_root)
+        # Step 6: Append follow-up hint
+        reply = _append_follow_up_hint(reply, user_text, self.workspace_root)
         return reply
 
     def _run_sequential_with_context(
@@ -1231,7 +1385,7 @@ class Orchestrator:
     ) -> List[Dict[str, Any]]:
         """Run specialists one by one, passing each result as context to the next.
 
-        Implements the full Hive Mind Protocol:
+        Implements the full sequential coordination protocol:
         - BATON PASS: Orchestrator sniffs artifacts (file paths, URLs) from each
           agent's reply and hands them explicitly to the next agent.
         - TELEPATHY: Prior context is injected directly into the next agent's
@@ -1315,7 +1469,7 @@ class Orchestrator:
 
             # BATON PASS: sniff this agent's reply for artifacts
             if reply:
-                artifacts = _extract_artifacts(reply)
+                artifacts = _merge_artifacts(reply, result.get("artifacts"))
                 # Build the Telepathy block for the next agent
                 prior_context_block = _build_prior_context_block(
                     result.get("agent", sp.name), reply, artifacts
@@ -1356,7 +1510,7 @@ class Orchestrator:
             reply = r.get("reply", "") or ""
             if not reply:
                 continue
-            artifacts = _extract_artifacts(reply)
+            artifacts = _merge_artifacts(reply, r.get("artifacts"))
             if not artifacts.get("handoffs"):
                 continue
             prior_context_block = _build_prior_context_block(r.get("agent", "Agent"), reply, artifacts)
@@ -1482,9 +1636,32 @@ class Orchestrator:
         except Exception:
             return combined
 
-    def _run_general(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
+    def _run_general(self, user_text: str, messages: List[Dict[str, Any]], routing_reason: str = "") -> str:
             """Fallback: use full AgentRuntime-style loop with all tools."""
             print(f"[Orchestrator._run_general] Starting with user_text: {user_text[:100]}...", flush=True)
+            capability_mode = _is_capability_routing_reason(routing_reason)
+            if capability_mode:
+                return self._run_capability_inventory(
+                    user_text=user_text,
+                    tool_specs=TOOL_SPECS,
+                    scope_label="A.N.K.I.T.A overall",
+                )
+            else:
+                direct_messages = list(messages)
+            direct_messages.append({"role": "user", "content": user_text})
+            try:
+                response = call_chat_once(self.runtime, direct_messages, tools=None, max_tokens=240)
+                result = (response.get("content") or "").strip()
+                if result:
+                    try:
+                        from memory import get_memory_manager
+                        get_memory_manager(self.workspace_root).save("assistant", result, interface="orchestrator")
+                    except Exception:
+                        pass
+                    print(f"[Orchestrator._run_general] Completed direct LLM reply", flush=True)
+                    return result
+            except Exception as err:
+                print(f"[Orchestrator._run_general] Direct LLM path failed: {err}", flush=True)
             from agent_runtime import AgentRuntime
             agent = AgentRuntime(runtime=self.runtime, workspace_root=self.workspace_root)
             messages.append({"role": "user", "content": user_text})
@@ -1504,74 +1681,62 @@ class Orchestrator:
                     messages.pop()
                 return f"[Error] {err}"
 
+    def _run_specialist_capability_query(self, specialist: SpecialistAgent, user_text: str) -> str:
+            """Answer domain capability questions from actual tool specs, not stale action history."""
+            return self._run_capability_inventory(
+                user_text=user_text,
+                tool_specs=specialist.tool_specs,
+                scope_label=specialist.name,
+            )
 
-    def _run_watchdog_agent(self, user_text: str, messages: List[Dict[str, Any]]) -> str:
-        """
-        Run WatchdogAgent: get LLM to parse the user's intent into a WATCHDOG_ACTION,
-        then execute it against the WatchdogManager singleton.
-        """
-        from .specialists import SPECIALIST_MAP
-        import re as _re
+    def _run_capability_inventory(
+        self,
+        user_text: str,
+        tool_specs: List[Dict[str, Any]],
+        scope_label: str,
+    ) -> str:
+            payload = []
+            for spec in tool_specs:
+                fn = spec.get("function", {})
+                payload.append(
+                    {
+                        "name": fn.get("name", ""),
+                        "description": fn.get("description", ""),
+                    }
+                )
+            messages = [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are summarizing capabilities from a real tool registry. "
+                        "Use ONLY the provided tools and descriptions. "
+                        "Do not invent abilities that are not supported by those tools. "
+                        "Group related capabilities together, keep it concise, and avoid slang. "
+                        "Mention representative tool names where useful."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(
+                        {
+                            "scope": scope_label,
+                            "question": user_text,
+                            "tools": payload,
+                        },
+                        ensure_ascii=False,
+                    ),
+                },
+            ]
+            try:
+                response = call_chat_once(self.runtime, messages, tools=None, max_tokens=420)
+                result = (response.get("content") or "").strip()
+                if result:
+                    return result
+            except Exception as err:
+                print(f"[Orchestrator._run_capability_inventory] Error: {err}", flush=True)
+            names = ", ".join(sorted(item["name"] for item in payload if item.get("name")))
+            return f"Available tools in {scope_label}: {names}"
 
-        specialist = SPECIALIST_MAP.get("WatchdogAgent")
-        if specialist is None:
-            return "[ERROR] WatchdogAgent not found."
-
-        # Get LLM response (WatchdogAgent has no tools - pure text output)
-        msg = specialist.make_messages(user_text)
-        try:
-            response = call_chat_once(self.runtime, msg, tools=None, max_tokens=512)
-            llm_reply = (response.get("content") or "").strip()
-        except Exception as err:
-            return f"[WatchdogAgent Error] {err}"
-
-        # Parse WATCHDOG_ACTION from LLM reply
-        action_match = _re.search(r"WATCHDOG_ACTION:\s*(.+?)(?:\n|$)", llm_reply)
-        if not action_match:
-            # No action found - just return the LLM reply as-is
-            self._append_to_messages(messages, user_text, llm_reply)
-            return llm_reply
-
-        action_line = action_match.group(1).strip()
-        parts = [p.strip() for p in action_line.split("|")]
-        action = parts[0] if parts else ""
-        action_result = ""
-
-        # Execute action against WatchdogManager via singleton registry
-        try:
-            import watchdog_manager as _wdm
-            mgr = _wdm.get_instance()
-            if mgr is None:
-                action_result = "[WARN] WatchdogManager not running yet - start ANKITA first."
-            elif action == "add_price_alert" and len(parts) >= 4:
-                symbol, condition_type, value = parts[1], parts[2], float(parts[3])
-                action_result = mgr.add_price_alert(symbol, condition_type, value)
-            elif action == "add_news_keyword" and len(parts) >= 2:
-                keyword = parts[1]
-                action_result = mgr.add_news_keyword(keyword)
-            elif action == "add_watch_dir" and len(parts) >= 2:
-                directory = parts[1]
-                action_result = mgr.add_watch_dir(directory)
-            elif action == "add_git_repo" and len(parts) >= 2:
-                repo_path = parts[1]
-                action_result = mgr.add_git_repo(repo_path)
-            elif action == "status":
-                action_result = mgr.status()
-            elif action == "stop" and len(parts) >= 2:
-                watcher_name = parts[1]
-                mgr.unregister(watcher_name)
-                action_result = f"[OK] Stopped watcher: {watcher_name}"
-            else:
-                action_result = f"[WARN] Unknown watchdog action: {action}"
-        except Exception as exc:
-            action_result = f"[ERROR] Watchdog error: {exc}"
-
-        # Build final reply: strip the raw WATCHDOG_ACTION line, append result
-        friendly = _re.sub(r"WATCHDOG_ACTION:.*?(?:\n|$)", "", llm_reply).strip()
-        final_reply = f"{action_result}\n\n{friendly}".strip() if friendly else action_result
-
-        self._append_to_messages(messages, user_text, final_reply)
-        return final_reply
 
     def _append_to_messages(
         self, messages: List[Dict[str, Any]], user_text: str, reply: str
@@ -1607,7 +1772,8 @@ class Orchestrator:
         planner_messages = planner_specialist.make_messages(user_text, history=conversation_history)
         
         try:
-            response = call_chat_once(self.runtime, planner_messages, tools=None, max_tokens=1500)
+            planner_runtime = get_agent_runtime("PlannerAgent", self.runtime)
+            response = call_chat_once(planner_runtime, planner_messages, tools=None, max_tokens=1500)
             plan_content = (response.get("content") or "").strip()
         except Exception as err:
             return f"❌ PlannerAgent failed: {err}"

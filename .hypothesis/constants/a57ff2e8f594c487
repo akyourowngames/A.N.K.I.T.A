@@ -1,4 +1,0 @@
-# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\notification_router.py
-# hypothesis_version: 6.151.6
-
-['%H:%M', ',', '-', '.ankita', ':', 'ANKITA_DND_HOURS', 'No active channels', '[CRITICAL]', '[HIGH]', '[INFO]', '[NOTE]', 'a', 'channels', 'chat.py', 'cli', 'cmdline', 'critical', 'delivered', 'dnd_mode', 'duplicate', 'error', 'formatted_messages', 'gui', 'gui.py', 'high', 'id', 'kind', 'low', 'medium', 'name', 'no_channels', 'notifications.jsonl', 'priority', 'python', 'r', 'skipped_reason', 'state', 'telegram', 'telegram_bot.py', 'timestamp', 'utf-8', 'ℹ️', '⚠️', '💡', '💬', '📢', '🚨']

@@ -37,7 +37,7 @@ class IntentionEngine:
     - Supervisor: Injects intent context into agent prompts
     - EnvironmentManager: Adjusts environment based on focus_mode
     - AnticipatoryActionSystem: Pre-executes actions based on intent
-    - MorningAgent: Includes intent in morning briefing
+    - Proactive systems: consume intent for planning and environment hints
     """
     
     def __init__(self, workspace_root: Path) -> None:
@@ -116,9 +116,8 @@ class IntentionEngine:
         Sources:
         - ChromaDB: Last 30 memory entries
         - task_ops: Pending tasks
-        - corn/store: Cron jobs for next 24 hours
+        - scheduler state: Scheduled jobs for next 24 hours
         - git: Recent commits (last 10)
-        - watchdog_manager: Watchdog states
         
         Returns:
             Dictionary containing all gathered context
@@ -149,36 +148,10 @@ class IntentionEngine:
         except Exception as e:
             print(f"[IntentionEngine] ⚠️  Failed to gather tasks: {e}", flush=True)
         
-        # Gather cron jobs for next 24 hours
         try:
-            from corn.store import load_store
-            jobs_file = self.workspace_root / ".ankita" / "corn" / "jobs.json"
-            if jobs_file.exists():
-                store = load_store(jobs_file)
-                jobs = store.get("jobs", [])
-                
-                now_ms = time.time() * 1000
-                next_24h_ms = now_ms + (24 * 60 * 60 * 1000)
-                
-                upcoming_jobs = []
-                for job in jobs:
-                    if not isinstance(job, dict):
-                        continue
-                    if not job.get("enabled", True):
-                        continue
-                    
-                    state = job.get("state", {})
-                    next_run = state.get("next_run_at_ms")
-                    if next_run and now_ms <= next_run <= next_24h_ms:
-                        upcoming_jobs.append({
-                            "name": job.get("name", job.get("id", "unknown")),
-                            "task": job.get("task", ""),
-                            "next_run": datetime.fromtimestamp(next_run / 1000).isoformat(),
-                        })
-                
-                context["cron_jobs_24h"] = upcoming_jobs
+            context["cron_jobs_24h"] = self._load_scheduled_jobs()
         except Exception as e:
-            print(f"[IntentionEngine] ⚠️  Failed to gather cron jobs: {e}", flush=True)
+            print(f"[IntentionEngine] ⚠️  Failed to gather scheduled jobs: {e}", flush=True)
         
         # Gather recent git commits (last 10)
         try:
@@ -279,7 +252,6 @@ class IntentionEngine:
         cron_section = self._format_cron_jobs(context["cron_jobs_24h"])
         git_section = self._format_git_commits(context["recent_git_commits"])
         watchdog_section = self._format_watchdog_states(context["watchdog_states"])
-        
         prompt = f"""Analyze this user context and produce a daily intent model.
 
 CONTEXT:
@@ -357,6 +329,10 @@ Output JSON only:"""
             lines.append(f"  {name}: {task} (at {next_run})")
         
         return "\n".join(lines) if lines else "  (No scheduled jobs in next 24 hours)"
+
+    def _load_scheduled_jobs(self) -> List[Dict[str, Any]]:
+        """Return upcoming scheduled jobs if the workspace exposes them."""
+        return []
     
     def _format_git_commits(self, commits: List[str]) -> str:
         """Format git commits for prompt."""
@@ -365,7 +341,7 @@ Output JSON only:"""
         
         lines = [f"  {commit}" for commit in commits[:10]]
         return "\n".join(lines) if lines else "  (No recent git activity)"
-    
+
     def _format_watchdog_states(self, states: Dict[str, Any]) -> str:
         """Format watchdog states for prompt."""
         if not states:

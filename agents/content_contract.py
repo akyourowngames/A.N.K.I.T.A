@@ -5,8 +5,8 @@ from typing import Any, Dict, List, Optional, Tuple
 
 _START = "CONTENT_PAYLOAD_V1"
 _END = "CONTENT_PAYLOAD_V1_END"
-_TASK_TYPES = {"poem", "email", "report", "script", "article", "other"}
 _FORMATS = {"markdown", "plain_text"}
+_TASK_TYPE_RE = re.compile(r"^[a-z][a-z0-9_ -]{1,63}$")
 
 
 def parse_content_payload(text: str) -> Optional[Dict[str, Any]]:
@@ -62,7 +62,7 @@ def validate_content_payload(payload: Optional[Dict[str, Any]]) -> Tuple[bool, L
         errors.append("Extra text exists outside CONTENT_PAYLOAD_V1 envelope")
 
     task_type = str(payload.get("task_type", "")).strip().lower()
-    if task_type not in _TASK_TYPES:
+    if not task_type or not _TASK_TYPE_RE.fullmatch(task_type):
         errors.append(f"Invalid TASK_TYPE: {task_type!r}")
 
     fmt = str(payload.get("format", "")).strip().lower()

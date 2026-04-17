@@ -13,7 +13,6 @@ import requests
 from dotenv import load_dotenv
 
 from agent_runtime import AgentRuntime, new_session
-from corn import CornRunner
 from llm import build_runtime_from_env
 
 WORKSPACE_ROOT = Path.cwd().resolve()
@@ -318,15 +317,6 @@ def main() -> None:
     sessions: Dict[str, List[Dict[str, Any]]] = {}
     sessions_lock = threading.Lock()
 
-    runner: CornRunner | None = None
-    if _env_bool("CORN_AUTO_RUN", True):
-        runner = CornRunner(
-            workspace_root=WORKSPACE_ROOT,
-            poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
-            max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
-        )
-        runner.start()
-
     class Handler(BaseHTTPRequestHandler):
         def address_string(self) -> str:
             # Avoid reverse-DNS lookups that can block local responses on some Windows setups.
@@ -421,7 +411,7 @@ def main() -> None:
     print(f"Model: {runtime.model}")
     print(f"Workspace: {WORKSPACE_ROOT}")
     print(f"URL: http://{host}:{port}")
-    print(f"Corn scheduler: {'ON' if runner is not None else 'OFF'}")
+    print("Scheduler: OFF")
 
     try:
         server.serve_forever(poll_interval=0.5)
@@ -429,8 +419,6 @@ def main() -> None:
         print("\nStopping voice gateway.")
     finally:
         server.server_close()
-        if runner is not None:
-            runner.stop()
 
 
 if __name__ == "__main__":

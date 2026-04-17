@@ -2,6 +2,7 @@ import comtypes
 import comtypes.client
 import ctypes
 import os
+import shutil
 import subprocess
 import time
 from pathlib import Path
@@ -11,9 +12,20 @@ from typing import Any, Dict, Optional
 # Helpers
 # ---------------------------------------------------------------------------
 
+def _powershell_exe() -> str:
+    for name in ("powershell.exe", "powershell", "pwsh.exe", "pwsh"):
+        found = shutil.which(name)
+        if found:
+            return found
+    if os.name == "nt":
+        legacy = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "WindowsPowerShell" / "v1.0" / "powershell.exe"
+        if legacy.exists():
+            return str(legacy)
+    raise FileNotFoundError("No PowerShell executable found (tried powershell.exe and pwsh.exe)")
+
 def _run_powershell(script: str, timeout: int = 15) -> Dict[str, Any]:
     out = subprocess.run(
-        ["powershell", "-NoProfile", "-Command", script],
+        [_powershell_exe(), "-NoProfile", "-Command", script],
         capture_output=True,
         text=True,
         shell=False,
@@ -141,16 +153,50 @@ def _ensure_windows() -> None:
         raise RuntimeError("system_control is currently supported on Windows only")
 
 
-def _safe_out_path(workspace_root: Optional[Path], raw_path: str) -> Path:
+def _is_relative_to(path: Path, root: Path) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
+
+
+def _safe_out_path(workspace_root: Optional[Path], raw_path: str, default_relative: str) -> Path:
     base = workspace_root.resolve() if workspace_root is not None else Path.cwd().resolve()
+    default_target = (base / default_relative).resolve()
     value = str(raw_path or "").strip().strip("\"'")
-    target = (base / value).resolve() if value else base
-    target.parent.mkdir(parents=True, exist_ok=True)
-    if workspace_root is not None:
+    if not value:
+        default_target.parent.mkdir(parents=True, exist_ok=True)
+        return default_target
+
+    candidate = Path(os.path.expandvars(value)).expanduser()
+    target = (base / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
+
+    allowed_roots = [base]
+    try:
+        allowed_roots.append(Path.home().resolve())
+    except Exception:
+        pass
+    user_profile = os.environ.get("USERPROFILE", "").strip()
+    if user_profile:
+        try:
+            allowed_roots.append(Path(user_profile).expanduser().resolve())
+        except Exception:
+            pass
+
+    parent = target.parent
+    if candidate.is_absolute() and not parent.exists():
+        if not any(_is_relative_to(target, root) for root in allowed_roots):
+            default_target.parent.mkdir(parents=True, exist_ok=True)
+            return default_target
+
+    if workspace_root is not None and not candidate.is_absolute():
         try:
             target.relative_to(base)
         except ValueError as err:
             raise ValueError(f"path escapes workspace: {raw_path}") from err
+
+    parent.mkdir(parents=True, exist_ok=True)
     return target
 
 
@@ -457,7 +503,7 @@ def system_control(
     elif op == "screenshot":
         stamp = int(time.time())
         default_name = f"screenshots/screenshot-{stamp}.png"
-        out_path = _safe_out_path(workspace_root, path or default_name)
+        out_path = _safe_out_path(workspace_root, path or "", default_name)
         escaped = str(out_path).replace("'", "''")
         script = (
             "Add-Type -AssemblyName System.Windows.Forms; "
@@ -669,7 +715,10 @@ def system_control(
         "exit_code": res["exit_code"],
     }
     if op == "screenshot" and ok:
-        out["path"] = res["stdout"]
+        screenshot_path = str(res["stdout"]).strip()
+        out["path"] = screenshot_path
+        out["absolute_path"] = screenshot_path
+        out["FILE_PATH"] = screenshot_path
     return out
 
 

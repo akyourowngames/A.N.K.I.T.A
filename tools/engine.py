@@ -8,7 +8,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from memory import get_memory_manager
 
 from . import content_ops
-from . import cron_ops
+from . import code_writer_ops
 from . import deep_research as deep_research_mod
 from . import desktop_ops
 from . import fs_ops
@@ -19,8 +19,6 @@ from . import terminal_ops
 from . import sheets_ops
 from . import youtube_ops
 from . import figma_ops
-from . import whatsapp_ops
-from . import contacts_ops
 from . import camera_ops
 from . import app_manager
 from . import voice_ops
@@ -82,38 +80,6 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
     # FileAgent gets unrestricted access to the entire PC
     unrestricted = (agent_name == "FileAgent")
     
-    if name == "lookup_contact":
-        return contacts_ops.lookup_contact(name=str(args.get("name", "")))
-
-    if name == "add_contact":
-        return contacts_ops.add_contact(
-            name=str(args.get("name", "")),
-            phone=str(args.get("phone", "")),
-        )
-
-    if name == "remove_contact":
-        return contacts_ops.remove_contact(name=str(args.get("name", "")))
-
-    if name == "list_contacts":
-        return contacts_ops.list_contacts()
-
-    if name == "send_whatsapp":
-        return whatsapp_ops.send_whatsapp(
-            phone=str(args.get("phone", "")),
-            message=str(args.get("message", "")),
-            wait=int(args.get("wait", 10)),
-        )
-    if name == "cron":
-        return cron_ops.cron_action(
-            workspace_root=workspace_root,
-            action=str(args.get("action", "")),
-            job=args.get("job") if isinstance(args.get("job"), dict) else None,
-            job_id=str(args.get("job_id", "")) if args.get("job_id") is not None else None,
-            patch=args.get("patch") if isinstance(args.get("patch"), dict) else None,
-            include_disabled=bool(args.get("include_disabled", False)),
-            mode=str(args.get("mode", "due")),
-            limit=int(args.get("limit", 20)),
-        )
     if name == "remember":
         mem = get_memory_manager(workspace_root)
         key = str(args.get("key", "")).strip()
@@ -227,6 +193,11 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             args=[str(v) for v in (args.get("args") or [])] if isinstance(args.get("args"), list) else None,
             cwd=str(args.get("cwd")) if args.get("cwd") is not None else None,
         )
+    if name == "open_path":
+        return terminal_ops.open_path(
+            workspace_root,
+            path=str(args.get("path", "")),
+        )
     if name == "execute_shell":
         return terminal_ops.execute_shell_command(
             command=str(args.get("command", "")),
@@ -240,6 +211,13 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             glob=str(args.get("glob")) if args.get("glob") is not None else None,
             max_results=int(args.get("max_results", 50)),
             case_sensitive=bool(args.get("case_sensitive", False)),
+        )
+    if name == "resolve_local_target":
+        return terminal_ops.resolve_local_target(
+            query=str(args.get("query", "")),
+            roots=[str(item) for item in args.get("roots", [])] if isinstance(args.get("roots"), list) else None,
+            extensions=[str(item) for item in args.get("extensions", [])] if isinstance(args.get("extensions"), list) else None,
+            max_results=int(args.get("max_results", 10)),
         )
     if name == "run_command":
         env = args.get("env")
@@ -269,6 +247,10 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             port=int(args.get("port")) if args.get("port") is not None else None,
             pid=int(args.get("pid")) if args.get("pid") is not None else None,
         )
+
+    # ── Self-Introspection API ────────────────────────────────────────────
+    if name == "introspect_tools":
+        return _introspect_tools(args)
 
     # ── Autonomous Ops ────────────────────────────────────────────────────
     if name == "discover_tools":
@@ -671,6 +653,16 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             extra_context=str(args.get("extra_context", "")),
             output_dir=str(args.get("output_dir")) if args.get("output_dir") else None,
         )
+    if name == "write_code_artifact":
+        return code_writer_ops.write_code_artifact(
+            workspace_root=workspace_root,
+            task=str(args.get("task", "")),
+            artifact_type=str(args.get("artifact_type", "")),
+            extra_context=str(args.get("extra_context", "")),
+            output_dir=str(args.get("output_dir")) if args.get("output_dir") else None,
+            filename=str(args.get("filename")) if args.get("filename") else None,
+            framework=str(args.get("framework", "")),
+        )
     if name == "capture_screen":
         return desktop_ops.capture_screen(
             monitor=int(args.get("monitor", 1)),
@@ -857,11 +849,149 @@ def _call(name: str, args: Dict[str, Any], workspace_root: Path, agent_name: Opt
             prompt=str(args.get("prompt", "")),
             width=int(args.get("width", 1024)),
             height=int(args.get("height", 1024)),
-            model=str(args.get("model", "flux")),
+            model=str(args.get("model", "")),
             output_path=str(args.get("output_path")) if args.get("output_path") else None,
+            style=str(args.get("style")) if args.get("style") else None,
         )
 
+    # ── Self-Introspection Implementation ─────────────────────────────────
+    if name == "introspect_tools":
+        return _introspect_tools(args)
+
     raise ValueError(f"Unknown tool: {name}")
+
+
+def _introspect_tools(args: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Self-introspection API — allows any agent to query the system's own capabilities.
+    
+    This is the KEY feature for tool-awareness: the system can inspect itself.
+    
+    Actions:
+        - manifest: Full capability manifest (all agents + tools)
+        - agent_info: Details about a specific agent
+        - tool_lookup: Which agents have access to a specific tool
+        - suggest: Suggest agents for a natural-language task
+        - metrics: Execution metrics for all tools
+        - health: System health (circuit breakers, failure rates)
+    """
+    action = str(args.get("action", "manifest")).strip().lower()
+    
+    if action == "manifest":
+        try:
+            from agents.planner import get_capability_manifest
+            manifest = get_capability_manifest()
+            return {
+                "ok": True,
+                "kind": "introspection",
+                "action": "manifest",
+                "total_agents": manifest["total_agents"],
+                "total_tools": manifest["total_tools"],
+                "agent_names": manifest["agent_names"],
+                "agents": {
+                    name: {
+                        "tool_count": info["tool_count"],
+                        "capabilities": info["capabilities"],
+                        "tools": info["tools"][:20],  # Cap at 20 for readability
+                    }
+                    for name, info in manifest["agents"].items()
+                },
+            }
+        except Exception as err:
+            return {"ok": False, "error": f"Manifest unavailable: {err}"}
+    
+    if action == "agent_info":
+        agent_name = str(args.get("agent_name", "")).strip()
+        if not agent_name:
+            return {"ok": False, "error": "agent_name parameter required"}
+        try:
+            from agents.planner import get_capability_manifest
+            manifest = get_capability_manifest()
+            info = manifest["agents"].get(agent_name)
+            if not info:
+                return {"ok": False, "error": f"Agent '{agent_name}' not found. Available: {manifest['agent_names']}"}
+            return {
+                "ok": True,
+                "kind": "introspection",
+                "action": "agent_info",
+                "agent": agent_name,
+                "tool_count": info["tool_count"],
+                "capabilities": info["capabilities"],
+                "tools": info["tools"],
+            }
+        except Exception as err:
+            return {"ok": False, "error": str(err)}
+    
+    if action == "tool_lookup":
+        tool_name = str(args.get("tool_name", "")).strip()
+        if not tool_name:
+            return {"ok": False, "error": "tool_name parameter required"}
+        try:
+            from agents.planner import get_capability_manifest
+            manifest = get_capability_manifest()
+            agents_with_tool = manifest["tool_to_agents"].get(tool_name, [])
+            return {
+                "ok": True,
+                "kind": "introspection",
+                "action": "tool_lookup",
+                "tool": tool_name,
+                "available_in_agents": agents_with_tool,
+                "count": len(agents_with_tool),
+            }
+        except Exception as err:
+            return {"ok": False, "error": str(err)}
+    
+    if action == "suggest":
+        task = str(args.get("task", "")).strip()
+        if not task:
+            return {"ok": False, "error": "task parameter required"}
+        try:
+            from agents.planner import get_tools_for_task
+            suggested = get_tools_for_task(task)
+            return {
+                "ok": True,
+                "kind": "introspection",
+                "action": "suggest",
+                "task": task,
+                "suggested_agents": suggested,
+            }
+        except Exception as err:
+            return {"ok": False, "error": str(err)}
+    
+    if action == "metrics":
+        return {
+            "ok": True,
+            "kind": "introspection",
+            "action": "metrics",
+            "tool_metrics": get_tool_metrics(),
+        }
+    
+    if action == "health":
+        # Report circuit breaker states and tool health
+        metrics = get_tool_metrics()
+        health_report = {}
+        for tool_name, m in metrics.items():
+            calls = m.get("calls", 0)
+            success = m.get("success", 0)
+            fail = m.get("fail", 0)
+            success_rate = (success / calls * 100) if calls > 0 else 0
+            avg_latency = (m.get("total_ms", 0) / calls) if calls > 0 else 0
+            health_report[tool_name] = {
+                "calls": calls,
+                "success_rate": f"{success_rate:.1f}%",
+                "avg_latency_ms": f"{avg_latency:.0f}",
+                "failures": fail,
+                "circuit_open": _check_circuit_breaker(tool_name),
+            }
+        return {
+            "ok": True,
+            "kind": "introspection",
+            "action": "health",
+            "tool_health": health_report,
+            "total_tools_tracked": len(metrics),
+        }
+    
+    return {"ok": False, "error": f"Unknown introspect action: {action}. Valid: manifest, agent_info, tool_lookup, suggest, metrics, health"}
 
 
 # ── PRISM PROTOCOL v2 — Adaptive Tool Result Budget (OpenClaw-inspired) ──────
@@ -999,8 +1129,8 @@ _TRANSIENT_CATEGORIES = frozenset({"rate_limit", "network", "timeout"})
 _SAFE_TO_RETRY = frozenset({
     "search_web", "search_news", "search_price", "search_and_fetch",
     "fetch_page_content", "search_music", "read_file", "read_file_lines",
-    "list_files", "file_info", "search_text", "recall", "lookup_contact",
-    "list_contacts", "current_music", "show_queue", "discover_tools",
+    "list_files", "file_info", "search_text", "recall",
+    "current_music", "show_queue", "discover_tools",
     "workspace_scan", "code_analysis", "process_op", "git_op",
     "fast_file_search", "pc_search", "disk_analysis", "diff_files",
     "sheets_op", "youtube_op", "figma_op", "maps_op", "image_search",
@@ -1012,7 +1142,7 @@ _SAFE_TO_RETRY = frozenset({
 # Tools that modify state — retry only on transient errors, with caution
 _WRITE_TOOLS_RETRY_ON_TRANSIENT = frozenset({
     "write_file", "edit_file", "edit_file_lines", "execute_shell",
-    "run_command", "send_whatsapp", "remember", "apply_patch",
+    "run_command", "remember", "apply_patch",
     "generate_and_run_script", "execute_pipeline",
 })
 
@@ -1312,73 +1442,6 @@ def _format_result(result: Dict[str, Any]) -> str:
         lines.append(f"stderr: {result.get('stderr', '')}")
         return "\n".join(lines).strip()
 
-    if isinstance(result, dict) and result.get("kind") == "cron_status":
-        return (
-            f"Cron status\n"
-            f"- jobs_total: {result.get('jobs_total', 0)}\n"
-            f"- jobs_enabled: {result.get('jobs_enabled', 0)}\n"
-            f"- jobs_due_now: {result.get('jobs_due_now', 0)}"
-        )
-
-    if isinstance(result, dict) and result.get("kind") == "cron_list":
-        jobs = result.get("jobs", [])
-        if not isinstance(jobs, list):
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        lines = [f"Cron jobs: {len(jobs)}"]
-        for row in jobs[:40]:
-            if not isinstance(row, dict):
-                continue
-            jid = row.get("id", "")
-            name = row.get("name", "")
-            enabled = bool(row.get("enabled", True))
-            next_at = row.get("state", {}).get("next_run_at_ms") if isinstance(row.get("state"), dict) else None
-            lines.append(f"- {jid} | {name} | enabled={enabled} | next={next_at}")
-        if len(jobs) > 40:
-            lines.append("... [truncated in display]")
-        return "\n".join(lines)
-
-    if isinstance(result, dict) and result.get("kind") == "cron_job":
-        action = str(result.get("action", ""))
-        job = result.get("job", {})
-        if not isinstance(job, dict):
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        return (
-            f"Cron {action} complete\n"
-            f"- id: {job.get('id', '')}\n"
-            f"- name: {job.get('name', '')}\n"
-            f"- enabled: {bool(job.get('enabled', True))}\n"
-            f"- next_run_at_ms: {job.get('state', {}).get('next_run_at_ms') if isinstance(job.get('state'), dict) else None}"
-        )
-
-    if isinstance(result, dict) and result.get("kind") in {"cron_run", "cron_run_due", "cron_runs"}:
-        if result.get("kind") == "cron_run":
-            return (
-                f"Cron run\n"
-                f"- job_id: {result.get('job_id', '')}\n"
-                f"- status: {result.get('status', '')}\n"
-                f"- duration_ms: {result.get('duration_ms', '')}\n"
-                f"- error: {result.get('error', '')}"
-            )
-        if result.get("kind") == "cron_run_due":
-            ran = result.get("ran", [])
-            if not isinstance(ran, list):
-                return json.dumps(result, ensure_ascii=False, indent=2)
-            lines = [f"Cron run_due executed: {len(ran)}"]
-            for row in ran[:40]:
-                if not isinstance(row, dict):
-                    continue
-                lines.append(f"- {row.get('job_id', '')}: {row.get('status', '')} ({row.get('duration_ms', '')} ms)")
-            return "\n".join(lines)
-        rows = result.get("runs", [])
-        if not isinstance(rows, list):
-            return json.dumps(result, ensure_ascii=False, indent=2)
-        lines = [f"Cron runs for {result.get('job_id', '')}: {len(rows)}"]
-        for row in rows[:40]:
-            if not isinstance(row, dict):
-                continue
-            lines.append(f"- {row.get('ts_ms', '')}: {row.get('status', '')} {row.get('error', '')}")
-        return "\n".join(lines)
-
     if isinstance(result, dict) and result.get("kind") == "page_content":
         if not bool(result.get("ok")):
             return f"[FETCH FAILED] {result.get('url', '')}\nreason: {result.get('reason', 'unknown')}"
@@ -1451,6 +1514,23 @@ def _format_result(result: Dict[str, Any]) -> str:
         requested = result.get("requested", "")
         return f"[CLOSED] requested={requested} process={proc}".strip()
 
+    if isinstance(result, dict) and result.get("kind") == "resolve_local_target":
+        if not bool(result.get("ok", False)):
+            return f"[FAILED] {result.get('error', 'could not resolve local target')}".strip()
+        best_path = str(result.get("best_path", "")).strip()
+        confidence = str(result.get("confidence", "")).strip()
+        results = result.get("results", [])
+        lines = [f"[RESOLVED] confidence={confidence or 'unknown'}"]
+        if best_path:
+            lines.append(f"path: {best_path}")
+        for item in results[:5] if isinstance(results, list) else []:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                f"- {item.get('name', '')} | score={item.get('score', 0)} | {item.get('path', '')}".rstrip()
+            )
+        return "\n".join(lines).strip()
+
     if isinstance(result, dict) and result.get("launched") is True:
         app = result.get("app", "")
         pid = result.get("pid", "")
@@ -1458,6 +1538,46 @@ def _format_result(result: Dict[str, Any]) -> str:
         args = result.get("args", [])
         args_text = " ".join(str(a) for a in args) if isinstance(args, list) else ""
         return f"[LAUNCHED] {app} {args_text}\npid: {pid}\ncwd: {cwd}".strip()
+
+    if isinstance(result, dict) and ("opened" in result or "already_opened" in result):
+        path = result.get("FILE_PATH") or result.get("absolute_path") or result.get("path", "")
+        state = "ALREADY_OPEN" if bool(result.get("already_opened")) else "OPENED"
+        lines = [f"[{state}]"]
+        if path:
+            lines.append(f"path: {path}")
+        launcher = str(result.get("launcher", "")).strip()
+        if launcher:
+            lines.append(f"launcher: {launcher}")
+        return "\n".join(lines).strip()
+
+    if isinstance(result, dict) and str(result.get("status", "")).strip().lower() == "success" and result.get("FILE_PATH"):
+        path = result.get("FILE_PATH") or result.get("absolute_path") or result.get("path", "")
+        provider = str(result.get("provider", "")).strip()
+        model = str(result.get("model", "")).strip()
+        bytes_written = result.get("bytes")
+        label = "GENERATED_ASSET" if provider else "FILE_READY"
+        lines = [f"[{label}]"]
+        if path:
+            lines.append(f"path: {path}")
+        if provider:
+            lines.append(f"provider: {provider}")
+        if model:
+            lines.append(f"model: {model}")
+        if bytes_written is not None:
+            lines.append(f"bytes: {bytes_written}")
+        return "\n".join(lines).strip()
+
+    if isinstance(result, dict) and str(result.get("status", "")).strip().lower() == "error":
+        message = str(result.get("message", "")).strip()
+        if message:
+            return f"[FAILED] {message}"
+
+    if isinstance(result, dict) and result.get("ok") is False and result.get("error"):
+        tool_name = str(result.get("tool", "")).strip()
+        error_text = str(result.get("error", "")).strip()
+        if tool_name:
+            return f"[FAILED] {tool_name}\nerror: {error_text}".strip()
+        return f"[FAILED] {error_text}"
 
     if isinstance(result, dict) and "argv" in result and "exit_code" in result:
         ok = bool(result.get("ok"))
@@ -1663,19 +1783,6 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
     if has_window and has_restore:
         return ("system_control", {"action": "window_restore_all", "amount": 1})
 
-    if tokens[0] == "cron":
-        if len(tokens) == 1:
-            return ("cron", {"action": "status"})
-        action = tokens[1]
-        if action in {"status", "list"}:
-            return ("cron", {"action": action})
-        if action in {"run", "remove", "runs"}:
-            if len(words) < 3:
-                return ("__run_help", {"message": f"Usage: cron {action} <job_id>"})
-            return ("cron", {"action": action, "job_id": words[2].strip()})
-        if action == "due":
-            return ("cron", {"action": "run_due"})
-
     if tokens[0] in {"close", "kill", "stop", "terminate", "quit"}:
         if len(words) == 1:
             return (
@@ -1729,13 +1836,10 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
             normalized_path = _normalize_human_path(target_text)
             try:
                 resolved = fs_ops.resolve_safe_path(workspace_root, normalized_path)
-                if resolved.exists() and resolved.is_file():
-                    return ("read_file", {"path": normalized_path})
+                if resolved.exists():
+                    return ("open_path", {"path": str(resolved)})
             except Exception:
                 pass
-            # If user mentions an extension-like token, prefer file read attempt.
-            if "." in Path(normalized_path).name and " " not in Path(normalized_path).name:
-                return ("read_file", {"path": normalized_path})
             return ("launch_app", {"app": target_text, "args": []})
 
     if tokens[0] in {"run", "exec", "execute", "cmd"}:
@@ -1765,7 +1869,7 @@ def _parse_local_intent(user_text: str, workspace_root: Path) -> Optional[Tuple[
     if has_list and has_files:
         return ("list_files", {"path": _first_path_after_prep(words), "max_entries": 300})
 
-    if tokens[0] in {"read", "open", "cat"} and len(words) > 1:
+    if tokens[0] in {"read", "cat"} and len(words) > 1:
         return ("read_file", {"path": _normalize_human_path(" ".join(words[1:]))})
 
     has_search = any(_match(t, ["search", "find", "grep", "contains", "lookup"], 0.72) for t in tokens)

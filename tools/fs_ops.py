@@ -3,6 +3,7 @@ import shutil
 import subprocess
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
+import ctypes
 
 DEFAULT_IGNORE_DIRS = {
     ".git",
@@ -13,6 +14,84 @@ DEFAULT_IGNORE_DIRS = {
     ".mypy_cache",
     ".pytest_cache",
 }
+
+
+def _known_folder(csidl: int, fallback: Path) -> Path:
+    if os.name != "nt":
+        return fallback
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        result = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        if result == 0 and buf.value:
+            return Path(buf.value)
+    except Exception:
+        pass
+    return fallback
+
+
+_SPECIAL_FOLDER_MAP = {
+    (Path.home() / "Desktop").resolve(): _known_folder(0x10, Path.home() / "Desktop").resolve(),
+    (Path.home() / "Documents").resolve(): _known_folder(0x05, Path.home() / "Documents").resolve(),
+    (Path.home() / "Pictures").resolve(): _known_folder(0x27, Path.home() / "Pictures").resolve(),
+}
+
+
+def _rebase_special_folder(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    raw = str(path)
+    raw_lower = raw.lower()
+    for source_root, actual_root in _SPECIAL_FOLDER_MAP.items():
+        source_text = str(source_root)
+        if source_root == actual_root:
+            continue
+        source_lower = source_text.lower()
+        if raw_lower == source_lower:
+            return actual_root
+        prefix = source_lower + "\\"
+        if raw_lower.startswith(prefix):
+            suffix = raw[len(source_text):].lstrip("\\/")
+            return actual_root / suffix if suffix else actual_root
+    return path
+
+
+def _known_folder(csidl: int, fallback: Path) -> Path:
+    if os.name != "nt":
+        return fallback
+    try:
+        buf = ctypes.create_unicode_buffer(260)
+        result = ctypes.windll.shell32.SHGetFolderPathW(None, csidl, None, 0, buf)
+        if result == 0 and buf.value:
+            return Path(buf.value)
+    except Exception:
+        pass
+    return fallback
+
+
+_SPECIAL_FOLDER_MAP = {
+    (Path.home() / "Desktop").resolve(): _known_folder(0x10, Path.home() / "Desktop").resolve(),
+    (Path.home() / "Documents").resolve(): _known_folder(0x05, Path.home() / "Documents").resolve(),
+    (Path.home() / "Pictures").resolve(): _known_folder(0x27, Path.home() / "Pictures").resolve(),
+}
+
+
+def _rebase_special_folder(path: Path) -> Path:
+    if os.name != "nt":
+        return path
+    raw = str(path)
+    raw_lower = raw.lower()
+    for source_root, actual_root in _SPECIAL_FOLDER_MAP.items():
+        source_text = str(source_root)
+        if source_root == actual_root:
+            continue
+        source_lower = source_text.lower()
+        if raw_lower == source_lower:
+            return actual_root
+        prefix = source_lower + "\\"
+        if raw_lower.startswith(prefix):
+            suffix = raw[len(source_text):].lstrip("\\/")
+            return actual_root / suffix if suffix else actual_root
+    return path
 
 
 def resolve_safe_path(workspace_root: Path, raw_path: str) -> Path:
@@ -71,13 +150,13 @@ def resolve_any_path(raw_path: str) -> Path:
     
     # If absolute, use it directly
     if candidate.is_absolute():
-        resolved = candidate.resolve()
+        resolved = _rebase_special_folder(candidate.resolve())
     # If starts with ~, expand to home
     elif expanded.startswith("~"):
-        resolved = Path(expanded).expanduser().resolve()
+        resolved = _rebase_special_folder(Path(expanded).expanduser().resolve())
     # Otherwise, resolve against home directory (not workspace)
     else:
-        resolved = (Path.home() / expanded).resolve()
+        resolved = _rebase_special_folder((Path.home() / expanded).resolve())
     
     # SAFETY CHECK: Block dangerous system paths
     resolved_str = str(resolved)
@@ -468,7 +547,7 @@ def write_file(workspace_root: Path, path: str, content: str, overwrite: bool = 
 
     # Absolute path (Desktop saves, etc.) — use directly without workspace restriction
     if candidate.is_absolute():
-        target = candidate.resolve()
+        target = _rebase_special_folder(candidate.resolve())
     else:
         target = resolve_safe_path(workspace_root, raw_path)
 

@@ -15,6 +15,121 @@ import re
 from typing import Any, Dict, List
 
 from llm import LLMRuntime, call_chat_once
+from llm.agent_router import get_agent_runtime
+
+
+_AMBIGUOUS_FOLLOWUP_PROMPT = """You resolve short ambiguous follow-up messages.
+
+Task:
+- Read the recent conversation and the latest user message.
+- Decide whether the latest user message means:
+  1. "global_capabilities" -> the user is asking about ANKITA's broader abilities/tools overall
+  2. "same_domain" -> the user is still asking within the previous specialist's domain
+  3. "other" -> neither of the above
+
+Rules:
+- Messages like "what else", "anything else", "more", "what can you do" often mean global capabilities.
+- But if the latest user message explicitly mentions a domain (music, files, code, figma, tasks, screenshot, etc.), classify as same_domain.
+- Prefer global_capabilities when the latest message is broad/open-ended and does not explicitly keep the prior domain scope.
+- Do not anchor too hard on the previous specialist if the newest message is broader.
+
+Respond ONLY with JSON:
+{"mode":"global_capabilities|same_domain|other","reasoning":"..."}
+"""
+
+_AMBIGUOUS_CAPABILITY_RE = re.compile(
+    r"(?i)^\s*("
+    r"what\s+else"
+    r"|anything\s+else"
+    r"|more"
+    r"|what\s+can\s+you\s+do"
+    r"|what\s+else\s+can\s+you\s+do"
+    r"|what\s+tools(?:\s+do\s+you\s+have)?"
+    r"|show\s+(?:your\s+)?capabilities"
+    r"|capabilities"
+    r"|abilities"
+    r"|tools"
+    r")\s*[?.!]*\s*$"
+)
+
+_EXPLICIT_PATH_RE = re.compile(r"(?i)(?:[A-Z]:\\|/|\\)")
+_LOCAL_DISCOVERY_HINT_RE = re.compile(
+    r"(?i)\b(file|folder|path|directory|report|screenshot|image|photo|picture|document|pdf|txt|log|desktop|downloads|documents|project|repo)\b"
+)
+_LOCAL_DISCOVERY_ACTION_RE = re.compile(
+    r"(?i)\b(find|locate|where|search|look\s+for|show|open|view|launch|list)\b"
+)
+_NEW_LOCAL_ARTIFACT_ACTION_RE = re.compile(r"(?i)\b(take|capture|generate|create|make)\b")
+_NEW_LOCAL_ARTIFACT_HINT_RE = re.compile(r"(?i)\b(screenshot|snapshot|image|photo|picture|selfie)\b")
+
+
+def _needs_followup_disambiguation(user_text: str, history: Optional[List[Dict[str, Any]]]) -> bool:
+    if not history:
+        return False
+    text = str(user_text or "").strip()
+    if not text:
+        return False
+    words = [w for w in re.split(r"\s+", text) if w]
+    if not (0 < len(words) <= 6):
+        return False
+    return bool(_AMBIGUOUS_CAPABILITY_RE.match(text))
+
+
+def _resolve_followup_scope(
+    runtime: LLMRuntime,
+    user_text: str,
+    history: Optional[List[Dict[str, Any]]],
+    current_agents: List[str],
+) -> Optional[str]:
+    if not _needs_followup_disambiguation(user_text, history):
+        return None
+    try:
+        convo = list((history or [])[-4:])
+        payload = {
+            "current_route": current_agents,
+            "latest_user_message": user_text,
+            "recent_history": convo,
+        }
+        response = call_chat_once(
+            runtime,
+            [
+                {"role": "system", "content": _AMBIGUOUS_FOLLOWUP_PROMPT},
+                {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
+            ],
+            tools=None,
+            max_tokens=120,
+        )
+        content = (response.get("content") or "").strip()
+        match = re.search(r"\{[\s\S]*\}", content)
+        if match:
+            content = match.group(0)
+        parsed = json.loads(content)
+        mode = str(parsed.get("mode", "")).strip().lower()
+        if mode in {"global_capabilities", "same_domain", "other"}:
+            return mode
+    except Exception:
+        return None
+    return None
+
+
+def _needs_local_discovery_chain(user_text: str) -> bool:
+    text = str(user_text or "").strip()
+    if not text or _EXPLICIT_PATH_RE.search(text):
+        return False
+    if _NEW_LOCAL_ARTIFACT_ACTION_RE.search(text) and _NEW_LOCAL_ARTIFACT_HINT_RE.search(text):
+        return False
+    return bool(_LOCAL_DISCOVERY_HINT_RE.search(text) and _LOCAL_DISCOVERY_ACTION_RE.search(text))
+
+
+def _history_has_concrete_local_target(history: Optional[List[Dict[str, Any]]]) -> bool:
+    if not history:
+        return False
+    markers = ("FILE:", "FILE_PATH:", "OPENED_FILE:")
+    for item in history[-6:]:
+        content = str(item.get("content", "") or "")
+        if any(marker in content for marker in markers):
+            return True
+    return False
 
 _SUPERVISOR_SYSTEM_PROMPT = """You are A.N.K.I.T.A's Supervisor — the routing brain.
 
@@ -119,24 +234,53 @@ If the message is a follow-up question about something ANKITA just did:
   - Route to GeneralAgent — it's a conversational clarification, not a new task
   - GeneralAgent has access to conversation history and can answer based on what was just done
 
+GLOBAL CAPABILITY QUESTIONS (CRITICAL):
+If the user is asking about ANKITA's overall capabilities, available tools, or what else it can do:
+  - Route to GeneralAgent, even if the recent conversation was inside one domain like music or files
+  - Do NOT trap broad capability questions inside the last specialist's domain
+  - Examples:
+    - "what can you do"
+    - "what else can you do"
+    - "list all things you can do"
+    - "what tools do you have"
+    - "show your capabilities"
+    - "anything else"
+    - "what else"
+    - "more"
+  - BUT if the user explicitly scopes it to a domain, keep it in that specialist:
+    - "what can you do with music" → MusicAgent
+    - "what else can you do with music" → MusicAgent
+    - "what else can you do in figma" → IntegrationAgent
+    - "what else can you do with files" → FileAgent
+  - If the message is short and vague, prefer this interpretation when there is NO explicit domain noun/action in the latest user message.
+
 AGENTS:
 - ContentAgent: Writes poems, essays, scripts, emails using strict CONTENT_PAYLOAD_V1 schema for reliable relay.
 - SystemAgent: Controls Volume, Wi-Fi, Bluetooth, Screen, launches apps. (DOES NOT WRITE CONTENT).
 - CodeAgent: Project-aware coding specialist (bug fixes, multi-file edits, build/scaffold, refactor/review/explain, tests, git-aware).
+- CodeWriterAgent: Narrow code-artifact specialist for landing pages, local HTML files, UI prototypes, components, and small generated code artifacts.
 - FileAgent: file system operations (read, write, edit, search, move, delete files/dirs).
 - WebAgent: Search & Research. Can save findings to file.
 - MusicAgent: music search, playback control (play, stop, current).
-- CronAgent: cron job scheduling (add, list, update, remove, run).
 - TerminalAgent: raw terminal/shell access — ping, ipconfig, git, tasklist, netstat, whoami, curl.
 - ScreenAgent: Visual tasks ("look at this", "click that", "what's on my screen").
-- CommsAgent: WhatsApp messages.
 - IntegrationAgent: Cloud API tasks — Google Sheets (log/track/read data), YouTube (subscriptions, playlists), Figma (design files, comments, node properties).
-- WatchdogAgent: Background monitoring — price alerts, news tracking, file watching, git repo watching. Use for: 'watch', 'track', 'monitor', 'alert me when', 'notify me when', 'keep an eye on', 'tell me if'.
 - NavigatorAgent: Maps, navigation, location services — routes, nearby places, distances, traffic, geocoding. Use for: 'navigate', 'find places', 'how far', 'traffic', 'directions', 'near me'.
 - TaskAgent: Task management — add/list/complete tasks with priorities and deadlines, auto-scheduled reminders. Use for: 'add task', 'my tasks', 'mark done', 'what's overdue', 'task summary'.
 - ReportAgent: Automated report generation — builds structured reports with data, tables, exports to PDF/Markdown. Use for: 'build report', 'generate report', 'create report', 'system health report', 'project status report'.
-- ImageAgent: AI image generation from text prompts using Pollinations.ai (free, no API key). Use for: 'generate image', 'create image', 'draw', 'paint', 'make a picture', 'create artwork', 'design poster', 'render', 'visualize', 'anime art', 'wallpaper', 'logo', 'illustration'.
+- ImageAgent: AI image generation from text prompts using the configured NVIDIA image backend. Use for: 'generate image', 'create image', 'draw', 'paint', 'make a picture', 'create artwork', 'design poster', 'render', 'visualize', 'anime art', 'wallpaper', 'logo', 'illustration'.
 - GeneralAgent: Complex multi-step tasks that genuinely cross domains, or pure conversation.
+
+LOCAL DISCOVERY RULE (CRITICAL):
+If the task depends on discovering a local path, checking what exists on disk, listing files/folders, finding the real app target, or resolving an ambiguous local item before acting:
+  - Prefer TerminalAgent for shell-native inspection, path discovery, process/app lookup, and environment checks.
+  - Prefer FileAgent for file/folder browsing, reading, saving, and workspace/local filesystem operations.
+  - Do NOT send SystemAgent alone when the path is unknown and not already present in context.
+Examples:
+  - "open that screenshot from before" but no FILE/FILE_PATH in context → TerminalAgent or FileAgent first
+  - "find the blender file and open it" → TerminalAgent + SystemAgent, sequential
+  - "show me where the report was saved" → FileAgent or TerminalAgent
+  - "open the generated image" with FILE_PATH already in context → SystemAgent only
 
 WEBAGENT NEW TOOLS ROUTING (CRITICAL — READ FIRST):
 WebAgent now has 10+ specialized tools. Route these requests to WebAgent:
@@ -174,7 +318,21 @@ A.N.K.I.T.A uses a Relay Race model. Agents pass the baton. Each does ONE job.
 4. "Fix my code and open it in VS Code" → CodeAgent ONLY.
    - CodeAgent is self-sufficient for code tasks (has launch_app).
 
-5. "Turn off wifi" / "open Notepad" (NO content) → SystemAgent ONLY.
+5. "Build a landing page and open it" / "Create a website for my cafe"
+   → CodeWriterAgent ONLY.
+   - Local page generation is a narrow code-artifact workflow handled by CodeWriterAgent.
+
+6. "Take a screenshot", "save a screenshot", "take a screenshot and open it"
+   → SystemAgent ONLY.
+   - This is a system artifact action, not a vision-analysis task.
+   - ScreenAgent is only for interpreting what is on the screen or clicking UI elements.
+
+7. "Generate an image and open it" / "create an image and show it"
+   → ["ImageAgent", "SystemAgent"], parallel: false
+   - ImageAgent generates the file.
+   - SystemAgent opens the generated FILE_PATH using the OS default handler.
+
+8. "Turn off wifi" / "open Notepad" (NO content) → SystemAgent ONLY.
 
 6. "Research X and write a report" → ["WebAgent", "FileAgent"], parallel: false
    - WebAgent researches. FileAgent saves. Then add SystemAgent if "open it" requested.
@@ -203,9 +361,10 @@ and there is PREVIOUS CONTENT in the conversation history:
   → Key indicators: "that", "it", "this" referring to previous content
 
 SPECIALIST PRIORITY RULE:
-- open/launch/close app, screenshot, volume, brightness (NO writing) → SystemAgent only
+- open/launch/close app, screenshot, save screenshot, open screenshot, volume, brightness (NO writing) → SystemAgent only
 - play/stop/queue music → MusicAgent
-- write/draft/create/generate text → ContentAgent (ALWAYS followed by FileAgent)
+- write/draft/create/generate text documents → ContentAgent (ALWAYS followed by FileAgent)
+- build/design/create/generate landing page/home page/web page/html/local site/ui prototype/component/single-file code artifact → CodeWriterAgent
 - list/read/edit/delete files (not saving new content) → FileAgent only
 - search/google/news/fetch/tell me about/who is/latest news/how does/what is → WebAgent
 - download/get/fetch a file/document/datasheet/PDF/report → WebAgent ONLY (WebAgent uses download_file + launch_app internally)
@@ -215,27 +374,12 @@ SPECIALIST PRIORITY RULE:
 - review my code / what's wrong with this code / explain this file or codebase -> CodeAgent
 - refactor/clean up/improve code quality -> CodeAgent
 - ping/ipconfig/git/netstat/tasklist/whoami/curl → TerminalAgent
-- "schedule/cron/remind → CronAgent
-- SCHEDULING INTENT (CRITICAL — INTERCEPT BEFORE ANYTHING ELSE):
-  If the user says ANY of these patterns, route to CronAgent IMMEDIATELY:
-    "every day/morning/evening/night/hour/week/month [do X]"
-    "at [time] [do X]"
-    "daily/weekly/monthly [do X]"
-    "remind me [when] to [X]"
-    "schedule [X] at [time]"
-    "from now on every [time] [do X]"
-    "at 5pm tell me / at 9am check / every morning send me"
-  CronAgent creates agent-type heartbeat jobs that run the FULL AI pipeline on schedule.
-  Examples:
-    "every morning tell me the news" → CronAgent (creates agent heartbeat job)
-    "every day at 5pm check Bitcoin price" → CronAgent (creates agent heartbeat job)
-    "remind me every hour to drink water" → CronAgent (creates note heartbeat job)
-    "every Friday write me a weekly summary" → CronAgent (creates agent heartbeat job)
 - what's on screen, click button visually → ScreenAgent
 - log/add expense/track/record/spreadsheet/google sheet → IntegrationAgent
 - new videos from/subscriptions/youtube playlist/create playlist → IntegrationAgent
 - figma/design file/design comments/client feedback/hex code/button colour → IntegrationAgent
 - generate image/draw/create art/make a picture/paint/render/create artwork/wallpaper/poster/logo/anime art/illustrate/visualize → ImageAgent
+- generate/create/draw an image and open/show/view it → ["ImageAgent", "SystemAgent"] sequentially
 - GeneralAgent ONLY for pure conversation or genuinely ambiguous with NO real-world actions.
 
 CONFIDENCE SCORING (UPGRADE 13 — CRITICAL):
@@ -288,11 +432,18 @@ Examples:
 - "write a funny song about Python" → {"agents": ["ContentAgent", "FileAgent"], "parallel": false, "reasoning": "ContentAgent writes, FileAgent saves"}
 - "write a report and play music while I read" → {"agents": ["ContentAgent", "FileAgent", "SystemAgent", "MusicAgent"], "parallel": false, "reasoning": "assembly line write→save→open, then music"}
 - "play some lo-fi music and turn volume up" → {"agents": ["MusicAgent", "SystemAgent"], "parallel": true, "reasoning": "independent tasks"}
+- "what can you do" (after playing music) → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "global capability question must not stay trapped in music context"}
+- "what can you do with music" → {"agents": ["MusicAgent"], "parallel": false, "reasoning": "domain-scoped capability question about music capabilities"}
+- "what else can you do" (after any specialist action) → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "broad meta capability question about ANKITA overall"}
+- "anything else" (after music or files or system) → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "open-ended follow-up about broader capabilities, no explicit domain scope"}
+- "what else" (after any specialist reply) → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "short broad follow-up, should not stay trapped in previous specialist"}
+- "more" (after capability discussion) → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "continue broader capability inventory"}
 - "what time is it" → {"agents": ["GeneralAgent"], "parallel": false, "reasoning": "general knowledge"}
 - "list my files" → {"agents": ["FileAgent"], "parallel": false, "reasoning": "file operation only"}
 - "hit enter", "press escape", "type my password" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "keyboard interaction via desktop_interact"}
 - "run test.py and fix errors" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "autonomous self-healing dev loop"}
 - "build me a flask api scaffold" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "project scaffold and verification is a coding workflow"}
+- "build me a landing page for a tea shop and open it in browser" → {"agents": ["CodeWriterAgent"], "parallel": false, "reasoning": "local page generation is a code artifact workflow handled by CodeWriterAgent"}
 - "review my code in agents/specialists.py" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "code review and issue analysis belong to CodeAgent"}
 - "refactor this module" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "refactor is a code transformation task"}
 - "explain this codebase" → {"agents": ["CodeAgent"], "parallel": false, "reasoning": "code explanation requires repo-level code analysis"}
@@ -303,6 +454,9 @@ Examples:
 - "install ookla speedtest" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "CLI tool installation"}
 - "install python package requests" → {"agents": ["TerminalAgent"], "parallel": false, "reasoning": "pip package installation"}
 - "what's on my screen" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "screen vision"}
+- "take a screenshot" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "system screenshot artifact"}
+- "take a screenshot and open it" → {"agents": ["SystemAgent"], "parallel": false, "reasoning": "capture file then open it"}
+- "generate an image of Elon Musk and open it" → {"agents": ["ImageAgent", "SystemAgent"], "parallel": false, "reasoning": "generate image file, then open resulting FILE_PATH"}
 - "click the Deploy button" → {"agents": ["ScreenAgent"], "parallel": false, "reasoning": "visual click"}
 - "get me the LM555 datasheet" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "file hunt: search filetype:pdf → download_file → launch_app"}
 - "download the annual report PDF" → {"agents": ["WebAgent"], "parallel": false, "reasoning": "WebAgent searches, downloads and opens the file autonomously"}
@@ -316,12 +470,6 @@ Examples:
 - "create a playlist of these python tutorials" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "YouTube: create_playlist with video IDs"}
 - "check design comments on the homepage figma" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Figma: read_comments on Homepage file"}
 - "what's the hex code of the primary button in figma?" → {"agents": ["IntegrationAgent"], "parallel": false, "reasoning": "Figma: get_node_properties for button node"}
-- "alert me if BTC drops 5%" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "price alert via WatchdogManager"}
-- "watch my Downloads folder" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "file watcher via WatchdogManager"}
-- "track news about AI" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "news keyword watcher via WatchdogManager"}
-- "monitor my git repo" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "git watcher via WatchdogManager"}
-- "notify me when ethereum crosses $5000" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "price alert via WatchdogManager"}
-- "watchdog status" → {"agents": ["WatchdogAgent"], "parallel": false, "reasoning": "show watchdog status"}
 - "navigate to Connaught Place" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "maps navigation"}
 - "find coffee near me" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "place search"}
 - "how far is Delhi from Mumbai" → {"agents": ["NavigatorAgent"], "parallel": false, "reasoning": "distance calculation"}
@@ -335,20 +483,13 @@ Examples:
 - "generate weekly activity report" → {"agents": ["ReportAgent"], "parallel": false, "reasoning": "generate activity report"}
 - "generate an image of a sunset over mountains" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: landscape scene"}
 - "draw me an anime character" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: anime-style character"}
-- "create a photorealistic portrait of a robot" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: portrait with flux-realism"}
+- "create a photorealistic portrait of a robot" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: realistic portrait"}
 - "make me a cyberpunk city wallpaper" → {"agents": ["ImageAgent"], "parallel": false, "reasoning": "image generation: cyberpunk landscape wallpaper"}
 - "deep report on AI regulation in India" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "comprehensive analysis of climate change" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "swarm research quantum computing" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "research and write a detailed report on OpenAI" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
 - "in-depth investigation of cryptocurrency markets" → {"agents": ["WebAgent", "ContentAgent", "FileAgent"], "parallel": false, "reasoning": "WebAgent: deep_research → ContentAgent: Journalist Mode → FileAgent: save"}
-- "every morning tell me the news" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat to fetch news daily at 9am"}
-- "every day at 5pm check Bitcoin price" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat for daily crypto check"}
-- "remind me every hour to drink water" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: recurring note reminder"}
-- "every Friday write me a weekly summary" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: weekly agent heartbeat for report generation"}
-- "at 9am send me a motivational quote" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: daily agent heartbeat for quote generation"}
-- "daily check the weather and tell me" → {"agents": ["CronAgent"], "parallel": false, "confidence": 0.95, "reasoning": "scheduling intent: agent heartbeat for weather check"}
-
 WRONG — never do this:
 - "write a poem" → WRONG: {"agents": ["ContentAgent"]} ← ContentAgent has NO tools, can't save
 - "write a poem in Notepad" → WRONG: {"agents": ["ContentAgent", "SystemAgent"]} ← missing FileAgent
@@ -363,7 +504,7 @@ class SupervisorAgent:
     """
 
     def __init__(self, runtime: LLMRuntime) -> None:
-        self.runtime = runtime
+        self.runtime = get_agent_runtime("SupervisorAgent", runtime)
 
     def route(self, user_text: str, history: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
         """
@@ -446,23 +587,61 @@ class SupervisorAgent:
             if fence_match:
                 json_str = fence_match.group(1).strip()
             else:
-                # Try to find the first {...} block
                 brace_match = re.search(r"\{[\s\S]*\}", content)
                 if brace_match:
                     json_str = brace_match.group(0)
 
-            parsed = json.loads(json_str)
+            try:
+                parsed = json.loads(json_str)
+            except Exception:
+                repair_messages = [
+                    {
+                        "role": "system",
+                        "content": (
+                            "Rewrite the previous supervisor routing answer as valid JSON only. "
+                            "Do not add markdown, explanation, or prose. "
+                            "Return exactly this shape: "
+                            '{"agents":["GeneralAgent"],"parallel":false,"reasoning":"...","confidence":0.0}'
+                        ),
+                    },
+                    {"role": "user", "content": content or user_text},
+                ]
+                repair_response = call_chat_once(self.runtime, repair_messages, tools=None, max_tokens=160)
+                repaired = (repair_response.get("content") or "").strip()
+                repaired_match = re.search(r"\{[\s\S]*\}", repaired)
+                if repaired_match:
+                    repaired = repaired_match.group(0)
+                parsed = json.loads(repaired)
             agents = parsed.get("agents", ["GeneralAgent"])
             if not isinstance(agents, list) or not agents:
                 agents = ["GeneralAgent"]
 
             # Validate agent names
             valid = {"FileAgent", "WebAgent", "SystemAgent", "MusicAgent",
-                     "CodeAgent", "CronAgent", "ContentAgent", "CommsAgent",
+                     "CodeAgent", "CodeWriterAgent", "ContentAgent",
                      "GeneralAgent", "TerminalAgent", "ScreenAgent",
-                     "IntegrationAgent", "WatchdogAgent", "NavigatorAgent",
+                     "IntegrationAgent", "NavigatorAgent",
                      "TaskAgent", "ReportAgent", "ImageAgent", "PlannerAgent"}
             agents = [a for a in agents if a in valid] or ["GeneralAgent"]
+
+            followup_scope = _resolve_followup_scope(self.runtime, user_text, history, agents)
+            if followup_scope == "global_capabilities":
+                agents = ["GeneralAgent"]
+                parsed["parallel"] = False
+                parsed["reasoning"] = "ambiguous short follow-up resolved as broader ANKITA capability question"
+
+            if (
+                _needs_local_discovery_chain(user_text)
+                and not _history_has_concrete_local_target(history)
+            ):
+                agents = ["TerminalAgent", *[agent for agent in agents if agent != "TerminalAgent"]]
+                if "GeneralAgent" in agents and len(agents) > 1:
+                    agents = [agent for agent in agents if agent != "GeneralAgent"]
+                parsed["parallel"] = False
+                parsed["reasoning"] = (
+                    "local discovery path added: inspect the real local target before acting. "
+                    + str(parsed.get("reasoning", "")).strip()
+                ).strip()
 
             # Extract confidence score (UPGRADE 13)
             confidence = float(parsed.get("confidence", 0.75))  # Default to 0.75 if not provided

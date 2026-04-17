@@ -1,5 +1,6 @@
 import json
 import logging
+import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -43,7 +44,19 @@ from tools.engine import _estimate_tokens
 # Proactive compaction threshold — compact before sending if estimated > this many tokens
 _PROACTIVE_TOKEN_LIMIT = 48_000   # leaves 16k headroom below 64k limit
 
-MAX_TOOL_STEPS = 12  # Default; overridden adaptively per-turn
+
+def _env_int(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(str(os.getenv(name, str(default))).strip())
+    except Exception:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+MAX_TOOL_STEPS = _env_int("ANKITA_MAX_TOOL_STEPS", 20, 4, 96)
+_MULTI_STEP_TOOL_STEPS = _env_int("ANKITA_MULTI_STEP_TOOL_STEPS", 28, 4, 128)
+_COMPLEX_TOOL_STEPS = _env_int("ANKITA_COMPLEX_TOOL_STEPS", 24, 4, 96)
+_SIMPLE_TOOL_STEPS = _env_int("ANKITA_SIMPLE_TOOL_STEPS", 8, 2, 32)
 
 # ─── COPOUT / LOW-QUALITY DETECTION ──────────────────────────────────────────
 import re as _re
@@ -58,13 +71,27 @@ _COPOUT_PATTERNS = _re.compile(
     r"|as an ai,? i)"
 )
 
-_EMPTY_REPLY_MIN = 15  # replies shorter than this are considered empty/low-quality
-
 def _is_copout(text: str) -> bool:
     """Detect if the LLM is giving up instead of actually trying."""
-    if not text or len(text.strip()) < _EMPTY_REPLY_MIN:
+    if not text or not text.strip():
         return True
     return bool(_COPOUT_PATTERNS.search(text))
+
+_RETRY_PLACEHOLDER_PATTERNS = _re.compile(
+    r"(?i)"
+    r"(?:that did(?:n't| not) work.*(?:try again|more ideas)"
+    r"|let me try again"
+    r"|i have (?:one|two|more) (?:more )?ideas"
+    r"|trying again"
+    r"|hold on.*try again)"
+)
+
+def _is_retry_placeholder(text: str) -> bool:
+    """Detect non-terminal chatter that should continue the tool loop, not end it."""
+    if not text:
+        return False
+    return bool(_RETRY_PLACEHOLDER_PATTERNS.search(text.strip()))
+
 
 SYSTEM_PROMPT = """You are ANKITA — built by Krish Verma (15-year-old developer, founder of Helper ID). \
 You are highly intelligent, resourceful, and handle multi-step complex tasks autonomously.
@@ -144,12 +171,6 @@ ABSOLUTE RULES — NEVER BREAK THESE:
 
 def new_session(user_query: str = "") -> List[Dict[str, Any]]:
     """Start a fresh conversation, injecting long-term memory context."""
-    # Reset session mood state — fresh conversation, fresh emotional baseline
-    try:
-        from tools.personality_engine import get_mood_tracker
-        get_mood_tracker().reset()
-    except Exception:
-        pass
     messages: List[Dict[str, Any]] = [{"role": "system", "content": SYSTEM_PROMPT}]
     try:
         mem = _get_mem()
@@ -253,15 +274,15 @@ class AgentRuntime:
         txt = str(last_user).lower()
         # Multi-domain tasks get more steps
         if any(kw in txt for kw in ("and then", "after that", "also", "as well", "plus")):
-            return 20
+            return _MULTI_STEP_TOOL_STEPS
         # Research/fix/coding tasks need room to iterate
         if any(kw in txt for kw in ("research", "find", "investigate", "fix", "debug", "repair",
                                     "code", "build", "refactor", "review")):
-            return 16
+            return _COMPLEX_TOOL_STEPS
         # Simple single-action tasks need fewer
         if any(kw in txt for kw in ("open", "play", "mute", "volume", "screenshot", "lock")):
-            return 6
-        return MAX_TOOL_STEPS  # default: 12
+            return _SIMPLE_TOOL_STEPS
+        return MAX_TOOL_STEPS  # default: 20
 
     @staticmethod
     def _sanitize_messages_for_api(msgs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -308,30 +329,14 @@ class AgentRuntime:
         messages.clear()
         messages.extend(safe_messages)
 
-        # ── MOOD ADAPTATION: update session mood from latest user message ───
-        try:
-            from tools.personality_engine import get_mood_tracker, apply_mood_to_messages
-            _user_text = next(
-                (m["content"] for m in reversed(messages)
-                 if m.get("role") == "user" and isinstance(m.get("content"), str)),
-                "",
-            )
-            if _user_text:
-                _tracker = get_mood_tracker()
-                _tracker.update(_user_text, runtime=self.runtime)
-                _directive = _tracker.get_personality_directive()
-                apply_mood_to_messages(messages, _directive)
-                _state = _tracker.current_state()
-                print(f"[Personality] mood={_state.primary} intensity={_state.intensity:.2f} directive_len={len(_directive)}", flush=True)
-        except Exception as _pe_err:
-            print(f"[Personality] ⚠️  Error in agent_runtime mood adaptation: {_pe_err}", flush=True)
-
         step_limit = self._adaptive_step_limit(messages)
         # Tool deduplication: track (tool_name, args_hash) to detect infinite loops
         seen_calls: set = set()
-        # Copout retry budget: allow 1 retry when LLM gives up without trying
+        # Copout retry budget: allow retries when LLM gives up without trying
         _copout_retries = 0
         _MAX_COPOUT_RETRIES = 2
+        _retry_placeholder_retries = 0
+        _MAX_RETRY_PLACEHOLDER_RETRIES = 3
         # Tool-sequence cycle detection: track last N tool names for A→B→A→B pattern
         _tool_sequence: List[str] = []
         # Cascading overflow recovery (OpenClaw-inspired)
@@ -412,9 +417,10 @@ class AgentRuntime:
 
             if not tool_calls:
                 _final = assistant_msg.get("content", "").strip()
+                _should_enforce_execution = bool(_tool_sequence)
 
                 # ── COPOUT INTERCEPTOR: detect LLM giving up without trying ──
-                if _copout_retries < _MAX_COPOUT_RETRIES and _is_copout(_final):
+                if _should_enforce_execution and _copout_retries < _MAX_COPOUT_RETRIES and _is_copout(_final):
                     _copout_retries += 1
                     # Remove the copout reply and inject a nudge
                     messages.pop()  # remove assistant copout message
@@ -430,6 +436,31 @@ class AgentRuntime:
                     })
                     print(f"[CopoutInterceptor] Detected refusal, retrying (attempt {_copout_retries})", flush=True)
                     continue  # re-enter the loop
+
+                # ── RETRY-PLACEHOLDER INTERCEPTOR: "let me try again" is not final ──
+                if (
+                    _should_enforce_execution
+                    and
+                    _retry_placeholder_retries < _MAX_RETRY_PLACEHOLDER_RETRIES
+                    and _is_retry_placeholder(_final)
+                ):
+                    _retry_placeholder_retries += 1
+                    messages.pop()  # remove placeholder assistant message
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "[SYSTEM] Your previous reply said you would try again, "
+                            "but you stopped before finishing. Continue the recovery loop now. "
+                            "Use tools again if needed. Only return once you have either "
+                            "(1) completed the task, or (2) a concrete final failure with what you tried."
+                        ),
+                    })
+                    print(
+                        f"[RetryPlaceholderInterceptor] Non-final retry chatter detected, continuing "
+                        f"(attempt {_retry_placeholder_retries})",
+                        flush=True,
+                    )
+                    continue
 
                 if interaction_id:
                     try:
@@ -636,7 +667,10 @@ class AgentRuntime:
                 messages.append({"role": "user", "content": _escalation_msg})
                 print(f"[Escalation] 🔄 All tools failed — injecting recovery hint", flush=True)
 
-        _fallback = "I reached the maximum reasoning steps. The task may be too complex — please break it into smaller parts."
+        _fallback = (
+            "I ran through the current execution budget without landing the task cleanly. "
+            "I need a different approach, not a smaller prompt."
+        )
         if interaction_id:
             try:
                 from tools.feedback_engine import get_instance as _fb_get
@@ -702,13 +736,6 @@ class AgentRuntime:
               "what do i look like", "look at me"},
              {"capture_screen", "read_screen_context", "visual_click",
               "capture_webcam", "desktop_interact", "camera_control"}),
-
-            ({"whatsapp", "message", "send", "text", "contact"},
-             {"send_whatsapp", "lookup_contact", "add_contact",
-              "remove_contact", "list_contacts"}),
-
-            ({"schedule", "cron", "reminder", "every", "at ", "recurring"},
-             {"cron"}),
 
             ({"bitcoin", "crypto", "stock", "price", "eth", "aapl", "market"},
              {"search_price", "search_and_fetch"}),
@@ -778,7 +805,7 @@ class AgentRuntime:
 
         messages.append({"role": "user", "content": user_text})
         
-        # Select only relevant tools — avoids Copilot 400 from oversized tool payloads
+        # Conversational turns should not enter tool mode at all.
         active_tools = self._select_tools(user_text)
         try:
             reply = self.run_turn(messages, tools=active_tools)

@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 import requests
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
+NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
 DEFAULT_COPILOT_API_BASE_URL = "https://api.individual.githubcopilot.com"
 COPILOT_TOKEN_URL = "https://api.github.com/copilot_internal/v2/token"
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
@@ -20,6 +21,10 @@ GITHUB_COPILOT_CLIENT_ID = "Iv1.b507a08c87ecfe98"
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai"
 
 DEFAULT_GROQ_MODEL = "llama-3.1-8b-instant"
+DEFAULT_NVIDIA_MODEL = "meta/llama-3.1-8b-instruct"
+DEFAULT_NVIDIA_REASONING_MODEL = "nvidia/nemotron-3-super-120b-a12b"
+DEFAULT_NVIDIA_CODE_MODEL = "qwen/qwen2.5-coder-32b-instruct"
+DEFAULT_NVIDIA_VISION_MODEL = "meta/llama-3.2-11b-vision-instruct"
 DEFAULT_COPILOT_MODEL = "gpt-4o"
 DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_MAX_TOKENS = 2048  # 120 was far too low — tool call JSON alone can exceed 300 tokens
@@ -246,9 +251,31 @@ def _exchange_github_to_copilot_token(github_token: str, cache_file: Path) -> Di
 
 
 def build_runtime_from_env() -> LLMRuntime:
-    provider = os.getenv("LLM_PROVIDER", "groq").strip().lower() or "groq"
-    max_tokens_raw = _env_first("LLM_MAX_TOKENS", "GROQ_MAX_TOKENS", "COPILOT_MAX_TOKENS", "GEMINI_MAX_TOKENS")
+    provider = os.getenv("LLM_PROVIDER", "nvidia").strip().lower() or "nvidia"
+    max_tokens_raw = _env_first(
+        "LLM_MAX_TOKENS",
+        "NVIDIA_MAX_TOKENS",
+        "GROQ_MAX_TOKENS",
+        "COPILOT_MAX_TOKENS",
+        "GEMINI_MAX_TOKENS",
+    )
     max_tokens = _parse_max_tokens(max_tokens_raw or "auto")
+
+    if provider == "nvidia":
+        api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+        if not api_key:
+            print("Error: NVIDIA_API_KEY is not set.")
+            print("Set it in .env or shell env.")
+            sys.exit(1)
+        model = os.getenv("NVIDIA_MODEL", DEFAULT_NVIDIA_MODEL).strip() or DEFAULT_NVIDIA_MODEL
+        base_url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
+        return LLMRuntime(
+            provider="nvidia",
+            model=model,
+            api_key=api_key,
+            base_url=base_url.rstrip("/"),
+            max_tokens=max_tokens,
+        )
 
     if provider == "gemini":
         api_key = os.getenv("GEMINI_API_KEY", "").strip()
@@ -329,8 +356,92 @@ def build_runtime_from_env() -> LLMRuntime:
             max_tokens=max_tokens,
         )
 
-    print(f"Error: unsupported LLM_PROVIDER '{provider}'. Use 'groq', 'copilot', or 'gemini'.")
+    print(f"Error: unsupported LLM_PROVIDER '{provider}'. Use 'nvidia', 'groq', 'copilot', or 'gemini'.")
     sys.exit(1)
+
+
+def _build_nvidia_vision_runtime(reference_runtime: "LLMRuntime") -> Optional["LLMRuntime"]:
+    api_key = os.getenv("NVIDIA_API_KEY", "").strip()
+    if not api_key:
+        return None
+    base_url = os.getenv("NVIDIA_BASE_URL", NVIDIA_BASE_URL).strip() or NVIDIA_BASE_URL
+    model = os.getenv("VISION_MODEL", os.getenv("NVIDIA_VISION_MODEL", DEFAULT_NVIDIA_VISION_MODEL)).strip()
+    model = model or DEFAULT_NVIDIA_VISION_MODEL
+    return LLMRuntime(
+        provider="nvidia",
+        model=model,
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        max_tokens=reference_runtime.max_tokens,
+    )
+
+
+def _build_gemini_vision_runtime(reference_runtime: "LLMRuntime") -> Optional["LLMRuntime"]:
+    api_key = os.getenv("GEMINI_API_KEY", "").strip()
+    if not api_key:
+        return None
+    base_url = os.getenv("GEMINI_BASE_URL", GEMINI_BASE_URL).strip() or GEMINI_BASE_URL
+    model = os.getenv("VISION_MODEL", os.getenv("GEMINI_MODEL", DEFAULT_GEMINI_MODEL)).strip() or DEFAULT_GEMINI_MODEL
+    return LLMRuntime(
+        provider="gemini",
+        model=model,
+        api_key=api_key,
+        base_url=base_url.rstrip("/"),
+        max_tokens=reference_runtime.max_tokens,
+    )
+
+
+def _build_copilot_vision_runtime(reference_runtime: "LLMRuntime") -> Optional["LLMRuntime"]:
+    try:
+        github_token = _env_first("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
+        if not github_token:
+            github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
+        if not github_token:
+            return None
+        cache = _cache_path()
+        token_payload = _exchange_github_to_copilot_token(github_token, cache)
+        token = str(token_payload["token"])
+        derived_base = _derive_copilot_base_url(token)
+        base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
+        model = os.getenv("VISION_MODEL", os.getenv("COPILOT_MODEL", DEFAULT_COPILOT_MODEL)).strip() or DEFAULT_COPILOT_MODEL
+        return LLMRuntime(
+            provider="copilot",
+            model=model,
+            api_key=token,
+            base_url=base_url.rstrip("/"),
+            max_tokens=reference_runtime.max_tokens,
+        )
+    except Exception as err:
+        print(f"[VisionRuntime] ⚠️  Copilot vision runtime build failed: {err}", flush=True)
+        return None
+
+
+def _runtime_signature(runtime: "LLMRuntime") -> tuple[str, str, str]:
+    return (runtime.provider, runtime.model, runtime.base_url)
+
+
+def _vision_fallback_candidates(primary_runtime: "LLMRuntime") -> List["LLMRuntime"]:
+    candidates: List[LLMRuntime] = [primary_runtime]
+    seen = {_runtime_signature(primary_runtime)}
+
+    def _append(runtime_obj: Optional["LLMRuntime"]) -> None:
+        if runtime_obj is None:
+            return
+        signature = _runtime_signature(runtime_obj)
+        if signature in seen:
+            return
+        seen.add(signature)
+        candidates.append(runtime_obj)
+
+    if primary_runtime.provider == "gemini":
+        _append(_build_nvidia_vision_runtime(primary_runtime))
+    elif primary_runtime.provider == "nvidia":
+        _append(_build_gemini_vision_runtime(primary_runtime))
+    elif primary_runtime.provider == "copilot":
+        _append(_build_gemini_vision_runtime(primary_runtime))
+        _append(_build_nvidia_vision_runtime(primary_runtime))
+
+    return candidates
 
 
 def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
@@ -339,8 +450,8 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
 
     Priority:
     1. VISION_PROVIDER env var (explicit override)
-    2. If main runtime is already vision-capable (copilot/gpt-4o) → use it directly
-    3. Try Copilot as fallback if COPILOT_GITHUB_TOKEN is set
+    2. If main runtime is already vision-capable (copilot/gemini) → use it directly
+    3. Try Copilot or NVIDIA/Gemini fallback runtimes if configured
     4. Fall back to main runtime (will fail gracefully with a text error)
 
     Usage: Pass this runtime to call_chat_with_image() for webcam/screenshot analysis.
@@ -348,27 +459,20 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
     vision_provider = os.getenv("VISION_PROVIDER", "").strip().lower()
 
     # 1. Explicit VISION_PROVIDER override
+    if vision_provider == "gemini":
+        runtime = _build_gemini_vision_runtime(main_runtime)
+        if runtime is not None:
+            return runtime
+
+    if vision_provider == "nvidia":
+        runtime = _build_nvidia_vision_runtime(main_runtime)
+        if runtime is not None:
+            return runtime
+
     if vision_provider == "copilot":
-        try:
-            github_token = _env_first("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-            if not github_token:
-                github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
-            if github_token:
-                cache = _cache_path()
-                token_payload = _exchange_github_to_copilot_token(github_token, cache)
-                token = str(token_payload["token"])
-                derived_base = _derive_copilot_base_url(token)
-                base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
-                model = os.getenv("VISION_MODEL", os.getenv("COPILOT_MODEL", DEFAULT_COPILOT_MODEL)).strip() or DEFAULT_COPILOT_MODEL
-                return LLMRuntime(
-                    provider="copilot",
-                    model=model,
-                    api_key=token,
-                    base_url=base_url.rstrip("/"),
-                    max_tokens=main_runtime.max_tokens,
-                )
-        except Exception as _ve:
-            print(f"[VisionRuntime] ⚠️  VISION_PROVIDER=copilot build failed: {_ve}", flush=True)
+        runtime = _build_copilot_vision_runtime(main_runtime)
+        if runtime is not None:
+            return runtime
 
     # 2. Main runtime already supports vision (copilot/gpt-4o, gemini)
     if main_runtime.provider in ("copilot", "gemini"):
@@ -378,36 +482,26 @@ def build_vision_runtime_from_env(main_runtime: "LLMRuntime") -> "LLMRuntime":
         )
         return main_runtime
 
-    # 3. Auto-fallback: try Copilot if COPILOT_GITHUB_TOKEN is available
-    github_token = _env_first("COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN")
-    if not github_token:
-        github_token = _load_cached_github_token(_github_auth_cache_path()) or ""
-    if github_token:
-        try:
-            cache = _cache_path()
-            token_payload = _exchange_github_to_copilot_token(github_token, cache)
-            token = str(token_payload["token"])
-            derived_base = _derive_copilot_base_url(token)
-            base_url = os.getenv("COPILOT_BASE_URL", "").strip() or derived_base
-            model = os.getenv("VISION_MODEL", DEFAULT_COPILOT_MODEL).strip() or DEFAULT_COPILOT_MODEL
-            print(
-                f"[VisionRuntime] ✅ Auto-fallback Copilot vision runtime: {model}",
-                flush=True,
-            )
-            return LLMRuntime(
-                provider="copilot",
-                model=model,
-                api_key=token,
-                base_url=base_url.rstrip("/"),
-                max_tokens=main_runtime.max_tokens,
-            )
-        except Exception as _ve2:
-            print(f"[VisionRuntime] ⚠️  Auto-fallback Copilot build failed: {_ve2}", flush=True)
+    # 3. Auto-fallback: prefer NVIDIA vision if configured, otherwise Copilot
+    nvidia_runtime = _build_nvidia_vision_runtime(main_runtime)
+    if nvidia_runtime is not None:
+        print(
+            f"[VisionRuntime] ✅ Auto-fallback NVIDIA vision runtime: {nvidia_runtime.model}",
+            flush=True,
+        )
+        return nvidia_runtime
+    copilot_runtime = _build_copilot_vision_runtime(main_runtime)
+    if copilot_runtime is not None:
+        print(
+            f"[VisionRuntime] ✅ Auto-fallback Copilot vision runtime: {copilot_runtime.model}",
+            flush=True,
+        )
+        return copilot_runtime
 
     # 4. Last resort — return main runtime (will fail with a clear error in call_chat_with_image)
     print(
         f"[VisionRuntime] ⚠️  No vision runtime found — returning main runtime ({main_runtime.provider}/{main_runtime.model}). "
-        "Vision calls will likely fail. Set VISION_PROVIDER=copilot or COPILOT_GITHUB_TOKEN in .env.",
+        "Vision calls will likely fail. Set VISION_PROVIDER=gemini/nvidia/copilot or configure vision credentials in .env.",
         flush=True,
     )
     return main_runtime
@@ -421,13 +515,14 @@ def call_chat_with_image(
     temperature: float = 0.0,
     mime_type: str = "image/jpeg",
 ) -> str:
-    """Send a single vision request to GPT-4o with an inline base64 image.
+    """Send a single vision request with an inline base64 image.
 
     This is used internally by the ScreenAgent tools (capture_screen / visual_click)
     to let the model *look* at a screenshot and return a text answer.
 
     Args:
-        runtime:    The active LLMRuntime (must be a model that supports vision, e.g. gpt-4o).
+        runtime:    The active LLMRuntime primary vision runtime.
+                    If this runtime fails and it is Gemini, NVIDIA vision will be tried as fallback when configured.
         prompt:     The text instruction to accompany the image.
         image_b64:  Base64-encoded PNG/JPEG image string (no data URI prefix needed).
         max_tokens: Optional token cap. Falls back to runtime.max_tokens.
@@ -439,19 +534,6 @@ def call_chat_with_image(
     Returns:
         The model's text reply (string).
     """
-    url = f"{runtime.base_url}/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {runtime.api_key}",
-        "Content-Type": "application/json",
-        "Accept": "application/json",
-    }
-    if runtime.provider == "copilot":
-        headers["Editor-Version"] = "vscode/1.96.2"
-        headers["User-Agent"] = "GitHubCopilotChat/0.26.7"
-        headers["Editor-Plugin-Version"] = "copilot-chat/0.26.7"
-        headers["Copilot-Integration-Id"] = "vscode-chat"
-        headers["OpenAI-Intent"] = "conversation-panel"
-
     system_message = {
         "role": "system",
         "content": (
@@ -479,22 +561,61 @@ def call_chat_with_image(
     }
 
     tokens = max_tokens if isinstance(max_tokens, int) and max_tokens > 0 else runtime.max_tokens
-    payload: Dict[str, Any] = {
-        "model": runtime.model,
-        "messages": [system_message, vision_message],
-        "temperature": temperature,
-    }
-    if isinstance(tokens, int) and tokens > 0:
-        if runtime.provider == "copilot":
-            payload["max_completion_tokens"] = tokens
-        else:
-            payload["max_tokens"] = tokens
+    last_error: Optional[Exception] = None
 
-    response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
-    response.raise_for_status()
-    data = response.json()
-    content = data["choices"][0]["message"].get("content") or ""
-    return content.strip()
+    for candidate in _vision_fallback_candidates(runtime):
+        url = f"{candidate.base_url}/chat/completions"
+        headers = {
+            "Authorization": f"Bearer {candidate.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+        }
+        if candidate.provider == "copilot":
+            headers["Editor-Version"] = "vscode/1.96.2"
+            headers["User-Agent"] = "GitHubCopilotChat/0.26.7"
+            headers["Editor-Plugin-Version"] = "copilot-chat/0.26.7"
+            headers["Copilot-Integration-Id"] = "vscode-chat"
+            headers["OpenAI-Intent"] = "conversation-panel"
+
+        payload: Dict[str, Any] = {
+            "model": candidate.model,
+            "messages": [system_message, vision_message],
+            "temperature": temperature,
+        }
+        if isinstance(tokens, int) and tokens > 0:
+            if candidate.provider == "copilot":
+                payload["max_completion_tokens"] = tokens
+            else:
+                payload["max_tokens"] = tokens
+
+        try:
+            response = _HTTP.post(url, headers=headers, json=payload, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            content = data["choices"][0]["message"].get("content") or ""
+            if candidate.provider != runtime.provider or candidate.model != runtime.model:
+                print(
+                    f"[VisionRuntime] Fallback vision provider succeeded: {candidate.provider}/{candidate.model}",
+                    flush=True,
+                )
+            return content.strip()
+        except Exception as err:
+            last_error = err
+            if candidate.provider != runtime.provider or candidate.model != runtime.model:
+                print(
+                    f"[VisionRuntime] Fallback vision provider failed: {candidate.provider}/{candidate.model} -> {err}",
+                    flush=True,
+                )
+            else:
+                print(
+                    f"[VisionRuntime] Primary vision provider failed: {candidate.provider}/{candidate.model} -> {err}",
+                    flush=True,
+                )
+            continue
+
+    if last_error is not None:
+        raise last_error
+    raise RuntimeError("Vision request failed before any provider could be tried.")
 
 
 def call_chat_once(
@@ -539,7 +660,7 @@ def call_chat_once(
     request_timeout = int(os.getenv("LLM_REQUEST_TIMEOUT_SEC", "45"))
 
     # Exponential backoff with jitter for transient errors (429, 502, 503, 504)
-    _RETRYABLE = {429, 502, 503, 504}
+    _RETRYABLE = {429, 500, 502, 503, 504}
     max_retries = 3
     for attempt in range(max_retries + 1):
         try:

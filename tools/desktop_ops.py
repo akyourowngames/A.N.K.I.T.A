@@ -537,6 +537,8 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
                     return {
                         "ok": True,
                         "path": str(file_path),
+                        "absolute_path": str(file_path.resolve()),
+                        "FILE_PATH": str(file_path.resolve()),
                         "base64": b64_data,           # downscaled JPEG for LLM vision (small)
                         "base64_mime": "image/jpeg",   # hint for call_chat_with_image()
                         "resolution": vis_resolution,  # resolution of the b64 image
@@ -558,6 +560,8 @@ def capture_screen(monitor: int = 1, save_path: Optional[str] = None) -> Dict[st
                 return {
                     "ok": True,
                     "path": str(file_path),
+                    "absolute_path": str(file_path.resolve()),
+                    "FILE_PATH": str(file_path.resolve()),
                     "base64": b64_data,
                     "base64_mime": "image/jpeg",
                     "resolution": vis_resolution,
@@ -623,7 +627,8 @@ def read_screen_context(image_path: str) -> Dict[str, Any]:
                 "path": str(p.resolve()),
             }
         b64_data = base64.b64encode(raw).decode("utf-8")
-        return {"ok": True, "base64": b64_data, "path": str(p.resolve())}
+        resolved = str(p.resolve())
+        return {"ok": True, "base64": b64_data, "path": resolved, "absolute_path": resolved, "FILE_PATH": resolved}
     except Exception as err:
         return {"ok": False, "error": str(err)}
 

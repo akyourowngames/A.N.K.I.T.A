@@ -1,4 +1,5 @@
 import base64
+import html
 import io
 import os
 import subprocess
@@ -55,10 +56,7 @@ from PyQt5.QtWidgets import (
 
 from agent_runtime import AgentRuntime, new_session
 from agents import Orchestrator
-from agents.hive import HiveMind
-from corn import CornRunner
 from llm import build_runtime_from_env
-from proactive import ProactiveEngine
 import voice_web
 
 WORKSPACE_ROOT = Path.cwd().resolve()
@@ -76,12 +74,6 @@ try:
 except Exception:
     HAS_SPEECH_RECOGNITION = False
 
-try:
-    from pynput import keyboard as pynput_keyboard
-    HAS_PYNPUT = True
-except Exception:
-    HAS_PYNPUT = False
-
 
 def _env_bool(name: str, default: bool) -> bool:
     raw = os.getenv(name, str(default)).strip().lower()
@@ -90,11 +82,6 @@ def _env_bool(name: str, default: bool) -> bool:
     if raw in {"0", "false", "no", "off"}:
         return False
     return default
-
-
-# ---------------------------------------------------------------------------
-# Background workers
-# ---------------------------------------------------------------------------
 
 class AskWorker(QThread):
     done = pyqtSignal(str, str)
@@ -441,121 +428,6 @@ class VoiceCallWorker(QThread):
 
 
 # ---------------------------------------------------------------------------
-# Wake Word Listener  -- always-on background speech recogniser
-# ---------------------------------------------------------------------------
-
-class WakeWordListener(QThread):
-    """Continuously listens in the background using speech_recognition.
-
-    Emits:
-        wake_detected   -- user said "hi ankita" / "hey ankita"
-        stop_detected   -- user said "stop" (while voice worker is active)
-    """
-    wake_detected = pyqtSignal()
-    stop_detected = pyqtSignal()
-
-    # Words that count as the wake phrase (any substring match, lowercase)
-    WAKE_PHRASES = {
-        # English variants
-        "hi ankita", "hey ankita", "hello ankita",
-        "hi, ankita", "hey, ankita", "hello, ankita",
-        "okay ankita", "ok ankita", "oi ankita",
-        "wake up ankita", "ankita wake up",
-        # Common speech-recognition misheards
-        "hi ankit", "hey ankit", "hello ankit",
-        "hi ankitha", "hey ankitha", "hello ankitha",
-        "hi an kita", "hey an kita",
-        "ankita listen", "ankita start",
-        # Hindi/mixed
-        "ankita suno", "ankita sun",
-        "hello ankita ji", "hi ankita ji",
-    }
-    # Words that trigger a stop
-    STOP_PHRASES = {
-        "stop", "stop it", "stop now", "cancel",
-        "bas", "bas karo", "ruko", "quiet", "silence",
-        "shut up", "enough", "pause",
-    }
-
-    def __init__(self, voice_active_flag, lang_code: str = "en-IN"):
-        super().__init__()
-        self._flag = voice_active_flag   # threading.Event  -- set while VoiceCallWorker records
-        self._running = True
-        self._lang = lang_code
-        self.recognizer = sr.Recognizer() if HAS_SPEECH_RECOGNITION else None
-
-    def stop(self) -> None:
-        self._running = False
-
-    def run(self) -> None:
-        print("[WakeWord] Thread started.", flush=True)
-        if not HAS_SPEECH_RECOGNITION:
-            print("[WakeWord] speech_recognition not available  -- thread exiting.", flush=True)
-            return
-        r = self.recognizer
-        # Lower energy threshold  -- we only need short phrases
-        r.dynamic_energy_threshold = True
-        r.energy_threshold = 300
-        r.pause_threshold = 0.6
-
-        print(f"[WakeWord] Listening for wake phrases. Lang={self._lang}", flush=True)
-        loop_count = 0
-        while self._running:
-            # Back off while VoiceCallWorker is actively recording  -- avoids mic contention
-            if self._flag.is_set():
-                import time as _t
-                _t.sleep(0.3)
-                continue
-
-            loop_count += 1
-            if loop_count % 10 == 1:
-                print(f"[WakeWord] Loop #{loop_count}  -- waiting for speech...", flush=True)
-
-            try:
-                with sr.Microphone() as source:
-                    # Adjust once per open
-                    r.adjust_for_ambient_noise(source, duration=0.3)
-                    try:
-                        audio = r.listen(source, timeout=2, phrase_time_limit=4)
-                    except sr.WaitTimeoutError:
-                        continue
-                try:
-                    text = r.recognize_google(audio, language=self._lang).lower().strip()
-                    print(f"[WakeWord] Heard: '{text}'", flush=True)
-                except sr.UnknownValueError:
-                    print("[WakeWord] Could not understand audio.", flush=True)
-                    continue
-                except sr.RequestError as e:
-                    print(f"[WakeWord] Google STT error: {e}", flush=True)
-                    continue
-
-                # --- Wake word check ---
-                if any(phrase in text for phrase in self.WAKE_PHRASES):
-                    print(f"[WakeWord] WAKE WORD matched! text='{text}'", flush=True)
-                    if not self._flag.is_set():   # only wake if not already listening
-                        self.wake_detected.emit()
-                    continue
-
-                # --- Stop command check ---
-                if any(phrase in text for phrase in self.STOP_PHRASES):
-                    print(f"[WakeWord] STOP COMMAND matched! text='{text}'", flush=True)
-                    if self._flag.is_set():        # only stop if currently listening
-                        self.stop_detected.emit()
-                    continue
-
-            except OSError as e:
-                print(f"[WakeWord] OSError (mic unavailable?): {e}", flush=True)
-                import time as _t
-                _t.sleep(1.0)
-            except Exception as e:
-                print(f"[WakeWord] Unexpected error: {e}", flush=True)
-                import time as _t
-                _t.sleep(0.5)
-
-        print("[WakeWord] Thread stopped.", flush=True)
-
-
-# ---------------------------------------------------------------------------
 # Startup Worker — heavy init off the main thread so GUI never hangs
 # ---------------------------------------------------------------------------
 
@@ -601,41 +473,6 @@ class _StartupWorker(QThread):
             except Exception as e:
                 print(f"[Startup] FeedbackEngine init warning: {e}", flush=True)
 
-            self.progress.emit("Starting scheduler...")
-            corn_runner = None
-            if _env_bool("CORN_AUTO_RUN", True):
-                try:
-                    corn_runner = CornRunner(
-                        workspace_root=WORKSPACE_ROOT,
-                        poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
-                        max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
-                    )
-                    corn_runner.start()
-                except Exception as e:
-                    print(f"[Startup] CornRunner warning: {e}", flush=True)
-
-            self.progress.emit("Starting proactive engine...")
-            proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
-            proactive.attach_runtime(runtime)
-            proactive.start()
-
-            self.progress.emit("Loading notification router...")
-            from tools.notification_router import NotificationRouter
-            notification_router = NotificationRouter(WORKSPACE_ROOT)
-
-            self.progress.emit("Starting watchdog system...")
-            from watchdog_manager import WatchdogManager
-            watchdog_mgr = WatchdogManager(workspace_root=WORKSPACE_ROOT, proactive=proactive)
-            watchdog_mgr.load_config()
-            watchdog_mgr.start_all()
-
-            self.progress.emit("Initializing Hive Mind...")
-            hive = HiveMind(
-                orchestrator=orchestrator,
-                agent_runtime=agent,
-                use_multi_agent=use_multi_agent,
-            )
-
             self.progress.emit("Systems online.")
             self.ready.emit({
                 "runtime": runtime,
@@ -644,11 +481,6 @@ class _StartupWorker(QThread):
                 "use_multi_agent": use_multi_agent,
                 "memory": memory,
                 "feedback_engine": feedback_engine,
-                "corn_runner": corn_runner,
-                "proactive": proactive,
-                "notification_router": notification_router,
-                "watchdog_mgr": watchdog_mgr,
-                "hive": hive,
             })
 
         except SystemExit as exc:
@@ -674,7 +506,24 @@ _JARVIS_RED      = "#ff3355"
 _JARVIS_AMBER    = "#ffaa00"
 _JARVIS_TEXT     = "#8090a0"
 _JARVIS_TEXT_DIM = "#2a3038"
-_JARVIS_FONT     = "Cascadia Code, JetBrains Mono, Consolas, monospace"
+
+
+def _resolve_ui_font_family() -> str:
+    env_font = os.getenv("ANKITA_UI_FONT", "").strip()
+    if env_font:
+        return env_font
+    try:
+        return QFontDatabase.systemFont(QFontDatabase.FixedFont).family()
+    except Exception:
+        return "Monospace"
+
+
+_UI_FONT_FAMILY = _resolve_ui_font_family()
+_JARVIS_FONT = os.getenv("ANKITA_UI_FONT_STACK", _UI_FONT_FAMILY).strip()
+
+
+def _ui_font(size: int) -> QFont:
+    return QFont(_UI_FONT_FAMILY, size)
 
 _MASTER_QSS = f"""
 QMainWindow {{
@@ -1044,9 +893,6 @@ class _InfoCard(QFrame):
 # ---------------------------------------------------------------------------
 
 class AnkitaWindow(QMainWindow):
-    hotkey_toggle_requested = pyqtSignal()
-    drone_reply_ready = pyqtSignal(str)
-
     def __init__(self) -> None:
         super().__init__()
         load_dotenv()
@@ -1060,11 +906,6 @@ class AnkitaWindow(QMainWindow):
         self.use_multi_agent = True
         self.memory: Any = None
         self.feedback_engine: Any = None
-        self.corn_runner: CornRunner | None = None
-        self.proactive: Any = None
-        self.notification_router: Any = None
-        self.watchdog_mgr: Any = None
-        self.hive: Any = None
         self._last_fb_iid: str = ""
 
         self.session_id = "gui-session"
@@ -1074,14 +915,13 @@ class AnkitaWindow(QMainWindow):
         self.voice_worker: Any = None
         self._content_worker: _ContentRequestWorker | None = None
         self._pending_user_text: str = ""
-        self.hotkey_listener = None
-        self._voice_active_flag = threading.Event()
-        self.wake_word_listener: WakeWordListener | None = None
-        self.hotkey_key = os.getenv("VOICE_HOTKEY_KEY", "f8").strip().lower() or "f8"
-        self.hotkey_window_ms = max(120, int(os.getenv("VOICE_HOTKEY_DOUBLE_PRESS_MS", "400")))
-        self.hotkey_last_press_ts = 0.0
         self.voice_lang_code = os.getenv("VOICE_GUI_LANG", "en-IN")
         self._backend_ready = False
+        self._chat_history: List[Dict[str, Any]] = []
+        self._stream_timer = QTimer(self)
+        self._stream_timer.timeout.connect(self._advance_stream)
+        self._stream_message_index = -1
+        self._stream_target_text = ""
 
         # ── PHASE 2: Build the Jarvis dashboard ──
         self.setWindowTitle("A.N.K.I.T.A")
@@ -1251,7 +1091,7 @@ class AnkitaWindow(QMainWindow):
         self.input = QLineEdit()
         self.input.setObjectName("inputField")
         self.input.setPlaceholderText("Ask ANKITA anything...")
-        self.input.setFont(QFont("Cascadia Code", 12))
+        self.input.setFont(_ui_font(12))
         self.input.returnPressed.connect(self.on_send)
         self.input.setDisabled(True)
         self.input.setStyleSheet(
@@ -1353,7 +1193,7 @@ class AnkitaWindow(QMainWindow):
         self.chat.setReadOnly(True)
         self.chat.setOpenLinks(False)
         self.chat.anchorClicked.connect(self._on_feedback_link_clicked)
-        self.chat.setFont(QFont("Cascadia Code", 11))
+        self.chat.setFont(_ui_font(11))
         chat_lay.addWidget(self.chat, stretch=1)
 
         # Chat input bar (mirrors orb input but separate widget)
@@ -1367,8 +1207,9 @@ class AnkitaWindow(QMainWindow):
         chat_input_inner.setSpacing(8)
         self._chat_input = QLineEdit()
         self._chat_input.setPlaceholderText("Type a message...")
-        self._chat_input.setFont(QFont("Cascadia Code", 12))
+        self._chat_input.setFont(_ui_font(12))
         self._chat_input.returnPressed.connect(self._on_chat_send)
+        self._chat_input.setDisabled(True)
         self._chat_input.setStyleSheet(
             f"QLineEdit {{ background: transparent; color: {_JARVIS_TEXT};"
             f" border: none; padding: 8px 4px; font-size: 13px;"
@@ -1406,12 +1247,12 @@ class AnkitaWindow(QMainWindow):
         self._mem_val = self._sys_card.add_metric("Memory Cluster", "0 GB", _JARVIS_CYAN)
         right_layout.addWidget(self._sys_card)
 
-        # Hive Mind card
-        self._hive_card = _InfoCard("Hive Mind")
-        self._hive_card.set_status(False)
-        self._hive_status = self._hive_card.add_metric("Status", "Offline", _JARVIS_TEXT_DIM)
-        self._hive_tasks = self._hive_card.add_metric("Active Drones", "0", _JARVIS_CYAN)
-        right_layout.addWidget(self._hive_card)
+        # Runtime card
+        self._runtime_card = _InfoCard("Runtime")
+        self._runtime_card.set_status(False)
+        self._runtime_status = self._runtime_card.add_metric("Status", "Offline", _JARVIS_TEXT_DIM)
+        self._runtime_mode = self._runtime_card.add_metric("Mode", "Direct", _JARVIS_CYAN)
+        right_layout.addWidget(self._runtime_card)
 
         # Context / recent activity card
         self._ctx_card = _InfoCard("Context")
@@ -1447,13 +1288,6 @@ class AnkitaWindow(QMainWindow):
         self._voice_status = self._voice_card.add_metric("Status", "Standby", _JARVIS_TEXT_DIM)
         self._voice_mic = self._voice_card.add_metric("Device", "Default", _JARVIS_TEXT_DIM)
         right_layout.addWidget(self._voice_card)
-
-        # Mood / Personality card
-        self._mood_card = _InfoCard("Personality Engine")
-        self._mood_card.set_status(True)
-        self._mood_val = self._mood_card.add_metric("Mood", "Neutral 😊", _JARVIS_GREEN)
-        self._mood_intensity = self._mood_card.add_metric("Intensity", "0%", _JARVIS_TEXT_DIM)
-        right_layout.addWidget(self._mood_card)
 
         # Scroll the right panel
         right_scroll = QScrollArea()
@@ -1590,38 +1424,6 @@ class AnkitaWindow(QMainWindow):
         except Exception:
             pass
 
-        # Mood / Personality engine status
-        try:
-            from tools.personality_engine import get_mood_tracker
-            _tracker = get_mood_tracker()
-            _state = _tracker.current_state()
-            _MOOD_EMOJI = {
-                "neutral": "😊", "stressed": "😰", "frustrated": "😤",
-                "excited": "🔥", "sad": "😔", "tired": "😴",
-                "curious": "🤔", "urgent": "⚡", "casual": "😎",
-                "playful": "😜", "focused": "🎯",
-            }
-            _emoji = _MOOD_EMOJI.get(_state.primary, "❓")
-            self._mood_val.setText(f"{_state.primary.capitalize()} {_emoji}")
-            _pct = f"{_state.intensity:.0%}"
-            self._mood_intensity.setText(_pct)
-            # Color based on mood type
-            _mood_color = _JARVIS_GREEN
-            if _state.primary in ("stressed", "frustrated", "sad"):
-                _mood_color = _JARVIS_RED
-            elif _state.primary in ("excited", "urgent", "playful"):
-                _mood_color = _JARVIS_AMBER
-            elif _state.primary in ("curious", "focused", "casual"):
-                _mood_color = _JARVIS_CYAN
-            self._mood_val.setStyleSheet(
-                f"color: {_mood_color}; font-size: 12px; font-weight: bold;"
-                f" font-family: {_JARVIS_FONT};"
-                " border: none; background: transparent; padding: 0;"
-            )
-            self._mood_card.set_status(True)
-        except Exception:
-            pass
-
     def _on_chip_click(self, text: str) -> None:
         if not self._backend_ready:
             return
@@ -1656,17 +1458,11 @@ class AnkitaWindow(QMainWindow):
         self.use_multi_agent = backends["use_multi_agent"]
         self.memory = backends["memory"]
         self.feedback_engine = backends["feedback_engine"]
-        self.corn_runner = backends["corn_runner"]
-        self.proactive = backends["proactive"]
-        self.notification_router = backends["notification_router"]
-        self.watchdog_mgr = backends["watchdog_mgr"]
-        self.hive = backends["hive"]
         self._backend_ready = True
-
-        self.drone_reply_ready.connect(self._on_drone_reply)
 
         # Enable UI
         self.input.setDisabled(False)
+        self._chat_input.setDisabled(False)
         self.send_btn.setDisabled(False)
         self.voice_btn.setDisabled(False)
         for chip in self._chips:
@@ -1692,31 +1488,18 @@ class AnkitaWindow(QMainWindow):
         self._subtitle.setText("Neural networks idling at 98% efficiency.")
         self.status_label.setText("PROCESSOR READY")
 
-        # Hive card
-        self._hive_card.set_status(True)
-        self._hive_status.setText("Active")
-        self._hive_status.setStyleSheet(
+        # Runtime card
+        self._runtime_card.set_status(True)
+        self._runtime_status.setText("Online")
+        self._runtime_status.setStyleSheet(
             f"color: {_JARVIS_GREEN}; font-size: 12px; font-weight: bold;"
             f" font-family: {_JARVIS_FONT};"
             " border: none; background: transparent; padding: 0;"
         )
+        self._runtime_mode.setText("Multi-Agent" if self.use_multi_agent else "Direct")
 
         if not HAS_AUDIO_STACK:
             self._append_system("Voice unavailable - pip install numpy sounddevice")
-
-        # Hotkey
-        self.hotkey_toggle_requested.connect(self._toggle_voice_by_hotkey)
-        self._setup_hotkey_listener()
-
-        # Wake word
-        if HAS_SPEECH_RECOGNITION:
-            self.wake_word_listener = WakeWordListener(
-                voice_active_flag=self._voice_active_flag,
-                lang_code=self.voice_lang_code or "en-IN",
-            )
-            self.wake_word_listener.wake_detected.connect(self._on_wake_word)
-            self.wake_word_listener.stop_detected.connect(self._on_stop_command)
-            self.wake_word_listener.start()
 
         # Proactive timer
         self._proactive_timer = QTimer(self)
@@ -1781,82 +1564,137 @@ class AnkitaWindow(QMainWindow):
                 f" color: {_JARVIS_CYAN}; border-left: 2px solid {_JARVIS_CYAN}; }}"
             )
 
-    def _append(self, who: str, text: str) -> None:
-        # Don't auto-switch to chat — user stays where they are
-        if self._center_stack.currentIndex() != 1:
-            self._unread_count += 1
-            self._update_chat_badge()
-        text = text.replace("\n", "<br>").strip()
-        ts = ""
+    def _message_timestamp(self) -> str:
         try:
             import datetime
-            ts = datetime.datetime.now().strftime("%H:%M")
+            return datetime.datetime.now().strftime("%H:%M")
+        except Exception:
+            return ""
+
+    def _escape_chat_text(self, text: str) -> str:
+        return html.escape((text or "").strip()).replace("\n", "<br>")
+
+    def _scroll_chat_to_bottom(self) -> None:
+        try:
+            bar = self.chat.verticalScrollBar()
+            bar.setValue(bar.maximum())
         except Exception:
             pass
 
-        if who in ("You", "You (voice)"):
-            # User message - right aligned, card style
-            self.chat.append(
-                f"<div style='text-align:right; margin: 6px 0;'>"
-                f"<span style='background: {_JARVIS_CYAN_DIM}; color: {_JARVIS_TEXT};"
-                f" padding: 8px 14px; border-radius: 16px 16px 4px 16px;"
-                f" display: inline-block; font-size: 12px;'>"
-                f"{text}</span>"
-                f"<br><span style='color: {_JARVIS_TEXT_DIM}; font-size: 9px;'>{ts}</span>"
-                f"</div>"
-            )
-        elif who in ("Assistant", "A.N.K.I.T.A"):
-            # ANKITA response - left aligned with cyan accent
-            self.chat.append(
-                f"<div style='margin: 8px 0;'>"
-                f"<span style='color: {_JARVIS_CYAN}; font-size: 10px;"
-                f" font-weight: bold; letter-spacing: 1px;'>"
-                f"A.N.K.I.T.A</span>"
-                f" <span style='color: {_JARVIS_TEXT_DIM}; font-size: 9px;'>{ts}</span>"
-                f"<br>"
-                f"<span style='color: {_JARVIS_TEXT}; font-size: 12px; line-height: 1.5;'>"
-                f"{text}</span>"
-                f"</div>"
-            )
-        else:
-            # System / other
-            self.chat.append(
-                f"<div style='margin: 4px 0; padding-left: 8px;"
-                f" border-left: 2px solid {_JARVIS_BORDER};'>"
-                f"<span style='color: {_JARVIS_TEXT_DIM}; font-size: 10px;"
-                f" font-weight: bold;'>{who}</span>"
-                f" <span style='color: {_JARVIS_TEXT_DIM}; font-size: 9px;'>{ts}</span>"
-                f"<br>"
-                f"<span style='color: {_JARVIS_TEXT_DIM}; font-size: 11px;'>{text}</span>"
-                f"</div>"
-            )
+    def _render_chat(self) -> None:
+        blocks: List[str] = []
+        for entry in self._chat_history:
+            who = entry["who"]
+            ts = entry["ts"]
+            text_html = self._escape_chat_text(entry["text"])
+            feedback_id = entry.get("feedback_id", "")
+            if who in ("You", "You (voice)"):
+                blocks.append(
+                    f"<div style='text-align:right; margin: 8px 0;'>"
+                    f"<div style='display:inline-block; max-width:72%; background:{_JARVIS_CYAN_DIM};"
+                    f" color:{_JARVIS_TEXT}; border:1px solid {_JARVIS_BORDER};"
+                    f" border-radius:14px 14px 4px 14px; padding:10px 14px; text-align:left;"
+                    f" font-size:12px; line-height:1.55;'>{text_html}</div>"
+                    f"<div style='color:{_JARVIS_TEXT_DIM}; font-size:9px; margin-top:3px;'>{ts}</div>"
+                    f"</div>"
+                )
+            elif who in ("Assistant", "A.N.K.I.T.A"):
+                feedback_html = ""
+                if feedback_id:
+                    feedback_html = (
+                        f"<div style='margin-top:6px; font-size:11px;'>"
+                        f"<a href='fb:thumbs_up:{feedback_id}' style='color:{_JARVIS_GREEN}; text-decoration:none;'>Good</a>"
+                        f"&nbsp;&nbsp;&nbsp;"
+                        f"<a href='fb:thumbs_down:{feedback_id}' style='color:{_JARVIS_AMBER}; text-decoration:none;'>Bad</a>"
+                        f"</div>"
+                    )
+                blocks.append(
+                    f"<div style='text-align:left; margin: 8px 0;'>"
+                    f"<div style='color:{_JARVIS_CYAN}; font-size:10px; font-weight:bold; letter-spacing:1px;"
+                    f" margin-bottom:3px;'>A.N.K.I.T.A <span style='color:{_JARVIS_TEXT_DIM}; font-weight:normal; font-size:9px;'>{ts}</span></div>"
+                    f"<div style='display:inline-block; max-width:72%; background:{_JARVIS_SURFACE};"
+                    f" color:{_JARVIS_TEXT}; border:1px solid {_JARVIS_BORDER};"
+                    f" border-radius:14px 14px 14px 4px; padding:10px 14px; text-align:left;"
+                    f" font-size:12px; line-height:1.6;'>{text_html}</div>"
+                    f"{feedback_html}"
+                    f"</div>"
+                )
+            else:
+                blocks.append(
+                    f"<div style='margin: 6px 0; text-align:center;'>"
+                    f"<span style='color:{_JARVIS_TEXT_DIM}; font-size:10px; font-style:italic;'>{text_html}</span>"
+                    f"</div>"
+                )
+        self.chat.setHtml(
+            f"<div style='font-family:{_JARVIS_FONT}; padding:8px 10px 14px 10px;'>"
+            + "".join(blocks)
+            + "</div>"
+        )
+        QTimer.singleShot(0, self._scroll_chat_to_bottom)
 
-        # Update context card with last messages
+    def _update_context_card(self, who: str, text: str) -> None:
         try:
-            short = text[:60].replace("<br>", " ")
+            short = (text or "").strip().replace("\n", " ")[:60]
             if who in ("You", "You (voice)"):
                 self._ctx_items[0].setText(f"You: {short}")
             elif who in ("Assistant", "A.N.K.I.T.A"):
-                # Shift items
                 self._ctx_items[2].setText(self._ctx_items[1].text())
                 self._ctx_items[1].setText(self._ctx_items[0].text())
                 self._ctx_items[0].setText(f"ANKITA: {short}")
         except Exception:
             pass
 
-    def _append_system(self, text: str) -> None:
+    def _finish_streaming(self) -> None:
+        if self._stream_timer.isActive():
+            self._stream_timer.stop()
+        if 0 <= self._stream_message_index < len(self._chat_history):
+            self._chat_history[self._stream_message_index]["text"] = self._stream_target_text
+        self._stream_message_index = -1
+        self._stream_target_text = ""
+
+    def _advance_stream(self) -> None:
+        if self._stream_message_index < 0 or self._stream_message_index >= len(self._chat_history):
+            self._finish_streaming()
+            self._render_chat()
+            return
+        current = self._chat_history[self._stream_message_index]["text"]
+        remaining = self._stream_target_text[len(current):]
+        if not remaining:
+            self._finish_streaming()
+            self._render_chat()
+            return
+        chunk_size = 2 if remaining.startswith("\n") else min(8, max(3, len(remaining) // 18 or 3))
+        self._chat_history[self._stream_message_index]["text"] = current + remaining[:chunk_size]
+        self._render_chat()
+
+    def _append(self, who: str, text: str, stream: bool = False, feedback_id: str = "") -> None:
         if self._center_stack.currentIndex() != 1:
             self._unread_count += 1
             self._update_chat_badge()
-        self.chat.append(
-            f"<div style='margin: 3px 0; text-align: center;'>"
-            f"<span style='color: {_JARVIS_TEXT_DIM}; font-size: 10px;"
-            f" font-style: italic; letter-spacing: 1px;'>"
-            f"{text}</span></div>"
-        )
+
+        self._finish_streaming()
+        entry = {
+            "who": who,
+            "text": "" if stream and who in ("Assistant", "A.N.K.I.T.A") else (text or ""),
+            "ts": self._message_timestamp(),
+            "feedback_id": feedback_id,
+        }
+        self._chat_history.append(entry)
+        self._update_context_card(who, text)
+        if stream and who in ("Assistant", "A.N.K.I.T.A"):
+            self._stream_message_index = len(self._chat_history) - 1
+            self._stream_target_text = text or ""
+            self._render_chat()
+            self._stream_timer.start(18)
+            return
+        self._render_chat()
+
+    def _append_system(self, text: str) -> None:
+        self._append("System", text)
 
     def _set_busy(self, busy: bool) -> None:
         self.input.setDisabled(busy)
+        self._chat_input.setDisabled(busy)
         self.send_btn.setDisabled(busy)
         if busy:
             self._orb.set_state("thinking")
@@ -1866,67 +1704,6 @@ class AnkitaWindow(QMainWindow):
             self._orb.set_state("online")
             self.status_label.setText("PROCESSOR READY")
             self._mode_label.setText("DIRECT ACCESS MODE")
-
-    # -----------------------------------------------------------------------
-    # Hotkey
-    # -----------------------------------------------------------------------
-
-    def _normalize_hotkey_name(self, key_obj: Any) -> str:
-        key_char = getattr(key_obj, "char", None)
-        if isinstance(key_char, str) and key_char:
-            return key_char.lower()
-        text = str(key_obj).strip().lower()
-        if text.startswith("key."):
-            return text[4:]
-        return text
-
-    def _on_global_key_press(self, key_obj: Any) -> None:
-        name = self._normalize_hotkey_name(key_obj)
-        if name != self.hotkey_key:
-            return
-        now = time.monotonic() * 1000.0
-        if now - self.hotkey_last_press_ts <= float(self.hotkey_window_ms):
-            self.hotkey_last_press_ts = 0.0
-            self.hotkey_toggle_requested.emit()
-            return
-        self.hotkey_last_press_ts = now
-
-    def _setup_hotkey_listener(self) -> None:
-        if not _env_bool("VOICE_HOTKEY_ENABLED", True):
-            return
-        if not HAS_PYNPUT:
-            return
-        try:
-            self.hotkey_listener = pynput_keyboard.Listener(
-                on_press=self._on_global_key_press)
-            self.hotkey_listener.daemon = True
-            self.hotkey_listener.start()
-        except Exception:
-            pass
-
-    def _toggle_voice_by_hotkey(self) -> None:
-        if self.voice_worker is not None and self.voice_worker.isRunning():
-            self.on_voice_stop()
-        else:
-            self.on_voice_start()
-
-    # -----------------------------------------------------------------------
-    # Wake word / stop command handlers
-    # -----------------------------------------------------------------------
-
-    def _on_wake_word(self) -> None:
-        print("[WakeWord] _on_wake_word() called on main thread.", flush=True)
-        if self.voice_worker is not None and self.voice_worker.isRunning():
-            return
-        self._append("System", "Wake word 'Hi Ankita' detected - starting voice listener...")
-        self.on_voice_start()
-
-    def _on_stop_command(self) -> None:
-        print("[WakeWord] _on_stop_command() called on main thread.", flush=True)
-        if self.voice_worker is None or not self.voice_worker.isRunning():
-            return
-        self._append("System", "Stop command heard - stopping voice listener.")
-        self.on_voice_stop()
 
     # -----------------------------------------------------------------------
     # Proactive tick
@@ -1985,136 +1762,24 @@ class AnkitaWindow(QMainWindow):
         _pt.Thread(target=_do_tts, daemon=True, name="ProactiveTTS").start()
 
     def _on_proactive_tick(self) -> None:
-        # Drain Hive Mind drone notifications
-        if self.hive is not None:
-            notes = self.hive.check_notifications()
-            for note in notes:
-                self._append("\U0001f41d Hive", note)
-            # Update hive tasks count
-            try:
-                active = len([t for t in self.hive._tasks.values()
-                              if t.get("status") == "running"]) if hasattr(self.hive, "_tasks") else 0
-                self._hive_tasks.setText(str(active))
-            except Exception:
-                pass
-
-        if not self.proactive:
-            return
-
-        for event in self.proactive.get_pending_events():
-            result = self.notification_router.route_notification(event)
-            if not result.get("delivered") or "gui" not in result.get("channels", []):
-                continue
-            formatted = result.get("formatted_messages", {}).get("gui", event.message)
-
-            if event.kind == "sentinel":
-                sentinel_text = event.data.get("text", event.message)
-                idle_label = event.data.get("idle_label", "a while")
-                if sentinel_text:
-                    self._append("\U0001f9e0 Sentinel",
-                                 f"You've been away for {idle_label}:\n\n{sentinel_text}")
-                    self._speak_proactive(sentinel_text)
-                continue
-
-            if event.kind == "morning_briefing":
-                briefing_text = event.data.get("text", event.message)
-                if briefing_text:
-                    self._append("\u2600\ufe0f Morning", briefing_text)
-                    self._speak_proactive(briefing_text, max_chars=300)
-                continue
-
-            self._append("A.N.K.I.T.A", formatted)
-
-            if event.kind == "dream_epiphany":
-                epiphany_text = event.data.get("text", event.message)
-                if epiphany_text:
-                    self._speak_proactive(epiphany_text)
-                continue
-
-            if event.kind in ("system", "auto_action", "insight", "cron", "drop_file"):
-                self._speak_proactive(event.message)
-                continue
-
-            if event.kind == "content_request":
-                suggested_prompt = event.data.get("suggested_prompt", "")
-                if not suggested_prompt:
-                    continue
-                if self._content_worker is not None and self._content_worker.isRunning():
-                    continue
-                worker = _ContentRequestWorker(
-                    orchestrator=self.orchestrator,
-                    agent=self.agent,
-                    use_multi_agent=self.use_multi_agent,
-                    suggested_prompt=suggested_prompt,
-                )
-
-                def _on_content_done(reply: str, error: str) -> None:
-                    if error:
-                        self._append("A.N.K.I.T.A [Error]", error)
-                        return
-                    self._append("A.N.K.I.T.A", reply)
-                    if self.memory:
-                        self.memory.save("assistant", reply, "gui")
-                    self._speak_proactive(reply)
-
-                worker.done.connect(_on_content_done)
-                worker.start()
-                self._content_worker = worker
-                continue
-
-            self._speak_proactive(formatted)
-
-    # -----------------------------------------------------------------------
-    # Chat actions
-    # -----------------------------------------------------------------------
+        return
 
     def on_send(self) -> None:
         if not self._backend_ready:
             return
-        self.proactive.set_last_interaction()
-        if self.worker is not None and self.worker.isRunning():
-            return
+
         text = self.input.text().strip()
         if not text:
             return
         self.input.clear()
-        self._append("You", text)
-        self._switch_to_chat()
 
-        # Commands
-        if text.lower() == "/hive":
-            self._append("\U0001f41d Hive", self.hive.list_tasks())
-            return
-        if text.lower() == "/watchdogs":
-            mgr = getattr(self, "watchdog_mgr", None)
-            status = mgr.status() if mgr else "[Watchdog] Not running."
-            self._append("Watchdogs", status)
-            return
-        if text.lower() == "/reset":
-            self.on_reset()
-            return
-        if text.lower() == "/orb":
-            self._switch_to_orb()
-            return
-
-        if text.lower() == "/mood":
-            try:
-                from tools.personality_engine import mood_status
-                self._append("Personality", mood_status())
-            except Exception as _me:
-                self._append("Personality", f"Error: {_me}")
-            return
-
-        # Implicit feedback
-        _impl_fb = None
+        # Keep the chat page input in sync when send originates from the orb input.
         try:
-            _impl_fb = self.feedback_engine.detect_implicit_feedback(text, self._last_fb_iid)
+            self._chat_input.clear()
         except Exception:
             pass
-        if _impl_fb is not None:
-            _emoji = "\U0001f44d" if _impl_fb == "positive" else "\U0001f44e"
-            self._append("A.N.K.I.T.A", f"Thanks for the feedback {_emoji}")
-            return
+
+        self._append("You", text)
 
         if text.lower() == "/feedback stats":
             try:
@@ -2125,7 +1790,8 @@ class AnkitaWindow(QMainWindow):
 
         if text.lower() in ("/reauth github", "/reauth-github"):
             import threading
-            def _do_reauth():
+
+            def _do_reauth() -> None:
                 try:
                     from tools.auth_manager import get_github_token, github_token_status
                     self._append("GitHub", "Starting Device Flow...")
@@ -2133,6 +1799,7 @@ class AnkitaWindow(QMainWindow):
                     self._append("GitHub", github_token_status())
                 except Exception as exc:
                     self._append("GitHub", f"Re-auth failed: {exc}")
+
             threading.Thread(target=_do_reauth, daemon=True).start()
             return
 
@@ -2144,56 +1811,22 @@ class AnkitaWindow(QMainWindow):
                 self._append("GitHub", f"Error: {exc}")
             return
 
-        if text.lower().startswith("show "):
-            task_id = text[5:].strip()
-            self._append("Hive", self.hive.get_result(task_id))
-            return
-
-        # Save to memory
         if self.memory:
             self.memory.save("user", text, "gui")
-        self._pending_user_text = text
-
-        # Inject memory context in-place (replaces previous block, prevents accumulation)
-        if self.memory:
             self.memory.inject_into_messages(self.messages, user_query=text)
 
-        # Route via HiveMind
-        def _gui_reply(reply_text: str) -> None:
-            if reply_text:
-                self.drone_reply_ready.emit(reply_text)
+        self._pending_user_text = text
 
         self._set_busy(True)
-        ack = self.hive.delegate(text, self.messages, send_fn=_gui_reply)
-        if ack:
-            self._append("A.N.K.I.T.A", ack)
-            self._set_busy(False)
-
-    def _on_drone_reply(self, reply: str) -> None:
-        if not reply:
+        if self.worker is not None and self.worker.isRunning():
             return
-        self._append("A.N.K.I.T.A", reply)
 
-        try:
-            _iid = self.feedback_engine.new_interaction()
-            self.feedback_engine.record_interaction(_iid, "", reply)
-            self._last_fb_iid = _iid
-            self.chat.append(
-                f"<div style='margin: 2px 0;'>"
-                f"<a href='fb:thumbs_up:{_iid}' style='color:{_JARVIS_GREEN};"
-                f" text-decoration:none; font-size:11px;'>\U0001f44d Good</a>"
-                f"&nbsp;&nbsp;&nbsp;"
-                f"<a href='fb:thumbs_down:{_iid}' style='color:{_JARVIS_RED};"
-                f" text-decoration:none; font-size:11px;'>\U0001f44e Bad</a>"
-                f"</div>"
-            )
-        except Exception:
-            pass
-
-        if self.memory:
-            self.memory.save("assistant", reply, "gui")
-        self._set_busy(False)
-        self.input.setFocus()
+        if self.use_multi_agent and self.orchestrator is not None:
+            self.worker = _OrchestratorWorker(self.orchestrator, self.messages, text)
+        else:
+            self.worker = AskWorker(self.agent, self.messages, text)
+        self.worker.done.connect(self._on_reply)
+        self.worker.start()
 
     def _on_feedback_link_clicked(self, url) -> None:
         try:
@@ -2221,24 +1854,28 @@ class AnkitaWindow(QMainWindow):
         if error:
             self._append("Assistant [Error]", error)
         else:
-            self._append("Assistant", reply)
+            feedback_id = ""
+            try:
+                _iid = self.feedback_engine.new_interaction()
+                self.feedback_engine.record_interaction(_iid, "", reply)
+                self._last_fb_iid = _iid
+                feedback_id = _iid
+            except Exception:
+                pass
+            self._append("Assistant", reply, stream=True, feedback_id=feedback_id)
             if self.memory:
-                self.memory.add(self.session_id, "assistant", reply)
+                self.memory.save("assistant", reply, "gui")
         self._pending_user_text = ""
         self._set_busy(False)
         self.input.setFocus()
 
     def on_reset(self) -> None:
         self.messages = new_session()
-        self.chat.clear()
+        self._finish_streaming()
+        self._chat_history.clear()
+        self._render_chat()
         self._switch_to_orb()
         self._orb.set_state("online")
-        # Reset personality engine mood state
-        try:
-            from tools.personality_engine import get_mood_tracker
-            get_mood_tracker().reset()
-        except Exception:
-            pass
         self._append_system("Conversation reset. Memory preserved.")
 
     # -----------------------------------------------------------------------
@@ -2250,7 +1887,6 @@ class AnkitaWindow(QMainWindow):
             self.voice_worker.interrupt_speaking()
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
-            self._voice_active_flag.clear()
             self.voice_btn.setStyleSheet(
                 f"QPushButton {{ background: transparent; border: none;"
                 f" border-radius: 18px; font-size: 10px; font-weight: bold;"
@@ -2277,12 +1913,10 @@ class AnkitaWindow(QMainWindow):
             if any(kw in mic_label for kw in ("invalid", "fallback", "auto (")):
                 self._append("System", f"Mic fallback: {mic_label}")
             self.voice_worker.heard.connect(lambda t: self._append("You (voice)", t))
-            self.voice_worker.heard.connect(lambda _: self.proactive.set_last_interaction())
-            self.voice_worker.replied.connect(lambda t: self._append("Assistant", t))
+            self.voice_worker.replied.connect(lambda t: self._append("Assistant", t, stream=True))
             self.voice_worker.status.connect(lambda s: self.status_label.setText(s.upper()))
             self.voice_worker.error.connect(lambda e: self._append("Voice [Error]", e))
             self.voice_worker.finished.connect(self._on_voice_worker_finished)
-            self._voice_active_flag.set()
             self.voice_worker.start()
             self.voice_btn.setStyleSheet(
                 f"QPushButton {{ background: {_JARVIS_RED}; border: none;"
@@ -2305,7 +1939,6 @@ class AnkitaWindow(QMainWindow):
 
     def _on_voice_worker_finished(self) -> None:
         print("[GUI] Voice worker finished", flush=True)
-        self._voice_active_flag.clear()
         self.voice_btn.setStyleSheet(
             f"QPushButton {{ background: transparent; border: none;"
             f" border-radius: 18px; font-size: 10px; font-weight: bold;"
@@ -2329,26 +1962,13 @@ class AnkitaWindow(QMainWindow):
     def closeEvent(self, event: Any) -> None:
         if getattr(self, "_proactive_timer", None) is not None:
             self._proactive_timer.stop()
-        if getattr(self, "proactive", None) is not None:
-            self.proactive.stop()
+        self._finish_streaming()
         if self.worker is not None and self.worker.isRunning():
             self.worker.quit()
             self.worker.wait(1000)
         if self.voice_worker is not None and self.voice_worker.isRunning():
             self.voice_worker.stop()
             self.voice_worker.wait(1500)
-        if self.wake_word_listener is not None and self.wake_word_listener.isRunning():
-            self.wake_word_listener.stop()
-            self.wake_word_listener.wait(2000)
-        if self.corn_runner is not None:
-            self.corn_runner.stop()
-        if hasattr(self, "watchdog_mgr") and self.watchdog_mgr is not None:
-            self.watchdog_mgr.stop_all()
-        if self.hotkey_listener is not None:
-            try:
-                self.hotkey_listener.stop()
-            except Exception:
-                pass
         super().closeEvent(event)
 
 
@@ -2378,7 +1998,7 @@ def main() -> None:
     except SystemExit as exc:
         QMessageBox.critical(None, "A.N.K.I.T.A - Startup Error",
                              "Failed to initialise LLM runtime.\n\n"
-                             "Check your .env file (COPILOT_GITHUB_TOKEN / GROQ_API_KEY).\n\n"
+                             "Check your .env file (NVIDIA_API_KEY / COPILOT_GITHUB_TOKEN / GROQ_API_KEY).\n\n"
                              f"Exit code: {exc.code}")
         sys.exit(exc.code or 1)
     except Exception as exc:

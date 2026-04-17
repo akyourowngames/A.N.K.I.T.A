@@ -1,4 +1,4 @@
-# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\app_manager.py
+# file: C:\Users\anime\3D Objects\JAKATA\tools\app_manager.py
 # hypothesis_version: 6.151.6
 
 [0.5, 0.6, 1000000.0, 10000000, 'No apps found', 'apps', 'close_app', 'closed', 'content', 'count', 'cpu_pct', 'error', 'exe', 'force', 'forced', 'list_running', 'memory_info', 'name', 'ok', 'pid', 'ram_mb', 'restart_app', 'restarted', 'role', 'top_hog', 'top_ram_hog', 'user']

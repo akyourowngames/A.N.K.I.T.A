@@ -12,12 +12,15 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
+from .writer_common import normalize_absolute_path, resolve_output_dir, safe_filename
+
 
 def _safe_filename(text: str, max_len: int = 40) -> str:
-    """Convert arbitrary text into a safe filename fragment."""
-    safe = re.sub(r'[\\/:*?"<>|]', "_", text)
-    safe = re.sub(r"\s+", "_", safe.strip())
-    return safe[:max_len] or "content"
+    return safe_filename(text, max_len=max_len)
+
+
+def _resolve_output_dir(output_dir: Optional[str]) -> Path:
+    return resolve_output_dir(output_dir)
 
 
 # Known content format keywords, ordered longest-first so multi-word matches win
@@ -31,6 +34,61 @@ _FORMAT_KEYWORDS: list = [
     "outline", "review", "analysis", "description", "bio", "biography",
     "tweet", "caption", "tagline", "slogan", "advertisement", "ad",
 ]
+
+_CODEISH_FORMATS = {"landing page", "home page", "homepage", "web page", "html page", "website", "html"}
+_STRUCTURED_MARKDOWN_FORMATS = {
+    "report",
+    "analysis",
+    "summary",
+    "executive summary",
+    "proposal",
+    "plan",
+    "pitch deck",
+    "article",
+    "blog post",
+    "case study",
+    "research summary",
+    "project proposal",
+    "meeting notes",
+    "press release",
+}
+_PLAIN_TEXT_FORMATS = {
+    "essay",
+    "letter",
+    "cover letter",
+    "email",
+    "poem",
+    "song",
+    "story",
+    "short story",
+    "script",
+    "paragraph",
+    "pitch",
+    "tweet",
+    "caption",
+    "tagline",
+    "slogan",
+    "advertisement",
+    "description",
+    "biography",
+    "bio",
+    "outline",
+    "review",
+    "content",
+}
+_FORMAT_ALIASES = {
+    "progress report": "report",
+    "status report": "report",
+    "executive summary": "summary",
+    "research summary": "summary",
+    "project proposal": "proposal",
+    "action plan": "plan",
+    "lesson plan": "plan",
+    "cover letter": "letter",
+    "short story": "story",
+    "bio": "biography",
+    "product description": "description",
+}
 
 
 def detect_format_type(filename_stem: str, raw_text: str = "") -> tuple[str, str]:
@@ -79,6 +137,36 @@ def detect_format_type(filename_stem: str, raw_text: str = "") -> tuple[str, str
     # 3. No format found — use "content" and the full stem as topic
     topic = filename_stem.strip() or "your notes"
     return "content", topic
+
+
+def _infer_effective_format(format_type: str, topic: str, extra_context: str) -> str:
+    format_clean = str(format_type or "").strip().lower() or "content"
+    if format_clean and format_clean != "content":
+        return _FORMAT_ALIASES.get(format_clean, format_clean)
+
+    combined = " ".join(
+        part.strip()
+        for part in (str(topic or ""), str(extra_context or ""))
+        if str(part or "").strip()
+    )
+    detected_format, _ = detect_format_type(combined or "content")
+    return _FORMAT_ALIASES.get(detected_format.lower(), detected_format.lower())
+
+
+def _is_codeish_request(format_type: str, topic: str, extra_context: str) -> bool:
+    combined = " ".join(
+        part.strip().lower()
+        for part in (format_type, topic, extra_context)
+        if str(part or "").strip()
+    )
+    return any(keyword in combined for keyword in _CODEISH_FORMATS)
+
+
+def _extension_for_format(format_type: str) -> str:
+    fmt = str(format_type or "").strip().lower()
+    if fmt in _STRUCTURED_MARKDOWN_FORMATS:
+        return ".md"
+    return ".txt"
 
 
 _DEEP_MODE_KEYWORDS = {
@@ -173,10 +261,8 @@ _DEEP_MODE_SYSTEM_PROMPT = (
 
 _NORMAL_SYSTEM_PROMPT = (
     "You are an expert writer and analyst. "
-    "Adapt your tone perfectly to the requested format. "
-    "If the format is a song or poem, be creative and use rhyme/rhythm. "
-    "If the format is a technical report, be precise and professional. "
-    "If the format is a script or pitch deck, be persuasive and structured. "
+    "Adapt your tone perfectly to the requested document format. "
+    "A report should read like a real report, an essay like a real essay, and a letter like a real letter. "
     "Always produce complete, polished, ready-to-use content — not an outline."
 )
 
@@ -186,13 +272,66 @@ _FORMAT_TOKEN_MAP: Dict[str, int] = {
     "tweet": 512, "tagline": 512, "slogan": 512,
     "essay": 2048, "letter": 2048, "script": 2048, "story": 2048,
     "report": 3000, "pitch deck": 3000, "pitch": 3000, "analysis": 3000,
-    "proposal": 3000, "plan": 3000,
+    "proposal": 3000, "plan": 3000, "article": 2800, "blog post": 2800,
+    "case study": 3200, "press release": 2200, "review": 2200,
 }
 _DEEP_TOKEN_BUDGET = 8192   # ~6000-8000 words
+_DEEP_FRIENDLY_FORMATS = {
+    "report",
+    "analysis",
+    "essay",
+    "article",
+    "blog post",
+    "case study",
+    "proposal",
+    "plan",
+    "summary",
+    "story",
+}
+
+
+def _format_specific_instruction(format_type: str) -> str:
+    fmt = str(format_type or "").strip().lower()
+    if fmt == "report":
+        return (
+            "Write a real report with a clear title, executive summary, section headings, "
+            "fact-based analysis, and a concise conclusion. Prioritize clarity and substance over flair."
+        )
+    if fmt == "essay":
+        return (
+            "Write a real essay with an introduction, thesis-driven body paragraphs, and a conclusion. "
+            "Use flowing prose instead of report-style bullet sections."
+        )
+    if fmt in {"letter", "cover letter"}:
+        return (
+            "Write a real letter with salutation, body, and sign-off. "
+            "Keep the tone appropriate to the audience and purpose."
+        )
+    if fmt == "email":
+        return (
+            "Write a real email with subject-appropriate opening, concise body, and a natural sign-off. "
+            "Do not format it like a report."
+        )
+    if fmt == "summary":
+        return "Write a concise, information-dense summary that surfaces the main points without drifting into essay form."
+    if fmt in {"proposal", "plan"}:
+        return "Write a structured professional document with clear goals, approach, rationale, and next steps."
+    if fmt in {"poem", "song"}:
+        return "Write creative lyrical text with deliberate rhythm, imagery, and voice."
+    if fmt == "script":
+        return "Write a real script with scene or speaker cues, clear pacing, and spoken-ready lines."
+    if fmt in {"story", "short story"}:
+        return "Write narrative prose with scene-setting, progression, and a satisfying ending."
+    if fmt in {"article", "blog post", "case study", "press release"}:
+        return "Write a polished publication-ready piece with a strong opening, useful structure, and coherent transitions."
+    return "Match the conventions of the requested format exactly and deliver complete final copy."
 
 
 def _detect_deep_mode(format_type: str, topic: str, extra_context: str) -> bool:
     """Return True if the request signals deep/comprehensive/long-form writing."""
+    fmt = str(format_type or "").strip().lower()
+    if fmt and fmt not in _DEEP_FRIENDLY_FORMATS:
+        return False
     combined = f"{format_type} {topic} {extra_context}".lower()
     return any(kw in combined for kw in _DEEP_MODE_KEYWORDS)
 
@@ -264,7 +403,7 @@ def _generate_deep_parallel(
         title = f"Comprehensive {format_clean.title()}: {topic_clean}"
 
     n_sections = len(_DEEP_SECTION_PLAN)
-    print(f"[ContentEngine] 🚀 Launching {n_sections} parallel section threads (4096 tokens each)…", flush=True)
+    print(f"[ContentEngine] Launching {n_sections} parallel section threads (4096 tokens each)...", flush=True)
 
     # Parallel section generation — all 8 sections at once
     section_texts: dict[str, str] = {}
@@ -279,7 +418,7 @@ def _generate_deep_parallel(
                 _, text = future.result()
                 section_texts[sname] = text
                 wc = len(text.split())
-                print(f"[ContentEngine] ✅ Section '{sname}' — {wc} words", flush=True)
+                print(f"[ContentEngine] Section '{sname}' - {wc} words", flush=True)
             except Exception as err:
                 section_texts[sname] = f"## {sname}\n\n[Generation failed: {err}]"
 
@@ -290,7 +429,7 @@ def _generate_deep_parallel(
 
     full_doc = "\n\n---\n\n".join(parts)
     total_words = len(full_doc.split())
-    print(f"[ContentEngine] 🎉 Full document assembled: {total_words} words ({len(full_doc)} chars)", flush=True)
+    print(f"[ContentEngine] Full document assembled: {total_words} words ({len(full_doc)} chars)", flush=True)
     return full_doc
 
 
@@ -329,13 +468,20 @@ def write_and_save_content(
     # ------------------------------------------------------------------
     # 2. Detect depth mode + build the generation prompt
     # ------------------------------------------------------------------
-    format_clean = format_type.strip() or "content"
+    format_clean = _infer_effective_format(format_type, topic, extra_context)
     topic_clean = topic.strip() or "the requested subject"
     context_section = (
         f"\n\nAdditional context / rough notes:\n{extra_context.strip()}"
         if extra_context and extra_context.strip()
         else ""
     )
+    if _is_codeish_request(format_clean, topic_clean, extra_context):
+        return {
+            "ok": False,
+            "error": "write_content is for document writing only. Use write_code_artifact for HTML, landing pages, and code outputs.",
+            "preferred_tool": "write_code_artifact",
+            "spoken_reply": "That request is a code or web artifact. It should go through the code writer, not the document writer.",
+        }
 
     is_deep = _detect_deep_mode(format_clean, topic_clean, extra_context)
 
@@ -352,6 +498,7 @@ def write_and_save_content(
         system_prompt = _NORMAL_SYSTEM_PROMPT
         user_prompt = (
             f"Write a {format_clean} about: {topic_clean}.{context_section}\n\n"
+            f"Format rules: {_format_specific_instruction(format_clean)}\n\n"
             f"Produce only the final {format_clean} — no meta-commentary, no preamble."
         )
         # Normal token budget — scales with format
@@ -364,9 +511,9 @@ def write_and_save_content(
         depth_label = "normal"
 
     if is_deep:
-        print(f"[ContentEngine] 🔥 DEEP MODE (Parallel Chunks) for: {topic_clean!r}", flush=True)
+        print(f"[ContentEngine] DEEP MODE (parallel chunks) for: {topic_clean!r}", flush=True)
     else:
-        print(f"[ContentEngine] ✍️  Normal mode: {format_clean!r} — {generation_max_tokens} tokens", flush=True)
+        print(f"[ContentEngine] Normal mode: {format_clean!r} - {generation_max_tokens} tokens", flush=True)
 
     # ------------------------------------------------------------------
     # 3. Call the LLM — branch: parallel chunk engine (deep) or single call (normal)
@@ -417,7 +564,7 @@ def write_and_save_content(
                 "spoken_reply": f"Sorry, I wasn't able to generate the {format_clean}. The model returned no content.",
             }
         word_count = len(generated_text.split())
-        print(f"[ContentEngine] ✅ Generated {word_count} words ({len(generated_text)} chars) [{depth_label}]", flush=True)
+        print(f"[ContentEngine] Generated {word_count} words ({len(generated_text)} chars) [{depth_label}]", flush=True)
     except Exception as err:
         return {
             "ok": False,
@@ -428,24 +575,20 @@ def write_and_save_content(
     # ------------------------------------------------------------------
     # 4. Determine output path — GPS LOCK: always Desktop unless overridden
     # ------------------------------------------------------------------
-    if output_dir:
-        dest_dir = Path(output_dir).expanduser().resolve()
-    else:
-        # Hard-wire to the real Desktop — never a hidden project subfolder
-        dest_dir = Path.home() / "Desktop"
+    dest_dir = resolve_output_dir(output_dir)
 
     dest_dir.mkdir(parents=True, exist_ok=True)
 
     timestamp = time.strftime("%Y%m%d_%H%M%S")
     
     # Detect file extension based on format type
-    ext = ".md" if format_clean in ("report", "essay", "article", "analysis", "summary", "proposal", "plan", "pitch deck") else ".txt"
+    ext = _extension_for_format(format_clean)
     
-    filename = f"{_safe_filename(topic)}_{_safe_filename(format_clean)}_{timestamp}{ext}"
+    filename = f"{safe_filename(topic)}_{safe_filename(format_clean)}_{timestamp}{ext}"
     file_path = dest_dir / filename
     
     # Normalize path to use backslashes on Windows
-    absolute_path = str(file_path.resolve()).replace("/", "\\")
+    absolute_path = normalize_absolute_path(file_path)
 
     # ------------------------------------------------------------------
     # 5. Save the generated content + write audit log entry

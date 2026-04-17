@@ -4,7 +4,7 @@ tools/feedback_engine.py
 A.N.K.I.T.A Self-Improvement / Feedback Engine
 -----------------------------------------------
 Collects implicit and explicit feedback on every response, persists it to
-.ankita/feedback/, and exposes methods that the Supervisor and DreamAgent
+.ankita/feedback/, and exposes methods that the Supervisor and runtime
 use to inject learned patterns back into routing + generation.
 
 Architecture
@@ -15,7 +15,7 @@ Architecture
   ├── record_routing()       → called by Orchestrator after Supervisor routes
   ├── start_agent_task()     → called before each specialist runs
   ├── end_agent_task()       → called after each specialist returns
-  ├── analyze_recent()       → called by DreamAgent during idle cycle
+  ├── analyze_recent()       → distills lessons from recent interactions
   │     └─ uses LLM to distill lessons from recent interactions
   ├── get_injected_patterns() → returns text block to inject into Supervisor prompt
   └── get_stats()            → returns human-readable status string
@@ -25,7 +25,7 @@ Storage
   .ankita/feedback/
   ├── interactions.jsonl   – one JSON line per interaction
   ├── explicit.jsonl       – explicit 👍/👎 feedback lines
-  ├── patterns.json        – distilled lessons from DreamAgent analysis
+  ├── patterns.json        – distilled lessons from feedback analysis
   └── stats.json           – running aggregate stats
 """
 
@@ -41,7 +41,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 # ---------------------------------------------------------------------------
-# Singleton registry (same pattern as WatchdogManager)
+# Singleton registry for the active feedback engine
 # ---------------------------------------------------------------------------
 
 _INSTANCE: "Optional[FeedbackEngine]" = None
@@ -104,14 +104,14 @@ class FeedbackEngine:
     4.  Orchestrator calls end_agent_task(interaction_id, agent_name, result_len)
     5.  agent_runtime calls record_interaction(interaction_id, prompt, response)
     6.  (Optional) gui/chat calls record_feedback(interaction_id, rating)
-    7.  DreamAgent calls analyze_recent() during idle sleep
+    7.  Background analysis calls analyze_recent() when enough feedback exists
     8.  Supervisor calls get_injected_patterns() to enrich its routing prompt
     """
 
-    # How many recent interactions to analyze in one DreamAgent pass
+    # How many recent interactions to analyze in one feedback pass
     ANALYZE_WINDOW = 50
 
-    # Minimum interactions before DreamAgent analysis is triggered
+    # Minimum interactions before feedback analysis is triggered
     MIN_INTERACTIONS_FOR_ANALYSIS = 10
 
     # Explicit positive keywords recognized in plain text feedback
@@ -140,7 +140,7 @@ class FeedbackEngine:
         # In-memory tracking for active interactions
         self._active: Dict[str, Dict[str, Any]] = {}  # interaction_id → metadata
 
-        # Cached patterns (loaded from disk, refreshed after DreamAgent analysis)
+        # Cached patterns (loaded from disk, refreshed after analysis)
         self._patterns: List[str] = []
         self._load_patterns()
 
@@ -303,12 +303,12 @@ class FeedbackEngine:
         return None
 
     # ------------------------------------------------------------------
-    # DreamAgent analysis
+    # Feedback analysis
     # ------------------------------------------------------------------
 
     def analyze_recent(self, _memories: Optional[List[Any]] = None) -> Optional[str]:
         """
-        Called by DreamAgent during idle cycle.
+        Called by background analysis to distill recent interaction lessons.
         Uses LLM to distill lessons from recent interactions + explicit feedback.
         Returns a summary of what was learned (or None if not enough data).
         """

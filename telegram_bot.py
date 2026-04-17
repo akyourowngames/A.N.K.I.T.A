@@ -24,8 +24,6 @@ from dotenv import load_dotenv
 
 from agent_runtime import AgentRuntime, new_session
 from agents import Orchestrator
-from agents.hive import HiveMind
-from corn import CornRunner
 from llm import build_runtime_from_env, call_chat_once
 from llm.client import call_chat_with_image
 from proactive import ProactiveEngine
@@ -641,34 +639,6 @@ def main() -> None:
     # Track active chat early — needed by heartbeat delivery closure below
     last_active_chat_id: Optional[int] = None
 
-    # Corn scheduler — with heartbeat agent execution
-    runner: Optional[CornRunner] = None
-    if _env_bool("CORN_AUTO_RUN", True):
-        runner = CornRunner(
-            workspace_root=WORKSPACE_ROOT,
-            poll_interval_sec=float(os.getenv("CORN_POLL_INTERVAL_SEC", "5")),
-            max_jobs_per_tick=int(os.getenv("CORN_MAX_JOBS_PER_TICK", "5")),
-        )
-        # Wire heartbeat: agent payload jobs run through the orchestrator
-        runner.attach_orchestrator(orchestrator, runtime)
-
-        # Delivery callback: push heartbeat results to the active Telegram chat
-        def _heartbeat_deliver(job_name: str, result_text: str) -> None:
-            target = last_active_chat_id
-            if target is None and allowed_chat_ids:
-                target = next(iter(sorted(allowed_chat_ids)))
-            if target is None:
-                print(f"[heartbeat] No chat to deliver to: {job_name}")
-                return
-            header = f"⏰ *Heartbeat — {job_name}*\n\n"
-            try:
-                send_text(bot_token, target, header + result_text)
-            except Exception as err:
-                print(f"[heartbeat-send-error] {err}")
-
-        runner.set_delivery_fn(_heartbeat_deliver)
-        runner.start()
-
     # Proactive engine — memory session id will be updated to the real per-chat
     # session id as soon as the first message arrives (see set_last_interaction below).
     proactive = ProactiveEngine(workspace_root=WORKSPACE_ROOT)
@@ -677,9 +647,6 @@ def main() -> None:
 
     from tools.notification_router import NotificationRouter
     notification_router = NotificationRouter(WORKSPACE_ROOT)
-
-    # Hive Mind — async background task manager
-    hive = HiveMind(orchestrator=orchestrator, agent_runtime=agent, use_multi_agent=use_multi_agent)
 
     # Watchdog system — always-on 24/7 monitoring (shared singleton with chat/gui)
     from watchdog_manager import WatchdogManager
@@ -725,8 +692,8 @@ def main() -> None:
     print(f"  Model       : {runtime.model}")
     print(f"  Multi-agent : {'ON' if use_multi_agent else 'OFF'}")
     print(f"  Proactive   : ON (DreamState + ContentAgent)")
-    print(f"  Scheduler   : {'ON' if runner is not None else 'OFF'}")
-    print(f"  Heartbeat   : {'ON 💓' if runner is not None and runner._orchestrator else 'OFF'}")
+    print("  Scheduler   : OFF")
+    print("  Heartbeat   : OFF")
     print()
 
     # ------------------------------------------------------------------
@@ -745,27 +712,6 @@ def main() -> None:
             if not result.get("delivered") or "telegram" not in result.get("channels", []):
                 continue
             formatted = result.get("formatted_messages", {}).get("telegram", event.message)
-
-            # ---- DreamState epiphany ----------------------------------------
-            if event.kind == "dream_epiphany":
-                epiphany_text = event.message
-                if not epiphany_text:
-                    continue
-                try:
-                    send_text(bot_token, target_chat, f"💭 {epiphany_text}")
-                except Exception as err:
-                    print(f"[proactive-dream-send-error] {err}")
-                continue
-
-            # ---- Morning briefing (first boot of day) -----------------------
-            if event.kind == "morning_briefing":
-                briefing_text = event.data.get("text", event.message)
-                if briefing_text:
-                    try:
-                        send_text(bot_token, target_chat, f"☀️ *Morning Briefing*\n\n{briefing_text}")
-                    except Exception as err:
-                        print(f"[proactive-morning-send-error] {err}")
-                continue
 
             # ---- ContentAgent raw_ideas request ------------------------------
             if event.kind == "content_request":
@@ -998,26 +944,19 @@ def main() -> None:
                             "🤖 *A.N.K.I.T.A* is online.\n\n"
                             "Commands:\n"
                             "/reset — clear current session (memory persists)\n"
-                            "/mood — show current personality/mood state\n"
                             "/memory — show memory stats\n"
                             "/agents on — enable multi-agent mode\n"
                             "/agents off — disable multi-agent mode\n"
-                            "/hive — show background task status\n"
-                            "/heartbeats — show scheduled agent heartbeat jobs\n"
+                            "/heartbeats — scheduler status\n"
                             "/watchdogs — show all watcher statuses\n"
                             "/github status — check GitHub token\n"
                             "/reauth github — re-authorize GitHub (device flow)\n"
                             "/feedback stats — show self-improvement stats\n"
                             "/sendfile <path> — send a local file/photo/voice\n"
-                            "show <id> — get result of a background task\n\n"
-                            "Then just send normal prompts!"
+                            "Then just send normal prompts!\n\n"
                         ),
                         msg_id,
                     )
-                    continue
-
-                if parsed.kind == "text" and text.lower() == "/hive":
-                    send_text(bot_token, chat_id, hive.list_tasks(), msg_id)
                     continue
 
                 if parsed.kind == "text" and text.lower() == "/watchdogs":
@@ -1025,29 +964,7 @@ def main() -> None:
                     continue
 
                 if parsed.kind == "text" and text.lower() == "/heartbeats":
-                    try:
-                        from corn import CornService
-                        _cs = CornService(workspace_root=WORKSPACE_ROOT)
-                        _jobs = _cs.list().get("jobs", [])
-                        _agent_jobs = [j for j in _jobs if isinstance(j, dict) and j.get("payload", {}).get("kind") == "agent"]
-                        if not _agent_jobs:
-                            send_text(bot_token, chat_id, "No agent heartbeat jobs scheduled yet.\n\nTry: \"every morning tell me the news\"", msg_id)
-                        else:
-                            import datetime as _dt
-                            lines = ["⏰ *Heartbeat Jobs*\n"]
-                            for j in _agent_jobs:
-                                _name = j.get("name", "?")
-                                _sched = j.get("schedule", {})
-                                _expr = _sched.get("expr", _sched.get("every_ms", "?"))
-                                _next_ms = j.get("state", {}).get("next_run_at_ms")
-                                _next = "?"
-                                if _next_ms:
-                                    _next = _dt.datetime.fromtimestamp(_next_ms / 1000).strftime("%Y-%m-%d %H:%M")
-                                _prompt = j.get("payload", {}).get("prompt", "")[:60]
-                                lines.append(f"• [{j.get('id', '?')[:8]}] {_name}\n  Schedule: {_expr}\n  Next: {_next}\n  Prompt: {_prompt}...")
-                            send_text(bot_token, chat_id, "\n".join(lines), msg_id)
-                    except Exception as hb_err:
-                        send_text(bot_token, chat_id, f"Error listing heartbeats: {hb_err}", msg_id)
+                    send_text(bot_token, chat_id, "Heartbeat scheduling is disabled in this workspace.", msg_id)
                     continue
 
                 if parsed.kind == "text" and text.lower() in ("/reauth github", "/reauth-github"):
@@ -1075,28 +992,9 @@ def main() -> None:
                         send_text(bot_token, chat_id, f"Error: {_exc}", msg_id)
                     continue
 
-                if parsed.kind == "text" and text.lower().startswith("show "):
-                    task_id = text[5:].strip()
-                    send_text(bot_token, chat_id, hive.get_result(task_id), msg_id)
-                    continue
-
                 if parsed.kind == "text" and text.lower() == "/reset":
                     sessions[chat_id] = new_session("")  # empty query, still injects recent memory
-                    # Reset personality engine mood state
-                    try:
-                        from tools.personality_engine import get_mood_tracker
-                        get_mood_tracker().reset()
-                    except Exception:
-                        pass
                     send_text(bot_token, chat_id, "✅ Conversation reset. Long-term memory preserved.", msg_id)
-                    continue
-
-                if parsed.kind == "text" and text.lower() == "/mood":
-                    try:
-                        from tools.personality_engine import mood_status
-                        send_text(bot_token, chat_id, f"🎭 *Personality Engine*\n{mood_status()}", msg_id)
-                    except Exception as _mood_err:
-                        send_text(bot_token, chat_id, f"⚠️ Personality engine error: {_mood_err}", msg_id)
                     continue
 
                 if parsed.kind == "text" and text.lower() in {"/agents on", "/agents off"}:
@@ -1213,70 +1111,6 @@ def main() -> None:
                 # Memory injection is handled by orchestrator's _inject_memory()
                 # Removed duplicate injection here to avoid polluting history with system messages
 
-                # Build per-chat send_fn — called by drone when reply is ready
-                _chat_id_for_drone = chat_id
-                _session_id_for_drone = session_id
-                _msg_id_for_drone = msg_id
-
-                _sm_for_drone = None
-
-                def _drone_reply(
-                    note: str,
-                    _cid: int = _chat_id_for_drone,
-                ) -> None:
-                    """Called from drone thread when reply is ready — sends to Telegram."""
-                    if not note:
-                        return
-                    # Save assistant reply to shared memory
-                    try:
-                        from memory import get_memory_manager
-                        get_memory_manager(WORKSPACE_ROOT).save("assistant", note, interface="telegram")
-                    except Exception:
-                        pass
-                    try:
-                        clean_note, directive_paths, notify_msgs = _extract_send_directives(note)
-                        if clean_note:
-                            send_text(bot_token, _cid, clean_note)
-                        for nm in notify_msgs:
-                            try:
-                                send_text(bot_token, _cid, nm)
-                            except Exception:
-                                pass
-                        found_paths = directive_paths or _extract_candidate_paths(note)
-                        if not found_paths and send_intent_path is not None:
-                            # Recovery: if agent mentioned a filename (e.g., "Opened random image: photo_x.jpg"),
-                            # resolve it to a real path and still deliver to Telegram.
-                            for fname in _extract_mentioned_filenames(note):
-                                resolved = _resolve_file_by_name(fname)
-                                if resolved:
-                                    found_paths.append(resolved)
-                                    break
-                        if found_paths:
-                            existing = recent_artifacts.setdefault(_cid, [])
-                            for p in found_paths:
-                                existing.append(p)
-                                try:
-                                    send_file_auto(bot_token, _cid, p, caption=f"📎 Generated file: {p.name}")
-                                except Exception as send_err:
-                                    print(f"[artifact-send-error] {send_err}")
-                            recent_artifacts[_cid] = existing[-10:]
-                        elif send_intent_path is not None:
-                            send_text(
-                                bot_token,
-                                _cid,
-                                "I couldn't resolve a sendable file path yet. Please give a direct path or ask: `/sendfile <path>`.",
-                            )
-                        if reactions_enabled:
-                            try:
-                                emoji = choose_reaction_with_llm(runtime, parsed, processing_state="", result_state="success")
-                                if emoji:
-                                    send_reaction(bot_token, _cid, msg_id, emoji)
-                            except Exception:
-                                pass
-                    except Exception as err:
-                        print(f"[drone-reply-error] {err}")
-
-
                 try:
                     if reactions_enabled:
                         try:
@@ -1285,7 +1119,10 @@ def main() -> None:
                                 send_reaction(bot_token, chat_id, msg_id, emoji)
                         except Exception:
                             pass
-                    ack = hive.delegate(user_payload_text, sessions[chat_id], send_fn=_drone_reply)
+                    if use_multi_agent:
+                        reply = orchestrator.run(user_payload_text, sessions[chat_id])
+                    else:
+                        reply = agent.process_user_text(user_payload_text, sessions[chat_id])
                 except Exception as err:
                     if reactions_enabled:
                         try:
@@ -1297,12 +1134,17 @@ def main() -> None:
                     send_text(bot_token, chat_id, f"⚠️ Error: {err}", msg_id)
                     continue
 
-                # For heavy tasks: send the "Started 🐝" acknowledgement immediately
-                # For normal tasks: ack is "" — _drone_reply delivers the real reply async
-                if ack:
-                    clean_ack, directive_paths, notify_msgs = _extract_send_directives(ack)
-                    if clean_ack:
-                        send_text(bot_token, chat_id, clean_ack, msg_id)
+                try:
+                    # Save assistant reply to shared memory
+                    try:
+                        from memory import get_memory_manager
+                        get_memory_manager(WORKSPACE_ROOT).save("assistant", reply, interface="telegram")
+                    except Exception:
+                        pass
+
+                    clean_reply, directive_paths, notify_msgs = _extract_send_directives(reply)
+                    if clean_reply:
+                        send_text(bot_token, chat_id, clean_reply, msg_id)
                     for nm in notify_msgs:
                         try:
                             send_text(bot_token, chat_id, nm)
@@ -1317,6 +1159,22 @@ def main() -> None:
                             except Exception as send_err:
                                 print(f"[ack-artifact-send-error] {send_err}")
                         recent_artifacts[chat_id] = existing[-10:]
+                    elif send_intent_path is not None:
+                        send_text(
+                            bot_token,
+                            chat_id,
+                            "I couldn't resolve a sendable file path yet. Please give a direct path or ask: `/sendfile <path>`.",
+                            msg_id,
+                        )
+                    if reactions_enabled:
+                        try:
+                            emoji = choose_reaction_with_llm(runtime, parsed, processing_state="", result_state="success")
+                            if emoji:
+                                send_reaction(bot_token, chat_id, msg_id, emoji)
+                        except Exception:
+                            pass
+                except Exception as err:
+                    print(f"[telegram-reply-error] {err}")
 
         except KeyboardInterrupt:
             print("\nStopping Telegram bot bridge.")
@@ -1327,8 +1185,6 @@ def main() -> None:
 
     proactive.stop()
     watchdog_mgr.stop_all()
-    if runner is not None:
-        runner.stop()
 
 
 if __name__ == "__main__":

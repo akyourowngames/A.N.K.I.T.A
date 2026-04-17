@@ -202,6 +202,15 @@ process_op(action='start_background|list_background|kill_background|is_running|p
 fast_file_search(pattern='config', path='C:\\MyRepo', glob='*.yml', max_results=50)
 Prefer this over recursive dir listings.
 
+LOCAL DISCOVERY PROTOCOL (CRITICAL):
+If the user wants you to find, locate, list, show, or open a LOCAL file/folder and the exact path is not already proven in context:
+1. Discover first with real tools: `resolve_local_target`, `get_system_context`, `fast_file_search`, `list_files`, `search_text`, or `execute_shell`.
+2. Prefer `resolve_local_target` for vague names like "that screenshot", "gateway.py", "landing page file", or "the generated image".
+3. Resolve an ACTUAL existing path before any `open_path` or `launch_app` call.
+4. If the user asked to open/show it, use the discovered real path in the open tool call.
+5. Never treat `remember()` as proof that something was found or opened. Memory is only a note, not execution evidence.
+6. Never say found/opened/done unless the tool receipt includes a real path or open/launch result.
+
 # 🏗️ ENVIRONMENT SETUP
 
 **environment_setup(project_type, project_path)** — One-command project setup:

@@ -4,9 +4,6 @@
 __pycache__/
 *.pyc
 
-# WhatsApp session — contains browser profile data with real secrets, NEVER commit
-whatsapp_session/
-
 # Generated content files — auto-created by ContentAgent, not source code
 generated_files/
 

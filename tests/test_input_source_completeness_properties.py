@@ -95,21 +95,15 @@ def test_property_intention_engine_queries_all_sources(scenario):
         workspace = Path(tmpdir)
         engine = IntentionEngine(workspace)
         
-        # Create the cron jobs file so the code path is executed
-        corn_dir = workspace / ".ankita" / "corn"
-        corn_dir.mkdir(parents=True, exist_ok=True)
-        jobs_file = corn_dir / "jobs.json"
-        jobs_file.write_text("[]", encoding="utf-8")
-        
-        # Track which sources were queried
+                # Track which sources were queried
         queried_sources: Set[str] = set()
         
         # Mock all external dependencies and track calls
-        with patch("memory.MemoryStore") as mock_memory:
+        with patch("memory.MemoryStore", create=True) as mock_memory:
             with patch("tools.task_ops.task_op") as mock_task_op:
-                with patch("corn.store.load_store") as mock_load_store:
+                with patch.object(IntentionEngine, "_load_scheduled_jobs") as mock_load_store:
                     with patch("subprocess.run") as mock_subprocess:
-                        with patch("watchdog_manager.get_instance") as mock_get_instance:
+                        with patch("watchdog_manager.get_instance", create=True) as mock_get_instance:
                             
                             # Setup mocks to track queries
                             def track_memory(*args, **kwargs):
@@ -220,24 +214,18 @@ def test_property_intention_engine_handles_source_failures(num_failures: int, fa
         workspace = Path(tmpdir)
         engine = IntentionEngine(workspace)
         
-        # Create the cron jobs file so the code path is executed
-        corn_dir = workspace / ".ankita" / "corn"
-        corn_dir.mkdir(parents=True, exist_ok=True)
-        jobs_file = corn_dir / "jobs.json"
-        jobs_file.write_text("[]", encoding="utf-8")
-        
-        # Limit failure_indices to num_failures
+                # Limit failure_indices to num_failures
         actual_failures = failure_indices[:num_failures]
         
         # Track which sources were queried
         queried_sources: Set[str] = set()
         
         # Mock all external dependencies with controlled failures
-        with patch("memory.MemoryStore") as mock_memory:
+        with patch("memory.MemoryStore", create=True) as mock_memory:
             with patch("tools.task_ops.task_op") as mock_task_op:
-                with patch("corn.store.load_store") as mock_load_store:
+                with patch.object(IntentionEngine, "_load_scheduled_jobs") as mock_load_store:
                     with patch("subprocess.run") as mock_subprocess:
-                        with patch("watchdog_manager.get_instance") as mock_get_instance:
+                        with patch("watchdog_manager.get_instance", create=True) as mock_get_instance:
                             
                             # Setup mocks with potential failures
                             def track_memory(*args, **kwargs):
@@ -352,13 +340,7 @@ def test_property_intention_engine_queries_sources_once():
         workspace = Path(tmpdir)
         engine = IntentionEngine(workspace)
         
-        # Create the cron jobs file so the code path is executed
-        corn_dir = workspace / ".ankita" / "corn"
-        corn_dir.mkdir(parents=True, exist_ok=True)
-        jobs_file = corn_dir / "jobs.json"
-        jobs_file.write_text("[]", encoding="utf-8")
-        
-        # Track call counts for each source
+                # Track call counts for each source
         call_counts: Dict[str, int] = {
             "chromadb_memories": 0,
             "pending_tasks": 0,
@@ -368,11 +350,11 @@ def test_property_intention_engine_queries_sources_once():
         }
         
         # Mock all external dependencies and count calls
-        with patch("memory.MemoryStore") as mock_memory:
+        with patch("memory.MemoryStore", create=True) as mock_memory:
             with patch("tools.task_ops.task_op") as mock_task_op:
-                with patch("corn.store.load_store") as mock_load_store:
+                with patch.object(IntentionEngine, "_load_scheduled_jobs") as mock_load_store:
                     with patch("subprocess.run") as mock_subprocess:
-                        with patch("watchdog_manager.get_instance") as mock_get_instance:
+                        with patch("watchdog_manager.get_instance", create=True) as mock_get_instance:
                             
                             # Setup mocks to count calls
                             def count_memory(*args, **kwargs):
@@ -444,24 +426,18 @@ def test_property_intention_engine_consistent_across_executions(num_executions: 
         workspace = Path(tmpdir)
         engine = IntentionEngine(workspace)
         
-        # Create the cron jobs file so the code path is executed
-        corn_dir = workspace / ".ankita" / "corn"
-        corn_dir.mkdir(parents=True, exist_ok=True)
-        jobs_file = corn_dir / "jobs.json"
-        jobs_file.write_text("[]", encoding="utf-8")
-        
-        # Track queries across all executions
+                # Track queries across all executions
         all_queries: List[Set[str]] = []
         
         for execution_num in range(num_executions):
             queried_sources: Set[str] = set()
             
             # Mock all external dependencies
-            with patch("memory.MemoryStore") as mock_memory:
+            with patch("memory.MemoryStore", create=True) as mock_memory:
                 with patch("tools.task_ops.task_op") as mock_task_op:
-                    with patch("corn.store.load_store") as mock_load_store:
+                    with patch.object(IntentionEngine, "_load_scheduled_jobs") as mock_load_store:
                         with patch("subprocess.run") as mock_subprocess:
-                            with patch("watchdog_manager.get_instance") as mock_get_instance:
+                            with patch("watchdog_manager.get_instance", create=True) as mock_get_instance:
                                 
                                 # Setup mocks to track queries
                                 def track_memory(*args, **kwargs):

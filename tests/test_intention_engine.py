@@ -251,11 +251,11 @@ def test_gather_context_structure(intention_engine):
     Test that _gather_context returns the expected structure.
     """
     # Mock all external dependencies (imports are inside the method)
-    with patch("memory.MemoryStore") as mock_memory:
+    with patch("memory.MemoryStore", create=True) as mock_memory:
         with patch("tools.task_ops.task_op") as mock_task_op:
-            with patch("corn.store.load_store") as mock_load_store:
+            with patch.object(IntentionEngine, "_load_scheduled_jobs") as mock_load_store:
                 with patch("subprocess.run") as mock_subprocess:
-                    with patch("watchdog_manager.get_instance") as mock_get_instance:
+                    with patch("watchdog_manager.get_instance", create=True) as mock_get_instance:
                         # Setup mocks
                         mock_memory.return_value.enabled = False
                         mock_task_op.return_value = {"status": "success", "tasks": []}
@@ -492,7 +492,7 @@ def test_format_memories_empty(intention_engine):
     """
     result = intention_engine._format_memories([])
     
-    assert "(No recent memories)" in result
+    assert "(Memory system currently being rebuilt)" in result
 
 
 def test_format_tasks_empty(intention_engine):

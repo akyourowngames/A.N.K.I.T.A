@@ -194,7 +194,7 @@ class MemoryManager:
 
         Includes (in order of relevance):
           1. Semantically relevant long-term facts (via ChromaDB / SQLite fallback)
-          2. Recent mid-term summaries from DreamAgent
+          2. Recent mid-term summaries from the summarizer
         
         Returns "" if nothing useful found.
         """
@@ -277,29 +277,6 @@ class MemoryManager:
                 break
 
         messages.insert(insert_idx, {"role": "system", "content": context})
-
-    # ── DreamAgent integration ────────────────────────────────────────────────
-
-    def run_dream_cycle(self, interface: str = "dream") -> Optional[str]:
-        """
-        Called by DreamAgent at idle. Compresses recent turns into a summary,
-        saves it, and extracts facts from the summary text.
-        Returns the summary string or None.
-        """
-        if self._runtime is None:
-            logger.debug("[MemoryManager] Dream cycle skipped — no runtime attached.")
-            return None
-
-        summary = self._summarizer.generate_summary(self._runtime, n_turns=30)
-        if not summary:
-            return None
-
-        self._summarizer.save_summary(summary, interface=interface)
-        logger.info("[MemoryManager] Dream cycle: summary generated (%d chars)", len(summary))
-
-        # Extract facts from the summary itself
-        self._extract_facts_from_text(summary, interface="dream")
-        return summary
 
     # ── Internal ──────────────────────────────────────────────────────────────
 

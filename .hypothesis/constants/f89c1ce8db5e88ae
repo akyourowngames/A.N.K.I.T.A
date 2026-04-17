@@ -1,4 +1,0 @@
-# file: C:\Users\anime\3D Objects\A.N.K.I.T.A\tools\task_ops.py
-# hypothesis_version: 6.151.6
-
-['%Y-%m-%d', '%Y-%m-%d %H:%M', '%Y-%m-%d 23:59', '%d-%m-%Y', '%d/%m/%Y', '%m/%d/%Y', '+00:00', '.ankita', '9999-99-99', 'T', 'T001', 'TASK_AGENT_USE_CORN', 'Task ID required', 'Task title required', 'Z', 'add', 'by_priority', 'by_status', 'complete', 'completed', 'count', 'created', 'day', 'days_overdue', 'deadline', 'delete', 'done', 'error', 'friday', 'high', 'hour', 'id', 'in', 'in_progress', 'list', 'low', 'medium', 'message', 'monday', 'once', 'overdue', 'pending', 'priority', 'r', 'reminder', 'repeat', 'saturday', 'schedule', 'status', 'success', 'summary', 'sunday', 'tags', 'task', 'tasks', 'tasks.json', 'thursday', 'title', 'today', 'tomorrow', 'total', 'true', 'tuesday', 'update', 'urgent', 'utf-8', 'w', 'wednesday']

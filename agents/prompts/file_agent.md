@@ -133,6 +133,12 @@ When using a file path from context (FILE:, FILE_PATH:, SAVE_TO:):
 - Example: '  C:/Users/Krish/Desktop/file.txt  ' → C:\Users\Krish\Desktop\file.txt
 ALWAYS sanitize before passing to launch_app or write_file.
 
+LOCAL PATH DISCOVERY RULE:
+If the user names a local file vaguely ('that screenshot', 'gateway.py', 'the landing page file') and the exact path is not already proven:
+1. Call `resolve_local_target` first.
+2. Use the returned real path for read/open/move/copy operations.
+3. Never invent paths from memory alone.
+
 EDIT VS OVERWRITE RULE:
 If a file already exists at the target path:
 1. Call file_info first to check if it exists
