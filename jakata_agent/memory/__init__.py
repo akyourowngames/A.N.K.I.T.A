@@ -1,0 +1,2 @@
+"""Memory subsystem for JAKATA."""
+

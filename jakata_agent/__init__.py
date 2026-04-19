@@ -1,0 +1,2 @@
+"""JAKATA personal assistant starter."""
+

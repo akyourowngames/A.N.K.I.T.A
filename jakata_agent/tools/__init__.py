@@ -1,0 +1,2 @@
+"""Tool registry for JAKATA."""
+
