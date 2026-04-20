@@ -20,6 +20,7 @@ class Settings:
     base_url: str
     primary_model: str
     fallback_models: list[str]
+    embedding_model: str
     session_id: str
     data_dir: Path
     tavily_api_key: str
@@ -47,14 +48,17 @@ def load_settings() -> Settings:
         api_key=api_key,
         base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip(),
         primary_model=os.getenv(
-            "NVIDIA_PRIMARY_MODEL", "nvidia/llama-3.1-nemotron-nano-8b-v1"
+            "NVIDIA_PRIMARY_MODEL", "moonshotai/kimi-k2-instruct-0905"
         ).strip(),
         fallback_models=_split_csv(
             os.getenv(
                 "NVIDIA_FALLBACK_MODELS",
-                "nvidia/nemotron-mini-4b-instruct,nvidia/llama-3.1-nemotron-nano-4b-v1_1",
+                "z-ai/glm-5,nvidia/nemotron-3-super-120b-a12b,meta/llama-3.3-70b-instruct",
             )
         ),
+        embedding_model=os.getenv(
+            "NVIDIA_EMBEDDING_MODEL", "nvidia/llama-nemotron-embed-1b-v2"
+        ).strip(),
         session_id=os.getenv("JAKATA_SESSION_ID", "default").strip() or "default",
         data_dir=Path(os.getenv("JAKATA_DATA_DIR", "data")).resolve(),
         tavily_api_key=os.getenv("TAVILY_API_KEY", "").strip(),

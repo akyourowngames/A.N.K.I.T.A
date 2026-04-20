@@ -33,6 +33,18 @@ class ToolRegistry:
             return "No tools connected yet."
         return "\n".join(f"- {tool.name}: {tool.description}" for tool in self._tools.values())
 
+    def manifest(self) -> list[dict]:
+        return [
+            {
+                "name": tool.name,
+                "description": tool.description,
+                "args": tool.input_schema.get("properties", {}),
+                "required": tool.input_schema.get("required", []),
+                "safety": getattr(tool, "safety", "read_only"),
+            }
+            for tool in self._tools.values()
+        ]
+
     def planner_prompt(self) -> str:
         specs = [
             {

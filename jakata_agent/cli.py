@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from prompt_toolkit import prompt
+from prompt_toolkit.key_binding import KeyBindings
 from rich.console import Console
 from rich.panel import Panel
 from rich.text import Text
@@ -8,14 +10,29 @@ from jakata_agent.agent import JakataAgent
 from jakata_agent.config import load_settings
 from jakata_agent.llm import NvidiaChatClient
 from jakata_agent.memory.manager import MemoryManager
+from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.router import IntentRouter
 from jakata_agent.tools.datetime_tool import DateTimeTool
+from jakata_agent.tools.memory_tool import MemoryTool
+from jakata_agent.tools.keyboard import register_input_tools
 from jakata_agent.tools.registry import ToolRegistry
 from jakata_agent.tools.search_web import TavilySearchTool
+from jakata_agent.tools.terminal import register_terminal_tools
 from jakata_agent.tools.weather import OpenWeatherTool
 
 
 console = Console()
+bindings = KeyBindings()
+
+
+@bindings.add("enter")
+def _(event) -> None:
+    event.current_buffer.validate_and_handle()
+
+
+@bindings.add("escape", "enter")
+def _(event) -> None:
+    event.current_buffer.insert_text("\n")
 
 
 def build_agent() -> JakataAgent:
@@ -23,14 +40,24 @@ def build_agent() -> JakataAgent:
     client = NvidiaChatClient(settings)
     tools = ToolRegistry()
     tools.register(DateTimeTool())
+    tools.register(MemoryTool())
     tools.register(TavilySearchTool(settings.tavily_api_key))
     tools.register(OpenWeatherTool(settings.openweather_api_key))
+    register_terminal_tools(tools)
+    register_input_tools(tools)
     return JakataAgent(
         settings=settings,
         client=client,
         tools=tools,
-        memory=MemoryManager(settings.data_dir, settings.session_id),
+        memory=MemoryManager(
+            settings.data_dir,
+            settings.session_id,
+            settings.api_key,
+            settings.base_url,
+            settings.embedding_model,
+        ),
         router=IntentRouter(client),
+        validator=PlanValidator(),
     )
 
 
@@ -57,11 +84,31 @@ def print_help() -> None:
             "/clear reset chat history\n"
             "/models show configured model fallback order\n"
             "/memory show memory storage location\n"
+            "Enter  send message\n"
+            "Esc+Enter insert newline for big pasted prompts\n"
             "/exit  quit",
             title="Help",
             border_style="green",
         )
     )
+
+
+def read_user_input() -> str:
+    return prompt(
+        [("class:prompt", "you> ")],
+        multiline=True,
+        key_bindings=bindings,
+        mouse_support=False,
+        prompt_continuation=lambda width, line_number, wrap_count: "... ",
+        bottom_toolbar="Enter: send  Esc+Enter: newline",
+    ).strip()
+
+
+def preview_user_input(user_input: str, limit: int = 140) -> str:
+    flattened = " ".join(user_input.split())
+    if len(flattened) <= limit:
+        return flattened
+    return flattened[: limit - 3].rstrip() + "..."
 
 
 def main() -> None:
@@ -72,13 +119,16 @@ def main() -> None:
 
     while True:
         try:
-            user_input = console.input("[bold yellow]you> [/bold yellow]").strip()
+            user_input = read_user_input()
         except (EOFError, KeyboardInterrupt):
             console.print("\n[dim]bye[/dim]")
             break
 
         if not user_input:
             continue
+
+        if "\n" in user_input or len(user_input) > 160:
+            console.print(f"[dim]you> {preview_user_input(user_input)}[/dim]")
 
         if user_input.lower() in {"exit", "quit", "/exit"}:
             console.print("[dim]bye[/dim]")

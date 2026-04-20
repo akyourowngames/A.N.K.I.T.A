@@ -1,3 +1,8 @@
 openai>=1.75.0
 python-dotenv>=1.0.1
+prompt_toolkit>=3.0.52
+pyautogui>=0.9.54
+pygetwindow>=0.0.9
+pyperclip>=1.9.0
+pynput>=1.7.7
 rich>=14.0.0

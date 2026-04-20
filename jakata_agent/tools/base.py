@@ -19,6 +19,9 @@ class Tool(ABC):
     input_schema: dict[str, Any]
     safety: str = "read_only"
 
+    def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        return args
+
     @abstractmethod
     def run(self, args: dict[str, Any]) -> ToolResult:
         raise NotImplementedError

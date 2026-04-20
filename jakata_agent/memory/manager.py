@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from jakata_agent.memory.embedder import SemanticEmbedder
 from jakata_agent.memory.extractor import MemoryExtractor
 from jakata_agent.memory.knowledge_loader import KnowledgeLoader
 from jakata_agent.memory.models import RetrievedContext
@@ -11,7 +12,7 @@ from jakata_agent.memory.store import MemoryStore
 
 
 class MemoryManager:
-    def __init__(self, data_dir: Path, session_id: str) -> None:
+    def __init__(self, data_dir: Path, session_id: str, api_key: str, base_url: str, embedding_model: str) -> None:
         self.data_dir = data_dir
         self.session_id = session_id
         self.chats_dir = self.data_dir / "chats"
@@ -27,8 +28,9 @@ class MemoryManager:
         self.extractor = MemoryExtractor()
         self.knowledge_loader = KnowledgeLoader(self.knowledge_dir)
         self.knowledge_chunks = self.knowledge_loader.load_chunks()
+        self.embedder = SemanticEmbedder(api_key=api_key, base_url=base_url, model=embedding_model)
         self._backfill_archived_memories()
-        self.retriever = MemoryRetriever(self.store, self.chats_dir, self.knowledge_chunks)
+        self.retriever = MemoryRetriever(self.store, self.chats_dir, self.knowledge_chunks, self.embedder)
 
     def bootstrap_system_note(self) -> str:
         sources: list[str] = []

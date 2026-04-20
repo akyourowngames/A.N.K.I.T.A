@@ -18,7 +18,7 @@ class NvidiaChatClient:
             max_retries=0,
         )
 
-    def complete(self, messages: list[dict[str, Any]]) -> tuple[str, str]:
+    def complete(self, messages: list[dict[str, Any]], temperature: float = 0.7) -> tuple[str, str]:
         last_error: Exception | None = None
 
         for model in self.settings.model_chain:
@@ -27,7 +27,7 @@ class NvidiaChatClient:
                     response = self.client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        temperature=0.7,
+                        temperature=temperature,
                     )
                     content = response.choices[0].message.content or ""
                     if not content.strip():
@@ -40,7 +40,7 @@ class NvidiaChatClient:
 
         raise RuntimeError(f"All NVIDIA model attempts failed: {last_error}") from last_error
 
-    def stream_complete(self, messages: list[dict[str, Any]]) -> Iterator[tuple[str, str]]:
+    def stream_complete(self, messages: list[dict[str, Any]], temperature: float = 0.7) -> Iterator[tuple[str, str]]:
         last_error: Exception | None = None
 
         for model in self.settings.model_chain:
@@ -50,7 +50,7 @@ class NvidiaChatClient:
                     stream = self.client.chat.completions.create(
                         model=model,
                         messages=messages,
-                        temperature=0.7,
+                        temperature=temperature,
                         stream=True,
                     )
                     for event in stream:
@@ -68,10 +68,11 @@ class NvidiaChatClient:
 
         raise RuntimeError(f"All NVIDIA model attempts failed: {last_error}") from last_error
 
-    def complete_text(self, system_prompt: str, user_prompt: str) -> tuple[str, str]:
+    def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> tuple[str, str]:
         return self.complete(
             [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
-            ]
+            ],
+            temperature=temperature,
         )
