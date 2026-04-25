@@ -1,10 +1,11 @@
 """
 Input control tool suite for JAKATA.
 
-Three tools:
+Four tools:
   keyboard  - type text, run hotkeys, press keys, key sequences
   clipboard - read and write the system clipboard
   window    - focus windows by title, list open windows, get active window
+  mouse     - click, double-click, move, drag, and scroll
 
 Dependencies (install in your project):
   pip install pyautogui pyperclip pygetwindow pynput
@@ -18,7 +19,7 @@ All tools use lazy imports and return a clean ToolResult(ok=False) with an
 actionable error message if a dependency is missing — the agent can tell the
 user exactly what to install.
 
-Register all three via:
+Register all four via:
     from jakata_agent.tools.keyboard import register_input_tools
     register_input_tools(registry)
 """
@@ -28,6 +29,7 @@ import platform
 import subprocess
 import sys
 import time
+import ctypes
 from typing import Any
 
 from jakata_agent.tools.base import Tool, ToolResult
@@ -104,12 +106,67 @@ def _import_pygetwindow():
         return None, "pygetwindow not installed. Run: pip install pygetwindow"
 
 
+def _powershell(command: str) -> tuple[bool, str]:
+    try:
+        output = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", command],
+            text=True,
+            stderr=subprocess.STDOUT,
+        ).strip()
+        return True, output
+    except subprocess.CalledProcessError as exc:
+        return False, (exc.output or str(exc)).strip()
+    except Exception as exc:  # noqa: BLE001
+        return False, str(exc)
+
+
+def _windows_active_title_ctypes() -> str:
+    try:
+        hwnd = ctypes.windll.user32.GetForegroundWindow()
+        if not hwnd:
+            return ""
+        length = ctypes.windll.user32.GetWindowTextLengthW(hwnd)
+        buffer = ctypes.create_unicode_buffer(length + 1)
+        ctypes.windll.user32.GetWindowTextW(hwnd, buffer, length + 1)
+        return buffer.value.strip()
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+def _window_rect_payload(win) -> dict[str, int]:
+    return {
+        "left": int(getattr(win, "left", 0)),
+        "top": int(getattr(win, "top", 0)),
+        "width": int(getattr(win, "width", 0)),
+        "height": int(getattr(win, "height", 0)),
+        "right": int(getattr(win, "left", 0)) + int(getattr(win, "width", 0)),
+        "bottom": int(getattr(win, "top", 0)) + int(getattr(win, "height", 0)),
+    }
+
+
+def _primary_screen_size() -> tuple[int, int]:
+    try:
+        if PLATFORM == "Windows":
+            return int(ctypes.windll.user32.GetSystemMetrics(0)), int(ctypes.windll.user32.GetSystemMetrics(1))
+    except Exception:  # noqa: BLE001
+        pass
+    pyautogui, err = _import_pyautogui()
+    if err or pyautogui is None:
+        return 0, 0
+    try:
+        width, height = pyautogui.size()
+        return int(width), int(height)
+    except Exception:  # noqa: BLE001
+        return 0, 0
+
+
 # ---------------------------------------------------------------------------
 # 1. KeyboardTool
 # ---------------------------------------------------------------------------
 
 class KeyboardTool(Tool):
     name = "keyboard"
+    public = False
     description = (
         "Control the keyboard: type text, run shortcuts (Ctrl+C, Alt+Tab, etc.), "
         "press individual keys, or hold modifier keys while pressing others. "
@@ -305,12 +362,145 @@ class KeyboardTool(Tool):
         return data.get("summary", "Keyboard action done.")
 
 
+class MouseTool(Tool):
+    name = "mouse"
+    public = False
+    description = (
+        "Control the mouse: inspect cursor position, click, double-click, move, drag, and scroll. "
+        "Useful for direct desktop interaction when keyboard or browser helpers are insufficient."
+    )
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["position", "click", "double_click", "move", "move_relative", "drag", "scroll"],
+                "description": "Mouse action to perform.",
+            },
+            "x": {"type": "integer", "description": "Target x coordinate."},
+            "y": {"type": "integer", "description": "Target y coordinate."},
+            "button": {"type": "string", "enum": ["left", "right", "middle"], "description": "Mouse button to use."},
+            "dx": {"type": "integer", "description": "Relative horizontal movement for action=move_relative."},
+            "dy": {"type": "integer", "description": "Relative vertical movement for action=move_relative."},
+            "duration": {"type": "number", "description": "Movement duration in seconds for move or drag actions."},
+            "scroll_y": {"type": "integer", "description": "Scroll delta for action=scroll."},
+            "path": {
+                "type": "array",
+                "description": "For action=drag: list of [x, y] pairs or {x, y} points.",
+                "items": {"type": "object"},
+            },
+        },
+        "required": ["action"],
+        "additionalProperties": False,
+    }
+
+    def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        args.setdefault("button", "left")
+        args.setdefault("duration", 0.08)
+        return args
+
+    def run(self, args: dict[str, Any]) -> ToolResult:
+        pyautogui, err = _import_pyautogui()
+        if err:
+            return ToolResult(ok=False, summary=err, data={}, error="missing_dep")
+
+        action = str(args.get("action", "")).strip()
+        try:
+            if action == "position":
+                x, y = pyautogui.position()
+                return ToolResult(ok=True, summary=f"Mouse is at ({x}, {y}).", data={"action": action, "x": x, "y": y})
+            if action == "click":
+                target = self._require_xy(args)
+                if isinstance(target, ToolResult):
+                    return target
+                x, y = target
+                pyautogui.click(x, y, button=str(args.get("button", "left")))
+                return ToolResult(ok=True, summary="Mouse click complete.", data={"action": action, "x": x, "y": y})
+            if action == "double_click":
+                target = self._require_xy(args)
+                if isinstance(target, ToolResult):
+                    return target
+                x, y = target
+                pyautogui.doubleClick(x, y, button=str(args.get("button", "left")))
+                return ToolResult(ok=True, summary="Mouse double-click complete.", data={"action": action, "x": x, "y": y})
+            if action == "move":
+                target = self._require_xy(args)
+                if isinstance(target, ToolResult):
+                    return target
+                x, y = target
+                duration = max(0.0, float(args.get("duration", 0.08)))
+                pyautogui.moveTo(x, y, duration=duration)
+                return ToolResult(ok=True, summary="Mouse move complete.", data={"action": action, "x": x, "y": y})
+            if action == "move_relative":
+                dx = int(args.get("dx", 0))
+                dy = int(args.get("dy", 0))
+                duration = max(0.0, float(args.get("duration", 0.08)))
+                current_x, current_y = pyautogui.position()
+                pyautogui.moveRel(dx, dy, duration=duration)
+                next_x, next_y = pyautogui.position()
+                return ToolResult(
+                    ok=True,
+                    summary="Mouse relative move complete.",
+                    data={"action": action, "from_x": current_x, "from_y": current_y, "x": next_x, "y": next_y, "dx": dx, "dy": dy},
+                )
+            if action == "scroll":
+                target = self._require_xy(args)
+                if isinstance(target, ToolResult):
+                    return target
+                x, y = target
+                pyautogui.moveTo(x, y)
+                pyautogui.scroll(-int(args.get("scroll_y", 0)))
+                return ToolResult(ok=True, summary="Mouse scroll complete.", data={"action": action, "x": x, "y": y, "scroll_y": int(args.get("scroll_y", 0))})
+            if action == "drag":
+                points = self._normalize_drag_path(args.get("path", []))
+                if len(points) < 2:
+                    return ToolResult(ok=False, summary="Drag requires at least two points.", data={}, error="invalid_path")
+                pyautogui.moveTo(points[0][0], points[0][1])
+                pyautogui.mouseDown(button=str(args.get("button", "left")))
+                for x, y in points[1:]:
+                    pyautogui.moveTo(x, y, duration=max(0.0, float(args.get("duration", 0.08))))
+                pyautogui.mouseUp(button=str(args.get("button", "left")))
+                return ToolResult(ok=True, summary="Mouse drag complete.", data={"action": action, "points": points})
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(ok=False, summary=f"Mouse action failed: {exc}", data={}, error=str(exc))
+        return ToolResult(ok=False, summary=f"Unknown mouse action: {action}", data={}, error="unknown_action")
+
+    @staticmethod
+    def _require_xy(args: dict[str, Any]) -> tuple[int, int] | ToolResult:
+        if args.get("x", None) in (None, "") or args.get("y", None) in (None, ""):
+            return ToolResult(ok=False, summary="Mouse action requires both x and y coordinates.", data={}, error="missing_coordinates")
+        return int(args.get("x", 0)), int(args.get("y", 0))
+
+    @staticmethod
+    def _normalize_drag_path(path: Any) -> list[tuple[int, int]]:
+        points: list[tuple[int, int]] = []
+        for point in path if isinstance(path, list) else []:
+            if isinstance(point, (list, tuple)) and len(point) >= 2:
+                points.append((int(point[0]), int(point[1])))
+            elif isinstance(point, dict) and "x" in point and "y" in point:
+                points.append((int(point["x"]), int(point["y"])))
+        return points
+
+    def render(self, data: dict[str, Any]) -> str:
+        action = data.get("action", "mouse")
+        if action == "position":
+            return f"Cursor at ({data.get('x', 0)}, {data.get('y', 0)})"
+        if action == "move_relative":
+            return f"Moved cursor by ({data.get('dx', 0)}, {data.get('dy', 0)}) to ({data.get('x', 0)}, {data.get('y', 0)})"
+        if action == "drag":
+            return f"Dragged across {len(data.get('points', []))} point(s)."
+        if action == "scroll":
+            return f"Scrolled at ({data.get('x', 0)}, {data.get('y', 0)}) by {data.get('scroll_y', 0)}."
+        return f"{action} at ({data.get('x', 0)}, {data.get('y', 0)})"
+
+
 # ---------------------------------------------------------------------------
 # 2. ClipboardTool
 # ---------------------------------------------------------------------------
 
 class ClipboardTool(Tool):
     name = "clipboard"
+    public = False
     description = (
         "Read from or write to the system clipboard. "
         "Use to get copied text, paste content into fields, or stage text for pasting."
@@ -415,27 +605,33 @@ class ClipboardTool(Tool):
 
 class WindowTool(Tool):
     name = "window"
+    public = False
     description = (
         "Manage application windows: focus a window by title, list all open windows, "
-        "get the active window, or minimize/maximize/restore windows."
+        "get the active window, or focus, move, resize, center, close, minimize, maximize, and restore windows."
     )
     input_schema = {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["focus", "list", "active", "minimize", "maximize", "restore"],
+                "enum": ["focus", "list", "active", "minimize", "maximize", "restore", "close", "move", "resize", "center"],
                 "description": (
                     "focus: bring a window to front by title substring. "
                     "list: list all open window titles. "
                     "active: get the currently focused window title. "
-                    "minimize/maximize/restore: change window state by title."
+                    "minimize/maximize/restore/close: change window state by title. "
+                    "move/resize/center: adjust window placement on screen."
                 ),
             },
             "title": {
                 "type": "string",
-                "description": "Window title substring to match (for focus/minimize/maximize/restore).",
+                "description": "Window title substring to match (for focus/minimize/maximize/restore/close/move/resize/center).",
             },
+            "x": {"type": "integer", "description": "Target left position for action=move."},
+            "y": {"type": "integer", "description": "Target top position for action=move."},
+            "width": {"type": "integer", "description": "Target width for action=resize or optional width for action=center."},
+            "height": {"type": "integer", "description": "Target height for action=resize or optional height for action=center."},
         },
         "required": ["action"],
         "additionalProperties": False,
@@ -455,17 +651,22 @@ class WindowTool(Tool):
             "minimize": self._state_change,
             "maximize": self._state_change,
             "restore":  self._state_change,
+            "close":    self._state_change,
+            "move":     self._geometry_change,
+            "resize":   self._geometry_change,
+            "center":   self._geometry_change,
         }
         fn = dispatch.get(action)
         if not fn:
             return ToolResult(ok=False, summary=f"Unknown window action: {action}", data={}, error="unknown_action")
-        return fn(action=action, title=title)
+        return fn(action=action, title=title, args=args)
 
     # ------------------------------------------------------------------
     # Platform dispatch helpers
     # ------------------------------------------------------------------
 
-    def _focus(self, action: str, title: str) -> ToolResult:
+    def _focus(self, action: str, title: str, args: dict[str, Any] | None = None) -> ToolResult:
+        del action, args
         if not title:
             return ToolResult(ok=False, summary="Window title required for focus.", data={}, error="missing_title")
 
@@ -477,27 +678,32 @@ class WindowTool(Tool):
             return self._macos_applescript("focus", title)
         return ToolResult(ok=False, summary="Unsupported platform.", data={}, error="unsupported_platform")
 
-    def _list(self, action: str, title: str) -> ToolResult:
+    def _list(self, action: str, title: str, args: dict[str, Any] | None = None) -> ToolResult:
+        del action, title, args
         if PLATFORM == "Windows":
-            return self._windows_op("list", title)
+            return self._windows_op("list", "")
         if PLATFORM == "Linux":
-            return self._linux_xdotool("list", title)
+            return self._linux_xdotool("list", "")
         if PLATFORM == "Darwin":
-            return self._macos_applescript("list", title)
+            return self._macos_applescript("list", "")
         return ToolResult(ok=False, summary="Unsupported platform.", data={}, error="unsupported_platform")
 
-    def _active(self, action: str, title: str) -> ToolResult:
+    def _active(self, action: str, title: str, args: dict[str, Any] | None = None) -> ToolResult:
+        del action, title, args
         if PLATFORM == "Windows":
-            return self._windows_op("active", title)
+            return self._windows_op("active", "")
         if PLATFORM == "Linux":
-            return self._linux_xdotool("active", title)
+            return self._linux_xdotool("active", "")
         if PLATFORM == "Darwin":
-            return self._macos_applescript("active", title)
+            return self._macos_applescript("active", "")
         return ToolResult(ok=False, summary="Unsupported platform.", data={}, error="unsupported_platform")
 
-    def _state_change(self, action: str, title: str) -> ToolResult:
+    def _state_change(self, action: str, title: str, args: dict[str, Any] | None = None) -> ToolResult:
+        del args
         if not title:
             return ToolResult(ok=False, summary=f"Window title required for {action}.", data={}, error="missing_title")
+        if action == "close" and PLATFORM != "Windows":
+            return ToolResult(ok=False, summary="Window close is only implemented on Windows right now.", data={}, error="unsupported_action")
         if PLATFORM == "Windows":
             return self._windows_op(action, title)
         if PLATFORM == "Linux":
@@ -506,40 +712,142 @@ class WindowTool(Tool):
             return self._macos_applescript(action, title)
         return ToolResult(ok=False, summary="Unsupported platform.", data={}, error="unsupported_platform")
 
+    def _geometry_change(self, action: str, title: str, args: dict[str, Any] | None = None) -> ToolResult:
+        if not title:
+            return ToolResult(ok=False, summary=f"Window title required for {action}.", data={}, error="missing_title")
+        args = args or {}
+        x = args.get("x")
+        y = args.get("y")
+        width = args.get("width")
+        height = args.get("height")
+        if action == "move" and (x in (None, "") or y in (None, "")):
+            return ToolResult(ok=False, summary="Window move requires x and y.", data={}, error="missing_coordinates")
+        if action == "resize" and (width in (None, "") or height in (None, "")):
+            return ToolResult(ok=False, summary="Window resize requires width and height.", data={}, error="missing_size")
+        if PLATFORM == "Windows":
+            return self._windows_op(
+                action,
+                title,
+                x=int(x) if x not in (None, "") else None,
+                y=int(y) if y not in (None, "") else None,
+                width=int(width) if width not in (None, "") else None,
+                height=int(height) if height not in (None, "") else None,
+            )
+        return ToolResult(ok=False, summary=f"Window {action} is only implemented on Windows right now.", data={}, error="unsupported_action")
+
     # ------------------------------------------------------------------
     # Windows
     # ------------------------------------------------------------------
 
-    def _windows_op(self, action: str, title: str) -> ToolResult:
+    def _windows_op(
+        self,
+        action: str,
+        title: str,
+        *,
+        x: int | None = None,
+        y: int | None = None,
+        width: int | None = None,
+        height: int | None = None,
+    ) -> ToolResult:
         pygetwindow, err = _import_pygetwindow()
-        if err:
-            return ToolResult(ok=False, summary=err, data={}, error="missing_dep")
+        if action == "active":
+            active_title = _windows_active_title_ctypes()
+            if active_title and pygetwindow is not None:
+                try:
+                    win = pygetwindow.getActiveWindow()
+                    if win:
+                        return ToolResult(
+                            ok=True,
+                            summary=f"Active: {active_title}",
+                            data={"title": active_title, **_window_rect_payload(win)},
+                        )
+                except Exception:
+                    pass
+            if active_title:
+                return ToolResult(ok=True, summary=f"Active: {active_title}", data={"title": active_title})
         try:
-            if action == "list":
-                titles = pygetwindow.getAllTitles()
-                visible = [t for t in titles if t.strip()]
-                return ToolResult(ok=True, summary=f"{len(visible)} windows.", data={"windows": visible})
+            if action == "list" and pygetwindow is not None:
+                raw_windows = [win for win in pygetwindow.getAllWindows() if str(getattr(win, "title", "")).strip()]
+                visible = [str(win.title) for win in raw_windows]
+                details = [{"title": str(win.title), **_window_rect_payload(win)} for win in raw_windows[:50]]
+                return ToolResult(ok=True, summary=f"{len(visible)} windows.", data={"windows": visible, "window_details": details})
 
-            if action == "active":
+            if action == "active" and pygetwindow is not None:
                 win = pygetwindow.getActiveWindow()
                 t = win.title if win else "none"
-                return ToolResult(ok=True, summary=f"Active: {t}", data={"title": t})
+                payload = {"title": t}
+                if win is not None:
+                    payload.update(_window_rect_payload(win))
+                return ToolResult(ok=True, summary=f"Active: {t}", data=payload)
 
-            windows = pygetwindow.getWindowsWithTitle(title)
-            if not windows:
-                return ToolResult(ok=False, summary=f"No window found matching: {title!r}", data={}, error="window_not_found")
-            win = windows[0]
-            if action == "focus":
-                win.activate()
-            elif action == "minimize":
-                win.minimize()
-            elif action == "maximize":
-                win.maximize()
-            elif action == "restore":
-                win.restore()
-            return ToolResult(ok=True, summary=f"{action.title()}d window: {win.title}", data={"title": win.title, "action": action})
+            if pygetwindow is not None:
+                windows = pygetwindow.getWindowsWithTitle(title)
+                if windows:
+                    win = windows[0]
+                    if action == "focus":
+                        win.activate()
+                    elif action == "minimize":
+                        win.minimize()
+                    elif action == "maximize":
+                        win.maximize()
+                    elif action == "restore":
+                        win.restore()
+                    elif action == "close":
+                        win.close()
+                    elif action == "move":
+                        win.moveTo(int(x or 0), int(y or 0))
+                    elif action == "resize":
+                        win.resizeTo(int(width or 0), int(height or 0))
+                    elif action == "center":
+                        target_width = int(width or getattr(win, "width", 0))
+                        target_height = int(height or getattr(win, "height", 0))
+                        if width is not None and height is not None:
+                            win.resizeTo(target_width, target_height)
+                        screen_width, screen_height = _primary_screen_size()
+                        left = max(0, int((screen_width - target_width) / 2)) if screen_width else int(getattr(win, "left", 0))
+                        top = max(0, int((screen_height - target_height) / 2)) if screen_height else int(getattr(win, "top", 0))
+                        win.moveTo(left, top)
+                    label = {
+                        "focus": "Focused",
+                        "minimize": "Minimized",
+                        "maximize": "Maximized",
+                        "restore": "Restored",
+                        "close": "Closed",
+                        "move": "Moved",
+                        "resize": "Resized",
+                        "center": "Centered",
+                    }.get(action, action.title())
+                    return ToolResult(
+                        ok=True,
+                        summary=f"{label} window: {win.title}",
+                        data={"title": win.title, "action": action, **_window_rect_payload(win)},
+                    )
         except Exception as exc:  # noqa: BLE001
-            return ToolResult(ok=False, summary=f"Window operation failed: {exc}", data={}, error=str(exc))
+            if action != "focus":
+                return ToolResult(ok=False, summary=f"Window operation failed: {exc}", data={}, error=str(exc))
+
+        if action == "focus":
+            safe_title = title.replace("'", "''")
+            ok, _ = _powershell(
+                "$ws = New-Object -ComObject WScript.Shell; "
+                f"if ($ws.AppActivate('{safe_title}')) {{ 'focused' }} else {{ exit 1 }}"
+            )
+            if ok:
+                active_title = _windows_active_title_ctypes() or title
+                return ToolResult(ok=True, summary=f"Focused window: {active_title}", data={"title": active_title, "action": action})
+            return ToolResult(ok=False, summary=f"No window found matching: {title!r}", data={}, error="window_not_found")
+
+        if action == "list":
+            ok, output = _powershell(
+                "Get-Process | Where-Object { $_.MainWindowTitle } | Select-Object -ExpandProperty MainWindowTitle"
+            )
+            if ok:
+                visible = [line.strip() for line in output.splitlines() if line.strip()]
+                return ToolResult(ok=True, summary=f"{len(visible)} windows.", data={"windows": visible, "window_details": []})
+
+        if err:
+            return ToolResult(ok=False, summary=err, data={}, error="missing_dep")
+        return ToolResult(ok=False, summary=f"No window found matching: {title!r}", data={}, error="window_not_found")
 
     # ------------------------------------------------------------------
     # Linux (xdotool)
@@ -626,8 +934,17 @@ class WindowTool(Tool):
             return "\n".join(lines)
         if "title" in data:
             act = data.get("action", "")
-            label = {"focus": "Focused", "minimize": "Minimized", "maximize": "Maximized",
-                     "restore": "Restored", "active": "Active window"}.get(act, act.title())
+            label = {
+                "focus": "Focused",
+                "minimize": "Minimized",
+                "maximize": "Maximized",
+                "restore": "Restored",
+                "active": "Active window",
+                "close": "Closed",
+                "move": "Moved",
+                "resize": "Resized",
+                "center": "Centered",
+            }.get(act, act.title())
             return f"{label}: {data['title']}"
         return data.get("summary", "Window operation done.")
 
@@ -638,7 +955,7 @@ class WindowTool(Tool):
 
 def register_input_tools(registry: ToolRegistry) -> None:
     """
-    Register keyboard, clipboard, and window tools.
+    Register keyboard, clipboard, window, and mouse tools.
 
     Usage in cli.py:
         from jakata_agent.tools.keyboard import register_input_tools
@@ -647,3 +964,4 @@ def register_input_tools(registry: ToolRegistry) -> None:
     registry.register(KeyboardTool())
     registry.register(ClipboardTool())
     registry.register(WindowTool())
+    registry.register(MouseTool())

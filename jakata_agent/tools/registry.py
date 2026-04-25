@@ -28,12 +28,13 @@ class ToolRegistry:
             return ToolResult(ok=False, summary=f"Unknown tool: {name}", data={}, error="unknown_tool")
         return tool.run(args)
 
-    def describe(self) -> str:
-        if not self._tools:
+    def describe(self, public_only: bool = True) -> str:
+        tools = list(self._iter_tools(public_only=public_only))
+        if not tools:
             return "No tools connected yet."
-        return "\n".join(f"- {tool.name}: {tool.description}" for tool in self._tools.values())
+        return "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
 
-    def manifest(self) -> list[dict]:
+    def manifest(self, public_only: bool = True) -> list[dict]:
         return [
             {
                 "name": tool.name,
@@ -42,7 +43,7 @@ class ToolRegistry:
                 "required": tool.input_schema.get("required", []),
                 "safety": getattr(tool, "safety", "read_only"),
             }
-            for tool in self._tools.values()
+            for tool in self._iter_tools(public_only=public_only)
         ]
 
     def planner_prompt(self) -> str:
@@ -52,6 +53,11 @@ class ToolRegistry:
                 "description": tool.description,
                 "input_schema": tool.input_schema,
             }
-            for tool in self._tools.values()
+            for tool in self._iter_tools(public_only=True)
         ]
         return json.dumps(specs, indent=2)
+
+    def _iter_tools(self, public_only: bool) -> list[Tool]:
+        if not public_only:
+            return list(self._tools.values())
+        return [tool for tool in self._tools.values() if getattr(tool, "public", True)]

@@ -5,6 +5,8 @@ from pathlib import Path
 
 from jakata_agent.memory.embedder import SemanticEmbedder
 from jakata_agent.memory.extractor import MemoryExtractor
+from jakata_agent.memory.graph_extractor import GraphExtractor
+from jakata_agent.memory.graph_store import GraphStore
 from jakata_agent.memory.knowledge_loader import KnowledgeLoader
 from jakata_agent.memory.models import RetrievedContext
 from jakata_agent.memory.retriever import MemoryRetriever
@@ -25,12 +27,20 @@ class MemoryManager:
         self.memory_dir.mkdir(parents=True, exist_ok=True)
 
         self.store = MemoryStore(self.db_path)
+        self.graph = GraphStore(self.db_path)
         self.extractor = MemoryExtractor()
+        self.graph_extractor = GraphExtractor()
         self.knowledge_loader = KnowledgeLoader(self.knowledge_dir)
         self.knowledge_chunks = self.knowledge_loader.load_chunks()
         self.embedder = SemanticEmbedder(api_key=api_key, base_url=base_url, model=embedding_model)
         self._backfill_archived_memories()
-        self.retriever = MemoryRetriever(self.store, self.chats_dir, self.knowledge_chunks, self.embedder)
+        self.retriever = MemoryRetriever(
+            self.store,
+            self.chats_dir,
+            self.knowledge_chunks,
+            self.embedder,
+            self.graph,
+        )
 
     def bootstrap_system_note(self) -> str:
         sources: list[str] = []
@@ -39,6 +49,9 @@ class MemoryManager:
         recent_memories = self.store.recent(limit=5)
         if recent_memories:
             sources.append(f"{len(recent_memories)} permanent memory item(s)")
+        graph_nodes = self.graph.search("", limit=3)["nodes"]
+        if graph_nodes:
+            sources.append(f"{len(graph_nodes)} graph node(s)")
         archived_sessions = len(list(self.chats_dir.glob("session_*.json")))
         if archived_sessions:
             sources.append(f"{archived_sessions} archived session(s)")
@@ -78,6 +91,12 @@ class MemoryManager:
     def learn_from_user_message(self, user_message: str) -> None:
         for record in self.extractor.extract(user_message, session_id=self.session_id):
             self.store.upsert(record)
+        for event in self.graph_extractor.extract_from_user_message(user_message):
+            self._apply_graph_event(event)
+
+    def remember_task_event(self, task_id: str, goal: str, event_type: str, payload: dict[str, object]) -> None:
+        for event in self.graph_extractor.extract_from_task_event(task_id, goal, event_type, payload):
+            self._apply_graph_event(event)
 
     def _backfill_archived_memories(self) -> None:
         for path in sorted(self.chats_dir.glob("session_*.json")):
@@ -94,3 +113,21 @@ class MemoryManager:
                     continue
                 for record in self.extractor.extract(content, session_id=session_id):
                     self.store.upsert(record)
+                for event in self.graph_extractor.extract_from_user_message(content):
+                    self._apply_graph_event(event)
+
+    def graph_search(self, query: str, limit: int = 8) -> dict[str, list[dict[str, object]]]:
+        return self.graph.search(query, limit=limit)
+
+    def _apply_graph_event(self, event: dict[str, object]) -> None:
+        source_type = str(event.get("source_type", "")).strip()
+        source_label = str(event.get("source_label", "")).strip()
+        target_type = str(event.get("target_type", "")).strip()
+        target_label = str(event.get("target_label", "")).strip()
+        edge_type = str(event.get("edge_type", "")).strip()
+        metadata = event.get("metadata", {})
+        if not (source_type and source_label and target_type and target_label and edge_type):
+            return
+        source_id = self.graph.upsert_node(source_type, source_label, metadata={"role": "source"})
+        target_id = self.graph.upsert_node(target_type, target_label, metadata={"role": "target"})
+        self.graph.upsert_edge(source_id, target_id, edge_type, metadata=metadata if isinstance(metadata, dict) else {})

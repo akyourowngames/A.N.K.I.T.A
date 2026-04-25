@@ -23,6 +23,7 @@ class RetrievedContext:
     permanent_memories: list[MemoryRecord]
     knowledge_chunks: list[str]
     archived_chat_chunks: list[str]
+    graph_chunks: list[str] = field(default_factory=list)
 
     def to_system_context(self) -> str:
         parts: list[str] = []
@@ -37,5 +38,7 @@ class RetrievedContext:
             parts.append(
                 "Relevant previous chats:\n" + "\n".join(f"- {item}" for item in self.archived_chat_chunks)
             )
+        if self.graph_chunks:
+            parts.append("Live memory graph:\n" + "\n".join(f"- {item}" for item in self.graph_chunks))
         return "\n\n".join(parts).strip()
 

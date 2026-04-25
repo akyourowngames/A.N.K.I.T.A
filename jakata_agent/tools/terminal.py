@@ -100,6 +100,7 @@ def _run_cmd(cmd: str, cwd: _CwdState, timeout: int = _TIMEOUT) -> tuple[str, st
 
 class ShellTool(Tool):
     name = "shell"
+    public = False
     description = (
         "Run any shell/terminal command. Tracks working directory across calls. "
         "Use for compiling, installing packages, running scripts, git, grep, etc."

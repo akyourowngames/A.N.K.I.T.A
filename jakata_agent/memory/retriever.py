@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 
 from jakata_agent.memory.embedder import SemanticEmbedder
+from jakata_agent.memory.graph_store import GraphStore
 from jakata_agent.memory.models import RetrievedContext
 from jakata_agent.memory.store import MemoryStore
 
@@ -15,20 +16,29 @@ class MemoryRetriever:
         chat_dir: Path,
         knowledge_chunks: list[str],
         embedder: SemanticEmbedder,
+        graph_store: GraphStore,
     ) -> None:
         self.store = store
         self.chat_dir = chat_dir
         self.knowledge_chunks = knowledge_chunks
         self.embedder = embedder
+        self.graph_store = graph_store
 
     def retrieve(self, query: str, session_id: str, memory_limit: int = 5, chunk_limit: int = 3) -> RetrievedContext:
         permanent_memories = self._hybrid_memory_search(query, limit=memory_limit)
         knowledge_chunks = self._hybrid_rank_chunks(self.knowledge_chunks, query, limit=chunk_limit)
         archived_chat_chunks = self._search_chats(query, session_id, limit=chunk_limit)
+        graph_results = self.graph_store.search(query, limit=chunk_limit)
+        graph_chunks = [
+            f"[{item['node_type']}] {item['label']}" for item in graph_results["nodes"]
+        ] + [
+            f"[{item['edge_type']}] {item['source_label']} -> {item['target_label']}" for item in graph_results["edges"]
+        ]
         return RetrievedContext(
             permanent_memories=permanent_memories,
             knowledge_chunks=knowledge_chunks,
             archived_chat_chunks=archived_chat_chunks,
+            graph_chunks=graph_chunks[:chunk_limit * 2],
         )
 
     def _hybrid_memory_search(self, query: str, limit: int) -> list:

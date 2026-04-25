@@ -18,9 +18,13 @@ class Tool(ABC):
     description: str
     input_schema: dict[str, Any]
     safety: str = "read_only"
+    public: bool = True
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         return args
+
+    def render(self, data: dict[str, Any]) -> str:
+        return data.get("summary", "") if isinstance(data, dict) else str(data)
 
     @abstractmethod
     def run(self, args: dict[str, Any]) -> ToolResult:
