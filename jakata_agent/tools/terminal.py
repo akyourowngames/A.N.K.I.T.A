@@ -1,15 +1,16 @@
 """
 Terminal tool suite for JAKATA.
 
-Five tools that collectively give the agent real shell access:
-  shell        - run any command, track cwd, timeout, safety checks
+Six tools that collectively give the agent real shell access:
+  shell        - run any command, track cwd, timeout
   read_file    - read file with optional line range
   list_dir     - ls -la with metadata
   search_files - find by name pattern OR grep content across a tree
   write_file   - write / overwrite / append files
+  open_path    - open files, folders, and URLs in the default app
 
 All follow the Tool contract: normalize_args(), run(), render().
-Register all five via register_terminal_tools(registry, cwd).
+Register all six via register_terminal_tools(registry, cwd).
 """
 from __future__ import annotations
 
@@ -17,10 +18,14 @@ import os
 import platform
 import re
 import subprocess
+import time
+from collections import deque
+from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
 from jakata_agent.tools.base import Tool, ToolResult
+from jakata_agent.tools.opening import is_url_target, open_target
 from jakata_agent.tools.registry import ToolRegistry
 
 
@@ -34,7 +39,11 @@ class _CwdState:
         self.path: Path = initial.resolve()
 
     def chdir(self, target: str) -> None:
-        candidate = (self.path / Path(target).expanduser()).resolve()
+        candidate = _resolve_path(self, target)
+        if not candidate.is_dir():
+            discovered, _ = _discover_existing_path(self, target, want="dir")
+            if discovered is not None:
+                candidate = discovered
         if candidate.is_dir():
             self.path = candidate
 
@@ -42,35 +51,16 @@ class _CwdState:
         return str(self.path)
 
 
-# ---------------------------------------------------------------------------
-# Safety: commands that are never allowed regardless of context
-# ---------------------------------------------------------------------------
-
-_BLOCKED_PATTERNS: tuple[re.Pattern, ...] = tuple(
-    re.compile(p, re.IGNORECASE)
-    for p in [
-        r"\brm\s+-rf\s+/",           # rm -rf /
-        r"\bmkfs\b",                  # format disk
-        r"\bdd\b.*of=/dev/",          # disk write
-        r"\bfork\s*bomb\b",
-        r":\(\)\s*\{.*:\|:&",         # fork bomb syntax
-        r"\bshutdown\b",
-        r"\breboot\b",
-        r"\bhalt\b",
-        r"\bsudo\s+rm\s+-rf\s+/\s*$",  # only literal root
-        r"\bsudo\s+dd\b",
-    ]
-)
-
 PLATFORM = platform.system()
 _MAX_OUTPUT = 24_000
 _TIMEOUT = 60
 _MAX_TIMEOUT = 1_800
 _DEFAULT_EXCLUDES = {".git", ".venv", "__pycache__", "node_modules", ".pytest_cache"}
-
-
-def _is_blocked(cmd: str) -> bool:
-    return any(p.search(cmd) for p in _BLOCKED_PATTERNS)
+_DISCOVERY_MAX_DEPTH = 6
+_DISCOVERY_MAX_VISITS = 50_000
+_DISCOVERY_MIN_SCORE = 0.62
+_SEARCH_MAX_FILES = 20_000
+_SEARCH_MAX_SECONDS = 8.0
 
 
 def _truncate(text: str, limit: int = _MAX_OUTPUT) -> tuple[str, bool]:
@@ -112,10 +102,271 @@ def _resolve_base(cwd: _CwdState, raw_cwd: str = "") -> Path:
 
 def _resolve_path(cwd: _CwdState, raw_path: str, raw_cwd: str = "") -> Path:
     base = _resolve_base(cwd, raw_cwd)
-    candidate = Path(raw_path).expanduser()
+    cleaned = _clean_path_text(raw_path)
+    candidate = Path(cleaned).expanduser()
     if not candidate.is_absolute():
         candidate = base / candidate
     return candidate.resolve()
+
+
+def _clean_path_text(raw_path: str) -> str:
+    cleaned = str(raw_path or "").strip().strip("'\"")
+    return cleaned or "."
+
+
+def _env_path(name: str) -> Path | None:
+    value = os.getenv(name, "").strip()
+    if not value:
+        return None
+    try:
+        return Path(value).expanduser().resolve()
+    except OSError:
+        return None
+
+
+def _configured_search_roots() -> list[Path]:
+    roots: list[Path] = []
+    raw = os.getenv("JAKATA_PATH_SEARCH_ROOTS", "")
+    for item in raw.split(os.pathsep):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            roots.append(Path(item).expanduser().resolve())
+        except OSError:
+            continue
+    return roots
+
+
+def _windows_drive_roots() -> list[Path]:
+    if PLATFORM != "Windows":
+        return [Path("/")]
+    try:
+        drives = list(os.listdrives())  # type: ignore[attr-defined]
+    except AttributeError:
+        drives = [f"{chr(letter)}:\\" for letter in range(ord("A"), ord("Z") + 1)]
+    return [Path(drive) for drive in drives if Path(drive).exists()]
+
+
+def _path_search_roots(cwd: _CwdState) -> list[Path]:
+    candidates: list[Path] = []
+    candidates.extend(_configured_search_roots())
+    candidates.append(cwd.path)
+    candidates.extend(cwd.path.parents)
+    for name in ("USERPROFILE", "HOME", "OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        env_path = _env_path(name)
+        if env_path is not None:
+            candidates.append(env_path)
+            candidates.extend(env_path.parents)
+    try:
+        home = Path.home().resolve()
+        candidates.append(home)
+        candidates.extend(home.parents)
+    except OSError:
+        pass
+    candidates.extend(_windows_drive_roots())
+
+    seen: set[str] = set()
+    roots: list[Path] = []
+    for candidate in candidates:
+        try:
+            resolved = candidate.resolve()
+        except OSError:
+            continue
+        key = os.path.normcase(str(resolved))
+        if key in seen or not resolved.exists() or not resolved.is_dir():
+            continue
+        seen.add(key)
+        roots.append(resolved)
+    return roots
+
+
+def _kind_matches(path: Path, want: str) -> bool:
+    if want == "dir":
+        return path.is_dir()
+    if want == "file":
+        return path.is_file()
+    return path.exists()
+
+
+def _norm_match_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
+
+
+def _path_match_score(raw_path: str, candidate: Path) -> float:
+    wanted = _clean_path_text(raw_path)
+    wanted_name = _norm_match_text(Path(wanted).name or wanted)
+    candidate_name = _norm_match_text(candidate.name)
+    if not wanted_name or not candidate_name:
+        return 0.0
+    if wanted_name == candidate_name:
+        return 1.0
+    shorter = min(len(wanted_name), len(candidate_name))
+    longer = max(len(wanted_name), len(candidate_name))
+    if shorter >= 4 and shorter / longer >= 0.5 and (wanted_name in candidate_name or candidate_name in wanted_name):
+        return 0.9
+
+    score = SequenceMatcher(None, wanted_name, candidate_name).ratio()
+    wanted_parts = [_norm_match_text(part) for part in Path(wanted).parts if _norm_match_text(part)]
+    if len(wanted_parts) > 1:
+        suffix = _norm_match_text(" ".join(candidate.parts[-len(wanted_parts) :]))
+        wanted_suffix = _norm_match_text(" ".join(wanted_parts))
+        score = max(score, SequenceMatcher(None, wanted_suffix, suffix).ratio())
+    return score
+
+
+def _direct_candidate_paths(cwd: _CwdState, raw_path: str, raw_cwd: str = "") -> list[Path]:
+    cleaned = _clean_path_text(raw_path)
+    candidates = [_resolve_path(cwd, cleaned, raw_cwd)]
+    path = Path(cleaned).expanduser()
+    if path.is_absolute():
+        return candidates
+    for root in _path_search_roots(cwd):
+        try:
+            candidates.append((root / path).resolve())
+        except OSError:
+            continue
+    return _dedupe_paths(candidates)
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    seen: set[str] = set()
+    deduped: list[Path] = []
+    for path in paths:
+        key = os.path.normcase(str(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(path)
+    return deduped
+
+
+def _bounded_int_env(name: str, default: int, minimum: int, maximum: int) -> int:
+    try:
+        value = int(os.getenv(name, str(default)))
+    except ValueError:
+        value = default
+    return max(minimum, min(value, maximum))
+
+
+def _discovery_excludes() -> set[str]:
+    raw = os.getenv("JAKATA_PATH_DISCOVERY_EXCLUDE_DIRS", "")
+    if not raw.strip():
+        return set(_DEFAULT_EXCLUDES)
+    return {item.strip() for item in raw.split(",") if item.strip()}
+
+
+def _discover_existing_path(cwd: _CwdState, raw_path: str, *, want: str = "any", raw_cwd: str = "") -> tuple[Path | None, dict[str, Any]]:
+    cleaned = _clean_path_text(raw_path)
+    checked: list[str] = []
+    direct = _resolve_path(cwd, cleaned, raw_cwd)
+    checked.append(str(direct))
+    if _kind_matches(direct, want):
+        return direct, {"resolved_from": cleaned, "discovered": False, "checked": checked}
+
+    if len([part for part in Path(cleaned).parts if part not in {".", ""}]) == 1:
+        for root in _path_search_roots(cwd):
+            if _kind_matches(root, want) and _path_match_score(cleaned, root) >= 0.995:
+                return root, {"resolved_from": cleaned, "discovered": True, "checked": checked, "score": 1.0, "search_root": str(root)}
+
+    for candidate in _direct_candidate_paths(cwd, cleaned, raw_cwd):
+        if candidate == direct:
+            continue
+        checked.append(str(candidate))
+        if _kind_matches(candidate, want):
+            return candidate, {"resolved_from": cleaned, "discovered": True, "checked": checked}
+
+    max_depth = _bounded_int_env("JAKATA_PATH_DISCOVERY_MAX_DEPTH", _DISCOVERY_MAX_DEPTH, 1, 20)
+    max_visits = _bounded_int_env("JAKATA_PATH_DISCOVERY_MAX_VISITS", _DISCOVERY_MAX_VISITS, 500, 500_000)
+    exclude_dirs = _discovery_excludes()
+    visits = 0
+    best: tuple[float, Path] | None = None
+
+    for root in _path_search_roots(cwd):
+        queue: deque[tuple[Path, int]] = deque([(root, 0)])
+        best_in_root: tuple[float, Path] | None = None
+        while queue and visits < max_visits:
+            current, depth = queue.popleft()
+            visits += 1
+            try:
+                exists = current.exists()
+            except OSError:
+                continue
+            if not exists:
+                continue
+            if _kind_matches(current, want):
+                score = _path_match_score(cleaned, current)
+                if score >= 0.995:
+                    return current.resolve(), {
+                        "resolved_from": cleaned,
+                        "discovered": True,
+                        "checked": checked,
+                        "visits": visits,
+                        "score": score,
+                        "search_root": str(root),
+                    }
+                if score >= _DISCOVERY_MIN_SCORE and (best is None or score > best[0]):
+                    resolved = current.resolve()
+                    best = (score, resolved)
+                    if best_in_root is None or score > best_in_root[0]:
+                        best_in_root = (score, resolved)
+            if depth >= max_depth or not current.is_dir():
+                continue
+            try:
+                children = sorted(current.iterdir(), key=lambda item: item.name.casefold())
+            except (OSError, PermissionError):
+                continue
+            for child in children:
+                if child.is_symlink():
+                    continue
+                if child.name in exclude_dirs:
+                    continue
+                if child.is_dir() or want != "dir":
+                    queue.append((child, depth + 1))
+        if best_in_root is not None:
+            score, path = best_in_root
+            return path, {
+                "resolved_from": cleaned,
+                "discovered": True,
+                "checked": checked,
+                "visits": visits,
+                "score": score,
+                "search_root": str(root),
+            }
+
+    if best is not None:
+        score, path = best
+        return path, {
+            "resolved_from": cleaned,
+            "discovered": True,
+            "checked": checked,
+            "visits": visits,
+            "score": score,
+            "search_root": "",
+        }
+    return None, {"resolved_from": cleaned, "discovered": False, "checked": checked, "visits": visits}
+
+
+def _resolve_existing_path(cwd: _CwdState, raw_path: str, *, want: str = "any", raw_cwd: str = "") -> tuple[Path, dict[str, Any]]:
+    direct = _resolve_path(cwd, raw_path, raw_cwd)
+    if _kind_matches(direct, want):
+        return direct, {"resolved_from": _clean_path_text(raw_path), "discovered": False, "checked": [str(direct)]}
+    discovered, meta = _discover_existing_path(cwd, raw_path, want=want, raw_cwd=raw_cwd)
+    if discovered is not None:
+        return discovered, meta
+    return direct, meta
+
+
+def _resolve_write_target(cwd: _CwdState, raw_path: str, raw_cwd: str = "") -> tuple[Path, dict[str, Any]]:
+    direct = _resolve_path(cwd, raw_path, raw_cwd)
+    if direct.parent.exists():
+        return direct, {"resolved_from": _clean_path_text(raw_path), "discovered": False, "checked": [str(direct.parent)]}
+    raw_parent = Path(_clean_path_text(raw_path)).parent
+    if str(raw_parent) not in {"", "."}:
+        parent, meta = _resolve_existing_path(cwd, str(raw_parent), want="dir", raw_cwd=raw_cwd)
+        if parent.exists() and parent.is_dir():
+            return (parent / Path(raw_path).name).resolve(), meta
+    return direct, {"resolved_from": _clean_path_text(raw_path), "discovered": False, "checked": [str(direct.parent)]}
 
 
 def _run_cmd(
@@ -175,8 +426,8 @@ class ShellTool(Tool):
     public = True
     description = (
         "Run real terminal commands with persistent cwd, per-command cwd/env, shell selection, longer timeouts, "
-        "and network-capable commands. Use for compiling, installing packages, tests, git, scripts, repo inspection, "
-        "and commands not covered by a dedicated tool."
+        "network-capable commands, and no command blacklist. Use for compiling, installing packages, tests, git, scripts, "
+        "repo inspection, whole-PC search, and commands not covered by a dedicated tool."
     )
     input_schema = {
         "type": "object",
@@ -226,12 +477,13 @@ class ShellTool(Tool):
         cmd = str(args["command"]).strip()
         timeout = _bounded_timeout(args.get("timeout", _TIMEOUT))
         output_limit = _bounded_output_limit(args.get("max_output", _MAX_OUTPUT))
-        run_cwd = _resolve_base(self.cwd, str(args.get("cwd", "")).strip())
+        raw_cwd = str(args.get("cwd", "")).strip()
+        run_cwd = _resolve_base(self.cwd, raw_cwd)
+        if raw_cwd and (not run_cwd.exists() or not run_cwd.is_dir()):
+            run_cwd, _ = _resolve_existing_path(self.cwd, raw_cwd, want="dir")
         shell_name = str(args.get("shell", "auto")).strip().lower() or "auto"
         env_extra = _coerce_env(args.get("env", {}))
 
-        if _is_blocked(cmd):
-            return ToolResult(ok=False, summary="Blocked: command matches a safety rule.", data={}, error="blocked_command")
         if not run_cwd.exists() or not run_cwd.is_dir():
             return ToolResult(ok=False, summary=f"Working directory not found: {run_cwd}", data={}, error="cwd_not_found")
 
@@ -298,7 +550,7 @@ class ReadFileTool(Tool):
     name = "read_file"
     description = (
         "Read the contents of a file. Supports line range (start_line, end_line). "
-        "Handles text and binary files gracefully."
+        "Handles text and binary files gracefully. If a relative path does not exist, searches likely PC roots and verifies the match."
     )
     input_schema = {
         "type": "object",
@@ -333,12 +585,12 @@ class ReadFileTool(Tool):
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         raw_path = str(args["path"]).strip()
-        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
+        target, path_meta = _resolve_existing_path(self.cwd, raw_path, want="file", raw_cwd=str(args.get("cwd", "")).strip())
 
         if not target.exists():
-            return ToolResult(ok=False, summary=f"File not found: {raw_path}", data={}, error="file_not_found")
+            return ToolResult(ok=False, summary=f"File not found: {raw_path}", data=path_meta, error="file_not_found")
         if not target.is_file():
-            return ToolResult(ok=False, summary=f"Not a file: {raw_path}", data={}, error="not_a_file")
+            return ToolResult(ok=False, summary=f"Not a file: {raw_path}", data=path_meta, error="not_a_file")
 
         try:
             raw = target.read_bytes()
@@ -355,7 +607,7 @@ class ReadFileTool(Tool):
                 return ToolResult(
                     ok=True,
                     summary=f"Binary file ({len(raw)} bytes): {raw_path}",
-                    data={"path": str(target), "binary": True, "size_bytes": len(raw), "content": ""},
+                    data={"path": str(target), "binary": True, "size_bytes": len(raw), "content": "", **path_meta},
                 )
 
         lines = text.splitlines(keepends=True)
@@ -384,6 +636,7 @@ class ReadFileTool(Tool):
                 "end_line": end,
                 "truncated": truncated,
                 "size_bytes": len(raw),
+                **path_meta,
             },
         )
 
@@ -405,7 +658,7 @@ class ListDirTool(Tool):
     name = "list_dir"
     description = (
         "List files and directories. Shows names, sizes, types, and modification times. "
-        "Optionally recursive."
+        "Optionally recursive. If a relative path does not exist, searches likely PC roots and verifies the matching directory."
     )
     input_schema = {
         "type": "object",
@@ -443,14 +696,14 @@ class ListDirTool(Tool):
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         raw_path = str(args.get("path", ".")).strip()
-        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
+        target, path_meta = _resolve_existing_path(self.cwd, raw_path, want="dir", raw_cwd=str(args.get("cwd", "")).strip())
         recursive = bool(args.get("recursive", False))
         pattern = str(args.get("pattern", "*"))
 
         if not target.exists():
-            return ToolResult(ok=False, summary=f"Path not found: {raw_path}", data={}, error="not_found")
+            return ToolResult(ok=False, summary=f"Path not found: {raw_path}", data=path_meta, error="not_found")
         if not target.is_dir():
-            return ToolResult(ok=False, summary=f"Not a directory: {raw_path}", data={}, error="not_a_dir")
+            return ToolResult(ok=False, summary=f"Not a directory: {raw_path}", data=path_meta, error="not_a_dir")
 
         try:
             if recursive:
@@ -482,6 +735,7 @@ class ListDirTool(Tool):
                 "count": len(entries),
                 "recursive": recursive,
                 "pattern": pattern,
+                **path_meta,
             },
         )
 
@@ -504,7 +758,7 @@ class SearchFilesTool(Tool):
     name = "search_files"
     description = (
         "Find files by name pattern OR search file contents with a text/regex query. "
-        "Like find + grep. Use for exploring codebases, locating configs, searching logs."
+        "Like find + grep. Use for exploring codebases, locating configs, searching logs, and whole-PC file discovery."
     )
     input_schema = {
         "type": "object",
@@ -534,6 +788,14 @@ class SearchFilesTool(Tool):
                 "items": {"type": "string"},
                 "description": "Directory names to skip during recursive search.",
             },
+            "max_files": {
+                "type": "integer",
+                "description": "Maximum files to inspect before returning partial results. Default 20000.",
+            },
+            "max_seconds": {
+                "type": "number",
+                "description": "Maximum seconds to search before returning partial results. Default 8.",
+            },
             "cwd": {
                 "type": "string",
                 "description": "Optional base directory for relative paths.",
@@ -553,6 +815,8 @@ class SearchFilesTool(Tool):
         args.setdefault("case_sensitive", False)
         args.setdefault("max_results", 50)
         args.setdefault("exclude_dirs", sorted(_DEFAULT_EXCLUDES))
+        args.setdefault("max_files", _SEARCH_MAX_FILES)
+        args.setdefault("max_seconds", _SEARCH_MAX_SECONDS)
         args.setdefault("cwd", "")
         return args
 
@@ -562,29 +826,64 @@ class SearchFilesTool(Tool):
         raw_path = str(args.get("path", ".")).strip()
         case_sensitive = bool(args.get("case_sensitive", False))
         max_results = int(args.get("max_results", 50))
+        max_files = max(1, min(int(args.get("max_files", _SEARCH_MAX_FILES)), 200_000))
+        max_seconds = max(1.0, min(float(args.get("max_seconds", _SEARCH_MAX_SECONDS)), 60.0))
         exclude_dirs = {str(item) for item in args.get("exclude_dirs", sorted(_DEFAULT_EXCLUDES)) if str(item).strip()}
 
-        root = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
+        root, path_meta = _resolve_existing_path(self.cwd, raw_path, want="dir", raw_cwd=str(args.get("cwd", "")).strip())
         if not root.exists():
-            return ToolResult(ok=False, summary=f"Path not found: {raw_path}", data={}, error="not_found")
+            return ToolResult(ok=False, summary=f"Path not found: {raw_path}", data=path_meta, error="not_found")
 
-        # Find matching files
-        try:
-            all_files = [
-                p
-                for p in sorted(root.rglob(file_pattern))
-                if p.is_file() and not any(part in exclude_dirs for part in p.relative_to(root).parts[:-1])
-            ]
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(ok=False, summary="Search failed.", data={}, error=str(exc))
+        started = time.monotonic()
+        deadline = started + max_seconds
+        scanned = 0
+        timed_out = False
+        scan_capped = False
+
+        def iter_files():
+            nonlocal scanned, timed_out, scan_capped
+            try:
+                iterator = root.rglob(file_pattern)
+                for p in iterator:
+                    if time.monotonic() >= deadline:
+                        timed_out = True
+                        break
+                    if scanned >= max_files:
+                        scan_capped = True
+                        break
+                    try:
+                        if not p.is_file():
+                            continue
+                        relative_parts = p.relative_to(root).parts[:-1]
+                    except Exception:
+                        continue
+                    if any(part in exclude_dirs for part in relative_parts):
+                        continue
+                    scanned += 1
+                    yield p
+            except Exception:
+                return
 
         # Name-only mode: no query
         if not query:
-            results = [{"file": str(p.relative_to(root)), "line": None, "text": None} for p in all_files[:max_results]]
+            results = []
+            for p in iter_files():
+                results.append({"file": str(p.relative_to(root)), "line": None, "text": None})
+                if len(results) >= max_results:
+                    break
             return ToolResult(
                 ok=True,
-                summary=f"Found {len(all_files)} file(s) matching '{file_pattern}' in {root}",
-                data={"mode": "name", "root": str(root), "results": results, "total": len(all_files)},
+                summary=f"Found {len(results)} file(s) matching '{file_pattern}' in {root}",
+                data={
+                    "mode": "name",
+                    "root": str(root),
+                    "results": results,
+                    "total": len(results),
+                    "scanned_files": scanned,
+                    "capped": scan_capped or timed_out,
+                    "timed_out": timed_out,
+                    **path_meta,
+                },
             )
 
         # Content grep mode
@@ -595,7 +894,7 @@ class SearchFilesTool(Tool):
             return ToolResult(ok=False, summary="Invalid regex pattern.", data={}, error=str(exc))
 
         matches: list[dict[str, Any]] = []
-        for file_path in all_files:
+        for file_path in iter_files():
             if len(matches) >= max_results:
                 break
             try:
@@ -621,7 +920,10 @@ class SearchFilesTool(Tool):
                 "query": query,
                 "results": matches,
                 "total": len(matches),
-                "capped": len(matches) >= max_results,
+                "scanned_files": scanned,
+                "capped": len(matches) >= max_results or scan_capped or timed_out,
+                "timed_out": timed_out,
+                **path_meta,
             },
         )
 
@@ -653,7 +955,7 @@ class WriteFileTool(Tool):
     name = "write_file"
     description = (
         "Write, overwrite, or append content to a file. "
-        "Creates parent directories automatically. Use for editing code, configs, notes."
+        "Creates parent directories automatically. If a relative parent path does not exist, searches likely PC roots and verifies it."
     )
     safety = "write"
     input_schema = {
@@ -694,7 +996,7 @@ class WriteFileTool(Tool):
         content = str(args["content"])
         mode = str(args.get("mode", "overwrite"))
 
-        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
+        target, path_meta = _resolve_write_target(self.cwd, raw_path, str(args.get("cwd", "")).strip())
 
         if mode == "create_only" and target.exists():
             return ToolResult(ok=False, summary=f"File already exists: {raw_path}", data={}, error="file_exists")
@@ -717,7 +1019,7 @@ class WriteFileTool(Tool):
         return ToolResult(
             ok=True,
             summary=summary,
-            data={"path": str(target), "size_bytes": size, "mode": mode, "lines": content.count("\n") + 1},
+            data={"path": str(target), "size_bytes": size, "mode": mode, "lines": content.count("\n") + 1, **path_meta},
         )
 
     def render(self, data: dict[str, Any]) -> str:
@@ -730,12 +1032,110 @@ class WriteFileTool(Tool):
 
 
 # ---------------------------------------------------------------------------
-# Factory: register all five terminal tools
+# 6. OpenPathTool
+# ---------------------------------------------------------------------------
+
+class OpenPathTool(Tool):
+    name = "open_path"
+    description = (
+        "Open a local file, folder, or URL in its default app and report whether the OS returned launch/window evidence. "
+        "Uses the same verified path discovery as the terminal file tools, so repo-relative paths and likely PC folders can be opened."
+    )
+    safety = "write"
+    input_schema = {
+        "type": "object",
+        "properties": {
+            "target": {
+                "type": "string",
+                "description": "File path, folder path, or URL to open.",
+            },
+            "cwd": {
+                "type": "string",
+                "description": "Optional base directory for relative paths.",
+            },
+            "wait_seconds": {
+                "type": "number",
+                "description": "Seconds to wait while checking for a launched app/window. Default 1.5.",
+            },
+        },
+        "required": ["target"],
+        "additionalProperties": False,
+    }
+
+    def __init__(self, cwd: _CwdState) -> None:
+        self.cwd = cwd
+
+    def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        args.setdefault("cwd", "")
+        args.setdefault("wait_seconds", 1.5)
+        return args
+
+    def run(self, args: dict[str, Any]) -> ToolResult:
+        raw_target = str(args["target"]).strip()
+        wait_seconds = float(args.get("wait_seconds", 1.5))
+        path_meta: dict[str, Any] = {}
+        if not raw_target:
+            return ToolResult(ok=False, summary="Open target is required.", data={}, error="missing_target")
+
+        if is_url_target(raw_target):
+            target = raw_target
+            kind = "url"
+        else:
+            resolved, path_meta = _resolve_existing_path(self.cwd, raw_target, want="any", raw_cwd=str(args.get("cwd", "")).strip())
+            if not resolved.exists():
+                return ToolResult(ok=False, summary=f"Path not found: {raw_target}", data=path_meta, error="not_found")
+            target = str(resolved)
+            kind = "dir" if resolved.is_dir() else "file"
+
+        opened = open_target(target, wait_seconds=wait_seconds)
+        data = {
+            "target": target,
+            "kind": kind,
+            "opened": opened.opened,
+            "verified": opened.verified,
+            "method": opened.method,
+            "process": opened.process,
+            "matching_windows": opened.matching_windows or [],
+            "open_error": opened.error,
+            **path_meta,
+        }
+        if opened.ok:
+            if opened.verified:
+                summary = f"Opened {kind}: {target}"
+            else:
+                summary = f"Open request sent for {kind}: {target}"
+            return ToolResult(ok=True, summary=summary, data=data)
+        return ToolResult(ok=False, summary=f"Failed to open {kind}: {target}", data=data, error=opened.error or "open_failed")
+
+    def render(self, data: dict[str, Any]) -> str:
+        target = data.get("target", "")
+        kind = data.get("kind", "target")
+        method = data.get("method", "")
+        verified = bool(data.get("verified"))
+        status = "opened and verified" if verified else "open request sent"
+        lines = [f"{status}: {target}"]
+        if method:
+            lines.append(f"method: {method}")
+        windows = data.get("matching_windows") or []
+        if windows:
+            lines.append("matching windows:")
+            for window in windows[:5]:
+                lines.append(f"- {window.get('ProcessName', window.get('process_name', 'process'))} [{window.get('Id', window.get('id', '?'))}] {window.get('MainWindowTitle', window.get('main_window_title', ''))}")
+        error = str(data.get("open_error", "")).strip()
+        if error:
+            lines.append(f"open error: {error}")
+        if kind:
+            lines.append(f"kind: {kind}")
+        return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Factory: register all six terminal tools
 # ---------------------------------------------------------------------------
 
 def register_terminal_tools(registry: ToolRegistry, initial_cwd: str | Path | None = None) -> _CwdState:
     """
-    Register all five terminal tools sharing one cwd state.
+    Register all six terminal tools sharing one cwd state.
     Returns the cwd state so the CLI can display it.
 
     Usage in cli.py:
@@ -748,4 +1148,5 @@ def register_terminal_tools(registry: ToolRegistry, initial_cwd: str | Path | No
     registry.register(ListDirTool(cwd))
     registry.register(SearchFilesTool(cwd))
     registry.register(WriteFileTool(cwd))
+    registry.register(OpenPathTool(cwd))
     return cwd

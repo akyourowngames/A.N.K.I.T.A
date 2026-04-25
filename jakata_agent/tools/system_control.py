@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from jakata_agent.tools.base import Tool, ToolResult
+from jakata_agent.tools.opening import open_target
 from jakata_agent.tools.registry import ToolRegistry
 
 
@@ -425,21 +426,12 @@ class SystemTool(Tool):
     def _open_url(self, target: str) -> ToolResult:
         if not target:
             return ToolResult(ok=False, summary="System open_url requires a URL target.", data={}, error="missing_target")
-        try:
-            if PLATFORM == "Windows":
-                safe_target = target.replace("'", "''")
-                subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command", f"Start-Process '{safe_target}'"],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            elif PLATFORM == "Darwin":
-                subprocess.Popen(["open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                subprocess.Popen(["xdg-open", target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return ToolResult(ok=True, summary=f"Opened URL: {target}", data={"action": "open_url", "target": target})
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(ok=False, summary=f"Failed to open URL: {target}", data={}, error=str(exc))
+        opened = open_target(target, wait_seconds=1.5)
+        data = {"action": "open_url", "target": target, **opened.as_dict()}
+        if opened.ok:
+            summary = f"Opened URL: {target}" if opened.verified else f"Open URL request sent: {target}"
+            return ToolResult(ok=True, summary=summary, data=data)
+        return ToolResult(ok=False, summary=f"Failed to open URL: {target}", data=data, error=opened.error or "open_failed")
 
     def _open_path(self, target: str) -> ToolResult:
         if not target:
@@ -447,20 +439,12 @@ class SystemTool(Tool):
         path = Path(target).expanduser()
         if not path.exists():
             return ToolResult(ok=False, summary=f"Path not found: {target}", data={}, error="not_found")
-        try:
-            if PLATFORM == "Windows":
-                subprocess.Popen(
-                    ["powershell", "-NoProfile", "-Command", f'Start-Process -FilePath "{str(path).replace(chr(34), chr(34) * 2)}"'],
-                    stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL,
-                )
-            elif PLATFORM == "Darwin":
-                subprocess.Popen(["open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            else:
-                subprocess.Popen(["xdg-open", str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            return ToolResult(ok=True, summary=f"Opened path: {path}", data={"action": "open_path", "target": str(path)})
-        except Exception as exc:  # noqa: BLE001
-            return ToolResult(ok=False, summary=f"Failed to open path: {target}", data={}, error=str(exc))
+        opened = open_target(path, wait_seconds=1.5)
+        data = {"action": "open_path", "target": str(path), **opened.as_dict()}
+        if opened.ok:
+            summary = f"Opened path: {path}" if opened.verified else f"Open path request sent: {path}"
+            return ToolResult(ok=True, summary=summary, data=data)
+        return ToolResult(ok=False, summary=f"Failed to open path: {target}", data=data, error=opened.error or "open_failed")
 
     def _open_settings(self, target: str) -> ToolResult:
         page = target.strip().lower() or "system"

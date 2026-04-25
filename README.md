@@ -83,11 +83,12 @@ Set these values in `.env` first:
 - `JAKATA_IMAGE_OUTPUT_DIR=data/generated/images`
 
 Anyone can send basic guest chat messages. Private control requires `/unlock <password>` and expires by timeout.
+After unlock, normal Telegram messages use the same JAKATA agent path as CLI: chat, memory, terminal, files, browser, system, camera, web, and coding tools route through the normal planner. They are not background tasks. Use `/bg <goal>` only when you explicitly want daemon-backed background work.
 
 Admin task and control commands:
 
 - `/start`, `/help`, `/commands`, `/admin`
-- `/task <goal>`, `/tasks`, `/details <task_id>`, `/approve <id>`, `/deny <id>`, `/cancel <task_id>`
+- `/bg <goal>`, `/task <goal>`, `/tasks`, `/details <task_id>`, `/approve <id>`, `/deny <id>`, `/cancel <task_id>`
 - `/screen`, `/kill`, `/unkill`, `/lock`
 
 Admin artifact commands:
@@ -98,10 +99,11 @@ Admin artifact commands:
 - upload a Telegram document/photo to save it under `data/telegram/uploads/<telegram_user_id>/`
 - `/put <artifact_or_upload_id> <pc_path>`
 - `/img <prompt>` sends a photo preview, `/imgfile <prompt>` sends the generated image as a document
+- normal unlocked Telegram chat can also route through `telegram_send` for requests like "send me this file", "send the cat image here", or "send me the latest generated image"
 
-All tool-driven admin work goes through the task completion loop. Approval is now policy-driven:
+Normal unlocked Telegram chat uses direct foreground agent execution like CLI. Explicit `/task` and `/bg` commands use the task completion loop. Approval is policy-driven for guarded desktop actions, but terminal tools (`shell`, `read_file`, `list_dir`, `search_files`, `write_file`, `open_path`) are not blacklisted or approval-gated:
 
-- `JAKATA_APPROVAL_POLICY=auto_safe` auto-runs safe local actions and still pauses destructive ones
+- `JAKATA_APPROVAL_POLICY=auto_safe` auto-runs safe local actions and still pauses guarded destructive non-shell actions
 - `JAKATA_APPROVAL_POLICY=manual` pauses all guarded desktop actions
 - `JAKATA_APPROVAL_POLICY=auto` runs guarded desktop actions without approval prompts
 
@@ -121,9 +123,15 @@ Optional local automation config:
 - `JAKATA_CODEX_CLI_PATH=codex`
 - `JAKATA_APPROVAL_POLICY=auto_safe|manual|auto`
 - `JAKATA_WORKSPACE_DIR=.`
+- `JAKATA_PATH_SEARCH_ROOTS=` optional path-separated roots for terminal path discovery
+- `JAKATA_PATH_DISCOVERY_MAX_DEPTH=6` / `JAKATA_PATH_DISCOVERY_MAX_VISITS=50000`
+- `JAKATA_PATH_DISCOVERY_EXCLUDE_DIRS=` optional comma-separated dependency/cache folders to skip during fallback discovery
+- `JAKATA_OPEN_IMAGE_APP=mspaint.exe` fallback viewer when Windows says an image opened but no viewer window is detected
 - `JAKATA_PROMPTS_DIR=prompts`
 - `JAKATA_TELEGRAM_SAFE_ROOTS=` optional comma-separated override for safe upload roots
 - `NVIDIA_IMAGE_BASE_URL=` optional image endpoint override
+- `NVIDIA_IMAGE_MODEL_NAMESPACE=black-forest-labs` for hosted NVIDIA GenAI image endpoints when the model id has no provider prefix
+- `NVIDIA_IMAGE_INFER_URL=` optional full hosted image infer URL override
 - `NVIDIA_IMAGE_SIZE=1024x1024`
 
 ## Current behavior
@@ -137,6 +145,9 @@ Optional local automation config:
 - automatic loading of `.txt` knowledge files
 - low-latency retrieval from prior chats, memories, and knowledge files
 - model-driven tool use
+- terminal file tools resolve missing relative paths by searching configured, workspace, user-profile, OneDrive, home, and drive roots, then verify the matched path before use
+- `open_path` opens local files, folders, and URLs with the OS default app and reports launch/window evidence when Windows exposes it
+- `telegram_send` prepares and sends existing files, folders, artifacts, and generated images back to the current Telegram chat
 - file-backed Markdown prompts loaded from `prompts/`
 - explicit `/bg` background execution only
 - local daemon-backed background task queue
@@ -147,10 +158,12 @@ Optional local automation config:
 - `os_agent` facade for desktop/browser workflows
 - `coding_agent` facade for code/project work with shell, file, web-search, browser/system, screen/OCR, and verify-and-repair access
 - internal browser tool for Playwright-backed Chrome navigation, history/tab control, search, result opening, page inspection, media playback checks, and wait-for-text verification
-- native local mouse, keyboard, window, browser, public shell, file, OCR, and system controls
+- native local mouse, keyboard, window, browser, public shell, file, open-path, OCR, and system controls
+- Telegram chat delivery for files/images without opening them on the PC
 - richer native controls for machine status, disk/network/environment checks, executable lookup, process lookup, terminal opening, URL opening, window move/resize/center/close, and region-based screen/OCR capture
 - live webcam preview with `/camera`
 - current-scene analysis through the `camera` tool and NVIDIA multimodal models
+- hosted NVIDIA GenAI image generation fallback with optional open-after-save support
 - Tavily web search
 - keyless DuckDuckGo HTML fallback when Tavily is not configured
 - OpenWeather current weather lookup

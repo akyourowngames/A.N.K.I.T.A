@@ -15,8 +15,6 @@ GUARDED_TOOLS = {
     "os_agent",
     "keyboard",
     "mouse",
-    "shell",
-    "write_file",
     "browser",
     "clipboard",
     "window",
@@ -31,26 +29,6 @@ _HIGH_RISK_KEYBOARD_HOTKEYS = {
     "win+r",
     "win+x",
 }
-
-_HIGH_RISK_SHELL_PATTERNS = (
-    "rm -rf",
-    "remove-item",
-    "rmdir /s",
-    "rd /s",
-    "del /s",
-    "format ",
-    "diskpart",
-    "shutdown",
-    "restart-computer",
-    "stop-computer",
-    "taskkill",
-    "stop-process",
-    "reg delete",
-    "git reset --hard",
-    "git clean",
-    "set-executionpolicy",
-)
-
 
 @dataclass(slots=True)
 class ApprovalRequest:
@@ -135,6 +113,8 @@ class ApprovalGate:
         raise ApprovalRequired(request)
 
     def _requires_approval(self, tool: str, args: dict[str, Any]) -> bool:
+        if tool == "shell":
+            return False
         if tool not in self.guarded_tools:
             return False
         if self.approval_policy == "auto":
@@ -146,8 +126,6 @@ class ApprovalGate:
     def _is_high_risk(self, tool: str, args: dict[str, Any]) -> bool:
         if tool == "os_agent":
             return True
-        if tool == "shell":
-            return not self._shell_is_auto_safe(args)
         if tool == "write_file":
             return not self._is_trusted_write(args)
         if tool == "system":
@@ -163,21 +141,6 @@ class ApprovalGate:
         if tool == "keyboard":
             return self._keyboard_is_high_risk(args)
         return False
-
-    def _shell_is_auto_safe(self, args: dict[str, Any]) -> bool:
-        command = str(args.get("command", "")).strip()
-        if not command:
-            return False
-        lowered = command.lower()
-        if any(pattern in lowered for pattern in _HIGH_RISK_SHELL_PATTERNS):
-            return False
-
-        cwd = str(args.get("cwd", "")).strip()
-        if lowered == "cd" or lowered.startswith("cd "):
-            cwd = command[2:].strip().strip("'\"") or cwd
-
-        target = self._resolve_trusted_candidate(cwd)
-        return target is not None
 
     def _keyboard_is_high_risk(self, args: dict[str, Any]) -> bool:
         action = str(args.get("action", "")).strip().lower()

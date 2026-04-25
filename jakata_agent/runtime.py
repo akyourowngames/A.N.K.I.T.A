@@ -82,6 +82,8 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         model=settings.image_model,
         output_dir=settings.image_output_dir,
         default_size=settings.image_size,
+        infer_url=settings.image_infer_url,
+        model_namespace=settings.image_model_namespace,
         timeout_seconds=settings.timeout_seconds,
     )
     task_store = TaskStore(memory.db_path)

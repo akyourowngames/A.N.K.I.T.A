@@ -144,3 +144,22 @@ class TavilySearchTool(Tool):
             error=None if results else "no_results",
         )
 
+    def render(self, data: dict[str, Any]) -> str:
+        answer = str(data.get("answer", "")).strip()
+        results = data.get("results", [])
+        lines: list[str] = []
+        if answer:
+            lines.append(answer)
+            lines.append("")
+        if isinstance(results, list) and results:
+            lines.append("Sources:")
+            for index, item in enumerate(results[:8], 1):
+                if not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", "")).strip() or "Untitled"
+                url = str(item.get("url", "")).strip()
+                content = " ".join(str(item.get("content", "")).split())
+                suffix = f" - {content[:220]}" if content else ""
+                lines.append(f"{index}. {title} ({url}){suffix}")
+        return "\n".join(lines).strip() or "No results found."
+

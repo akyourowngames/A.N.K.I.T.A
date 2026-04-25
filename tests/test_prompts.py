@@ -19,7 +19,6 @@ PROMPT_MARKERS = {
     "os_agent/verifier.md": "JAKATA OS verifier",
     "os_agent/modal_recovery.md": "modal recovery planner",
     "telegram/guest.md": "public Telegram guest mode",
-    "telegram/admin_router.md": "Telegram admin intent router",
     "camera/vision.md": "live camera frames",
     "coding_agent/planner.md": "internal JAKATA coding action planner",
     "coding_agent/verifier.md": "JAKATA coding task verifier",

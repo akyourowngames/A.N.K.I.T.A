@@ -42,11 +42,19 @@ class IntentRouter:
     def __init__(self, client: TextCompletionClient) -> None:
         self.client = client
 
-    def plan(self, user_message: str, tool_manifest: list[dict[str, Any]], memory_context: str = "") -> PlanDecision:
+    def plan(
+        self,
+        user_message: str,
+        tool_manifest: list[dict[str, Any]],
+        memory_context: str = "",
+        conversation_context: str = "",
+    ) -> PlanDecision:
         manifest_text = json.dumps(tool_manifest, ensure_ascii=False, separators=(",", ":"))
         context = memory_context.strip()
         context_block = f"\n\nRelevant memory and knowledge context:\n{context}" if context else ""
-        user_payload = f"Available tools:\n{manifest_text}{context_block}\n\nUser message: {user_message}"
+        conversation = conversation_context.strip()
+        conversation_block = f"\n\nRecent conversation context:\n{conversation}" if conversation else ""
+        user_payload = f"Available tools:\n{manifest_text}{context_block}{conversation_block}\n\nUser message: {user_message}"
 
         _, raw = self.client.complete_text(PLANNER_SYSTEM_PROMPT, user_payload, temperature=0.0)
         cleaned = raw.strip().replace("```json", "").replace("```", "").strip()

@@ -756,18 +756,26 @@ def test_approval_gate_auto_safe_allows_safe_workspace_shell(tmp_path: Path):
     assert loaded.status == "queued"
 
 
-def test_approval_gate_auto_safe_still_requires_dangerous_shell(tmp_path: Path):
+def test_approval_gate_allows_shell_without_command_blacklist(tmp_path: Path):
     store = TaskStore(tmp_path / "jakata.db")
     task = store.create_task(goal="delete repo", session_id="s1")
-    gate = ApprovalGate(task_store=store, task=task, approval_policy="auto_safe", workspace_dir=tmp_path)
-    try:
-        gate.require("shell", {"command": "git clean -fd", "cwd": str(tmp_path)}, "delete generated files")
-    except ApprovalRequired:
-        waiting = store.get_task(task.id)
-        assert waiting is not None
-        assert waiting.status == "awaiting_approval"
-    else:
-        raise AssertionError("dangerous shell should still require approval in auto_safe mode")
+    gate = ApprovalGate(task_store=store, task=task, approval_policy="manual", workspace_dir=tmp_path)
+    gate.require("shell", {"command": "git clean -fd", "cwd": str(tmp_path)}, "operator approved terminal access")
+    loaded = store.get_task(task.id)
+    assert loaded is not None
+    assert loaded.pending_approval == {}
+    assert loaded.status == "queued"
+
+
+def test_approval_gate_allows_terminal_write_by_default(tmp_path: Path):
+    store = TaskStore(tmp_path / "jakata.db")
+    task = store.create_task(goal="write file", session_id="s1")
+    gate = ApprovalGate(task_store=store, task=task, approval_policy="manual", workspace_dir=tmp_path)
+    gate.require("write_file", {"path": str(tmp_path / "note.txt"), "content": "ok"}, "operator approved terminal access")
+    loaded = store.get_task(task.id)
+    assert loaded is not None
+    assert loaded.pending_approval == {}
+    assert loaded.status == "queued"
 
 
 def test_graph_store_search(tmp_path: Path):
@@ -943,17 +951,73 @@ class FakeTelegramTaskEngine:
         return SimpleNamespace(task=task, report=task.final_report)
 
 
-class FakeTelegramIntentClient:
-    def __init__(self, *intents: dict[str, object]) -> None:
-        self.intents = list(intents)
+class FakeTelegramAgent:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
 
+    def reply(self, text: str):
+        self.calls.append(text)
+        return "fake-agent", f"agent reply: {text}"
+
+
+class TelegramSendPlannerClient:
     def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.0):
         del system_prompt, user_prompt, temperature
-        intent = self.intents.pop(0) if self.intents else {"action": "task"}
-        return "fake-telegram-router", json.dumps(intent)
+        return "fake-model", '{"steps":[{"tool":"telegram_send","args":{"target":"cat image","prefer":"image","max_results":1},"reason":"send requested image"}]}'
+
+    def complete(self, messages, temperature: float = 0.7):
+        del messages, temperature
+        return "fake-model", "sent"
+
+    def stream_complete(self, messages, temperature: float = 0.7):
+        del messages, temperature
+        yield "fake-model", "sent"
 
 
-def test_telegram_start_admin_and_plain_help_onboard_users(tmp_path: Path):
+class MissingPlaceholderPlannerClient:
+    def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.0):
+        del system_prompt, user_prompt, temperature
+        return (
+            "fake-model",
+            '{"steps":[{"tool":"image_generation","args":{"prompt":"bad","size":"64x64"},"reason":"generate"},'
+            '{"tool":"open_path","args":{"target":"{{image_generation.path}}"},"reason":"open generated file"}]}',
+        )
+
+    def complete(self, messages, temperature: float = 0.7):
+        del messages, temperature
+        return "fake-model", "summarized"
+
+    def stream_complete(self, messages, temperature: float = 0.7):
+        del messages, temperature
+        yield "fake-model", "summarized"
+
+
+class FailingImageTool(Tool):
+    name = "image_generation"
+    description = "Generate image"
+    safety = "write"
+    input_schema = {"type": "object", "properties": {"prompt": {"type": "string"}, "size": {"type": "string"}}, "required": ["prompt"]}
+
+    def run(self, args):
+        del args
+        return ToolResult(ok=False, summary="image failed", data={}, error="image_failed")
+
+
+class RecordingOpenPathTool(Tool):
+    name = "open_path"
+    description = "Open path"
+    safety = "write"
+    input_schema = {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}
+
+    def __init__(self) -> None:
+        self.calls: list[dict] = []
+
+    def run(self, args):
+        self.calls.append(args)
+        return ToolResult(ok=True, summary="opened", data=args)
+
+
+def test_telegram_start_admin_and_help_commands_onboard_users(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
     runtime = SimpleNamespace(settings=settings, task_store=store)
@@ -968,10 +1032,6 @@ def test_telegram_start_admin_and_plain_help_onboard_users(tmp_path: Path):
     asyncio.run(controller.admin(update, SimpleNamespace(args=[])))
     assert "/unlock <password>" in update.message.replies[-1]
 
-    asyncio.run(controller.message(update, SimpleNamespace(args=[])))
-    assert "Guest mode" in update.message.replies[-1]
-    assert auth._guest_counts == {}
-
     asyncio.run(controller.unlock(update, SimpleNamespace(args=["secret"])))
     assert "Admin mode unlocked" in update.message.replies[-1]
     assert "/sendfile <path>" in update.message.replies[-1]
@@ -980,7 +1040,7 @@ def test_telegram_start_admin_and_plain_help_onboard_users(tmp_path: Path):
     assert "JAKATA admin commands" in update.message.replies[-1]
 
 
-def test_telegram_plain_admin_screenshot_sends_photo_without_command(tmp_path: Path):
+def test_telegram_screen_command_sends_photo(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
     image_path = settings.data_dir / "screen.png"
@@ -996,15 +1056,14 @@ def test_telegram_plain_admin_screenshot_sends_photo_without_command(tmp_path: P
         settings=settings,
         task_store=store,
         tools=FakeScreenTools(),
-        client=FakeTelegramIntentClient({"action": "screenshot"}),
     )
     auth = TelegramAuthManager(password="secret")
     assert auth.unlock(1, "secret")
     controller = TelegramBotController(runtime, auth=auth)
-    update = _fake_update(1, "hey take a screenshot and send me via telegram")
+    update = _fake_update(1)
 
     async def run():
-        await controller.message(update, SimpleNamespace(args=[]))
+        await controller.screen(update, SimpleNamespace(args=[]))
         await _drain_telegram_foreground(controller)
 
     asyncio.run(run())
@@ -1012,66 +1071,54 @@ def test_telegram_plain_admin_screenshot_sends_photo_without_command(tmp_path: P
     assert any("Task finished" in reply for reply in update.message.replies)
 
 
-def test_telegram_plain_file_request_scans_safe_roots_and_sends_match(tmp_path: Path):
+def test_telegram_plain_admin_message_uses_agent_not_file_queue(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
     target = settings.workspace_dir / "math_notes.txt"
     target.write_text("algebra", encoding="utf-8")
+    agent = FakeTelegramAgent()
     runtime = SimpleNamespace(
         settings=settings,
         task_store=store,
         tools=ToolRegistry(),
-        client=FakeTelegramIntentClient({"action": "file", "query": "math notes", "target_type": "file"}),
+        agent=agent,
     )
     auth = TelegramAuthManager(password="secret")
     assert auth.unlock(1, "secret")
     controller = TelegramBotController(runtime, auth=auth)
     update = _fake_update(1, "send me math notes file")
 
-    async def run():
-        await controller.message(update, SimpleNamespace(args=[]))
-        await _drain_telegram_foreground(controller)
+    asyncio.run(controller.message(update, SimpleNamespace(args=[])))
 
-    asyncio.run(run())
-    assert update.message.documents
+    assert agent.calls == ["send me math notes file"]
+    assert update.message.replies[-1] == "agent reply: send me math notes file"
+    assert update.message.documents == []
+    assert controller._foreground_queue is None
 
 
-def test_telegram_foreground_tasks_run_in_queue_order(tmp_path: Path):
+def test_telegram_plain_admin_messages_do_not_create_tasks(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
-    engine = FakeTelegramTaskEngine(store)
+    agent = FakeTelegramAgent()
     runtime = SimpleNamespace(
         settings=settings,
         task_store=store,
-        task_engine=engine,
-        memory=FakeMemory(),
-        client=FakeTelegramIntentClient(
-            {"action": "task"},
-            {"action": "task"},
-            {"action": "status"},
-        ),
+        agent=agent,
     )
     auth = TelegramAuthManager(password="secret")
     assert auth.unlock(1, "secret")
     controller = TelegramBotController(runtime, auth=auth)
-    first = _fake_update(1, "first task")
-    second = _fake_update(1, "second task")
+    first = _fake_update(1, "first normal message")
+    second = _fake_update(1, "what else can you do bud")
+    third = _fake_update(1, "what can you do")
 
-    async def run():
-        await controller.message(first, SimpleNamespace(args=[]))
-        await controller.message(second, SimpleNamespace(args=[]))
-        await _drain_telegram_foreground(controller)
+    asyncio.run(controller.message(first, SimpleNamespace(args=[])))
+    asyncio.run(controller.message(second, SimpleNamespace(args=[])))
+    asyncio.run(controller.message(third, SimpleNamespace(args=[])))
 
-    asyncio.run(run())
-    assert engine.calls == ["first task", "second task"]
-    assert any("Queued foreground task" in reply for reply in first.message.replies)
-    assert any("Task finished: first task" in reply for reply in first.message.replies)
-    assert any("Task finished: second task" in reply for reply in second.message.replies)
-
-    status = _fake_update(1, "where have you gone")
-    asyncio.run(controller.message(status, SimpleNamespace(args=[])))
-    assert "No active Telegram foreground task" in status.message.replies[-1]
-    assert engine.calls == ["first task", "second task"]
+    assert agent.calls == ["first normal message", "what else can you do bud", "what can you do"]
+    assert store.list_tasks() == []
+    assert controller._foreground_queue is None
 
 
 def test_telegram_bg_is_explicit_background_path(tmp_path: Path):
@@ -1156,6 +1203,57 @@ def test_image_generation_tool_saves_png_from_b64(tmp_path: Path):
     assert Path(result.data["path"]).read_bytes() == png
 
 
+def test_image_generation_tool_falls_back_to_nvidia_genai_and_opens(tmp_path: Path, monkeypatch):
+    png = b"\x89PNG\r\n\x1a\nhosted"
+    opened: list[Path] = []
+    requested: list[dict] = []
+
+    class FakeImages:
+        def generate(self, **kwargs):
+            del kwargs
+            raise RuntimeError("404 page not found")
+
+    class FakeImageClient:
+        def __init__(self, **kwargs):
+            del kwargs
+            self.images = FakeImages()
+
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            payload = base64.b64encode(png).decode("ascii")
+            return json.dumps({"artifacts": [{"base64": payload}]}).encode("utf-8")
+
+    def fake_urlopen(request, timeout=0):
+        requested.append({"url": request.full_url, "body": json.loads(request.data.decode("utf-8")), "timeout": timeout})
+        return FakeResponse()
+
+    monkeypatch.setattr("jakata_agent.tools.image_generation.urllib.request.urlopen", fake_urlopen)
+    tool = ImageGenerationTool(
+        api_key="key",
+        base_url="https://example.com/v1",
+        model="flux.2-klein-4b",
+        output_dir=tmp_path,
+        client_factory=FakeImageClient,
+        opener=lambda path: opened.append(path),
+    )
+
+    result = tool.run({"prompt": "blue cyber city", "open_after": True})
+
+    assert result.ok
+    assert Path(result.data["path"]).read_bytes() == png
+    assert result.data["provider"] == "nvidia_genai"
+    assert result.data["opened"] is True
+    assert opened == [Path(result.data["path"])]
+    assert requested[0]["url"] == "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.2-klein-4b"
+    assert requested[0]["body"]["prompt"] == "blue cyber city"
+
+
 def test_telegram_sendfile_outside_safe_root_requires_approval_then_sends(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
@@ -1210,6 +1308,66 @@ def test_telegram_img_command_sends_generated_photo(tmp_path: Path):
 
     asyncio.run(run_img())
     assert update.message.photos
+
+
+def test_telegram_plain_send_image_uses_delivery_tool_not_pc_open(tmp_path: Path):
+    settings = _artifact_settings(tmp_path)
+    store = TaskStore(tmp_path / "jakata.db")
+    image_path = settings.image_output_dir / "cute-cat.png"
+    image_path.parent.mkdir(parents=True)
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+    client = TelegramSendPlannerClient()
+    runtime = SimpleNamespace(
+        settings=settings,
+        client=client,
+        tools=ToolRegistry(),
+        memory=FakeMemory(),
+        router=IntentRouter(client),
+        validator=FakeValidator(),
+        task_store=store,
+        daemon=FakeDaemon(),
+        task_engine=None,
+    )
+    auth = TelegramAuthManager(password="secret")
+    assert auth.unlock(1, "secret")
+    controller = TelegramBotController(runtime, auth=auth)
+    update = _fake_update(1, "can yu send me the img of cat")
+
+    asyncio.run(controller.message(update, SimpleNamespace(args=[])))
+
+    assert update.message.photos
+    assert update.message.documents == []
+    assert not any("opened" in reply.lower() for reply in update.message.replies)
+    assert controller._foreground_queue is None
+
+
+def test_agent_skips_dependent_step_when_placeholder_is_missing(tmp_path: Path):
+    client = MissingPlaceholderPlannerClient()
+    tools = ToolRegistry()
+    open_tool = RecordingOpenPathTool()
+    tools.register(FailingImageTool())
+    tools.register(open_tool)
+    agent = JakataAgent(
+        settings=SimpleNamespace(session_id="s1", workspace_dir=tmp_path, data_dir=tmp_path, approval_policy="auto"),
+        client=client,
+        tools=tools,
+        memory=FakeMemory(),
+        router=IntentRouter(client),
+        validator=FakeValidator(),
+        task_store=TaskStore(tmp_path / "jakata.db"),
+        daemon=FakeDaemon(),
+    )
+
+    response = agent.respond("make an image and open it")
+
+    assert open_tool.calls == []
+    assert response.tool_results[1]["tool"] == "open_path"
+    assert response.tool_results[1]["error"] == "missing_dependency"
+
+
+def test_image_generation_snaps_tiny_size_to_supported_nvidia_dimensions():
+    assert ImageGenerationTool._parse_size("64x64") == (512, 512)
+    assert ImageGenerationTool._parse_size("1025x1569") == (1024, 1568)
 
 
 def test_background_task_notifier_reports_completion_once(tmp_path: Path):

@@ -58,6 +58,8 @@ class Settings:
     image_model: str
     image_size: str
     image_output_dir: Path
+    image_infer_url: str = ""
+    image_model_namespace: str = "black-forest-labs"
     approval_policy: str = "auto_safe"
     timeout_seconds: float = 60.0
     automation_timeout_seconds: float = 180.0
@@ -155,6 +157,8 @@ def load_settings() -> Settings:
         image_model=os.getenv("NVIDIA_IMAGE_MODEL", "flux.2-klein-4b").strip() or "flux.2-klein-4b",
         image_size=os.getenv("NVIDIA_IMAGE_SIZE", "1024x1024").strip() or "1024x1024",
         image_output_dir=Path(os.getenv("JAKATA_IMAGE_OUTPUT_DIR", str(data_dir / "generated" / "images"))).resolve(),
+        image_infer_url=os.getenv("NVIDIA_IMAGE_INFER_URL", "").strip(),
+        image_model_namespace=os.getenv("NVIDIA_IMAGE_MODEL_NAMESPACE", "black-forest-labs").strip() or "black-forest-labs",
         approval_policy=_normalize_approval_policy(os.getenv("JAKATA_APPROVAL_POLICY", "auto_safe")),
         automation_timeout_seconds=float(os.getenv("JAKATA_AUTOMATION_TIMEOUT_SECONDS", "180").strip() or "180"),
     )

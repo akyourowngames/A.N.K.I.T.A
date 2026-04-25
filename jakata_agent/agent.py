@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass, field
 from typing import Any, Iterator
 
@@ -21,6 +22,7 @@ from jakata_agent.tasks.models import (
     MAX_TASK_BUDGET_MINUTES,
 )
 from jakata_agent.tasks.store import TaskStore
+from jakata_agent.tools.base import ToolResult
 from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.os_agent import OsAgentTool
 from jakata_agent.tools.registry import ToolRegistry
@@ -31,6 +33,7 @@ SYNTHESIS_SYSTEM_PROMPT = load_prompt("agent/synthesis.md")
 
 MAX_TOOL_STEPS = 4
 DIRECT_TOOL_ENGINE_ENV = "JAKATA_FOREGROUND_TASK_ENGINE"
+PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
 
 
 @dataclass(slots=True)
@@ -38,6 +41,7 @@ class AgentResponse:
     model: str
     content: str
     background_task_id: str | None = None
+    tool_results: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -54,17 +58,17 @@ class JakataAgent:
     messages: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        loaded = self.memory.load_session_messages()
-        if loaded:
-            self.messages = loaded
-        else:
-            self.messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{self.memory.bootstrap_system_note()}"}]
-            self.memory.persist_turn(self.messages)
+        self.messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{self.memory.bootstrap_system_note()}"}]
+        self.memory.persist_turn(self.messages)
 
     def reply(self, user_message: str) -> tuple[str, str]:
+        response = self.respond(user_message)
+        return response.model, response.content
+
+    def respond(self, user_message: str) -> AgentResponse:
         response = self._handle(user_message)
         self._record_conversation(user_message, response.content)
-        return response.model, response.content
+        return response
 
     def stream_reply(self, user_message: str) -> Iterator[tuple[str, str]]:
         decision = self._plan(user_message)
@@ -167,7 +171,7 @@ class JakataAgent:
             return AgentResponse(model=model, content=content)
 
         model, content = self._synthesise(user_message, decision.steps, tool_results, decision.memory_context)
-        return AgentResponse(model=model, content=content)
+        return AgentResponse(model=model, content=content, tool_results=tool_results)
 
     def _plan(self, user_message: str) -> PlanDecision:
         manifest = self.tools.manifest(public_only=True) + [
@@ -180,7 +184,8 @@ class JakataAgent:
             }
         ]
         memory_context = self._retrieve_memory_context(user_message)
-        decision = self.router.plan(user_message, manifest, memory_context=memory_context)
+        conversation_context = self._conversation_context()
+        decision = self.router.plan(user_message, manifest, memory_context=memory_context, conversation_context=conversation_context)
         decision.memory_context = memory_context
         decision.steps = self.validator.validate(decision.steps, self.tools).steps[:MAX_TOOL_STEPS]
         return decision
@@ -239,6 +244,7 @@ class JakataAgent:
 
     def _execute(self, plan: list[PlanStep]) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        tool_context: dict[str, Any] = {}
         for step in plan:
             if step.tool == "general_chat":
                 continue
@@ -255,11 +261,31 @@ class JakataAgent:
                 )
                 continue
 
-            result = self._execute_one_direct_tool(step)
+            resolved_step = PlanStep(
+                tool=step.tool,
+                args=self._resolve_tool_placeholders(step.args, tool_context),
+                reason=step.reason,
+                fallbacks=step.fallbacks,
+            )
+            if self._has_unresolved_placeholder(resolved_step.args):
+                result = ToolResult(
+                    ok=False,
+                    summary=f"Skipped {step.tool}: required previous tool output was not available.",
+                    data={"args": resolved_step.args},
+                    error="missing_dependency",
+                )
+            else:
+                result = self._execute_one_direct_tool(resolved_step)
             result_tool_name = step.tool
             if not result.ok:
                 for fallback in step.fallbacks:
-                    fallback_step = PlanStep(tool=fallback.tool, args=fallback.args, reason=fallback.reason)
+                    fallback_step = PlanStep(
+                        tool=fallback.tool,
+                        args=self._resolve_tool_placeholders(fallback.args, tool_context),
+                        reason=fallback.reason,
+                    )
+                    if self._has_unresolved_placeholder(fallback_step.args):
+                        continue
                     fallback_result = self._execute_one_direct_tool(fallback_step)
                     if fallback_result.ok:
                         result = fallback_result
@@ -284,6 +310,9 @@ class JakataAgent:
                     "rendered": rendered,
                 }
             )
+            if result.ok:
+                tool_context["previous"] = result.data
+                tool_context[result_tool_name] = result.data
         return results
 
     def _execute_one_direct_tool(self, step: PlanStep):
@@ -387,7 +416,7 @@ class JakataAgent:
         return self.client.complete(self._build_general_chat_messages(user_message, memory_context))
 
     def _build_general_chat_messages(self, user_message: str, memory_context: str = "") -> list[dict[str, Any]]:
-        messages = list(self.messages)
+        messages = [self.messages[0], *self._short_prompt_context()]
         context = memory_context.strip()
         if context:
             messages.append({"role": "system", "content": "Relevant memory and knowledge context:\n" + context})
@@ -449,6 +478,8 @@ class JakataAgent:
         error = str(result.get("error", "")).strip()
         if result.get("ok"):
             rendered = str(result.get("rendered", "")).strip()
+            if rendered and ("\n" in rendered or rendered.startswith("#")):
+                return rendered
             return summary or rendered or "Tool action complete."
         return summary or error or "System action failed."
 
@@ -505,3 +536,48 @@ class JakataAgent:
         if len(context) <= max_chars:
             return context
         return context[:max_chars].rstrip() + "\n..."
+
+    def _short_prompt_context(self, *, max_messages: int = 2) -> list[dict[str, Any]]:
+        return [dict(item) for item in self.messages if item.get("role") != "system"][-max_messages:]
+
+    def _conversation_context(self, *, max_messages: int = 2, max_chars: int = 1600) -> str:
+        recent = [item for item in self.messages if item.get("role") != "system"][-max_messages:]
+        lines: list[str] = []
+        for item in recent:
+            role = str(item.get("role", "")).strip() or "message"
+            content = str(item.get("content", "")).strip()
+            if content:
+                lines.append(f"{role}: {content[:700]}")
+        context = "\n".join(lines).strip()
+        if len(context) <= max_chars:
+            return context
+        return context[-max_chars:].lstrip()
+
+    @classmethod
+    def _resolve_tool_placeholders(cls, value: Any, tool_context: dict[str, Any]) -> Any:
+        if isinstance(value, dict):
+            return {key: cls._resolve_tool_placeholders(item, tool_context) for key, item in value.items()}
+        if isinstance(value, list):
+            return [cls._resolve_tool_placeholders(item, tool_context) for item in value]
+        if not isinstance(value, str):
+            return value
+
+        def replace(match: re.Match[str]) -> str:
+            path = match.group(1)
+            current: Any = tool_context
+            for part in path.split("."):
+                if isinstance(current, dict) and part in current:
+                    current = current[part]
+                else:
+                    return match.group(0)
+            return str(current)
+
+        return PLACEHOLDER_RE.sub(replace, value)
+
+    @classmethod
+    def _has_unresolved_placeholder(cls, value: Any) -> bool:
+        if isinstance(value, dict):
+            return any(cls._has_unresolved_placeholder(item) for item in value.values())
+        if isinstance(value, list):
+            return any(cls._has_unresolved_placeholder(item) for item in value)
+        return isinstance(value, str) and bool(PLACEHOLDER_RE.search(value))
