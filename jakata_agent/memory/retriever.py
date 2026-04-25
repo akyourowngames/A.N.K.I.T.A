@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from collections import Counter
 from pathlib import Path
 
 from jakata_agent.memory.embedder import SemanticEmbedder
@@ -27,8 +29,14 @@ class MemoryRetriever:
     def retrieve(self, query: str, session_id: str, memory_limit: int = 5, chunk_limit: int = 3) -> RetrievedContext:
         permanent_memories = self._hybrid_memory_search(query, limit=memory_limit)
         knowledge_chunks = self._hybrid_rank_chunks(self.knowledge_chunks, query, limit=chunk_limit)
-        archived_chat_chunks = self._search_chats(query, session_id, limit=chunk_limit)
-        graph_results = self.graph_store.search(query, limit=chunk_limit)
+        if not knowledge_chunks:
+            knowledge_chunks = self._baseline_knowledge(limit=chunk_limit)
+        archived_chat_chunks = [] if permanent_memories or knowledge_chunks else self._search_chats(query, session_id, limit=chunk_limit)
+        graph_results = (
+            self.graph_store.search(query, limit=chunk_limit)
+            if not (permanent_memories or knowledge_chunks)
+            else {"nodes": [], "edges": []}
+        )
         graph_chunks = [
             f"[{item['node_type']}] {item['label']}" for item in graph_results["nodes"]
         ] + [
@@ -49,14 +57,15 @@ class MemoryRetriever:
         for item in pool.values():
             lexical_score = self._token_score(query, f"{item.kind} {item.content} {item.summary}")
             semantic_score = self._semantic_score(query, item.content)
-            score = lexical_score + semantic_score * 5.0 + item.confidence
-            if score > 0:
+            evidence_score = lexical_score + semantic_score * 5.0
+            if evidence_score > 0:
+                score = evidence_score + item.confidence * 0.25
                 ranked.append((score, item))
         ranked.sort(key=lambda pair: pair[0], reverse=True)
         return [item for _, item in ranked[:limit]]
 
     def _search_chats(self, query: str, session_id: str, limit: int) -> list[str]:
-        tokens = [token.lower() for token in query.split() if len(token) > 2]
+        tokens = self._tokens(query)
         results: list[tuple[int, str]] = []
         for path in sorted(self.chat_dir.glob("session_*.json")):
             try:
@@ -113,14 +122,24 @@ class MemoryRetriever:
         ranked.sort(key=lambda item: item[0], reverse=True)
         return [chunk for _, chunk in ranked[:limit]]
 
+    def _baseline_knowledge(self, limit: int) -> list[str]:
+        short_chunks = [chunk for chunk in self.knowledge_chunks if len(chunk) <= 500]
+        return short_chunks[:limit]
+
     @staticmethod
     def _token_score(query: str, text: str) -> int:
-        tokens = [token.lower() for token in query.split() if len(token) > 2]
-        haystack = text.lower()
-        return sum(haystack.count(token) for token in tokens)
+        tokens = MemoryRetriever._tokens(query)
+        if not tokens:
+            return 0
+        counts = Counter(MemoryRetriever._tokens(text))
+        return sum(counts[token] for token in tokens)
+
+    @staticmethod
+    def _tokens(text: str) -> list[str]:
+        return [token.lower() for token in re.findall(r"[A-Za-z0-9_]+", text) if len(token) > 2]
 
     def _semantic_score(self, query: str, text: str) -> float:
         try:
-            return self.embedder.similarity(query, text)
+            return max(0.0, self.embedder.similarity(query, text))
         except Exception:
             return 0.0

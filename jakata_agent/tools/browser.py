@@ -25,7 +25,7 @@ def detect_chrome_path(configured_path: str = "") -> str:
 
 class BrowserTool(Tool):
     name = "browser"
-    public = False
+    public = True
     description = (
         "Internal Chrome helper for navigation, search, page inspection, tab control, result opening, and media playback control."
     )

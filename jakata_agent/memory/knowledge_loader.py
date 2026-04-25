@@ -15,8 +15,21 @@ class KnowledgeLoader:
             text = path.read_text(encoding="utf-8").strip()
             if not text:
                 continue
-            chunks.extend(self._chunk_text(text))
+            for unit in self._split_units(text):
+                chunks.extend(self._chunk_text(unit))
         return chunks
+
+    @staticmethod
+    def _split_units(text: str) -> list[str]:
+        paragraphs = [part.strip() for part in text.replace("\r\n", "\n").split("\n\n") if part.strip()]
+        units: list[str] = []
+        for paragraph in paragraphs or [text.strip()]:
+            lines = [line.strip() for line in paragraph.splitlines() if line.strip()]
+            if len(lines) > 1:
+                units.extend(lines)
+            else:
+                units.append(paragraph)
+        return units
 
     def _chunk_text(self, text: str) -> list[str]:
         if len(text) <= self.chunk_size:

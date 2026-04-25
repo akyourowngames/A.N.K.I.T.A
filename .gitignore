@@ -3,3 +3,7 @@
 __pycache__/
 *.pyc
 data/
+.pytest_cache/
+.pytest-tmp-current/
+pytest_tmp_current/
+.tmp/pytest/pytest-of-anime/

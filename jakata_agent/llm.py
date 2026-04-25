@@ -11,11 +11,15 @@ from typing import Any, Iterator, Protocol
 from openai import OpenAI
 
 from jakata_agent.config import Settings
+from jakata_agent.prompts import load_prompt
 
 
 class TextCompletionClient(Protocol):
     def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.7) -> tuple[str, str]:
         ...
+
+
+VISION_SYSTEM_PROMPT = load_prompt("camera/vision.md")
 
 
 class NvidiaChatClient:
@@ -96,7 +100,7 @@ class NvidiaChatClient:
         *,
         image_path: str | Path,
         user_prompt: str,
-        system_prompt: str = "You analyze live camera frames for a local assistant. Be concrete, fast, and concise.",
+        system_prompt: str = VISION_SYSTEM_PROMPT,
         temperature: float = 0.2,
         max_tokens: int = 300,
     ) -> tuple[str, str]:

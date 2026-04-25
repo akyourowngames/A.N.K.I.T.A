@@ -277,29 +277,6 @@ def handle_camera_command(user_input: str, runtime: JakataRuntime) -> tuple[bool
     return True, "Camera commands: /camera, /camera off, /camera status, /camera ask <prompt>"
 
 
-def should_force_camera_analysis(user_input: str, runtime: JakataRuntime) -> bool:
-    if not runtime.camera_session.is_active:
-        return False
-    lowered = user_input.strip().lower()
-    if not lowered or lowered.startswith("/"):
-        return False
-    triggers = (
-        "what do you see",
-        "what are you seeing",
-        "describe what you see",
-        "describe what you're seeing",
-        "what is in front of you",
-        "what's in front of you",
-        "look at",
-        "analyze the camera",
-        "analyse the camera",
-        "camera feed",
-        "live feed",
-        "can you see",
-    )
-    return any(trigger in lowered for trigger in triggers)
-
-
 def print_task_message(message: str) -> None:
     line = Text()
     line.append("task", style="bold #9ec5a2")
@@ -571,20 +548,6 @@ def main() -> None:
                 runtime.daemon.clear_kill_switch()
                 console.print(Panel.fit("Global kill switch cleared.", border_style="#4b5563", box=box.SQUARE))
                 continue
-            if should_force_camera_analysis(user_input, runtime):
-                result = runtime.tools.execute("camera", {"action": "describe", "prompt": user_input})
-                console.print(
-                    Panel(
-                        result.summary,
-                        title="Camera Analysis",
-                        border_style="#4b5563" if result.ok else "red",
-                        box=box.SQUARE,
-                        padding=(0, 1),
-                    )
-                )
-                console.print()
-                continue
-
             try:
                 console.print()
                 suppress_notifier.set()

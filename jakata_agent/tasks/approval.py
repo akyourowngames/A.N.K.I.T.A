@@ -32,6 +32,25 @@ _HIGH_RISK_KEYBOARD_HOTKEYS = {
     "win+x",
 }
 
+_HIGH_RISK_SHELL_PATTERNS = (
+    "rm -rf",
+    "remove-item",
+    "rmdir /s",
+    "rd /s",
+    "del /s",
+    "format ",
+    "diskpart",
+    "shutdown",
+    "restart-computer",
+    "stop-computer",
+    "taskkill",
+    "stop-process",
+    "reg delete",
+    "git reset --hard",
+    "git clean",
+    "set-executionpolicy",
+)
+
 
 @dataclass(slots=True)
 class ApprovalRequest:
@@ -128,7 +147,7 @@ class ApprovalGate:
         if tool == "os_agent":
             return True
         if tool == "shell":
-            return True
+            return not self._shell_is_auto_safe(args)
         if tool == "write_file":
             return not self._is_trusted_write(args)
         if tool == "system":
@@ -144,6 +163,21 @@ class ApprovalGate:
         if tool == "keyboard":
             return self._keyboard_is_high_risk(args)
         return False
+
+    def _shell_is_auto_safe(self, args: dict[str, Any]) -> bool:
+        command = str(args.get("command", "")).strip()
+        if not command:
+            return False
+        lowered = command.lower()
+        if any(pattern in lowered for pattern in _HIGH_RISK_SHELL_PATTERNS):
+            return False
+
+        cwd = str(args.get("cwd", "")).strip()
+        if lowered == "cd" or lowered.startswith("cd "):
+            cwd = command[2:].strip().strip("'\"") or cwd
+
+        target = self._resolve_trusted_candidate(cwd)
+        return target is not None
 
     def _keyboard_is_high_risk(self, args: dict[str, Any]) -> bool:
         action = str(args.get("action", "")).strip().lower()
@@ -167,21 +201,24 @@ class ApprovalGate:
         raw_path = str(args.get("path", "")).strip()
         if not raw_path:
             return False
+        candidate = self._resolve_trusted_candidate(raw_path)
+        return candidate is not None
+
+    def _resolve_trusted_candidate(self, raw_path: str) -> Path | None:
         trusted_roots = [root for root in [self.workspace_dir, self.data_dir, self._task_cwd()] if root is not None]
         if not trusted_roots:
-            return False
+            return None
+        if not raw_path:
+            return trusted_roots[0]
         candidate = Path(raw_path).expanduser()
-        if not candidate.is_absolute():
-            candidate = (trusted_roots[0] / candidate).resolve()
-        else:
-            candidate = candidate.resolve()
+        candidate = (trusted_roots[0] / candidate).resolve() if not candidate.is_absolute() else candidate.resolve()
         for root in trusted_roots:
             try:
                 candidate.relative_to(root)
-                return True
+                return candidate
             except ValueError:
                 continue
-        return False
+        return None
 
     def _task_cwd(self) -> Path | None:
         cwd = str(getattr(self.task, "cwd", "") or "").strip()

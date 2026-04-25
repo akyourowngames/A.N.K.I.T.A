@@ -49,6 +49,11 @@ class FakeAgent:
 
     def plan(self, user_message: str) -> PlanDecision:
         lowered = user_message.lower()
+        if "direct answer" in lowered:
+            return PlanDecision(
+                steps=[PlanStep(tool="general_chat", args={}, reason="direct_answer")],
+                direct_answer="direct response from router",
+            )
         if "latest" in lowered or "news" in lowered or "who is" in lowered:
             return PlanDecision(
                 steps=[
@@ -73,6 +78,10 @@ class FakeAgent:
         self.history.append(user_message)
         summary = str(tool_results[0]["summary"])
         yield "fake-model", f"{summary} [turn {len(self.history)}]"
+
+    def stream_direct_answer(self, user_message: str, content: str):
+        self.history.append(user_message)
+        yield "router:answer", content
 
 
 def fake_runtime_factory(settings: Settings) -> FakeRuntime:
@@ -178,7 +187,7 @@ def test_chat_stream_emits_session_and_done(tmp_path: Path):
     assert response.status_code == 200
 
     payloads = parse_sse_payloads(response.text)
-    assert payloads[0]["session_id"]
+    assert payloads[0]["session_id"] == "default"
     assert payloads[0]["chunk"] == ""
     assert any(item.get("activity", {}).get("event") == "routing" for item in payloads if isinstance(item.get("activity"), dict))
     assert any(item.get("chunk") == "turn 1: hello there" for item in payloads)
@@ -195,6 +204,14 @@ def test_session_id_keeps_conversation_context(tmp_path: Path):
     )
 
     assert any(item.get("chunk") == "turn 2: second turn" for item in second)
+
+
+def test_web_stream_uses_router_direct_answer_without_second_chat(tmp_path: Path):
+    client = build_client(tmp_path)
+
+    payloads = parse_sse_payloads(client.post("/chat/stream", json={"message": "direct answer please"}).text)
+
+    assert any(item.get("model") == "router:answer" and item.get("chunk") == "direct response from router" for item in payloads)
 
 
 def test_realtime_and_jarvis_emit_search_results(tmp_path: Path):

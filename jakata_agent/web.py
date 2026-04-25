@@ -7,7 +7,6 @@ from pathlib import Path
 from threading import Lock
 from time import perf_counter
 from typing import Any, Callable, Iterator
-from uuid import uuid4
 
 import uvicorn
 from fastapi import FastAPI, HTTPException
@@ -48,12 +47,15 @@ class SessionManager:
     _sessions: dict[str, SessionContext] = field(default_factory=dict)
 
     def get_or_create(self, session_id: str | None) -> SessionContext:
-        public_id = (session_id or "").strip() or str(uuid4())
+        public_id = (session_id or "").strip() or self.base_settings.session_id
         with self._lock:
             existing = self._sessions.get(public_id)
             if existing is not None:
                 return existing
-            session_settings = replace(self.base_settings, session_id=f"{self.session_prefix}{public_id}")
+            storage_session_id = public_id
+            if public_id != self.base_settings.session_id and not public_id.startswith(self.session_prefix):
+                storage_session_id = f"{self.session_prefix}{public_id}"
+            session_settings = replace(self.base_settings, session_id=storage_session_id)
             runtime = self.runtime_factory(session_settings)
             agent_builder = self.agent_builder or build_agent
             context = SessionContext(
@@ -147,7 +149,7 @@ def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str
     def event_stream() -> Iterator[bytes]:
         with context.chat_lock:
             started = perf_counter()
-            route, reasoning, search_step, general_steps = _resolve_route(context.agent, message, mode)
+            route, reasoning, search_step, general_steps, direct_answer = _resolve_route(context.agent, message, mode)
             first_chunk_sent = False
             try:
                 yield _sse({"session_id": context.public_session_id, "chunk": "", "done": False})
@@ -169,7 +171,9 @@ def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str
                 yield _sse({"activity": {"event": "routing", "route": route}, "done": False})
                 yield _sse({"activity": {"event": "streaming_started", "route": route}, "done": False})
 
-                if route == "realtime":
+                if direct_answer:
+                    chunk_stream = context.agent.stream_direct_answer(message, direct_answer)
+                elif route == "realtime":
                     yield _sse(
                         {
                             "activity": {
@@ -292,27 +296,29 @@ def _resolve_route(
     agent: JakataAgent,
     message: str,
     mode: str,
-) -> tuple[str, str, PlanStep | None, list[PlanStep]]:
+) -> tuple[str, str, PlanStep | None, list[PlanStep], str]:
     if mode == "realtime":
         decision = agent.plan(message)
         search_step = next((step for step in decision.steps if step.tool == "search_web"), None)
         if search_step is None:
             search_step = PlanStep(tool="search_web", args={"query": message, "topic": "general", "max_results": 5}, reason="explicit realtime mode")
-        return "realtime", "Realtime mode selected.", search_step, []
+        return "realtime", "Realtime mode selected.", search_step, [], ""
 
     decision = agent.plan(message)
+    if decision.direct_answer:
+        return "general", decision.steps[0].reason if decision.steps else "Planner answered directly.", None, [], decision.direct_answer
     search_step = next((step for step in decision.steps if step.tool == "search_web"), None)
     general_steps = [step for step in decision.steps if step.tool != "search_web"]
 
     if mode == "jarvis" and search_step is not None:
         reason = search_step.reason or "Planner selected live web search."
-        return "realtime", reason, search_step, general_steps
+        return "realtime", reason, search_step, general_steps, ""
 
     if mode == "jarvis":
         primary_reason = decision.steps[0].reason if decision.steps else "Planner selected standard chat."
-        return "general", primary_reason, None, general_steps
+        return "general", primary_reason, None, general_steps, ""
 
-    return "general", "General mode selected.", None, general_steps
+    return "general", "General mode selected.", None, general_steps, ""
 
 
 def _resolve_asset(root: Path, relative_path: str) -> Path:

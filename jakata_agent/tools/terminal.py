@@ -14,6 +14,7 @@ Register all five via register_terminal_tools(registry, cwd).
 from __future__ import annotations
 
 import os
+import platform
 import re
 import subprocess
 from pathlib import Path
@@ -61,8 +62,11 @@ _BLOCKED_PATTERNS: tuple[re.Pattern, ...] = tuple(
     ]
 )
 
-_MAX_OUTPUT = 12_000   # chars — truncate beyond this
-_TIMEOUT    = 30       # seconds per command
+PLATFORM = platform.system()
+_MAX_OUTPUT = 24_000
+_TIMEOUT = 60
+_MAX_TIMEOUT = 1_800
+_DEFAULT_EXCLUDES = {".git", ".venv", "__pycache__", "node_modules", ".pytest_cache"}
 
 
 def _is_blocked(cmd: str) -> bool:
@@ -75,17 +79,85 @@ def _truncate(text: str, limit: int = _MAX_OUTPUT) -> tuple[str, bool]:
     return text[:limit], True
 
 
-def _run_cmd(cmd: str, cwd: _CwdState, timeout: int = _TIMEOUT) -> tuple[str, str, int]:
+def _bounded_timeout(value: Any) -> int:
+    try:
+        requested = int(value)
+    except (TypeError, ValueError):
+        requested = _TIMEOUT
+    return max(1, min(requested, _MAX_TIMEOUT))
+
+
+def _bounded_output_limit(value: Any) -> int:
+    try:
+        requested = int(value)
+    except (TypeError, ValueError):
+        requested = _MAX_OUTPUT
+    return max(1_000, min(requested, 200_000))
+
+
+def _coerce_env(value: Any) -> dict[str, str]:
+    if not isinstance(value, dict):
+        return {}
+    return {str(key): str(item) for key, item in value.items() if str(key).strip()}
+
+
+def _resolve_base(cwd: _CwdState, raw_cwd: str = "") -> Path:
+    if not raw_cwd:
+        return cwd.path
+    candidate = Path(raw_cwd).expanduser()
+    if not candidate.is_absolute():
+        candidate = cwd.path / candidate
+    return candidate.resolve()
+
+
+def _resolve_path(cwd: _CwdState, raw_path: str, raw_cwd: str = "") -> Path:
+    base = _resolve_base(cwd, raw_cwd)
+    candidate = Path(raw_path).expanduser()
+    if not candidate.is_absolute():
+        candidate = base / candidate
+    return candidate.resolve()
+
+
+def _run_cmd(
+    cmd: str,
+    cwd: Path,
+    *,
+    timeout: int = _TIMEOUT,
+    shell_name: str = "auto",
+    env_extra: dict[str, str] | None = None,
+) -> tuple[str, str, int]:
     """Run a shell command, return (stdout, stderr, returncode)."""
+    env = {**os.environ, "TERM": "dumb", "NO_COLOR": "1", **(env_extra or {})}
+    shell_name = shell_name.strip().lower() or "auto"
+    if PLATFORM == "Windows":
+        if shell_name in {"auto", "powershell", "pwsh"}:
+            executable = "pwsh" if shell_name == "pwsh" else "powershell"
+            command: str | list[str] = [executable, "-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", cmd]
+            use_shell = False
+        elif shell_name == "cmd":
+            command = ["cmd", "/d", "/s", "/c", cmd]
+            use_shell = False
+        elif shell_name == "bash":
+            command = ["bash", "-lc", cmd]
+            use_shell = False
+        else:
+            command = cmd
+            use_shell = True
+    elif shell_name == "bash":
+        command = ["bash", "-lc", cmd]
+        use_shell = False
+    else:
+        command = cmd
+        use_shell = True
     try:
         proc = subprocess.run(
-            cmd,
-            shell=True,
-            cwd=str(cwd.path),
+            command,
+            shell=use_shell,
+            cwd=str(cwd),
             capture_output=True,
             text=True,
             timeout=timeout,
-            env={**os.environ, "TERM": "dumb", "NO_COLOR": "1"},
+            env=env,
         )
         return proc.stdout, proc.stderr, proc.returncode
     except subprocess.TimeoutExpired:
@@ -100,10 +172,11 @@ def _run_cmd(cmd: str, cwd: _CwdState, timeout: int = _TIMEOUT) -> tuple[str, st
 
 class ShellTool(Tool):
     name = "shell"
-    public = False
+    public = True
     description = (
-        "Run any shell/terminal command. Tracks working directory across calls. "
-        "Use for compiling, installing packages, running scripts, git, grep, etc."
+        "Run real terminal commands with persistent cwd, per-command cwd/env, shell selection, longer timeouts, "
+        "and network-capable commands. Use for compiling, installing packages, tests, git, scripts, repo inspection, "
+        "and commands not covered by a dedicated tool."
     )
     input_schema = {
         "type": "object",
@@ -114,7 +187,24 @@ class ShellTool(Tool):
             },
             "timeout": {
                 "type": "integer",
-                "description": "Max seconds to wait. Default 30.",
+                "description": "Max seconds to wait. Default 60, max 1800.",
+            },
+            "cwd": {
+                "type": "string",
+                "description": "Optional working directory for this command. Relative paths resolve from the shared terminal cwd.",
+            },
+            "shell": {
+                "type": "string",
+                "enum": ["auto", "powershell", "pwsh", "cmd", "bash"],
+                "description": "Shell flavor. On Windows, auto uses PowerShell.",
+            },
+            "env": {
+                "type": "object",
+                "description": "Optional environment variable overrides for this command.",
+            },
+            "max_output": {
+                "type": "integer",
+                "description": "Maximum stdout/stderr characters to return. Default 24000, max 200000.",
             },
         },
         "required": ["command"],
@@ -126,42 +216,59 @@ class ShellTool(Tool):
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         args.setdefault("timeout", _TIMEOUT)
+        args.setdefault("cwd", "")
+        args.setdefault("shell", "auto")
+        args.setdefault("env", {})
+        args.setdefault("max_output", _MAX_OUTPUT)
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         cmd = str(args["command"]).strip()
-        timeout = int(args.get("timeout", _TIMEOUT))
+        timeout = _bounded_timeout(args.get("timeout", _TIMEOUT))
+        output_limit = _bounded_output_limit(args.get("max_output", _MAX_OUTPUT))
+        run_cwd = _resolve_base(self.cwd, str(args.get("cwd", "")).strip())
+        shell_name = str(args.get("shell", "auto")).strip().lower() or "auto"
+        env_extra = _coerce_env(args.get("env", {}))
 
         if _is_blocked(cmd):
             return ToolResult(ok=False, summary="Blocked: command matches a safety rule.", data={}, error="blocked_command")
+        if not run_cwd.exists() or not run_cwd.is_dir():
+            return ToolResult(ok=False, summary=f"Working directory not found: {run_cwd}", data={}, error="cwd_not_found")
 
-        # Handle `cd` specially — update shared cwd state
-        if cmd.startswith("cd "):
-            target = cmd[3:].strip().strip("'\"")
+        # Handle `cd` specially so follow-up terminal and file tools share the new cwd.
+        if cmd == "cd" or cmd.startswith("cd "):
+            target = cmd[2:].strip().strip("'\"") or str(Path.home())
+            if args.get("cwd"):
+                self.cwd.path = run_cwd
             self.cwd.chdir(target)
             return ToolResult(
                 ok=True,
                 summary=f"Changed directory to {self.cwd}",
-                data={"cwd": str(self.cwd), "stdout": "", "stderr": "", "returncode": 0},
+                data={"cwd": str(self.cwd), "stdout": "", "stderr": "", "returncode": 0, "shell": shell_name},
             )
 
-        stdout, stderr, returncode = _run_cmd(cmd, self.cwd, timeout=timeout)
-        out, truncated = _truncate(stdout)
-        if truncated:
-            out += f"\n\n[... output truncated at {_MAX_OUTPUT} chars ...]"
+        stdout, stderr, returncode = _run_cmd(cmd, run_cwd, timeout=timeout, shell_name=shell_name, env_extra=env_extra)
+        out, stdout_truncated = _truncate(stdout, output_limit)
+        err, stderr_truncated = _truncate(stderr, min(output_limit, 20_000))
+        if stdout_truncated:
+            out += f"\n\n[... stdout truncated at {output_limit} chars ...]"
+        if stderr_truncated:
+            err += f"\n\n[... stderr truncated at {min(output_limit, 20_000)} chars ...]"
 
         ok = returncode == 0
-        summary = out.strip() or stderr.strip() or ("Done." if ok else f"Exit code {returncode}.")
+        summary = out.strip() or err.strip() or ("Done." if ok else f"Exit code {returncode}.")
         return ToolResult(
             ok=ok,
             summary=summary[:300],
             data={
                 "command": cmd,
                 "stdout": out,
-                "stderr": stderr[:2000],
+                "stderr": err,
                 "returncode": returncode,
-                "cwd": str(self.cwd),
-                "truncated": truncated,
+                "cwd": str(run_cwd),
+                "shell": shell_name,
+                "timeout": timeout,
+                "truncated": stdout_truncated or stderr_truncated,
             },
             error=None if ok else f"exit_{returncode}",
         )
@@ -172,7 +279,8 @@ class ShellTool(Tool):
         stderr = str(data.get("stderr", "")).strip()
         rc = data.get("returncode", 0)
         cwd = data.get("cwd", "")
-        parts = [f"$ {cmd}  (cwd: {cwd})"]
+        shell = data.get("shell", "auto")
+        parts = [f"$ {cmd}  (cwd: {cwd}, shell: {shell})"]
         if stdout:
             parts.append(stdout)
         if stderr and rc != 0:
@@ -207,6 +315,10 @@ class ReadFileTool(Tool):
                 "type": "integer",
                 "description": "Last line to read (inclusive). Default: end of file.",
             },
+            "cwd": {
+                "type": "string",
+                "description": "Optional base directory for relative paths.",
+            },
         },
         "required": ["path"],
         "additionalProperties": False,
@@ -216,11 +328,12 @@ class ReadFileTool(Tool):
         self.cwd = cwd
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        args.setdefault("cwd", "")
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         raw_path = str(args["path"]).strip()
-        target = (self.cwd.path / Path(raw_path).expanduser()).resolve()
+        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
 
         if not target.exists():
             return ToolResult(ok=False, summary=f"File not found: {raw_path}", data={}, error="file_not_found")
@@ -309,6 +422,10 @@ class ListDirTool(Tool):
                 "type": "string",
                 "description": "Glob pattern filter, e.g. '*.py'. Default: all files.",
             },
+            "cwd": {
+                "type": "string",
+                "description": "Optional base directory for relative paths.",
+            },
         },
         "required": [],
         "additionalProperties": False,
@@ -321,11 +438,12 @@ class ListDirTool(Tool):
         args.setdefault("path", ".")
         args.setdefault("recursive", False)
         args.setdefault("pattern", "*")
+        args.setdefault("cwd", "")
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
         raw_path = str(args.get("path", ".")).strip()
-        target = (self.cwd.path / Path(raw_path).expanduser()).resolve()
+        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
         recursive = bool(args.get("recursive", False))
         pattern = str(args.get("pattern", "*"))
 
@@ -411,6 +529,15 @@ class SearchFilesTool(Tool):
                 "type": "integer",
                 "description": "Max number of matching lines/files to return. Default 50.",
             },
+            "exclude_dirs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Directory names to skip during recursive search.",
+            },
+            "cwd": {
+                "type": "string",
+                "description": "Optional base directory for relative paths.",
+            },
         },
         "required": [],
         "additionalProperties": False,
@@ -425,6 +552,8 @@ class SearchFilesTool(Tool):
         args.setdefault("path", ".")
         args.setdefault("case_sensitive", False)
         args.setdefault("max_results", 50)
+        args.setdefault("exclude_dirs", sorted(_DEFAULT_EXCLUDES))
+        args.setdefault("cwd", "")
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
@@ -433,14 +562,19 @@ class SearchFilesTool(Tool):
         raw_path = str(args.get("path", ".")).strip()
         case_sensitive = bool(args.get("case_sensitive", False))
         max_results = int(args.get("max_results", 50))
+        exclude_dirs = {str(item) for item in args.get("exclude_dirs", sorted(_DEFAULT_EXCLUDES)) if str(item).strip()}
 
-        root = (self.cwd.path / Path(raw_path).expanduser()).resolve()
+        root = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
         if not root.exists():
             return ToolResult(ok=False, summary=f"Path not found: {raw_path}", data={}, error="not_found")
 
         # Find matching files
         try:
-            all_files = [p for p in sorted(root.rglob(file_pattern)) if p.is_file()]
+            all_files = [
+                p
+                for p in sorted(root.rglob(file_pattern))
+                if p.is_file() and not any(part in exclude_dirs for part in p.relative_to(root).parts[:-1])
+            ]
         except Exception as exc:  # noqa: BLE001
             return ToolResult(ok=False, summary="Search failed.", data={}, error=str(exc))
 
@@ -538,6 +672,10 @@ class WriteFileTool(Tool):
                 "enum": ["overwrite", "append", "create_only"],
                 "description": "overwrite: replace file. append: add to end. create_only: fail if file exists.",
             },
+            "cwd": {
+                "type": "string",
+                "description": "Optional base directory for relative paths.",
+            },
         },
         "required": ["path", "content"],
         "additionalProperties": False,
@@ -548,6 +686,7 @@ class WriteFileTool(Tool):
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         args.setdefault("mode", "overwrite")
+        args.setdefault("cwd", "")
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
@@ -555,7 +694,7 @@ class WriteFileTool(Tool):
         content = str(args["content"])
         mode = str(args.get("mode", "overwrite"))
 
-        target = (self.cwd.path / Path(raw_path).expanduser()).resolve()
+        target = _resolve_path(self.cwd, raw_path, str(args.get("cwd", "")).strip())
 
         if mode == "create_only" and target.exists():
             return ToolResult(ok=False, summary=f"File already exists: {raw_path}", data={}, error="file_exists")

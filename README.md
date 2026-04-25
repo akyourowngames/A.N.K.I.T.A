@@ -10,6 +10,7 @@ JAKATA now supports:
 - self-healing verify-and-repair loops
 - permanent memory plus a live memory graph
 - goal-oriented `os_agent` automation
+- goal-oriented `coding_agent` automation for repo edits, terminal commands, tests, online lookup, screenshots, and opening results
 - Tavily web search, OpenWeather, datetime, files, and OS surfaces
 - live webcam preview plus NVIDIA vision analysis from the CLI
 - Telegram long-polling access with guest chat, password unlock, task details, approvals, files, reports, uploads, and image generation
@@ -22,6 +23,12 @@ The default split is:
 - browser and OS automation reasoning: NVIDIA models by default, with optional Codex CLI fallback if you choose it
 
 Automation stays local and uses JAKATA's own OS surfaces instead of an external computer-use API branch.
+
+## Prompt files
+
+JAKATA's core model instructions live in root-level Markdown files under `prompts/` instead of being embedded directly in Python. This keeps routing, OS-agent, verifier, Telegram guest, and vision prompts editable without changing runtime code.
+
+Set `JAKATA_PROMPTS_DIR=prompts` to use the repo defaults, or point it at another prompt folder with the same relative file names.
 
 ## Setup
 
@@ -114,6 +121,7 @@ Optional local automation config:
 - `JAKATA_CODEX_CLI_PATH=codex`
 - `JAKATA_APPROVAL_POLICY=auto_safe|manual|auto`
 - `JAKATA_WORKSPACE_DIR=.`
+- `JAKATA_PROMPTS_DIR=prompts`
 - `JAKATA_TELEGRAM_SAFE_ROOTS=` optional comma-separated override for safe upload roots
 - `NVIDIA_IMAGE_BASE_URL=` optional image endpoint override
 - `NVIDIA_IMAGE_SIZE=1024x1024`
@@ -129,6 +137,7 @@ Optional local automation config:
 - automatic loading of `.txt` knowledge files
 - low-latency retrieval from prior chats, memories, and knowledge files
 - model-driven tool use
+- file-backed Markdown prompts loaded from `prompts/`
 - explicit `/bg` background execution only
 - local daemon-backed background task queue
 - foreground tool requests are wrapped in persisted task records
@@ -136,12 +145,14 @@ Optional local automation config:
 - self-healing verification and repair loop
 - policy-driven approval gates for OS actions with final task reports
 - `os_agent` facade for desktop/browser workflows
+- `coding_agent` facade for code/project work with shell, file, web-search, browser/system, screen/OCR, and verify-and-repair access
 - internal browser tool for Playwright-backed Chrome navigation, history/tab control, search, result opening, page inspection, media playback checks, and wait-for-text verification
-- native local mouse, keyboard, window, browser, shell, file, OCR, and system controls
-- richer native controls for machine status, process lookup, URL opening, window move/resize/center/close, and region-based screen/OCR capture
+- native local mouse, keyboard, window, browser, public shell, file, OCR, and system controls
+- richer native controls for machine status, disk/network/environment checks, executable lookup, process lookup, terminal opening, URL opening, window move/resize/center/close, and region-based screen/OCR capture
 - live webcam preview with `/camera`
 - current-scene analysis through the `camera` tool and NVIDIA multimodal models
 - Tavily web search
+- keyless DuckDuckGo HTML fallback when Tavily is not configured
 - OpenWeather current weather lookup
 - datetime lookup
 

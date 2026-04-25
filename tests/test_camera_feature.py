@@ -30,7 +30,7 @@ def load_dotenv(*args, **kwargs):
 dotenv.load_dotenv = load_dotenv
 sys.modules.setdefault("dotenv", dotenv)
 
-from jakata_agent.cli import handle_camera_command, should_force_camera_analysis
+from jakata_agent.cli import handle_camera_command
 from jakata_agent.tools.camera import CameraTool
 
 
@@ -115,13 +115,10 @@ def test_camera_command_forces_analysis_through_tool_registry():
     assert message == "detected laptop on desk"
 
 
-def test_force_camera_analysis_requires_live_session_and_prompt_match():
+def test_camera_tool_is_public_for_llm_router():
     session = StubCameraSession()
-    runtime = SimpleNamespace(camera_session=session)
-    assert not should_force_camera_analysis("what do you see right now", runtime)
-    session.start()
-    assert should_force_camera_analysis("what do you see right now", runtime)
-    assert not should_force_camera_analysis("tell me a joke", runtime)
+    tool = CameraTool(session, StubVisionClient())
+    assert tool.public is True
 
 
 if __name__ == "__main__":

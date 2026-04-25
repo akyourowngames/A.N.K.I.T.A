@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from pathlib import Path
 
@@ -80,7 +81,7 @@ class MemoryStore:
                 )
 
     def search(self, query: str, limit: int = 5) -> list[MemoryRecord]:
-        tokens = [token.lower() for token in query.split() if len(token) > 2]
+        tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9_]+", query) if len(token) > 2]
         if not tokens:
             return self.recent(limit=limit)
 
@@ -95,8 +96,8 @@ class MemoryStore:
 
         ranked: list[tuple[int, MemoryRecord]] = []
         for row in rows:
-            haystack = f"{row[1]} {row[2]} {row[3]} {row[4]}".lower()
-            score = sum(haystack.count(token) for token in tokens)
+            haystack_tokens = [token.lower() for token in re.findall(r"[A-Za-z0-9_]+", f"{row[1]} {row[2]} {row[3]} {row[4]}")]
+            score = sum(haystack_tokens.count(token) for token in tokens)
             if score > 0:
                 ranked.append((score, self._row_to_record(row)))
 

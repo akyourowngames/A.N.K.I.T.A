@@ -13,6 +13,7 @@ from jakata_agent.tasks.engine import TaskCompletionEngine
 from jakata_agent.tasks.store import TaskStore
 from jakata_agent.tools.browser import register_browser_tools
 from jakata_agent.tools.camera import register_camera_tools
+from jakata_agent.tools.coding_agent import CodingAgentTool, CodingController
 from jakata_agent.tools.datetime_tool import DateTimeTool
 from jakata_agent.tools.image_generation import register_image_generation_tool
 from jakata_agent.tools.keyboard import register_input_tools
@@ -40,6 +41,7 @@ class JakataRuntime:
     task_engine: TaskCompletionEngine
     daemon: DaemonManager
     os_controller: OsController
+    coding_controller: CodingController
     camera_session: CameraSession
 
 
@@ -90,6 +92,8 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         browser_client=browser_automation_client,
     )
     tools.register(OsAgentTool(os_controller))
+    coding_controller = CodingController(client=automation_client, tools=tools)
+    tools.register(CodingAgentTool(coding_controller))
     tools.register(DateTimeTool())
     tools.register(MemoryTool())
     tools.register(TavilySearchTool(settings.tavily_api_key))
@@ -117,5 +121,6 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         ),
         daemon=daemon,
         os_controller=os_controller,
+        coding_controller=coding_controller,
         camera_session=camera_session,
     )

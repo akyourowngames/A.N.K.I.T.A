@@ -8,88 +8,16 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from jakata_agent.llm import TextCompletionClient
+from jakata_agent.prompts import load_prompt
 from jakata_agent.tasks.approval import ApprovalGate
 from jakata_agent.tools.base import Tool, ToolResult
 from jakata_agent.tools.registry import ToolRegistry
 
 
-OS_PLANNER_PROMPT = """You are the internal JAKATA OS action planner.
-
-Return JSON only.
-Pick up to 6 actions that move the OS task toward completion.
-Prefer the minimum safe actions.
-
-Allowed tools are low-level surfaces like shell, read_file, write_file, search_files,
-list_dir, browser, window, keyboard, clipboard, mouse, system, screen, and ocr.
-
-You are operating on a real desktop. Use commands and workflows appropriate for the
-current platform and shell only. Avoid Linux/macOS commands when on Windows.
-If the current desktop state already satisfies the goal, do not relaunch apps.
-Prefer the dedicated browser, system, mouse, keyboard, and window tools over raw shell.
-If a modal dialog, save prompt, overwrite prompt, permission popup, or confirmation dialog
-is visible, resolve that blocker first. Do not claim success while any blocking popup is still open.
-After using save or confirm actions, re-check the resulting screen state instead of assuming success.
-
-Output format:
-{
-  "steps": [
-    {"tool": "system", "args": {"action": "launch_app", "target": "chrome.exe"}, "reason": "..."}
-  ]
-}
-"""
-
-
-OS_SPEC_PROMPT = """You are the JAKATA OS task spec builder.
-
-Return JSON only.
-Turn the user goal into concrete completion criteria that can be verified on the machine.
-Prefer 1-4 concise criteria.
-
-Output:
-{
-  "success_criteria": ["criterion 1", "criterion 2"],
-  "completion_hint": "one_shot | persistent"
-}
-"""
-
-
-OS_VERIFIER_PROMPT = """You are the JAKATA OS verifier.
-
-Return JSON only.
-Decide whether the goal is satisfied from the observations.
-If a blocking popup, confirmation dialog, login wall, or overwrite prompt is still visible,
-the task is not complete.
-
-Output:
-{
-  "ok": true or false,
-  "summary": "short verdict",
-  "reason": "verified | tool_failure | unmet_precondition | wrong_window | ocr_uncertain | verifier_rejected | blocked_by_login | blocked_by_modal | timeout | unknown"
-}
-"""
-
-
-OS_MODAL_RECOVERY_PROMPT = """You are the JAKATA modal recovery planner.
-
-Return JSON only.
-The machine is blocked by a visible popup or confirmation dialog. Choose up to 3 actions
-that resolve the popup in the direction that completes the user's goal.
-
-Rules:
-- Prefer keyboard accelerators first when the dialog text makes the right choice obvious.
-- Use mouse actions when a popup likely needs a direct click.
-- Never close or cancel the dialog if that would clearly abandon the user's goal.
-- For overwrite/replace prompts during save/export/write goals, confirm the overwrite.
-- For save prompts during save/write goals, choose Save or Yes.
-- After choosing a response, include a follow-up focus or wait action if needed.
-
-Output:
-{
-  "steps": [
-    {"tool": "keyboard", "args": {"action": "press", "keys": "left"}, "reason": "..."}
-  ]
-}
-"""
+OS_PLANNER_PROMPT = load_prompt("os_agent/planner.md")
+OS_SPEC_PROMPT = load_prompt("os_agent/spec_builder.md")
+OS_VERIFIER_PROMPT = load_prompt("os_agent/verifier.md")
+OS_MODAL_RECOVERY_PROMPT = load_prompt("os_agent/modal_recovery.md")
 
 
 @dataclass(slots=True)

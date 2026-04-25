@@ -3,23 +3,22 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import hmac
+import json
+import re
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import Any
+from typing import Any, Awaitable, Callable
 
+from jakata_agent.prompts import load_prompt
 from jakata_agent.runtime import JakataRuntime, create_runtime
-from jakata_agent.tasks.models import utcnow_iso
+from jakata_agent.tasks.models import DEFAULT_TASK_ACTION_LIMIT, DEFAULT_TASK_BUDGET_MINUTES, DEFAULT_TASK_REPAIR_LIMIT, utcnow_iso
 from jakata_agent.telegram_artifacts import ArtifactError, ArtifactRecord, TelegramArtifactService
 
 
-GUEST_SYSTEM_PROMPT = """You are JAKATA in public Telegram guest mode.
-
-Reply briefly and naturally.
-Do not claim access to the user's private memory, files, tools, screen, OS, or tasks.
-If the user asks for control or private details, tell them to unlock admin mode.
-"""
+GUEST_SYSTEM_PROMPT = load_prompt("telegram/guest.md")
+ADMIN_ROUTER_PROMPT = load_prompt("telegram/admin_router.md")
 
 
 GUEST_HELP_TEXT = """JAKATA Telegram help
@@ -40,8 +39,10 @@ ADMIN_HELP_TEXT = """JAKATA admin commands
 
 Natural control:
 - Send a normal message like "take a screenshot", "generate image of a cyber city", or "run this task..."
+- Foreground work runs one task at a time. Use /bg only when you want persistent background work.
 
 Tasks:
+/bg <goal>
 /task <goal>
 /tasks
 /details <task_id>
@@ -157,11 +158,23 @@ def split_message(text: str, limit: int = 3900) -> list[str]:
     return chunks
 
 
+@dataclass(slots=True)
+class TelegramWorkItem:
+    update: Any
+    description: str
+    run: Callable[[], Awaitable[None]]
+
+
 class TelegramBotController:
     def __init__(self, runtime: JakataRuntime, auth: TelegramAuthManager | None = None) -> None:
         self.runtime = runtime
         self.auth = auth or build_auth_manager(runtime)
         self.artifacts = TelegramArtifactService(runtime.settings, runtime.task_store)
+        self._foreground_queue: asyncio.Queue[TelegramWorkItem] | None = None
+        self._foreground_worker: asyncio.Task | None = None
+        self._foreground_loop: asyncio.AbstractEventLoop | None = None
+        self._active_description = ""
+        self._active_started_at: datetime | None = None
 
     async def start(self, update, context) -> None:
         await self.help(update, context)
@@ -210,6 +223,30 @@ class TelegramBotController:
             await self._reply(update, "Usage: /task <goal>")
             return
         await self._run_task(update, goal)
+
+    async def bg(self, update, context) -> None:
+        if not await self._require_admin(update):
+            return
+        goal = " ".join(context.args or []).strip()
+        if not goal:
+            await self._reply(update, "Usage: /bg <goal>")
+            return
+        session_id = f"telegram-{self._user_id(update)}"
+        memory_context = self.runtime.memory.retrieve(goal).to_system_context()
+        task = self.runtime.task_store.create_task(
+            goal=goal,
+            session_id=session_id,
+            execution_mode="background",
+            context=memory_context,
+            background_reason="telegram_bg_request",
+            budget_minutes=DEFAULT_TASK_BUDGET_MINUTES,
+            repair_limit=DEFAULT_TASK_REPAIR_LIMIT,
+            action_limit=DEFAULT_TASK_ACTION_LIMIT,
+        )
+        self.runtime.task_store.append_event(task.id, "planned", {"source": "telegram_bg"})
+        self.runtime.memory.remember_task_event(task.id, task.goal, "planned", {"source": "telegram_bg"})
+        self.runtime.daemon.ensure_running()
+        await self._reply(update, f"Queued background task: {task.id}\nUse /details {task.id} for progress.")
 
     async def tasks(self, update, context) -> None:
         del context
@@ -311,16 +348,11 @@ class TelegramBotController:
         del context
         if not await self._require_admin(update):
             return
-        result = self.runtime.tools.execute("screen", {"action": "capture"})
-        if not result.ok:
-            await self._reply(update, result.summary)
-            return
-        path = Path(str(result.data.get("path", "")))
-        if path.exists() and getattr(update, "message", None) is not None:
-            with path.open("rb") as handle:
-                await update.message.reply_photo(photo=handle, caption=result.summary[:900])
-        else:
-            await self._reply(update, result.summary)
+        await self._enqueue_foreground_work(
+            update,
+            "capture and send screenshot",
+            lambda: self._capture_and_send_screen(update),
+        )
 
     async def sendfile(self, update, context) -> None:
         if not await self._require_admin(update):
@@ -329,6 +361,13 @@ class TelegramBotController:
         if not raw_path:
             await self._reply(update, "Usage: /sendfile <path>")
             return
+        await self._enqueue_foreground_work(
+            update,
+            f"send file: {raw_path}",
+            lambda: self._sendfile_now(update, raw_path),
+        )
+
+    async def _sendfile_now(self, update, raw_path: str) -> None:
         try:
             path = self.artifacts.resolve_path(raw_path)
             if not path.exists() or not path.is_file():
@@ -353,6 +392,13 @@ class TelegramBotController:
         if not raw_path:
             await self._reply(update, "Usage: /senddir <path>")
             return
+        await self._enqueue_foreground_work(
+            update,
+            f"send directory: {raw_path}",
+            lambda: self._senddir_now(update, raw_path),
+        )
+
+    async def _senddir_now(self, update, raw_path: str) -> None:
         try:
             path = self.artifacts.resolve_path(raw_path)
             if not path.exists() or not path.is_dir():
@@ -383,6 +429,13 @@ class TelegramBotController:
         if not await self._require_admin(update):
             return
         query = " ".join(context.args or []).strip()
+        await self._enqueue_foreground_work(
+            update,
+            f"find file: {query or '*'}",
+            lambda: self._findfile_now(update, query),
+        )
+
+    async def _findfile_now(self, update, query: str) -> None:
         try:
             matches = self.artifacts.find_files(query)
         except ArtifactError as exc:
@@ -413,6 +466,13 @@ class TelegramBotController:
         if not artifact_id:
             await self._reply(update, "Usage: /download <artifact_id>")
             return
+        await self._enqueue_foreground_work(
+            update,
+            f"download artifact: {artifact_id}",
+            lambda: self._download_now(update, artifact_id),
+        )
+
+    async def _download_now(self, update, artifact_id: str) -> None:
         record = self.artifacts.get_artifact(artifact_id)
         if record is None:
             await self._reply(update, f"Artifact not found: {artifact_id}")
@@ -426,6 +486,13 @@ class TelegramBotController:
         if not task_id:
             await self._reply(update, "Usage: /report <task_id>")
             return
+        await self._enqueue_foreground_work(
+            update,
+            f"export report: {task_id}",
+            lambda: self._report_now(update, task_id),
+        )
+
+    async def _report_now(self, update, task_id: str) -> None:
         task = self.runtime.task_store.get_task(task_id)
         if task is None:
             await self._reply(update, f"Task not found: {task_id}")
@@ -445,6 +512,13 @@ class TelegramBotController:
             await self._reply(update, "Usage: /export <task_id> md|json|zip")
             return
         task_id, fmt = args[0], args[1]
+        await self._enqueue_foreground_work(
+            update,
+            f"export task {task_id} as {fmt}",
+            lambda: self._export_now(update, task_id, fmt),
+        )
+
+    async def _export_now(self, update, task_id: str, fmt: str) -> None:
         try:
             record = self.artifacts.export_task(task_id, fmt)
             await self._send_artifact(update, record)
@@ -458,6 +532,13 @@ class TelegramBotController:
         if not task_id:
             await self._reply(update, "Usage: /logs <task_id>")
             return
+        await self._enqueue_foreground_work(
+            update,
+            f"export task logs: {task_id}",
+            lambda: self._logs_now(update, task_id),
+        )
+
+    async def _logs_now(self, update, task_id: str) -> None:
         try:
             record = self.artifacts.create_json_artifact(
                 f"task-{task_id}-logs",
@@ -477,6 +558,13 @@ class TelegramBotController:
             return
         artifact_id = args[0]
         target_raw = " ".join(args[1:])
+        await self._enqueue_foreground_work(
+            update,
+            f"put artifact {artifact_id}: {target_raw}",
+            lambda: self._put_now(update, artifact_id, target_raw),
+        )
+
+    async def _put_now(self, update, artifact_id: str, target_raw: str) -> None:
         try:
             target = self.artifacts.resolve_path(target_raw)
             if not self.artifacts.is_safe_path(target):
@@ -498,7 +586,11 @@ class TelegramBotController:
         if not prompt:
             await self._reply(update, "Usage: /img <prompt>")
             return
-        await self._generate_image(update, prompt, send_as_document=False)
+        await self._enqueue_foreground_work(
+            update,
+            f"generate image: {prompt}",
+            lambda: self._generate_image(update, prompt, send_as_document=False),
+        )
 
     async def imgfile(self, update, context) -> None:
         if not await self._require_admin(update):
@@ -507,7 +599,11 @@ class TelegramBotController:
         if not prompt:
             await self._reply(update, "Usage: /imgfile <prompt>")
             return
-        await self._generate_image(update, prompt, send_as_document=True)
+        await self._enqueue_foreground_work(
+            update,
+            f"generate image file: {prompt}",
+            lambda: self._generate_image(update, prompt, send_as_document=True),
+        )
 
     async def upload(self, update, context) -> None:
         if not await self._require_admin(update):
@@ -550,9 +646,8 @@ class TelegramBotController:
             await self.admin(update, context)
             return
         if self.auth.is_admin(self._user_id(update)):
-            image_prompt = self._image_prompt_from_text(text)
-            if image_prompt:
-                await self._generate_image(update, image_prompt, send_as_document=False)
+            intent = await asyncio.to_thread(self._classify_admin_intent, text)
+            if await self._handle_admin_intent(update, text, intent):
                 return
             await self._run_task(update, text)
             return
@@ -567,7 +662,13 @@ class TelegramBotController:
         await self._reply(update, reply)
 
     async def _run_task(self, update, goal: str) -> None:
-        await self._reply(update, "Task started.")
+        await self._enqueue_foreground_work(
+            update,
+            goal,
+            lambda: self._run_task_now(update, goal),
+        )
+
+    async def _run_task_now(self, update, goal: str) -> None:
         session_id = f"telegram-{self._user_id(update)}"
         context = self.runtime.memory.retrieve(goal).to_system_context()
         result = await asyncio.to_thread(
@@ -577,6 +678,260 @@ class TelegramBotController:
             context=context,
         )
         await self._reply(update, result.report)
+        await self._send_task_outputs(update, result.task.id)
+
+    async def _enqueue_foreground_work(
+        self,
+        update,
+        description: str,
+        run: Callable[[], Awaitable[None]],
+    ) -> None:
+        queue = self._ensure_foreground_worker()
+        waiting_ahead = queue.qsize() + (1 if self._active_description else 0)
+        await queue.put(TelegramWorkItem(update=update, description=description.strip()[:180] or "task", run=run))
+        if waiting_ahead:
+            await self._reply(update, f"Queued foreground task. Position: {waiting_ahead + 1}. I will send the result here.")
+        else:
+            await self._reply(update, "Queued foreground task. Running now.")
+
+    def _ensure_foreground_worker(self) -> asyncio.Queue[TelegramWorkItem]:
+        loop = asyncio.get_running_loop()
+        if self._foreground_queue is None or self._foreground_loop is not loop:
+            self._foreground_queue = asyncio.Queue()
+            self._foreground_loop = loop
+            self._foreground_worker = None
+            self._active_description = ""
+            self._active_started_at = None
+        if self._foreground_worker is None or self._foreground_worker.done():
+            self._foreground_worker = loop.create_task(self._foreground_worker_loop())
+        return self._foreground_queue
+
+    async def _foreground_worker_loop(self) -> None:
+        assert self._foreground_queue is not None
+        while True:
+            item = await self._foreground_queue.get()
+            self._active_description = item.description
+            self._active_started_at = _utcnow()
+            try:
+                await self._reply(item.update, f"Task started: {item.description}")
+                await item.run()
+                await self._reply(item.update, f"Task finished: {item.description}")
+            except Exception as exc:  # noqa: BLE001
+                await self._reply(item.update, f"Task failed: {item.description}\n{exc}")
+            finally:
+                self._active_description = ""
+                self._active_started_at = None
+                self._foreground_queue.task_done()
+
+    def _classify_admin_intent(self, text: str) -> dict[str, Any]:
+        client = getattr(self.runtime, "client", None)
+        if client is None:
+            return {"action": "task", "goal": text}
+        tools = getattr(getattr(self.runtime, "tools", None), "manifest", lambda public_only=True: [])(public_only=True)
+        payload = {
+            "message": text,
+            "active_task": self._active_description,
+            "queue_size": self._foreground_queue.qsize() if self._foreground_queue is not None else 0,
+            "tools": tools,
+        }
+        try:
+            _, raw = client.complete_text(ADMIN_ROUTER_PROMPT, json.dumps(payload, ensure_ascii=False, default=str), temperature=0.0)
+            parsed = self._parse_json_object(raw)
+        except Exception:
+            return {"action": "task", "goal": text}
+        action = str(parsed.get("action", "task")).strip().lower()
+        if action not in {"status", "image", "screenshot", "report", "file", "task"}:
+            action = "task"
+        parsed["action"] = action
+        return parsed
+
+    async def _handle_admin_intent(self, update, text: str, intent: dict[str, Any]) -> bool:
+        action = str(intent.get("action", "task")).strip().lower()
+        if action == "status":
+            await self._send_foreground_status(update)
+            return True
+
+        if action == "image":
+            image_prompt = str(intent.get("prompt", "")).strip() or text
+            await self._enqueue_foreground_work(
+                update,
+                f"generate image: {image_prompt}",
+                lambda: self._generate_image(update, image_prompt, send_as_document=False),
+            )
+            return True
+
+        if action == "screenshot":
+            await self._enqueue_foreground_work(
+                update,
+                "capture and send screenshot",
+                lambda: self._capture_and_send_screen(update),
+            )
+            return True
+
+        if action == "report":
+            await self._enqueue_foreground_work(
+                update,
+                "export and send task report",
+                lambda: self._send_natural_report(update, text),
+            )
+            return True
+
+        if action == "file":
+            prefer_dirs = str(intent.get("target_type", "")).strip().lower() == "directory"
+            await self._enqueue_foreground_work(
+                update,
+                "find and send requested file",
+                lambda: self._send_natural_files(
+                    update,
+                    text,
+                    query=str(intent.get("query", "")).strip(),
+                    path=str(intent.get("path", "")).strip(),
+                    prefer_dirs=prefer_dirs,
+                    latest=bool(intent.get("latest", False)),
+                ),
+            )
+            return True
+        return False
+
+    async def _send_foreground_status(self, update) -> None:
+        if not self._active_description and self._foreground_queue is None:
+            await self._reply(update, "No active Telegram foreground task right now. The queue is empty.")
+            return
+        pending = self._foreground_queue.qsize() if self._foreground_queue is not None else 0
+        if self._active_description:
+            started = self._active_started_at.isoformat(timespec="seconds") if self._active_started_at else "-"
+            await self._reply(update, f"Still working on: {self._active_description}\nStarted: {started}\nQueued after this: {pending}")
+            return
+        if pending:
+            await self._reply(update, f"No active task right now. Foreground queue has {pending} pending task(s).")
+            return
+        lines = ["No active Telegram foreground task right now. The queue is empty."]
+        try:
+            latest = self.runtime.task_store.list_tasks(limit=1)
+        except Exception:
+            latest = []
+        if latest:
+            task = latest[0]
+            lines.append(f"Latest stored task: {task.id} [{task.status}] {task.result_summary or task.last_error or task.goal}")
+        await self._reply(update, "\n".join(lines))
+
+    async def _capture_and_send_screen(self, update) -> None:
+        result = await asyncio.to_thread(self.runtime.tools.execute, "screen", {"action": "capture"})
+        if not result.ok:
+            await self._reply(update, result.summary)
+            return
+        path = Path(str(result.data.get("path", "")))
+        if not path.exists():
+            await self._reply(update, f"Screenshot was captured but file is missing: {path}")
+            return
+        record = self.artifacts.register_file(path, kind="screenshot", title=path.name, source="screen")
+        await self._send_artifact(update, self.artifacts.sendable_or_manifest(record), as_photo=True)
+
+    async def _send_natural_report(self, update, text: str) -> None:
+        task_id = self._extract_task_id(text)
+        task = self.runtime.task_store.get_task(task_id) if task_id else None
+        if task is None:
+            tasks = self.runtime.task_store.list_tasks(limit=1)
+            task = tasks[0] if tasks else None
+        if task is None:
+            await self._reply(update, "No task report exists yet.")
+            return
+        await self._reply(update, f"Sending report for {task.id} [{task.status}].")
+        record = self.artifacts.export_task(task.id, "md")
+        await self._send_artifact(update, record)
+
+    async def _send_natural_files(
+        self,
+        update,
+        text: str,
+        *,
+        query: str = "",
+        path: str = "",
+        prefer_dirs: bool = False,
+        latest: bool = False,
+    ) -> None:
+        path = path or self._extract_path_candidate(text)
+        if path:
+            try:
+                target = self.artifacts.resolve_path(path)
+                if target.is_dir():
+                    if not self.artifacts.is_safe_path(target):
+                        await self._request_artifact_approval(
+                            update,
+                            kind="telegram_senddir",
+                            summary=f"Zip and upload directory outside safe roots: {target}",
+                            payload={"command": "senddir", "path": str(target)},
+                        )
+                        return
+                    await self._send_path_directory(update, target)
+                    return
+                if target.is_file():
+                    if not self.artifacts.is_safe_path(target):
+                        await self._request_artifact_approval(
+                            update,
+                            kind="telegram_sendfile",
+                            summary=f"Upload file outside safe roots: {target}",
+                            payload={"command": "sendfile", "path": str(target)},
+                        )
+                        return
+                    await self._send_path_file(update, target)
+                    return
+            except ArtifactError:
+                pass
+
+        if latest:
+            latest_file = self._latest_safe_file(text)
+            if latest_file is not None:
+                await self._send_path_file(update, latest_file)
+                return
+
+        query = query.strip()
+        matches = self._search_safe_paths(query, prefer_dirs=prefer_dirs)
+        if not matches and not query:
+            manifest = self._safe_roots_manifest()
+            await self._reply(update, "I made an index of safe folders instead of blindly sending everything.")
+            await self._send_artifact(update, manifest)
+            return
+        if not matches:
+            await self._reply(update, f"No safe-root files matched: {query or text}")
+            return
+
+        sent = 0
+        for match in matches[:3]:
+            if match.is_dir():
+                await self._send_path_directory(update, match)
+            else:
+                await self._send_path_file(update, match)
+            sent += 1
+        if len(matches) > sent:
+            await self._reply(update, f"Sent {sent} best match(es). Found {len(matches)} total; ask with a more exact name for the rest.")
+
+    async def _send_task_outputs(self, update, task_id: str) -> None:
+        sent: set[str] = set()
+        for event in self.runtime.task_store.list_events(task_id, limit=200):
+            if event.event_type != "observation_recorded":
+                continue
+            payload = event.payload
+            data = payload.get("data", {}) if isinstance(payload, dict) else {}
+            if not isinstance(data, dict):
+                continue
+            path_text = str(data.get("path", "")).strip()
+            if not path_text:
+                continue
+            path = Path(path_text)
+            if not path.exists() or not path.is_file():
+                continue
+            resolved = str(path.resolve())
+            if resolved in sent:
+                continue
+            sent.add(resolved)
+            kind = "task_output"
+            if str(payload.get("tool", "")) == "image_generation":
+                kind = "generated_image"
+            if str(payload.get("tool", "")) == "screen":
+                kind = "screenshot"
+            record = self.artifacts.register_file(path, kind=kind, title=path.name, source="task_engine")
+            await self._send_artifact(update, self.artifacts.sendable_or_manifest(record), as_photo=kind in {"generated_image", "screenshot"})
 
     async def _send_path_file(self, update, path: Path) -> ArtifactRecord:
         record = self.artifacts.register_file(path, kind="pc_file", title=path.name, source="pc")
@@ -719,22 +1074,107 @@ class TelegramBotController:
             {"summary": summary},
         )
 
+    def _safe_roots_manifest(self) -> ArtifactRecord:
+        lines = ["Safe Telegram file roots:"]
+        for root in self.artifacts.safe_roots():
+            lines.append("")
+            lines.append(str(root))
+            if not root.exists() or not root.is_dir():
+                lines.append("- not available")
+                continue
+            try:
+                entries = sorted(root.iterdir(), key=lambda item: item.stat().st_mtime if item.exists() else 0, reverse=True)
+            except OSError as exc:
+                lines.append(f"- unreadable: {exc}")
+                continue
+            for item in entries[:40]:
+                try:
+                    stat = item.stat()
+                    kind = "dir" if item.is_dir() else "file"
+                    lines.append(f"- [{kind}] {item.name} ({stat.st_size} bytes)")
+                except OSError:
+                    continue
+            if len(entries) > 40:
+                lines.append(f"- ... {len(entries) - 40} more item(s)")
+        return self.artifacts.create_text_artifact("telegram-safe-folder-index", "\n".join(lines), suffix=".txt", kind="manifest")
+
+    def _latest_safe_file(self, text: str) -> Path | None:
+        roots = self._roots_for_text(text)
+        latest: tuple[float, Path] | None = None
+        for root in roots:
+            if not root.exists() or not root.is_dir():
+                continue
+            try:
+                iterator = root.rglob("*")
+                for item in iterator:
+                    try:
+                        if not item.is_file():
+                            continue
+                        stat = item.stat()
+                    except OSError:
+                        continue
+                    if latest is None or stat.st_mtime > latest[0]:
+                        latest = (stat.st_mtime, item)
+            except OSError:
+                continue
+        return latest[1] if latest else None
+
+    def _search_safe_paths(self, query: str, *, prefer_dirs: bool = False, limit: int = 20) -> list[Path]:
+        tokens = [token for token in re.split(r"[^a-zA-Z0-9._-]+", query.lower()) if len(token) >= 2]
+        if not tokens:
+            return []
+        scored: list[tuple[int, float, Path]] = []
+        for root in self.artifacts.safe_roots():
+            if not root.exists() or not root.is_dir():
+                continue
+            try:
+                for item in root.rglob("*"):
+                    try:
+                        name = item.name.lower()
+                        score = sum(1 for token in tokens if token in name)
+                        if score <= 0:
+                            continue
+                        stat = item.stat()
+                    except OSError:
+                        continue
+                    if prefer_dirs and item.is_dir():
+                        score += 2
+                    if not prefer_dirs and item.is_file():
+                        score += 1
+                    scored.append((score, stat.st_mtime, item))
+            except OSError:
+                continue
+        scored.sort(key=lambda item: (item[0], item[1]), reverse=True)
+        return [item[2] for item in scored[:limit]]
+
+    def _roots_for_text(self, text: str) -> list[Path]:
+        lowered = text.lower()
+        roots = self.artifacts.safe_roots()
+        named = []
+        for root in roots:
+            name = root.name.lower()
+            if name and name in lowered:
+                named.append(root)
+        return named or roots
+
     @staticmethod
-    def _image_prompt_from_text(text: str) -> str:
-        lowered = text.strip().lower()
-        triggers = [
-            "generate an image of",
-            "generate image of",
-            "create an image of",
-            "create image of",
-            "make an image of",
-            "make image of",
-            "draw",
-            "render image of",
-        ]
-        for trigger in triggers:
-            if lowered.startswith(trigger):
-                return text.strip()[len(trigger):].strip(" :,-")
+    def _extract_task_id(text: str) -> str:
+        match = re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b", text, re.IGNORECASE)
+        return match.group(0) if match else ""
+
+    @staticmethod
+    def _extract_path_candidate(text: str) -> str:
+        quoted = re.search(r'"([^"]+)"|\'([^\']+)\'', text)
+        if quoted:
+            return (quoted.group(1) or quoted.group(2) or "").strip()
+        windows = re.search(r"\b[A-Za-z]:\\[^<>|?*\n]+", text)
+        if windows:
+            return windows.group(0).strip().rstrip(".,")
+        explicit = re.search(r"(?:path|file|folder|directory|dir|from|at|in)\s+(.+)$", text, re.IGNORECASE)
+        if explicit:
+            candidate = explicit.group(1).strip().rstrip(".,")
+            if candidate and len(candidate.split()) <= 8:
+                return candidate
         return ""
 
     async def _require_admin(self, update) -> bool:
@@ -785,6 +1225,18 @@ class TelegramBotController:
             return "admin"
         return ""
 
+    @staticmethod
+    def _parse_json_object(raw: str) -> dict[str, Any]:
+        cleaned = raw.strip().replace("```json", "").replace("```", "").strip()
+        brace = cleaned.find("{")
+        if brace > 0:
+            cleaned = cleaned[brace:]
+        end = cleaned.rfind("}")
+        if end >= 0:
+            cleaned = cleaned[: end + 1]
+        payload = json.loads(cleaned)
+        return payload if isinstance(payload, dict) else {}
+
 
 def create_application(runtime: JakataRuntime):
     try:
@@ -803,6 +1255,7 @@ def create_application(runtime: JakataRuntime):
     app.add_handler(CommandHandler("admin", controller.admin))
     app.add_handler(CommandHandler("unlock", controller.unlock))
     app.add_handler(CommandHandler("lock", controller.lock))
+    app.add_handler(CommandHandler("bg", controller.bg))
     app.add_handler(CommandHandler("task", controller.task))
     app.add_handler(CommandHandler("tasks", controller.tasks))
     app.add_handler(CommandHandler("details", controller.details))

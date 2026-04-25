@@ -130,4 +130,12 @@ class TaskCompletionEngine:
     def _decision_steps(decision: PlanDecision | None) -> list[dict[str, Any]]:
         if decision is None:
             return []
-        return [{"tool": step.tool, "args": step.args, "reason": step.reason} for step in decision.steps]
+        return [
+            {
+                "tool": step.tool,
+                "args": step.args,
+                "reason": step.reason,
+                "fallbacks": [{"tool": item.tool, "args": item.args, "reason": item.reason} for item in step.fallbacks],
+            }
+            for step in decision.steps
+        ]

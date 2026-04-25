@@ -6,38 +6,18 @@ from pathlib import Path
 from typing import Any
 
 from jakata_agent.memory.manager import MemoryManager
-from jakata_agent.router import IntentRouter, PlanDecision, PlanStep
+from jakata_agent.prompts import load_prompt
+from jakata_agent.router import IntentRouter, PlanDecision, PlanFallback, PlanStep
 from jakata_agent.tasks.approval import ApprovalDenied, ApprovalGate, ApprovalRequired
 from jakata_agent.tasks.models import RoleSelection, TaskRecord, utcnow_iso
 from jakata_agent.tasks.store import TaskStore
+from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.os_agent import OsAgentTool
 from jakata_agent.tools.registry import ToolRegistry
 
 
-ROLE_PROMPT = """You are the JAKATA multi-agent orchestrator.
-
-Return JSON only.
-Choose the minimum useful roles from planner, researcher, executor, verifier.
-Use researcher when the task needs context gathering.
-Use verifier whenever the task must prove completion.
-
-Output:
-{"roles": ["planner", "executor", "verifier"], "summary": "short reason"}
-"""
-
-
-VERIFY_TASK_PROMPT = """You are the JAKATA task verifier.
-
-Return JSON only.
-Judge whether the task goal is satisfied from the task state, results, and observations.
-
-Output:
-{
-  "ok": true or false,
-  "summary": "short verdict",
-  "reason": "verified | tool_failure | unmet_precondition | wrong_window | ocr_uncertain | verifier_rejected | blocked_by_login | blocked_by_modal | timeout | unknown"
-}
-"""
+ROLE_PROMPT = load_prompt("tasks/role_selector.md")
+VERIFY_TASK_PROMPT = load_prompt("tasks/verifier.md")
 
 
 @dataclass(slots=True)
@@ -90,7 +70,15 @@ class TaskOrchestrator:
                 {
                     "execution_mode": context.decision.execution_mode,
                     "background_reason": context.decision.background_reason,
-                    "steps": [{"tool": step.tool, "args": step.args, "reason": step.reason} for step in context.decision.steps],
+                    "steps": [
+                        {
+                            "tool": step.tool,
+                            "args": step.args,
+                            "reason": step.reason,
+                            "fallbacks": [{"tool": item.tool, "args": item.args, "reason": item.reason} for item in step.fallbacks],
+                        }
+                        for step in context.decision.steps
+                    ],
                 },
             )
             task = self.task_store.update_task(task.id, status="running") or task
@@ -236,49 +224,116 @@ class TaskOrchestrator:
                 retrieved = self.memory.retrieve(step.args.get("query", task.goal))
                 payload = {"summary": retrieved.to_system_context(), "facts": [item.content for item in retrieved.permanent_memories]}
                 result = {"tool": "memory", "ok": True, "summary": payload["summary"], "data": payload, "rendered": payload["summary"]}
-            else:
-                tool = self.tools.get(step.tool)
-                if step.tool != "os_agent":
-                    approval_gate.require(step.tool, step.args, step.reason)
-                if isinstance(tool, OsAgentTool):
-                    normalized = tool.normalize_args(dict(step.args))
-                    remaining_repairs = max(1, task.repair_limit - task.repair_count)
-                    remaining_actions = max(1, task.action_limit - task.action_count)
-                    result_obj = tool.controller.run_goal(
-                        str(normalized["goal"]),
-                        context=str(normalized.get("context", task.context)),
-                        success_criteria=list(normalized.get("success_criteria", task.success_criteria)),
-                        budget_minutes=int(normalized.get("budget_minutes", task.budget_minutes)),
-                        allowed_surfaces=list(normalized.get("allowed_surfaces", task.allowed_surfaces)),
-                        cwd=str(normalized.get("cwd", task.cwd)),
-                        repair_limit=remaining_repairs,
-                        action_limit=remaining_actions,
-                        event_logger=lambda event_type, payload: self._record_nested_event(task, event_type, payload),
-                        approval_gate=approval_gate,
-                    )
-                else:
-                    result_obj = self.tools.execute(step.tool, step.args)
-                tool = self.tools.get(step.tool)
-                rendered = result_obj.summary
-                if tool is not None:
-                    try:
-                        rendered = tool.render(result_obj.data).strip() or rendered
-                    except Exception:
-                        rendered = result_obj.summary
-                result = {
-                    "tool": step.tool,
-                    "ok": result_obj.ok,
-                    "summary": result_obj.summary,
-                    "data": result_obj.data,
-                    "error": result_obj.error,
-                    "rendered": rendered,
-                }
-            self.task_store.append_event(task.id, "observation_recorded", result)
-            self.memory.remember_task_event(task.id, task.goal, "observation_recorded", result)
-            self.task_store.add_agent_message(run.id or 0, "executor", "output", json.dumps(result, ensure_ascii=False, default=str)[:4000])
-            results.append(result)
+                self._record_executor_result(task, run.id or 0, result, results)
+                continue
+
+            attempts = [step, *self._fallback_steps(step)]
+            for attempt_index, attempt in enumerate(attempts):
+                result = self._execute_tool_step(task, attempt, approval_gate)
+                if attempt_index > 0:
+                    result["fallback_for"] = step.tool
+                self._record_executor_result(task, run.id or 0, result, results)
+                if result.get("ok"):
+                    break
         self.task_store.update_agent_run(run.id or 0, "completed", {"results": len(results)})
         return results
+
+    def _execute_tool_step(self, task: TaskRecord, step: PlanStep, approval_gate: ApprovalGate) -> dict[str, Any]:
+        tool = self.tools.get(step.tool)
+        if step.tool not in {"os_agent", "coding_agent"}:
+            approval_gate.require(step.tool, step.args, step.reason)
+        if isinstance(tool, OsAgentTool):
+            normalized = tool.normalize_args(dict(step.args))
+            remaining_repairs = max(1, task.repair_limit - task.repair_count)
+            remaining_actions = max(1, task.action_limit - task.action_count)
+            result_obj = tool.controller.run_goal(
+                str(normalized["goal"]),
+                context=str(normalized.get("context", task.context)),
+                success_criteria=list(normalized.get("success_criteria", task.success_criteria)),
+                budget_minutes=int(normalized.get("budget_minutes", task.budget_minutes)),
+                allowed_surfaces=list(normalized.get("allowed_surfaces", task.allowed_surfaces)),
+                cwd=str(normalized.get("cwd", task.cwd)),
+                repair_limit=remaining_repairs,
+                action_limit=remaining_actions,
+                event_logger=lambda event_type, payload: self._record_nested_event(task, event_type, payload),
+                approval_gate=approval_gate,
+            )
+        elif isinstance(tool, CodingAgentTool):
+            normalized = tool.normalize_args(dict(step.args))
+            remaining_repairs = max(1, task.repair_limit - task.repair_count)
+            remaining_actions = max(1, task.action_limit - task.action_count)
+            result_obj = tool.controller.run_goal(
+                str(normalized["goal"]),
+                context=str(normalized.get("context", task.context)),
+                success_criteria=list(normalized.get("success_criteria", task.success_criteria)),
+                cwd=str(normalized.get("cwd", task.cwd or self.workspace_dir or "")),
+                budget_minutes=int(normalized.get("budget_minutes", task.budget_minutes)),
+                allowed_tools=list(normalized.get("allowed_tools", [])),
+                repair_limit=remaining_repairs,
+                action_limit=remaining_actions,
+                event_logger=lambda event_type, payload: self._record_nested_event(task, event_type, payload),
+                approval_gate=approval_gate,
+            )
+        else:
+            result_obj = self.tools.execute(step.tool, step.args)
+
+        rendered = result_obj.summary
+        tool = self.tools.get(step.tool)
+        if tool is not None:
+            try:
+                rendered = tool.render(result_obj.data).strip() or rendered
+            except Exception:
+                rendered = result_obj.summary
+        return {
+            "tool": step.tool,
+            "ok": result_obj.ok,
+            "summary": result_obj.summary,
+            "data": result_obj.data,
+            "error": result_obj.error,
+            "rendered": rendered,
+        }
+
+    def _record_executor_result(self, task: TaskRecord, run_id: int, result: dict[str, Any], results: list[dict[str, Any]]) -> None:
+        self.task_store.append_event(task.id, "observation_recorded", result)
+        self.memory.remember_task_event(task.id, task.goal, "observation_recorded", result)
+        self.task_store.add_agent_message(run_id, "executor", "output", json.dumps(result, ensure_ascii=False, default=str)[:4000])
+        results.append(result)
+
+    def _fallback_steps(self, step: PlanStep) -> list[PlanStep]:
+        fallbacks = [
+            PlanStep(tool=item.tool, args=item.args, reason=item.reason or f"fallback for {step.tool}")
+            for item in step.fallbacks
+            if item.tool != step.tool
+        ]
+        fallbacks.extend(self._derived_fallback_steps(step))
+        seen: set[tuple[str, str]] = set()
+        unique: list[PlanStep] = []
+        for fallback in fallbacks:
+            key = (fallback.tool, json.dumps(fallback.args, sort_keys=True, default=str))
+            if key in seen:
+                continue
+            seen.add(key)
+            if self.tools.get(fallback.tool) is not None:
+                unique.append(fallback)
+        return unique[:3]
+
+    @staticmethod
+    def _derived_fallback_steps(step: PlanStep) -> list[PlanStep]:
+        action = str(step.args.get("action", "")).strip()
+        if step.tool == "system" and action == "open_url":
+            target = str(step.args.get("target", "")).strip()
+            if target:
+                return [PlanStep(tool="browser", args={"action": "open_url", "url": target}, reason="fallback: open URL through browser tool")]
+        if step.tool == "browser" and action == "open_url":
+            url = str(step.args.get("url", "")).strip()
+            if url:
+                return [PlanStep(tool="system", args={"action": "open_url", "target": url}, reason="fallback: open URL through system shell")]
+        if step.tool == "system" and action in {"launch_app", "open_path"}:
+            target = str(step.args.get("target", "")).strip()
+            if target:
+                escaped = target.replace("'", "''")
+                return [PlanStep(tool="shell", args={"command": f"Start-Process '{escaped}'"}, reason="fallback: launch through terminal")]
+        return []
 
     def _build_final_report(self, task: TaskRecord, context: TaskRuntimeContext, verdict: dict[str, Any]) -> str:
         done: list[str] = []
@@ -366,7 +421,7 @@ class TaskOrchestrator:
             return None
         for result in results:
             data = result.get("data", {})
-            if result.get("tool") != "os_agent" or not isinstance(data, dict):
+            if result.get("tool") not in {"os_agent", "coding_agent"} or not isinstance(data, dict):
                 continue
             if str(data.get("reason", "")).strip() != "verified":
                 continue
@@ -376,7 +431,7 @@ class TaskOrchestrator:
                 "ok": True,
                 "summary": summary,
                 "reason": "verified",
-                "source": "os_agent",
+                "source": str(result.get("tool")),
                 "evidence": observations[-4:] if isinstance(observations, list) else [],
             }
         return None

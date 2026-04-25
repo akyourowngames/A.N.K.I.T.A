@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from jakata_agent.router import PlanStep
+from jakata_agent.router import PlanFallback, PlanStep
 from jakata_agent.tools.registry import ToolRegistry
 
 
@@ -32,7 +32,7 @@ class PlanValidator:
     - Required args are checked after normalization.
     - Unknown arg keys are stripped (tool schema is the contract).
     - Duplicate (tool, args) pairs are deduplicated.
-    - fallback_to is validated — nulled out if the fallback tool is not registered.
+    - fallback_to/fallbacks are validated and normalized when alternate tool attempts are available.
     - If all steps are rejected, falls back to a single general_chat step.
     """
 
@@ -54,29 +54,9 @@ class PlanValidator:
                 errors.append(f"unknown_tool:{step.tool}")
                 continue
 
-            # Unwrap LLM artifacts like {"value": "Delhi"} -> "Delhi"
-            args: dict = {}
-            for key, val in step.args.items():
-                if isinstance(val, dict) and list(val.keys()) == ["value"]:
-                    args[key] = val["value"]
-                elif isinstance(val, dict):
-                    errors.append(f"bad_arg_shape:{step.tool}:{key}")
-                else:
-                    args[key] = val
-
-            # Let the tool fill its own defaults
-            args = tool.normalize_args(args)
-
-            # Check required fields
-            required = tool.input_schema.get("required", [])
-            missing = [k for k in required if args.get(k) in (None, "")]
-            if missing:
-                errors.append(f"missing_required:{step.tool}:{','.join(missing)}")
+            args = self._normalize_tool_args(step.tool, step.args, tool, errors)
+            if args is None:
                 continue
-
-            # Strip keys the tool doesn't declare
-            allowed = set(tool.input_schema.get("properties", {}).keys())
-            args = {k: v for k, v in args.items() if k in allowed}
 
             # Deduplicate
             dedup_key = (step.tool, str(sorted(args.items())))
@@ -89,10 +69,47 @@ class PlanValidator:
             if fallback and registry.get(fallback) is None:
                 errors.append(f"unknown_fallback:{step.tool}:{fallback}")
                 fallback = None
+            validated_fallbacks: list[PlanFallback] = []
+            fallback_candidates = list(step.fallbacks)
+            if fallback:
+                fallback_candidates.append(PlanFallback(tool=fallback, args=args, reason="legacy fallback"))
+            for candidate in fallback_candidates:
+                fallback_tool = registry.get(candidate.tool)
+                if fallback_tool is None:
+                    errors.append(f"unknown_fallback:{step.tool}:{candidate.tool}")
+                    continue
+                fallback_args = self._normalize_tool_args(candidate.tool, candidate.args, fallback_tool, errors)
+                if fallback_args is None:
+                    continue
+                if candidate.tool == step.tool and fallback_args == args:
+                    continue
+                validated_fallbacks.append(PlanFallback(tool=candidate.tool, args=fallback_args, reason=candidate.reason))
 
-            validated.append(PlanStep(tool=step.tool, args=args, reason=step.reason, fallback_to=fallback))
+            validated.append(PlanStep(tool=step.tool, args=args, reason=step.reason, fallback_to=fallback, fallbacks=validated_fallbacks[:3]))
 
         if not validated:
             validated = [PlanStep(tool="general_chat", args={}, reason="validator_empty_fallback")]
 
         return ValidationResult(steps=validated, errors=errors)
+
+    @staticmethod
+    def _normalize_tool_args(tool_name: str, raw_args: dict, tool, errors: list[str]) -> dict | None:
+        args: dict = {}
+        for key, val in raw_args.items():
+            if isinstance(val, dict) and list(val.keys()) == ["value"]:
+                args[key] = val["value"]
+            elif isinstance(val, dict):
+                errors.append(f"bad_arg_shape:{tool_name}:{key}")
+            else:
+                args[key] = val
+
+        args = tool.normalize_args(args)
+
+        required = tool.input_schema.get("required", [])
+        missing = [k for k in required if args.get(k) in (None, "")]
+        if missing:
+            errors.append(f"missing_required:{tool_name}:{','.join(missing)}")
+            return None
+
+        allowed = set(tool.input_schema.get("properties", {}).keys())
+        return {k: v for k, v in args.items() if k in allowed}

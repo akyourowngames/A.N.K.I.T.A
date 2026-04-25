@@ -745,18 +745,29 @@ def test_approval_gate_auto_safe_skips_safe_system_status(tmp_path: Path):
     assert loaded.status == "queued"
 
 
-def test_approval_gate_auto_safe_still_requires_shell(tmp_path: Path):
+def test_approval_gate_auto_safe_allows_safe_workspace_shell(tmp_path: Path):
     store = TaskStore(tmp_path / "jakata.db")
     task = store.create_task(goal="run git status", session_id="s1")
     gate = ApprovalGate(task_store=store, task=task, approval_policy="auto_safe", workspace_dir=tmp_path)
+    gate.require("shell", {"command": "git status", "cwd": str(tmp_path)}, "inspect repo")
+    loaded = store.get_task(task.id)
+    assert loaded is not None
+    assert loaded.pending_approval == {}
+    assert loaded.status == "queued"
+
+
+def test_approval_gate_auto_safe_still_requires_dangerous_shell(tmp_path: Path):
+    store = TaskStore(tmp_path / "jakata.db")
+    task = store.create_task(goal="delete repo", session_id="s1")
+    gate = ApprovalGate(task_store=store, task=task, approval_policy="auto_safe", workspace_dir=tmp_path)
     try:
-        gate.require("shell", {"command": "git status"}, "inspect repo")
+        gate.require("shell", {"command": "git clean -fd", "cwd": str(tmp_path)}, "delete generated files")
     except ApprovalRequired:
         waiting = store.get_task(task.id)
         assert waiting is not None
         assert waiting.status == "awaiting_approval"
     else:
-        raise AssertionError("shell should still require approval in auto_safe mode")
+        raise AssertionError("dangerous shell should still require approval in auto_safe mode")
 
 
 def test_graph_store_search(tmp_path: Path):
@@ -900,6 +911,48 @@ def _fake_update(user_id: int = 1, text: str = ""):
     return SimpleNamespace(effective_user=SimpleNamespace(id=user_id), message=FakeTelegramMessage(text))
 
 
+async def _drain_telegram_foreground(controller: TelegramBotController) -> None:
+    assert controller._foreground_queue is not None
+    await controller._foreground_queue.join()
+    assert controller._foreground_worker is not None
+    controller._foreground_worker.cancel()
+    try:
+        await controller._foreground_worker
+    except asyncio.CancelledError:
+        pass
+
+
+class FakeTelegramDaemon:
+    def __init__(self) -> None:
+        self.started = 0
+
+    def ensure_running(self) -> None:
+        self.started += 1
+
+
+class FakeTelegramTaskEngine:
+    def __init__(self, store: TaskStore) -> None:
+        self.store = store
+        self.calls: list[str] = []
+
+    def run_foreground_task(self, *, goal: str, session_id: str, context: str = "", **kwargs):
+        del kwargs
+        self.calls.append(goal)
+        task = self.store.create_task(goal=goal, session_id=session_id, execution_mode="foreground", context=context)
+        task = self.store.update_task(task.id, status="completed", result_summary=f"done {goal}", final_report=f"Goal: {goal}\nStatus: completed") or task
+        return SimpleNamespace(task=task, report=task.final_report)
+
+
+class FakeTelegramIntentClient:
+    def __init__(self, *intents: dict[str, object]) -> None:
+        self.intents = list(intents)
+
+    def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.0):
+        del system_prompt, user_prompt, temperature
+        intent = self.intents.pop(0) if self.intents else {"action": "task"}
+        return "fake-telegram-router", json.dumps(intent)
+
+
 def test_telegram_start_admin_and_plain_help_onboard_users(tmp_path: Path):
     settings = _artifact_settings(tmp_path)
     store = TaskStore(tmp_path / "jakata.db")
@@ -925,6 +978,118 @@ def test_telegram_start_admin_and_plain_help_onboard_users(tmp_path: Path):
 
     asyncio.run(controller.help(update, SimpleNamespace(args=[])))
     assert "JAKATA admin commands" in update.message.replies[-1]
+
+
+def test_telegram_plain_admin_screenshot_sends_photo_without_command(tmp_path: Path):
+    settings = _artifact_settings(tmp_path)
+    store = TaskStore(tmp_path / "jakata.db")
+    image_path = settings.data_dir / "screen.png"
+    image_path.write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+    class FakeScreenTools:
+        def execute(self, name, args):
+            assert name == "screen"
+            assert args["action"] == "capture"
+            return ToolResult(ok=True, summary="captured", data={"path": str(image_path)})
+
+    runtime = SimpleNamespace(
+        settings=settings,
+        task_store=store,
+        tools=FakeScreenTools(),
+        client=FakeTelegramIntentClient({"action": "screenshot"}),
+    )
+    auth = TelegramAuthManager(password="secret")
+    assert auth.unlock(1, "secret")
+    controller = TelegramBotController(runtime, auth=auth)
+    update = _fake_update(1, "hey take a screenshot and send me via telegram")
+
+    async def run():
+        await controller.message(update, SimpleNamespace(args=[]))
+        await _drain_telegram_foreground(controller)
+
+    asyncio.run(run())
+    assert update.message.photos
+    assert any("Task finished" in reply for reply in update.message.replies)
+
+
+def test_telegram_plain_file_request_scans_safe_roots_and_sends_match(tmp_path: Path):
+    settings = _artifact_settings(tmp_path)
+    store = TaskStore(tmp_path / "jakata.db")
+    target = settings.workspace_dir / "math_notes.txt"
+    target.write_text("algebra", encoding="utf-8")
+    runtime = SimpleNamespace(
+        settings=settings,
+        task_store=store,
+        tools=ToolRegistry(),
+        client=FakeTelegramIntentClient({"action": "file", "query": "math notes", "target_type": "file"}),
+    )
+    auth = TelegramAuthManager(password="secret")
+    assert auth.unlock(1, "secret")
+    controller = TelegramBotController(runtime, auth=auth)
+    update = _fake_update(1, "send me math notes file")
+
+    async def run():
+        await controller.message(update, SimpleNamespace(args=[]))
+        await _drain_telegram_foreground(controller)
+
+    asyncio.run(run())
+    assert update.message.documents
+
+
+def test_telegram_foreground_tasks_run_in_queue_order(tmp_path: Path):
+    settings = _artifact_settings(tmp_path)
+    store = TaskStore(tmp_path / "jakata.db")
+    engine = FakeTelegramTaskEngine(store)
+    runtime = SimpleNamespace(
+        settings=settings,
+        task_store=store,
+        task_engine=engine,
+        memory=FakeMemory(),
+        client=FakeTelegramIntentClient(
+            {"action": "task"},
+            {"action": "task"},
+            {"action": "status"},
+        ),
+    )
+    auth = TelegramAuthManager(password="secret")
+    assert auth.unlock(1, "secret")
+    controller = TelegramBotController(runtime, auth=auth)
+    first = _fake_update(1, "first task")
+    second = _fake_update(1, "second task")
+
+    async def run():
+        await controller.message(first, SimpleNamespace(args=[]))
+        await controller.message(second, SimpleNamespace(args=[]))
+        await _drain_telegram_foreground(controller)
+
+    asyncio.run(run())
+    assert engine.calls == ["first task", "second task"]
+    assert any("Queued foreground task" in reply for reply in first.message.replies)
+    assert any("Task finished: first task" in reply for reply in first.message.replies)
+    assert any("Task finished: second task" in reply for reply in second.message.replies)
+
+    status = _fake_update(1, "where have you gone")
+    asyncio.run(controller.message(status, SimpleNamespace(args=[])))
+    assert "No active Telegram foreground task" in status.message.replies[-1]
+    assert engine.calls == ["first task", "second task"]
+
+
+def test_telegram_bg_is_explicit_background_path(tmp_path: Path):
+    settings = _artifact_settings(tmp_path)
+    store = TaskStore(tmp_path / "jakata.db")
+    daemon = FakeTelegramDaemon()
+    runtime = SimpleNamespace(settings=settings, task_store=store, memory=FakeMemory(), daemon=daemon)
+    auth = TelegramAuthManager(password="secret")
+    assert auth.unlock(1, "secret")
+    controller = TelegramBotController(runtime, auth=auth)
+    update = _fake_update(1)
+
+    asyncio.run(controller.bg(update, SimpleNamespace(args=["long", "job"])))
+    tasks = store.list_tasks()
+    assert len(tasks) == 1
+    assert tasks[0].execution_mode == "background"
+    assert tasks[0].background_reason == "telegram_bg_request"
+    assert daemon.started == 1
 
 
 def test_telegram_artifact_service_exports_reports_and_logs(tmp_path: Path):
@@ -1002,12 +1167,16 @@ def test_telegram_sendfile_outside_safe_root_requires_approval_then_sends(tmp_pa
     outside_file = tmp_path / "outside.txt"
     outside_file.write_text("send me", encoding="utf-8")
     update = _fake_update(1)
-    asyncio.run(controller.sendfile(update, SimpleNamespace(args=[str(outside_file)])))
+    async def run_sendfile():
+        await controller.sendfile(update, SimpleNamespace(args=[str(outside_file)]))
+        await _drain_telegram_foreground(controller)
+
+    asyncio.run(run_sendfile())
 
     pending = store.list_pending_approvals()
     assert len(pending) == 1
     approval_id = pending[0].pending_approval["id"]
-    assert "Approval required" in update.message.replies[-1]
+    assert any("Approval required" in reply for reply in update.message.replies)
 
     asyncio.run(controller.approve(update, SimpleNamespace(args=[approval_id])))
     assert update.message.documents
@@ -1035,7 +1204,11 @@ def test_telegram_img_command_sends_generated_photo(tmp_path: Path):
     controller = TelegramBotController(runtime, auth=auth)
     update = _fake_update(1)
 
-    asyncio.run(controller.img(update, SimpleNamespace(args=["blue", "city"])))
+    async def run_img():
+        await controller.img(update, SimpleNamespace(args=["blue", "city"]))
+        await _drain_telegram_foreground(controller)
+
+    asyncio.run(run_img())
     assert update.message.photos
 
 
@@ -1067,8 +1240,8 @@ def test_real_agent_runs_foreground_until_bg_is_explicit(tmp_path: Path):
         daemon=daemon,
     )
     model, content = agent.reply("open chrome and ai news")
-    assert model == "fake-model"
-    assert content == "ok"
+    assert model == "local:tool"
+    assert content == "done open app"
     assert daemon.started == 0
     assert store.list_tasks(session_id="s1") == []
 

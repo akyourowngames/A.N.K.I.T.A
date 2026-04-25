@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import os
 import platform
+import shutil
+import socket
 import subprocess
 import time
 from pathlib import Path
@@ -33,6 +36,11 @@ _SETTINGS_URIS = {
     "taskbar": "ms-settings:taskbar",
     "personalization": "ms-settings:personalization",
 }
+
+
+def _looks_secret(name: str) -> bool:
+    lowered = name.lower()
+    return any(token in lowered for token in ("key", "token", "secret", "password", "credential"))
 
 _WINDOWS_AUDIO_MANAGER_SOURCE = r'''
 $source = @"
@@ -162,7 +170,8 @@ class SystemTool(Tool):
     description = (
         "Control local Windows system features directly: machine status, volume, brightness, Bluetooth, "
         "recycle bin, power/session actions, app launching, opening paths/URLs/settings, process listing "
-        "and lookup, waiting, and non-critical process termination. Wi-Fi controls are intentionally excluded."
+        "and lookup, terminal launching, disk/network/environment inspection, executable lookup, waiting, "
+        "and non-critical process termination. Wi-Fi controls are intentionally excluded."
     )
     input_schema = {
         "type": "object",
@@ -178,6 +187,11 @@ class SystemTool(Tool):
                     "list_processes",
                     "find_process",
                     "terminate_process",
+                    "disk_usage",
+                    "network_status",
+                    "resolve_executable",
+                    "open_terminal",
+                    "environment",
                     "wait",
                     "volume",
                     "brightness",
@@ -200,7 +214,7 @@ class SystemTool(Tool):
             },
             "target": {
                 "type": "string",
-                "description": "App path, file path, URL, process name, or settings page depending on action.",
+                "description": "App path, file path, URL, process name, executable name, env var name, or settings page depending on action.",
             },
             "seconds": {
                 "type": "number",
@@ -218,6 +232,10 @@ class SystemTool(Tool):
                 "type": "integer",
                 "description": "Relative step size for up/down actions. Default 10.",
             },
+            "cwd": {
+                "type": "string",
+                "description": "Optional working directory for action=open_terminal.",
+            },
         },
         "required": ["action"],
         "additionalProperties": False,
@@ -228,6 +246,7 @@ class SystemTool(Tool):
         args.setdefault("max_results", 30)
         args.setdefault("operation", "get")
         args.setdefault("step", 10)
+        args.setdefault("cwd", "")
         return args
 
     def run(self, args: dict[str, Any]) -> ToolResult:
@@ -250,6 +269,16 @@ class SystemTool(Tool):
             return self._find_process(str(args.get("target", "")).strip(), int(args.get("max_results", 30)))
         if action == "terminate_process":
             return self._terminate_process(str(args.get("target", "")).strip())
+        if action == "disk_usage":
+            return self._disk_usage(str(args.get("target", "")).strip())
+        if action == "network_status":
+            return self._network_status()
+        if action == "resolve_executable":
+            return self._resolve_executable(str(args.get("target", "")).strip())
+        if action == "open_terminal":
+            return self._open_terminal(str(args.get("cwd", "")).strip() or str(args.get("target", "")).strip())
+        if action == "environment":
+            return self._environment(str(args.get("target", "")).strip())
         if action == "volume":
             return self._volume(str(args.get("operation", "get")).strip(), args)
         if action == "brightness":
@@ -266,6 +295,114 @@ class SystemTool(Tool):
         bounded = max(0.0, min(float(seconds), 30.0))
         time.sleep(bounded)
         return ToolResult(ok=True, summary=f"Waited {bounded:.1f}s.", data={"seconds": bounded, "action": "wait"})
+
+    def _disk_usage(self, target: str) -> ToolResult:
+        roots: list[Path]
+        if target:
+            roots = [Path(target).expanduser().resolve()]
+        elif PLATFORM == "Windows":
+            roots = [Path(f"{letter}:\\") for letter in "ABCDEFGHIJKLMNOPQRSTUVWXYZ" if Path(f"{letter}:\\").exists()]
+        else:
+            roots = [Path("/")]
+        disks: list[dict[str, Any]] = []
+        for root in roots:
+            try:
+                usage = shutil.disk_usage(root)
+            except Exception:
+                continue
+            total = int(usage.total)
+            free = int(usage.free)
+            used = int(usage.used)
+            percent_used = round((used / total) * 100, 1) if total else 0.0
+            disks.append(
+                {
+                    "path": str(root),
+                    "total_bytes": total,
+                    "used_bytes": used,
+                    "free_bytes": free,
+                    "percent_used": percent_used,
+                }
+            )
+        if not disks:
+            return ToolResult(ok=False, summary="No disk usage information available.", data={}, error="not_found")
+        summary = "; ".join(f"{item['path']} {item['percent_used']}% used" for item in disks[:4])
+        return ToolResult(ok=True, summary=f"Disk usage: {summary}.", data={"action": "disk_usage", "disks": disks})
+
+    def _network_status(self) -> ToolResult:
+        payload: dict[str, Any] = {"action": "network_status", "hostname": socket.gethostname()}
+        addresses: list[str] = []
+        try:
+            for family, _, _, _, sockaddr in socket.getaddrinfo(socket.gethostname(), None):
+                if family in {socket.AF_INET, socket.AF_INET6} and sockaddr:
+                    address = str(sockaddr[0])
+                    if address and address not in addresses:
+                        addresses.append(address)
+        except Exception:
+            pass
+        payload["addresses"] = addresses[:12]
+        try:
+            with socket.create_connection(("1.1.1.1", 53), timeout=3):
+                payload["internet_reachable"] = True
+        except Exception:
+            payload["internet_reachable"] = False
+        if PLATFORM == "Windows":
+            try:
+                output = subprocess.check_output(["ipconfig"], text=True, stderr=subprocess.STDOUT, timeout=8)
+                payload["ipconfig_excerpt"] = "\n".join(line.rstrip() for line in output.splitlines()[:80])
+            except Exception as exc:  # noqa: BLE001
+                payload["ipconfig_error"] = str(exc)[:200]
+        summary = "Internet reachable." if payload["internet_reachable"] else "Internet connectivity not proven."
+        if addresses:
+            summary += f" Local address: {addresses[0]}."
+        return ToolResult(ok=True, summary=summary, data=payload)
+
+    def _resolve_executable(self, target: str) -> ToolResult:
+        if not target:
+            return ToolResult(ok=False, summary="System resolve_executable requires a target.", data={}, error="missing_target")
+        resolved = shutil.which(target)
+        payload: dict[str, Any] = {"action": "resolve_executable", "target": target, "path": resolved or "", "found": bool(resolved)}
+        if resolved:
+            return ToolResult(ok=True, summary=f"Resolved {target}: {resolved}", data=payload)
+        return ToolResult(ok=True, summary=f"Executable not found on PATH: {target}", data=payload)
+
+    def _open_terminal(self, cwd: str) -> ToolResult:
+        base = Path(cwd).expanduser().resolve() if cwd else Path.cwd().resolve()
+        if not base.exists() or not base.is_dir():
+            return ToolResult(ok=False, summary=f"Terminal cwd not found: {base}", data={}, error="cwd_not_found")
+        try:
+            if PLATFORM == "Windows":
+                wt = shutil.which("wt.exe") or shutil.which("wt")
+                if wt:
+                    subprocess.Popen([wt, "-d", str(base)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                else:
+                    subprocess.Popen(
+                        ["powershell", "-NoProfile", "-Command", f"Start-Process powershell -ArgumentList '-NoExit','-NoProfile' -WorkingDirectory '{str(base).replace(chr(39), chr(39) * 2)}'"],
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL,
+                    )
+            elif PLATFORM == "Darwin":
+                subprocess.Popen(["open", "-a", "Terminal", str(base)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            else:
+                terminal = shutil.which("x-terminal-emulator") or shutil.which("gnome-terminal") or shutil.which("konsole")
+                if not terminal:
+                    return ToolResult(ok=False, summary="No terminal emulator found.", data={}, error="missing_terminal")
+                subprocess.Popen([terminal], cwd=str(base), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return ToolResult(ok=True, summary=f"Opened terminal at {base}", data={"action": "open_terminal", "cwd": str(base)})
+        except Exception as exc:  # noqa: BLE001
+            return ToolResult(ok=False, summary=f"Failed to open terminal at {base}", data={}, error=str(exc))
+
+    def _environment(self, target: str) -> ToolResult:
+        if target:
+            value = os.environ.get(target, "")
+            shown = bool(value)
+            redacted = _looks_secret(target) and shown
+            return ToolResult(
+                ok=True,
+                summary=f"Environment variable {target} {'is set' if shown else 'is not set'}.",
+                data={"action": "environment", "target": target, "value": "[redacted]" if redacted else value, "set": shown, "redacted": redacted},
+            )
+        keys = sorted(key for key in os.environ if not _looks_secret(key))[:120]
+        return ToolResult(ok=True, summary=f"Environment has {len(keys)} visible key(s).", data={"action": "environment", "keys": keys})
 
     def _launch_app(self, target: str) -> ToolResult:
         if not target:
@@ -422,12 +559,18 @@ class SystemTool(Tool):
             return ToolResult(ok=False, summary=f"Blocked process termination: {target}", data={}, error="blocked_process")
         try:
             if PLATFORM == "Windows":
+                if target.isdigit():
+                    subprocess.check_output(["taskkill", "/PID", target, "/F"], text=True, stderr=subprocess.STDOUT)
+                    return ToolResult(ok=True, summary=f"Terminated process id: {target}", data={"action": "terminate_process", "target": target})
                 subprocess.check_output(
                     ["taskkill", "/IM", target, "/F"],
                     text=True,
                     stderr=subprocess.STDOUT,
                 )
             else:
+                if target.isdigit():
+                    subprocess.check_output(["kill", target], text=True, stderr=subprocess.STDOUT)
+                    return ToolResult(ok=True, summary=f"Terminated process id: {target}", data={"action": "terminate_process", "target": target})
                 subprocess.check_output(["pkill", "-f", target], text=True, stderr=subprocess.STDOUT)
             return ToolResult(ok=True, summary=f"Terminated process: {target}", data={"action": "terminate_process", "target": target})
         except Exception as exc:  # noqa: BLE001
@@ -739,6 +882,25 @@ $count = if ($folder) { @($folder.Items()).Count } else { 0 }
             return f"Bluetooth: {data.get('state', 'unknown')} ({data.get('name', '')})".strip()
         if action == "recycle_bin" and data.get("operation") == "count":
             return f"Recycle bin items: {data.get('count', 0)}"
+        if action == "disk_usage":
+            disks = data.get("disks", [])
+            lines = ["Disk usage:"]
+            for item in disks[:8] if isinstance(disks, list) else []:
+                lines.append(f"  {item.get('path', '')}: {item.get('percent_used', '?')}% used, {item.get('free_bytes', 0)} bytes free")
+            return "\n".join(lines)
+        if action == "network_status":
+            addresses = data.get("addresses", [])
+            reachable = data.get("internet_reachable", False)
+            return f"Network: internet_reachable={reachable}, addresses={', '.join(addresses[:4]) if isinstance(addresses, list) else ''}"
+        if action == "resolve_executable":
+            return data.get("path") or f"Executable not found: {data.get('target', '')}"
+        if action == "open_terminal":
+            return f"Opened terminal at {data.get('cwd', '')}"
+        if action == "environment":
+            if data.get("target"):
+                return f"{data.get('target')}={'[redacted]' if data.get('redacted') else data.get('value', '')}"
+            keys = data.get("keys", [])
+            return "Environment keys: " + ", ".join(str(item) for item in keys[:40]) if isinstance(keys, list) else "Environment inspected."
         return data.get("summary", "System action complete.")
 
     @staticmethod
