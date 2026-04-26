@@ -99,6 +99,8 @@ def run_benchmark(*, cases_path: Path, output_dir: Path, case_filter: str = "") 
                 "ok": ok,
                 "invalid_expected_tools": invalid_expected,
                 "semantic_best_score": round(float(manifest_result.best_score), 4) if manifest_result else 0.0,
+                "semantic_second_score": round(float(manifest_result.second_score), 4) if manifest_result else 0.0,
+                "semantic_margin": round(float(manifest_result.best_score - manifest_result.second_score), 4) if manifest_result else 0.0,
                 "semantic_used": bool(manifest_result.used_semantic_ranking) if manifest_result else False,
                 "semantic_shortlist": selected_tools,
                 "manifest_ms": round((after_manifest - started) * 1000),

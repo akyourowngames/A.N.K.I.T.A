@@ -122,6 +122,8 @@ Optional local automation config:
 - `NVIDIA_VISION_FALLBACK_MODELS` for extra multimodal fallbacks
 - `JAKATA_ROUTER_MODEL`, `JAKATA_ROUTER_TIMEOUT_SECONDS`, `JAKATA_ROUTER_MAX_RETRIES`, and `JAKATA_ROUTER_MAX_TOKENS` for the fast JSON planner
 - `JAKATA_ROUTER_TOOL_LIMIT` and `JAKATA_ROUTER_MIN_TOOL_SCORE` for NVIDIA embedding-backed tool shortlisting
+- `JAKATA_ROUTER_GENERAL_CHAT_MIN_SCORE`, `JAKATA_ROUTER_GENERAL_CHAT_MIN_MARGIN`, and `JAKATA_ROUTER_TOOL_OVER_CHAT_MIN_MARGIN` for the semantic no-tool fast lane
+- `JAKATA_FAST_CHAT_MODEL`, `JAKATA_FAST_CHAT_FALLBACK_MODELS`, and `JAKATA_FAST_CHAT_TIMEOUT_SECONDS` for low-latency casual/chat-only replies
 - `SARVAM_API_KEY`, `SARVAM_TTS_SPEAKER`, `SARVAM_TTS_LANGUAGE`, and `SARVAM_TTS_MODEL` for web text-to-speech
 - `SARVAM_TTS_MAX_SPOKEN_CHARS` and `SARVAM_TTS_LONG_RESPONSE_PHRASES` to avoid reading long replies aloud
 - `JAKATA_CAMERA_DEVICE_INDEX` for a different webcam

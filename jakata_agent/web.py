@@ -33,6 +33,11 @@ class ChatRequest(BaseModel):
     tts: bool = False
 
 
+class TTSRequest(BaseModel):
+    text: str = Field(min_length=1, max_length=32000)
+    session_id: str | None = Field(default=None, max_length=200)
+
+
 class CompanionNextRequest(BaseModel):
     session_id: str | None = Field(default=None, max_length=200)
     force: bool = False
@@ -91,6 +96,7 @@ def build_agent(runtime: JakataRuntime) -> JakataAgent:
     return JakataAgent(
         settings=runtime.settings,
         client=runtime.client,
+        fast_client=getattr(runtime, "fast_client", None),
         tools=runtime.tools,
         memory=runtime.memory,
         router=runtime.router,
@@ -148,6 +154,28 @@ def create_app(
     @app.post("/chat/jarvis/stream")
     def chat_jarvis_stream(payload: ChatRequest) -> StreamingResponse:
         return _stream_response(manager, payload, mode="jarvis", tts_client_factory=app.state.tts_client_factory)
+
+    @app.post("/tts/synthesize")
+    def tts_synthesize(payload: TTSRequest) -> dict[str, Any]:
+        text = payload.text.strip()
+        if not text:
+            raise HTTPException(status_code=400, detail="Text is required.")
+        context = manager.get_or_create(payload.session_id)
+        tts_text, _, limited = _next_tts_text_for_budget(
+            context.runtime.settings,
+            text,
+            spoken_chars=0,
+            closing_spoken=False,
+        )
+        audio = _tts_audio_base64(context.runtime.settings, app.state.tts_client_factory, tts_text)
+        return {
+            "session_id": context.public_session_id,
+            "audio": audio,
+            "audio_codec": context.runtime.settings.sarvam_tts_codec,
+            "spoken_text": _clean_tts_text(tts_text),
+            "limited": limited,
+            "available": bool(context.runtime.settings.sarvam_api_key),
+        }
 
     @app.post("/companion/next")
     def companion_next(payload: CompanionNextRequest) -> dict[str, Any]:
@@ -371,11 +399,12 @@ def _stream_response(
                         )
                         chunk_stream = _stream_general_chat(context.agent, message, route_memory_context)
                 else:
+                    prefer_fast_chat = _prefer_fast_general_chat(general_steps, route_memory_context)
                     yield _sse(
                         {
                             "activity": {
                                 "event": "context_retrieved",
-                                "message": "Memory and local tools are ready.",
+                                "message": "Fast chat path is ready." if prefer_fast_chat else "Memory and local tools are ready.",
                             },
                             "done": False,
                         }
@@ -384,7 +413,12 @@ def _stream_response(
                     if tool_results:
                         chunk_stream = context.agent.stream_tool_results_reply(message, tool_results)
                     else:
-                        chunk_stream = _stream_general_chat(context.agent, message, route_memory_context)
+                        chunk_stream = _stream_general_chat(
+                            context.agent,
+                            message,
+                            route_memory_context,
+                            prefer_fast=prefer_fast_chat,
+                        )
 
                 for current_model, chunk in chunk_stream:
                     if chunk and not first_chunk_sent:
@@ -500,11 +534,27 @@ def _resolve_route(
     return "general", "General mode selected.", None, general_steps, "", decision.memory_context
 
 
-def _stream_general_chat(agent: JakataAgent, message: str, memory_context: str) -> Iterator[tuple[str, str]]:
+def _stream_general_chat(
+    agent: JakataAgent,
+    message: str,
+    memory_context: str,
+    *,
+    prefer_fast: bool = False,
+) -> Iterator[tuple[str, str]]:
     stream_with_context = getattr(agent, "stream_general_chat_with_context", None)
     if callable(stream_with_context):
-        return stream_with_context(message, memory_context)
+        try:
+            return stream_with_context(message, memory_context, prefer_fast=prefer_fast)
+        except TypeError:
+            return stream_with_context(message, memory_context)
     return agent.stream_general_chat(message)
+
+
+def _prefer_fast_general_chat(steps: list[PlanStep], memory_context: str) -> bool:
+    if memory_context.strip():
+        return False
+    semantic_reasons = {"semantic_no_tool_match", "semantic_general_chat", "semantic_general_chat_competitive"}
+    return bool(steps) and all(step.tool == "general_chat" and (step.reason or "") in semantic_reasons for step in steps)
 
 
 def _resolve_asset(root: Path, relative_path: str) -> Path:

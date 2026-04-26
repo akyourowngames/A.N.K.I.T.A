@@ -89,6 +89,8 @@ let currentMode = 'jarvis';
 let isStreaming = false;
 let currentStreamController = null;
 let currentStreamAbortReason = '';
+let currentTtsController = null;
+let ttsSynthesisToken = 0;
 
 /*
  * isListening — True while the speech recognition engine is actively
@@ -885,8 +887,21 @@ function startListening() {
     }
 }
 
+function isTtsBusy() {
+    return !!currentTtsController || !!(ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0));
+}
+
+function cancelPendingTts() {
+    ttsSynthesisToken += 1;
+    if (currentTtsController) {
+        try { currentTtsController.abort(); } catch (_) {}
+        currentTtsController = null;
+    }
+}
+
 function interruptResponse(reason = 'interrupted') {
     currentStreamAbortReason = reason;
+    cancelPendingTts();
     if (ttsPlayer) ttsPlayer.stop();
     if (currentStreamController) {
         try { currentStreamController.abort(); } catch (_) {}
@@ -921,7 +936,7 @@ function stopListening() {
 function maybeRestartListening() {
     if (!autoListenMode || !recognition) return;
     if (isStreaming) return;
-    if (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0)) return;
+    if (isTtsBusy()) return;
     setTimeout(() => {
         if (autoListenMode && !isStreaming && !isListening && recognition) {
             startListening();
@@ -1009,7 +1024,7 @@ function bindEvents() {
 
     // MIC BUTTON — Toggle speech recognition. When ON: auto mode — listen, stop on send, restart after AI+TTS done.
     if (micBtn) micBtn.addEventListener('click', () => {
-        if (isStreaming || (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0))) {
+        if (isStreaming || isTtsBusy()) {
             autoListenMode = true;
             if (micBtn) {
                 micBtn.classList.add('auto-listen');
@@ -1040,7 +1055,10 @@ function bindEvents() {
     if (ttsBtn) ttsBtn.addEventListener('click', () => {
         if (ttsPlayer) ttsPlayer.enabled = !ttsPlayer.enabled;
         ttsBtn.classList.toggle('tts-active', ttsPlayer && ttsPlayer.enabled);
-        if (ttsPlayer && !ttsPlayer.enabled) ttsPlayer.stop();
+        if (ttsPlayer && !ttsPlayer.enabled) {
+            cancelPendingTts();
+            ttsPlayer.stop();
+        }
     });
 
     // NEW CHAT BUTTON — Reset the conversation
@@ -1189,6 +1207,7 @@ function setMode(mode) {
  *   6. Update the greeting text (in case time-of-day changed).
  */
 function newChat() {
+    cancelPendingTts();
     if (ttsPlayer) ttsPlayer.stop();
     sessionId = createClientSessionId();
     if (chatMessages) chatMessages.innerHTML = '';
@@ -1369,6 +1388,8 @@ const ACTIVITY_STEPS = {
     searching_web:       { step: 0, label: 'Searching web' },
     search_completed:    { step: 0, label: 'Search completed' },
     context_retrieved:   { step: 0, label: 'Context retrieved' },
+    tts_ready:           { step: 0, label: 'Voice ready' },
+    tts_limited:         { step: 0, label: 'Voice shortened' },
     first_chunk:         { step: 5, label: 'Core responded' },
 };
 
@@ -1676,6 +1697,35 @@ function scrollToBottom() {
 
    ================================================================ */
 
+async function synthesizeAndPlayTts(text, token) {
+    if (!ttsPlayer || !ttsPlayer.enabled || !text.trim()) {
+        maybeRestartListening();
+        return;
+    }
+    const controller = new AbortController();
+    currentTtsController = controller;
+    appendActivity({ event: 'tts_ready', message: 'Voice response is being prepared.' });
+    try {
+        const res = await fetch(`${API}/tts/synthesize`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ text, session_id: sessionId }),
+            signal: controller.signal,
+        });
+        if (!res.ok) return;
+        const data = await res.json().catch(() => null);
+        if (token !== ttsSynthesisToken || !data) return;
+        if (data.session_id) sessionId = data.session_id;
+        if (data.limited) appendActivity({ event: 'tts_limited', message: 'Long reply voice was shortened; full text remains on screen.' });
+        if (data.audio && ttsPlayer.enabled) ttsPlayer.enqueue(data.audio);
+    } catch (err) {
+        if (err.name !== 'AbortError') console.warn('TTS synthesis failed:', err);
+    } finally {
+        if (currentTtsController === controller) currentTtsController = null;
+        maybeRestartListening();
+    }
+}
+
 /**
  * sendMessage(textOverride) — Sends a user message and streams the AI response.
  *
@@ -1688,6 +1738,8 @@ async function sendMessage(textOverride) {
     if (!text || isStreaming) return;  // Ignore empty messages or if already streaming
     if (!sessionId) sessionId = createClientSessionId();
     markUserInteraction();
+    cancelPendingTts();
+    const responseTtsToken = ttsSynthesisToken;
     if (lastProactiveMessageId) {
         sendCompanionFeedback(lastProactiveMessageId, 'reply', { user_reply: text });
         lastProactiveMessageId = null;
@@ -1741,7 +1793,7 @@ async function sendMessage(textOverride) {
             body: JSON.stringify({
                 message: text,                                 // The user's message
                 session_id: sessionId,                         // null on first message; UUID after that
-                tts: !!(ttsPlayer && ttsPlayer.enabled)        // Tell the backend whether to generate audio
+                tts: false                                     // Browser TTS is synthesized after text so chat latency stays low
             }),
             signal: controller.signal,
         });
@@ -1863,6 +1915,9 @@ async function sendMessage(textOverride) {
         // Step 10: Clean up — remove the blinking cursor
         if (cursorEl) cursorEl.remove();
         if (contentEl && fullResponse) renderMessageContent(contentEl, fullResponse);
+        if (fullResponse && ttsPlayer && ttsPlayer.enabled) {
+            synthesizeAndPlayTts(fullResponse, responseTtsToken);
+        }
 
         // If the server sent nothing, show a placeholder
         if (!contentEl) {

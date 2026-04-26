@@ -28,6 +28,21 @@ SYNTHESIS_SYSTEM_PROMPT = load_prompt("agent/synthesis.md")
 MAX_TOOL_STEPS = 4
 DIRECT_TOOL_ENGINE_ENV = "JAKATA_FOREGROUND_TASK_ENGINE"
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
+GENERAL_CHAT_TOOL_NAME = "general_chat"
+
+
+def _general_chat_manifest() -> dict[str, Any]:
+    return {
+        "name": GENERAL_CHAT_TOOL_NAME,
+        "description": (
+            "No tool needed. Use for natural conversation, advice, explanations, drafting, planning, "
+            "rewriting, formatting, and answers the user wants directly in chat without editing files, "
+            "opening apps, using the web, or controlling the computer."
+        ),
+        "args": {},
+        "required": [],
+        "safety": "read_only",
+    }
 
 
 @dataclass(slots=True)
@@ -46,6 +61,7 @@ class JakataAgent:
     router: IntentRouter
     validator: PlanValidator
     task_store: TaskStore
+    fast_client: NvidiaChatClient | None = None
     task_engine: TaskCompletionEngine | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
 
@@ -76,7 +92,11 @@ class JakataAgent:
         tool_results = self._execute(decision.steps)
         if not tool_results:
             messages = self._build_general_chat_messages(user_message, decision.memory_context)
-            yield from self._stream_messages(user_message, messages)
+            yield from self._stream_messages(
+                user_message,
+                messages,
+                client=self._fast_client_for_decision(decision),
+            )
             return
 
         direct = self._direct_tool_reply(tool_results)
@@ -98,8 +118,15 @@ class JakataAgent:
         memory_context = self._retrieve_memory_context(user_message)
         yield from self._stream_messages(user_message, self._build_general_chat_messages(user_message, memory_context))
 
-    def stream_general_chat_with_context(self, user_message: str, memory_context: str = "") -> Iterator[tuple[str, str]]:
-        yield from self._stream_messages(user_message, self._build_general_chat_messages(user_message, memory_context))
+    def stream_general_chat_with_context(
+        self,
+        user_message: str,
+        memory_context: str = "",
+        *,
+        prefer_fast: bool = False,
+    ) -> Iterator[tuple[str, str]]:
+        client = self.fast_client if prefer_fast and not memory_context.strip() else None
+        yield from self._stream_messages(user_message, self._build_general_chat_messages(user_message, memory_context), client=client)
 
     def stream_direct_answer(self, user_message: str, content: str) -> Iterator[tuple[str, str]]:
         self._record_conversation(user_message, content)
@@ -132,14 +159,22 @@ class JakataAgent:
         if decision.direct_answer:
             return AgentResponse(model="router:answer", content=decision.direct_answer)
         if self._is_general_chat_decision(decision):
-            model, content = self._general_chat_reply(user_message, decision.memory_context)
+            model, content = self._general_chat_reply(
+                user_message,
+                decision.memory_context,
+                client=self._fast_client_for_decision(decision),
+            )
             return AgentResponse(model=model, content=content)
         if self._should_use_task_engine(decision):
             result = self._run_task_engine(user_message, decision)
             return AgentResponse(model=result.model, content=result.report)
         tool_results = self._execute(decision.steps)
         if not tool_results:
-            model, content = self._general_chat_reply(user_message, decision.memory_context)
+            model, content = self._general_chat_reply(
+                user_message,
+                decision.memory_context,
+                client=self._fast_client_for_decision(decision),
+            )
             return AgentResponse(model=model, content=content)
 
         model, content = self._synthesise(user_message, decision.steps, tool_results, decision.memory_context)
@@ -148,7 +183,13 @@ class JakataAgent:
     def _plan(self, user_message: str) -> PlanDecision:
         manifest_result = self._planner_manifest(user_message)
         if manifest_result.used_semantic_ranking and manifest_result.tools:
-            first_tool = self.tools.get(str(manifest_result.tools[0].get("name", "")))
+            first_tool_name = str(manifest_result.tools[0].get("name", ""))
+            if first_tool_name == GENERAL_CHAT_TOOL_NAME and self._semantic_general_chat_ready(manifest_result):
+                return PlanDecision(
+                    steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="semantic_general_chat")],
+                    memory_context="",
+                )
+            first_tool = self.tools.get(first_tool_name)
             direct_min_score = float(getattr(first_tool, "semantic_direct_min_score", 0.0) or 0.0) if first_tool else 0.0
             direct_min_margin = float(getattr(first_tool, "semantic_direct_min_margin", 0.0) or 0.0) if first_tool else 0.0
             direct_margin = float(manifest_result.best_score) - float(getattr(manifest_result, "second_score", 0.0) or 0.0)
@@ -166,26 +207,30 @@ class JakataAgent:
                     steps=[PlanStep(tool=first_tool.name, args={}, reason="semantic_direct_tool")],
                     memory_context="",
                 )
+            if self._semantic_general_chat_competitive(manifest_result):
+                return PlanDecision(
+                    steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="semantic_general_chat_competitive")],
+                    memory_context="",
+                )
         if manifest_result.used_semantic_ranking and not manifest_result.tools:
             return PlanDecision(
                 steps=[PlanStep(tool="general_chat", args={}, reason="semantic_no_tool_match")],
                 memory_context="",
             )
 
-        first_manifest_tool = self.tools.get(str(manifest_result.tools[0].get("name", ""))) if manifest_result.tools else None
+        selected_tools = [tool for tool in manifest_result.tools if str(tool.get("name", "")) != GENERAL_CHAT_TOOL_NAME]
+        if manifest_result.used_semantic_ranking and not selected_tools:
+            return PlanDecision(
+                steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="semantic_no_tool_match")],
+                memory_context="",
+            )
+
+        first_manifest_tool = self.tools.get(str(selected_tools[0].get("name", ""))) if selected_tools else None
         if getattr(first_manifest_tool, "skip_planning_memory", False):
             memory_context = ""
         else:
             memory_context = self._retrieve_memory_context(user_message)
-        manifest = manifest_result.tools + [
-            {
-                "name": "general_chat",
-                "description": "Use ONLY when the user is having a normal conversation and no tool is needed.",
-                "args": {},
-                "required": [],
-                "safety": "read_only",
-            }
-        ]
+        manifest = selected_tools + [_general_chat_manifest()]
         conversation_context = self._conversation_context()
         decision = self.router.plan(user_message, manifest, memory_context=memory_context, conversation_context=conversation_context)
         decision.memory_context = memory_context
@@ -199,7 +244,10 @@ class JakataAgent:
         min_score = float(getattr(self.settings, "router_min_tool_score", 0.0) or 0.0)
         if embedder is None or limit <= 0:
             return SemanticToolManifest(None, limit=0, min_score=0.0).shortlist(user_message, manifest)
-        return SemanticToolManifest(embedder, limit=limit, min_score=min_score).shortlist(user_message, manifest)
+        return SemanticToolManifest(embedder, limit=limit, min_score=min_score).shortlist(
+            user_message,
+            [*manifest, _general_chat_manifest()],
+        )
 
     def _should_use_task_engine(self, decision: PlanDecision) -> bool:
         if self.task_engine is None:
@@ -391,8 +439,15 @@ class JakataAgent:
             return "local:tool", direct
         return self.client.complete(self._build_synthesis_messages(user_message, results, memory_context))
 
-    def _general_chat_reply(self, user_message: str, memory_context: str = "") -> tuple[str, str]:
-        return self.client.complete(self._build_general_chat_messages(user_message, memory_context))
+    def _general_chat_reply(
+        self,
+        user_message: str,
+        memory_context: str = "",
+        *,
+        client: NvidiaChatClient | None = None,
+    ) -> tuple[str, str]:
+        active_client = client or self.client
+        return active_client.complete(self._build_general_chat_messages(user_message, memory_context))
 
     def _build_general_chat_messages(self, user_message: str, memory_context: str = "") -> list[dict[str, Any]]:
         messages = [self.messages[0], *self._short_prompt_context()]
@@ -423,11 +478,18 @@ class JakataAgent:
             {"role": "user", "content": f"User: {user_message}{context_block}\n\nResults:\n" + "\n".join(step_summaries)},
         ]
 
-    def _stream_messages(self, user_message: str, messages: list[dict[str, Any]]) -> Iterator[tuple[str, str]]:
+    def _stream_messages(
+        self,
+        user_message: str,
+        messages: list[dict[str, Any]],
+        *,
+        client: NvidiaChatClient | None = None,
+    ) -> Iterator[tuple[str, str]]:
+        active_client = client or self.client
         chunks: list[str] = []
         current_model = ""
         try:
-            for model, chunk in self.client.stream_complete(messages):
+            for model, chunk in active_client.stream_complete(messages):
                 current_model = model
                 chunks.append(chunk)
                 yield model, chunk
@@ -435,7 +497,7 @@ class JakataAgent:
             if chunks:
                 self._record_conversation(user_message, "".join(chunks))
                 return
-            current_model, content = self.client.complete(messages)
+            current_model, content = active_client.complete(messages)
             chunks = [content]
             yield current_model, content
         self._record_conversation(user_message, "".join(chunks))
@@ -468,7 +530,38 @@ class JakataAgent:
 
     @staticmethod
     def _is_general_chat_decision(decision: PlanDecision) -> bool:
-        return all(step.tool == "general_chat" for step in decision.steps)
+        return all(step.tool == GENERAL_CHAT_TOOL_NAME for step in decision.steps)
+
+    def _semantic_general_chat_ready(self, manifest_result: Any) -> bool:
+        min_score = float(
+            getattr(
+                self.settings,
+                "router_general_chat_min_score",
+                getattr(self.settings, "router_min_tool_score", 0.0),
+            )
+            or 0.0
+        )
+        min_margin = float(getattr(self.settings, "router_general_chat_min_margin", 0.0) or 0.0)
+        margin = float(manifest_result.best_score) - float(getattr(manifest_result, "second_score", 0.0) or 0.0)
+        return float(manifest_result.best_score) >= min_score and margin >= min_margin
+
+    def _fast_client_for_decision(self, decision: PlanDecision) -> NvidiaChatClient | None:
+        if self.fast_client is None or decision.memory_context.strip():
+            return None
+        if not self._is_general_chat_decision(decision):
+            return None
+        semantic_reasons = {"semantic_no_tool_match", "semantic_general_chat", "semantic_general_chat_competitive"}
+        if all((step.reason or "") in semantic_reasons for step in decision.steps):
+            return self.fast_client
+        return None
+
+    def _semantic_general_chat_competitive(self, manifest_result: Any) -> bool:
+        names = [str(tool.get("name", "")) for tool in manifest_result.tools]
+        if GENERAL_CHAT_TOOL_NAME not in names[1:]:
+            return False
+        margin = float(manifest_result.best_score) - float(getattr(manifest_result, "second_score", 0.0) or 0.0)
+        min_margin = float(getattr(self.settings, "router_tool_over_chat_min_margin", 0.05) or 0.0)
+        return margin <= min_margin
 
     def _build_memory_payload(self, query: str) -> dict[str, Any]:
         retrieved = self.memory.retrieve(query)

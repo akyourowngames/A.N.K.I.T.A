@@ -234,6 +234,18 @@ def test_chat_stream_emits_sarvam_audio_when_tts_enabled(tmp_path: Path):
     assert any(item.get("activity", {}).get("event") == "tts_ready" for item in payloads if isinstance(item.get("activity"), dict))
 
 
+def test_tts_synthesize_endpoint_returns_audio_without_chat_stream(tmp_path: Path):
+    client = build_client(tmp_path)
+
+    response = client.post("/tts/synthesize", json={"text": "The document is ready, sir."})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["available"] is True
+    assert payload["audio_codec"] == "mp3"
+    assert base64.b64decode(payload["audio"]).startswith(b"mp3:The document is ready, sir.")
+
+
 def test_long_tts_is_limited_with_professional_closing(tmp_path: Path):
     client = build_client(tmp_path)
 

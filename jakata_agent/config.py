@@ -84,12 +84,18 @@ class Settings:
     sarvam_tts_preprocessing: bool = True
     sarvam_tts_max_spoken_chars: int = 420
     sarvam_tts_long_response_phrases: list[str] | None = None
-    router_model: str = "meta/llama-3.3-70b-instruct"
+    router_model: str = "nvidia/nemotron-mini-4b-instruct"
     router_timeout_seconds: float = 6.0
     router_max_retries: int = 1
     router_max_tokens: int = 512
     router_tool_limit: int = 5
     router_min_tool_score: float = 0.12
+    router_general_chat_min_score: float = 0.16
+    router_general_chat_min_margin: float = 0.015
+    router_tool_over_chat_min_margin: float = 0.05
+    fast_chat_model: str = "nvidia/nemotron-mini-4b-instruct"
+    fast_chat_fallback_models: list[str] | None = None
+    fast_chat_timeout_seconds: float = 8.0
     embedding_timeout_seconds: float = 8.0
     approval_policy: str = "auto_safe"
     companion_enabled: bool = True
@@ -221,13 +227,20 @@ def load_settings() -> Settings:
                 "I have prepared the full response, sir. Please review the written details when ready.|The full briefing is ready, sir. I have kept the detailed version in the chat.|I have completed the detailed answer, sir. The written version is ready for review.",
             )
         ),
-        router_model=os.getenv("JAKATA_ROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b").strip()
-        or "nvidia/nemotron-3-super-120b-a12b",
+        router_model=os.getenv("JAKATA_ROUTER_MODEL", "nvidia/nemotron-mini-4b-instruct").strip()
+        or "nvidia/nemotron-mini-4b-instruct",
         router_timeout_seconds=float(os.getenv("JAKATA_ROUTER_TIMEOUT_SECONDS", "6").strip() or "6"),
         router_max_retries=int(os.getenv("JAKATA_ROUTER_MAX_RETRIES", "1").strip() or "1"),
         router_max_tokens=int(os.getenv("JAKATA_ROUTER_MAX_TOKENS", "512").strip() or "512"),
         router_tool_limit=int(os.getenv("JAKATA_ROUTER_TOOL_LIMIT", "5").strip() or "5"),
         router_min_tool_score=float(os.getenv("JAKATA_ROUTER_MIN_TOOL_SCORE", "0.12").strip() or "0.12"),
+        router_general_chat_min_score=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_SCORE", "0.16").strip() or "0.16"),
+        router_general_chat_min_margin=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_MARGIN", "0.015").strip() or "0.015"),
+        router_tool_over_chat_min_margin=float(os.getenv("JAKATA_ROUTER_TOOL_OVER_CHAT_MIN_MARGIN", "0.05").strip() or "0.05"),
+        fast_chat_model=os.getenv("JAKATA_FAST_CHAT_MODEL", "nvidia/nemotron-mini-4b-instruct").strip()
+        or "nvidia/nemotron-mini-4b-instruct",
+        fast_chat_fallback_models=_split_csv(os.getenv("JAKATA_FAST_CHAT_FALLBACK_MODELS", "")),
+        fast_chat_timeout_seconds=float(os.getenv("JAKATA_FAST_CHAT_TIMEOUT_SECONDS", "8").strip() or "8"),
         embedding_timeout_seconds=float(os.getenv("JAKATA_EMBEDDING_TIMEOUT_SECONDS", "8").strip() or "8"),
         approval_policy=_normalize_approval_policy(os.getenv("JAKATA_APPROVAL_POLICY", "auto_safe")),
         companion_enabled=_env_bool("JAKATA_COMPANION_ENABLED", True),

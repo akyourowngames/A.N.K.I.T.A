@@ -183,6 +183,7 @@ class TelegramBotController:
         return JakataAgent(
             settings=runtime.settings,
             client=runtime.client,
+            fast_client=getattr(runtime, "fast_client", None),
             tools=tools or runtime.tools,
             memory=runtime.memory,
             router=runtime.router,

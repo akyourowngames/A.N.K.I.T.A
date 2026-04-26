@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 from jakata_agent.camera import CameraSession
 from jakata_agent.companion import CompanionStore, ProactiveCompanionEngine
@@ -40,6 +40,7 @@ from jakata_agent.tools.weather import OpenWeatherTool
 class JakataRuntime:
     settings: Settings
     client: NvidiaChatClient
+    fast_client: NvidiaChatClient
     automation_client: TextCompletionClient
     tools: ToolRegistry
     memory: MemoryManager
@@ -58,6 +59,17 @@ class JakataRuntime:
 def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     settings = settings or load_settings()
     client = NvidiaChatClient(settings)
+    fast_fallbacks = settings.fast_chat_fallback_models or [
+        model for model in [settings.primary_model, *settings.fallback_models] if model != settings.fast_chat_model
+    ]
+    fast_settings = replace(
+        settings,
+        primary_model=settings.fast_chat_model,
+        fallback_models=fast_fallbacks,
+        timeout_seconds=settings.fast_chat_timeout_seconds,
+        max_retries=1,
+    )
+    fast_client = NvidiaChatClient(fast_settings)
     router_client = build_router_client(settings, client)
     automation_client = build_automation_client(settings, client)
     browser_automation_client = build_browser_automation_client(settings, automation_client)
@@ -140,6 +152,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     return JakataRuntime(
         settings=settings,
         client=client,
+        fast_client=fast_client,
         automation_client=automation_client,
         tools=tools,
         memory=memory,

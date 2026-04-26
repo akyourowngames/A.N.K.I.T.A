@@ -153,6 +153,36 @@ class ReadFileEmbedder:
         return [0.91 if "read_file" in text else 0.01 for text in texts]
 
 
+class GeneralChatEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        scores: list[float] = []
+        for text in texts:
+            text_l = text.lower()
+            if "general_chat" in text_l and "no tool needed" in text_l:
+                scores.append(0.46)
+            elif "coding_agent" in text_l or "document" in text_l:
+                scores.append(0.18)
+            else:
+                scores.append(0.03)
+        return scores
+
+
+class GeneralChatRunnerUpEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        scores: list[float] = []
+        for text in texts:
+            text_l = text.lower()
+            if "produce_path" in text_l:
+                scores.append(0.24)
+            elif "general_chat" in text_l and "no tool needed" in text_l:
+                scores.append(0.21)
+            else:
+                scores.append(0.02)
+        return scores
+
+
 class CapturingCodingController:
     def __init__(self) -> None:
         self.cwd = ""
@@ -172,6 +202,7 @@ def build_agent(
     embedder=None,
     router_tool_limit: int = 0,
     router_min_tool_score: float = 0.0,
+    fast_client=None,
 ) -> JakataAgent:
     settings = SimpleNamespace(
         session_id="test",
@@ -189,6 +220,7 @@ def build_agent(
         router=IntentRouter(client),
         validator=PlanValidator(),
         task_store=TaskStore(tmp_path / "jakata.db"),
+        fast_client=fast_client,
         task_engine=None,
     )
 
@@ -260,6 +292,72 @@ def test_semantic_no_match_skips_router_and_uses_streamable_chat_path(tmp_path: 
     assert client.router_calls == 0
     assert client.chat_calls == 1
     assert agent.memory.retrieve_calls == 0
+
+
+def test_semantic_general_chat_candidate_skips_planner_for_chat_only_work(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"coding_agent","args":{},"reason":"wrong"}]}')
+    tools = ToolRegistry()
+    tools.register(CodingAgentTool(CapturingCodingController()))  # type: ignore[arg-type]
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=GeneralChatEmbedder(),
+        router_tool_limit=3,
+        router_min_tool_score=0.09,
+    )
+
+    decision = agent.plan("Create a detailed landing page plan here without editing files.")
+
+    assert decision.steps[0].tool == "general_chat"
+    assert decision.steps[0].reason == "semantic_general_chat"
+    assert client.router_calls == 0
+    assert agent.memory.retrieve_calls == 0
+
+
+def test_semantic_general_chat_runner_up_beats_ambiguous_tool_without_router(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"produce_path","args":{},"reason":"wrong"}]}')
+    tools = ToolRegistry()
+    tools.register(ProducePathTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=GeneralChatRunnerUpEmbedder(),
+        router_tool_limit=2,
+        router_min_tool_score=0.09,
+    )
+
+    decision = agent.plan("Draft the plan here in chat without taking local action.")
+
+    assert decision.steps[0].tool == "general_chat"
+    assert decision.steps[0].reason == "semantic_general_chat_competitive"
+    assert client.router_calls == 0
+    assert agent.memory.retrieve_calls == 0
+
+
+def test_semantic_no_match_can_use_fast_chat_client(tmp_path: Path):
+    client = RouterAnswerClient('{"answer":"router should not be called"}')
+    fast_client = RouterAnswerClient('{"answer":"unused"}')
+    tools = ToolRegistry()
+    tools.register(DateTimeTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+        fast_client=fast_client,
+    )
+
+    model, content = agent.reply("casual message")
+
+    assert model == "chat-model"
+    assert content == "chat fallback"
+    assert client.router_calls == 0
+    assert client.chat_calls == 0
+    assert fast_client.chat_calls == 1
 
 
 def test_specific_semantic_direct_tool_answers_without_router(tmp_path: Path):

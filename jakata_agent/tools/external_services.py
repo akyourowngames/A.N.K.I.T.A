@@ -65,6 +65,9 @@ def _render_items(items: list[dict[str, Any]], *, empty: str) -> str:
 
 class ExternalServicesStatusTool(Tool):
     name = "external_services_status"
+    semantic_direct = True
+    semantic_direct_min_score = 0.42
+    semantic_direct_min_margin = 0.05
     description = "Check Google Workspace integration health for Calendar, Gmail, OAuth authorization, and the local external-service sync cache."
     input_schema = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     safety = "read_only"

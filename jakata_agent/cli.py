@@ -59,6 +59,7 @@ def build_agent() -> tuple[JakataAgent, JakataRuntime]:
         JakataAgent(
             settings=runtime.settings,
             client=runtime.client,
+            fast_client=runtime.fast_client,
             tools=runtime.tools,
             memory=runtime.memory,
             router=runtime.router,
