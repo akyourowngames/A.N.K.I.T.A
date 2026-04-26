@@ -69,9 +69,7 @@ class TaskCompletionEngine:
         task = self.task_store.create_task(
             goal=goal,
             session_id=session_id,
-            execution_mode="foreground",
             context=context,
-            background_reason=decision.background_reason if decision else "",
             budget_minutes=budget,
             repair_limit=DEFAULT_TASK_REPAIR_LIMIT,
             action_limit=DEFAULT_TASK_ACTION_LIMIT,

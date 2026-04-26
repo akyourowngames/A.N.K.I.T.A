@@ -30,8 +30,6 @@ class PlanStep:
 @dataclass(slots=True)
 class PlanDecision:
     steps: list[PlanStep]
-    execution_mode: str = "foreground"
-    background_reason: str = ""
     direct_answer: str = ""
     memory_context: str = ""
 
@@ -75,8 +73,6 @@ class IntentRouter:
         if answer:
             return PlanDecision(
                 steps=[PlanStep(tool="general_chat", args={}, reason="direct_answer")],
-                execution_mode="foreground",
-                background_reason="",
                 direct_answer=answer,
                 memory_context=context,
             )
@@ -104,8 +100,6 @@ class IntentRouter:
             return self._fallback("no_valid_steps")
         return PlanDecision(
             steps=steps,
-            execution_mode="foreground",
-            background_reason="",
             memory_context=context,
         )
 
@@ -113,8 +107,6 @@ class IntentRouter:
     def _fallback(reason: str) -> PlanDecision:
         return PlanDecision(
             steps=[PlanStep(tool="general_chat", args={}, reason=reason)],
-            execution_mode="foreground",
-            background_reason="",
         )
 
     @staticmethod

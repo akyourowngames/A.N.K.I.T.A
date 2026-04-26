@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import threading
 import time
 
 from prompt_toolkit import prompt
@@ -18,7 +17,6 @@ from rich.text import Text
 
 from jakata_agent.agent import JakataAgent
 from jakata_agent.runtime import JakataRuntime, create_runtime
-from jakata_agent.tasks.notifications import BackgroundTaskNotifier
 
 
 console = Console(soft_wrap=True, highlight=False)
@@ -64,10 +62,9 @@ def build_agent() -> tuple[JakataAgent, JakataRuntime]:
             tools=runtime.tools,
             memory=runtime.memory,
             router=runtime.router,
-            validator=runtime.validator,
-            task_store=runtime.task_store,
-            daemon=runtime.daemon,
-            task_engine=runtime.task_engine,
+        validator=runtime.validator,
+        task_store=runtime.task_store,
+        task_engine=runtime.task_engine,
         ),
         runtime,
     )
@@ -90,13 +87,12 @@ def _build_detail_table(rows: list[tuple[str, object]]) -> Table:
 def print_welcome(agent: JakataAgent) -> None:
     intro = Group(
         Text("JAKATA CLI", style="bold #9ec5a2"),
-        Text("Simple operator shell for chat, tools, and background tasks.", style="#8b949e"),
+        Text("Simple operator shell for foreground chat and tools.", style="#8b949e"),
     )
     session = _build_detail_table(
         [
             ("Session", agent.settings.session_id),
             ("Data", agent.settings.data_dir),
-            ("Background", "Use /bg to queue work"),
             ("Input", "Enter sends, Esc+Enter adds a newline"),
         ]
     )
@@ -109,7 +105,6 @@ def print_welcome(agent: JakataAgent) -> None:
         ("/models", "show model order"),
         ("/camera", "open live camera preview"),
         ("/memory", "show memory paths"),
-        ("/bg <goal>", "queue a background task"),
         ("/tasks", "list recent tasks"),
         ("/task <id>", "inspect one task"),
         ("/approve <id>", "approve a waiting action"),
@@ -117,8 +112,6 @@ def print_welcome(agent: JakataAgent) -> None:
         ("/cancel <id>", "cancel a task"),
         ("/agents <id>", "inspect agent runs"),
         ("/graph <query>", "search the memory graph"),
-        ("/kill", "enable kill switch"),
-        ("/unkill", "clear kill switch"),
         ("/exit", "leave the shell"),
     ]:
         commands.add_row(command, description)
@@ -153,7 +146,6 @@ def print_help() -> None:
         ("/camera status", "show live camera state"),
         ("/camera ask <prompt>", "force live camera analysis now"),
         ("/memory", "show memory storage location"),
-        ("/bg <goal>", "queue a background task"),
         ("/tasks", "list recent tasks"),
         ("/task <id>", "inspect one task and recent events"),
         ("/approve <id>", "approve a waiting action"),
@@ -161,8 +153,6 @@ def print_help() -> None:
         ("/cancel <id>", "cancel a task"),
         ("/agents <id>", "inspect agent runs for a task"),
         ("/graph <query>", "inspect the live memory graph"),
-        ("/kill", "enable global daemon kill switch"),
-        ("/unkill", "clear global daemon kill switch"),
         ("Enter", "send message"),
         ("Esc+Enter", "insert newline for long prompts"),
         ("/exit", "quit"),
@@ -277,38 +267,6 @@ def handle_camera_command(user_input: str, runtime: JakataRuntime) -> tuple[bool
     return True, "Camera commands: /camera, /camera off, /camera status, /camera ask <prompt>"
 
 
-def print_task_message(message: str) -> None:
-    line = Text()
-    line.append("task", style="bold #9ec5a2")
-    line.append(" ", style="dim")
-    line.append(time.strftime("%H:%M:%S"), style="#8b949e")
-    line.append("  ", style="dim")
-    line.append(message, style="white")
-    console.print(line)
-
-
-def start_background_notifier(
-    runtime: JakataRuntime,
-    notifier: BackgroundTaskNotifier,
-    suppress_event: threading.Event,
-) -> tuple[threading.Event, threading.Thread]:
-    stop_event = threading.Event()
-
-    def worker() -> None:
-        while not stop_event.is_set():
-            if suppress_event.is_set():
-                stop_event.wait(0.25)
-                continue
-            messages = notifier.collect(runtime.task_store)
-            for message in messages:
-                print_task_message(message)
-            stop_event.wait(2.0)
-
-    thread = threading.Thread(target=worker, name="jakata-task-notifier", daemon=True)
-    thread.start()
-    return stop_event, thread
-
-
 def _should_refresh_stream(last_render: float, now: float, chunk: str) -> bool:
     if last_render == 0.0:
         return True
@@ -372,19 +330,11 @@ def stream_assistant_reply(agent: JakataAgent, user_input: str) -> str:
 def main() -> None:
     agent, runtime = build_agent()
     settings = runtime.settings
-    notifier = BackgroundTaskNotifier(session_id=settings.session_id)
-    suppress_notifier = threading.Event()
-    stop_notifier, notifier_thread = start_background_notifier(runtime, notifier, suppress_notifier)
 
     print_welcome(agent)
 
     try:
         while True:
-            startup_messages = notifier.collect(runtime.task_store)
-            for message in startup_messages:
-                print_task_message(message)
-            if startup_messages:
-                console.print()
             try:
                 user_input = read_user_input()
             except (EOFError, KeyboardInterrupt):
@@ -452,9 +402,7 @@ def main() -> None:
                             f"data: {settings.data_dir}\n"
                             f"chat archive: {settings.data_dir / 'chats'}\n"
                             f"knowledge: {settings.data_dir / 'knowledge'}\n"
-                            f"memory db: {settings.data_dir / 'memory' / 'jakata.db'}\n"
-                            f"daemon pid file: {runtime.daemon.pid_file}\n"
-                            f"kill switch: {runtime.daemon.kill_switch}"
+                            f"memory db: {settings.data_dir / 'memory' / 'jakata.db'}"
                         ),
                         title="Memory",
                         border_style="#4b5563",
@@ -462,14 +410,6 @@ def main() -> None:
                         padding=(0, 1),
                     )
                 )
-                continue
-            if lowered.startswith("/bg "):
-                goal = user_input[4:].strip()
-                if not goal:
-                    console.print(Panel.fit("Usage: /bg <goal>", border_style="red", box=box.SQUARE))
-                    continue
-                task_id = agent.submit_background_task(goal)
-                console.print(Panel.fit(f"Queued background task: {task_id}", border_style="#4b5563", box=box.SQUARE))
                 continue
             if lowered == "/tasks":
                 tasks = runtime.task_store.list_tasks(limit=15)
@@ -540,28 +480,10 @@ def main() -> None:
                 console.print(Panel(body, title="Graph", border_style="#4b5563", box=box.SQUARE, padding=(0, 1)))
                 console.print()
                 continue
-            if lowered == "/kill":
-                runtime.daemon.activate_kill_switch()
-                console.print(Panel.fit("Global kill switch enabled.", border_style="#4b5563", box=box.SQUARE))
-                continue
-            if lowered == "/unkill":
-                runtime.daemon.clear_kill_switch()
-                console.print(Panel.fit("Global kill switch cleared.", border_style="#4b5563", box=box.SQUARE))
-                continue
             try:
                 console.print()
-                suppress_notifier.set()
-                try:
-                    stream_assistant_reply(agent, user_input)
-                finally:
-                    suppress_notifier.clear()
-                completion_messages = notifier.collect(runtime.task_store)
-                for message in completion_messages:
-                    print_task_message(message)
-                if completion_messages:
-                    console.print()
+                stream_assistant_reply(agent, user_input)
             except Exception as exc:  # noqa: BLE001
-                suppress_notifier.clear()
                 console.print(
                     Panel.fit(
                         Text(str(exc), style="white"),
@@ -572,5 +494,3 @@ def main() -> None:
                 )
     finally:
         runtime.camera_session.stop()
-        stop_notifier.set()
-        notifier_thread.join(timeout=1.0)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import base64
 import sys
 from pathlib import Path
 from types import SimpleNamespace
@@ -72,6 +73,13 @@ class FakeAgent:
 
     def stream_general_chat(self, user_message: str):
         self.history.append(user_message)
+        if "long voice" in user_message.lower():
+            yield "fake-model", (
+                "This is a long spoken response with many details. "
+                "It keeps going with setup steps, extra notes, verification details, and more explanation. "
+                "This final sentence should stay on the screen instead of being fully read aloud."
+            )
+            return
         yield "fake-model", f"turn {len(self.history)}: {user_message}"
 
     def stream_tool_results_reply(self, user_message: str, tool_results: list[dict[str, object]]):
@@ -129,7 +137,20 @@ def build_settings(tmp_path: Path) -> Settings:
         image_model="fake-image-model",
         image_size="1024x1024",
         image_output_dir=tmp_path / "images",
+        sarvam_api_key="sarvam-test-key",
+        sarvam_tts_max_spoken_chars=95,
+        sarvam_tts_long_response_phrases=["The rest of the chat is on screen, sir. You can check it out."],
     )
+
+
+class FakeTTSClient:
+    def stream(self, text: str):
+        yield f"mp3:{text}".encode("utf-8")
+
+
+def fake_tts_client_factory(settings: Settings) -> FakeTTSClient:
+    assert settings.sarvam_api_key == "sarvam-test-key"
+    return FakeTTSClient()
 
 
 def build_client(tmp_path: Path) -> TestClient:
@@ -139,7 +160,11 @@ def build_client(tmp_path: Path) -> TestClient:
         runtime_factory=fake_runtime_factory,
         agent_builder=fake_agent_builder,
     )
-    app = create_app(base_settings=settings, session_manager=session_manager)
+    app = create_app(
+        base_settings=settings,
+        session_manager=session_manager,
+        tts_client_factory=fake_tts_client_factory,
+    )
     return TestClient(app)
 
 
@@ -192,6 +217,32 @@ def test_chat_stream_emits_session_and_done(tmp_path: Path):
     assert any(item.get("activity", {}).get("event") == "routing" for item in payloads if isinstance(item.get("activity"), dict))
     assert any(item.get("chunk") == "turn 1: hello there" for item in payloads)
     assert payloads[-1]["done"] is True
+
+
+def test_chat_stream_emits_sarvam_audio_when_tts_enabled(tmp_path: Path):
+    client = build_client(tmp_path)
+
+    response = client.post("/chat/stream", json={"message": "hello there", "tts": True})
+    assert response.status_code == 200
+
+    payloads = parse_sse_payloads(response.text)
+    audio_payload = next(item for item in payloads if "audio" in item)
+    decoded = base64.b64decode(str(audio_payload["audio"]))
+    assert decoded.startswith(b"mp3:turn 1: hello there")
+    assert any(item.get("activity", {}).get("event") == "tts_ready" for item in payloads if isinstance(item.get("activity"), dict))
+
+
+def test_long_tts_is_limited_and_points_to_screen(tmp_path: Path):
+    client = build_client(tmp_path)
+
+    response = client.post("/chat/stream", json={"message": "long voice please", "tts": True})
+    assert response.status_code == 200
+
+    payloads = parse_sse_payloads(response.text)
+    decoded_audio = b" ".join(base64.b64decode(str(item["audio"])) for item in payloads if "audio" in item)
+    assert b"The rest of the chat is on screen, sir" in decoded_audio
+    assert b"final sentence should stay on the screen" not in decoded_audio
+    assert any(item.get("activity", {}).get("event") == "tts_limited" for item in payloads if isinstance(item.get("activity"), dict))
 
 
 def test_session_id_keeps_conversation_context(tmp_path: Path):

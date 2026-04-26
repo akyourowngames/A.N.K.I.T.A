@@ -87,6 +87,8 @@ let currentMode = 'jarvis';
  * assistant is still replying (avoids race conditions and garbled output).
  */
 let isStreaming = false;
+let currentStreamController = null;
+let currentStreamAbortReason = '';
 
 /*
  * isListening — True while the speech recognition engine is actively
@@ -107,6 +109,7 @@ const SPEECH_ERROR_MAX_RETRIES = 3;
 let speechErrorRetryCount = 0;
 const SPEECH_SEND_DELAY_MS = 500;   /* Pause after final transcript before sending (lets user add more) */
 const SPEECH_RESTART_DELAY_MS = 700; /* Delay before restarting mic after AI+TTS complete (avoids echo) */
+const SPEECH_RECOGNITION_LANGUAGE = 'hi-IN';
 let speechSendTimeout = null;
 let pendingSendTranscript = null;
 let safariVoiceHintShown = false;
@@ -578,7 +581,7 @@ function initSpeech() {
     recognition.continuous = false;
     recognition.interimResults = !safariMode;
     recognition.maxAlternatives = 1;
-    recognition.lang = 'en-US';
+    recognition.lang = SPEECH_RECOGNITION_LANGUAGE;
 
     console.log('[SPEECH] Initialized with settings:', {
         continuous: recognition.continuous,
@@ -768,6 +771,14 @@ function startListening() {
     }
 }
 
+function interruptResponse(reason = 'interrupted') {
+    currentStreamAbortReason = reason;
+    if (ttsPlayer) ttsPlayer.stop();
+    if (currentStreamController) {
+        try { currentStreamController.abort(); } catch (_) {}
+    }
+}
+
 /**
  * stopListening() — Deactivates the microphone and stops recognition.
  *
@@ -884,6 +895,18 @@ function bindEvents() {
 
     // MIC BUTTON — Toggle speech recognition. When ON: auto mode — listen, stop on send, restart after AI+TTS done.
     if (micBtn) micBtn.addEventListener('click', () => {
+        if (isStreaming || (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0))) {
+            autoListenMode = true;
+            if (micBtn) {
+                micBtn.classList.add('auto-listen');
+                micBtn.title = 'Voice input — click to stop auto-listen';
+            }
+            interruptResponse('voice_interrupt');
+            setTimeout(() => {
+                if (autoListenMode && !isStreaming && !isListening) startListening();
+            }, 250);
+            return;
+        }
         if (isListening) {
             autoListenMode = false;
             stopListening();
@@ -1521,6 +1544,8 @@ async function sendMessage(textOverride) {
     let firstChunkReceived = false;
     let timeoutId = null;
     const controller = new AbortController();
+    currentStreamController = controller;
+    currentStreamAbortReason = '';
 
     try {
         // ─── Pre-starter + Main stream ───
@@ -1660,11 +1685,16 @@ async function sendMessage(textOverride) {
     } catch (err) {
         clearTimeout(timeoutId);
         removeTypingIndicator();
+        if (err.name === 'AbortError' && currentStreamAbortReason === 'voice_interrupt') {
+            showToast('Interrupted. Listening now.');
+            return;
+        }
         const msg = err.name === 'AbortError' ? 'Request timed out. Please try again.' : `Something went wrong: ${err.message}`;
         addMessage('assistant', msg);
         showToast(msg);
     } finally {
         clearTimeout(timeoutId);
+        if (currentStreamController === controller) currentStreamController = null;
         isStreaming = false;
         if (sendBtn) sendBtn.disabled = false;
         if (messageInput) messageInput.disabled = false;

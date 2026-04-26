@@ -7,7 +7,7 @@ from jakata_agent.tools.base import Tool, ToolResult
 
 class MemoryTool(Tool):
     name = "memory"
-    description = "Recall stored user facts, knowledge files, semantic memory matches, graph facts, and archived chat context."
+    description = "Recall stored user identity, profile facts, preferences, knowledge files, semantic memory matches, graph facts, and archived chat context."
     input_schema = {
         "type": "object",
         "properties": {

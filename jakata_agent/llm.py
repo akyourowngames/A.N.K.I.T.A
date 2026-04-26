@@ -149,10 +149,12 @@ class NvidiaTextClient:
         model_chain: list[str],
         timeout_seconds: float = 60.0,
         max_retries: int = 3,
+        max_tokens: int | None = None,
     ) -> None:
         self.model_chain = [item for item in model_chain if item]
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self.max_tokens = max_tokens
         self.client = OpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -169,11 +171,14 @@ class NvidiaTextClient:
         for model in self.model_chain:
             for attempt in range(1, self.max_retries + 1):
                 try:
-                    response = self.client.chat.completions.create(
-                        model=model,
-                        messages=messages,
-                        temperature=temperature,
-                    )
+                    request: dict[str, Any] = {
+                        "model": model,
+                        "messages": messages,
+                        "temperature": temperature,
+                    }
+                    if self.max_tokens is not None:
+                        request["max_tokens"] = self.max_tokens
+                    response = self.client.chat.completions.create(**request)
                     content = response.choices[0].message.content or ""
                     if not content.strip():
                         raise RuntimeError("Model returned an empty response.")
@@ -279,6 +284,28 @@ def build_automation_client(settings: Settings, fallback: NvidiaChatClient) -> T
     if backend == "auto":
         return FallbackTextClient(codex_client, nvidia_automation or fallback)
     return nvidia_automation or fallback
+
+
+def build_router_client(settings: Settings, fallback: NvidiaChatClient) -> TextCompletionClient:
+    seen: set[str] = set()
+    model_chain: list[str] = []
+    for model in [settings.router_model, settings.primary_model, *settings.fallback_models]:
+        if model and model not in seen:
+            seen.add(model)
+            model_chain.append(model)
+    if not model_chain:
+        return fallback
+    return FallbackTextClient(
+        NvidiaTextClient(
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            model_chain=model_chain,
+            timeout_seconds=settings.router_timeout_seconds,
+            max_retries=settings.router_max_retries,
+            max_tokens=settings.router_max_tokens,
+        ),
+        fallback,
+    )
 
 
 def build_browser_automation_client(settings: Settings, fallback: TextCompletionClient) -> TextCompletionClient:

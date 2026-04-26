@@ -23,9 +23,8 @@ class TaskRecord:
     goal: str
     status: str
     session_id: str
-    execution_mode: str = "background"
+    execution_mode: str = "foreground"
     context: str = ""
-    background_reason: str = ""
     budget_minutes: int = DEFAULT_TASK_BUDGET_MINUTES
     repair_limit: int = DEFAULT_TASK_REPAIR_LIMIT
     action_limit: int = DEFAULT_TASK_ACTION_LIMIT

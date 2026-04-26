@@ -13,19 +13,13 @@ from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.prompts import load_prompt
 from jakata_agent.router import IntentRouter, PlanDecision, PlanStep
 from jakata_agent.tasks.approval import GUARDED_TOOLS, ApprovalDenied, ApprovalGate, ApprovalRequired
-from jakata_agent.tasks.daemon import DaemonManager
 from jakata_agent.tasks.engine import TaskCompletionEngine
-from jakata_agent.tasks.models import (
-    DEFAULT_TASK_ACTION_LIMIT,
-    DEFAULT_TASK_BUDGET_MINUTES,
-    DEFAULT_TASK_REPAIR_LIMIT,
-    MAX_TASK_BUDGET_MINUTES,
-)
 from jakata_agent.tasks.store import TaskStore
 from jakata_agent.tools.base import ToolResult
 from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.os_agent import OsAgentTool
 from jakata_agent.tools.registry import ToolRegistry
+from jakata_agent.tools.semantic_manifest import SemanticToolManifest
 
 
 SYSTEM_PROMPT = load_prompt("agent/system.md")
@@ -40,7 +34,6 @@ PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
 class AgentResponse:
     model: str
     content: str
-    background_task_id: str | None = None
     tool_results: list[dict[str, Any]] = field(default_factory=list)
 
 
@@ -53,7 +46,6 @@ class JakataAgent:
     router: IntentRouter
     validator: PlanValidator
     task_store: TaskStore
-    daemon: DaemonManager
     task_engine: TaskCompletionEngine | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
 
@@ -87,6 +79,12 @@ class JakataAgent:
             yield from self._stream_messages(user_message, messages)
             return
 
+        direct = self._direct_tool_reply(tool_results)
+        if direct is not None:
+            self._record_conversation(user_message, direct)
+            yield "local:tool", direct
+            return
+
         messages = self._build_synthesis_messages(user_message, tool_results, decision.memory_context)
         yield from self._stream_messages(user_message, messages)
 
@@ -116,35 +114,6 @@ class JakataAgent:
             return
         yield from self._stream_messages(user_message, self._build_synthesis_messages(user_message, tool_results))
 
-    def submit_background_task(
-        self,
-        goal: str,
-        *,
-        context: str = "",
-        success_criteria: list[str] | None = None,
-        budget_minutes: int = DEFAULT_TASK_BUDGET_MINUTES,
-        allowed_surfaces: list[str] | None = None,
-        cwd: str = "",
-    ) -> str:
-        budget = min(max(int(budget_minutes), 1), MAX_TASK_BUDGET_MINUTES)
-        task = self.task_store.create_task(
-            goal=goal,
-            session_id=self.settings.session_id,
-            execution_mode="background",
-            context=context,
-            background_reason="explicit_background_request",
-            budget_minutes=budget,
-            repair_limit=DEFAULT_TASK_REPAIR_LIMIT,
-            action_limit=DEFAULT_TASK_ACTION_LIMIT,
-            success_criteria=success_criteria or [],
-            allowed_surfaces=allowed_surfaces or [],
-            cwd=cwd,
-        )
-        self.task_store.append_event(task.id, "planned", {"source": "cli_bg"})
-        self.memory.remember_task_event(task.id, task.goal, "planned", {"source": "cli_bg"})
-        self.daemon.ensure_running()
-        return task.id
-
     def reset(self) -> None:
         self.messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{self.memory.bootstrap_system_note()}"}]
         self.memory.persist_turn(self.messages)
@@ -164,7 +133,7 @@ class JakataAgent:
             return AgentResponse(model=model, content=content)
         if self._should_use_task_engine(decision):
             result = self._run_task_engine(user_message, decision)
-            return AgentResponse(model=result.model, content=result.report, background_task_id=result.task.id)
+            return AgentResponse(model=result.model, content=result.report)
         tool_results = self._execute(decision.steps)
         if not tool_results:
             model, content = self._general_chat_reply(user_message, decision.memory_context)
@@ -174,7 +143,22 @@ class JakataAgent:
         return AgentResponse(model=model, content=content, tool_results=tool_results)
 
     def _plan(self, user_message: str) -> PlanDecision:
-        manifest = self.tools.manifest(public_only=True) + [
+        manifest_result = self._planner_manifest(user_message)
+        memory_context = self._retrieve_memory_context(user_message)
+        if manifest_result.used_semantic_ranking and manifest_result.tools:
+            first_tool = self.tools.get(str(manifest_result.tools[0].get("name", "")))
+            if getattr(first_tool, "semantic_direct", False):
+                return PlanDecision(
+                    steps=[PlanStep(tool=first_tool.name, args={}, reason="semantic_direct_tool")],
+                    memory_context=memory_context,
+                )
+        if manifest_result.used_semantic_ranking and not manifest_result.tools:
+            return PlanDecision(
+                steps=[PlanStep(tool="general_chat", args={}, reason="semantic_no_tool_match")],
+                memory_context=memory_context,
+            )
+
+        manifest = manifest_result.tools + [
             {
                 "name": "general_chat",
                 "description": "Use ONLY when the user is having a normal conversation and no tool is needed.",
@@ -183,47 +167,20 @@ class JakataAgent:
                 "safety": "read_only",
             }
         ]
-        memory_context = self._retrieve_memory_context(user_message)
         conversation_context = self._conversation_context()
         decision = self.router.plan(user_message, manifest, memory_context=memory_context, conversation_context=conversation_context)
         decision.memory_context = memory_context
         decision.steps = self.validator.validate(decision.steps, self.tools).steps[:MAX_TOOL_STEPS]
         return decision
 
-    def _enqueue_background_task(self, user_message: str, decision: PlanDecision) -> str:
-        task = self.task_store.create_task(
-            goal=user_message,
-            session_id=self.settings.session_id,
-            execution_mode="background",
-            context=self.memory.retrieve(user_message).to_system_context(),
-            background_reason=decision.background_reason or "router_requested_background",
-            budget_minutes=DEFAULT_TASK_BUDGET_MINUTES,
-            repair_limit=DEFAULT_TASK_REPAIR_LIMIT,
-            action_limit=DEFAULT_TASK_ACTION_LIMIT,
-            success_criteria=[],
-            allowed_surfaces=[],
-            cwd="",
-        )
-        self.task_store.append_event(
-            task.id,
-            "planned",
-            {
-                "execution_mode": decision.execution_mode,
-                "background_reason": decision.background_reason,
-                "steps": [
-                    {
-                        "tool": step.tool,
-                        "args": step.args,
-                        "reason": step.reason,
-                        "fallbacks": [{"tool": item.tool, "args": item.args, "reason": item.reason} for item in step.fallbacks],
-                    }
-                    for step in decision.steps
-                ],
-            },
-        )
-        self.memory.remember_task_event(task.id, task.goal, "planned", {"background_reason": decision.background_reason})
-        self.daemon.ensure_running()
-        return task.id
+    def _planner_manifest(self, user_message: str):
+        manifest = self.tools.manifest(public_only=True)
+        embedder = getattr(self.memory, "embedder", None)
+        limit = int(getattr(self.settings, "router_tool_limit", 0) or 0)
+        min_score = float(getattr(self.settings, "router_min_tool_score", 0.0) or 0.0)
+        if embedder is None or limit <= 0:
+            return SemanticToolManifest(None, limit=0, min_score=0.0).shortlist(user_message, manifest)
+        return SemanticToolManifest(embedder, limit=limit, min_score=min_score).shortlist(user_message, manifest)
 
     def _should_use_task_engine(self, decision: PlanDecision) -> bool:
         if self.task_engine is None:
@@ -338,11 +295,12 @@ class JakataAgent:
             )
         if isinstance(tool, CodingAgentTool):
             normalized = tool.normalize_args(dict(step.args))
+            cwd = str(normalized.get("cwd", "")).strip() or str(self._generated_projects_dir())
             return tool.controller.run_goal(
                 str(normalized["goal"]),
                 context=str(normalized.get("context", "")),
                 success_criteria=list(normalized.get("success_criteria", [])),
-                cwd=str(normalized.get("cwd", self._workspace_dir())),
+                cwd=cwd,
                 budget_minutes=int(normalized.get("budget_minutes", 20)),
                 allowed_tools=list(normalized.get("allowed_tools", [])),
                 approval_gate=approval_gate,
@@ -378,6 +336,9 @@ class JakataAgent:
         from pathlib import Path
 
         return Path(getattr(self.settings, "data_dir", Path("data"))).resolve()
+
+    def _generated_projects_dir(self):
+        return self._data_dir() / "generated" / "projects"
 
     def _approval_policy(self) -> str:
         return str(getattr(self.settings, "approval_policy", "auto_safe"))

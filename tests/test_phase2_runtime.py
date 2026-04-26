@@ -40,7 +40,6 @@ from jakata_agent.memory.graph_store import GraphStore
 from jakata_agent.router import IntentRouter
 from jakata_agent.tasks.approval import ApprovalGate, ApprovalRequired
 from jakata_agent.tasks.engine import TaskCompletionEngine
-from jakata_agent.tasks.notifications import BackgroundTaskNotifier
 from jakata_agent.tasks.orchestrator import TaskOrchestrator
 from jakata_agent.tasks.store import TaskStore
 from jakata_agent.telegram_artifacts import TelegramArtifactService
@@ -80,7 +79,7 @@ class FakeClient:
             if "AI news" in observations or "Chrome" in observations:
                 return "fake-model", '{"ok": true, "summary": "verified", "reason": "verified"}'
             return "fake-model", '{"ok": false, "summary": "not verified", "reason": "unmet_precondition"}'
-        return "fake-model", '{"execution_mode":"background","background_reason":"long task","steps":[{"tool":"os_agent","args":{"goal":"open app"},"reason":"needs os flow"}]}'
+        return "fake-model", '{"steps":[{"tool":"os_agent","args":{"goal":"open app"},"reason":"needs os flow"}]}'
 
     def complete(self, messages, temperature: float = 0.7):
         del messages, temperature
@@ -671,20 +670,10 @@ class FakeValidator:
         return Result(steps)
 
 
-class FakeDaemon:
-    def __init__(self):
-        self.started = 0
-
-    def ensure_running(self):
-        self.started += 1
-
-
-def test_router_parses_background_execution_mode():
+def test_router_plans_foreground_tools_only():
     router = IntentRouter(FakeClient())
     manifest = [{"name": "os_agent", "description": "OS agent", "args": {}, "required": [], "safety": "write"}]
     decision = router.plan("Open app and keep trying", manifest)
-    assert decision.execution_mode == "foreground"
-    assert decision.background_reason == ""
     assert decision.steps[0].tool == "os_agent"
 
 
@@ -801,12 +790,12 @@ def test_os_controller_rejects_keyboard_when_ocr_missing(tmp_path: Path):
     assert result.error == "ocr_uncertain"
 
 
-def test_task_orchestrator_processes_background_task(tmp_path: Path):
+def test_task_orchestrator_processes_foreground_task(tmp_path: Path):
     store = TaskStore(tmp_path / "jakata.db")
     tools = ToolRegistry()
     tools.register(StubOsAgentTool())
     router = IntentRouter(FakeClient())
-    task = store.create_task(goal="Open demo app", session_id="s1", execution_mode="background")
+    task = store.create_task(goal="Open demo app", session_id="s1")
     orchestrator = TaskOrchestrator(
         client=FakeClient(),
         router=router,
@@ -829,7 +818,7 @@ def test_task_orchestrator_accepts_self_verified_os_agent_result(tmp_path: Path)
     tools = ToolRegistry()
     tools.register(StubVerifiedOsAgentTool())
     router = IntentRouter(FakeClient())
-    task = store.create_task(goal="Open chrome and AI news", session_id="s1", execution_mode="background")
+    task = store.create_task(goal="Open chrome and AI news", session_id="s1")
     orchestrator = TaskOrchestrator(
         client=FakeClient(),
         router=router,
@@ -930,14 +919,6 @@ async def _drain_telegram_foreground(controller: TelegramBotController) -> None:
         pass
 
 
-class FakeTelegramDaemon:
-    def __init__(self) -> None:
-        self.started = 0
-
-    def ensure_running(self) -> None:
-        self.started += 1
-
-
 class FakeTelegramTaskEngine:
     def __init__(self, store: TaskStore) -> None:
         self.store = store
@@ -946,7 +927,7 @@ class FakeTelegramTaskEngine:
     def run_foreground_task(self, *, goal: str, session_id: str, context: str = "", **kwargs):
         del kwargs
         self.calls.append(goal)
-        task = self.store.create_task(goal=goal, session_id=session_id, execution_mode="foreground", context=context)
+        task = self.store.create_task(goal=goal, session_id=session_id, context=context)
         task = self.store.update_task(task.id, status="completed", result_summary=f"done {goal}", final_report=f"Goal: {goal}\nStatus: completed") or task
         return SimpleNamespace(task=task, report=task.final_report)
 
@@ -1119,24 +1100,6 @@ def test_telegram_plain_admin_messages_do_not_create_tasks(tmp_path: Path):
     assert agent.calls == ["first normal message", "what else can you do bud", "what can you do"]
     assert store.list_tasks() == []
     assert controller._foreground_queue is None
-
-
-def test_telegram_bg_is_explicit_background_path(tmp_path: Path):
-    settings = _artifact_settings(tmp_path)
-    store = TaskStore(tmp_path / "jakata.db")
-    daemon = FakeTelegramDaemon()
-    runtime = SimpleNamespace(settings=settings, task_store=store, memory=FakeMemory(), daemon=daemon)
-    auth = TelegramAuthManager(password="secret")
-    assert auth.unlock(1, "secret")
-    controller = TelegramBotController(runtime, auth=auth)
-    update = _fake_update(1)
-
-    asyncio.run(controller.bg(update, SimpleNamespace(args=["long", "job"])))
-    tasks = store.list_tasks()
-    assert len(tasks) == 1
-    assert tasks[0].execution_mode == "background"
-    assert tasks[0].background_reason == "telegram_bg_request"
-    assert daemon.started == 1
 
 
 def test_telegram_artifact_service_exports_reports_and_logs(tmp_path: Path):
@@ -1325,7 +1288,6 @@ def test_telegram_plain_send_image_uses_delivery_tool_not_pc_open(tmp_path: Path
         router=IntentRouter(client),
         validator=FakeValidator(),
         task_store=store,
-        daemon=FakeDaemon(),
         task_engine=None,
     )
     auth = TelegramAuthManager(password="secret")
@@ -1355,7 +1317,6 @@ def test_agent_skips_dependent_step_when_placeholder_is_missing(tmp_path: Path):
         router=IntentRouter(client),
         validator=FakeValidator(),
         task_store=TaskStore(tmp_path / "jakata.db"),
-        daemon=FakeDaemon(),
     )
 
     response = agent.respond("make an image and open it")
@@ -1370,21 +1331,8 @@ def test_image_generation_snaps_tiny_size_to_supported_nvidia_dimensions():
     assert ImageGenerationTool._parse_size("1025x1569") == (1024, 1568)
 
 
-def test_background_task_notifier_reports_completion_once(tmp_path: Path):
+def test_real_agent_runs_foreground_without_background_daemon(tmp_path: Path):
     store = TaskStore(tmp_path / "jakata.db")
-    task = store.create_task(goal="demo", session_id="s1")
-    store.update_task(task.id, status="completed", result_summary="done")
-    notifier = BackgroundTaskNotifier(session_id="s1")
-    first = notifier.collect(store)
-    second = notifier.collect(store)
-    assert len(first) == 1
-    assert "completed" in first[0]
-    assert second == []
-
-
-def test_real_agent_runs_foreground_until_bg_is_explicit(tmp_path: Path):
-    store = TaskStore(tmp_path / "jakata.db")
-    daemon = FakeDaemon()
     tools = ToolRegistry()
     tools.register(StubOsAgentTool())
     agent = JakataAgent(
@@ -1395,41 +1343,15 @@ def test_real_agent_runs_foreground_until_bg_is_explicit(tmp_path: Path):
         router=IntentRouter(FakeClient()),
         validator=FakeValidator(),
         task_store=store,
-        daemon=daemon,
     )
     model, content = agent.reply("open chrome and ai news")
     assert model == "local:tool"
     assert content == "done open app"
-    assert daemon.started == 0
     assert store.list_tasks(session_id="s1") == []
-
-
-def test_submit_background_task_queues_daemon_work(tmp_path: Path):
-    store = TaskStore(tmp_path / "jakata.db")
-    daemon = FakeDaemon()
-    tools = ToolRegistry()
-    tools.register(StubOsAgentTool())
-    agent = JakataAgent(
-        settings=SimpleNamespace(session_id="s1"),
-        client=FakeClient(),
-        tools=tools,
-        memory=FakeMemory(),
-        router=IntentRouter(FakeClient()),
-        validator=FakeValidator(),
-        task_store=store,
-        daemon=daemon,
-    )
-    task_id = agent.submit_background_task("open chrome and ai news")
-    assert task_id
-    assert daemon.started == 1
-    tasks = store.list_tasks(session_id="s1")
-    assert len(tasks) == 1
-    assert tasks[0].status == "queued"
 
 
 def test_agent_stream_reply_uses_streaming_chunks(tmp_path: Path):
     store = TaskStore(tmp_path / "jakata.db")
-    daemon = FakeDaemon()
     tools = ToolRegistry()
     agent = JakataAgent(
         settings=SimpleNamespace(session_id="s1"),
@@ -1439,7 +1361,6 @@ def test_agent_stream_reply_uses_streaming_chunks(tmp_path: Path):
         router=IntentRouter(FakeClient()),
         validator=FakeValidator(),
         task_store=store,
-        daemon=daemon,
     )
     chunks = list(agent.stream_reply("hey"))
     assert chunks == [("fake-model", "o"), ("fake-model", "k")]

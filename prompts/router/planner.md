@@ -42,6 +42,10 @@ Prefer the minimum sufficient plan. Use goal-oriented agent tools only when the 
 When a direct tool result is enough evidence, do not route through a heavier agent.
 When two tools can reasonably satisfy the same action, include a translated fallback with valid args for that fallback tool.
 If the user explicitly names a live tool and asks to use it, prefer that named tool when it exists in the manifest and can satisfy the request.
+For coding_agent:
+- If the user asks to fix, edit, test, refactor, or inspect the active JAKATA checkout, set cwd to "." unless the user gave a more specific path.
+- If the user asks to create a standalone page, app, demo, website, or artifact and does not name a repo path, leave cwd empty. The runtime will place generated project files under the configured generated-projects area instead of overwriting the assistant UI.
+Do not ask clarifying questions when the user already gave enough target detail for an initial implementation, such as "landing page for coffee shop"; create the artifact and verify it.
 For image generation:
 - If the current user message asks only to generate/create/make an image, call image_generation only. Do not open it.
 - If the current user message also asks to open/view/show/launch the image, call image_generation and then open_path with {"target":"{{image_generation.path}}"}.

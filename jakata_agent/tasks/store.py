@@ -37,7 +37,6 @@ class TaskStore:
                     session_id TEXT NOT NULL,
                     execution_mode TEXT NOT NULL,
                     context TEXT NOT NULL,
-                    background_reason TEXT NOT NULL,
                     budget_minutes INTEGER NOT NULL,
                     repair_limit INTEGER NOT NULL,
                     action_limit INTEGER NOT NULL,
@@ -102,9 +101,7 @@ class TaskStore:
         *,
         goal: str,
         session_id: str,
-        execution_mode: str = "background",
         context: str = "",
-        background_reason: str = "",
         budget_minutes: int = 20,
         repair_limit: int = 5,
         action_limit: int = 30,
@@ -118,9 +115,8 @@ class TaskStore:
             goal=goal.strip(),
             status="queued",
             session_id=session_id,
-            execution_mode=execution_mode,
+            execution_mode="foreground",
             context=context,
-            background_reason=background_reason,
             budget_minutes=budget_minutes,
             repair_limit=repair_limit,
             action_limit=action_limit,
@@ -131,41 +127,65 @@ class TaskStore:
             updated_at=now,
         )
         with self._connect() as conn:
+            columns = [
+                "id",
+                "goal",
+                "status",
+                "session_id",
+                "execution_mode",
+                "context",
+                "budget_minutes",
+                "repair_limit",
+                "action_limit",
+                "repair_count",
+                "action_count",
+                "worker_id",
+                "success_criteria",
+                "allowed_surfaces",
+                "pending_approval",
+                "cwd",
+                "result_summary",
+                "last_error",
+                "final_report",
+                "created_at",
+                "updated_at",
+                "started_at",
+                "completed_at",
+            ]
+            values: list[object] = [
+                record.id,
+                record.goal,
+                record.status,
+                record.session_id,
+                record.execution_mode,
+                record.context,
+                record.budget_minutes,
+                record.repair_limit,
+                record.action_limit,
+                record.repair_count,
+                record.action_count,
+                record.worker_id,
+                json.dumps(record.success_criteria),
+                json.dumps(record.allowed_surfaces),
+                json.dumps(record.pending_approval),
+                record.cwd,
+                record.result_summary,
+                record.last_error,
+                record.final_report,
+                record.created_at,
+                record.updated_at,
+                record.started_at,
+                record.completed_at,
+            ]
+            existing_columns = self._table_columns(conn, "tasks")
+            if "background_reason" in existing_columns:
+                insert_at = columns.index("budget_minutes")
+                columns.insert(insert_at, "background_reason")
+                values.insert(insert_at, "")
+            placeholders = ", ".join("?" for _ in columns)
             conn.execute(
-                """
-                INSERT INTO tasks (
-                    id, goal, status, session_id, execution_mode, context, background_reason,
-                    budget_minutes, repair_limit, action_limit, repair_count, action_count,
-                    worker_id, success_criteria, allowed_surfaces, pending_approval, cwd, result_summary,
-                    last_error, final_report, created_at, updated_at, started_at, completed_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    record.id,
-                    record.goal,
-                    record.status,
-                    record.session_id,
-                    record.execution_mode,
-                    record.context,
-                    record.background_reason,
-                    record.budget_minutes,
-                    record.repair_limit,
-                    record.action_limit,
-                    record.repair_count,
-                    record.action_count,
-                    record.worker_id,
-                    json.dumps(record.success_criteria),
-                    json.dumps(record.allowed_surfaces),
-                    json.dumps(record.pending_approval),
-                    record.cwd,
-                    record.result_summary,
-                    record.last_error,
-                    record.final_report,
-                    record.created_at,
-                    record.updated_at,
-                    record.started_at,
-                    record.completed_at,
-                ),
+                f"INSERT INTO tasks ({', '.join(columns)}) VALUES ({placeholders})",
+                tuple(values),
             )
         return record
 
@@ -473,9 +493,13 @@ class TaskStore:
 
     @staticmethod
     def _ensure_column(conn: sqlite3.Connection, table: str, name: str, definition: str) -> None:
-        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        columns = TaskStore._table_columns(conn, table)
         if name not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {definition}")
+
+    @staticmethod
+    def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+        return {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
 
     @staticmethod
     def _row_to_task(row: sqlite3.Row) -> TaskRecord:
@@ -486,7 +510,6 @@ class TaskStore:
             session_id=row["session_id"],
             execution_mode=row["execution_mode"],
             context=row["context"],
-            background_reason=row["background_reason"],
             budget_minutes=row["budget_minutes"],
             repair_limit=row["repair_limit"],
             action_limit=row["action_limit"],

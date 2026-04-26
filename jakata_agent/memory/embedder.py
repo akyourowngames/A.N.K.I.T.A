@@ -12,25 +12,57 @@ class SemanticEmbedder:
         self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
         self._cache: dict[str, list[float]] = {}
 
-    def embed(self, text: str) -> list[float]:
+    def embed(self, text: str, input_type: str = "passage") -> list[float]:
         key = " ".join(text.strip().split())
         if not key:
             return []
-        cached = self._cache.get(key)
+        cache_key = f"{input_type}:{key}"
+        cached = self._cache.get(cache_key)
         if cached is not None:
             return cached
 
-        response = self.client.embeddings.create(model=self.model, input=[key])
+        response = self.client.embeddings.create(model=self.model, input=[key], extra_body={"input_type": input_type})
         vector = list(response.data[0].embedding)
-        self._cache[key] = vector
+        self._cache[cache_key] = vector
         return vector
 
+    def embed_many(self, texts: list[str], input_type: str = "passage") -> list[list[float]]:
+        normalized = [" ".join(text.strip().split()) for text in texts]
+        vectors: list[list[float]] = [[] for _ in normalized]
+        missing: list[str] = []
+        missing_indexes: list[int] = []
+        for index, key in enumerate(normalized):
+            if not key:
+                continue
+            cache_key = f"{input_type}:{key}"
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                vectors[index] = cached
+                continue
+            missing.append(key)
+            missing_indexes.append(index)
+
+        if missing:
+            response = self.client.embeddings.create(model=self.model, input=missing, extra_body={"input_type": input_type})
+            for index, item in zip(missing_indexes, response.data, strict=False):
+                vector = list(item.embedding)
+                vectors[index] = vector
+                self._cache[f"{input_type}:{normalized[index]}"] = vector
+        return vectors
+
     def similarity(self, a: str, b: str) -> float:
-        va = self.embed(a)
-        vb = self.embed(b)
+        va = self.embed(a, input_type="query")
+        vb = self.embed(b, input_type="passage")
         if not va or not vb:
             return 0.0
         return cosine_similarity(va, vb)
+
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        query_vector = self.embed(query, input_type="query")
+        text_vectors = self.embed_many(texts, input_type="passage")
+        if not query_vector:
+            return [0.0 for _ in texts]
+        return [cosine_similarity(query_vector, vector) if vector else 0.0 for vector in text_vectors]
 
 
 def cosine_similarity(a: Iterable[float], b: Iterable[float]) -> float:

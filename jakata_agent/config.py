@@ -14,6 +14,10 @@ def _split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
 
+def _split_pipe(value: str) -> list[str]:
+    return [item.strip() for item in value.split("|") if item.strip()]
+
+
 def _normalize_approval_policy(value: str) -> str:
     policy = value.strip().lower()
     if policy in {"manual", "auto_safe", "auto"}:
@@ -60,10 +64,29 @@ class Settings:
     image_output_dir: Path
     image_infer_url: str = ""
     image_model_namespace: str = "black-forest-labs"
+    sarvam_api_key: str = ""
+    sarvam_tts_url: str = "https://api.sarvam.ai/text-to-speech/stream"
+    sarvam_tts_language: str = "en-IN"
+    sarvam_tts_speaker: str = "shubh"
+    sarvam_tts_model: str = "bulbul:v3"
+    sarvam_tts_pace: float = 1.1
+    sarvam_tts_sample_rate: int = 22050
+    sarvam_tts_codec: str = "mp3"
+    sarvam_tts_preprocessing: bool = True
+    sarvam_tts_max_spoken_chars: int = 420
+    sarvam_tts_long_response_phrases: list[str] | None = None
+    router_model: str = "meta/llama-3.3-70b-instruct"
+    router_timeout_seconds: float = 6.0
+    router_max_retries: int = 1
+    router_max_tokens: int = 512
+    router_tool_limit: int = 5
+    router_min_tool_score: float = 0.09
     approval_policy: str = "auto_safe"
     timeout_seconds: float = 60.0
     automation_timeout_seconds: float = 180.0
     max_retries: int = 3
+    google_credentials_path: Path = Path("data/integrations/google_credentials.json")
+    google_token_path: Path = Path("data/integrations/google_token.json")
 
     @property
     def model_chain(self) -> list[str]:
@@ -133,6 +156,12 @@ def load_settings() -> Settings:
         data_dir=data_dir,
         tavily_api_key=os.getenv("TAVILY_API_KEY", "").strip(),
         openweather_api_key=os.getenv("OPENWEATHER_API_KEY", "").strip(),
+        google_credentials_path=Path(
+            os.getenv("JAKATA_GOOGLE_CREDENTIALS_PATH", str(data_dir / "integrations" / "google_credentials.json"))
+        ).expanduser().resolve(),
+        google_token_path=Path(
+            os.getenv("JAKATA_GOOGLE_TOKEN_PATH", str(data_dir / "integrations" / "google_token.json"))
+        ).expanduser().resolve(),
         chrome_path=os.getenv("JAKATA_CHROME_PATH", "").strip(),
         tesseract_cmd=os.getenv("JAKATA_TESSERACT_CMD", "").strip(),
         browser_backend=os.getenv("JAKATA_BROWSER_BACKEND", "playwright").strip().lower() or "playwright",
@@ -159,6 +188,32 @@ def load_settings() -> Settings:
         image_output_dir=Path(os.getenv("JAKATA_IMAGE_OUTPUT_DIR", str(data_dir / "generated" / "images"))).resolve(),
         image_infer_url=os.getenv("NVIDIA_IMAGE_INFER_URL", "").strip(),
         image_model_namespace=os.getenv("NVIDIA_IMAGE_MODEL_NAMESPACE", "black-forest-labs").strip() or "black-forest-labs",
+        sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
+        sarvam_tts_url=os.getenv("SARVAM_TTS_URL", "https://api.sarvam.ai/text-to-speech/stream").strip()
+        or "https://api.sarvam.ai/text-to-speech/stream",
+        sarvam_tts_language=os.getenv("SARVAM_TTS_LANGUAGE", "en-IN").strip() or "en-IN",
+        sarvam_tts_speaker=os.getenv("SARVAM_TTS_SPEAKER", "shubh").strip() or "shubh",
+        sarvam_tts_model=os.getenv("SARVAM_TTS_MODEL", "bulbul:v3").strip() or "bulbul:v3",
+        sarvam_tts_pace=float(os.getenv("SARVAM_TTS_PACE", "1.1").strip() or "1.1"),
+        sarvam_tts_sample_rate=int(os.getenv("SARVAM_TTS_SAMPLE_RATE", "22050").strip() or "22050"),
+        sarvam_tts_codec=os.getenv("SARVAM_TTS_CODEC", "mp3").strip() or "mp3",
+        sarvam_tts_preprocessing=os.getenv("SARVAM_TTS_PREPROCESSING", "true").strip().lower() not in {"0", "false", "off", "no"},
+        sarvam_tts_max_spoken_chars=int(os.getenv("SARVAM_TTS_MAX_SPOKEN_CHARS", "420").strip() or "420"),
+        sarvam_tts_long_response_phrases=_split_pipe(
+            os.getenv(
+                "SARVAM_TTS_LONG_RESPONSE_PHRASES",
+                "The rest of the chat is on screen, sir. You can check it out.|I kept the full answer on screen, sir. You can read the rest there.|The rest is written on the screen, sir. Take a look when you want.",
+            )
+        ),
+        router_model=os.getenv("JAKATA_ROUTER_MODEL", "meta/llama-3.3-70b-instruct").strip()
+        or "meta/llama-3.3-70b-instruct",
+        router_timeout_seconds=float(os.getenv("JAKATA_ROUTER_TIMEOUT_SECONDS", "6").strip() or "6"),
+        router_max_retries=int(os.getenv("JAKATA_ROUTER_MAX_RETRIES", "1").strip() or "1"),
+        router_max_tokens=int(os.getenv("JAKATA_ROUTER_MAX_TOKENS", "512").strip() or "512"),
+        router_tool_limit=int(os.getenv("JAKATA_ROUTER_TOOL_LIMIT", "5").strip() or "5"),
+        router_min_tool_score=float(os.getenv("JAKATA_ROUTER_MIN_TOOL_SCORE", "0.09").strip() or "0.09"),
         approval_policy=_normalize_approval_policy(os.getenv("JAKATA_APPROVAL_POLICY", "auto_safe")),
+        timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "60").strip() or "60"),
         automation_timeout_seconds=float(os.getenv("JAKATA_AUTOMATION_TIMEOUT_SECONDS", "180").strip() or "180"),
+        max_retries=int(os.getenv("NVIDIA_MAX_RETRIES", "3").strip() or "3"),
     )

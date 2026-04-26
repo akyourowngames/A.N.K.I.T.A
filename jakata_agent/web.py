@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import json
+import random
+import re
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock
@@ -17,6 +20,7 @@ from jakata_agent.agent import JakataAgent
 from jakata_agent.config import Settings, load_settings
 from jakata_agent.router import PlanStep
 from jakata_agent.runtime import JakataRuntime, create_runtime
+from jakata_agent.tts import SarvamTTSClient
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -76,7 +80,6 @@ def build_agent(runtime: JakataRuntime) -> JakataAgent:
         router=runtime.router,
         validator=runtime.validator,
         task_store=runtime.task_store,
-        daemon=runtime.daemon,
         task_engine=runtime.task_engine,
     )
 
@@ -87,6 +90,7 @@ def create_app(
     runtime_factory: Callable[[Settings], JakataRuntime] = create_runtime,
     agent_builder: Callable[[JakataRuntime], JakataAgent] = build_agent,
     session_manager: SessionManager | None = None,
+    tts_client_factory: Callable[[Settings], Any] | None = None,
 ) -> FastAPI:
     if not FRONTEND_DIR.exists():
         raise RuntimeError(f"Frontend directory not found: {FRONTEND_DIR}")
@@ -101,6 +105,7 @@ def create_app(
     app = FastAPI(title="JAKATA Web", version="2.0.0")
     app.state.base_settings = settings
     app.state.session_manager = manager
+    app.state.tts_client_factory = tts_client_factory or SarvamTTSClient.from_settings
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -111,19 +116,21 @@ def create_app(
             "frontend": "jarvis",
             "models": settings.model_chain,
             "realtime_search": bool(settings.tavily_api_key),
+            "tts": bool(settings.sarvam_api_key),
+            "tts_speaker": settings.sarvam_tts_speaker,
         }
 
     @app.post("/chat/stream")
     def chat_stream(payload: ChatRequest) -> StreamingResponse:
-        return _stream_response(manager, payload, mode="general")
+        return _stream_response(manager, payload, mode="general", tts_client_factory=app.state.tts_client_factory)
 
     @app.post("/chat/realtime/stream")
     def chat_realtime_stream(payload: ChatRequest) -> StreamingResponse:
-        return _stream_response(manager, payload, mode="realtime")
+        return _stream_response(manager, payload, mode="realtime", tts_client_factory=app.state.tts_client_factory)
 
     @app.post("/chat/jarvis/stream")
     def chat_jarvis_stream(payload: ChatRequest) -> StreamingResponse:
-        return _stream_response(manager, payload, mode="jarvis")
+        return _stream_response(manager, payload, mode="jarvis", tts_client_factory=app.state.tts_client_factory)
 
     @app.get("/")
     def index() -> FileResponse:
@@ -139,7 +146,13 @@ def create_app(
     return app
 
 
-def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str) -> StreamingResponse:
+def _stream_response(
+    manager: SessionManager,
+    payload: ChatRequest,
+    *,
+    mode: str,
+    tts_client_factory: Callable[[Settings], Any],
+) -> StreamingResponse:
     message = payload.message.strip()
     if not message:
         raise HTTPException(status_code=400, detail="Message is required.")
@@ -151,6 +164,10 @@ def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str
             started = perf_counter()
             route, reasoning, search_step, general_steps, direct_answer = _resolve_route(context.agent, message, mode)
             first_chunk_sent = False
+            tts_buffer = ""
+            tts_spoken_chars = 0
+            tts_closing_spoken = False
+            tts_limit_reported = False
             try:
                 yield _sse({"session_id": context.public_session_id, "chunk": "", "done": False})
                 yield _sse({"activity": {"event": "query_detected", "message": message}, "done": False})
@@ -170,6 +187,27 @@ def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str
 
                 yield _sse({"activity": {"event": "routing", "route": route}, "done": False})
                 yield _sse({"activity": {"event": "streaming_started", "route": route}, "done": False})
+                if payload.tts:
+                    if context.runtime.settings.sarvam_api_key:
+                        yield _sse(
+                            {
+                                "activity": {
+                                    "event": "tts_ready",
+                                    "message": f"Voice ready: {context.runtime.settings.sarvam_tts_speaker}",
+                                },
+                                "done": False,
+                            }
+                        )
+                    else:
+                        yield _sse(
+                            {
+                                "activity": {
+                                    "event": "tts_unavailable",
+                                    "message": "SARVAM_API_KEY is not configured.",
+                                },
+                                "done": False,
+                            }
+                        )
 
                 if direct_answer:
                     chunk_stream = context.agent.stream_direct_answer(message, direct_answer)
@@ -276,6 +314,51 @@ def _stream_response(manager: SessionManager, payload: ChatRequest, *, mode: str
                                 "done": False,
                             }
                         )
+                    if payload.tts and chunk:
+                        tts_buffer += chunk
+                        segments, tts_buffer = _drain_tts_segments(tts_buffer)
+                        for segment in segments:
+                            tts_text, tts_spoken_chars, tts_closing_spoken = _next_tts_text_for_budget(
+                                context.runtime.settings,
+                                segment,
+                                spoken_chars=tts_spoken_chars,
+                                closing_spoken=tts_closing_spoken,
+                            )
+                            if tts_text:
+                                yield from _tts_audio_events(context.runtime.settings, tts_client_factory, tts_text)
+                            if tts_closing_spoken and not tts_limit_reported:
+                                tts_limit_reported = True
+                                yield _sse(
+                                    {
+                                        "activity": {
+                                            "event": "tts_limited",
+                                            "message": "Long reply voice was shortened; full text remains on screen.",
+                                        },
+                                        "done": False,
+                                    }
+                                )
+
+                if payload.tts and tts_buffer.strip() and not tts_closing_spoken:
+                    for segment in _final_tts_segments(tts_buffer):
+                        tts_text, tts_spoken_chars, tts_closing_spoken = _next_tts_text_for_budget(
+                            context.runtime.settings,
+                            segment,
+                            spoken_chars=tts_spoken_chars,
+                            closing_spoken=tts_closing_spoken,
+                        )
+                        if tts_text:
+                            yield from _tts_audio_events(context.runtime.settings, tts_client_factory, tts_text)
+                        if tts_closing_spoken and not tts_limit_reported:
+                            tts_limit_reported = True
+                            yield _sse(
+                                {
+                                    "activity": {
+                                        "event": "tts_limited",
+                                        "message": "Long reply voice was shortened; full text remains on screen.",
+                                    },
+                                    "done": False,
+                                }
+                            )
 
                 yield _sse({"session_id": context.public_session_id, "done": True})
             except Exception as exc:  # noqa: BLE001
@@ -329,6 +412,115 @@ def _resolve_asset(root: Path, relative_path: str) -> Path:
     if not candidate.is_file():
         raise HTTPException(status_code=404, detail="Asset not found.")
     return candidate
+
+
+def _tts_audio_events(
+    settings: Settings,
+    tts_client_factory: Callable[[Settings], Any],
+    text: str,
+) -> Iterator[bytes]:
+    clean_text = _clean_tts_text(text)
+    if not clean_text or not settings.sarvam_api_key:
+        return
+    try:
+        client = tts_client_factory(settings)
+        audio = b"".join(client.stream(clean_text))
+    except Exception as exc:  # noqa: BLE001
+        yield _sse(
+            {
+                "activity": {
+                    "event": "tts_error",
+                    "message": f"TTS failed: {str(exc)[:160]}",
+                },
+                "done": False,
+            }
+        )
+        return
+    if audio:
+        yield _sse(
+            {
+                "audio": base64.b64encode(audio).decode("ascii"),
+                "audio_codec": settings.sarvam_tts_codec,
+                "done": False,
+            }
+        )
+
+
+def _next_tts_text_for_budget(
+    settings: Settings,
+    text: str,
+    *,
+    spoken_chars: int,
+    closing_spoken: bool,
+) -> tuple[str, int, bool]:
+    clean_text = _clean_tts_text(text)
+    if not clean_text or closing_spoken:
+        return "", spoken_chars, closing_spoken
+    max_chars = int(getattr(settings, "sarvam_tts_max_spoken_chars", 0) or 0)
+    if max_chars <= 0:
+        return clean_text, spoken_chars + len(clean_text), False
+    if spoken_chars + len(clean_text) <= max_chars:
+        return clean_text, spoken_chars + len(clean_text), False
+
+    phrase = _long_tts_phrase(settings)
+    remaining = max(0, max_chars - spoken_chars)
+    prefix = _truncate_for_tts(clean_text, remaining)
+    if prefix:
+        return f"{prefix}. {phrase}", max_chars, True
+    return phrase, max_chars, True
+
+
+def _long_tts_phrase(settings: Settings) -> str:
+    phrases = getattr(settings, "sarvam_tts_long_response_phrases", None) or [
+        "The rest of the chat is on screen, sir. You can check it out."
+    ]
+    return random.choice([phrase for phrase in phrases if phrase.strip()] or ["The rest of the chat is on screen, sir."])
+
+
+def _truncate_for_tts(text: str, max_chars: int) -> str:
+    if max_chars < 80:
+        return ""
+    if len(text) <= max_chars:
+        return text
+    cut = text.rfind(" ", 0, max_chars)
+    if cut < 80:
+        cut = max_chars
+    return text[:cut].rstrip(" ,;:-.")
+
+
+def _drain_tts_segments(buffer: str, *, max_chars: int = 260) -> tuple[list[str], str]:
+    segments: list[str] = []
+    remaining = buffer
+    while remaining:
+        match = re.search(r"(?<=[.!?।])\s+|\n+", remaining)
+        cut = match.end() if match else -1
+        if cut < 0 and len(remaining) >= max_chars:
+            cut = max(remaining.rfind(" ", 0, max_chars), remaining.rfind(",", 0, max_chars))
+            if cut <= 0:
+                cut = max_chars
+        if cut < 0:
+            break
+        segment = remaining[:cut].strip()
+        remaining = remaining[cut:].lstrip()
+        if segment:
+            segments.append(segment)
+    return segments, remaining
+
+
+def _final_tts_segments(buffer: str, *, max_chars: int = 260) -> list[str]:
+    segments, remaining = _drain_tts_segments(buffer, max_chars=max_chars)
+    tail = remaining.strip()
+    if tail:
+        segments.append(tail)
+    return segments
+
+
+def _clean_tts_text(text: str) -> str:
+    cleaned = re.sub(r"`([^`]*)`", r"\1", text)
+    cleaned = re.sub(r"[*_#>\[\]{}]", "", cleaned)
+    cleaned = re.sub(r"^\s*[-•]\s*", "", cleaned, flags=re.MULTILINE)
+    cleaned = re.sub(r"https?://\S+", "link", cleaned)
+    return " ".join(cleaned.split())
 
 
 def _sse(payload: dict[str, Any]) -> bytes:

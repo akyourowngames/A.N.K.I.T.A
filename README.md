@@ -1,17 +1,17 @@
 # JAKATA
 
-Personal AI assistant with foreground chat, explicit background task execution, live memory, and OS automation.
+Personal AI assistant with foreground chat, live memory, voice I/O, and OS automation.
 
 JAKATA now supports:
 
 - normal multi-turn chat
-- long-running background tasks with persisted task state
+- foreground task execution with persisted task records
 - dynamic multi-agent orchestration (planner, researcher, executor, verifier)
 - self-healing verify-and-repair loops
 - permanent memory plus a live memory graph
 - goal-oriented `os_agent` automation
 - goal-oriented `coding_agent` automation for repo edits, terminal commands, tests, online lookup, screenshots, and opening results
-- Tavily web search, OpenWeather, datetime, files, and OS surfaces
+- Tavily web search, OpenWeather, Google Calendar, Gmail, datetime, files, and OS surfaces
 - live webcam preview plus NVIDIA vision analysis from the CLI
 - Telegram long-polling access with guest chat, password unlock, task details, approvals, files, reports, uploads, and image generation
 
@@ -83,13 +83,13 @@ Set these values in `.env` first:
 - `JAKATA_IMAGE_OUTPUT_DIR=data/generated/images`
 
 Anyone can send basic guest chat messages. Private control requires `/unlock <password>` and expires by timeout.
-After unlock, normal Telegram messages use the same JAKATA agent path as CLI: chat, memory, terminal, files, browser, system, camera, web, and coding tools route through the normal planner. They are not background tasks. Use `/bg <goal>` only when you explicitly want daemon-backed background work.
+After unlock, normal Telegram messages use the same JAKATA agent path as CLI: chat, memory, terminal, files, browser, system, camera, web, and coding tools route through the normal planner. Work stays in the foreground task flow.
 
 Admin task and control commands:
 
 - `/start`, `/help`, `/commands`, `/admin`
-- `/bg <goal>`, `/task <goal>`, `/tasks`, `/details <task_id>`, `/approve <id>`, `/deny <id>`, `/cancel <task_id>`
-- `/screen`, `/kill`, `/unkill`, `/lock`
+- `/task <goal>`, `/tasks`, `/details <task_id>`, `/approve <id>`, `/deny <id>`, `/cancel <task_id>`
+- `/screen`, `/lock`
 
 Admin artifact commands:
 
@@ -101,7 +101,7 @@ Admin artifact commands:
 - `/img <prompt>` sends a photo preview, `/imgfile <prompt>` sends the generated image as a document
 - normal unlocked Telegram chat can also route through `telegram_send` for requests like "send me this file", "send the cat image here", or "send me the latest generated image"
 
-Normal unlocked Telegram chat uses direct foreground agent execution like CLI. Explicit `/task` and `/bg` commands use the task completion loop. Approval is policy-driven for guarded desktop actions, but terminal tools (`shell`, `read_file`, `list_dir`, `search_files`, `write_file`, `open_path`) are not blacklisted or approval-gated:
+Normal unlocked Telegram chat uses direct foreground agent execution like CLI. Explicit `/task` commands use the task completion loop. Approval is policy-driven for guarded desktop actions, but terminal tools (`shell`, `read_file`, `list_dir`, `search_files`, `write_file`, `open_path`) are not blacklisted or approval-gated:
 
 - `JAKATA_APPROVAL_POLICY=auto_safe` auto-runs safe local actions and still pauses guarded destructive non-shell actions
 - `JAKATA_APPROVAL_POLICY=manual` pauses all guarded desktop actions
@@ -116,6 +116,10 @@ Optional local automation config:
 - `JAKATA_BROWSER_BACKEND=playwright|native|auto` to choose DOM-level browser control or native UI fallback
 - `NVIDIA_VISION_MODEL` to override the camera analysis model
 - `NVIDIA_VISION_FALLBACK_MODELS` for extra multimodal fallbacks
+- `JAKATA_ROUTER_MODEL`, `JAKATA_ROUTER_TIMEOUT_SECONDS`, `JAKATA_ROUTER_MAX_RETRIES`, and `JAKATA_ROUTER_MAX_TOKENS` for the fast JSON planner
+- `JAKATA_ROUTER_TOOL_LIMIT` and `JAKATA_ROUTER_MIN_TOOL_SCORE` for NVIDIA embedding-backed tool shortlisting
+- `SARVAM_API_KEY`, `SARVAM_TTS_SPEAKER`, `SARVAM_TTS_LANGUAGE`, and `SARVAM_TTS_MODEL` for web text-to-speech
+- `SARVAM_TTS_MAX_SPOKEN_CHARS` and `SARVAM_TTS_LONG_RESPONSE_PHRASES` to avoid reading long replies aloud
 - `JAKATA_CAMERA_DEVICE_INDEX` for a different webcam
 - `JAKATA_CAMERA_FRAME_WIDTH` / `JAKATA_CAMERA_FRAME_HEIGHT` to tune preview latency
 - `JAKATA_AUTOMATION_BACKEND=codex|nvidia|auto`
@@ -128,6 +132,8 @@ Optional local automation config:
 - `JAKATA_PATH_DISCOVERY_EXCLUDE_DIRS=` optional comma-separated dependency/cache folders to skip during fallback discovery
 - `JAKATA_OPEN_IMAGE_APP=mspaint.exe` fallback viewer when Windows says an image opened but no viewer window is detected
 - `JAKATA_PROMPTS_DIR=prompts`
+- `JAKATA_GOOGLE_CREDENTIALS_PATH=data/integrations/google_credentials.json`
+- `JAKATA_GOOGLE_TOKEN_PATH=data/integrations/google_token.json`
 - `JAKATA_TELEGRAM_SAFE_ROOTS=` optional comma-separated override for safe upload roots
 - `NVIDIA_IMAGE_BASE_URL=` optional image endpoint override
 - `NVIDIA_IMAGE_MODEL_NAMESPACE=black-forest-labs` for hosted NVIDIA GenAI image endpoints when the model id has no provider prefix
@@ -149,8 +155,6 @@ Optional local automation config:
 - `open_path` opens local files, folders, and URLs with the OS default app and reports launch/window evidence when Windows exposes it
 - `telegram_send` prepares and sends existing files, folders, artifacts, and generated images back to the current Telegram chat
 - file-backed Markdown prompts loaded from `prompts/`
-- explicit `/bg` background execution only
-- local daemon-backed background task queue
 - foreground tool requests are wrapped in persisted task records
 - dynamic multi-agent task orchestration
 - self-healing verification and repair loop
@@ -164,6 +168,7 @@ Optional local automation config:
 - live webcam preview with `/camera`
 - current-scene analysis through the `camera` tool and NVIDIA multimodal models
 - hosted NVIDIA GenAI image generation fallback with optional open-after-save support
+- Google Workspace context tools for Calendar and Gmail through local OAuth
 - Tavily web search
 - keyless DuckDuckGo HTML fallback when Tavily is not configured
 - OpenWeather current weather lookup
@@ -176,17 +181,36 @@ JAKATA now keeps memory in `data/`:
 - `data/chats/` raw per-session chat logs
 - `data/knowledge/` plain `.txt` files loaded on startup
 - `data/memory/jakata.db` permanent extracted memory records
-- `data/daemon/` daemon pid and kill switch files
+- `data/integrations/` local OAuth tokens and external-service sync cache
 
 The SQLite database now also stores:
 
-- background tasks and task events
+- foreground tasks and task events
 - agent runs and agent messages
 - graph nodes and graph edges
 
+## Google Calendar and Gmail
+
+JAKATA can connect to Google Workspace with the free Google APIs and a local desktop OAuth token. This gives the assistant real Calendar and Gmail context without adding phone integration.
+
+1. Create a Google Cloud OAuth desktop client with Calendar and Gmail API access.
+2. Download the OAuth client JSON and save it as `data/integrations/google_credentials.json`, or set `JAKATA_GOOGLE_CREDENTIALS_PATH` to another local path.
+3. Start JAKATA and ask it to check `external_services_status`.
+4. Run `google_workspace_connect` with `authorize=true` once. This opens the browser OAuth flow and saves `data/integrations/google_token.json`.
+
+Connected tools:
+
+- `calendar_today` reads today's Google Calendar events.
+- `calendar_upcoming` reads upcoming Google Calendar events.
+- `gmail_unread` reads unread Gmail message metadata.
+- `gmail_search` searches Gmail with Gmail query syntax.
+- `gmail_create_draft` creates a Gmail draft only when `confirm_create=true`; it never sends mail.
+- `external_services_status` reports Google auth state and local sync-cache counts.
+
+Calendar and Gmail reads are cached in `data/integrations/external_services.db` so later proactive work can reason over recent external context quickly. Sending mail is intentionally not implemented here; draft creation is the highest write level in this slice.
+
 ## CLI commands
 
-- `/bg <goal>` queue a background task; normal prompts stay foreground
 - `/camera` open the live camera preview window
 - `/camera off` close the preview window
 - `/camera status` inspect live camera state
@@ -198,8 +222,6 @@ The SQLite database now also stores:
 - `/cancel <id>` cancel a task
 - `/agents <id>` inspect orchestrator/executor/verifier runs
 - `/graph <query>` inspect the live memory graph
-- `/kill` enable the global daemon kill switch
-- `/unkill` clear the global daemon kill switch
 
 If you restart the app with the same session id, it continues from the same conversation and still retrieves relevant older chats plus saved knowledge text.
 
@@ -209,5 +231,4 @@ With the preview open, prompts like `what do you see right now?` or `describe th
 
 - OCR support uses `pytesseract` plus a local Tesseract installation.
 - On Windows, `JAKATA_TESSERACT_CMD=C:\Program Files\Tesseract-OCR\tesseract.exe` works with the standard installer path.
-- Background tasks are processed by a local daemon launched with `python -m jakata_agent.daemon_entry`.
 - The upgraded `os_agent` can now use dedicated `mouse`, `window`, `browser`, `screen`, and `system` controls for richer local automation.

@@ -4,17 +4,24 @@ from dataclasses import dataclass
 
 from jakata_agent.camera import CameraSession
 from jakata_agent.config import Settings, load_settings
-from jakata_agent.llm import NvidiaChatClient, TextCompletionClient, build_automation_client, build_browser_automation_client
+from jakata_agent.llm import (
+    NvidiaChatClient,
+    TextCompletionClient,
+    build_automation_client,
+    build_browser_automation_client,
+    build_router_client,
+)
 from jakata_agent.memory.manager import MemoryManager
 from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.router import IntentRouter
-from jakata_agent.tasks.daemon import DaemonManager
 from jakata_agent.tasks.engine import TaskCompletionEngine
 from jakata_agent.tasks.store import TaskStore
 from jakata_agent.tools.browser import register_browser_tools
 from jakata_agent.tools.camera import register_camera_tools
+from jakata_agent.tools.capabilities import register_capabilities_tool
 from jakata_agent.tools.coding_agent import CodingAgentTool, CodingController
 from jakata_agent.tools.datetime_tool import DateTimeTool
+from jakata_agent.tools.external_services import register_external_service_tools
 from jakata_agent.tools.image_generation import register_image_generation_tool
 from jakata_agent.tools.keyboard import register_input_tools
 from jakata_agent.tools.memory_tool import MemoryTool
@@ -39,7 +46,6 @@ class JakataRuntime:
     validator: PlanValidator
     task_store: TaskStore
     task_engine: TaskCompletionEngine
-    daemon: DaemonManager
     os_controller: OsController
     coding_controller: CodingController
     camera_session: CameraSession
@@ -48,6 +54,7 @@ class JakataRuntime:
 def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     settings = settings or load_settings()
     client = NvidiaChatClient(settings)
+    router_client = build_router_client(settings, client)
     automation_client = build_automation_client(settings, client)
     browser_automation_client = build_browser_automation_client(settings, automation_client)
     tools = ToolRegistry()
@@ -58,7 +65,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         settings.base_url,
         settings.embedding_model,
     )
-    daemon = DaemonManager(settings.data_dir)
+    kill_switch_path = settings.data_dir / "control" / "kill.switch"
     register_terminal_tools(tools)
     register_input_tools(tools)
     register_system_tools(tools)
@@ -90,7 +97,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     os_controller = OsController(
         client=automation_client,
         tools=tools,
-        kill_switch_path=str(daemon.kill_switch),
+        kill_switch_path=str(kill_switch_path),
         browser_client=browser_automation_client,
     )
     tools.register(OsAgentTool(os_controller))
@@ -100,13 +107,20 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     tools.register(MemoryTool())
     tools.register(TavilySearchTool(settings.tavily_api_key))
     tools.register(OpenWeatherTool(settings.openweather_api_key))
+    register_external_service_tools(
+        tools,
+        data_dir=settings.data_dir,
+        google_credentials_path=settings.google_credentials_path,
+        google_token_path=settings.google_token_path,
+    )
+    register_capabilities_tool(tools)
     return JakataRuntime(
         settings=settings,
         client=client,
         automation_client=automation_client,
         tools=tools,
         memory=memory,
-        router=IntentRouter(client),
+        router=IntentRouter(router_client),
         automation_router=IntentRouter(automation_client),
         validator=PlanValidator(),
         task_store=task_store,
@@ -121,7 +135,6 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
             workspace_dir=settings.workspace_dir,
             data_dir=settings.data_dir,
         ),
-        daemon=daemon,
         os_controller=os_controller,
         coding_controller=coding_controller,
         camera_session=camera_session,

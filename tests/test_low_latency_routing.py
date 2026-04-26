@@ -8,6 +8,8 @@ from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.router import IntentRouter
 from jakata_agent.tasks.store import TaskStore
 from jakata_agent.tools.base import Tool, ToolResult
+from jakata_agent.tools.capabilities import register_capabilities_tool
+from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.datetime_tool import DateTimeTool
 from jakata_agent.tools.image_generation import ImageGenerationTool
 from jakata_agent.tools.registry import ToolRegistry
@@ -38,10 +40,28 @@ class RouterAnswerClient:
         yield "chat-model", "chat fallback"
 
 
+class FakeSemanticEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        query_l = query.lower()
+        scores: list[float] = []
+        for text in texts:
+            text_l = text.lower()
+            if "what can you do" in query_l and "connected tool catalog" in text_l:
+                scores.append(0.44)
+            elif "time" in query_l and "datetime" in text_l:
+                scores.append(0.91)
+            elif "time" in query_l:
+                scores.append(0.02)
+            else:
+                scores.append(0.0)
+        return scores
+
+
 class DummyMemory:
-    def __init__(self, context: str = "") -> None:
+    def __init__(self, context: str = "", embedder=None) -> None:
         self.messages = []
         self.context = context
+        self.embedder = embedder
         self.knowledge_chunks = []
         self.store = SimpleNamespace(recent=lambda limit=10: [])
 
@@ -101,22 +121,42 @@ class ConsumePathTool(Tool):
         return ToolResult(ok=True, summary=f"consumed {target}", data={"target": target})
 
 
-def build_agent(tmp_path: Path, client: RouterAnswerClient, tools: ToolRegistry, memory_context: str = "") -> JakataAgent:
+class CapturingCodingController:
+    def __init__(self) -> None:
+        self.cwd = ""
+
+    def run_goal(self, goal: str, **kwargs):
+        del goal
+        self.cwd = str(kwargs.get("cwd", ""))
+        return ToolResult(ok=True, summary="coding complete", data={"reason": "verified", "observations": ["done"]})
+
+
+def build_agent(
+    tmp_path: Path,
+    client: RouterAnswerClient,
+    tools: ToolRegistry,
+    memory_context: str = "",
+    *,
+    embedder=None,
+    router_tool_limit: int = 0,
+    router_min_tool_score: float = 0.0,
+) -> JakataAgent:
     settings = SimpleNamespace(
         session_id="test",
         workspace_dir=tmp_path,
         data_dir=tmp_path / "data",
         approval_policy="auto_safe",
+        router_tool_limit=router_tool_limit,
+        router_min_tool_score=router_min_tool_score,
     )
     return JakataAgent(
         settings=settings,
         client=client,
         tools=tools,
-        memory=DummyMemory(memory_context),
+        memory=DummyMemory(memory_context, embedder=embedder),
         router=IntentRouter(client),
         validator=PlanValidator(),
         task_store=TaskStore(tmp_path / "jakata.db"),
-        daemon=SimpleNamespace(ensure_running=lambda: None),
         task_engine=None,
     )
 
@@ -130,6 +170,71 @@ def test_router_direct_answer_returns_without_second_chat_call(tmp_path: Path):
     assert model == "router:answer"
     assert content == "normal chat answered by router"
     assert client.router_calls == 1
+    assert client.chat_calls == 0
+
+
+def test_router_receives_semantic_shortlisted_manifest(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"datetime","args":{},"reason":"live time"}]}')
+    tools = ToolRegistry()
+    tools.register(DateTimeTool())
+    tools.register(ProducePathTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("what time is it")
+
+    assert model == "local:tool"
+    assert "Local time is" in content
+    assert '"name":"datetime"' in client.last_user_prompt
+    assert '"name":"produce_path"' not in client.last_user_prompt
+
+
+def test_semantic_no_match_skips_router_and_uses_streamable_chat_path(tmp_path: Path):
+    client = RouterAnswerClient('{"answer":"normal chat"}')
+    tools = ToolRegistry()
+    tools.register(DateTimeTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("casual message")
+
+    assert model == "chat-model"
+    assert content == "chat fallback"
+    assert client.router_calls == 0
+    assert client.chat_calls == 1
+
+
+def test_semantic_direct_tool_answers_capabilities_without_router(tmp_path: Path):
+    client = RouterAnswerClient('{"answer":"router should not be called"}')
+    tools = ToolRegistry()
+    tools.register(DateTimeTool())
+    register_capabilities_tool(tools)
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=2,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("what can you do")
+
+    assert model == "local:tool"
+    assert "datetime" in content
+    assert client.router_calls == 0
     assert client.chat_calls == 0
 
 
@@ -155,6 +260,21 @@ def test_simple_tool_plan_executes_directly_without_chat_synthesis(tmp_path: Pat
 
     assert model == "local:tool"
     assert "Local time is" in content
+    assert client.router_calls == 1
+    assert client.chat_calls == 0
+
+
+def test_stream_reply_returns_direct_tool_result_without_chat_synthesis(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"datetime","args":{"include_utc":false},"reason":"live time"}]}')
+    tools = ToolRegistry()
+    tools.register(DateTimeTool())
+    agent = build_agent(tmp_path, client, tools)
+
+    chunks = list(agent.stream_reply("time please"))
+
+    assert chunks
+    assert chunks[0][0] == "local:tool"
+    assert "Local time is" in chunks[0][1]
     assert client.router_calls == 1
     assert client.chat_calls == 0
 
@@ -238,3 +358,17 @@ def test_agent_resolves_tool_output_placeholders_between_steps(tmp_path: Path):
     assert model == "local:tool"
     assert consumer.targets == ["C:/tmp/generated.png"]
     assert "consume_path: consumed C:/tmp/generated.png" in content
+
+
+def test_blank_coding_cwd_uses_generated_projects_area(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"coding_agent","args":{"goal":"build a landing page"},"reason":"build artifact"}]}')
+    tools = ToolRegistry()
+    controller = CapturingCodingController()
+    tools.register(CodingAgentTool(controller))  # type: ignore[arg-type]
+    agent = build_agent(tmp_path, client, tools)
+
+    model, content = agent.reply("build me a landing page")
+
+    assert model == "local:tool"
+    assert content == "coding complete"
+    assert controller.cwd == str(tmp_path / "data" / "generated" / "projects")

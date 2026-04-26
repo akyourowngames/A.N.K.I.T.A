@@ -68,8 +68,7 @@ class TaskOrchestrator:
                 task.id,
                 "planned",
                 {
-                    "execution_mode": context.decision.execution_mode,
-                    "background_reason": context.decision.background_reason,
+                    "execution_mode": "foreground",
                     "steps": [
                         {
                             "tool": step.tool,
@@ -262,11 +261,12 @@ class TaskOrchestrator:
             normalized = tool.normalize_args(dict(step.args))
             remaining_repairs = max(1, task.repair_limit - task.repair_count)
             remaining_actions = max(1, task.action_limit - task.action_count)
+            cwd = str(normalized.get("cwd", "")).strip() or str(task.cwd or self._generated_projects_dir())
             result_obj = tool.controller.run_goal(
                 str(normalized["goal"]),
                 context=str(normalized.get("context", task.context)),
                 success_criteria=list(normalized.get("success_criteria", task.success_criteria)),
-                cwd=str(normalized.get("cwd", task.cwd or self.workspace_dir or "")),
+                cwd=cwd,
                 budget_minutes=int(normalized.get("budget_minutes", task.budget_minutes)),
                 allowed_tools=list(normalized.get("allowed_tools", [])),
                 repair_limit=remaining_repairs,
@@ -414,6 +414,10 @@ class TaskOrchestrator:
     def _record_nested_event(self, task: TaskRecord, event_type: str, payload: dict[str, Any]) -> None:
         self.task_store.append_event(task.id, event_type, payload)
         self.memory.remember_task_event(task.id, task.goal, event_type, payload)
+
+    def _generated_projects_dir(self) -> Path:
+        base = self.data_dir or self.workspace_dir or Path.cwd()
+        return base / "generated" / "projects"
 
     @staticmethod
     def _verified_delegate_result(results: list[dict[str, Any]]) -> dict[str, Any] | None:

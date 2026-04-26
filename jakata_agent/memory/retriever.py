@@ -54,9 +54,10 @@ class MemoryRetriever:
         recent = self.store.recent(limit=max(limit * 3, 10))
         pool = {item.content: item for item in [*lexical, *recent]}
         ranked: list[tuple[float, object]] = []
-        for item in pool.values():
+        items = list(pool.values())
+        semantic_scores = self._semantic_scores(query, [item.content for item in items])
+        for item, semantic_score in zip(items, semantic_scores, strict=False):
             lexical_score = self._token_score(query, f"{item.kind} {item.content} {item.summary}")
-            semantic_score = self._semantic_score(query, item.content)
             evidence_score = lexical_score + semantic_score * 5.0
             if evidence_score > 0:
                 score = evidence_score + item.confidence * 0.25
@@ -113,9 +114,9 @@ class MemoryRetriever:
             return []
 
         ranked: list[tuple[float, str]] = []
-        for chunk in chunks:
+        semantic_scores = self._semantic_scores(query, chunks)
+        for chunk, semantic_score in zip(chunks, semantic_scores, strict=False):
             lexical_score = self._token_score(query, chunk)
-            semantic_score = self._semantic_score(query, chunk)
             score = lexical_score + semantic_score * 5.0
             if score > 0:
                 ranked.append((score, chunk))
@@ -143,3 +144,14 @@ class MemoryRetriever:
             return max(0.0, self.embedder.similarity(query, text))
         except Exception:
             return 0.0
+
+    def _semantic_scores(self, query: str, texts: list[str]) -> list[float]:
+        if not texts:
+            return []
+        try:
+            similarity_many = getattr(self.embedder, "similarity_many", None)
+            if callable(similarity_many):
+                return [max(0.0, float(score)) for score in similarity_many(query, texts)]
+        except Exception:
+            pass
+        return [self._semantic_score(query, text) for text in texts]

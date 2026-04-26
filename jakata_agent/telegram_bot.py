@@ -40,11 +40,9 @@ ADMIN_HELP_TEXT = """JAKATA admin commands
 Natural control:
 - Send a normal message to use the same JAKATA agent path as CLI, including chat and tools.
 - Ask naturally to send files/images back here; JAKATA will use Telegram delivery when the planner selects it.
-- Use /bg only when you want persistent background work.
 - Use the file/screenshot/image commands only when you explicitly want Telegram to send an attachment.
 
 Tasks:
-/bg <goal>
 /task <goal>
 /tasks
 /details <task_id>
@@ -74,8 +72,6 @@ Send a document/photo to store it on the PC.
 
 Session:
 /lock
-/kill
-/unkill
 """
 
 
@@ -181,7 +177,7 @@ class TelegramBotController:
 
     @staticmethod
     def _build_agent(runtime: JakataRuntime, tools: ToolRegistry | None = None) -> JakataAgent | None:
-        required = ("settings", "client", "tools", "memory", "router", "validator", "task_store", "daemon")
+        required = ("settings", "client", "tools", "memory", "router", "validator", "task_store")
         if not all(hasattr(runtime, name) for name in required):
             return None
         return JakataAgent(
@@ -192,7 +188,6 @@ class TelegramBotController:
             router=runtime.router,
             validator=runtime.validator,
             task_store=runtime.task_store,
-            daemon=runtime.daemon,
             task_engine=getattr(runtime, "task_engine", None),
         )
 
@@ -253,30 +248,6 @@ class TelegramBotController:
             await self._reply(update, "Usage: /task <goal>")
             return
         await self._run_task(update, goal)
-
-    async def bg(self, update, context) -> None:
-        if not await self._require_admin(update):
-            return
-        goal = " ".join(context.args or []).strip()
-        if not goal:
-            await self._reply(update, "Usage: /bg <goal>")
-            return
-        session_id = f"telegram-{self._user_id(update)}"
-        memory_context = self.runtime.memory.retrieve(goal).to_system_context()
-        task = self.runtime.task_store.create_task(
-            goal=goal,
-            session_id=session_id,
-            execution_mode="background",
-            context=memory_context,
-            background_reason="telegram_bg_request",
-            budget_minutes=DEFAULT_TASK_BUDGET_MINUTES,
-            repair_limit=DEFAULT_TASK_REPAIR_LIMIT,
-            action_limit=DEFAULT_TASK_ACTION_LIMIT,
-        )
-        self.runtime.task_store.append_event(task.id, "planned", {"source": "telegram_bg"})
-        self.runtime.memory.remember_task_event(task.id, task.goal, "planned", {"source": "telegram_bg"})
-        self.runtime.daemon.ensure_running()
-        await self._reply(update, f"Queued background task: {task.id}\nUse /details {task.id} for progress.")
 
     async def tasks(self, update, context) -> None:
         del context
@@ -359,20 +330,6 @@ class TelegramBotController:
             await self._reply(update, f"Task not found: {token}")
             return
         await self._reply(update, f"Task {task.id} is {task.status}.")
-
-    async def kill(self, update, context) -> None:
-        del context
-        if not await self._require_admin(update):
-            return
-        self.runtime.daemon.activate_kill_switch()
-        await self._reply(update, "Global kill switch enabled.")
-
-    async def unkill(self, update, context) -> None:
-        del context
-        if not await self._require_admin(update):
-            return
-        self.runtime.daemon.clear_kill_switch()
-        await self._reply(update, "Global kill switch cleared.")
 
     async def screen(self, update, context) -> None:
         del context
@@ -895,7 +852,6 @@ class TelegramBotController:
         task = self.runtime.task_store.create_task(
             goal=summary,
             session_id=session_id,
-            execution_mode="foreground",
             context="telegram_artifact_action",
             success_criteria=["Operator approves or denies the Telegram artifact action."],
             allowed_surfaces=["telegram"],
@@ -1003,15 +959,12 @@ def create_application(runtime: JakataRuntime):
     app.add_handler(CommandHandler("admin", controller.admin))
     app.add_handler(CommandHandler("unlock", controller.unlock))
     app.add_handler(CommandHandler("lock", controller.lock))
-    app.add_handler(CommandHandler("bg", controller.bg))
     app.add_handler(CommandHandler("task", controller.task))
     app.add_handler(CommandHandler("tasks", controller.tasks))
     app.add_handler(CommandHandler("details", controller.details))
     app.add_handler(CommandHandler("approve", controller.approve))
     app.add_handler(CommandHandler("deny", controller.deny))
     app.add_handler(CommandHandler("cancel", controller.cancel))
-    app.add_handler(CommandHandler("kill", controller.kill))
-    app.add_handler(CommandHandler("unkill", controller.unkill))
     app.add_handler(CommandHandler("screen", controller.screen))
     app.add_handler(CommandHandler("sendfile", controller.sendfile))
     app.add_handler(CommandHandler("senddir", controller.senddir))
