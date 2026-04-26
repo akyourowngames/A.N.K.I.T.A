@@ -109,11 +109,15 @@ let autoListenMode = false;
 /* Speech recognition config */
 const SPEECH_ERROR_MAX_RETRIES = 3;
 let speechErrorRetryCount = 0;
-const SPEECH_SEND_DELAY_MS = 500;   /* Pause after final transcript before sending (lets user add more) */
+const SPEECH_SEND_DELAY_MS = 2800;   /* Silence window before a voice draft is committed. */
 const SPEECH_RESTART_DELAY_MS = 700; /* Delay before restarting mic after AI+TTS complete (avoids echo) */
+const SPEECH_RESUME_DELAY_MS = 260;  /* Fast resume after the browser ends a dictation segment. */
 const SPEECH_RECOGNITION_LANGUAGE = 'hi-IN';
 let speechSendTimeout = null;
-let pendingSendTranscript = null;
+let speechRestartTimeout = null;
+let speechFinalTranscript = '';
+let speechInterimTranscript = '';
+let speechSubmitInProgress = false;
 let safariVoiceHintShown = false;
 
 /*
@@ -186,6 +190,7 @@ const activityClose       = $('activity-close');           // Close button insid
 const activityList        = $('activity-list');            // Container for activity items
 const panelOverlay        = $('panel-overlay');            // Backdrop when a side panel is open
 const speechWidget        = $('speech-widget');            // Live speech-to-text display
+const speechWidgetLabel   = $('speech-widget-label');      // Voice state label
 const speechWidgetText    = $('speech-widget-text');       // Transcript text element
 const settingsBtn         = $('settings-btn');              // Gear icon to open settings
 const settingsPanel       = $('settings-panel');            // Settings modal/panel
@@ -677,9 +682,130 @@ function isSafariOrIOS() {
         (/Safari/.test(ua) && !/Chrome|Chromium|CriOS/.test(ua));
 }
 
+function normalizeSpeechText(value) {
+    return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function currentSpeechDraft(includeInterim = false) {
+    const text = includeInterim
+        ? `${speechFinalTranscript} ${speechInterimTranscript}`
+        : speechFinalTranscript;
+    return normalizeSpeechText(text);
+}
+
+function resetSpeechBuffer() {
+    speechFinalTranscript = '';
+    speechInterimTranscript = '';
+}
+
+function appendFinalSpeechChunk(transcript) {
+    const next = normalizeSpeechText(transcript);
+    if (!next) return;
+
+    const current = currentSpeechDraft(false);
+    if (!current) {
+        speechFinalTranscript = next;
+        return;
+    }
+    if (current === next || current.endsWith(` ${next}`)) return;
+    if (next.startsWith(current)) {
+        speechFinalTranscript = next;
+        return;
+    }
+    speechFinalTranscript = normalizeSpeechText(`${current} ${next}`);
+}
+
+function clearSpeechSendTimer() {
+    if (speechSendTimeout) {
+        clearTimeout(speechSendTimeout);
+        speechSendTimeout = null;
+    }
+}
+
+function clearSpeechRestartTimer() {
+    if (speechRestartTimeout) {
+        clearTimeout(speechRestartTimeout);
+        speechRestartTimeout = null;
+    }
+}
+
+function setSpeechWidgetState(state, text = '') {
+    if (speechWidget) {
+        speechWidget.classList.toggle('visible', state !== 'hidden');
+        speechWidget.classList.toggle('holding', state === 'holding');
+        speechWidget.classList.toggle('sending', state === 'sending');
+        speechWidget.setAttribute('aria-hidden', state === 'hidden' ? 'true' : 'false');
+    }
+    if (speechWidgetLabel) {
+        const labels = {
+            listening: 'Listening',
+            holding: 'Still listening',
+            sending: 'Sending',
+            hidden: 'Listening'
+        };
+        speechWidgetLabel.textContent = labels[state] || labels.listening;
+    }
+    if (speechWidgetText) {
+        const fallbacks = {
+            listening: 'Listening...',
+            holding: 'Pause to send.',
+            sending: 'Sending...',
+            hidden: ''
+        };
+        speechWidgetText.textContent = text || fallbacks[state] || fallbacks.listening;
+    }
+    if (micBtn) {
+        const titles = {
+            listening: 'Voice input - listening',
+            holding: 'Voice input - holding your sentence',
+            sending: 'Voice input - sending',
+            hidden: 'Voice input'
+        };
+        micBtn.title = titles[state] || titles.listening;
+    }
+}
+
+function scheduleSpeechSend(delay = SPEECH_SEND_DELAY_MS) {
+    const draft = currentSpeechDraft(false);
+    if (!draft) return;
+
+    clearSpeechSendTimer();
+    setSpeechWidgetState('holding', draft);
+    speechSendTimeout = setTimeout(() => submitSpeechDraft(), delay);
+}
+
+function resumeSpeechCaptureWithDraft() {
+    clearSpeechRestartTimer();
+    if (!autoListenMode || isStreaming || isTtsBusy() || !currentSpeechDraft(true)) return;
+    speechRestartTimeout = setTimeout(() => {
+        if (autoListenMode && !isStreaming && !isListening && recognition && currentSpeechDraft(true)) {
+            startListening({ preserveDraft: true });
+        }
+    }, SPEECH_RESUME_DELAY_MS);
+}
+
+function submitSpeechDraft() {
+    const draft = currentSpeechDraft(true);
+    if (!draft) return;
+
+    clearSpeechSendTimer();
+    clearSpeechRestartTimer();
+    speechSubmitInProgress = true;
+    resetSpeechBuffer();
+    isListening = false;
+    if (micBtn) micBtn.classList.remove('listening');
+    setSpeechWidgetState('sending', 'Sending...');
+    try { recognition.stop(); } catch (_) {}
+    sendMessage(draft);
+    setTimeout(() => {
+        if (!isListening) setSpeechWidgetState('hidden');
+    }, 650);
+}
+
 /**
  * initSpeech() — Sets up SpeechRecognition with PC-optimized settings.
- * Uses single-utterance mode (continuous: false) for clean, accurate results.
+ * Uses continuous dictation on Chromium so longer sentences are not committed
+ * until the user leaves a stable pause.
  */
 function initSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
@@ -691,10 +817,9 @@ function initSpeech() {
 
     recognition = new SR();
 
-    /* PC: single utterance, interim results for real-time feedback. Avoids Chrome incremental bug. */
-    /* Safari: no interim (unstable), single utterance. */
+    /* Chromium supports stable continuous dictation. Safari stays single utterance. */
     const safariMode = isSafariOrIOS();
-    recognition.continuous = false;
+    recognition.continuous = !safariMode;
     recognition.interimResults = !safariMode;
     recognition.maxAlternatives = 1;
     recognition.lang = SPEECH_RECOGNITION_LANGUAGE;
@@ -712,47 +837,58 @@ function initSpeech() {
             console.warn('[SPEECH] No results in event');
             return;
         }
-        /* Chrome sends incremental results — each extends the previous. Use ONLY the last. */
-        const last = e.results[e.results.length - 1];
-        const transcript = (last && last[0]) ? last[0].transcript.trim() : '';
-        const isFinal = last && last.isFinal;
-        const confidence = (last && last[0]) ? last[0].confidence : 0;
 
-        console.log('[SPEECH] Transcript:', transcript, '| Final:', isFinal, '| Confidence:', confidence);
+        speechInterimTranscript = '';
+        let finalChanged = false;
+        const startIndex = typeof e.resultIndex === 'number' ? e.resultIndex : 0;
+        for (let i = startIndex; i < e.results.length; i += 1) {
+            const result = e.results[i];
+            const transcript = (result && result[0]) ? normalizeSpeechText(result[0].transcript) : '';
+            if (!transcript) continue;
+            if (result.isFinal) {
+                appendFinalSpeechChunk(transcript);
+                finalChanged = true;
+            } else {
+                speechInterimTranscript = normalizeSpeechText(`${speechInterimTranscript} ${transcript}`);
+            }
+        }
 
-        if (speechWidgetText) speechWidgetText.textContent = transcript || 'Listening...';
-        if (speechWidget) speechWidget.classList.add('visible');
+        const visibleDraft = currentSpeechDraft(true);
+        console.log('[SPEECH] Draft:', visibleDraft, '| Final changed:', finalChanged);
+        setSpeechWidgetState(finalChanged ? 'holding' : 'listening', visibleDraft);
 
-        if (isFinal && transcript) {
-            console.log('[SPEECH] Final transcript received, will send in', SPEECH_SEND_DELAY_MS, 'ms');
-            pendingSendTranscript = transcript;
-            clearTimeout(speechSendTimeout);
-            speechSendTimeout = setTimeout(() => {
-                if (pendingSendTranscript) {
-                    console.log('[SPEECH] Sending message:', pendingSendTranscript);
-                    sendMessage(pendingSendTranscript);
-                    pendingSendTranscript = null;
-                }
-                speechSendTimeout = null;
-                stopListening();
-            }, SPEECH_SEND_DELAY_MS);
-        } else if (!isFinal) {
-            pendingSendTranscript = null;
-            clearTimeout(speechSendTimeout);
-            speechSendTimeout = null;
+        if (speechInterimTranscript) {
+            clearSpeechSendTimer();
+            clearSpeechRestartTimer();
+            return;
+        }
+        if (finalChanged && currentSpeechDraft(false)) {
+            console.log('[SPEECH] Final draft updated, will send after stable silence');
+            scheduleSpeechSend();
         }
     };
 
     recognition.onstart = () => { 
         console.log('[SPEECH] Recognition started');
+        speechSubmitInProgress = false;
         speechErrorRetryCount = 0; 
     };
 
     recognition.onerror = e => {
         console.error('[SPEECH] Error:', e.error, '| Message:', e.message);
-        stopListening();
         const msg = (e && e.error) ? String(e.error) : '';
         const isPermissionDenied = /denied|not-allowed|permission/i.test(msg);
+        const hasDraft = !!currentSpeechDraft(true);
+
+        if (msg === 'no-speech' && hasDraft) {
+            console.warn('[SPEECH] Pause detected while a draft exists; holding before send');
+            isListening = false;
+            if (micBtn) micBtn.classList.remove('listening');
+            scheduleSpeechSend();
+            return;
+        }
+
+        stopListening();
         
         if (isPermissionDenied) {
             showToast('Microphone access denied. Please allow microphone access in browser settings.');
@@ -777,23 +913,26 @@ function initSpeech() {
             console.log('[SPEECH] Will retry, attempt', speechErrorRetryCount, 'of', SPEECH_ERROR_MAX_RETRIES);
             setTimeout(() => maybeRestartListening(), SPEECH_RESTART_DELAY_MS);
         } else if (speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES && micBtn) {
-            micBtn.title = 'Voice input — click to try again';
+            micBtn.title = 'Voice input - click to try again';
         }
     };
 
     recognition.onend = () => {
         console.log('[SPEECH] Recognition ended');
-        if (pendingSendTranscript) {
-            clearTimeout(speechSendTimeout);
-            speechSendTimeout = null;
-            console.log('[SPEECH] Sending pending transcript on end:', pendingSendTranscript);
-            sendMessage(pendingSendTranscript);
-            pendingSendTranscript = null;
-        } else {
-            clearTimeout(speechSendTimeout);
-            speechSendTimeout = null;
+        if (speechSubmitInProgress) {
+            speechSubmitInProgress = false;
+            return;
         }
-        if (isListening) stopListening();
+        if (currentSpeechDraft(false)) {
+            isListening = false;
+            if (micBtn) micBtn.classList.remove('listening');
+            scheduleSpeechSend();
+            resumeSpeechCaptureWithDraft();
+            return;
+        }
+        clearSpeechSendTimer();
+        clearSpeechRestartTimer();
+        if (isListening) stopListening({ clearDraft: false });
         maybeRestartListening();
     };
 
@@ -835,7 +974,7 @@ function initSpeech() {
  *   - Does nothing if we're currently streaming a response (to avoid
  *     accidentally sending a voice message mid-stream).
  */
-function startListening() {
+function startListening({ preserveDraft = false } = {}) {
     if (!recognition) {
         console.error('[SPEECH] Recognition not initialized');
         showToast('Speech recognition not available. Please use Chrome or Edge.');
@@ -857,12 +996,11 @@ function startListening() {
     
     console.log('[SPEECH] Starting recognition...');
     isListening = true;
-    pendingSendTranscript = null;
-    clearTimeout(speechSendTimeout);
-    speechSendTimeout = null;
+    if (!preserveDraft) resetSpeechBuffer();
+    clearSpeechSendTimer();
+    clearSpeechRestartTimer();
     if (micBtn) micBtn.classList.add('listening');
-    if (speechWidget) speechWidget.classList.add('visible');
-    if (speechWidgetText) speechWidgetText.textContent = 'Listening...';
+    setSpeechWidgetState('listening', currentSpeechDraft(true));
     
     try {
         recognition.start();
@@ -871,13 +1009,13 @@ function startListening() {
         console.error('[SPEECH] Failed to start recognition:', err);
         isListening = false;
         if (micBtn) micBtn.classList.remove('listening');
-        if (speechWidget) speechWidget.classList.remove('visible');
+        setSpeechWidgetState('hidden');
         
         if (err.name === 'InvalidStateError') {
             console.warn('[SPEECH] Recognition already started, stopping and restarting...');
             try {
                 recognition.stop();
-                setTimeout(() => startListening(), 100);
+                setTimeout(() => startListening({ preserveDraft }), 100);
             } catch (e2) {
                 console.error('[SPEECH] Failed to restart:', e2);
             }
@@ -917,14 +1055,14 @@ function interruptResponse(reason = 'interrupted') {
  *   - An error occurs.
  *   - The recognition engine stops unexpectedly.
  */
-function stopListening() {
-    clearTimeout(speechSendTimeout);
-    speechSendTimeout = null;
-    pendingSendTranscript = null;
+function stopListening({ clearDraft = true } = {}) {
+    clearSpeechSendTimer();
+    clearSpeechRestartTimer();
+    if (clearDraft) resetSpeechBuffer();
+    speechInterimTranscript = '';
     isListening = false;
     if (micBtn) micBtn.classList.remove('listening');  // Remove visual highlight
-    if (speechWidget) speechWidget.classList.remove('visible');
-    if (speechWidgetText) speechWidgetText.textContent = '';
+    setSpeechWidgetState('hidden');
     try { recognition.stop(); } catch (_) {}
 }
 
@@ -937,6 +1075,7 @@ function maybeRestartListening() {
     if (!autoListenMode || !recognition) return;
     if (isStreaming) return;
     if (isTtsBusy()) return;
+    if (currentSpeechDraft(true)) return;
     setTimeout(() => {
         if (autoListenMode && !isStreaming && !isListening && recognition) {
             startListening();
@@ -1024,16 +1163,23 @@ function bindEvents() {
 
     // MIC BUTTON — Toggle speech recognition. When ON: auto mode — listen, stop on send, restart after AI+TTS done.
     if (micBtn) micBtn.addEventListener('click', () => {
+        const hasVoiceDraft = !!currentSpeechDraft(true) || !!speechSendTimeout;
         if (isStreaming || isTtsBusy()) {
             autoListenMode = true;
             if (micBtn) {
                 micBtn.classList.add('auto-listen');
-                micBtn.title = 'Voice input — click to stop auto-listen';
+                micBtn.title = 'Voice input - click to stop auto-listen';
             }
             interruptResponse('voice_interrupt');
             setTimeout(() => {
                 if (autoListenMode && !isStreaming && !isListening) startListening();
             }, 250);
+            return;
+        }
+        if (!isListening && hasVoiceDraft) {
+            autoListenMode = false;
+            stopListening();
+            if (micBtn) micBtn.classList.remove('auto-listen');
             return;
         }
         if (isListening) {
@@ -1045,7 +1191,7 @@ function bindEvents() {
             speechErrorRetryCount = 0;   // Reset retry count on fresh start
             if (micBtn) {
                 micBtn.classList.add('auto-listen');
-                micBtn.title = 'Voice input — click to stop auto-listen';
+                micBtn.title = 'Voice input - click to stop auto-listen';
             }
             startListening();
         }

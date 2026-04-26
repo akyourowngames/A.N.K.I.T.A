@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 
@@ -10,6 +10,7 @@ class SemanticManifestResult:
     best_score: float
     second_score: float
     used_semantic_ranking: bool
+    tool_scores: dict[str, float] = field(default_factory=dict)
 
 
 class SemanticToolManifest:
@@ -37,13 +38,26 @@ class SemanticToolManifest:
         except Exception:
             return SemanticManifestResult(tools=tools, best_score=1.0, second_score=0.0, used_semantic_ranking=False)
 
+        tool_scores = {str(tool.get("name", "")): float(score) for score, tool in zip(scores, tools, strict=False)}
         ranked = sorted(zip(scores, tools, strict=False), key=lambda item: item[0], reverse=True)
         best_score = ranked[0][0] if ranked else 0.0
         second_score = ranked[1][0] if len(ranked) > 1 else 0.0
         if best_score < self.min_score:
-            return SemanticManifestResult(tools=[], best_score=best_score, second_score=second_score, used_semantic_ranking=True)
+            return SemanticManifestResult(
+                tools=[],
+                best_score=best_score,
+                second_score=second_score,
+                used_semantic_ranking=True,
+                tool_scores=tool_scores,
+            )
         selected = [tool for score, tool in ranked[: self.limit] if score >= self.min_score]
-        return SemanticManifestResult(tools=selected, best_score=best_score, second_score=second_score, used_semantic_ranking=True)
+        return SemanticManifestResult(
+            tools=selected,
+            best_score=best_score,
+            second_score=second_score,
+            used_semantic_ranking=True,
+            tool_scores=tool_scores,
+        )
 
     @staticmethod
     def _manifest_text(tool: dict[str, Any]) -> str:

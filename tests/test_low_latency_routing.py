@@ -183,6 +183,21 @@ class GeneralChatRunnerUpEmbedder:
         return scores
 
 
+class ToolWithChatEscapeEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        scores: list[float] = []
+        for text in texts:
+            text_l = text.lower()
+            if "produce_path" in text_l:
+                scores.append(0.24)
+            elif "general_chat" in text_l and "no tool needed" in text_l:
+                scores.append(0.10)
+            else:
+                scores.append(0.02)
+        return scores
+
+
 class CapturingCodingController:
     def __init__(self) -> None:
         self.cwd = ""
@@ -334,6 +349,29 @@ def test_semantic_general_chat_runner_up_beats_ambiguous_tool_without_router(tmp
     assert decision.steps[0].reason == "semantic_general_chat_competitive"
     assert client.router_calls == 0
     assert agent.memory.retrieve_calls == 0
+
+
+def test_router_answer_uses_chat_voice_when_tool_manifest_is_ambiguous(tmp_path: Path):
+    client = RouterAnswerClient('{"answer":"raw router wording"}')
+    tools = ToolRegistry()
+    tools.register(ProducePathTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=ToolWithChatEscapeEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("ambiguous support request")
+
+    assert model == "chat-model"
+    assert content == "chat fallback"
+    assert client.router_calls == 1
+    assert client.chat_calls == 1
+    assert '"name":"produce_path"' in client.last_user_prompt
+    assert '"name":"general_chat"' in client.last_user_prompt
 
 
 def test_semantic_no_match_can_use_fast_chat_client(tmp_path: Path):

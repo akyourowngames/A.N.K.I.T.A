@@ -24,6 +24,7 @@ from jakata_agent.tools.semantic_manifest import SemanticToolManifest
 
 SYSTEM_PROMPT = load_prompt("agent/system.md")
 SYNTHESIS_SYSTEM_PROMPT = load_prompt("agent/synthesis.md")
+RESPONSE_STYLE_PROMPT = load_prompt("agent/response_style.md")
 
 MAX_TOOL_STEPS = 4
 DIRECT_TOOL_ENGINE_ENV = "JAKATA_FOREGROUND_TASK_ENGINE"
@@ -36,6 +37,7 @@ def _general_chat_manifest() -> dict[str, Any]:
         "name": GENERAL_CHAT_TOOL_NAME,
         "description": (
             "No tool needed. Use for natural conversation, advice, explanations, drafting, planning, "
+            "feelings, mood, emotional support, personal stress, studies, exams, and open-ended coaching, "
             "rewriting, formatting, and answers the user wants directly in chat without editing files, "
             "opening apps, using the web, or controlling the computer."
         ),
@@ -244,10 +246,13 @@ class JakataAgent:
         min_score = float(getattr(self.settings, "router_min_tool_score", 0.0) or 0.0)
         if embedder is None or limit <= 0:
             return SemanticToolManifest(None, limit=0, min_score=0.0).shortlist(user_message, manifest)
-        return SemanticToolManifest(embedder, limit=limit, min_score=min_score).shortlist(
+        result = SemanticToolManifest(embedder, limit=limit, min_score=min_score).shortlist(
             user_message,
             [*manifest, _general_chat_manifest()],
         )
+        if result.tools and all(str(tool.get("name", "")) != GENERAL_CHAT_TOOL_NAME for tool in result.tools):
+            result.tools.append(_general_chat_manifest())
+        return result
 
     def _should_use_task_engine(self, decision: PlanDecision) -> bool:
         if self.task_engine is None:
@@ -447,13 +452,14 @@ class JakataAgent:
         client: NvidiaChatClient | None = None,
     ) -> tuple[str, str]:
         active_client = client or self.client
-        return active_client.complete(self._build_general_chat_messages(user_message, memory_context))
+        return active_client.complete(self._build_general_chat_messages(user_message, memory_context), temperature=0.2)
 
     def _build_general_chat_messages(self, user_message: str, memory_context: str = "") -> list[dict[str, Any]]:
         messages = [self.messages[0], *self._short_prompt_context()]
         context = memory_context.strip()
         if context:
             messages.append({"role": "system", "content": "Relevant memory and knowledge context:\n" + context})
+        messages.append({"role": "system", "content": RESPONSE_STYLE_PROMPT})
         messages.append({"role": "user", "content": user_message})
         return messages
 
@@ -559,7 +565,15 @@ class JakataAgent:
         names = [str(tool.get("name", "")) for tool in manifest_result.tools]
         if GENERAL_CHAT_TOOL_NAME not in names[1:]:
             return False
-        margin = float(manifest_result.best_score) - float(getattr(manifest_result, "second_score", 0.0) or 0.0)
+        tool_scores = getattr(manifest_result, "tool_scores", {}) or {}
+        chat_score = float(tool_scores.get(GENERAL_CHAT_TOOL_NAME, 0.0) or 0.0)
+        min_score = float(
+            getattr(self.settings, "router_general_chat_min_score", getattr(self.settings, "router_min_tool_score", 0.0))
+            or 0.0
+        )
+        if chat_score < min_score:
+            return False
+        margin = float(manifest_result.best_score) - chat_score
         min_margin = float(getattr(self.settings, "router_tool_over_chat_min_margin", 0.05) or 0.0)
         return margin <= min_margin
 

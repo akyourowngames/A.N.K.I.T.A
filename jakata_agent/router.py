@@ -71,6 +71,12 @@ class IntentRouter:
 
         answer = str(payload.get("answer", "")).strip() if isinstance(payload, dict) else ""
         if answer:
+            tool_names = [str(entry.get("name", "")) for entry in tool_manifest]
+            if "general_chat" in tool_names and any(name != "general_chat" for name in tool_names):
+                return PlanDecision(
+                    steps=[PlanStep(tool="general_chat", args={}, reason="router_answer_to_voice")],
+                    memory_context=context,
+                )
             return PlanDecision(
                 steps=[PlanStep(tool="general_chat", args={}, reason="direct_answer")],
                 direct_answer=answer,

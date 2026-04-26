@@ -627,6 +627,14 @@ textarea { font-family: var(--font); color: var(--text); }
     transform: translateX(-50%) translateY(0);
     animation: speechWidgetIn 0.35s cubic-bezier(0.4, 0, 0.2, 1);
 }
+.speech-widget.holding {
+    border-color: rgba(78, 205, 196, 0.22);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(78, 205, 196, 0.12);
+}
+.speech-widget.sending {
+    border-color: rgba(124, 106, 239, 0.28);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.35), 0 0 0 1px rgba(124, 106, 239, 0.18);
+}
 @keyframes speechWidgetIn {
     from { opacity: 0; transform: translateX(-50%) translateY(12px); }
     to   { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -653,6 +661,12 @@ textarea { font-family: var(--font); color: var(--text); }
     border-radius: 50%;
     background: var(--danger);
     animation: pulse-dot 1.2s ease-in-out infinite;
+}
+.speech-widget.holding .speech-widget-label::before {
+    background: #4ecdc4;
+}
+.speech-widget.sending .speech-widget-label::before {
+    background: var(--accent);
 }
 .speech-widget-text {
     font-size: 0.9rem;

@@ -93,7 +93,7 @@ class Settings:
     router_general_chat_min_score: float = 0.16
     router_general_chat_min_margin: float = 0.015
     router_tool_over_chat_min_margin: float = 0.05
-    fast_chat_model: str = "nvidia/nemotron-mini-4b-instruct"
+    fast_chat_model: str = "meta/llama-3.3-70b-instruct"
     fast_chat_fallback_models: list[str] | None = None
     fast_chat_timeout_seconds: float = 8.0
     embedding_timeout_seconds: float = 8.0
@@ -237,8 +237,8 @@ def load_settings() -> Settings:
         router_general_chat_min_score=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_SCORE", "0.16").strip() or "0.16"),
         router_general_chat_min_margin=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_MARGIN", "0.015").strip() or "0.015"),
         router_tool_over_chat_min_margin=float(os.getenv("JAKATA_ROUTER_TOOL_OVER_CHAT_MIN_MARGIN", "0.05").strip() or "0.05"),
-        fast_chat_model=os.getenv("JAKATA_FAST_CHAT_MODEL", "nvidia/nemotron-mini-4b-instruct").strip()
-        or "nvidia/nemotron-mini-4b-instruct",
+        fast_chat_model=os.getenv("JAKATA_FAST_CHAT_MODEL", "meta/llama-3.3-70b-instruct").strip()
+        or "meta/llama-3.3-70b-instruct",
         fast_chat_fallback_models=_split_csv(os.getenv("JAKATA_FAST_CHAT_FALLBACK_MODELS", "")),
         fast_chat_timeout_seconds=float(os.getenv("JAKATA_FAST_CHAT_TIMEOUT_SECONDS", "8").strip() or "8"),
         embedding_timeout_seconds=float(os.getenv("JAKATA_EMBEDDING_TIMEOUT_SECONDS", "8").strip() or "8"),

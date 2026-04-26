@@ -9,6 +9,7 @@ from jakata_agent.prompts import PromptLoadError, load_prompt
 
 PROMPT_MARKERS = {
     "agent/system.md": "You are JAKATA, a personal AI assistant.",
+    "agent/response_style.md": "JAKATA response contract",
     "agent/casual.md": "Reply in one or two sentences maximum.",
     "agent/synthesis.md": "You have tool and memory results.",
     "router/planner.md": "You are the JAKATA task planner.",
