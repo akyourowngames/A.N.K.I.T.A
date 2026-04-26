@@ -13,6 +13,7 @@ from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.datetime_tool import DateTimeTool
 from jakata_agent.tools.image_generation import ImageGenerationTool
 from jakata_agent.tools.registry import ToolRegistry
+from jakata_agent.tools.terminal import register_terminal_tools
 
 
 class RouterAnswerClient:
@@ -48,7 +49,7 @@ class FakeSemanticEmbedder:
         scores: list[float] = []
         for text in texts:
             text_l = text.lower()
-            if "what can you do" in query_l and "connected tool catalog" in text_l:
+            if "what can you do" in query_l and "connected tools" in text_l and "tool catalog" in text_l:
                 scores.append(0.44)
             elif "time" in query_l and "datetime" in text_l:
                 scores.append(0.91)
@@ -127,6 +128,29 @@ class ConsumePathTool(Tool):
         target = str(args.get("target", ""))
         self.targets.append(target)
         return ToolResult(ok=True, summary=f"consumed {target}", data={"target": target})
+
+
+class SkipMemoryTool(Tool):
+    name = "skip_memory_tool"
+    description = "semantic tool that does not need planning memory"
+    skip_planning_memory = True
+    input_schema = {"type": "object", "properties": {}, "required": []}
+
+    def run(self, args):
+        del args
+        return ToolResult(ok=True, summary="skip memory complete", data={})
+
+
+class SkipMemoryEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        return [0.91 if "skip_memory_tool" in text else 0.01 for text in texts]
+
+
+class ReadFileEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        return [0.91 if "read_file" in text else 0.01 for text in texts]
 
 
 class CapturingCodingController:
@@ -257,6 +281,69 @@ def test_specific_semantic_direct_tool_answers_without_router(tmp_path: Path):
     assert "Local time is" in content
     assert client.router_calls == 0
     assert client.chat_calls == 0
+
+
+def test_capabilities_catalog_uses_semantic_direct_tool(tmp_path: Path):
+    client = RouterAnswerClient('{"answer":"router should not be called"}')
+    tools = ToolRegistry()
+    register_capabilities_tool(tools)
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=2,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("what can you do and which tools are connected")
+
+    assert model == "local:tool"
+    assert "connected tools" in content
+    assert client.router_calls == 0
+    assert client.chat_calls == 0
+
+
+def test_semantic_tool_can_skip_planning_memory_context(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"skip_memory_tool","args":{},"reason":"use selected tool"}]}')
+    tools = ToolRegistry()
+    tools.register(SkipMemoryTool())
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        memory_context="poisoned old coffee shop context",
+        embedder=SkipMemoryEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+    )
+
+    model, content = agent.reply("use the selected semantic tool")
+
+    assert model == "local:tool"
+    assert content == "skip memory complete"
+    assert "poisoned old coffee shop context" not in client.last_user_prompt
+
+
+def test_read_file_semantic_direct_extracts_named_file_path(tmp_path: Path):
+    (tmp_path / "README.md").write_text("Setup\nInstall dependencies.\n", encoding="utf-8")
+    client = RouterAnswerClient('{"answer":"router should not be called"}')
+    tools = ToolRegistry()
+    register_terminal_tools(tools, tmp_path)
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=ReadFileEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+    )
+
+    decision = agent.plan("Read README.md and summarize the setup section.")
+
+    assert decision.steps[0].tool == "read_file"
+    assert decision.steps[0].args["path"] == "README.md"
+    assert client.router_calls == 0
 
 
 def test_router_direct_answer_receives_memory_context(tmp_path: Path):

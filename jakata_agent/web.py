@@ -591,9 +591,12 @@ def _next_tts_text_for_budget(
 
 def _long_tts_phrase(settings: Settings) -> str:
     phrases = getattr(settings, "sarvam_tts_long_response_phrases", None) or [
-        "The rest of the chat is on screen, sir. You can check it out."
+        "I have prepared the full response, sir. Please review the written details when ready."
     ]
-    return random.choice([phrase for phrase in phrases if phrase.strip()] or ["The rest of the chat is on screen, sir."])
+    return random.choice(
+        [phrase for phrase in phrases if phrase.strip()]
+        or ["I have prepared the full response, sir. Please review the written details when ready."]
+    )
 
 
 def _truncate_for_tts(text: str, max_chars: int) -> str:
@@ -635,11 +638,40 @@ def _final_tts_segments(buffer: str, *, max_chars: int = 260) -> list[str]:
 
 
 def _clean_tts_text(text: str) -> str:
-    cleaned = re.sub(r"`([^`]*)`", r"\1", text)
+    cleaned = _replace_spoken_paths(text)
+    cleaned = re.sub(r"`([^`]*)`", r"\1", cleaned)
     cleaned = re.sub(r"[*_#>\[\]{}]", "", cleaned)
     cleaned = re.sub(r"^\s*[-•]\s*", "", cleaned, flags=re.MULTILINE)
     cleaned = re.sub(r"https?://\S+", "link", cleaned)
+    cleaned = re.sub(r"\s+\|\s+", ", ", cleaned)
     return " ".join(cleaned.split())
+
+
+WINDOWS_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])([A-Za-z]:[\\/][^\s`\"'<>|]+)")
+POSIX_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])(/(?:Users|home|tmp|var|mnt|data|workspace)/[^\s`\"'<>|]+)")
+
+
+def _replace_spoken_paths(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        raw = match.group(1).rstrip(".,;:)")
+        suffix = match.group(1)[len(raw) :]
+        name = Path(raw.replace("\\", "/")).name.strip()
+        if not name:
+            return f"a local path{suffix}"
+        return f"the local file {_friendly_spoken_filename(name)}{suffix}"
+
+    text = WINDOWS_PATH_RE.sub(replace, text)
+    return POSIX_PATH_RE.sub(replace, text)
+
+
+def _friendly_spoken_filename(name: str) -> str:
+    stem = Path(name).stem or name
+    suffix = Path(name).suffix.lower().lstrip(".")
+    spoken_stem = re.sub(r"[-_]+", " ", stem).strip()
+    if not suffix:
+        return spoken_stem or name
+    extension = " ".join(suffix.upper()) if len(suffix) <= 4 else suffix
+    return f"{spoken_stem} dot {extension}".strip()
 
 
 def _sse(payload: dict[str, Any]) -> bytes:

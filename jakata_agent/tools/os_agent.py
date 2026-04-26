@@ -1058,7 +1058,11 @@ class OsController:
 
 class OsAgentTool(Tool):
     name = "os_agent"
-    description = "Goal-oriented OS agent for desktop/browser workflows with verification and retries."
+    description = (
+        "Goal-oriented OS agent for multi-step desktop/browser workflows that need stateful execution, "
+        "verification, retries, recovery, or proof of completion. Prefer this over direct browser/system "
+        "tools when the user asks for a workflow to be completed and verified end-to-end."
+    )
     input_schema = {
         "type": "object",
         "properties": {

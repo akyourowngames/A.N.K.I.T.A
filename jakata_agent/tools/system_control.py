@@ -200,7 +200,8 @@ class SystemTool(Tool):
                     "recycle_bin",
                     "power",
                 ],
-                "description": "System action to perform.",
+                "description": "System action to perform. Default to status for a read-only PC health/resource snapshot.",
+                "default": "status",
             },
             "operation": {
                 "type": "string",
@@ -243,6 +244,7 @@ class SystemTool(Tool):
     }
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
+        args.setdefault("action", "status")
         args.setdefault("seconds", 1)
         args.setdefault("max_results", 30)
         args.setdefault("operation", "get")

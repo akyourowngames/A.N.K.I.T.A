@@ -28,3 +28,4 @@ Rules:
 - Make the document ready to share, not a rough outline.
 - Keep tables compact and readable.
 - If the user provided exact content, preserve its meaning while improving formatting and clarity.
+- The document should feel prepared by a serious assistant: polished headings, concise recommendations, and no filler.

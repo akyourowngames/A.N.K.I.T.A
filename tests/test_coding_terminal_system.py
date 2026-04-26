@@ -318,6 +318,14 @@ def test_system_status_render_includes_machine_resources():
     assert "Disk: C:" in rendered
 
 
+def test_system_tool_defaults_to_status_for_read_only_plan():
+    tool = SystemTool()
+
+    args = tool.normalize_args({})
+
+    assert args["action"] == "status"
+
+
 def test_task_orchestrator_runs_derived_fallback_when_primary_tool_fails(tmp_path: Path):
     registry = ToolRegistry()
     registry.register(FailingSystemTool())

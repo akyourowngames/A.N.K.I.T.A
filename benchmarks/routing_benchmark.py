@@ -57,8 +57,10 @@ def run_benchmark(*, cases_path: Path, output_dir: Path, case_filter: str = "") 
     settings = replace(settings, session_id=session_id)
     runtime = create_runtime(settings)
     agent = build_agent(runtime)
-    tool_manifest = runtime.tools.manifest(public_only=True)
-    tool_names = {tool.get("name") for tool in tool_manifest}
+    public_tool_manifest = runtime.tools.manifest(public_only=True)
+    all_tool_manifest = runtime.tools.manifest(public_only=False)
+    public_tool_names = {tool.get("name") for tool in public_tool_manifest}
+    all_tool_names = {tool.get("name") for tool in all_tool_manifest}
     cases = _load_cases(cases_path)
     if case_filter:
         cases = [case for case in cases if case_filter.lower() in str(case.get("id", "")).lower()]
@@ -66,33 +68,44 @@ def run_benchmark(*, cases_path: Path, output_dir: Path, case_filter: str = "") 
     results: list[dict[str, Any]] = []
     for case in cases:
         expected = [str(item) for item in case.get("expected_tools", [])]
+        execution = str(case.get("execution", "plan_only"))
         started = time.perf_counter()
-        manifest_result = agent._planner_manifest(str(case.get("prompt", "")))
-        after_manifest = time.perf_counter()
-        decision = agent.plan(str(case.get("prompt", "")))
+        if execution == "registry_only":
+            manifest_result = None
+            after_manifest = started
+            decision = None
+            route = expected[0] if expected else "none"
+            selected_tools: list[str] = []
+        else:
+            manifest_result = agent._planner_manifest(str(case.get("prompt", "")))
+            after_manifest = time.perf_counter()
+            decision = agent.plan(str(case.get("prompt", "")))
+            route = _first_route(decision)
+            selected_tools = [str(tool.get("name", "")) for tool in manifest_result.tools]
         finished = time.perf_counter()
-        route = _first_route(decision)
-        selected_tools = [str(tool.get("name", "")) for tool in manifest_result.tools]
-        invalid_expected = [tool for tool in expected if tool != "general_chat" and tool not in tool_names]
-        ok = route in expected and not invalid_expected
+        invalid_expected = [tool for tool in expected if tool != "general_chat" and tool not in all_tool_names]
+        registry_ok = execution == "registry_only" and all(
+            tool == "general_chat" or tool in all_tool_names for tool in expected
+        )
+        ok = (registry_ok if execution == "registry_only" else route in expected) and not invalid_expected
         results.append(
             {
                 "id": case.get("id", ""),
                 "category": case.get("category", ""),
-                "execution": case.get("execution", "plan_only"),
+                "execution": execution,
                 "prompt": case.get("prompt", ""),
                 "expected_tools": expected,
                 "actual_tool": route,
                 "ok": ok,
                 "invalid_expected_tools": invalid_expected,
-                "semantic_best_score": round(float(manifest_result.best_score), 4),
-                "semantic_used": bool(manifest_result.used_semantic_ranking),
+                "semantic_best_score": round(float(manifest_result.best_score), 4) if manifest_result else 0.0,
+                "semantic_used": bool(manifest_result.used_semantic_ranking) if manifest_result else False,
                 "semantic_shortlist": selected_tools,
                 "manifest_ms": round((after_manifest - started) * 1000),
                 "plan_ms": round((finished - after_manifest) * 1000),
                 "total_ms": round((finished - started) * 1000),
-                "steps": _steps_payload(decision),
-                "direct_answer_preview": str(getattr(decision, "direct_answer", ""))[:300],
+                "steps": _steps_payload(decision) if decision else [],
+                "direct_answer_preview": str(getattr(decision, "direct_answer", ""))[:300] if decision else "",
             }
         )
 
@@ -116,11 +129,14 @@ def run_benchmark(*, cases_path: Path, output_dir: Path, case_filter: str = "") 
         "passed": passed,
         "failed": len(results) - passed,
         "score": round(passed / len(results), 4) if results else 0.0,
-        "tool_catalog_count": len(tool_manifest),
-        "tool_catalog": sorted(str(name) for name in tool_names if name),
+        "tool_catalog_count": len(all_tool_manifest),
+        "public_tool_catalog_count": len(public_tool_manifest),
+        "all_tool_catalog_count": len(all_tool_manifest),
+        "tool_catalog": sorted(str(name) for name in all_tool_names if name),
+        "public_tool_catalog": sorted(str(name) for name in public_tool_names if name),
         "expected_tool_coverage": sorted(expected_coverage),
         "actual_tool_coverage": sorted(actual_coverage),
-        "missing_expected_catalog_tools": sorted((tool_names | {"general_chat"}) - expected_coverage),
+        "missing_expected_catalog_tools": sorted((all_tool_names | {"general_chat"}) - expected_coverage),
         "category_scores": categories,
         "results": results,
     }

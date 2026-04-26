@@ -218,7 +218,7 @@ def load_settings() -> Settings:
         sarvam_tts_long_response_phrases=_split_pipe(
             os.getenv(
                 "SARVAM_TTS_LONG_RESPONSE_PHRASES",
-                "The rest of the chat is on screen, sir. You can check it out.|I kept the full answer on screen, sir. You can read the rest there.|The rest is written on the screen, sir. Take a look when you want.",
+                "I have prepared the full response, sir. Please review the written details when ready.|The full briefing is ready, sir. I have kept the detailed version in the chat.|I have completed the detailed answer, sir. The written version is ready for review.",
             )
         ),
         router_model=os.getenv("JAKATA_ROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b").strip()

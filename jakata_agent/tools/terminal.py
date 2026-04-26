@@ -58,6 +58,7 @@ _MAX_TIMEOUT = 1_800
 _DEFAULT_EXCLUDES = {".git", ".venv", "__pycache__", "node_modules", ".pytest_cache"}
 _DISCOVERY_MAX_DEPTH = 6
 _DISCOVERY_MAX_VISITS = 50_000
+FILE_REFERENCE_RE = re.compile(r"(?:[A-Za-z]:[\\/])?(?:[A-Za-z0-9_. -]+[\\/])*[A-Za-z0-9_. -]+\.[A-Za-z0-9]{1,8}")
 _DISCOVERY_MIN_SCORE = 0.62
 _SEARCH_MAX_FILES = 20_000
 _SEARCH_MAX_SECONDS = 8.0
@@ -548,8 +549,13 @@ class ShellTool(Tool):
 
 class ReadFileTool(Tool):
     name = "read_file"
+    skip_planning_memory = True
+    semantic_direct_min_score = 0.30
+    semantic_direct_min_margin = 0.05
     description = (
-        "Read the contents of a file. Supports line range (start_line, end_line). "
+        "Read a named local file path such as README.md, markdown, config, txt, source code, or docs. "
+        "Use this to summarize setup sections, inspect, quote, or answer using current file contents. "
+        "Supports line range (start_line, end_line). "
         "Handles text and binary files gracefully. If a relative path does not exist, searches likely PC roots and verifies the match."
     )
     input_schema = {
@@ -578,6 +584,15 @@ class ReadFileTool(Tool):
 
     def __init__(self, cwd: _CwdState) -> None:
         self.cwd = cwd
+
+    def semantic_direct_args(self, user_message: str) -> dict[str, Any] | None:
+        matches = FILE_REFERENCE_RE.findall(user_message)
+        if not matches:
+            return None
+        path = max((item.strip("`\"'.,;:()[]{}") for item in matches), key=len, default="")
+        if path and not re.search(r"[\\/]", path) and " " in path:
+            path = path.split()[-1]
+        return {"path": path} if path else None
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         args.setdefault("cwd", "")
@@ -656,6 +671,7 @@ class ReadFileTool(Tool):
 
 class ListDirTool(Tool):
     name = "list_dir"
+    skip_planning_memory = True
     description = (
         "List files and directories. Shows names, sizes, types, and modification times. "
         "Optionally recursive. If a relative path does not exist, searches likely PC roots and verifies the matching directory."
@@ -756,6 +772,7 @@ class ListDirTool(Tool):
 
 class SearchFilesTool(Tool):
     name = "search_files"
+    skip_planning_memory = True
     description = (
         "Find files by name pattern OR search file contents with a text/regex query. "
         "Like find + grep. Use for exploring codebases, locating configs, searching logs, and whole-PC file discovery."
@@ -953,8 +970,10 @@ class SearchFilesTool(Tool):
 
 class WriteFileTool(Tool):
     name = "write_file"
+    skip_planning_memory = True
     description = (
-        "Write, overwrite, or append content to a file. "
+        "Write, overwrite, or append content to a named local file. Use this when the user asks to save text, "
+        "create a note, create a simple file, update file contents, or write content to a path. "
         "Creates parent directories automatically. If a relative parent path does not exist, searches likely PC roots and verifies it."
     )
     safety = "write"
@@ -1038,10 +1057,12 @@ class WriteFileTool(Tool):
 class OpenPathTool(Tool):
     name = "open_path"
     description = (
-        "Open a local file, folder, or URL in its default app and report whether the OS returned launch/window evidence. "
-        "Uses the same verified path discovery as the terminal file tools, so repo-relative paths and likely PC folders can be opened."
+        "Open a named local file path such as README.md in the default Windows app. Launch files, folders, "
+        "directories, generated artifacts, and URLs for viewing, then report whether the OS returned launch/window evidence."
     )
     safety = "write"
+    semantic_direct_min_score = 0.35
+    semantic_direct_min_margin = 0.05
     input_schema = {
         "type": "object",
         "properties": {
@@ -1064,6 +1085,18 @@ class OpenPathTool(Tool):
 
     def __init__(self, cwd: _CwdState) -> None:
         self.cwd = cwd
+
+    def semantic_direct_args(self, user_message: str) -> dict[str, Any] | None:
+        url_match = re.search(r"https?://\S+", user_message)
+        if url_match:
+            return {"target": url_match.group(0).strip("`\"'.,;:()[]{}")}
+        matches = FILE_REFERENCE_RE.findall(user_message)
+        if not matches:
+            return None
+        target = max((item.strip("`\"'.,;:()[]{}") for item in matches), key=len, default="")
+        if target and not re.search(r"[\\/]", target) and " " in target:
+            target = target.split()[-1]
+        return {"target": target} if target else None
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         args.setdefault("cwd", "")

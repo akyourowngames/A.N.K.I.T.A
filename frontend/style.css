@@ -363,7 +363,36 @@ textarea { font-family: var(--font); color: var(--text); }
     line-height: 1.65;
     font-weight: 400;
     word-wrap: break-word;
-    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    white-space: normal;
+}
+
+.msg-content p {
+    margin: 0;
+}
+
+.msg-content p + p,
+.msg-content p + ul,
+.msg-content ul + p,
+.msg-content ul + ul {
+    margin-top: 10px;
+}
+
+.msg-content ul {
+    margin: 0;
+    padding-left: 18px;
+}
+
+.msg-content li {
+    margin: 3px 0;
+}
+
+.msg-content code {
+    padding: 1px 5px;
+    border-radius: 5px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text);
+    font-size: 0.82rem;
 }
 
 .message.assistant .msg-content {

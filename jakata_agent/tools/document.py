@@ -126,11 +126,12 @@ class DocumentTool(Tool):
         return ToolResult(ok=False, summary=f"Unsupported document action: {action}", data={}, error="unsupported_action")
 
     def render(self, data: dict[str, Any]) -> str:
-        lines = [str(data.get("summary", "")).strip() or "Document action complete."]
+        summary = str(data.get("summary", "")).strip() or "Document action complete."
+        lines = [f"{summary}, sir."]
         paths = data.get("paths") or []
         if isinstance(paths, list) and paths:
             lines.append("")
-            lines.append("Files:")
+            lines.append("The file is saved here:" if len(paths) == 1 else "The files are saved here:")
             for path in paths:
                 lines.append(f"- {path}")
         source_count = int(data.get("source_count", 0) or 0)
@@ -158,7 +159,7 @@ class DocumentTool(Tool):
             summary = "Created researched DOCX/PDF document" if output_format == "both" else f"Created researched {output_format.upper()} document"
         return ToolResult(
             ok=True,
-            summary=f"{summary}: {', '.join(path.name for path in paths)}",
+            summary=f"The document is ready, sir. {summary}: {', '.join(path.name for path in paths)}",
             data={
                 "summary": summary,
                 "paths": [str(path) for path in paths],

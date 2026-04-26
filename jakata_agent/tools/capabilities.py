@@ -6,8 +6,10 @@ from jakata_agent.tools.registry import ToolRegistry
 
 class CapabilitiesTool(Tool):
     name = "capabilities"
+    semantic_direct = True
+    semantic_direct_min_score = 0.21
     description = (
-        "Explain JAKATA's own connected tool catalog, assistant capabilities, available integrations, and what the assistant can do."
+        "List JAKATA connected tools, tool names, tool catalog, integrations, and available tool inventory."
     )
     input_schema = {"type": "object", "properties": {}, "required": []}
     safety = "read_only"

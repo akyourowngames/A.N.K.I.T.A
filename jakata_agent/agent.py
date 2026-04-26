@@ -149,7 +149,19 @@ class JakataAgent:
         manifest_result = self._planner_manifest(user_message)
         if manifest_result.used_semantic_ranking and manifest_result.tools:
             first_tool = self.tools.get(str(manifest_result.tools[0].get("name", "")))
-            if getattr(first_tool, "semantic_direct", False):
+            direct_min_score = float(getattr(first_tool, "semantic_direct_min_score", 0.0) or 0.0) if first_tool else 0.0
+            direct_min_margin = float(getattr(first_tool, "semantic_direct_min_margin", 0.0) or 0.0) if first_tool else 0.0
+            direct_margin = float(manifest_result.best_score) - float(getattr(manifest_result, "second_score", 0.0) or 0.0)
+            direct_ready = manifest_result.best_score >= direct_min_score and direct_margin >= direct_min_margin
+            direct_args_builder = getattr(first_tool, "semantic_direct_args", None)
+            if callable(direct_args_builder) and direct_ready:
+                direct_args = direct_args_builder(user_message)
+                if isinstance(direct_args, dict):
+                    return PlanDecision(
+                        steps=[PlanStep(tool=first_tool.name, args=direct_args, reason="semantic_direct_tool")],
+                        memory_context="",
+                    )
+            if getattr(first_tool, "semantic_direct", False) and direct_ready:
                 return PlanDecision(
                     steps=[PlanStep(tool=first_tool.name, args={}, reason="semantic_direct_tool")],
                     memory_context="",
@@ -160,7 +172,11 @@ class JakataAgent:
                 memory_context="",
             )
 
-        memory_context = self._retrieve_memory_context(user_message)
+        first_manifest_tool = self.tools.get(str(manifest_result.tools[0].get("name", ""))) if manifest_result.tools else None
+        if getattr(first_manifest_tool, "skip_planning_memory", False):
+            memory_context = ""
+        else:
+            memory_context = self._retrieve_memory_context(user_message)
         manifest = manifest_result.tools + [
             {
                 "name": "general_chat",
@@ -429,6 +445,8 @@ class JakataAgent:
         if not results:
             return None
         if len(results) > 1:
+            if any(result.get("tool") == "read_file" for result in results):
+                return None
             lines: list[str] = []
             for result in results:
                 if not result.get("ok"):
@@ -437,6 +455,8 @@ class JakataAgent:
                 lines.append(f"{result.get('tool')}: {rendered[:500]}")
             return "\n".join(lines)
         result = results[0]
+        if result.get("tool") == "read_file":
+            return None
         summary = str(result.get("summary", "")).strip()
         error = str(result.get("error", "")).strip()
         if result.get("ok"):

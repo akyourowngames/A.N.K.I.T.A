@@ -189,9 +189,58 @@
     "execution": "plan_only"
   },
   {
+    "id": "keyboard_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: keyboard input control is registered for desktop automation.",
+    "expected_tools": ["keyboard"],
+    "execution": "registry_only"
+  },
+  {
+    "id": "clipboard_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: clipboard read and write control is registered for desktop automation.",
+    "expected_tools": ["clipboard"],
+    "execution": "registry_only"
+  },
+  {
+    "id": "window_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: window management is registered for desktop automation.",
+    "expected_tools": ["window"],
+    "execution": "registry_only"
+  },
+  {
+    "id": "mouse_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: mouse control is registered for desktop automation.",
+    "expected_tools": ["mouse"],
+    "execution": "registry_only"
+  },
+  {
+    "id": "screen_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: screen capture is registered for desktop automation.",
+    "expected_tools": ["screen"],
+    "execution": "registry_only"
+  },
+  {
+    "id": "ocr_internal_manifest",
+    "category": "internal_desktop",
+    "prompt": "Internal coverage check: OCR is registered for desktop automation.",
+    "expected_tools": ["ocr"],
+    "execution": "registry_only"
+  },
+  {
     "id": "capabilities_catalog",
     "category": "capabilities",
     "prompt": "What can you do and which tools are connected?",
+    "expected_tools": ["capabilities"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "capabilities_concise_catalog",
+    "category": "capabilities",
+    "prompt": "What can you do and which tools are connected? Keep it concise.",
     "expected_tools": ["capabilities"],
     "execution": "safe_live"
   }

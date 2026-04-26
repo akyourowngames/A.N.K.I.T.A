@@ -27,7 +27,9 @@ class BrowserTool(Tool):
     name = "browser"
     public = True
     description = (
-        "Internal Chrome helper for navigation, search, page inspection, tab control, result opening, and media playback control."
+        "Direct Chrome helper for a single browser action such as navigation, search, page inspection, tab control, "
+        "result opening, or media playback control. For multi-step workflows with verification, retries, or recovery, "
+        "use the goal-oriented OS agent instead."
     )
     input_schema = {
         "type": "object",

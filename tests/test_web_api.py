@@ -14,7 +14,7 @@ if str(ROOT) not in sys.path:
 
 from jakata_agent.config import Settings
 from jakata_agent.router import PlanDecision, PlanStep
-from jakata_agent.web import SessionManager, create_app
+from jakata_agent.web import SessionManager, _clean_tts_text, create_app
 
 
 class FakeTools:
@@ -139,7 +139,9 @@ def build_settings(tmp_path: Path) -> Settings:
         image_output_dir=tmp_path / "images",
         sarvam_api_key="sarvam-test-key",
         sarvam_tts_max_spoken_chars=95,
-        sarvam_tts_long_response_phrases=["The rest of the chat is on screen, sir. You can check it out."],
+        sarvam_tts_long_response_phrases=[
+            "I have prepared the full response, sir. Please review the written details when ready."
+        ],
     )
 
 
@@ -232,7 +234,7 @@ def test_chat_stream_emits_sarvam_audio_when_tts_enabled(tmp_path: Path):
     assert any(item.get("activity", {}).get("event") == "tts_ready" for item in payloads if isinstance(item.get("activity"), dict))
 
 
-def test_long_tts_is_limited_and_points_to_screen(tmp_path: Path):
+def test_long_tts_is_limited_with_professional_closing(tmp_path: Path):
     client = build_client(tmp_path)
 
     response = client.post("/chat/stream", json={"message": "long voice please", "tts": True})
@@ -240,9 +242,21 @@ def test_long_tts_is_limited_and_points_to_screen(tmp_path: Path):
 
     payloads = parse_sse_payloads(response.text)
     decoded_audio = b" ".join(base64.b64decode(str(item["audio"])) for item in payloads if "audio" in item)
-    assert b"The rest of the chat is on screen, sir" in decoded_audio
+    assert b"I have prepared the full response, sir" in decoded_audio
+    assert b"rest of the chat is on screen" not in decoded_audio
     assert b"final sentence should stay on the screen" not in decoded_audio
     assert any(item.get("activity", {}).get("event") == "tts_limited" for item in payloads if isinstance(item.get("activity"), dict))
+
+
+def test_tts_cleaner_speaks_file_paths_humanly():
+    spoken = _clean_tts_text(
+        r"The file is saved here: C:\Users\anime\Desktop\JAKATA\data\generated\documents\Coffee-Shop-Launch.pdf"
+    )
+
+    assert "C:" not in spoken
+    assert "\\" not in spoken
+    assert "/" not in spoken
+    assert "Coffee Shop Launch dot P D F" in spoken
 
 
 def test_session_id_keeps_conversation_context(tmp_path: Path):

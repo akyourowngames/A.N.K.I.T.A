@@ -1473,6 +1473,63 @@ function hideWelcome() {
 const AVATAR_ICON_USER = '<svg class="msg-avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 const AVATAR_ICON_ASSISTANT = '<svg class="msg-avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><circle cx="9" cy="16" r="1" fill="currentColor"/><circle cx="15" cy="16" r="1" fill="currentColor"/></svg>';
 
+function escapeHtml(value) {
+    return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+}
+
+function formatInlineMarkdown(value) {
+    let escaped = escapeHtml(value);
+    escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+    escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    return escaped;
+}
+
+function renderMessageContent(element, text) {
+    const raw = String(text || '').trim();
+    if (!raw) {
+        element.textContent = '';
+        return;
+    }
+    const blocks = raw.split(/\n{2,}/).map((block) => block.trim()).filter(Boolean);
+    const html = blocks.map((block) => {
+        const lines = block.split(/\n/).map((line) => line.trim()).filter(Boolean);
+        const parts = [];
+        let paragraphLines = [];
+        let bulletLines = [];
+
+        const flushParagraph = () => {
+            if (!paragraphLines.length) return;
+            parts.push(`<p>${paragraphLines.map(formatInlineMarkdown).join('<br>')}</p>`);
+            paragraphLines = [];
+        };
+        const flushBullets = () => {
+            if (!bulletLines.length) return;
+            const items = bulletLines.map((line) => `<li>${formatInlineMarkdown(line)}</li>`).join('');
+            parts.push(`<ul>${items}</ul>`);
+            bulletLines = [];
+        };
+
+        for (const line of lines) {
+            if (/^[-*•]\s+/.test(line)) {
+                flushParagraph();
+                bulletLines.push(line.replace(/^[-*•]\s+/, ''));
+            } else {
+                flushBullets();
+                paragraphLines.push(line);
+            }
+        }
+        flushParagraph();
+        flushBullets();
+        return parts.join('');
+    }).join('');
+    element.innerHTML = html;
+}
+
 function addMessage(role, text) {
     hideWelcome();
     const msg = document.createElement('div');
@@ -1493,7 +1550,7 @@ function addMessage(role, text) {
 
     const content = document.createElement('div');
     content.className = 'msg-content';
-    content.textContent = text;
+    renderMessageContent(content, text);
 
     body.appendChild(label);
     body.appendChild(content);
@@ -1805,6 +1862,7 @@ async function sendMessage(textOverride) {
 
         // Step 10: Clean up — remove the blinking cursor
         if (cursorEl) cursorEl.remove();
+        if (contentEl && fullResponse) renderMessageContent(contentEl, fullResponse);
 
         // If the server sent nothing, show a placeholder
         if (!contentEl) {
