@@ -824,6 +824,31 @@ $count = if ($folder) { @($folder.Items()).Count } else { 0 }
         action = str(data.get("action", "")).strip()
         if action == "status":
             lines = [self._status_summary(data)]
+            cpu_name = str(data.get("cpu_name", "")).strip()
+            if cpu_name:
+                cpu_load = data.get("cpu_load_percent")
+                load = f" | load={cpu_load}%" if cpu_load is not None else ""
+                lines.append(f"CPU: {cpu_name}{load}")
+            memory_total = self._as_int(data.get("memory_total_bytes"))
+            memory_available = self._as_int(data.get("memory_available_bytes"))
+            if memory_total is not None and memory_available is not None:
+                used = max(0, memory_total - memory_available)
+                percent = round((used / memory_total) * 100, 1) if memory_total else 0.0
+                lines.append(
+                    f"RAM: {self._format_bytes(used)} used / {self._format_bytes(memory_total)} total ({percent}% used)"
+                )
+            disks = data.get("disks", [])
+            if isinstance(disks, list) and disks:
+                disk_parts = []
+                for item in disks[:4]:
+                    if not isinstance(item, dict):
+                        continue
+                    disk_parts.append(
+                        f"{item.get('path', '')} {item.get('percent_used', '?')}% used, "
+                        f"{self._format_bytes(self._as_int(item.get('free_bytes')))} free"
+                    )
+                if disk_parts:
+                    lines.append("Disk: " + "; ".join(disk_parts))
             if data.get("battery_present"):
                 lines.append(
                     f"Battery: {data.get('battery_percent', '?')}% | AC={data.get('on_ac_power', False)}"
@@ -975,14 +1000,35 @@ if (-not $monitor) { throw "Brightness control is not available on this device."
 $os = Get-CimInstance Win32_OperatingSystem
 $boot = $os.LastBootUpTime
 $uptime = if ($boot) { New-TimeSpan -Start $boot -End (Get-Date) } else { $null }
+$cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
 $battery = Get-CimInstance Win32_Battery | Select-Object -First 1
 $batteryPresent = [bool]$battery
 $batteryPercent = if ($battery) { [int]$battery.EstimatedChargeRemaining } else { $null }
 $onAc = if ($battery) { @('2','6','7','8','9') -contains [string]$battery.BatteryStatus } else { $null }
 $processCount = (Get-Process | Measure-Object).Count
+$memoryTotalBytes = if ($os.TotalVisibleMemorySize) { [int64]$os.TotalVisibleMemorySize * 1024 } else { $null }
+$memoryAvailableBytes = if ($os.FreePhysicalMemory) { [int64]$os.FreePhysicalMemory * 1024 } else { $null }
+$drives = @(Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" | ForEach-Object {
+    $size = [int64]($_.Size)
+    $free = [int64]($_.FreeSpace)
+    $used = [Math]::Max([int64]0, $size - $free)
+    [pscustomobject]@{
+        path = [string]$_.DeviceID
+        total_bytes = $size
+        used_bytes = $used
+        free_bytes = $free
+        percent_used = if ($size -gt 0) { [Math]::Round(($used / $size) * 100, 1) } else { 0 }
+    }
+})
 [pscustomobject]@{
     action = 'status'
     platform = 'Windows'
+    os_caption = [string]$os.Caption
+    cpu_name = if ($cpu) { [string]$cpu.Name } else { $null }
+    cpu_load_percent = if ($cpu.LoadPercentage -ne $null) { [int]$cpu.LoadPercentage } else { $null }
+    memory_total_bytes = $memoryTotalBytes
+    memory_available_bytes = $memoryAvailableBytes
+    disks = $drives
     battery_present = $batteryPresent
     battery_percent = $batteryPercent
     on_ac_power = $onAc
@@ -994,7 +1040,27 @@ $processCount = (Get-Process | Measure-Object).Count
 
     @staticmethod
     def _status_summary(payload: dict[str, Any]) -> str:
-        parts = [f"PC status on {payload.get('platform', PLATFORM)}"]
+        os_label = str(payload.get("os_caption") or payload.get("platform", PLATFORM)).strip()
+        parts = [f"PC status on {os_label}"]
+        cpu_name = str(payload.get("cpu_name", "")).strip()
+        if cpu_name:
+            cpu_load = payload.get("cpu_load_percent")
+            suffix = f" at {cpu_load}% load" if cpu_load is not None else ""
+            parts.append(f"CPU {cpu_name}{suffix}")
+        memory_total = SystemTool._as_int(payload.get("memory_total_bytes"))
+        memory_available = SystemTool._as_int(payload.get("memory_available_bytes"))
+        if memory_total is not None and memory_available is not None:
+            used = max(0, memory_total - memory_available)
+            percent = round((used / memory_total) * 100, 1) if memory_total else 0.0
+            parts.append(f"RAM {SystemTool._format_bytes(used)}/{SystemTool._format_bytes(memory_total)} used ({percent}%)")
+        disks = payload.get("disks", [])
+        if isinstance(disks, list) and disks:
+            disk_summaries = []
+            for item in disks[:2]:
+                if isinstance(item, dict):
+                    disk_summaries.append(f"{item.get('path', '')} {item.get('percent_used', '?')}% used")
+            if disk_summaries:
+                parts.append("disk " + "; ".join(disk_summaries))
         battery_present = bool(payload.get("battery_present"))
         battery_percent = payload.get("battery_percent")
         on_ac_power = payload.get("on_ac_power")
@@ -1015,6 +1081,21 @@ $processCount = (Get-Process | Measure-Object).Count
         if process_count is not None:
             parts.append(f"{process_count} process(es)")
         return ", ".join(parts) + "."
+
+    @staticmethod
+    def _format_bytes(value: int | None) -> str:
+        if value is None:
+            return "unknown"
+        units = ["B", "KB", "MB", "GB", "TB"]
+        amount = float(max(0, value))
+        unit = units[0]
+        for unit in units:
+            if amount < 1024 or unit == units[-1]:
+                break
+            amount /= 1024
+        if unit == "B":
+            return f"{int(amount)} {unit}"
+        return f"{amount:.1f} {unit}"
 
 
 def register_system_tools(registry: ToolRegistry) -> None:

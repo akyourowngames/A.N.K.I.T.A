@@ -98,6 +98,9 @@ class JakataAgent:
         memory_context = self._retrieve_memory_context(user_message)
         yield from self._stream_messages(user_message, self._build_general_chat_messages(user_message, memory_context))
 
+    def stream_general_chat_with_context(self, user_message: str, memory_context: str = "") -> Iterator[tuple[str, str]]:
+        yield from self._stream_messages(user_message, self._build_general_chat_messages(user_message, memory_context))
+
     def stream_direct_answer(self, user_message: str, content: str) -> Iterator[tuple[str, str]]:
         self._record_conversation(user_message, content)
         yield "router:answer", content
@@ -144,20 +147,20 @@ class JakataAgent:
 
     def _plan(self, user_message: str) -> PlanDecision:
         manifest_result = self._planner_manifest(user_message)
-        memory_context = self._retrieve_memory_context(user_message)
         if manifest_result.used_semantic_ranking and manifest_result.tools:
             first_tool = self.tools.get(str(manifest_result.tools[0].get("name", "")))
             if getattr(first_tool, "semantic_direct", False):
                 return PlanDecision(
                     steps=[PlanStep(tool=first_tool.name, args={}, reason="semantic_direct_tool")],
-                    memory_context=memory_context,
+                    memory_context="",
                 )
         if manifest_result.used_semantic_ranking and not manifest_result.tools:
             return PlanDecision(
                 steps=[PlanStep(tool="general_chat", args={}, reason="semantic_no_tool_match")],
-                memory_context=memory_context,
+                memory_context="",
             )
 
+        memory_context = self._retrieve_memory_context(user_message)
         manifest = manifest_result.tools + [
             {
                 "name": "general_chat",
@@ -315,7 +318,6 @@ class JakataAgent:
         task = self.task_store.create_task(
             goal=f"Approve direct foreground action: {step.tool}",
             session_id=self.settings.session_id,
-            execution_mode="foreground",
             context="direct_approval_gate",
             cwd=str(self._workspace_dir()),
         )

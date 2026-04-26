@@ -16,8 +16,9 @@ from jakata_agent.tools.registry import ToolRegistry
 
 
 class RouterAnswerClient:
-    def __init__(self, raw: str) -> None:
-        self.raw = raw
+    def __init__(self, raw: str | list[str]) -> None:
+        self.raws = list(raw) if isinstance(raw, list) else [raw]
+        self.raw = self.raws[-1]
         self.router_calls = 0
         self.chat_calls = 0
         self.last_user_prompt = ""
@@ -26,8 +27,9 @@ class RouterAnswerClient:
     def complete_text(self, system_prompt: str, user_prompt: str, temperature: float = 0.0):
         del system_prompt, temperature
         self.last_user_prompt = user_prompt
+        raw = self.raws[min(self.router_calls, len(self.raws) - 1)]
         self.router_calls += 1
-        return "router-model", self.raw
+        return "router-model", raw
 
     def complete(self, messages, temperature: float = 0.7):
         del temperature
@@ -52,6 +54,10 @@ class FakeSemanticEmbedder:
                 scores.append(0.91)
             elif "time" in query_l:
                 scores.append(0.02)
+            elif "path" in query_l and "produce_path" in text_l:
+                scores.append(0.91)
+            elif "path" in query_l:
+                scores.append(0.02)
             else:
                 scores.append(0.0)
         return scores
@@ -64,6 +70,7 @@ class DummyMemory:
         self.embedder = embedder
         self.knowledge_chunks = []
         self.store = SimpleNamespace(recent=lambda limit=10: [])
+        self.retrieve_calls = 0
 
     def load_session_messages(self):
         return []
@@ -78,6 +85,7 @@ class DummyMemory:
         del user_message
 
     def retrieve(self, query: str):
+        self.retrieve_calls += 1
         del query
         return SimpleNamespace(
             to_system_context=lambda: self.context,
@@ -173,8 +181,21 @@ def test_router_direct_answer_returns_without_second_chat_call(tmp_path: Path):
     assert client.chat_calls == 0
 
 
+def test_router_retries_once_after_invalid_json(tmp_path: Path):
+    client = RouterAnswerClient(["not json", '{"answer":"normal chat answered after retry"}'])
+    agent = build_agent(tmp_path, client, ToolRegistry())
+
+    model, content = agent.reply("normal message")
+
+    assert model == "router:answer"
+    assert content == "normal chat answered after retry"
+    assert client.router_calls == 2
+    assert "previous planner response was not valid JSON" in client.last_user_prompt
+    assert client.chat_calls == 0
+
+
 def test_router_receives_semantic_shortlisted_manifest(tmp_path: Path):
-    client = RouterAnswerClient('{"steps":[{"tool":"datetime","args":{},"reason":"live time"}]}')
+    client = RouterAnswerClient('{"steps":[{"tool":"produce_path","args":{},"reason":"path requested"}]}')
     tools = ToolRegistry()
     tools.register(DateTimeTool())
     tools.register(ProducePathTool())
@@ -187,12 +208,12 @@ def test_router_receives_semantic_shortlisted_manifest(tmp_path: Path):
         router_min_tool_score=0.09,
     )
 
-    model, content = agent.reply("what time is it")
+    model, content = agent.reply("make a path")
 
     assert model == "local:tool"
-    assert "Local time is" in content
-    assert '"name":"datetime"' in client.last_user_prompt
-    assert '"name":"produce_path"' not in client.last_user_prompt
+    assert content == "produced path"
+    assert '"name":"produce_path"' in client.last_user_prompt
+    assert '"name":"datetime"' not in client.last_user_prompt
 
 
 def test_semantic_no_match_skips_router_and_uses_streamable_chat_path(tmp_path: Path):
@@ -214,13 +235,13 @@ def test_semantic_no_match_skips_router_and_uses_streamable_chat_path(tmp_path: 
     assert content == "chat fallback"
     assert client.router_calls == 0
     assert client.chat_calls == 1
+    assert agent.memory.retrieve_calls == 0
 
 
-def test_semantic_direct_tool_answers_capabilities_without_router(tmp_path: Path):
+def test_specific_semantic_direct_tool_answers_without_router(tmp_path: Path):
     client = RouterAnswerClient('{"answer":"router should not be called"}')
     tools = ToolRegistry()
     tools.register(DateTimeTool())
-    register_capabilities_tool(tools)
     agent = build_agent(
         tmp_path,
         client,
@@ -230,10 +251,10 @@ def test_semantic_direct_tool_answers_capabilities_without_router(tmp_path: Path
         router_min_tool_score=0.09,
     )
 
-    model, content = agent.reply("what can you do")
+    model, content = agent.reply("what time is it")
 
     assert model == "local:tool"
-    assert "datetime" in content
+    assert "Local time is" in content
     assert client.router_calls == 0
     assert client.chat_calls == 0
 

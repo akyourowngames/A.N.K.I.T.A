@@ -33,6 +33,22 @@ class ChatRequest(BaseModel):
     tts: bool = False
 
 
+class CompanionNextRequest(BaseModel):
+    session_id: str | None = Field(default=None, max_length=200)
+    force: bool = False
+    tts: bool = False
+    idle_seconds: int = Field(default=0, ge=0, le=86400)
+    page_visible: bool = True
+
+
+class CompanionFeedbackRequest(BaseModel):
+    session_id: str | None = Field(default=None, max_length=200)
+    message_id: str = Field(min_length=1, max_length=200)
+    signal: str = Field(min_length=1, max_length=80)
+    note: str = Field(default="", max_length=1000)
+    user_reply: str = Field(default="", max_length=4000)
+
+
 @dataclass(slots=True)
 class SessionContext:
     public_session_id: str
@@ -101,6 +117,7 @@ def create_app(
         runtime_factory=runtime_factory,
         agent_builder=agent_builder,
     )
+    manager.get_or_create(None)
 
     app = FastAPI(title="JAKATA Web", version="2.0.0")
     app.state.base_settings = settings
@@ -132,6 +149,68 @@ def create_app(
     def chat_jarvis_stream(payload: ChatRequest) -> StreamingResponse:
         return _stream_response(manager, payload, mode="jarvis", tts_client_factory=app.state.tts_client_factory)
 
+    @app.post("/companion/next")
+    def companion_next(payload: CompanionNextRequest) -> dict[str, Any]:
+        context = manager.get_or_create(payload.session_id)
+        if not payload.page_visible and not payload.force:
+            return {"should_speak": False, "skipped_reason": "page_hidden"}
+        if payload.idle_seconds < 20 and not payload.force:
+            return {"should_speak": False, "skipped_reason": "user_active"}
+        if context.chat_lock.locked() and not payload.force:
+            return {"should_speak": False, "skipped_reason": "chat_busy"}
+        conversation_context = context.agent._conversation_context(max_messages=8, max_chars=2400)
+        memory_context = context.agent._retrieve_memory_context(
+            "companion conversation preferences, interests, tone, age, favorite topics",
+            max_chars=1200,
+        )
+        decision = context.runtime.companion_engine.next_message(
+            session_id=context.public_session_id,
+            conversation_context=conversation_context,
+            memory_context=memory_context,
+            force=payload.force,
+        )
+        response = {
+            "session_id": context.public_session_id,
+            "should_speak": decision.should_speak,
+            "message_id": decision.message_id,
+            "text": decision.text,
+            "category": decision.category,
+            "reason": decision.reason,
+            "score": decision.score,
+            "skipped_reason": decision.skipped_reason,
+            "due_after_seconds": decision.due_after_seconds,
+        }
+        if not decision.should_speak:
+            return response
+        if not context.chat_lock.acquire(blocking=False):
+            response["should_speak"] = False
+            response["skipped_reason"] = "chat_busy"
+            response["text"] = ""
+            return response
+        try:
+            context.agent.messages.append({"role": "assistant", "content": decision.text})
+            context.agent.memory.persist_turn(context.agent.messages)
+        finally:
+            context.chat_lock.release()
+        if payload.tts:
+            audio = _tts_audio_base64(context.runtime.settings, app.state.tts_client_factory, decision.text)
+            if audio:
+                response["audio"] = audio
+                response["audio_codec"] = context.runtime.settings.sarvam_tts_codec
+        return response
+
+    @app.post("/companion/feedback")
+    def companion_feedback(payload: CompanionFeedbackRequest) -> dict[str, Any]:
+        context = manager.get_or_create(payload.session_id)
+        result = context.runtime.companion_store.record_feedback(
+            session_id=context.public_session_id,
+            message_id=payload.message_id,
+            signal=payload.signal,
+            note=payload.note,
+            user_reply=payload.user_reply,
+        )
+        return {"ok": True, **result}
+
     @app.get("/")
     def index() -> FileResponse:
         return FileResponse(FRONTEND_DIR / "index.html")
@@ -157,20 +236,35 @@ def _stream_response(
     if not message:
         raise HTTPException(status_code=400, detail="Message is required.")
 
-    context = manager.get_or_create(payload.session_id)
+    public_session_id = (payload.session_id or "").strip() or manager.base_settings.session_id
 
     def event_stream() -> Iterator[bytes]:
-        with context.chat_lock:
+        yield _sse({"session_id": public_session_id, "chunk": "", "done": False})
+        yield _sse({"activity": {"event": "query_detected", "message": message}, "done": False})
+        try:
+            context = manager.get_or_create(payload.session_id)
+        except Exception as exc:  # noqa: BLE001
+            yield _sse({"error": str(exc), "session_id": public_session_id, "done": False})
+            return
+        if not context.chat_lock.acquire(blocking=False):
+            yield _sse(
+                {
+                    "session_id": context.public_session_id,
+                    "activity": {"event": "busy", "message": "A response is already running."},
+                    "error": "A response is already running for this session. Please stop it or wait for it to finish.",
+                    "done": True,
+                }
+            )
+            return
+        try:
             started = perf_counter()
-            route, reasoning, search_step, general_steps, direct_answer = _resolve_route(context.agent, message, mode)
             first_chunk_sent = False
             tts_buffer = ""
             tts_spoken_chars = 0
             tts_closing_spoken = False
             tts_limit_reported = False
             try:
-                yield _sse({"session_id": context.public_session_id, "chunk": "", "done": False})
-                yield _sse({"activity": {"event": "query_detected", "message": message}, "done": False})
+                route, reasoning, search_step, general_steps, direct_answer, route_memory_context = _resolve_route(context.agent, message, mode)
 
                 if mode == "jarvis":
                     yield _sse(
@@ -275,7 +369,7 @@ def _stream_response(
                                 "done": False,
                             }
                         )
-                        chunk_stream = context.agent.stream_general_chat(message)
+                        chunk_stream = _stream_general_chat(context.agent, message, route_memory_context)
                 else:
                     yield _sse(
                         {
@@ -290,7 +384,7 @@ def _stream_response(
                     if tool_results:
                         chunk_stream = context.agent.stream_tool_results_reply(message, tool_results)
                     else:
-                        chunk_stream = context.agent.stream_general_chat(message)
+                        chunk_stream = _stream_general_chat(context.agent, message, route_memory_context)
 
                 for current_model, chunk in chunk_stream:
                     if chunk and not first_chunk_sent:
@@ -363,6 +457,8 @@ def _stream_response(
                 yield _sse({"session_id": context.public_session_id, "done": True})
             except Exception as exc:  # noqa: BLE001
                 yield _sse({"error": str(exc), "session_id": context.public_session_id, "done": False})
+        finally:
+            context.chat_lock.release()
 
     return StreamingResponse(
         event_stream(),
@@ -379,29 +475,36 @@ def _resolve_route(
     agent: JakataAgent,
     message: str,
     mode: str,
-) -> tuple[str, str, PlanStep | None, list[PlanStep], str]:
+) -> tuple[str, str, PlanStep | None, list[PlanStep], str, str]:
     if mode == "realtime":
         decision = agent.plan(message)
         search_step = next((step for step in decision.steps if step.tool == "search_web"), None)
         if search_step is None:
             search_step = PlanStep(tool="search_web", args={"query": message, "topic": "general", "max_results": 5}, reason="explicit realtime mode")
-        return "realtime", "Realtime mode selected.", search_step, [], ""
+        return "realtime", "Realtime mode selected.", search_step, [], "", decision.memory_context
 
     decision = agent.plan(message)
     if decision.direct_answer:
-        return "general", decision.steps[0].reason if decision.steps else "Planner answered directly.", None, [], decision.direct_answer
+        return "general", decision.steps[0].reason if decision.steps else "Planner answered directly.", None, [], decision.direct_answer, decision.memory_context
     search_step = next((step for step in decision.steps if step.tool == "search_web"), None)
     general_steps = [step for step in decision.steps if step.tool != "search_web"]
 
     if mode == "jarvis" and search_step is not None:
         reason = search_step.reason or "Planner selected live web search."
-        return "realtime", reason, search_step, general_steps, ""
+        return "realtime", reason, search_step, general_steps, "", decision.memory_context
 
     if mode == "jarvis":
         primary_reason = decision.steps[0].reason if decision.steps else "Planner selected standard chat."
-        return "general", primary_reason, None, general_steps, ""
+        return "general", primary_reason, None, general_steps, "", decision.memory_context
 
-    return "general", "General mode selected.", None, general_steps, ""
+    return "general", "General mode selected.", None, general_steps, "", decision.memory_context
+
+
+def _stream_general_chat(agent: JakataAgent, message: str, memory_context: str) -> Iterator[tuple[str, str]]:
+    stream_with_context = getattr(agent, "stream_general_chat_with_context", None)
+    if callable(stream_with_context):
+        return stream_with_context(message, memory_context)
+    return agent.stream_general_chat(message)
 
 
 def _resolve_asset(root: Path, relative_path: str) -> Path:
@@ -444,6 +547,22 @@ def _tts_audio_events(
                 "done": False,
             }
         )
+
+
+def _tts_audio_base64(
+    settings: Settings,
+    tts_client_factory: Callable[[Settings], Any],
+    text: str,
+) -> str:
+    clean_text = _clean_tts_text(text)
+    if not clean_text or not settings.sarvam_api_key:
+        return ""
+    try:
+        client = tts_client_factory(settings)
+        audio = b"".join(client.stream(clean_text))
+    except Exception:
+        return ""
+    return base64.b64encode(audio).decode("ascii") if audio else ""
 
 
 def _next_tts_text_for_budget(

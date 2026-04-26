@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import json
-import os
 import platform
 import subprocess
 import time
@@ -174,13 +173,6 @@ if ($started) {
         stdout=stdout,
         stderr=stderr,
     )
-    if result.ok and not result.verified and _is_image_path(target):
-        fallback = _open_windows_image_fallback(target, wait_seconds=wait_seconds)
-        if fallback.ok:
-            fallback.method = f"{result.method} -> {fallback.method}"
-            fallback.stdout = result.stdout
-            fallback.stderr = result.stderr
-            return fallback
     if result.ok and not result.verified and kind == "dir":
         fallback = _open_windows_folder_fallback(target, wait_seconds=wait_seconds)
         if fallback.ok:
@@ -215,27 +207,6 @@ def _open_windows_cmd_start(target: str, *, kind: str, wait_seconds: float) -> O
         )
     except Exception as exc:  # noqa: BLE001
         return OpenTargetResult(ok=False, target=target, kind=kind, method="cmd start", error=str(exc))
-
-
-def _open_windows_image_fallback(target: str, *, wait_seconds: float) -> OpenTargetResult:
-    app = os.getenv("JAKATA_OPEN_IMAGE_APP", "mspaint.exe").strip()
-    if not app:
-        return OpenTargetResult(ok=False, target=target, kind="path", method="image fallback", error="image fallback disabled")
-    try:
-        proc = subprocess.Popen([app, target], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        time.sleep(max(0.0, min(wait_seconds, 5.0)))
-        running = proc.poll() is None
-        return OpenTargetResult(
-            ok=True,
-            target=target,
-            kind="file",
-            method=f"image fallback: {app}",
-            opened=True,
-            verified=running,
-            process={"pid": proc.pid, "process_name": Path(app).stem, "running": running},
-        )
-    except Exception as exc:  # noqa: BLE001
-        return OpenTargetResult(ok=False, target=target, kind="file", method=f"image fallback: {app}", error=str(exc))
 
 
 def _open_windows_folder_fallback(target: str, *, wait_seconds: float) -> OpenTargetResult:

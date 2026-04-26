@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from jakata_agent.camera import CameraSession
+from jakata_agent.companion import CompanionStore, ProactiveCompanionEngine
 from jakata_agent.config import Settings, load_settings
 from jakata_agent.llm import (
     NvidiaChatClient,
@@ -21,6 +22,7 @@ from jakata_agent.tools.camera import register_camera_tools
 from jakata_agent.tools.capabilities import register_capabilities_tool
 from jakata_agent.tools.coding_agent import CodingAgentTool, CodingController
 from jakata_agent.tools.datetime_tool import DateTimeTool
+from jakata_agent.tools.document import register_document_tool
 from jakata_agent.tools.external_services import register_external_service_tools
 from jakata_agent.tools.image_generation import register_image_generation_tool
 from jakata_agent.tools.keyboard import register_input_tools
@@ -49,6 +51,8 @@ class JakataRuntime:
     os_controller: OsController
     coding_controller: CodingController
     camera_session: CameraSession
+    companion_store: CompanionStore
+    companion_engine: ProactiveCompanionEngine
 
 
 def create_runtime(settings: Settings | None = None) -> JakataRuntime:
@@ -64,6 +68,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         settings.api_key,
         settings.base_url,
         settings.embedding_model,
+        settings.embedding_timeout_seconds,
     )
     kill_switch_path = settings.data_dir / "control" / "kill.switch"
     register_terminal_tools(tools)
@@ -93,7 +98,25 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         model_namespace=settings.image_model_namespace,
         timeout_seconds=settings.timeout_seconds,
     )
+    search_tool = TavilySearchTool(settings.tavily_api_key)
+    register_document_tool(
+        tools,
+        client=automation_client,
+        output_dir=settings.document_output_dir,
+        template_dir=settings.document_template_dir,
+        workspace_dir=settings.workspace_dir,
+        search_tool=search_tool,
+    )
     task_store = TaskStore(memory.db_path)
+    companion_store = CompanionStore(settings.data_dir / "companion" / "companion.db")
+    companion_engine = ProactiveCompanionEngine(
+        client=router_client,
+        store=companion_store,
+        enabled_default=settings.companion_enabled,
+        min_interval_seconds=settings.companion_min_interval_seconds,
+        max_per_day=settings.companion_max_per_day,
+        min_score=settings.companion_min_score,
+    )
     os_controller = OsController(
         client=automation_client,
         tools=tools,
@@ -105,7 +128,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
     tools.register(CodingAgentTool(coding_controller))
     tools.register(DateTimeTool())
     tools.register(MemoryTool())
-    tools.register(TavilySearchTool(settings.tavily_api_key))
+    tools.register(search_tool)
     tools.register(OpenWeatherTool(settings.openweather_api_key))
     register_external_service_tools(
         tools,
@@ -138,4 +161,6 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         os_controller=os_controller,
         coding_controller=coding_controller,
         camera_session=camera_session,
+        companion_store=companion_store,
+        companion_engine=companion_engine,
     )

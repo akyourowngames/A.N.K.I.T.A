@@ -65,10 +65,9 @@ def _render_items(items: list[dict[str, Any]], *, empty: str) -> str:
 
 class ExternalServicesStatusTool(Tool):
     name = "external_services_status"
-    description = "Check connected external context services such as Google Calendar and Gmail plus the local sync cache."
+    description = "Check Google Workspace integration health for Calendar, Gmail, OAuth authorization, and the local external-service sync cache."
     input_schema = {"type": "object", "properties": {}, "required": [], "additionalProperties": False}
     safety = "read_only"
-    semantic_direct = True
 
     def __init__(self, *, google: GoogleConnectorLike, store: ExternalServiceStore) -> None:
         self.google = google
@@ -119,7 +118,10 @@ class GoogleWorkspaceConnectTool(Tool):
 
 class CalendarUpcomingTool(Tool):
     name = "calendar_upcoming"
-    description = "Read upcoming Google Calendar events and cache them locally for assistant context."
+    description = (
+        "Read real upcoming Google Calendar events and cache them locally for assistant context. "
+        "Use only when the user asks to check, list, show, search, or summarize actual calendar meetings, appointments, or events."
+    )
     input_schema = {
         "type": "object",
         "properties": {
@@ -171,7 +173,10 @@ class CalendarUpcomingTool(Tool):
 
 class CalendarTodayTool(Tool):
     name = "calendar_today"
-    description = "Read today's Google Calendar events and cache them locally for assistant context."
+    description = (
+        "Read real Google Calendar events for today and cache them locally for assistant context. "
+        "Use only when the user asks to check, list, show, search, or summarize actual calendar meetings, appointments, or events."
+    )
     input_schema = {
         "type": "object",
         "properties": {

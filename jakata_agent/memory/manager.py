@@ -14,7 +14,15 @@ from jakata_agent.memory.store import MemoryStore
 
 
 class MemoryManager:
-    def __init__(self, data_dir: Path, session_id: str, api_key: str, base_url: str, embedding_model: str) -> None:
+    def __init__(
+        self,
+        data_dir: Path,
+        session_id: str,
+        api_key: str,
+        base_url: str,
+        embedding_model: str,
+        embedding_timeout_seconds: float = 8.0,
+    ) -> None:
         self.data_dir = data_dir
         self.session_id = session_id
         self.chats_dir = self.data_dir / "chats"
@@ -32,7 +40,12 @@ class MemoryManager:
         self.graph_extractor = GraphExtractor()
         self.knowledge_loader = KnowledgeLoader(self.knowledge_dir)
         self.knowledge_chunks = self.knowledge_loader.load_chunks()
-        self.embedder = SemanticEmbedder(api_key=api_key, base_url=base_url, model=embedding_model)
+        self.embedder = SemanticEmbedder(
+            api_key=api_key,
+            base_url=base_url,
+            model=embedding_model,
+            timeout_seconds=embedding_timeout_seconds,
+        )
         self._backfill_archived_memories()
         self.retriever = MemoryRetriever(
             self.store,
@@ -99,7 +112,18 @@ class MemoryManager:
             self._apply_graph_event(event)
 
     def _backfill_archived_memories(self) -> None:
-        for path in sorted(self.chats_dir.glob("session_*.json")):
+        chat_files = sorted(self.chats_dir.glob("session_*.json"))
+        signature = self._archive_signature(chat_files)
+        marker = self.memory_dir / "archive_backfill.json"
+        try:
+            if marker.exists():
+                payload = json.loads(marker.read_text(encoding="utf-8"))
+                if payload.get("signature") == signature:
+                    return
+        except Exception:
+            pass
+
+        for path in chat_files:
             try:
                 payload = json.loads(path.read_text(encoding="utf-8"))
             except Exception:
@@ -115,6 +139,11 @@ class MemoryManager:
                     self.store.upsert(record)
                 for event in self.graph_extractor.extract_from_user_message(content):
                     self._apply_graph_event(event)
+        marker.write_text(json.dumps({"signature": signature}, ensure_ascii=False), encoding="utf-8")
+
+    @staticmethod
+    def _archive_signature(paths: list[Path]) -> str:
+        return "|".join(f"{path.name}:{path.stat().st_mtime_ns}:{path.stat().st_size}" for path in paths if path.exists())
 
     def graph_search(self, query: str, limit: int = 8) -> dict[str, list[dict[str, object]]]:
         return self.graph.search(query, limit=limit)

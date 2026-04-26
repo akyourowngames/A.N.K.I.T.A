@@ -7,9 +7,9 @@ from openai import OpenAI
 
 
 class SemanticEmbedder:
-    def __init__(self, api_key: str, base_url: str, model: str) -> None:
+    def __init__(self, api_key: str, base_url: str, model: str, timeout_seconds: float = 8.0) -> None:
         self.model = model
-        self.client = OpenAI(api_key=api_key, base_url=base_url, max_retries=0)
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout_seconds, max_retries=0)
         self._cache: dict[str, list[float]] = {}
 
     def embed(self, text: str, input_type: str = "passage") -> list[float]:

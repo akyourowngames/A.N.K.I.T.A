@@ -1,0 +1,198 @@
+[
+  {
+    "id": "general_simple_chat",
+    "category": "chat",
+    "prompt": "all good",
+    "expected_tools": ["general_chat"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "general_hindi_study_plan",
+    "category": "chat",
+    "prompt": "kal subah ke liye ek short study plan banao, answer English me do",
+    "expected_tools": ["general_chat"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "chat_only_landing_page_plan",
+    "category": "chat",
+    "prompt": "Create a detailed landing page plan for a premium coffee shop: hero, sections, CTA, copy, and visual direction. Do not edit files, just answer here.",
+    "expected_tools": ["general_chat"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "shell_status_command",
+    "category": "terminal",
+    "prompt": "Run git status --short in the terminal and tell me the output.",
+    "expected_tools": ["shell"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "read_file_readme",
+    "category": "files",
+    "prompt": "Read README.md and summarize the setup section.",
+    "expected_tools": ["read_file"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "list_dir_frontend",
+    "category": "files",
+    "prompt": "List the files in the frontend folder.",
+    "expected_tools": ["list_dir"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "search_files_runtime",
+    "category": "files",
+    "prompt": "Search project files for create_runtime and show matching files.",
+    "expected_tools": ["search_files"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "write_file_note",
+    "category": "files",
+    "prompt": "Write a short benchmark note to data/generated/benchmark-routing-note.txt.",
+    "expected_tools": ["write_file"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "open_path_readme",
+    "category": "desktop",
+    "prompt": "Open README.md in the default Windows app.",
+    "expected_tools": ["open_path"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "system_status",
+    "category": "desktop",
+    "prompt": "Show my PC status: OS, CPU, RAM, battery, and disk.",
+    "expected_tools": ["system"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "browser_inspect",
+    "category": "browser",
+    "prompt": "Inspect the current browser page title and URL.",
+    "expected_tools": ["browser"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "camera_status",
+    "category": "camera",
+    "prompt": "Check the local camera status without taking a picture.",
+    "expected_tools": ["camera"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "image_generation",
+    "category": "media",
+    "prompt": "Generate an image of a clean futuristic coffee cup on a desk.",
+    "expected_tools": ["image_generation"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "document_pdf",
+    "category": "documents",
+    "prompt": "Create a PDF document report about a coffee shop launch strategy and save it locally.",
+    "expected_tools": ["document"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "os_agent_browser_workflow",
+    "category": "agentic",
+    "prompt": "Use a desktop browser workflow with verification and retries to search YouTube for lofi music, open the first video result, and verify playback starts.",
+    "expected_tools": ["os_agent"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "coding_agent_landing_page",
+    "category": "coding",
+    "prompt": "Build and verify a landing page for a coffee shop in the current project.",
+    "expected_tools": ["coding_agent"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "datetime_now",
+    "category": "time",
+    "prompt": "What time is it right now?",
+    "expected_tools": ["datetime"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "memory_profile",
+    "category": "memory",
+    "prompt": "Use the memory tool to search stored user profile and study preferences.",
+    "expected_tools": ["memory"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "search_web_latest",
+    "category": "web",
+    "prompt": "Search the web for the latest NVIDIA AI news and summarize the top result.",
+    "expected_tools": ["search_web"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "weather_city",
+    "category": "weather",
+    "prompt": "What is the current weather in Delhi?",
+    "expected_tools": ["weather"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "external_services_status",
+    "category": "external",
+    "prompt": "Check Google Workspace connection status for Calendar and Gmail.",
+    "expected_tools": ["external_services_status"],
+    "execution": "safe_live"
+  },
+  {
+    "id": "google_workspace_connect",
+    "category": "external",
+    "prompt": "Start the Google Workspace OAuth setup for Calendar and Gmail.",
+    "expected_tools": ["google_workspace_connect"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "calendar_today",
+    "category": "external",
+    "prompt": "Check my real calendar events for today.",
+    "expected_tools": ["calendar_today"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "calendar_upcoming",
+    "category": "external",
+    "prompt": "What meetings and appointments do I have in the next three days?",
+    "expected_tools": ["calendar_upcoming"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "gmail_unread",
+    "category": "external",
+    "prompt": "Show my unread Gmail message metadata.",
+    "expected_tools": ["gmail_unread"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "gmail_search",
+    "category": "external",
+    "prompt": "Search my Gmail for messages about invoices.",
+    "expected_tools": ["gmail_search"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "gmail_create_draft",
+    "category": "external",
+    "prompt": "Create a Gmail draft to test@example.com with subject Benchmark and body This is a routing benchmark draft.",
+    "expected_tools": ["gmail_create_draft"],
+    "execution": "plan_only"
+  },
+  {
+    "id": "capabilities_catalog",
+    "category": "capabilities",
+    "prompt": "What can you do and which tools are connected?",
+    "expected_tools": ["capabilities"],
+    "execution": "safe_live"
+  }
+]

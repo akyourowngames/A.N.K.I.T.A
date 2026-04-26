@@ -25,6 +25,13 @@ def _normalize_approval_policy(value: str) -> str:
     return "auto_safe"
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    raw = os.getenv(name, "").strip().lower()
+    if not raw:
+        return default
+    return raw not in {"0", "false", "off", "no"}
+
+
 @dataclass(slots=True)
 class Settings:
     api_key: str
@@ -62,6 +69,8 @@ class Settings:
     image_model: str
     image_size: str
     image_output_dir: Path
+    document_output_dir: Path = Path("data/generated/documents")
+    document_template_dir: Path = Path("data/document_templates")
     image_infer_url: str = ""
     image_model_namespace: str = "black-forest-labs"
     sarvam_api_key: str = ""
@@ -80,8 +89,13 @@ class Settings:
     router_max_retries: int = 1
     router_max_tokens: int = 512
     router_tool_limit: int = 5
-    router_min_tool_score: float = 0.09
+    router_min_tool_score: float = 0.12
+    embedding_timeout_seconds: float = 8.0
     approval_policy: str = "auto_safe"
+    companion_enabled: bool = True
+    companion_min_interval_seconds: int = 300
+    companion_max_per_day: int = 12
+    companion_min_score: float = 0.62
     timeout_seconds: float = 60.0
     automation_timeout_seconds: float = 180.0
     max_retries: int = 3
@@ -134,12 +148,12 @@ def load_settings() -> Settings:
         api_key=api_key,
         base_url=os.getenv("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1").strip(),
         primary_model=os.getenv(
-            "NVIDIA_PRIMARY_MODEL", "moonshotai/kimi-k2-instruct-0905"
+            "NVIDIA_PRIMARY_MODEL", "meta/llama-3.1-8b-instruct"
         ).strip(),
         fallback_models=_split_csv(
             os.getenv(
                 "NVIDIA_FALLBACK_MODELS",
-                "z-ai/glm-5,nvidia/nemotron-3-super-120b-a12b,meta/llama-3.3-70b-instruct",
+                "nvidia/nemotron-mini-4b-instruct,meta/llama-3.3-70b-instruct,nvidia/nemotron-3-super-120b-a12b",
             )
         ),
         vision_model=os.getenv("NVIDIA_VISION_MODEL", "microsoft/phi-4-multimodal-instruct").strip(),
@@ -186,6 +200,8 @@ def load_settings() -> Settings:
         image_model=os.getenv("NVIDIA_IMAGE_MODEL", "flux.2-klein-4b").strip() or "flux.2-klein-4b",
         image_size=os.getenv("NVIDIA_IMAGE_SIZE", "1024x1024").strip() or "1024x1024",
         image_output_dir=Path(os.getenv("JAKATA_IMAGE_OUTPUT_DIR", str(data_dir / "generated" / "images"))).resolve(),
+        document_output_dir=Path(os.getenv("JAKATA_DOCUMENT_OUTPUT_DIR", str(data_dir / "generated" / "documents"))).resolve(),
+        document_template_dir=Path(os.getenv("JAKATA_DOCUMENT_TEMPLATE_DIR", str(data_dir / "document_templates"))).resolve(),
         image_infer_url=os.getenv("NVIDIA_IMAGE_INFER_URL", "").strip(),
         image_model_namespace=os.getenv("NVIDIA_IMAGE_MODEL_NAMESPACE", "black-forest-labs").strip() or "black-forest-labs",
         sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
@@ -205,15 +221,20 @@ def load_settings() -> Settings:
                 "The rest of the chat is on screen, sir. You can check it out.|I kept the full answer on screen, sir. You can read the rest there.|The rest is written on the screen, sir. Take a look when you want.",
             )
         ),
-        router_model=os.getenv("JAKATA_ROUTER_MODEL", "meta/llama-3.3-70b-instruct").strip()
-        or "meta/llama-3.3-70b-instruct",
+        router_model=os.getenv("JAKATA_ROUTER_MODEL", "nvidia/nemotron-3-super-120b-a12b").strip()
+        or "nvidia/nemotron-3-super-120b-a12b",
         router_timeout_seconds=float(os.getenv("JAKATA_ROUTER_TIMEOUT_SECONDS", "6").strip() or "6"),
         router_max_retries=int(os.getenv("JAKATA_ROUTER_MAX_RETRIES", "1").strip() or "1"),
         router_max_tokens=int(os.getenv("JAKATA_ROUTER_MAX_TOKENS", "512").strip() or "512"),
         router_tool_limit=int(os.getenv("JAKATA_ROUTER_TOOL_LIMIT", "5").strip() or "5"),
-        router_min_tool_score=float(os.getenv("JAKATA_ROUTER_MIN_TOOL_SCORE", "0.09").strip() or "0.09"),
+        router_min_tool_score=float(os.getenv("JAKATA_ROUTER_MIN_TOOL_SCORE", "0.12").strip() or "0.12"),
+        embedding_timeout_seconds=float(os.getenv("JAKATA_EMBEDDING_TIMEOUT_SECONDS", "8").strip() or "8"),
         approval_policy=_normalize_approval_policy(os.getenv("JAKATA_APPROVAL_POLICY", "auto_safe")),
-        timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "60").strip() or "60"),
+        companion_enabled=_env_bool("JAKATA_COMPANION_ENABLED", True),
+        companion_min_interval_seconds=int(os.getenv("JAKATA_COMPANION_MIN_INTERVAL_SECONDS", "300").strip() or "300"),
+        companion_max_per_day=int(os.getenv("JAKATA_COMPANION_MAX_PER_DAY", "12").strip() or "12"),
+        companion_min_score=float(os.getenv("JAKATA_COMPANION_MIN_SCORE", "0.62").strip() or "0.62"),
+        timeout_seconds=float(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20").strip() or "20"),
         automation_timeout_seconds=float(os.getenv("JAKATA_AUTOMATION_TIMEOUT_SECONDS", "180").strip() or "180"),
-        max_retries=int(os.getenv("NVIDIA_MAX_RETRIES", "3").strip() or "3"),
+        max_retries=int(os.getenv("NVIDIA_MAX_RETRIES", "1").strip() or "1"),
     )

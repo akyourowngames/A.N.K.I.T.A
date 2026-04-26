@@ -6,10 +6,11 @@ from jakata_agent.tools.registry import ToolRegistry
 
 class CapabilitiesTool(Tool):
     name = "capabilities"
-    description = "Explain what JAKATA can do from the live connected tool catalog and assistant runtime capabilities."
+    description = (
+        "Explain JAKATA's own connected tool catalog, assistant capabilities, available integrations, and what the assistant can do."
+    )
     input_schema = {"type": "object", "properties": {}, "required": []}
     safety = "read_only"
-    semantic_direct = True
 
     def __init__(self, registry: ToolRegistry) -> None:
         self.registry = registry

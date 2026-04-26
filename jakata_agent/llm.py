@@ -68,6 +68,8 @@ class NvidiaChatClient:
                         stream=True,
                     )
                     for event in stream:
+                        if not event.choices:
+                            continue
                         delta = event.choices[0].delta.content or ""
                         if delta:
                             chunks.append(delta)

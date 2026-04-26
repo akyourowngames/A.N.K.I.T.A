@@ -8,6 +8,7 @@ from jakata_agent.tools.base import Tool, ToolResult
 class DateTimeTool(Tool):
     name = "datetime"
     description = "Get the current local and UTC date/time."
+    semantic_direct = True
     input_schema = {
         "type": "object",
         "properties": {

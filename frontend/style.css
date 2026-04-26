@@ -386,6 +386,33 @@ textarea { font-family: var(--font); color: var(--text); }
 }
 .message.user .msg-label { text-align: right; }  
 
+.companion-feedback {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 4px 4px 0;
+}
+.companion-feedback button {
+    min-height: 28px;
+    padding: 5px 9px;
+    border-radius: 8px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    color: var(--text-dim);
+    font-size: 0.68rem;
+    line-height: 1.2;
+    transition: background var(--transition), color var(--transition), border-color var(--transition);
+}
+.companion-feedback button:hover {
+    background: rgba(124, 106, 239, 0.16);
+    border-color: rgba(124, 106, 239, 0.32);
+    color: var(--text);
+}
+.companion-feedback.feedback-sent button {
+    opacity: 0.45;
+    pointer-events: none;
+}
+
 .stream-cursor {
     animation: blink 0.8s step-end infinite;
     color: var(--accent);

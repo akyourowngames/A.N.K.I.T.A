@@ -137,7 +137,7 @@ let ttsPlayer = null;
  * settings — User preferences (auto-open panels). Stored in localStorage.
  */
 const SETTINGS_KEY = 'jarvis_settings';
-const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true };
+const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, autoCompanion: false };
 
 /* Pre-starter: pre-generated MP3 file names (from app.generate_thinking_audio) */
 /* Pre-loaded base64 audio cache — populated at init for instant playback */
@@ -190,7 +190,21 @@ const settingsPanel       = $('settings-panel');            // Settings modal/pa
 const settingsClose       = $('settings-close');           // Close settings
 const toggleAutoActivity  = $('toggle-auto-activity');     // Auto-open activity panel
 const toggleAutoSearch    = $('toggle-auto-search');        // Auto-open search results
+const toggleAutoCompanion = $('toggle-auto-companion');     // Auto-start companion thoughts
 const toastContainer     = $('toast-container');           // Toast container for error/status feedback
+
+const COMPANION_POLL_MS = 45000;
+const COMPANION_IDLE_SECONDS = 25;
+let lastUserInteractionAt = Date.now();
+let companionPollTimer = null;
+let lastProactiveMessageId = null;
+
+function createClientSessionId() {
+    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
+        return `web-${window.crypto.randomUUID()}`;
+    }
+    return `web-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+}
 
 /* ================================================================
    PRE-STARTER PLAYER (Dedicated — never interrupted by TTS reset)
@@ -438,6 +452,7 @@ function init() {
         console.error('[JARVIS] Required DOM elements (chat-messages, message-input) not found.');
         return;
     }
+    sessionId = createClientSessionId();
     loadSettings();
     ttsPlayer = new TTSPlayer();
     ttsPlayer.onPlaybackComplete = maybeRestartListening;   // Auto-restart mic when TTS finishes
@@ -449,6 +464,7 @@ function init() {
     bindEvents();
     setMode(currentMode);   // Sync mode slider, labels, and activity toggle
     autoResizeInput();
+    initCompanionLoop();
 }
 
 /**
@@ -465,6 +481,7 @@ function loadSettings() {
         }
         if (toggleAutoActivity) toggleAutoActivity.checked = settings.autoOpenActivity;
         if (toggleAutoSearch) toggleAutoSearch.checked = settings.autoOpenSearchResults;
+        if (toggleAutoCompanion) toggleAutoCompanion.checked = settings.autoCompanion;
     } catch (_) {}
 }
 
@@ -472,6 +489,103 @@ function saveSettings() {
     try {
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
     } catch (_) {}
+}
+
+function markUserInteraction() {
+    lastUserInteractionAt = Date.now();
+}
+
+function initCompanionLoop() {
+    ['keydown', 'pointerdown', 'mousemove', 'touchstart'].forEach(eventName => {
+        window.addEventListener(eventName, markUserInteraction, { passive: true });
+    });
+    if (companionPollTimer) clearInterval(companionPollTimer);
+    companionPollTimer = setInterval(pollCompanion, COMPANION_POLL_MS);
+    if (settings.autoCompanion) setTimeout(pollCompanion, 12000);
+}
+
+async function pollCompanion(force = false) {
+    if (!settings.autoCompanion && !force) return;
+    if (isStreaming || document.hidden) return;
+    const idleSeconds = Math.floor((Date.now() - lastUserInteractionAt) / 1000);
+    if (!force && idleSeconds < COMPANION_IDLE_SECONDS) return;
+    try {
+        const res = await fetch(`${API}/companion/next`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: sessionId,
+                force,
+                idle_seconds: idleSeconds,
+                page_visible: !document.hidden,
+                tts: !!(ttsPlayer && ttsPlayer.enabled),
+            }),
+        });
+        if (!res.ok) return;
+        const data = await res.json();
+        if (!data.should_speak || !data.text) return;
+        if (data.session_id) sessionId = data.session_id;
+        addCompanionMessage(data);
+        lastProactiveMessageId = data.message_id || null;
+        lastUserInteractionAt = Date.now();
+        if (data.audio && ttsPlayer && ttsPlayer.enabled) {
+            try { ttsPlayer.unlock(); } catch (_) {}
+            ttsPlayer.enqueue(data.audio);
+        }
+    } catch (err) {
+        console.warn('Companion poll failed:', err);
+    }
+}
+
+function addCompanionMessage(data) {
+    const contentEl = addMessage('assistant', data.text);
+    const body = contentEl.closest('.msg-body');
+    if (!body || !data.message_id) return;
+    const controls = document.createElement('div');
+    controls.className = 'companion-feedback';
+    const options = [
+        ['more_like_this', 'More like this'],
+        ['like', 'Good'],
+        ['boring', 'Boring'],
+        ['less_like_this', 'Less'],
+        ['snooze', 'Snooze'],
+        ['stop', 'Stop auto'],
+    ];
+    for (const [signal, label] of options) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.textContent = label;
+        btn.addEventListener('click', async () => {
+            await sendCompanionFeedback(data.message_id, signal);
+            controls.classList.add('feedback-sent');
+            if (signal === 'stop') {
+                settings.autoCompanion = false;
+                if (toggleAutoCompanion) toggleAutoCompanion.checked = false;
+                saveSettings();
+            }
+        });
+        controls.appendChild(btn);
+    }
+    body.appendChild(controls);
+}
+
+async function sendCompanionFeedback(messageId, signal, extra = {}) {
+    if (!messageId) return;
+    try {
+        await fetch(`${API}/companion/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: sessionId,
+                message_id: messageId,
+                signal,
+                note: extra.note || '',
+                user_reply: extra.user_reply || '',
+            }),
+        });
+    } catch (err) {
+        console.warn('Companion feedback failed:', err);
+    }
 }
 
 /* ================================================================
@@ -987,6 +1101,13 @@ function bindEvents() {
             saveSettings();
         });
     }
+    if (toggleAutoCompanion) {
+        toggleAutoCompanion.addEventListener('change', () => {
+            settings.autoCompanion = toggleAutoCompanion.checked;
+            saveSettings();
+            if (settings.autoCompanion) pollCompanion(true);
+        });
+    }
 }
 
 /**
@@ -1069,7 +1190,7 @@ function setMode(mode) {
  */
 function newChat() {
     if (ttsPlayer) ttsPlayer.stop();
-    sessionId = null;
+    sessionId = createClientSessionId();
     if (chatMessages) chatMessages.innerHTML = '';
     chatMessages.appendChild(createWelcome());
     messageInput.value = '';
@@ -1508,6 +1629,12 @@ async function sendMessage(textOverride) {
     // Step 1: Get the message text, trimming whitespace
     const text = (textOverride || messageInput.value).trim();
     if (!text || isStreaming) return;  // Ignore empty messages or if already streaming
+    if (!sessionId) sessionId = createClientSessionId();
+    markUserInteraction();
+    if (lastProactiveMessageId) {
+        sendCompanionFeedback(lastProactiveMessageId, 'reply', { user_reply: text });
+        lastProactiveMessageId = null;
+    }
 
     // Step 2: Clear the input field immediately (responsive UX)
     messageInput.value = '';
@@ -1550,7 +1677,7 @@ async function sendMessage(textOverride) {
     try {
         // ─── Pre-starter + Main stream ───
         // 1. Pre-starter: play immediately on dedicated audio element (immune to ttsPlayer.reset)
-        timeoutId = setTimeout(() => controller.abort(), 300000);
+        timeoutId = setTimeout(() => controller.abort(), 90000);
         const res = await fetch(`${API}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -1568,19 +1695,15 @@ async function sendMessage(textOverride) {
             throw new Error(err?.detail || `HTTP ${res.status}`);
         }
 
-        // Step 8: Replace the typing indicator with an empty assistant message
-        removeTypingIndicator();
-        const contentEl = addMessage('assistant', '');
-        contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
-        scrollToBottom();   // Scroll so placeholder is visible without manual scroll
-
-        // Set up the stream reader and SSE parser
+        // Set up the stream reader and SSE parser. Keep the typing indicator
+        // visible until real text arrives so slow backends do not show a blank bubble.
         if (!res.body) throw new Error('No response body');
         const reader = res.body.getReader();       // ReadableStream reader for the response body
         const decoder = new TextDecoder();          // Converts raw bytes (Uint8Array) to strings
         let sseBuffer = '';                         // Accumulates partial SSE lines between chunks
         let fullResponse = '';                      // The complete assistant response text so far
         let cursorEl = null;                        // The blinking "|" cursor shown during streaming
+        let contentEl = null;
 
         // Step 9: Read the stream in a loop until it's done
         let streamDone = false;
@@ -1639,15 +1762,20 @@ async function sendMessage(textOverride) {
                             firstChunkReceived = true;
                             if (ttsPlayer) ttsPlayer.reset();   // Stop pre-starter, play main immediately
                         }
+                        if (chunkText && !contentEl) {
+                            removeTypingIndicator();
+                            contentEl = addMessage('assistant', '');
+                            contentEl.innerHTML = '<span class="msg-stream-text"></span>';
+                        }
                         fullResponse += chunkText;
-                        const textSpan = contentEl.querySelector('.msg-stream-text');
+                        const textSpan = contentEl ? contentEl.querySelector('.msg-stream-text') : null;
                         if (textSpan) {
                             textSpan.textContent = fullResponse;
                             textSpan.classList.remove('stream-placeholder');
                         }
 
                         // Add a blinking cursor at the end (created once, on the first chunk)
-                        if (!cursorEl) {
+                        if (contentEl && !cursorEl) {
                             cursorEl = document.createElement('span');
                             cursorEl.className = 'stream-cursor';
                             cursorEl.textContent = '|';
@@ -1679,6 +1807,11 @@ async function sendMessage(textOverride) {
         if (cursorEl) cursorEl.remove();
 
         // If the server sent nothing, show a placeholder
+        if (!contentEl) {
+            removeTypingIndicator();
+            contentEl = addMessage('assistant', '');
+            contentEl.innerHTML = '<span class="msg-stream-text"></span>';
+        }
         const textSpan = contentEl.querySelector('.msg-stream-text');
         if (textSpan && !fullResponse) textSpan.textContent = '(No response)';
 

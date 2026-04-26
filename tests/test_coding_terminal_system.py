@@ -218,42 +218,28 @@ def test_search_files_returns_partial_results_when_scan_is_capped(tmp_path: Path
     assert len(result.data["results"]) == 5
 
 
-def test_windows_open_target_uses_image_fallback_when_default_app_is_unverified(tmp_path: Path, monkeypatch):
+def test_windows_open_target_uses_default_app_for_images(tmp_path: Path, monkeypatch):
     image = tmp_path / "picture.png"
     image.write_bytes(b"fake-png")
-    popen_calls: list[list[str]] = []
 
     class Completed:
         returncode = 0
         stdout = '{"ok":true,"error":"","process":null,"matching_windows":[]}'
         stderr = ""
 
-    class Proc:
-        pid = 456
-
-        def poll(self):
-            return None
-
     def fake_run(*args, **kwargs):
         del args, kwargs
         return Completed()
 
-    def fake_popen(command, **kwargs):
-        del kwargs
-        popen_calls.append(list(command))
-        return Proc()
-
     monkeypatch.setattr(opening_module, "PLATFORM", "Windows")
     monkeypatch.setattr(opening_module.subprocess, "run", fake_run)
-    monkeypatch.setattr(opening_module.subprocess, "Popen", fake_popen)
 
     result = opening_module.open_target(image, wait_seconds=0.1)
 
     assert result.ok
     assert result.opened is True
-    assert result.verified is True
-    assert "image fallback" in result.method
-    assert popen_calls == [["mspaint.exe", str(image)]]
+    assert result.verified is False
+    assert result.method == "powershell Invoke-Item/Start-Process"
 
 
 def test_windows_open_target_uses_explorer_fallback_for_unverified_folder(tmp_path: Path, monkeypatch):
@@ -308,6 +294,28 @@ def test_system_tool_adds_disk_network_environment_and_executable_lookup(tmp_pat
     env = tool.run({"action": "environment", "target": "PATH"})
     assert env.ok
     assert env.data["set"] is True
+
+
+def test_system_status_render_includes_machine_resources():
+    tool = SystemTool()
+    rendered = tool.render(
+        {
+            "action": "status",
+            "platform": "Windows",
+            "os_caption": "Windows 11",
+            "cpu_name": "Test CPU",
+            "cpu_load_percent": 12,
+            "memory_total_bytes": 16 * 1024 * 1024 * 1024,
+            "memory_available_bytes": 6 * 1024 * 1024 * 1024,
+            "disks": [{"path": "C:", "percent_used": 50.0, "free_bytes": 100 * 1024 * 1024 * 1024}],
+            "process_count": 42,
+            "warnings": [],
+        }
+    )
+
+    assert "CPU: Test CPU" in rendered
+    assert "RAM:" in rendered
+    assert "Disk: C:" in rendered
 
 
 def test_task_orchestrator_runs_derived_fallback_when_primary_tool_fails(tmp_path: Path):

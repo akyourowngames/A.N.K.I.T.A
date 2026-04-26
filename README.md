@@ -5,12 +5,14 @@ Personal AI assistant with foreground chat, live memory, voice I/O, and OS autom
 JAKATA now supports:
 
 - normal multi-turn chat
+- proactive companion thoughts in the web app, with durable feedback so JAKATA learns which styles to repeat or avoid
 - foreground task execution with persisted task records
 - dynamic multi-agent orchestration (planner, researcher, executor, verifier)
 - self-healing verify-and-repair loops
 - permanent memory plus a live memory graph
 - goal-oriented `os_agent` automation
 - goal-oriented `coding_agent` automation for repo edits, terminal commands, tests, online lookup, screenshots, and opening results
+- local document creation and editing for DOCX/PDF reports, researched documents, templates, conversion, extraction, and PDF page operations
 - Tavily web search, OpenWeather, Google Calendar, Gmail, datetime, files, and OS surfaces
 - live webcam preview plus NVIDIA vision analysis from the CLI
 - Telegram long-polling access with guest chat, password unlock, task details, approvals, files, reports, uploads, and image generation
@@ -81,6 +83,8 @@ Set these values in `.env` first:
 - `JAKATA_TELEGRAM_MAX_UPLOAD_MB=45`
 - `NVIDIA_IMAGE_MODEL=flux.2-klein-4b`
 - `JAKATA_IMAGE_OUTPUT_DIR=data/generated/images`
+- `JAKATA_DOCUMENT_OUTPUT_DIR=data/generated/documents`
+- `JAKATA_DOCUMENT_TEMPLATE_DIR=data/document_templates`
 
 Anyone can send basic guest chat messages. Private control requires `/unlock <password>` and expires by timeout.
 After unlock, normal Telegram messages use the same JAKATA agent path as CLI: chat, memory, terminal, files, browser, system, camera, web, and coding tools route through the normal planner. Work stays in the foreground task flow.
@@ -126,11 +130,14 @@ Optional local automation config:
 - `JAKATA_AUTOMATION_MODEL=` to override the automation planner model if needed
 - `JAKATA_CODEX_CLI_PATH=codex`
 - `JAKATA_APPROVAL_POLICY=auto_safe|manual|auto`
+- `JAKATA_COMPANION_ENABLED=true`
+- `JAKATA_COMPANION_MIN_INTERVAL_SECONDS=300`
+- `JAKATA_COMPANION_MAX_PER_DAY=12`
+- `JAKATA_COMPANION_MIN_SCORE=0.62`
 - `JAKATA_WORKSPACE_DIR=.`
 - `JAKATA_PATH_SEARCH_ROOTS=` optional path-separated roots for terminal path discovery
 - `JAKATA_PATH_DISCOVERY_MAX_DEPTH=6` / `JAKATA_PATH_DISCOVERY_MAX_VISITS=50000`
 - `JAKATA_PATH_DISCOVERY_EXCLUDE_DIRS=` optional comma-separated dependency/cache folders to skip during fallback discovery
-- `JAKATA_OPEN_IMAGE_APP=mspaint.exe` fallback viewer when Windows says an image opened but no viewer window is detected
 - `JAKATA_PROMPTS_DIR=prompts`
 - `JAKATA_GOOGLE_CREDENTIALS_PATH=data/integrations/google_credentials.json`
 - `JAKATA_GOOGLE_TOKEN_PATH=data/integrations/google_token.json`
@@ -143,6 +150,8 @@ Optional local automation config:
 ## Current behavior
 
 - normal multi-turn chat
+- automatic companion conversation starters in the web app when the page is idle
+- explicit companion feedback: more like this, good, boring, less, snooze, and stop auto
 - retry with exponential backoff
 - fallback across multiple NVIDIA chat models
 - persistent chat archives across runs
@@ -181,6 +190,7 @@ JAKATA now keeps memory in `data/`:
 - `data/chats/` raw per-session chat logs
 - `data/knowledge/` plain `.txt` files loaded on startup
 - `data/memory/jakata.db` permanent extracted memory records
+- `data/companion/` proactive companion messages, preferences, and feedback
 - `data/integrations/` local OAuth tokens and external-service sync cache
 
 The SQLite database now also stores:
@@ -188,6 +198,23 @@ The SQLite database now also stores:
 - foreground tasks and task events
 - agent runs and agent messages
 - graph nodes and graph edges
+
+## Proactive Companion
+
+The web app can now let JAKATA speak first when the page is open and idle. This is intentionally companion-style, not calendar/productivity nagging.
+
+- Starter generation is model-driven through `prompts/companion/starter.md`.
+- Frequency, daily limits, snooze, and stop are handled as policy.
+- Delivered messages and feedback are stored in `data/companion/companion.db`.
+- The web UI sends explicit feedback from the buttons under each companion message.
+- If you reply after a companion message, the web UI records that as implicit positive engagement.
+
+Useful controls:
+
+- Set `JAKATA_COMPANION_ENABLED=false` to disable by default.
+- Set `JAKATA_COMPANION_MIN_INTERVAL_SECONDS` to control how often JAKATA can speak first.
+- Set `JAKATA_COMPANION_MAX_PER_DAY` to cap daily companion starts.
+- Use the web settings toggle or the `Stop auto` feedback button to stop it for the current session.
 
 ## Google Calendar and Gmail
 

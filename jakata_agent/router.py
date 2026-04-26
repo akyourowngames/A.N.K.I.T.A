@@ -54,19 +54,19 @@ class IntentRouter:
         conversation_block = f"\n\nRecent conversation context:\n{conversation}" if conversation else ""
         user_payload = f"Available tools:\n{manifest_text}{context_block}{conversation_block}\n\nUser message: {user_message}"
 
-        _, raw = self.client.complete_text(PLANNER_SYSTEM_PROMPT, user_payload, temperature=0.0)
-        cleaned = raw.strip().replace("```json", "").replace("```", "").strip()
+        payload: dict[str, Any] | None = None
+        for attempt in range(2):
+            _, raw = self.client.complete_text(PLANNER_SYSTEM_PROMPT, user_payload, temperature=0.0)
+            payload = self._parse_json_object(raw)
+            if payload is not None:
+                break
+            if attempt == 0:
+                user_payload += (
+                    "\n\nThe previous planner response was not valid JSON. "
+                    "Return exactly one valid JSON object that follows the requested schema."
+                )
 
-        brace = cleaned.find("{")
-        if brace > 0:
-            cleaned = cleaned[brace:]
-        end_brace = cleaned.rfind("}")
-        if end_brace >= 0:
-            cleaned = cleaned[: end_brace + 1]
-
-        try:
-            payload = json.loads(cleaned)
-        except json.JSONDecodeError:
+        if payload is None:
             return self._fallback("parse_error")
 
         answer = str(payload.get("answer", "")).strip() if isinstance(payload, dict) else ""
@@ -108,6 +108,25 @@ class IntentRouter:
         return PlanDecision(
             steps=[PlanStep(tool="general_chat", args={}, reason=reason)],
         )
+
+    @staticmethod
+    def _parse_json_object(raw: str) -> dict[str, Any] | None:
+        cleaned = raw.strip().replace("```json", "").replace("```", "").strip()
+
+        brace = cleaned.find("{")
+        if brace > 0:
+            cleaned = cleaned[brace:]
+        end_brace = cleaned.rfind("}")
+        if end_brace >= 0:
+            cleaned = cleaned[: end_brace + 1]
+
+        try:
+            payload = json.loads(cleaned)
+        except json.JSONDecodeError:
+            return None
+        if not isinstance(payload, dict):
+            return None
+        return payload
 
     @staticmethod
     def _parse_fallbacks(item: dict[str, Any], known_tools: set[str], primary_args: dict[str, Any]) -> list[PlanFallback]:
