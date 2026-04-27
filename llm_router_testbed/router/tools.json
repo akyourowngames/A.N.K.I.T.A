@@ -1,0 +1,162 @@
+{
+  "version": 1,
+  "source": "jakata_agent.runtime.create_runtime().tools.manifest",
+  "public_only": false,
+  "tools": [
+    {
+      "label": "shell",
+      "description": "Run real terminal commands with persistent cwd, per-command cwd/env, shell selection, longer timeouts, network-capable commands, and no command blacklist. Use for compiling, installing packages, tests, git, scripts, repo inspection, whole-PC search, and commands not covered by a dedicated tool.",
+      "safety": "read_only"
+    },
+    {
+      "label": "read_file",
+      "description": "Read a named local file path such as README.md, markdown, config, txt, source code, or docs. Use this to summarize setup sections, inspect, quote, or answer using current file contents. Supports line range (start_line, end_line). Handles text and binary files gracefully. If a relative path does not exist, searches likely PC roots and verifies the match.",
+      "safety": "read_only"
+    },
+    {
+      "label": "list_dir",
+      "description": "List files and directories. Shows names, sizes, types, and modification times. Optionally recursive. If a relative path does not exist, searches likely PC roots and verifies the matching directory.",
+      "safety": "read_only"
+    },
+    {
+      "label": "search_files",
+      "description": "Find files by name pattern OR search file contents with a text/regex query. Like find + grep. Use for exploring codebases, locating configs, searching logs, and whole-PC file discovery.",
+      "safety": "read_only"
+    },
+    {
+      "label": "write_file",
+      "description": "Write, overwrite, or append content to a named local file. Use this when the user asks to save text, create a note, create a simple file, update file contents, or write content to a path. Creates parent directories automatically. If a relative parent path does not exist, searches likely PC roots and verifies it.",
+      "safety": "write"
+    },
+    {
+      "label": "open_path",
+      "description": "Open a named local file path such as README.md in the default Windows app. Launch files, folders, directories, generated artifacts, and URLs for viewing, then report whether the OS returned launch/window evidence.",
+      "safety": "write"
+    },
+    {
+      "label": "keyboard",
+      "description": "Control the keyboard: type text, run shortcuts (Ctrl+C, Alt+Tab, etc.), press individual keys, or hold modifier keys while pressing others. Works with any focused app  VS Code, browser, terminal, anything.",
+      "safety": "read_only"
+    },
+    {
+      "label": "clipboard",
+      "description": "Read from or write to the system clipboard. Use to get copied text, paste content into fields, or stage text for pasting.",
+      "safety": "read_only"
+    },
+    {
+      "label": "window",
+      "description": "Manage application windows: focus a window by title, list all open windows, get the active window, or focus, move, resize, center, close, minimize, maximize, and restore windows.",
+      "safety": "read_only"
+    },
+    {
+      "label": "mouse",
+      "description": "Control the mouse: inspect cursor position, click, double-click, move, drag, and scroll. Useful for direct desktop interaction when keyboard or browser helpers are insufficient.",
+      "safety": "read_only"
+    },
+    {
+      "label": "system",
+      "description": "Control local Windows system features directly: machine status, volume, brightness, Bluetooth, recycle bin, power/session actions, app launching, opening paths/URLs/settings, process listing and lookup, terminal launching, disk/network/environment inspection, executable lookup, waiting, and non-critical process termination. Wi-Fi controls are intentionally excluded.",
+      "safety": "write"
+    },
+    {
+      "label": "browser",
+      "description": "Direct Chrome helper for a single browser action such as navigation, search, page inspection, tab control, result opening, or media playback control. For multi-step workflows with verification, retries, or recovery, use the goal-oriented OS agent instead.",
+      "safety": "read_only"
+    },
+    {
+      "label": "screen",
+      "description": "Capture the current screen or a specific region for observation.",
+      "safety": "read_only"
+    },
+    {
+      "label": "ocr",
+      "description": "Extract UI text from a screenshot, the current screen, or a specific region.",
+      "safety": "read_only"
+    },
+    {
+      "label": "camera",
+      "description": "Use the local webcam to capture or describe what the camera currently sees.",
+      "safety": "read_only"
+    },
+    {
+      "label": "image_generation",
+      "description": "Generate an image from a text prompt. Supports local OpenAI-compatible image endpoints and NVIDIA hosted GenAI visual endpoints. This tool saves the image and returns its file path; use open_path separately when the current user message asks to open it.",
+      "safety": "write"
+    },
+    {
+      "label": "document",
+      "description": "Create, research, edit, convert, extract, merge, split, and annotate polished document files only when the user wants a saved/exported DOCX/PDF/TXT artifact or asks to modify an existing document. Do not use for ordinary in-chat planning, web page copy, outlines, ideas, or answers that the user wants shown in chat instead of saved to a file. Supports DOCX and PDF outputs, reusable DOCX templates, source-backed research documents, PDF page operations, and returns local file paths under the generated documents folder.",
+      "safety": "write"
+    },
+    {
+      "label": "os_agent",
+      "description": "Goal-oriented OS agent for multi-step desktop/browser workflows that need stateful execution, verification, retries, recovery, or proof of completion. Prefer this over direct browser/system tools when the user asks for a workflow to be completed and verified end-to-end.",
+      "safety": "read_only"
+    },
+    {
+      "label": "coding_agent",
+      "description": "Goal-oriented coding agent for repo edits, terminal commands, tests, online lookup, screenshots, and opening results with verify-and-repair loops.",
+      "safety": "write"
+    },
+    {
+      "label": "datetime",
+      "description": "Get the current local and UTC date/time.",
+      "safety": "read_only"
+    },
+    {
+      "label": "memory",
+      "description": "Recall stored user identity, profile facts, preferences, knowledge files, semantic memory matches, graph facts, and archived chat context.",
+      "safety": "read_only"
+    },
+    {
+      "label": "search_web",
+      "description": "Search the web for current information. Uses Tavily when configured, with a keyless DuckDuckGo HTML fallback.",
+      "safety": "read_only"
+    },
+    {
+      "label": "weather",
+      "description": "Get the current weather for a city. Uses OpenWeather when configured and keyless Open-Meteo as fallback.",
+      "safety": "read_only"
+    },
+    {
+      "label": "external_services_status",
+      "description": "Check Google Workspace integration health for Calendar, Gmail, OAuth authorization, and the local external-service sync cache.",
+      "safety": "read_only"
+    },
+    {
+      "label": "google_workspace_connect",
+      "description": "Check or start Google Workspace OAuth for Calendar and Gmail on this local machine.",
+      "safety": "external_auth"
+    },
+    {
+      "label": "calendar_today",
+      "description": "Read real Google Calendar events for today and cache them locally for assistant context. Use only when the user asks to check, list, show, search, or summarize actual calendar meetings, appointments, or events.",
+      "safety": "read_only"
+    },
+    {
+      "label": "calendar_upcoming",
+      "description": "Read real upcoming Google Calendar events and cache them locally for assistant context. Use only when the user asks to check, list, show, search, or summarize actual calendar meetings, appointments, or events.",
+      "safety": "read_only"
+    },
+    {
+      "label": "gmail_unread",
+      "description": "Read unread Gmail message metadata and cache it locally.",
+      "safety": "read_only"
+    },
+    {
+      "label": "gmail_search",
+      "description": "Search Gmail messages by Gmail query syntax, summarize matches, and cache metadata locally.",
+      "safety": "read_only"
+    },
+    {
+      "label": "gmail_create_draft",
+      "description": "Create a Gmail draft only when the user explicitly asks to draft an email; this never sends mail.",
+      "safety": "external_write"
+    },
+    {
+      "label": "capabilities",
+      "description": "List JAKATA connected tools, tool names, tool catalog, integrations, and available tool inventory.",
+      "safety": "read_only"
+    }
+  ]
+}

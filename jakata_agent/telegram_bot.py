@@ -190,6 +190,7 @@ class TelegramBotController:
             validator=runtime.validator,
             task_store=runtime.task_store,
             task_engine=getattr(runtime, "task_engine", None),
+            mandatory_router=getattr(runtime, "mandatory_router", None),
         )
 
     def _telegram_tool_registry(self, runtime: JakataRuntime) -> ToolRegistry | None:

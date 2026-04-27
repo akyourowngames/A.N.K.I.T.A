@@ -5,6 +5,7 @@ import base64
 import json
 import random
 import re
+import tempfile
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from threading import Lock
@@ -20,7 +21,7 @@ from jakata_agent.agent import JakataAgent
 from jakata_agent.config import Settings, load_settings
 from jakata_agent.router import PlanStep
 from jakata_agent.runtime import JakataRuntime, create_runtime
-from jakata_agent.tts import SarvamTTSClient
+from jakata_agent.tts import EdgeTTSClient, SarvamTTSClient
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
@@ -35,6 +36,12 @@ class ChatRequest(BaseModel):
 
 class TTSRequest(BaseModel):
     text: str = Field(min_length=1, max_length=32000)
+    session_id: str | None = Field(default=None, max_length=200)
+
+
+class BrowserCameraAnalyzeRequest(BaseModel):
+    image: str = Field(min_length=1, max_length=8_000_000)
+    prompt: str = Field(default="Describe what the live camera sees in detail.", max_length=4000)
     session_id: str | None = Field(default=None, max_length=200)
 
 
@@ -103,6 +110,7 @@ def build_agent(runtime: JakataRuntime) -> JakataAgent:
         validator=runtime.validator,
         task_store=runtime.task_store,
         task_engine=runtime.task_engine,
+        mandatory_router=getattr(runtime, "mandatory_router", None),
     )
 
 
@@ -128,7 +136,7 @@ def create_app(
     app = FastAPI(title="JAKATA Web", version="2.0.0")
     app.state.base_settings = settings
     app.state.session_manager = manager
-    app.state.tts_client_factory = tts_client_factory or SarvamTTSClient.from_settings
+    app.state.tts_client_factory = tts_client_factory or _default_tts_client_factory
 
     @app.get("/health")
     def health() -> dict[str, Any]:
@@ -139,8 +147,9 @@ def create_app(
             "frontend": "jarvis",
             "models": settings.model_chain,
             "realtime_search": bool(settings.tavily_api_key),
-            "tts": bool(settings.sarvam_api_key),
-            "tts_speaker": settings.sarvam_tts_speaker,
+            "tts": _tts_available(settings),
+            "tts_provider": settings.tts_provider,
+            "tts_speaker": _tts_voice_label(settings),
         }
 
     @app.post("/chat/stream")
@@ -171,11 +180,37 @@ def create_app(
         return {
             "session_id": context.public_session_id,
             "audio": audio,
-            "audio_codec": context.runtime.settings.sarvam_tts_codec,
+            "audio_codec": context.runtime.settings.tts_audio_codec,
             "spoken_text": _clean_tts_text(tts_text),
             "limited": limited,
-            "available": bool(context.runtime.settings.sarvam_api_key),
+            "available": _tts_available(context.runtime.settings),
         }
+
+    @app.post("/camera/analyze")
+    def camera_analyze(payload: BrowserCameraAnalyzeRequest) -> dict[str, Any]:
+        context = manager.get_or_create(payload.session_id)
+        image_bytes, suffix = _decode_data_image(payload.image)
+        with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as handle:
+            image_path = Path(handle.name)
+            handle.write(image_bytes)
+        try:
+            model, analysis = context.runtime.client.describe_image(
+                image_path=image_path,
+                user_prompt=payload.prompt.strip() or "Describe what the live camera sees in detail.",
+                temperature=0.1,
+                max_tokens=1300,
+            )
+            text = analysis.strip()
+            context.agent.messages.append({"role": "user", "content": "Analyze live camera frame."})
+            context.agent.messages.append({"role": "assistant", "content": text})
+            context.agent.memory.persist_turn(context.agent.messages)
+            return {
+                "session_id": context.public_session_id,
+                "model": model,
+                "analysis": text,
+            }
+        finally:
+            image_path.unlink(missing_ok=True)
 
     @app.post("/companion/next")
     def companion_next(payload: CompanionNextRequest) -> dict[str, Any]:
@@ -224,7 +259,7 @@ def create_app(
             audio = _tts_audio_base64(context.runtime.settings, app.state.tts_client_factory, decision.text)
             if audio:
                 response["audio"] = audio
-                response["audio_codec"] = context.runtime.settings.sarvam_tts_codec
+                response["audio_codec"] = context.runtime.settings.tts_audio_codec
         return response
 
     @app.post("/companion/feedback")
@@ -310,12 +345,12 @@ def _stream_response(
                 yield _sse({"activity": {"event": "routing", "route": route}, "done": False})
                 yield _sse({"activity": {"event": "streaming_started", "route": route}, "done": False})
                 if payload.tts:
-                    if context.runtime.settings.sarvam_api_key:
+                    if _tts_available(context.runtime.settings):
                         yield _sse(
                             {
                                 "activity": {
                                     "event": "tts_ready",
-                                    "message": f"Voice ready: {context.runtime.settings.sarvam_tts_speaker}",
+                                    "message": f"Voice ready: {_tts_voice_label(context.runtime.settings)}",
                                 },
                                 "done": False,
                             }
@@ -325,7 +360,7 @@ def _stream_response(
                             {
                                 "activity": {
                                     "event": "tts_unavailable",
-                                    "message": "SARVAM_API_KEY is not configured.",
+                                    "message": "TTS is not configured.",
                                 },
                                 "done": False,
                             }
@@ -567,13 +602,28 @@ def _resolve_asset(root: Path, relative_path: str) -> Path:
     return candidate
 
 
+def _decode_data_image(value: str) -> tuple[bytes, str]:
+    match = re.match(r"^data:(image/(?:png|jpeg|jpg|webp));base64,(.+)$", value.strip(), flags=re.IGNORECASE | re.DOTALL)
+    if not match:
+        raise HTTPException(status_code=400, detail="Expected a base64 data image.")
+    mime_type = match.group(1).lower()
+    suffix = ".jpg" if mime_type in {"image/jpeg", "image/jpg"} else ".png" if mime_type == "image/png" else ".webp"
+    try:
+        image_bytes = base64.b64decode(match.group(2), validate=True)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=400, detail="Invalid base64 image.") from exc
+    if not image_bytes or len(image_bytes) > 6_000_000:
+        raise HTTPException(status_code=400, detail="Image is empty or too large.")
+    return image_bytes, suffix
+
+
 def _tts_audio_events(
     settings: Settings,
     tts_client_factory: Callable[[Settings], Any],
     text: str,
 ) -> Iterator[bytes]:
     clean_text = _clean_tts_text(text)
-    if not clean_text or not settings.sarvam_api_key:
+    if not clean_text or not _tts_available(settings):
         return
     try:
         client = tts_client_factory(settings)
@@ -593,7 +643,7 @@ def _tts_audio_events(
         yield _sse(
             {
                 "audio": base64.b64encode(audio).decode("ascii"),
-                "audio_codec": settings.sarvam_tts_codec,
+                "audio_codec": settings.tts_audio_codec,
                 "done": False,
             }
         )
@@ -605,7 +655,7 @@ def _tts_audio_base64(
     text: str,
 ) -> str:
     clean_text = _clean_tts_text(text)
-    if not clean_text or not settings.sarvam_api_key:
+    if not clean_text or not _tts_available(settings):
         return ""
     try:
         client = tts_client_factory(settings)
@@ -613,6 +663,24 @@ def _tts_audio_base64(
     except Exception:
         return ""
     return base64.b64encode(audio).decode("ascii") if audio else ""
+
+
+def _default_tts_client_factory(settings: Settings) -> Any:
+    if settings.tts_provider == "sarvam":
+        return SarvamTTSClient.from_settings(settings)
+    return EdgeTTSClient.from_settings(settings)
+
+
+def _tts_available(settings: Settings) -> bool:
+    if settings.tts_provider == "sarvam":
+        return bool(settings.sarvam_api_key)
+    return settings.tts_provider == "edge"
+
+
+def _tts_voice_label(settings: Settings) -> str:
+    if settings.tts_provider == "sarvam":
+        return settings.sarvam_tts_speaker
+    return settings.edge_tts_voice
 
 
 def _next_tts_text_for_budget(

@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from jakata_agent.agent import JakataAgent
+from jakata_agent.mandatory_router import LocalFirstMandatoryRouter, LocalIntentClassifierConfig
 from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.router import IntentRouter
 from jakata_agent.tasks.store import TaskStore
@@ -13,7 +14,7 @@ from jakata_agent.tools.coding_agent import CodingAgentTool
 from jakata_agent.tools.datetime_tool import DateTimeTool
 from jakata_agent.tools.image_generation import ImageGenerationTool
 from jakata_agent.tools.registry import ToolRegistry
-from jakata_agent.tools.terminal import register_terminal_tools
+from jakata_agent.tools.terminal import _CwdState, _resolve_existing_path, register_terminal_tools
 
 
 class RouterAnswerClient:
@@ -41,6 +42,41 @@ class RouterAnswerClient:
     def stream_complete(self, messages, temperature: float = 0.7):
         del messages, temperature
         yield "chat-model", "chat fallback"
+
+
+class FakeMandatoryRouter:
+    def __init__(self, tools: list[str]) -> None:
+        self.tools = tools
+        self.calls = 0
+
+    def route(self, user_message: str):
+        del user_message
+        self.calls += 1
+        return SimpleNamespace(tools=list(self.tools), output="", raw_output="", model="fake", latency_ms=0)
+
+
+class LocalRouterEmbedder:
+    def similarity_many(self, query: str, texts: list[str]) -> list[float]:
+        del query
+        scores: list[float] = []
+        for text in texts:
+            if "open_path" in text:
+                scores.append(0.94)
+            elif "general_chat" in text:
+                scores.append(0.12)
+            else:
+                scores.append(0.08)
+        return scores
+
+
+class FallbackRouter:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def route(self, user_message: str):
+        del user_message
+        self.calls += 1
+        return SimpleNamespace(tools=["general_chat"], output='["general_chat"]', raw_output='["general_chat"]', model="fallback", latency_ms=0)
 
 
 class FakeSemanticEmbedder:
@@ -128,6 +164,46 @@ class ConsumePathTool(Tool):
         target = str(args.get("target", ""))
         self.targets.append(target)
         return ToolResult(ok=True, summary=f"consumed {target}", data={"target": target})
+
+
+class FakeImageArtifactTool(Tool):
+    name = "image_generation"
+    description = "Generate a test image path."
+    input_schema = {"type": "object", "properties": {"prompt": {"type": "string"}}, "required": ["prompt"]}
+    safety = "write"
+
+    def __init__(self, path: Path) -> None:
+        self.path = path
+
+    def run(self, args):
+        del args
+        self.path.write_bytes(b"png")
+        return ToolResult(
+            ok=True,
+            summary=f"Generated image: {self.path.name}",
+            data={"path": str(self.path), "mime_type": "image/png"},
+        )
+
+    def render(self, data):
+        return f"Generated image: {data['path']}"
+
+
+class FakeOpenPathTool(Tool):
+    name = "open_path"
+    description = "Open a local path."
+    input_schema = {"type": "object", "properties": {"target": {"type": "string"}}, "required": ["target"]}
+    safety = "write"
+
+    def __init__(self) -> None:
+        self.targets: list[str] = []
+
+    def run(self, args):
+        target = str(args.get("target", ""))
+        fallback = str(args.get("fallback_target", ""))
+        if fallback and not Path(target).exists():
+            target = fallback
+        self.targets.append(target)
+        return ToolResult(ok=True, summary=f"opened {target}", data={"target": target, "opened": True})
 
 
 class SkipMemoryTool(Tool):
@@ -218,6 +294,7 @@ def build_agent(
     router_tool_limit: int = 0,
     router_min_tool_score: float = 0.0,
     fast_client=None,
+    mandatory_router=None,
 ) -> JakataAgent:
     settings = SimpleNamespace(
         session_id="test",
@@ -237,6 +314,7 @@ def build_agent(
         task_store=TaskStore(tmp_path / "jakata.db"),
         fast_client=fast_client,
         task_engine=None,
+        mandatory_router=mandatory_router,
     )
 
 
@@ -263,6 +341,60 @@ def test_router_retries_once_after_invalid_json(tmp_path: Path):
     assert client.router_calls == 2
     assert "previous planner response was not valid JSON" in client.last_user_prompt
     assert client.chat_calls == 0
+
+
+def test_mandatory_router_runs_before_semantic_direct_tool(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"produce_path","args":{},"reason":"planner still fills args"}]}')
+    tools = ToolRegistry()
+    tools.register(ProducePathTool())
+    mandatory_router = FakeMandatoryRouter(["produce_path"])
+    agent = build_agent(
+        tmp_path,
+        client,
+        tools,
+        embedder=FakeSemanticEmbedder(),
+        router_tool_limit=1,
+        router_min_tool_score=0.09,
+        mandatory_router=mandatory_router,
+    )
+
+    decision = agent.plan("path please")
+
+    assert mandatory_router.calls == 1
+    assert client.router_calls == 1
+    assert [step.tool for step in decision.steps] == ["produce_path"]
+    assert "Candidate tools" in client.last_user_prompt
+    assert "Mandatory selected tools" not in client.last_user_prompt
+
+
+def test_candidate_router_does_not_force_unselected_planner_tool(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"consume_path","args":{"target":"bad"},"reason":"wrong tool"}]}')
+    tools = ToolRegistry()
+    tools.register(ProducePathTool())
+    tools.register(ConsumePathTool())
+    mandatory_router = FakeMandatoryRouter(["produce_path"])
+    agent = build_agent(tmp_path, client, tools, mandatory_router=mandatory_router)
+
+    decision = agent.plan("produce a path")
+
+    assert mandatory_router.calls == 1
+    assert [step.tool for step in decision.steps] == ["general_chat"]
+    assert decision.steps[0].reason == "no_valid_steps"
+
+
+def test_cheap_no_tool_route_skips_mandatory_router_for_chat_work(tmp_path: Path):
+    client = RouterAnswerClient('{"steps":[{"tool":"produce_path","args":{},"reason":"wrong tool"}]}')
+    tools = ToolRegistry()
+    tools.register(ProducePathTool())
+    mandatory_router = FakeMandatoryRouter(["produce_path"])
+    agent = build_agent(tmp_path, client, tools, mandatory_router=mandatory_router)
+
+    decision = agent.plan("Explain how routing works in simple terms.")
+
+    assert decision.steps[0].tool == "general_chat"
+    assert decision.steps[0].reason == "cheap_no_tool_route"
+    assert mandatory_router.calls == 0
+    assert client.router_calls == 0
 
 
 def test_router_receives_semantic_shortlisted_manifest(tmp_path: Path):
@@ -346,9 +478,9 @@ def test_semantic_general_chat_runner_up_beats_ambiguous_tool_without_router(tmp
     decision = agent.plan("Draft the plan here in chat without taking local action.")
 
     assert decision.steps[0].tool == "general_chat"
-    assert decision.steps[0].reason == "semantic_general_chat_competitive"
+    assert decision.steps[0].reason == "cheap_no_tool_route"
     assert client.router_calls == 0
-    assert agent.memory.retrieve_calls == 0
+    assert agent.memory.retrieve_calls == 1
 
 
 def test_router_answer_uses_chat_voice_when_tool_manifest_is_ambiguous(tmp_path: Path):
@@ -602,6 +734,75 @@ def test_agent_resolves_tool_output_placeholders_between_steps(tmp_path: Path):
     assert model == "local:tool"
     assert consumer.targets == ["C:/tmp/generated.png"]
     assert "consume_path: consumed C:/tmp/generated.png" in content
+
+
+def test_followup_open_it_uses_last_generated_artifact_without_router_false_positive(tmp_path: Path):
+    image_path = tmp_path / "generated-girl.png"
+    client = RouterAnswerClient(
+            [
+                '{"steps":[{"tool":"image_generation","args":{"prompt":"girl"},"reason":"generate image"}]}',
+                '{"steps":[{"tool":"open_path","args":{"target":"it"},"reason":"open referenced artifact"}]}',
+            ]
+        )
+    tools = ToolRegistry()
+    opener = FakeOpenPathTool()
+    tools.register(FakeImageArtifactTool(image_path))
+    tools.register(opener)
+    agent = build_agent(tmp_path, client, tools)
+
+    model, content = agent.reply("gen me a img of girl")
+    assert model == "local:tool"
+    assert "generated-girl.png" in content
+
+    decision = agent.plan("can yu open it uo")
+
+    assert decision.steps[0].tool == "open_path"
+    assert decision.steps[0].args["target"] == "it"
+    assert decision.steps[0].args["fallback_target"] == str(image_path)
+    assert client.router_calls == 2
+
+    model, content = agent.reply("can yu open it uo")
+    assert model == "local:tool"
+    assert opener.targets == [str(image_path)]
+    assert "opened" in content
+
+
+def test_local_first_router_selects_tool_without_fallback_model_call():
+    payload = {
+        "tools": [
+            {"label": "open_path", "description": "Open files and folders."},
+            {"label": "general_chat", "description": "No tool needed."},
+        ]
+    }
+    fallback = FallbackRouter()
+    router = LocalFirstMandatoryRouter(
+        tools_payload=payload,
+        local_embedder=LocalRouterEmbedder(),
+        fallback_router=fallback,  # type: ignore[arg-type]
+        config=LocalIntentClassifierConfig(
+            enabled=True,
+            confidence_threshold=0.86,
+            margin_threshold=0.08,
+            min_tool_score=0.62,
+            max_tools=1,
+        ),
+    )
+
+    result = router.route("open the desktop folder")
+
+    assert result.tools == ["open_path"]
+    assert result.model == "local:intent-embedding"
+    assert fallback.calls == 0
+
+
+def test_known_folder_alias_resolves_desktop_before_fuzzy_discovery(tmp_path: Path):
+    desktop = Path.home() / "Desktop"
+    if not desktop.exists():
+        return
+    resolved, meta = _resolve_existing_path(_CwdState(tmp_path), "desktop folder", want="dir")
+
+    assert resolved == desktop.resolve()
+    assert meta.get("alias") == "known_folder"
 
 
 def test_blank_coding_cwd_uses_generated_projects_area(tmp_path: Path):

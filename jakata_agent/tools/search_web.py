@@ -57,13 +57,28 @@ class _DuckDuckGoHTMLParser(HTMLParser):
 
 class TavilySearchTool(Tool):
     name = "search_web"
-    description = "Search the web for current information. Uses Tavily when configured, with a keyless DuckDuckGo HTML fallback."
+    description = (
+        "Search the web for current, source-backed information. Supports broad search plus optional domain targeting "
+        "and freshness hints. Use with document for researched files, weather for local planning, camera/OCR for visible "
+        "text lookups, and memory to personalize queries."
+    )
+    categories = ("web", "research", "grounding")
+    aliases = ("google", "look up", "research", "latest", "source check")
+    use_with = ("document", "weather", "camera", "ocr", "memory", "browser")
+    daily_uses = (
+        "Verify current facts, prices, product details, errors, people, places, and services.",
+        "Collect sources for reports, plans, troubleshooting, and document creation.",
+    )
+    grounding = "Returns source titles, URLs, snippets, backend, and optional answer text."
+    output_capabilities = ("sources", "urls", "snippets", "answer")
     input_schema = {
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query."},
             "topic": {"type": "string", "enum": ["general", "news", "finance"]},
             "max_results": {"type": "integer", "minimum": 1, "maximum": 10},
+            "site": {"type": "string", "description": "Optional domain to restrict results, e.g. openai.com."},
+            "freshness": {"type": "string", "enum": ["any", "day", "week", "month", "year"], "description": "Optional recency hint."},
         },
         "required": ["query"],
         "additionalProperties": False,
@@ -73,6 +88,8 @@ class TavilySearchTool(Tool):
         self.api_key = api_key
 
     def run(self, args: dict[str, Any]) -> ToolResult:
+        args = dict(args)
+        args["query"] = self._scoped_query(str(args.get("query", "")), str(args.get("site", "")))
         if not self.api_key:
             return self._run_duckduckgo(args)
 
@@ -84,6 +101,9 @@ class TavilySearchTool(Tool):
             "include_answer": True,
             "include_raw_content": False,
         }
+        freshness = str(args.get("freshness", "any")).strip().lower()
+        if freshness in {"day", "week", "month", "year"}:
+            payload["time_range"] = {"day": "d", "week": "w", "month": "m", "year": "y"}[freshness]
         request = urllib.request.Request(
             "https://api.tavily.com/search",
             data=json.dumps(payload).encode("utf-8"),
@@ -115,13 +135,17 @@ class TavilySearchTool(Tool):
         return ToolResult(
             ok=True,
             summary=summary,
-            data={"answer": data.get("answer", ""), "results": compact_results},
+            data={"answer": data.get("answer", ""), "results": compact_results, "backend": "tavily", "query": args["query"]},
         )
 
     def _run_duckduckgo(self, args: dict[str, Any]) -> ToolResult:
         query = str(args["query"]).strip()
+        freshness = str(args.get("freshness", "any")).strip().lower()
         max_results = max(1, min(int(args.get("max_results", 5)), 10))
-        url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode({"q": query})
+        params = {"q": query}
+        if freshness in {"day", "week", "month", "year"}:
+            params["df"] = {"day": "d", "week": "w", "month": "m", "year": "y"}[freshness]
+        url = "https://duckduckgo.com/html/?" + urllib.parse.urlencode(params)
         request = urllib.request.Request(
             url,
             headers={"User-Agent": "Mozilla/5.0 JAKATA local assistant"},
@@ -140,9 +164,17 @@ class TavilySearchTool(Tool):
         return ToolResult(
             ok=bool(results),
             summary=summary,
-            data={"answer": "", "results": results, "backend": "duckduckgo_html"},
+            data={"answer": "", "results": results, "backend": "duckduckgo_html", "query": query},
             error=None if results else "no_results",
         )
+
+    @staticmethod
+    def _scoped_query(query: str, site: str) -> str:
+        query = query.strip()
+        site = site.strip().replace("https://", "").replace("http://", "").strip("/")
+        if not site or "site:" in query.lower():
+            return query
+        return f"{query} site:{site}"
 
     def render(self, data: dict[str, Any]) -> str:
         answer = str(data.get("answer", "")).strip()

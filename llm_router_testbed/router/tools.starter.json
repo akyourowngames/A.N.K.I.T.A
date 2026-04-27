@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "tools": [
+    {
+      "label": "Weather Tool",
+      "description": "Weather, forecast, temperature, rain, storms, air conditions, and packing decisions that depend on weather."
+    },
+    {
+      "label": "Web Search tool",
+      "description": "Internet browsing, current or latest public information, online lookups, product research, news, prices, places near the user, and facts that should be verified online."
+    },
+    {
+      "label": "Document gen tool",
+      "description": "Create, write, draft, save, export, format, summarize into, or generate a document, report, brief, list, comparison, table, PDF, DOCX, or local text artifact."
+    },
+    {
+      "label": "system control tool",
+      "description": "Open, launch, close, control, type into, click, change settings, operate apps, manage windows, control media, and perform local device or desktop actions."
+    },
+    {
+      "label": "search tool",
+      "description": "Generic search intent, local search, personal notes/files/messages search, vague search commands, and assistant-intake search when no web/current-info requirement is stated."
+    }
+  ]
+}

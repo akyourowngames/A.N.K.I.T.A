@@ -35,16 +35,24 @@ class ToolRegistry:
         return "\n".join(f"- {tool.name}: {tool.description}" for tool in tools)
 
     def manifest(self, public_only: bool = True) -> list[dict]:
-        return [
-            {
+        manifest: list[dict] = []
+        for tool in self._iter_tools(public_only=public_only):
+            item = {
                 "name": tool.name,
                 "description": tool.description,
                 "args": tool.input_schema.get("properties", {}),
                 "required": tool.input_schema.get("required", []),
                 "safety": getattr(tool, "safety", "read_only"),
             }
-            for tool in self._iter_tools(public_only=public_only)
-        ]
+            for attr in ("categories", "aliases", "use_with", "daily_uses", "output_capabilities"):
+                values = list(getattr(tool, attr, ()) or ())
+                if values:
+                    item[attr] = values
+            grounding = str(getattr(tool, "grounding", "") or "").strip()
+            if grounding:
+                item["grounding"] = grounding
+            manifest.append(item)
+        return manifest
 
     def planner_prompt(self) -> str:
         specs = [
@@ -52,6 +60,10 @@ class ToolRegistry:
                 "name": tool.name,
                 "description": tool.description,
                 "input_schema": tool.input_schema,
+                "safety": getattr(tool, "safety", "read_only"),
+                "use_with": list(getattr(tool, "use_with", ()) or ()),
+                "daily_uses": list(getattr(tool, "daily_uses", ()) or ()),
+                "grounding": str(getattr(tool, "grounding", "") or ""),
             }
             for tool in self._iter_tools(public_only=True)
         ]

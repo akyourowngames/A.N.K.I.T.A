@@ -194,6 +194,45 @@ def _norm_match_text(value: str) -> str:
     return re.sub(r"[^a-z0-9]+", " ", value.casefold()).strip()
 
 
+def _known_folder_alias(raw_path: str) -> Path | None:
+    normalized = _norm_match_text(_clean_path_text(raw_path))
+    if not normalized:
+        return None
+    variants: set[str] = set()
+    for suffix in (" folder", " directory", " dir"):
+        if normalized.endswith(suffix):
+            variants.add(normalized[: -len(suffix)].strip())
+    if not variants:
+        return None
+    try:
+        home = Path.home().resolve()
+    except OSError:
+        return None
+    known_roots = {
+        "home": home,
+        "user": home,
+        "profile": home,
+        "user profile": home,
+        "desktop": home / "Desktop",
+        "downloads": home / "Downloads",
+        "download": home / "Downloads",
+        "documents": home / "Documents",
+        "document": home / "Documents",
+        "pictures": home / "Pictures",
+        "picture": home / "Pictures",
+        "images": home / "Pictures",
+        "image": home / "Pictures",
+        "music": home / "Music",
+        "videos": home / "Videos",
+        "video": home / "Videos",
+    }
+    for item in variants:
+        candidate = known_roots.get(item)
+        if candidate is not None and candidate.exists():
+            return candidate
+    return None
+
+
 def _path_match_score(raw_path: str, candidate: Path) -> float:
     wanted = _clean_path_text(raw_path)
     wanted_name = _norm_match_text(Path(wanted).name or wanted)
@@ -352,6 +391,14 @@ def _resolve_existing_path(cwd: _CwdState, raw_path: str, *, want: str = "any", 
     direct = _resolve_path(cwd, raw_path, raw_cwd)
     if _kind_matches(direct, want):
         return direct, {"resolved_from": _clean_path_text(raw_path), "discovered": False, "checked": [str(direct)]}
+    alias = _known_folder_alias(raw_path)
+    if alias is not None and _kind_matches(alias, want):
+        return alias, {
+            "resolved_from": _clean_path_text(raw_path),
+            "discovered": False,
+            "alias": "known_folder",
+            "checked": [str(direct), str(alias)],
+        }
     discovered, meta = _discover_existing_path(cwd, raw_path, want=want, raw_cwd=raw_cwd)
     if discovered is not None:
         return discovered, meta
@@ -1116,7 +1163,26 @@ class OpenPathTool(Tool):
         else:
             resolved, path_meta = _resolve_existing_path(self.cwd, raw_target, want="any", raw_cwd=str(args.get("cwd", "")).strip())
             if not resolved.exists():
-                return ToolResult(ok=False, summary=f"Path not found: {raw_target}", data=path_meta, error="not_found")
+                fallback_target = str(args.get("fallback_target", "")).strip()
+                if fallback_target:
+                    fallback_resolved, fallback_meta = _resolve_existing_path(
+                        self.cwd,
+                        fallback_target,
+                        want="any",
+                        raw_cwd=str(args.get("cwd", "")).strip(),
+                    )
+                    if fallback_resolved.exists():
+                        resolved = fallback_resolved
+                        path_meta = {
+                            **path_meta,
+                            "fallback_target": str(fallback_resolved),
+                            "fallback_reason": "primary_target_not_found",
+                            "fallback_meta": fallback_meta,
+                        }
+                    else:
+                        return ToolResult(ok=False, summary=f"Path not found: {raw_target}", data=path_meta, error="not_found")
+                else:
+                    return ToolResult(ok=False, summary=f"Path not found: {raw_target}", data=path_meta, error="not_found")
             target = str(resolved)
             kind = "dir" if resolved.is_dir() else "file"
 

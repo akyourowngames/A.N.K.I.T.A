@@ -63,9 +63,10 @@ def build_agent() -> tuple[JakataAgent, JakataRuntime]:
             tools=runtime.tools,
             memory=runtime.memory,
             router=runtime.router,
-        validator=runtime.validator,
-        task_store=runtime.task_store,
-        task_engine=runtime.task_engine,
+            validator=runtime.validator,
+            task_store=runtime.task_store,
+            task_engine=runtime.task_engine,
+            mandatory_router=getattr(runtime, "mandatory_router", None),
         ),
         runtime,
     )

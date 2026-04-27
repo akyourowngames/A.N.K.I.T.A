@@ -1,11 +1,54 @@
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass
 from typing import Iterator
 
 import requests
 
 from jakata_agent.config import Settings
+
+
+@dataclass(slots=True)
+class EdgeTTSClient:
+    voice: str = "en-US-GuyNeural"
+    rate: str = "-12%"
+    pitch: str = "-18Hz"
+    volume: str = "+8%"
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> "EdgeTTSClient":
+        return cls(
+            voice=settings.edge_tts_voice,
+            rate=settings.edge_tts_rate,
+            pitch=settings.edge_tts_pitch,
+            volume=settings.edge_tts_volume,
+        )
+
+    def stream(self, text: str) -> Iterator[bytes]:
+        clean_text = " ".join(text.strip().split())
+        if not clean_text:
+            return
+        yield from asyncio.run(self._synthesize(clean_text))
+
+    async def _synthesize(self, text: str) -> list[bytes]:
+        try:
+            import edge_tts
+        except ImportError as exc:
+            raise RuntimeError("edge-tts is not installed. Run: pip install -r requirements.txt") from exc
+
+        communicate = edge_tts.Communicate(
+            text=text,
+            voice=self.voice,
+            rate=self.rate,
+            pitch=self.pitch,
+            volume=self.volume,
+        )
+        chunks: list[bytes] = []
+        async for chunk in communicate.stream():
+            if chunk.get("type") == "audio" and chunk.get("data"):
+                chunks.append(chunk["data"])
+        return chunks
 
 
 @dataclass(slots=True)

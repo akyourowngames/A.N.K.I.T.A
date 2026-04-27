@@ -19,6 +19,12 @@ class Tool(ABC):
     input_schema: dict[str, Any]
     safety: str = "read_only"
     public: bool = True
+    categories: tuple[str, ...] = ()
+    aliases: tuple[str, ...] = ()
+    use_with: tuple[str, ...] = ()
+    daily_uses: tuple[str, ...] = ()
+    grounding: str = ""
+    output_capabilities: tuple[str, ...] = ()
 
     def normalize_args(self, args: dict[str, Any]) -> dict[str, Any]:
         return args

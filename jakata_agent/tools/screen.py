@@ -38,8 +38,22 @@ def _capture_with_imagegrab():
 
 class ScreenTool(Tool):
     name = "screen"
-    description = "Capture the current screen or a specific region for observation."
-    public = False
+    description = (
+        "Capture the current screen or a specific region for grounded desktop observation. "
+        "Use with ocr, browser, os_agent, document, or memory when the user asks what is on screen, "
+        "needs UI evidence, or wants to save visual context."
+    )
+    public = True
+    categories = ("vision", "desktop", "grounding")
+    aliases = ("screenshot", "what is on my screen", "screen capture", "desktop view")
+    use_with = ("ocr", "browser", "os_agent", "document", "memory")
+    daily_uses = (
+        "Capture visible app state before explaining or troubleshooting.",
+        "Pair with OCR to read UI text, errors, codes, receipts, or forms.",
+        "Save visual context for a document, report, or later memory lookup.",
+    )
+    grounding = "Captures a fresh local screenshot and returns the saved image path plus region metadata."
+    output_capabilities = ("image_path", "region", "desktop_evidence")
     input_schema = {
         "type": "object",
         "properties": {
@@ -108,8 +122,20 @@ class ScreenTool(Tool):
 
 class OCRTool(Tool):
     name = "ocr"
-    description = "Extract UI text from a screenshot, the current screen, or a specific region."
-    public = False
+    description = (
+        "Extract readable text from screenshots, the current screen, or a region. "
+        "Use with screen, browser, camera, document, memory, or search_web to ground answers in visible text."
+    )
+    public = True
+    categories = ("vision", "text_extraction", "grounding")
+    aliases = ("read screen", "extract text", "read screenshot", "image text")
+    use_with = ("screen", "browser", "camera", "document", "memory", "search_web")
+    daily_uses = (
+        "Read error messages, forms, invoices, labels, and app UI text.",
+        "Turn visible text into searchable, saveable, or document-ready content.",
+    )
+    grounding = "Runs OCR on a provided image path or freshly captured screenshot."
+    output_capabilities = ("text", "image_path", "ocr_evidence")
     input_schema = {
         "type": "object",
         "properties": {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 from dataclasses import dataclass, field
@@ -8,6 +9,7 @@ from typing import Any, Iterator
 
 from jakata_agent.config import Settings
 from jakata_agent.llm import NvidiaChatClient
+from jakata_agent.mandatory_router import mandatory_router_emergency_fallback_enabled
 from jakata_agent.memory.manager import MemoryManager
 from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.prompts import load_prompt
@@ -30,6 +32,7 @@ MAX_TOOL_STEPS = 4
 DIRECT_TOOL_ENGINE_ENV = "JAKATA_FOREGROUND_TASK_ENGINE"
 PLACEHOLDER_RE = re.compile(r"\{\{\s*([A-Za-z0-9_.-]+)\s*\}\}")
 GENERAL_CHAT_TOOL_NAME = "general_chat"
+LOGGER = logging.getLogger(__name__)
 
 
 def _general_chat_manifest() -> dict[str, Any]:
@@ -65,7 +68,9 @@ class JakataAgent:
     task_store: TaskStore
     fast_client: NvidiaChatClient | None = None
     task_engine: TaskCompletionEngine | None = None
+    mandatory_router: Any | None = None
     messages: list[dict[str, Any]] = field(default_factory=list)
+    recent_artifacts: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.messages = [{"role": "system", "content": f"{SYSTEM_PROMPT}\n\n{self.memory.bootstrap_system_note()}"}]
@@ -183,6 +188,21 @@ class JakataAgent:
         return AgentResponse(model=model, content=content, tool_results=tool_results)
 
     def _plan(self, user_message: str) -> PlanDecision:
+        if self._cheap_no_tool_route(user_message):
+            return PlanDecision(
+                steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="cheap_no_tool_route")],
+                memory_context=self._retrieve_memory_context(user_message),
+            )
+        if self.mandatory_router is not None:
+            try:
+                return self._mandatory_plan(user_message)
+            except Exception:
+                if mandatory_router_emergency_fallback_enabled():
+                    return self._legacy_plan(user_message)
+                raise
+        return self._legacy_plan(user_message)
+
+    def _legacy_plan(self, user_message: str) -> PlanDecision:
         manifest_result = self._planner_manifest(user_message)
         if manifest_result.used_semantic_ranking and manifest_result.tools:
             first_tool_name = str(manifest_result.tools[0].get("name", ""))
@@ -236,8 +256,197 @@ class JakataAgent:
         conversation_context = self._conversation_context()
         decision = self.router.plan(user_message, manifest, memory_context=memory_context, conversation_context=conversation_context)
         decision.memory_context = memory_context
-        decision.steps = self.validator.validate(decision.steps, self.tools).steps[:MAX_TOOL_STEPS]
+        decision.steps = self._validate_plan_steps(
+            user_message=user_message,
+            selected_tools=[str(tool.get("name", "")) for tool in manifest],
+            raw_steps=decision.steps,
+        )[:MAX_TOOL_STEPS]
+        decision.steps = self._attach_artifact_fallbacks(decision.steps)
         return decision
+
+    def _mandatory_plan(self, user_message: str) -> PlanDecision:
+        route_result = self.mandatory_router.route(user_message)
+        selected_tools = self._known_mandatory_tools(route_result.tools)
+        if not selected_tools:
+            raise RuntimeError("Mandatory router selected no known tools.")
+
+        if selected_tools == [GENERAL_CHAT_TOOL_NAME]:
+            return PlanDecision(
+                steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="mandatory_router_general_chat")],
+                memory_context=self._retrieve_memory_context(user_message),
+            )
+
+        first_real_tool_name = next((tool for tool in selected_tools if tool != GENERAL_CHAT_TOOL_NAME), "")
+        first_real_tool = self.tools.get(first_real_tool_name) if first_real_tool_name else None
+        if getattr(first_real_tool, "skip_planning_memory", False):
+            memory_context = ""
+        else:
+            memory_context = self._retrieve_memory_context(user_message)
+
+        manifest = self._mandatory_tool_manifest(selected_tools)
+        decision = self.router.plan(
+            user_message,
+            manifest,
+            memory_context=memory_context,
+            conversation_context=self._conversation_context(),
+            candidate_tools=selected_tools,
+        )
+        decision.memory_context = memory_context
+
+        allowed_tools = set(selected_tools) | {GENERAL_CHAT_TOOL_NAME}
+        if decision.direct_answer:
+            return PlanDecision(
+                steps=[PlanStep(tool=GENERAL_CHAT_TOOL_NAME, args={}, reason="candidate_router_direct_answer")],
+                direct_answer=decision.direct_answer,
+                memory_context=memory_context,
+            )
+
+        validated_steps = self._validate_plan_steps(
+            user_message=user_message,
+            selected_tools=selected_tools,
+            raw_steps=decision.steps,
+        )
+        restricted_steps = [self._restrict_step_to_mandatory_tools(step, allowed_tools) for step in validated_steps if step.tool in allowed_tools]
+        restricted_steps = [step for step in restricted_steps if step is not None]
+        restricted_steps = self._attach_artifact_fallbacks(restricted_steps)
+        return PlanDecision(
+            steps=restricted_steps[:MAX_TOOL_STEPS],
+            memory_context=memory_context,
+        )
+
+    def _known_mandatory_tools(self, selected_tools: list[str]) -> list[str]:
+        known: list[str] = []
+        seen: set[str] = set()
+        for tool_name in selected_tools:
+            if tool_name in seen:
+                continue
+            if tool_name == GENERAL_CHAT_TOOL_NAME or self.tools.get(tool_name) is not None:
+                known.append(tool_name)
+                seen.add(tool_name)
+        return known
+
+    def _mandatory_tool_manifest(self, selected_tools: list[str]) -> list[dict[str, Any]]:
+        manifest_by_name = {str(item.get("name", "")): item for item in self.tools.manifest(public_only=False)}
+        manifest: list[dict[str, Any]] = []
+        seen: set[str] = set()
+        for tool_name in selected_tools:
+            if tool_name in seen:
+                continue
+            if tool_name == GENERAL_CHAT_TOOL_NAME:
+                manifest.append(_general_chat_manifest())
+                seen.add(tool_name)
+                continue
+            tool_manifest = manifest_by_name.get(tool_name)
+            if tool_manifest is not None:
+                manifest.append(tool_manifest)
+                seen.add(tool_name)
+        if GENERAL_CHAT_TOOL_NAME not in seen:
+            manifest.append(_general_chat_manifest())
+        return manifest
+
+    @staticmethod
+    def _restrict_step_to_mandatory_tools(step: PlanStep, allowed_tools: set[str]) -> PlanStep | None:
+        if step.tool not in allowed_tools:
+            return None
+        return PlanStep(
+            tool=step.tool,
+            args=step.args,
+            reason=step.reason or "mandatory_router",
+            fallback_to=step.fallback_to if step.fallback_to in allowed_tools else None,
+            fallbacks=[fallback for fallback in step.fallbacks if fallback.tool in allowed_tools],
+        )
+
+    def _validate_plan_steps(
+        self,
+        *,
+        user_message: str,
+        selected_tools: list[str],
+        raw_steps: list[PlanStep],
+    ) -> list[PlanStep]:
+        validation = self.validator.validate(raw_steps, self.tools)
+        errors = list(getattr(validation, "errors", []) or [])
+        if errors:
+            self._log_router_failure(
+                user_message=user_message,
+                selected_tools=selected_tools,
+                raw_steps=raw_steps,
+                errors=errors,
+            )
+        return validation.steps
+
+    @staticmethod
+    def _log_router_failure(
+        *,
+        user_message: str,
+        selected_tools: list[str],
+        raw_steps: list[PlanStep],
+        errors: list[str],
+    ) -> None:
+        LOGGER.info(
+            "router_validation_errors",
+            extra={
+                "router_validation": {
+                    "user_message": user_message,
+                    "selected_tools": selected_tools,
+                    "raw_steps": [
+                        {"tool": step.tool, "args": step.args, "reason": step.reason}
+                        for step in raw_steps
+                    ],
+                    "errors": errors,
+                }
+            },
+        )
+
+    @staticmethod
+    def _cheap_no_tool_route(user_message: str) -> bool:
+        text = user_message.lower().strip()
+        if not text:
+            return False
+
+        action_patterns = [
+            "send",
+            "open",
+            "create file",
+            "make file",
+            "write file",
+            "edit file",
+            "save",
+            "search",
+            "verify",
+            "check online",
+            "latest",
+            "current",
+            "today",
+            "weather",
+            "calendar",
+            "schedule",
+            "delete",
+            "run",
+            "execute",
+            "click",
+            "download",
+            "generate image",
+            "gen a img",
+            "make an image",
+            "take screenshot",
+            "read file",
+        ]
+        if any(pattern in text for pattern in action_patterns):
+            return False
+
+        no_tool_patterns = [
+            "explain",
+            "what is",
+            "how does",
+            "why",
+            "help me understand",
+            "rewrite",
+            "draft",
+            "suggest",
+            "advice",
+            "do you think",
+        ]
+        return any(pattern in text for pattern in no_tool_patterns)
 
     def _planner_manifest(self, user_message: str):
         manifest = self.tools.manifest(public_only=True)
@@ -342,7 +551,80 @@ class JakataAgent:
             if result.ok:
                 tool_context["previous"] = result.data
                 tool_context[result_tool_name] = result.data
+                self._remember_tool_artifacts(result_tool_name, result.data)
         return results
+
+    def _remember_tool_artifacts(self, tool_name: str, data: dict[str, Any]) -> None:
+        for path in self._artifact_paths_from_data(data):
+            artifact = {
+                "tool": tool_name,
+                "path": path,
+                "kind": self._artifact_kind(path, data),
+                "mime_type": str(data.get("mime_type", "") if isinstance(data, dict) else ""),
+            }
+            self.recent_artifacts.append(artifact)
+        if len(self.recent_artifacts) > 20:
+            self.recent_artifacts = self.recent_artifacts[-20:]
+
+    @staticmethod
+    def _artifact_paths_from_data(data: dict[str, Any]) -> list[str]:
+        paths: list[str] = []
+        raw_path = data.get("path") if isinstance(data, dict) else ""
+        if raw_path:
+            paths.append(str(raw_path))
+        raw_paths = data.get("paths") if isinstance(data, dict) else []
+        if isinstance(raw_paths, list):
+            paths.extend(str(path) for path in raw_paths if str(path).strip())
+        seen: set[str] = set()
+        deduped: list[str] = []
+        for path in paths:
+            cleaned = path.strip()
+            if cleaned and cleaned not in seen:
+                seen.add(cleaned)
+                deduped.append(cleaned)
+        return deduped
+
+    @staticmethod
+    def _artifact_kind(path: str, data: dict[str, Any]) -> str:
+        mime_type = str(data.get("mime_type", "") if isinstance(data, dict) else "").lower()
+        suffix = os.path.splitext(path.lower())[1]
+        if mime_type.startswith("image/") or suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif", ".bmp"}:
+            return "image"
+        if suffix in {".pdf", ".docx", ".txt", ".md", ".csv", ".xlsx", ".pptx"}:
+            return "document"
+        return "file"
+
+    def _latest_openable_artifact(self) -> dict[str, Any] | None:
+        for artifact in reversed(self.recent_artifacts):
+            path = str(artifact.get("path", "")).strip()
+            if path:
+                return artifact
+        return None
+
+    def _attach_artifact_fallbacks(self, steps: list[PlanStep]) -> list[PlanStep]:
+        artifact = self._latest_openable_artifact()
+        if not artifact:
+            return steps
+        fallback_target = str(artifact.get("path", "")).strip()
+        if not fallback_target:
+            return steps
+        updated: list[PlanStep] = []
+        for step in steps:
+            if step.tool != "open_path":
+                updated.append(step)
+                continue
+            args = dict(step.args)
+            args.setdefault("fallback_target", fallback_target)
+            updated.append(
+                PlanStep(
+                    tool=step.tool,
+                    args=args,
+                    reason=step.reason,
+                    fallback_to=step.fallback_to,
+                    fallbacks=step.fallbacks,
+                )
+            )
+        return updated
 
     def _execute_one_direct_tool(self, step: PlanStep):
         tool = self.tools.get(step.tool)

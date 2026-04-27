@@ -31,6 +31,15 @@ class DocumentTool(Tool):
         "source-backed research documents, PDF page operations, and returns local file paths under the generated documents folder."
     )
     safety = "write"
+    categories = ("documents", "productivity", "artifact_creation")
+    aliases = ("docx", "pdf", "report", "save as document", "make a file")
+    use_with = ("search_web", "camera", "ocr", "screen", "memory", "weather")
+    daily_uses = (
+        "Turn research, camera observations, OCR text, notes, plans, or weather context into saved DOCX/PDF/TXT artifacts.",
+        "Edit, extract, convert, merge, split, annotate, and template documents.",
+    )
+    grounding = "Creates or modifies local files under the generated documents folder and returns saved paths plus preview/source metadata."
+    output_capabilities = ("docx", "pdf", "txt", "paths", "preview", "sources")
     input_schema = {
         "type": "object",
         "properties": {

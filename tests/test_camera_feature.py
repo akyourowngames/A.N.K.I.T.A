@@ -76,19 +76,50 @@ class StubCameraSession:
 
 
 class StubVisionClient:
+    def __init__(self) -> None:
+        self.calls = []
+
     def describe_image(self, *, image_path: str, user_prompt: str, system_prompt: str = "", temperature: float = 0.0, max_tokens: int = 0):
-        del system_prompt, temperature, max_tokens
+        del system_prompt, temperature
+        self.calls.append({"image_path": image_path, "user_prompt": user_prompt, "max_tokens": max_tokens})
         return "vision-fast", f"vision[{Path(image_path).name}] {user_prompt}"
 
 
 def test_camera_tool_describe_uses_snapshot_and_vision_client():
     session = StubCameraSession()
-    tool = CameraTool(session, StubVisionClient())
+    client = StubVisionClient()
+    tool = CameraTool(session, client)
     result = tool.run({"action": "describe", "prompt": "what do you see"})
     assert result.ok
     assert session.snapshots == 1
     assert result.data["model"] == "vision-fast"
     assert "what do you see" in result.summary
+    assert result.data["detail_level"] == "deep"
+    assert client.calls[0]["max_tokens"] == 1300
+
+
+def test_camera_tool_builds_mode_focus_and_format_prompt():
+    session = StubCameraSession()
+    client = StubVisionClient()
+    tool = CameraTool(session, client)
+    result = tool.run(
+        {
+            "action": "describe",
+            "mode": "ocr",
+            "detail_level": "quick",
+            "focus": "the label",
+            "output_format": "json",
+            "prompt": "read it carefully",
+        }
+    )
+    assert result.ok
+    prompt = client.calls[0]["user_prompt"]
+    assert "Prioritize every readable word" in prompt
+    assert "Primary focus: the label." in prompt
+    assert "Return valid JSON" in prompt
+    assert result.data["mode"] == "ocr"
+    assert result.data["detail_level"] == "quick"
+    assert client.calls[0]["max_tokens"] == 350
 
 
 def test_camera_command_turns_preview_on():

@@ -43,10 +43,24 @@ class FakeRuntime(SimpleNamespace):
     pass
 
 
+class FakeVisionClient:
+    def describe_image(self, *, image_path, user_prompt, temperature=0.0, max_tokens=0, system_prompt=""):
+        assert Path(image_path).exists()
+        assert "live camera" in user_prompt.lower() or "describe" in user_prompt.lower()
+        return "fake-vision", f"vision analysis from {Path(image_path).suffix} ({max_tokens})"
+
+
+class FakeMemory:
+    def persist_turn(self, messages):
+        self.messages = list(messages)
+
+
 class FakeAgent:
     def __init__(self, runtime: FakeRuntime) -> None:
         self.runtime = runtime
         self.history: list[str] = []
+        self.messages: list[dict[str, str]] = []
+        self.memory = FakeMemory()
 
     def plan(self, user_message: str) -> PlanDecision:
         lowered = user_message.lower()
@@ -93,7 +107,7 @@ class FakeAgent:
 
 
 def fake_runtime_factory(settings: Settings) -> FakeRuntime:
-    return FakeRuntime(settings=settings, tools=FakeTools())
+    return FakeRuntime(settings=settings, tools=FakeTools(), client=FakeVisionClient())
 
 
 def fake_agent_builder(runtime: FakeRuntime) -> FakeAgent:
@@ -198,6 +212,7 @@ def test_frontend_assets_and_health(tmp_path: Path):
     script = client.get("/script.js")
     assert script.status_code == 200
     assert "/chat/jarvis/stream" in script.text
+    assert "/camera/analyze" in script.text
 
     orb = client.get("/orb.js")
     assert orb.status_code == 200
@@ -308,6 +323,18 @@ def test_realtime_and_jarvis_emit_search_results(tmp_path: Path):
     decision = next(item["activity"] for item in jarvis if "activity" in item and item["activity"].get("event") == "decision")
     assert decision["query_type"] == "realtime"
     assert any("search_results" in item for item in jarvis)
+
+
+def test_camera_analyze_accepts_browser_frame(tmp_path: Path):
+    client = build_client(tmp_path)
+    image = "data:image/jpeg;base64," + base64.b64encode(b"fake-jpeg").decode("ascii")
+
+    response = client.post("/camera/analyze", json={"image": image, "prompt": "Describe the live camera frame."})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["model"] == "fake-vision"
+    assert "vision analysis" in payload["analysis"]
 
 
 if __name__ == "__main__":

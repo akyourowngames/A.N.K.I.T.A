@@ -10,12 +10,25 @@ from jakata_agent.tools.base import Tool, ToolResult
 
 class OpenWeatherTool(Tool):
     name = "weather"
-    description = "Get the current weather for a city. Uses OpenWeather when configured and keyless Open-Meteo as fallback."
+    description = (
+        "Get current weather and short daily forecasts for a city. Use with memory, camera, search_web, or document "
+        "for daily planning, travel prep, outfit checks, errands, events, and location-aware notes."
+    )
+    categories = ("daily_life", "weather", "planning")
+    aliases = ("forecast", "temperature", "rain", "weather today", "weather tomorrow")
+    use_with = ("memory", "camera", "search_web", "document", "datetime")
+    daily_uses = (
+        "Plan clothing, commute, errands, walks, trips, events, and outdoor work.",
+        "Add weather context to daily notes, schedules, or recommendations.",
+    )
+    grounding = "Uses OpenWeather when configured, otherwise Open-Meteo geocoding and forecast APIs."
+    output_capabilities = ("current_weather", "forecast", "location", "units")
     input_schema = {
         "type": "object",
         "properties": {
             "location": {"type": "string", "description": "City name, optionally with country code."},
             "units": {"type": "string", "enum": ["metric", "imperial", "standard"]},
+            "forecast_days": {"type": "integer", "minimum": 1, "maximum": 7, "description": "Open-Meteo fallback forecast days. Default 1."},
         },
         "required": ["location"],
         "additionalProperties": False,
@@ -85,8 +98,10 @@ class OpenWeatherTool(Tool):
                     "latitude": latitude,
                     "longitude": longitude,
                     "current": "temperature_2m,relative_humidity_2m,apparent_temperature,wind_speed_10m,weather_code",
+                    "daily": "temperature_2m_max,temperature_2m_min,precipitation_probability_max,weather_code",
                     "temperature_unit": temperature_unit,
                     "wind_speed_unit": wind_speed_unit,
+                    "forecast_days": max(1, min(int(args.get("forecast_days", 1) or 1), 7)),
                 }
             )
             with urllib.request.urlopen(f"https://api.open-meteo.com/v1/forecast?{query}", timeout=20) as response:
@@ -108,8 +123,28 @@ class OpenWeatherTool(Tool):
         humidity = current.get("relative_humidity_2m")
         feels_like = current.get("apparent_temperature")
         wind_speed = current.get("wind_speed_10m")
+        daily = dict(data.get("daily") or {})
+        forecast = []
+        times = list(daily.get("time") or [])
+        highs = list(daily.get("temperature_2m_max") or [])
+        lows = list(daily.get("temperature_2m_min") or [])
+        precipitation = list(daily.get("precipitation_probability_max") or [])
+        codes = list(daily.get("weather_code") or [])
+        for index, date in enumerate(times):
+            forecast.append(
+                {
+                    "date": date,
+                    "temp_max": highs[index] if index < len(highs) else None,
+                    "temp_min": lows[index] if index < len(lows) else None,
+                    "precipitation_probability": precipitation[index] if index < len(precipitation) else None,
+                    "weather_code": codes[index] if index < len(codes) else None,
+                }
+            )
         unit = "F" if temperature_unit == "fahrenheit" else "C"
         summary = f"{place_name}: {temperature} degrees {unit}, feels like {feels_like} degrees {unit}, humidity {humidity}%, wind {wind_speed} {wind_speed_unit}."
+        if forecast:
+            today = forecast[0]
+            summary += f" Today: {today.get('temp_min')} to {today.get('temp_max')} degrees {unit}, rain chance {today.get('precipitation_probability')}%."
         return ToolResult(
             ok=True,
             summary=summary,
@@ -123,6 +158,7 @@ class OpenWeatherTool(Tool):
                 "units": units,
                 "latitude": latitude,
                 "longitude": longitude,
+                "forecast": forecast,
             },
         )
 

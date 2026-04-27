@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from typing import Any
 
 from jakata_agent.camera import CameraSession
 from jakata_agent.companion import CompanionStore, ProactiveCompanionEngine
@@ -8,10 +9,12 @@ from jakata_agent.config import Settings, load_settings
 from jakata_agent.llm import (
     NvidiaChatClient,
     TextCompletionClient,
+    build_arg_planner_client,
     build_automation_client,
     build_browser_automation_client,
     build_router_client,
 )
+from jakata_agent.mandatory_router import build_runtime_mandatory_router
 from jakata_agent.memory.manager import MemoryManager
 from jakata_agent.plan_validator import PlanValidator
 from jakata_agent.router import IntentRouter
@@ -54,6 +57,7 @@ class JakataRuntime:
     camera_session: CameraSession
     companion_store: CompanionStore
     companion_engine: ProactiveCompanionEngine
+    mandatory_router: Any | None = None
 
 
 def create_runtime(settings: Settings | None = None) -> JakataRuntime:
@@ -149,6 +153,8 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         google_token_path=settings.google_token_path,
     )
     register_capabilities_tool(tools)
+    mandatory_router = build_runtime_mandatory_router(settings, tools, local_embedder=getattr(memory, "embedder", None))
+    agent_router_client = build_arg_planner_client(settings, client) if mandatory_router is not None else router_client
     return JakataRuntime(
         settings=settings,
         client=client,
@@ -156,7 +162,7 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         automation_client=automation_client,
         tools=tools,
         memory=memory,
-        router=IntentRouter(router_client),
+        router=IntentRouter(agent_router_client),
         automation_router=IntentRouter(automation_client),
         validator=PlanValidator(),
         task_store=task_store,
@@ -176,4 +182,5 @@ def create_runtime(settings: Settings | None = None) -> JakataRuntime:
         camera_session=camera_session,
         companion_store=companion_store,
         companion_engine=companion_engine,
+        mandatory_router=mandatory_router,
     )

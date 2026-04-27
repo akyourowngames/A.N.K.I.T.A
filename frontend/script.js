@@ -166,6 +166,7 @@ const $ = id => document.getElementById(id);
 const chatMessages = $('chat-messages');   // The scrollable container that holds all chat messages
 const messageInput = $('message-input');   // The <textarea> where the user types their message
 const sendBtn      = $('send-btn');        // The send button (arrow icon)
+const cameraBtn    = $('camera-btn');      // Live camera preview button
 const micBtn       = $('mic-btn');         // The microphone button for speech-to-text
 const ttsBtn       = $('tts-btn');         // The speaker button to toggle text-to-speech
 const newChatBtn   = $('new-chat-btn');    // The "New Chat" button that resets the conversation
@@ -192,6 +193,13 @@ const panelOverlay        = $('panel-overlay');            // Backdrop when a si
 const speechWidget        = $('speech-widget');            // Live speech-to-text display
 const speechWidgetLabel   = $('speech-widget-label');      // Voice state label
 const speechWidgetText    = $('speech-widget-text');       // Transcript text element
+const cameraWidget        = $('camera-widget');            // Floating live camera panel
+const cameraVideo         = $('camera-video');             // Camera video element
+const cameraPlaceholder   = $('camera-placeholder');       // Camera loading/error text
+const cameraStatusText    = $('camera-status-text');       // Camera panel status label
+const cameraAskBtn        = $('camera-ask-btn');           // Shortcut to ask backend camera tool
+const cameraMinimizeBtn   = $('camera-minimize-btn');      // Minimize camera panel
+const cameraCloseBtn      = $('camera-close-btn');         // Stop camera panel
 const settingsBtn         = $('settings-btn');              // Gear icon to open settings
 const settingsPanel       = $('settings-panel');            // Settings modal/panel
 const settingsClose       = $('settings-close');           // Close settings
@@ -205,6 +213,9 @@ const COMPANION_IDLE_SECONDS = 25;
 let lastUserInteractionAt = Date.now();
 let companionPollTimer = null;
 let lastProactiveMessageId = null;
+let cameraStream = null;
+let cameraStarting = false;
+let cameraMinimized = false;
 
 function createClientSessionId() {
     if (window.crypto && typeof window.crypto.randomUUID === 'function') {
@@ -1084,6 +1095,142 @@ function maybeRestartListening() {
 }
 
 /* ================================================================
+   LIVE CAMERA PANEL
+   ================================================================ */
+function setCameraUiState(state, detail = '') {
+    if (!cameraWidget || !cameraBtn) return;
+    cameraWidget.classList.toggle('open', state === 'live' || state === 'starting' || state === 'error');
+    cameraWidget.classList.toggle('starting', state === 'starting');
+    cameraWidget.classList.toggle('error', state === 'error');
+    cameraWidget.classList.toggle('minimized', cameraMinimized);
+    cameraBtn.classList.toggle('camera-active', state === 'live' || state === 'starting');
+    cameraWidget.setAttribute('aria-hidden', state === 'off' ? 'true' : 'false');
+    if (cameraStatusText) {
+        cameraStatusText.textContent = state === 'live' ? 'Vision - Live' : state === 'starting' ? 'Vision - Starting' : state === 'error' ? 'Vision - Blocked' : 'Vision';
+    }
+    if (cameraPlaceholder) {
+        cameraPlaceholder.textContent = detail || (state === 'starting' ? 'Camera is starting...' : state === 'error' ? 'Camera unavailable.' : '');
+        cameraPlaceholder.hidden = state === 'live';
+    }
+}
+
+async function startCameraPreview() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        setCameraUiState('error', 'Camera access is not supported in this browser.');
+        showToast('Camera access is not supported in this browser.');
+        return;
+    }
+    if (cameraStarting) return;
+    if (cameraStream) {
+        cameraMinimized = false;
+        setCameraUiState('live');
+        return;
+    }
+    cameraStarting = true;
+    cameraMinimized = false;
+    setCameraUiState('starting');
+    try {
+        cameraStream = await navigator.mediaDevices.getUserMedia({
+            video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                facingMode: 'environment'
+            },
+            audio: false
+        });
+        if (cameraVideo) {
+            cameraVideo.srcObject = cameraStream;
+            await cameraVideo.play().catch(() => {});
+        }
+        setCameraUiState('live');
+    } catch (err) {
+        cameraStream = null;
+        const detail = err && err.name === 'NotAllowedError'
+            ? 'Camera permission was denied. Allow camera access in the browser.'
+            : `Camera failed: ${err && err.message ? err.message : 'unknown error'}`;
+        setCameraUiState('error', detail);
+        showToast(detail);
+    } finally {
+        cameraStarting = false;
+    }
+}
+
+function stopCameraPreview() {
+    if (cameraStream) {
+        cameraStream.getTracks().forEach((track) => track.stop());
+        cameraStream = null;
+    }
+    if (cameraVideo) cameraVideo.srcObject = null;
+    cameraMinimized = false;
+    setCameraUiState('off');
+}
+
+function toggleCameraPreview() {
+    if (cameraWidget && cameraWidget.classList.contains('open') && cameraStream && !cameraMinimized) {
+        cameraMinimized = true;
+        setCameraUiState('live');
+        return;
+    }
+    startCameraPreview();
+}
+
+function captureCameraFrame() {
+    if (!cameraVideo || !cameraVideo.videoWidth || !cameraVideo.videoHeight) return '';
+    const canvas = document.createElement('canvas');
+    const maxWidth = 960;
+    const scale = Math.min(1, maxWidth / cameraVideo.videoWidth);
+    canvas.width = Math.max(1, Math.round(cameraVideo.videoWidth * scale));
+    canvas.height = Math.max(1, Math.round(cameraVideo.videoHeight * scale));
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return '';
+    ctx.drawImage(cameraVideo, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.82);
+}
+
+async function askJarvisAboutCamera() {
+    cameraMinimized = false;
+    setCameraUiState(cameraStream ? 'live' : 'starting');
+    if (!cameraStream) {
+        await startCameraPreview();
+    }
+    if (isStreaming) return;
+    const image = captureCameraFrame();
+    if (!image) {
+        showToast('Camera frame is not ready yet. Try again in a second.');
+        return;
+    }
+    addMessage('user', 'Analyze the live camera feed.');
+    const typing = addTypingIndicator();
+    appendActivity({ event: 'query_detected', message: 'Analyze live camera frame' });
+    appendActivity({ event: 'routing', route: 'vision' });
+    try {
+        const res = await fetch(`${API}/camera/analyze`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                session_id: sessionId,
+                image,
+                prompt: 'Analyze this live camera frame in deep detail. Include visible text, objects, spatial layout, uncertainty, and practical next steps.'
+            })
+        });
+        const data = await res.json().catch(() => null);
+        removeTypingIndicator();
+        if (!res.ok || !data) {
+            throw new Error((data && data.detail) || `Camera analysis failed (${res.status})`);
+        }
+        if (data.session_id) sessionId = data.session_id;
+        addMessage('assistant', data.analysis || 'I could not read the camera frame.');
+        appendActivity({ event: 'first_chunk', route: 'vision', elapsed_ms: null });
+    } catch (err) {
+        removeTypingIndicator();
+        addMessage('assistant', `Camera analysis failed: ${err.message}`);
+        showToast(`Camera analysis failed: ${err.message}`);
+    } finally {
+        if (typing) typing.classList.remove('typing-dots');
+    }
+}
+
+/* ================================================================
    BACKEND HEALTH CHECK
    ================================================================ */
 
@@ -1148,6 +1295,13 @@ function showToast(msg, durationMs = 5000) {
 function bindEvents() {
     // SEND BUTTON — Send the message when clicked (if not already streaming)
     if (sendBtn) sendBtn.addEventListener('click', () => { if (!isStreaming) sendMessage(); });
+    if (cameraBtn) cameraBtn.addEventListener('click', toggleCameraPreview);
+    if (cameraCloseBtn) cameraCloseBtn.addEventListener('click', stopCameraPreview);
+    if (cameraMinimizeBtn) cameraMinimizeBtn.addEventListener('click', () => {
+        cameraMinimized = !cameraMinimized;
+        setCameraUiState(cameraStream ? 'live' : 'error');
+    });
+    if (cameraAskBtn) cameraAskBtn.addEventListener('click', askJarvisAboutCamera);
 
     // ENTER KEY — Send on Enter (but allow Shift+Enter for new lines)
     if (messageInput) messageInput.addEventListener('keydown', e => {
@@ -1696,6 +1850,136 @@ function renderMessageContent(element, text) {
     }).join('');
     element.innerHTML = html;
 }
+
+function formatInlineMarkdownRich(value) {
+    let escaped = escapeHtml(value);
+    escaped = escaped.replace(/`([^`]+)`/g, '<code>$1</code>');
+    escaped = escaped.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    escaped = escaped.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    escaped = escaped.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>');
+    escaped = escaped.replace(/(^|[\s(])(https?:\/\/[^\s<]+)/g, '$1<a href="$2" target="_blank" rel="noopener noreferrer">$2</a>');
+    return escaped;
+}
+
+function renderMessageContentRich(element, text) {
+    const raw = String(text || '').trim();
+    if (!raw) {
+        element.textContent = '';
+        return;
+    }
+    const lines = raw.replace(/\r\n/g, '\n').split('\n');
+    const html = [];
+    let paragraph = [];
+    let listType = '';
+    let listItems = [];
+    let tableRows = [];
+    let inCode = false;
+    let codeLines = [];
+
+    const flushParagraph = () => {
+        if (!paragraph.length) return;
+        html.push(`<p>${paragraph.map(formatInlineMarkdownRich).join('<br>')}</p>`);
+        paragraph = [];
+    };
+    const flushList = () => {
+        if (!listItems.length) return;
+        const tag = listType === 'ol' ? 'ol' : 'ul';
+        html.push(`<${tag}>${listItems.map((item) => `<li>${formatInlineMarkdownRich(item)}</li>`).join('')}</${tag}>`);
+        listType = '';
+        listItems = [];
+    };
+    const flushTable = () => {
+        if (!tableRows.length) return;
+        if (tableRows.length < 2) {
+            tableRows.forEach((row) => paragraph.push(row.join(' | ')));
+            tableRows = [];
+            return;
+        }
+        const rows = tableRows.filter((row) => !row.every((cell) => /^:?-{3,}:?$/.test(cell.trim())));
+        const header = rows.shift();
+        if (!header) {
+            tableRows = [];
+            return;
+        }
+        const head = `<thead><tr>${header.map((cell) => `<th>${formatInlineMarkdownRich(cell.trim())}</th>`).join('')}</tr></thead>`;
+        const body = rows.length
+            ? `<tbody>${rows.map((row) => `<tr>${row.map((cell) => `<td>${formatInlineMarkdownRich(cell.trim())}</td>`).join('')}</tr>`).join('')}</tbody>`
+            : '';
+        html.push(`<div class="msg-table-wrap"><table>${head}${body}</table></div>`);
+        tableRows = [];
+    };
+    const flushCode = () => {
+        if (!codeLines.length) return;
+        html.push(`<pre><code>${escapeHtml(codeLines.join('\n'))}</code></pre>`);
+        codeLines = [];
+    };
+    const flushAll = () => {
+        flushParagraph();
+        flushList();
+        flushTable();
+    };
+
+    for (const rawLine of lines) {
+        const line = rawLine.trimEnd();
+        const trimmed = line.trim();
+        if (/^```/.test(trimmed)) {
+            if (inCode) {
+                flushCode();
+                inCode = false;
+            } else {
+                flushAll();
+                inCode = true;
+            }
+            continue;
+        }
+        if (inCode) {
+            codeLines.push(line);
+            continue;
+        }
+        if (!trimmed) {
+            flushAll();
+            continue;
+        }
+        if (trimmed.includes('|') && /^\|?.+\|.+\|?$/.test(trimmed)) {
+            flushParagraph();
+            flushList();
+            tableRows.push(trimmed.replace(/^\|/, '').replace(/\|$/, '').split('|'));
+            continue;
+        }
+        flushTable();
+        const heading = trimmed.match(/^(#{1,4})\s+(.+)$/);
+        if (heading) {
+            flushParagraph();
+            flushList();
+            const level = Math.min(heading[1].length + 2, 6);
+            html.push(`<h${level}>${formatInlineMarkdownRich(heading[2])}</h${level}>`);
+            continue;
+        }
+        const unordered = trimmed.match(/^[-*•]\s+(.+)$/);
+        const ordered = trimmed.match(/^\d+[.)]\s+(.+)$/);
+        if (unordered || ordered) {
+            flushParagraph();
+            const nextType = ordered ? 'ol' : 'ul';
+            if (listType && listType !== nextType) flushList();
+            listType = nextType;
+            listItems.push((unordered || ordered)[1]);
+            continue;
+        }
+        if (/^>\s+/.test(trimmed)) {
+            flushParagraph();
+            flushList();
+            html.push(`<blockquote>${formatInlineMarkdownRich(trimmed.replace(/^>\s+/, ''))}</blockquote>`);
+            continue;
+        }
+        flushList();
+        paragraph.push(trimmed);
+    }
+    if (inCode) flushCode();
+    flushAll();
+    element.innerHTML = html.join('');
+}
+
+renderMessageContent = renderMessageContentRich;
 
 function addMessage(role, text) {
     hideWelcome();

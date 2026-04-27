@@ -7,7 +7,19 @@ from jakata_agent.tools.base import Tool, ToolResult
 
 class MemoryTool(Tool):
     name = "memory"
-    description = "Recall stored user identity, profile facts, preferences, knowledge files, semantic memory matches, graph facts, and archived chat context."
+    description = (
+        "Recall stored user identity, profile facts, preferences, knowledge files, semantic memory matches, graph facts, "
+        "and archived chat context. Use with other tools to personalize and connect fresh observations to what is already known."
+    )
+    categories = ("memory", "personalization", "grounding")
+    aliases = ("remember", "recall", "what do you know about me", "past context")
+    use_with = ("camera", "screen", "search_web", "weather", "document", "browser")
+    daily_uses = (
+        "Personalize recommendations, plans, documents, searches, and daily context.",
+        "Bring back prior names, preferences, files, projects, and recurring routines.",
+    )
+    grounding = "Delegates memory retrieval to the agent memory manager and renders retrieved facts."
+    output_capabilities = ("facts", "preferences", "archived_context", "knowledge_matches")
     input_schema = {
         "type": "object",
         "properties": {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import os
 import mimetypes
 import subprocess
 import tempfile
@@ -305,6 +306,28 @@ def build_router_client(settings: Settings, fallback: NvidiaChatClient) -> TextC
             timeout_seconds=settings.router_timeout_seconds,
             max_retries=settings.router_max_retries,
             max_tokens=settings.router_max_tokens,
+        ),
+        fallback,
+    )
+
+
+def build_arg_planner_client(settings: Settings, fallback: NvidiaChatClient) -> TextCompletionClient:
+    model_text = (
+        os.getenv("JAKATA_ARG_PLANNER_MODELS", "").strip()
+        or os.getenv("JAKATA_ARG_PLANNER_MODEL", "").strip()
+        or "nvidia/nemotron-mini-4b-instruct"
+    )
+    model_chain = [item.strip() for item in model_text.split(",") if item.strip()]
+    if not model_chain:
+        model_chain = ["nvidia/nemotron-mini-4b-instruct"]
+    return FallbackTextClient(
+        NvidiaTextClient(
+            api_key=settings.api_key,
+            base_url=settings.base_url,
+            model_chain=model_chain,
+            timeout_seconds=float(os.getenv("JAKATA_ARG_PLANNER_TIMEOUT_SECONDS", "4").strip() or "4"),
+            max_retries=int(os.getenv("JAKATA_ARG_PLANNER_MAX_RETRIES", "1").strip() or "1"),
+            max_tokens=int(os.getenv("JAKATA_ARG_PLANNER_MAX_TOKENS", "256").strip() or "256"),
         ),
         fallback,
     )

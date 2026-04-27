@@ -46,13 +46,25 @@ class IntentRouter:
         tool_manifest: list[dict[str, Any]],
         memory_context: str = "",
         conversation_context: str = "",
+        required_tools: list[str] | None = None,
+        candidate_tools: list[str] | None = None,
     ) -> PlanDecision:
         manifest_text = json.dumps(tool_manifest, ensure_ascii=False, separators=(",", ":"))
         context = memory_context.strip()
         context_block = f"\n\nRelevant memory and knowledge context:\n{context}" if context else ""
         conversation = conversation_context.strip()
         conversation_block = f"\n\nRecent conversation context:\n{conversation}" if conversation else ""
-        user_payload = f"Available tools:\n{manifest_text}{context_block}{conversation_block}\n\nUser message: {user_message}"
+        candidates = [tool for tool in (candidate_tools or required_tools or []) if tool]
+        candidate_block = (
+            "\n\nCandidate tools:\n"
+            f"{json.dumps(candidates, ensure_ascii=False, separators=(',', ':'))}\n"
+            "These tools are likely candidates from a first-pass router. Prefer them when they fit, "
+            "but choose general_chat when no tool is actually needed. Do not execute a tool unless "
+            "the user clearly asked for an action and the needed args are available."
+            if candidates
+            else ""
+        )
+        user_payload = f"Available tools:\n{manifest_text}{candidate_block}{context_block}{conversation_block}\n\nUser message: {user_message}"
 
         payload: dict[str, Any] | None = None
         for attempt in range(2):

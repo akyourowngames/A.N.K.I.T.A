@@ -73,6 +73,12 @@ class Settings:
     document_template_dir: Path = Path("data/document_templates")
     image_infer_url: str = ""
     image_model_namespace: str = "black-forest-labs"
+    tts_provider: str = "edge"
+    edge_tts_voice: str = "en-US-GuyNeural"
+    edge_tts_rate: str = "-12%"
+    edge_tts_pitch: str = "-18Hz"
+    edge_tts_volume: str = "+8%"
+    tts_audio_codec: str = "mp3"
     sarvam_api_key: str = ""
     sarvam_tts_url: str = "https://api.sarvam.ai/text-to-speech/stream"
     sarvam_tts_language: str = "en-IN"
@@ -93,6 +99,11 @@ class Settings:
     router_general_chat_min_score: float = 0.16
     router_general_chat_min_margin: float = 0.015
     router_tool_over_chat_min_margin: float = 0.05
+    local_router_enabled: bool = True
+    local_router_confidence_threshold: float = 0.86
+    local_router_margin_threshold: float = 0.08
+    local_router_min_tool_score: float = 0.62
+    local_router_max_tools: int = 2
     fast_chat_model: str = "meta/llama-3.3-70b-instruct"
     fast_chat_fallback_models: list[str] | None = None
     fast_chat_timeout_seconds: float = 8.0
@@ -210,6 +221,12 @@ def load_settings() -> Settings:
         document_template_dir=Path(os.getenv("JAKATA_DOCUMENT_TEMPLATE_DIR", str(data_dir / "document_templates"))).resolve(),
         image_infer_url=os.getenv("NVIDIA_IMAGE_INFER_URL", "").strip(),
         image_model_namespace=os.getenv("NVIDIA_IMAGE_MODEL_NAMESPACE", "black-forest-labs").strip() or "black-forest-labs",
+        tts_provider=os.getenv("JAKATA_TTS_PROVIDER", "edge").strip().lower() or "edge",
+        edge_tts_voice=os.getenv("EDGE_TTS_VOICE", "en-US-GuyNeural").strip() or "en-US-GuyNeural",
+        edge_tts_rate=os.getenv("EDGE_TTS_RATE", "-12%").strip() or "-12%",
+        edge_tts_pitch=os.getenv("EDGE_TTS_PITCH", "-18Hz").strip() or "-18Hz",
+        edge_tts_volume=os.getenv("EDGE_TTS_VOLUME", "+8%").strip() or "+8%",
+        tts_audio_codec=os.getenv("JAKATA_TTS_AUDIO_CODEC", "mp3").strip() or "mp3",
         sarvam_api_key=os.getenv("SARVAM_API_KEY", "").strip(),
         sarvam_tts_url=os.getenv("SARVAM_TTS_URL", "https://api.sarvam.ai/text-to-speech/stream").strip()
         or "https://api.sarvam.ai/text-to-speech/stream",
@@ -237,6 +254,11 @@ def load_settings() -> Settings:
         router_general_chat_min_score=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_SCORE", "0.16").strip() or "0.16"),
         router_general_chat_min_margin=float(os.getenv("JAKATA_ROUTER_GENERAL_CHAT_MIN_MARGIN", "0.015").strip() or "0.015"),
         router_tool_over_chat_min_margin=float(os.getenv("JAKATA_ROUTER_TOOL_OVER_CHAT_MIN_MARGIN", "0.05").strip() or "0.05"),
+        local_router_enabled=_env_bool("JAKATA_LOCAL_ROUTER_ENABLED", True),
+        local_router_confidence_threshold=float(os.getenv("JAKATA_LOCAL_ROUTER_CONFIDENCE_THRESHOLD", "0.86").strip() or "0.86"),
+        local_router_margin_threshold=float(os.getenv("JAKATA_LOCAL_ROUTER_MARGIN_THRESHOLD", "0.08").strip() or "0.08"),
+        local_router_min_tool_score=float(os.getenv("JAKATA_LOCAL_ROUTER_MIN_TOOL_SCORE", "0.62").strip() or "0.62"),
+        local_router_max_tools=int(os.getenv("JAKATA_LOCAL_ROUTER_MAX_TOOLS", "2").strip() or "2"),
         fast_chat_model=os.getenv("JAKATA_FAST_CHAT_MODEL", "meta/llama-3.3-70b-instruct").strip()
         or "meta/llama-3.3-70b-instruct",
         fast_chat_fallback_models=_split_csv(os.getenv("JAKATA_FAST_CHAT_FALLBACK_MODELS", "")),

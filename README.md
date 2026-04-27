@@ -124,7 +124,8 @@ Optional local automation config:
 - `JAKATA_ROUTER_TOOL_LIMIT` and `JAKATA_ROUTER_MIN_TOOL_SCORE` for NVIDIA embedding-backed tool shortlisting
 - `JAKATA_ROUTER_GENERAL_CHAT_MIN_SCORE`, `JAKATA_ROUTER_GENERAL_CHAT_MIN_MARGIN`, and `JAKATA_ROUTER_TOOL_OVER_CHAT_MIN_MARGIN` for the semantic no-tool fast lane
 - `JAKATA_FAST_CHAT_MODEL`, `JAKATA_FAST_CHAT_FALLBACK_MODELS`, and `JAKATA_FAST_CHAT_TIMEOUT_SECONDS` for low-latency casual/chat-only replies
-- `SARVAM_API_KEY`, `SARVAM_TTS_SPEAKER`, `SARVAM_TTS_LANGUAGE`, and `SARVAM_TTS_MODEL` for web text-to-speech
+- `JAKATA_TTS_PROVIDER=edge`, `EDGE_TTS_VOICE`, `EDGE_TTS_RATE`, `EDGE_TTS_PITCH`, and `EDGE_TTS_VOLUME` for Edge-powered web text-to-speech
+- `SARVAM_API_KEY`, `SARVAM_TTS_SPEAKER`, `SARVAM_TTS_LANGUAGE`, and `SARVAM_TTS_MODEL` if you set `JAKATA_TTS_PROVIDER=sarvam`
 - `SARVAM_TTS_MAX_SPOKEN_CHARS` and `SARVAM_TTS_LONG_RESPONSE_PHRASES` to avoid reading long replies aloud
 - `JAKATA_CAMERA_DEVICE_INDEX` for a different webcam
 - `JAKATA_CAMERA_FRAME_WIDTH` / `JAKATA_CAMERA_FRAME_HEIGHT` to tune preview latency
