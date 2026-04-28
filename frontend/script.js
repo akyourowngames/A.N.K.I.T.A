@@ -518,6 +518,13 @@ function initCameraPanel() {
 function handleActions(actions, contentEl) {
     if (!actions) return;
     if (!contentEl) return;
+    const linkActions = [
+        ...(actions.wopens || []),
+        ...(actions.plays || []),
+        ...(actions.googlesearches || []),
+        ...(actions.youtubesearches || []),
+    ].filter(url => url && (url.startsWith('http://') || url.startsWith('https://')));
+
     const safeOpen = url => {
         if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
             try {
@@ -528,10 +535,21 @@ function handleActions(actions, contentEl) {
             }
         }
     };
-    (actions.wopens || []).forEach(safeOpen);
-    (actions.plays || []).forEach(safeOpen);
-    (actions.googlesearches || []).forEach(safeOpen);
-    (actions.youtubesearches || []).forEach(safeOpen);
+
+    if (linkActions.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg-action-links';
+        linkActions.forEach(url => {
+            const btn = document.createElement('button');
+            btn.className = 'msg-action-link-btn';
+            btn.textContent = getActionLinkLabel(url);
+            btn.addEventListener('click', () => safeOpen(url));
+            wrap.appendChild(btn);
+        });
+        contentEl.appendChild(wrap);
+    }
+
+    linkActions.forEach(safeOpen);
     if (actions.images && actions.images.length > 0) {
         const wrap = document.createElement('div');
         wrap.className = 'msg-actions-images';
@@ -601,6 +619,17 @@ function handleActions(actions, contentEl) {
                 }
             })();
         }
+    }
+}
+
+function getActionLinkLabel(url) {
+    try {
+        const u = new URL(url);
+        const host = u.hostname.replace(/^www\./, '');
+        const name = (host.split('.')[0] || 'link').replace(/[-_]+/g, ' ');
+        return `Open ${name.replace(/\b\w/g, ch => ch.toUpperCase())}`;
+    } catch (_) {
+        return 'Open link';
     }
 }
 
@@ -777,7 +806,7 @@ async function sendMessageWithImage(text, imgBase64) {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         removeTypingIndicator();
         const contentEl = addMessage('assistant', '');
-        contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
+        contentEl.innerHTML = '<div class="msg-stream-text">...</div>';
         scrollToBottom();
         if (!res.body) throw new Error('No response body');
         const reader = res.body.getReader();
@@ -809,7 +838,7 @@ async function sendMessageWithImage(text, imgBase64) {
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
-                            textSpan.textContent = fullResponse;
+                            textSpan.innerHTML = renderAssistantText(fullResponse);
                             textSpan.classList.remove('stream-placeholder');
                         }
                         if (!cursorEl) {
@@ -1116,6 +1145,7 @@ const ACTIVITY_STEPS = {
     query_detected:      { step: 1, label: 'Query detected' },
     decision:            { step: 2, label: 'Primary Brain' },
     intent_classified:   { step: 3, label: 'Task Brain' },
+    tool_chain_planned:  { step: 0, label: 'Tool chain' },
     routing:             { step: 4, label: 'Route selected' },
     tasks_executing:     { step: 0, label: 'Executing tasks' },
     tasks_completed:     { step: 0, label: 'Tasks completed' },
@@ -1167,6 +1197,9 @@ function appendActivity(activity) {
         addRouteClass(activity.query_type);
     } else if (activity.event === 'intent_classified') {
         detail = (activity.intent || '?').charAt(0).toUpperCase() + (activity.intent || '').slice(1);
+        item.classList.add('activity-sub', 'route-task');
+    } else if (activity.event === 'tool_chain_planned') {
+        detail = activity.message || 'Tool chain planned';
         item.classList.add('activity-sub', 'route-task');
     } else if (activity.event === 'routing') {
         detail = `→ ${(activity.route || '?').charAt(0).toUpperCase() + (activity.route || '').slice(1)}`;
@@ -1227,6 +1260,45 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
+function renderAssistantText(text) {
+    if (!text) return '';
+    const lines = String(text).replace(/\r\n/g, '\n').split('\n');
+    const html = [];
+    let inList = false;
+
+    const closeList = () => {
+        if (inList) {
+            html.push('</ul>');
+            inList = false;
+        }
+    };
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) {
+            closeList();
+            html.push('<div class="msg-gap"></div>');
+            continue;
+        }
+
+        const bullet = trimmed.match(/^[-*+]\s+(.+)$/);
+        if (bullet) {
+            if (!inList) {
+                html.push('<ul class="msg-list">');
+                inList = true;
+            }
+            html.push(`<li>${escapeHtml(bullet[1])}</li>`);
+            continue;
+        }
+
+        closeList();
+        html.push(`<div class="msg-line">${escapeHtml(trimmed)}</div>`);
+    }
+
+    closeList();
+    return html.join('');
+}
+
 function hideWelcome() {
     const w = document.getElementById('welcome-screen');
     if (w) w.remove();
@@ -1251,7 +1323,11 @@ function addMessage(role, text) {
         : 'You';
     const content = document.createElement('div');
     content.className = 'msg-content';
-    content.textContent = text;
+    if (role === 'assistant') {
+        content.innerHTML = renderAssistantText(text);
+    } else {
+        content.textContent = text;
+    }
     body.appendChild(label);
     body.appendChild(content);
     msg.appendChild(avatar);
@@ -1276,7 +1352,7 @@ function addTypingIndicator() {
     label.textContent = `Jarvis  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
     const content = document.createElement('div');
     content.className = 'msg-content';
-    content.innerHTML = '<span class="msg-stream-text">...</span>';
+    content.innerHTML = '<div class="msg-stream-text">...</div>';
     body.appendChild(label);
     body.appendChild(content);
     msg.appendChild(avatar);
@@ -1373,7 +1449,7 @@ async function sendMessage(textOverride) {
         }
         removeTypingIndicator();
         const contentEl = addMessage('assistant', '');
-        contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
+        contentEl.innerHTML = '<div class="msg-stream-text">...</div>';
         scrollToBottom();
         if (!res.body) throw new Error('No response body');
         const reader = res.body.getReader();
@@ -1418,7 +1494,7 @@ async function sendMessage(textOverride) {
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
                         if (textSpan) {
-                            textSpan.textContent = fullResponse;
+                            textSpan.innerHTML = renderAssistantText(fullResponse);
                             textSpan.classList.remove('stream-placeholder');
                         }
                         if (!cursorEl) {

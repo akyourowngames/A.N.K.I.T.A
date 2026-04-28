@@ -23,6 +23,7 @@ from app.model import ChatRequest, ChatResponse, TTSRequest
 from app.services.brain_service import BrainService
 from app.services.chat_service import ChatService
 from app.services.groq_service import AllGroqApisFailedError, GroqService
+from app.services.prompt_router_service import PromptRouterService
 from app.services.realtime_service import RealtimeGroqService
 from app.services.task_executor import TaskExecutor
 from app.services.task_manager import TaskManager
@@ -57,6 +58,7 @@ brain_service: BrainService = None
 task_executor: TaskExecutor = None
 task_manager: TaskManager = None
 vision_service: VisionService = None
+prompt_router_service: PromptRouterService = None
 chat_service: ChatService = None
 
 def print_title():
@@ -71,7 +73,7 @@ def print_title():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global vector_store_service, groq_service, realtime_service, brain_service
-    global task_executor, task_manager, vision_service, chat_service
+    global task_executor, task_manager, vision_service, prompt_router_service, chat_service
     
     print_title()
     logger.info("=" * 60)
@@ -102,6 +104,9 @@ async def lifespan(app: FastAPI):
         logger.info("Initializing Brain service (NVIDIA query classification)...")
         brain_service = BrainService(groq_service)
         logger.info("Brain service initialized successfully")
+        logger.info("Initializing Prompt router service...")
+        prompt_router_service = PromptRouterService()
+        logger.info("Prompt router service initialized successfully")
         logger.info("Initializing Task executor...")
         task_executor = TaskExecutor(groq_service=groq_service)
         logger.info("Task executor initialized successfully")
@@ -120,6 +125,7 @@ async def lifespan(app: FastAPI):
             task_executor=task_executor,
             vision_service=vision_service,
             task_manager=task_manager,
+            prompt_router=prompt_router_service,
         )
 
         logger.info("Chat service initialized successfully")
@@ -129,6 +135,7 @@ async def lifespan(app: FastAPI):
         logger.info("  - NVIDIA AI (General): Ready")
         logger.info("  - NVIDIA AI (Realtime): Ready")
         logger.info("  - Brain (Unified Decision): Ready")
+        logger.info("  - Prompt Router: Ready")
         logger.info("  - Task Executor: Ready")
         logger.info("  - Background Task Manager: Ready")
         logger.info("  - Vision (NVIDIA): Ready")
@@ -211,6 +218,7 @@ async def health():
             "nvidia_service": groq_service is not None,
             "realtime_service": realtime_service is not None,
             "brain_service": brain_service is not None,
+            "prompt_router_service": prompt_router_service is not None,
             "task_executor": task_executor is not None,
             "task_manager": task_manager is not None,
             "vision_service": vision_service is not None,

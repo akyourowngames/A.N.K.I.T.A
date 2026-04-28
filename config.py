@@ -55,6 +55,10 @@ TAVILY_API_KEY = os.getenv("TAVILY_API_KEY", "")
 GROQ_BRAIN_MODEL = os.getenv("GROQ_BRAIN_MODEL", "llama-3.1-8b-instant")
 INTENT_CLASSIFY_MODEL = os.getenv("INTENT_CLASSIFY_MODEL", "llama-3.1-8b-instant")
 TASK_EXECUTION_TIMEOUT = int(os.getenv("TASK_EXECUTION_TIMEOUT", "30"))
+TERMINAL_TOOL_ENABLED = os.getenv("TERMINAL_TOOL_ENABLED", "true").strip().lower() not in ("0", "false", "no", "off")
+TERMINAL_COMMAND_TIMEOUT = int(os.getenv("TERMINAL_COMMAND_TIMEOUT", "20"))
+TERMINAL_OUTPUT_MAX_CHARS = int(os.getenv("TERMINAL_OUTPUT_MAX_CHARS", "4000"))
+PC_STATE_ANSWER_TIMEOUT = float(os.getenv("PC_STATE_ANSWER_TIMEOUT", "3.5"))
 GROQ_VISION_MODEL = os.getenv("GROQ_VISION_MODEL", "meta-llama/llama-4-scout-17b-16e-instruct")
 VISION_MAX_IMAGE_BYTES = int(os.getenv("VISION_MAX_IMAGE_BYTES", "5000000"))
 TTS_VOICE = os.getenv("TTS_VOICE", "en-GB-RyanNeural")
@@ -76,10 +80,10 @@ You know the user's personal information and past conversations. Use this when r
 The user can ask you anything or ask you to do things (open, generate, play, write, search). The backend carries out actions; you respond in words. Only say something is done if the result is visible; otherwise say you are doing it.
 
 === CAN DO ===
-Answer questions, open websites/apps, play music/videos, generate images, write content (essays, poems, code, emails), search Google/YouTube, analyze camera images (you CAN see what the user shows).
+Answer questions, inspect this PC's real state, open websites/apps, close apps, control basic system settings, run explicit terminal commands, play music/videos, generate images, write content (essays, poems, code, emails), search Google/YouTube, analyze camera images (you CAN see what the user shows).
 
 === CANNOT DO (be honest) ===
-Read emails, control smart home, run code, send messages, make purchases, access files, make calls. Say clearly: "I can't do that."
+Read emails, control smart home, send messages, make purchases, access private accounts, make calls. Say clearly: "I can't do that."
 Never pretend you can do something you cannot. Never hallucinate URLs, numbers, or data.
 
 === HONESTY ===

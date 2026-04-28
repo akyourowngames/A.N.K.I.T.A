@@ -13,6 +13,18 @@ INTENT_CONTENT = "content"
 INTENT_GOOGLE_SEARCH = "google search"
 INTENT_YOUTUBE_SEARCH = "youtube search"
 INTENT_CHAT = "chat"
+INTENT_OPEN_APP = "open app"
+INTENT_CLOSE_APP = "close app"
+INTENT_SET_VOLUME = "set volume"
+INTENT_VOLUME_UP = "volume up"
+INTENT_VOLUME_DOWN = "volume down"
+INTENT_MUTE_VOLUME = "mute volume"
+INTENT_SET_BRIGHTNESS = "set brightness"
+INTENT_BRIGHTNESS_UP = "brightness up"
+INTENT_BRIGHTNESS_DOWN = "brightness down"
+INTENT_LOCK_SCREEN = "lock screen"
+INTENT_RUN_TERMINAL = "run terminal"
+INTENT_INSPECT_PC = "inspect pc"
 
 HEAVY_INTENTS = {INTENT_GENERATE_IMAGE, INTENT_CONTENT}
 
@@ -20,10 +32,15 @@ INSTANT_INTENTS = {
     INTENT_OPEN, INTENT_PLAY, INTENT_CAMERA,
     INTENT_OPEN_WEBCAM, INTENT_CLOSE_WEBCAM,
     INTENT_GOOGLE_SEARCH, INTENT_YOUTUBE_SEARCH,
+    INTENT_OPEN_APP, INTENT_CLOSE_APP,
+    INTENT_SET_VOLUME, INTENT_VOLUME_UP, INTENT_VOLUME_DOWN, INTENT_MUTE_VOLUME,
+    INTENT_SET_BRIGHTNESS, INTENT_BRIGHTNESS_UP, INTENT_BRIGHTNESS_DOWN,
+    INTENT_LOCK_SCREEN, INTENT_RUN_TERMINAL, INTENT_INSPECT_PC,
 }
 
 ROUTE_TO_INTENT = {
     "open": INTENT_OPEN,
+    "close": INTENT_CLOSE_APP,
     "play": INTENT_PLAY,
     "camera": INTENT_CAMERA,
     "open_webcam": INTENT_OPEN_WEBCAM,
@@ -34,4 +51,16 @@ ROUTE_TO_INTENT = {
     "youtube_search": INTENT_YOUTUBE_SEARCH,
     "general": INTENT_CHAT,
     "realtime": INTENT_CHAT,
+    "open_app": INTENT_OPEN_APP,
+    "close_app": INTENT_CLOSE_APP,
+    "set_volume": INTENT_SET_VOLUME,
+    "volume_up": INTENT_VOLUME_UP,
+    "volume_down": INTENT_VOLUME_DOWN,
+    "mute_volume": INTENT_MUTE_VOLUME,
+    "set_brightness": INTENT_SET_BRIGHTNESS,
+    "brightness_up": INTENT_BRIGHTNESS_UP,
+    "brightness_down": INTENT_BRIGHTNESS_DOWN,
+    "lock_screen": INTENT_LOCK_SCREEN,
+    "run_terminal": INTENT_RUN_TERMINAL,
+    "inspect_pc": INTENT_INSPECT_PC,
 }

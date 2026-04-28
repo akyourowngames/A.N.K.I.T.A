@@ -380,6 +380,7 @@ textarea { font-family: var(--font); color: var(--text); }
     line-height: 1.65;
     font-weight: 400;
     word-wrap: break-word;
+    overflow-wrap: anywhere;
     white-space: pre-wrap;
 }
 
@@ -393,6 +394,37 @@ textarea { font-family: var(--font); color: var(--text); }
     background: rgba(124, 106, 239, 0.13);
     border: 1px solid rgba(124, 106, 239, 0.16);
     border-top-right-radius: var(--radius-xs);
+}
+
+.msg-stream-text {
+    display: block;
+}
+
+.msg-line {
+    margin: 0;
+}
+
+.msg-gap {
+    height: 8px;
+}
+
+.msg-list {
+    margin: 8px 0;
+    padding-left: 18px;
+}
+
+.msg-list:first-child {
+    margin-top: 0;
+}
+
+.msg-list:last-child {
+    margin-bottom: 0;
+}
+
+.msg-list li {
+    margin: 4px 0;
+    padding-left: 2px;
+    overflow-wrap: anywhere;
 }
 
 .msg-label {
@@ -421,6 +453,29 @@ textarea { font-family: var(--font); color: var(--text); }
     max-height: 320px;
     border-radius: var(--radius);
     object-fit: contain;
+}
+
+.msg-action-links {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+}
+
+.msg-action-link-btn {
+    min-height: 34px;
+    padding: 0 12px;
+    border: 1px solid rgba(124, 106, 239, 0.28);
+    border-radius: var(--radius-xs);
+    background: rgba(124, 106, 239, 0.16);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.msg-action-link-btn:hover {
+    background: rgba(124, 106, 239, 0.24);
 }
 
 .msg-actions-contents {

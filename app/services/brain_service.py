@@ -14,12 +14,13 @@ TaskType = Literal[
     "open", "play", "generate_image", "content",
     "google_search", "youtube_search",
     "open_webcam", "close_webcam",
+    "run_terminal", "inspect_pc",
 ]
 
 ALL_TASK_TYPES: List[str] = [
     "open", "play", "generate_image", "content",
     "google_search", "youtube_search",
-    "open_webcam", "close_webcam",
+    "open_webcam", "close_webcam", "run_terminal", "inspect_pc",
 ]
 
 MAX_CONTEXT_TURNS = 6
@@ -34,7 +35,8 @@ Examples: "What is this?" / "What am I holding?" / "What do you see?" / "Describ
 - Any request where the user expects you to LOOK at something through the camera → camera
 
 **task** — User wants ONLY an ACTION performed (no question to answer). Opening apps/websites, playing music/video, generating images, writing content, searching Google/YouTube, or controlling the webcam.
-Examples: "Open YouTube" / "Play despacito" / "Generate image of a cat" / "Write an essay about AI" / "Search for Python tutorials" / "Open webcam" / "Close webcam" / "Launch Netflix" / "Go to Facebook" / "Make me a picture of a sunset" / "Draw a cat" / "Create an image of mountains"
+Examples: "Open YouTube" / "Play despacito" / "Generate image of a cat" / "Write an essay about AI" / "Search for Python tutorials" / "Open webcam" / "Close webcam" / "Launch Netflix" / "Go to Facebook" / "Make me a picture of a sunset" / "Draw a cat" / "Create an image of mountains" / "What apps are open?" / "Why is my laptop slow?"
+- Questions about THIS PC/laptop/system, local apps, active windows, CPU/RAM, ports, battery, disk space, recent downloads, or why this machine is slow -> task
 - ANY request to open, launch, play, generate, draw, create, write, draft, compose, search, or control webcam → task
 - "Open webcam" / "Turn on camera" / "Close webcam" / "Turn off camera" → task
 - Image/picture/drawing requests → task (NOT camera)
@@ -48,6 +50,7 @@ Examples: "What is machine learning? Also generate an image of a neural network"
 
 **realtime** — User needs CURRENT, LIVE, or RECENT information that requires web search.
 Examples: "Who is Elon Musk?" / "Latest news" / "What's the weather?" / "Current stock price" / "Today's headlines" / "Tell me about [famous person]" / "What happened in [event]?" / "How much does X cost?" / "Reviews of X" / "Best restaurants near me"
+- Do NOT use realtime for this PC/laptop/system state. That is task because it must inspect the local machine.
 - Questions about PEOPLE (who is, tell me about), EVENTS (what happened), PRICES, REVIEWS, NEWS → realtime
 - Questions about anything that changes over time or needs up-to-date info → realtime
 - When unsure if your knowledge is current enough → realtime (PREFER realtime over general for factual questions)
@@ -102,6 +105,57 @@ Respond with: task_type clean_query
 For multiple tasks, separate with commas: task_type1 query1, task_type2 query2
 
 === TASK TYPES & EXAMPLES ===
+
+-> 'open_app (desktop app name)' - Open a desktop application on this computer.
+   "Open VS Code" -> open_app vscode
+   "Launch calculator" -> open_app calculator
+   "Open notepad" -> open_app notepad
+   "Start Spotify app" -> open_app spotify
+
+-> 'close_app (desktop app name)' - Close a desktop application/process on this computer.
+   "Close Chrome" -> close_app chrome
+   "Quit Spotify" -> close_app spotify
+   "Close VS Code" -> close_app vscode
+   Only use close_app when the user explicitly asks to close, quit, stop, kill, or terminate an app.
+
+-> 'set_volume (0-100)' - Set system volume percentage.
+   "Set volume to 40" -> set_volume 40
+   "Volume 80 percent" -> set_volume 80
+
+-> 'volume_up' - Increase system volume.
+   "Increase volume" -> volume_up
+   "Turn volume up" -> volume_up
+
+-> 'volume_down' - Decrease system volume.
+   "Decrease volume" -> volume_down
+   "Turn volume down" -> volume_down
+
+-> 'mute_volume' - Toggle system mute.
+   "Mute volume" -> mute_volume
+   "Unmute" -> mute_volume
+
+-> 'set_brightness (0-100)' - Set display brightness percentage.
+   "Set brightness to 60" -> set_brightness 60
+
+-> 'brightness_up' - Increase display brightness.
+   "Increase brightness" -> brightness_up
+
+-> 'brightness_down' - Decrease display brightness.
+   "Dim the screen" -> brightness_down
+
+-> 'lock_screen' - Lock this Windows session.
+   "Lock my screen" -> lock_screen
+
+-> 'run_terminal (PowerShell command)' - Run an explicit terminal command on this PC.
+   "Run terminal command Get-Process notepad" -> run_terminal Get-Process notepad
+   "In PowerShell list python processes" -> run_terminal Get-Process python
+
+-> 'inspect_pc (what to inspect)' - Inspect this PC's real state: windows, apps, CPU/RAM, disks, ports, battery, downloads.
+   "What apps are open?" -> inspect_pc open windows
+   "What is using CPU?" -> inspect_pc CPU usage
+   "Why is my laptop slow?" -> inspect_pc performance
+   "What file did I just download?" -> inspect_pc recent downloads
+   Diagnostic questions about the PC should inspect first, not close or change anything.
 
 -> 'open (website/app name)' — Open a website or app.
    "Open YouTube" → open youtube
@@ -265,6 +319,10 @@ class BrainService:
             _TASK_BRAIN_PROMPT, user_content, key_index)
 
         decisions = self._parse_task_decisions(raw_response)
+        if not decisions:
+            decisions = [(task, "") for task in self._rule_based_task(msg)]
+        decisions = self._merge_missing_rule_decisions(msg, decisions)
+        decisions = self._guard_task_decisions(msg, decisions)
         self._last_task_decisions = decisions
         task_types = [d[0] for d in decisions]
 
@@ -303,8 +361,12 @@ class BrainService:
                 payload = {"message": user_message, "raw": user_message}
 
                 if task_type == "open":
-                    url = self._resolve_open_query(clean_query) if clean_query else "https://www.google.com"
+                    target = clean_query or self._extract_open_target(user_message)
+                    url = self._resolve_open_query(target) if target else "https://www.google.com"
                     payload["url"] = url
+                elif task_type in ("close", "close_app"):
+                    intent_key = ROUTE_TO_INTENT["close_app"]
+                    payload["app"] = clean_query or self._extract_app_name(user_message)
                 elif task_type == "play":
                     payload["query"] = clean_query or user_message
                 elif task_type in ("google_search", "youtube_search"):
@@ -313,6 +375,16 @@ class BrainService:
                     payload["prompt"] = clean_query or user_message
                 elif task_type == "content":
                     payload["prompt"] = clean_query or user_message
+                elif task_type in ("open_app", "close_app"):
+                    payload["app"] = clean_query or user_message
+                elif task_type in ("set_volume", "set_brightness"):
+                    payload["level"] = clean_query or user_message
+                elif task_type == "run_terminal":
+                    payload["command"] = clean_query or user_message
+                elif task_type == "inspect_pc":
+                    payload["query"] = clean_query or user_message
+                elif task_type in ("volume_up", "volume_down", "mute_volume", "brightness_up", "brightness_down", "lock_screen"):
+                    payload["query"] = clean_query or user_message
                 intents.append((intent_key, payload))
 
         else:
@@ -320,8 +392,11 @@ class BrainService:
 
             for task_type in task_types:
                 intent_key = ROUTE_TO_INTENT.get(task_type, task_type)
-                payloads = self._extract_payload(task_type, resolved_message)
+                if task_type in ("close", "close_app"):
+                    intents.append((ROUTE_TO_INTENT["close_app"], {"message": user_message, "raw": user_message, "app": self._extract_app_name(resolved_message)}))
+                    continue
 
+                payloads = self._extract_payload(task_type, resolved_message)
                 if isinstance(payloads, list):
                     for p in payloads:
                         intents.append((intent_key, p))
@@ -545,7 +620,7 @@ Classify. Output EXACTLY ONE category name."""
     def _parse_task_decisions(self, raw_response: str) -> List[Tuple[str, str]]:
 
         if not raw_response:
-            return [("open", "")]
+            return []
 
         text = raw_response.replace("\n", ",").strip()
 
@@ -553,7 +628,20 @@ Classify. Output EXACTLY ONE category name."""
             "generate_image", "generate image",
             "google_search", "google search",
             "youtube_search", "youtube search",
+            "set_brightness", "set brightness",
+            "brightness_up", "brightness up",
+            "brightness_down", "brightness down",
+            "set_volume", "set volume",
+            "volume_up", "volume up",
+            "volume_down", "volume down",
+            "mute_volume", "mute volume",
+            "run_terminal", "run terminal",
+            "inspect_pc", "inspect pc",
+            "open_app", "open app",
+            "close_app", "close app",
+            "lock_screen", "lock screen",
             "open_webcam", "close_webcam",
+            "opened", "closed", "played",
             "content", "open", "close", "play",
             "general", "realtime",
         ]
@@ -562,7 +650,33 @@ Classify. Output EXACTLY ONE category name."""
             "generate image": "generate_image",
             "google search": "google_search",
             "youtube search": "youtube_search",
+            "set brightness": "set_brightness",
+            "brightness up": "brightness_up",
+            "brightness down": "brightness_down",
+            "set volume": "set_volume",
+            "volume up": "volume_up",
+            "volume down": "volume_down",
+            "mute volume": "mute_volume",
+            "run terminal": "run_terminal",
+            "inspect pc": "inspect_pc",
+            "open app": "open_app",
+            "close app": "close_app",
+            "lock screen": "lock_screen",
+            "opened": "open",
+            "closed": "close",
+            "played": "play",
         }
+
+        def _starts_with_task(part_lower: str, prefix: str) -> bool:
+            if not part_lower.startswith(prefix):
+                return False
+            if len(part_lower) == len(prefix):
+                return True
+            return part_lower[len(prefix)].isspace()
+
+        def _find_task_prefix(part_lower: str, prefix: str) -> int:
+            match = re.search(r"(?<!\w)" + re.escape(prefix) + r"(?!\w)", part_lower)
+            return match.start() if match else -1
 
         decisions = []
 
@@ -573,7 +687,7 @@ Classify. Output EXACTLY ONE category name."""
             matched = False
 
             for prefix in TASK_PREFIXES:
-                if part_lower.startswith(prefix):
+                if _starts_with_task(part_lower, prefix):
                     query = part[len(prefix):].strip().rstrip(".!?")
                     task_type = NORMALIZE.get(prefix, prefix)
 
@@ -585,8 +699,8 @@ Classify. Output EXACTLY ONE category name."""
 
             if not matched:
                 for prefix in TASK_PREFIXES:
-                    if prefix in part_lower:
-                        idx = part_lower.index(prefix)
+                    idx = _find_task_prefix(part_lower, prefix)
+                    if idx >= 0:
                         query = part[idx + len(prefix):].strip().rstrip(".!?")
                         task_type = NORMALIZE.get(prefix, prefix)
                         if task_type in ("general", "realtime"):
@@ -598,7 +712,66 @@ Classify. Output EXACTLY ONE category name."""
                 if not matched:
                     logger.warning("[BRAIN-TASK] Could not parse decision part: '%s'", part[:80])
 
-        return decisions if decisions else [("open", "")]
+        return decisions
+
+    def _merge_missing_rule_decisions(self, user_message: str, decisions: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        rule_tasks = self._rule_based_task(user_message)
+        if not rule_tasks:
+            return decisions
+
+        merged = list(decisions)
+        existing = {task_type for task_type, _ in merged}
+
+        for task_type in rule_tasks:
+            if task_type not in existing:
+                merged.append((task_type, ""))
+                existing.add(task_type)
+
+        if len(merged) != len(decisions):
+            logger.info("[BRAIN-TASK] Merged rule-detected task(s): %s", merged)
+
+        return merged
+
+    def _guard_task_decisions(self, user_message: str, decisions: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
+        if not decisions:
+            return decisions
+
+        if self._allows_close_action(user_message):
+            return decisions
+
+        guarded = []
+        changed = False
+
+        for task_type, query in decisions:
+            if task_type in ("close", "close_app"):
+                guarded.append(("inspect_pc", query or user_message))
+                changed = True
+            elif task_type == "open" and not self._allows_open_action(user_message) and self._looks_like_pc_inspection(user_message):
+                guarded.append(("inspect_pc", query or user_message))
+                changed = True
+            else:
+                guarded.append((task_type, query))
+
+        if changed:
+            logger.info("[BRAIN-TASK] Guarded inferred close action for message: %s", user_message[:80])
+
+        return guarded
+
+    def _allows_close_action(self, msg: str) -> bool:
+        return bool(re.search(r"\b(close|quit|exit|kill|stop|terminate|shut)\b", msg or "", re.I))
+
+    def _allows_open_action(self, msg: str) -> bool:
+        return bool(re.search(r"\b(open|launch|start|go to|visit)\b", msg or "", re.I))
+
+    def _looks_like_pc_inspection(self, msg: str) -> bool:
+        m = (msg or "").lower()
+        signals = [
+            "pc", "laptop", "computer", "system", "machine",
+            "cpu", "ram", "memory", "disk", "battery", "download",
+            "port", "apps are open", "open apps", "active windows",
+            "using cpu", "slow",
+        ]
+        return any(signal in m for signal in signals)
 
     def _rule_based_primary(self, msg: str) -> str:
         m = (msg or "").strip().lower()
@@ -618,6 +791,19 @@ Classify. Output EXACTLY ONE category name."""
 
         if any(x in m for x in ["open webcam", "turn on camera", "start camera",
                                   "close webcam", "turn off camera", "stop camera"]):
+            return "task"
+
+        if self._looks_like_pc_inspection(m):
+            return "task"
+
+        if "terminal" in m or "powershell" in m:
+            return "task"
+
+        if any(x in m for x in ["volume", "brightness", "lock screen", "lock my screen", "mute", "unmute",
+                                  "close app", "quit app", "open app", "launch app"]):
+            return "task"
+
+        if m.startswith(("close ", "quit ", "exit ")):
             return "task"
 
         task_patterns = [
@@ -652,6 +838,29 @@ Classify. Output EXACTLY ONE category name."""
         if any(x in m for x in ["close webcam", "turn off camera", "stop camera",
                                   "close the webcam", "stop the camera", "turn off the camera"]):
             return ["close_webcam"]
+
+        if self._looks_like_pc_inspection(m):
+            return ["inspect_pc"]
+
+        if m.startswith(("close ", "quit ", "exit ")):
+            return ["close"]
+
+        if any(x in m for x in ["set volume", "volume to", "volume at"]):
+            return ["set_volume"]
+        if any(x in m for x in ["increase volume", "volume up", "turn volume up", "raise volume"]):
+            return ["volume_up"]
+        if any(x in m for x in ["decrease volume", "volume down", "turn volume down", "lower volume"]):
+            return ["volume_down"]
+        if any(x in m for x in ["mute", "unmute"]):
+            return ["mute_volume"]
+        if any(x in m for x in ["set brightness", "brightness to", "brightness at"]):
+            return ["set_brightness"]
+        if any(x in m for x in ["increase brightness", "brightness up", "turn brightness up"]):
+            return ["brightness_up"]
+        if any(x in m for x in ["decrease brightness", "brightness down", "dim the screen", "lower brightness"]):
+            return ["brightness_down"]
+        if any(x in m for x in ["lock screen", "lock my screen", "lock the screen"]):
+            return ["lock_screen"]
 
         if m.startswith(("open ", "launch ", "go to ", "visit ", "can you open ")) or \
            ("open" in m and any(s in m for s in ["facebook", "youtube", "google", "netflix", "gmail", "instagram", "twitter", "linkedin"])):
@@ -748,7 +957,43 @@ Classify. Output EXACTLY ONE category name."""
         elif task_type in ("google_search", "youtube_search"):
             payload["query"] = self._extract_search_query(message)
 
+        elif task_type in ("open_app", "close_app"):
+            payload["app"] = self._extract_app_name(message)
+
+        elif task_type in ("set_volume", "set_brightness"):
+            payload["level"] = message
+
+        elif task_type == "run_terminal":
+            payload["command"] = message
+
+        elif task_type == "inspect_pc":
+            payload["query"] = message
+
+        elif task_type in ("volume_up", "volume_down", "mute_volume", "brightness_up", "brightness_down", "lock_screen"):
+            payload["query"] = message
+
         return payload
+
+    def _extract_app_name(self, msg: str) -> str:
+        cleaned = self._strip_filler(msg)
+        cleaned = re.sub(
+            r"\b(?:open|launch|start|close|quit|exit|the|app|application|desktop)\b",
+            " ",
+            cleaned,
+            flags=re.I,
+        )
+        cleaned = re.sub(r"\s+", " ", cleaned).strip(" .!?")
+        return cleaned or msg.strip()
+
+    def _extract_open_target(self, msg: str) -> str:
+        cleaned = self._strip_filler(msg)
+        lower = cleaned.lower()
+
+        for prefix in ["open ", "launch ", "start ", "go to ", "visit ", "can you open "]:
+            if lower.startswith(prefix):
+                return cleaned[len(prefix):].strip().rstrip(".!?")
+
+        return cleaned.strip().rstrip(".!?")
 
     def _extract_urls(self, msg: str) -> list:
 

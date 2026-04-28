@@ -59,6 +59,7 @@ class ChatService:
         task_executor=None,
         vision_service=None,
         task_manager=None,
+        prompt_router=None,
     ):
         self.groq_service = groq_service
         self.realtime_service = realtime_service
@@ -66,6 +67,7 @@ class ChatService:
         self.task_executor = task_executor
         self.vision_service = vision_service
         self.task_manager = task_manager
+        self.prompt_router = prompt_router
         self.sessions: Dict[str, List[ChatMessage]] = {}
         self._save_lock = threading.Lock()
 
@@ -328,11 +330,24 @@ class ChatService:
         category = CATEGORY_GENERAL
         primary_elapsed_ms = 0
         primary_method = "default"
+        prompt_decision = None
 
         if self.brain_service:
             category, primary_method, primary_elapsed_ms = self.brain_service.classify_primary(
                 user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
             )
+
+        if self.prompt_router and category == CATEGORY_REALTIME:
+            try:
+                prompt_decision = self.prompt_router.classify_route(
+                    user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
+                )
+                if prompt_decision.primary in (CATEGORY_TASK, CATEGORY_MIXED):
+                    category = prompt_decision.primary
+                    primary_method = f"{prompt_decision.method}:{prompt_decision.reason or 'classified'}"
+                    primary_elapsed_ms = prompt_decision.elapsed_ms
+            except Exception as e:
+                logger.warning("[PROMPT-ROUTER] Realtime validation failed, keeping brain route: %s", e)
 
         yield {"_activity": {"event": "decision", "query_type": category, "reasoning": primary_method.capitalize(), "elapsed_ms": primary_elapsed_ms}}
 
@@ -375,10 +390,47 @@ class ChatService:
                     user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
                 )
 
+            if self.prompt_router and self._should_validate_with_prompt_router(category, task_types):
+                try:
+                    prompt_decision = self.prompt_router.classify_route(
+                        user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
+                    )
+                    yield {"_activity": {
+                        "event": "route_validated",
+                        "route": f"{prompt_decision.primary}/{prompt_decision.tool or '-'}",
+                        "elapsed_ms": prompt_decision.elapsed_ms,
+                    }}
+                except Exception as e:
+                    logger.warning("[PROMPT-ROUTER] Validation failed, keeping brain route: %s", e)
+
+            if prompt_decision and prompt_decision.tool == "unsupported_needs_tool":
+                text = (
+                    "I don't have a tool for that yet, so I won't fake it by opening a random website."
+                )
+                self.sessions[session_id][-1].content = text
+                yield {"_activity": {"event": "intent_classified", "intent": "unsupported_needs_tool"}}
+                yield text
+                self.save_chat_session(session_id)
+                elapsed_jarvis = time.perf_counter() - t0_jarvis
+                logger.info("[JARVIS-STREAM] Unsupported tool stopped in %.2fs | reason: %s",
+                            elapsed_jarvis, prompt_decision.reason)
+                return
+
+            if prompt_decision and self._should_use_prompt_override(category, task_types, prompt_decision):
+                task_types = [tool for tool, _ in prompt_decision.tasks]
+                task_method = prompt_decision.method
+                task_elapsed_ms = prompt_decision.elapsed_ms
+                if self.brain_service:
+                    self.brain_service._last_task_decisions = prompt_decision.tasks
+
             task_name = ", ".join(task_types[:3]) if task_types else "task"
             yield {"_activity": {"event": "intent_classified", "intent": task_name}}
 
             intents = self.brain_service.extract_task_payloads(user_message, task_types, chat_history) if self.brain_service else []
+
+            chain_plan = self.task_executor.describe_chain(intents) if self.task_executor else None
+            if chain_plan:
+                yield {"_activity": {"event": "tool_chain_planned", "message": chain_plan["message"]}}
 
             instant_intents = [(t, p) for t, p in intents if t not in HEAVY_INTENTS]
             heavy_intents = [(t, p) for t, p in intents if t in HEAVY_INTENTS]
@@ -542,6 +594,24 @@ class ChatService:
 
         elapsed_jarvis = time.perf_counter() - t0_jarvis
         logger.info("[JARVIS-STREAM] %s flow complete in %.2fs | chunks: %d", route_name, elapsed_jarvis, chunk_count)
+
+    def _should_validate_with_prompt_router(self, category: str, task_types: List[str]) -> bool:
+        if not task_types:
+            return False
+        return category == CATEGORY_MIXED or "open" in task_types or len(task_types) > 1
+
+    def _should_use_prompt_override(self, category: str, task_types: List[str], prompt_decision) -> bool:
+        if not prompt_decision or not prompt_decision.tasks:
+            return False
+        if prompt_decision.confidence < 0.75:
+            return False
+        if category == CATEGORY_MIXED and prompt_decision.primary == CATEGORY_MIXED:
+            return True
+        if "open" in task_types and prompt_decision.primary in (CATEGORY_TASK, CATEGORY_MIXED):
+            return True
+        if len(task_types) > 1 and prompt_decision.primary in (CATEGORY_TASK, CATEGORY_MIXED):
+            return True
+        return False
 
     def save_chat_session(self, session_id: str, log_timing: bool = True):
         if session_id not in self.sessions or not self.sessions[session_id]:
