@@ -1,0 +1,37 @@
+CATEGORY_GENERAL = "general"
+CATEGORY_REALTIME = "realtime"
+CATEGORY_CAMERA = "camera"
+CATEGORY_TASK = "task"
+CATEGORY_MIXED = "mixed"
+INTENT_OPEN = "open"
+INTENT_PLAY = "play"
+INTENT_CAMERA = "camera"
+INTENT_OPEN_WEBCAM = "open webcam"
+INTENT_CLOSE_WEBCAM = "close webcam"
+INTENT_GENERATE_IMAGE = "generate image"
+INTENT_CONTENT = "content"
+INTENT_GOOGLE_SEARCH = "google search"
+INTENT_YOUTUBE_SEARCH = "youtube search"
+INTENT_CHAT = "chat"
+
+HEAVY_INTENTS = {INTENT_GENERATE_IMAGE, INTENT_CONTENT}
+
+INSTANT_INTENTS = {
+    INTENT_OPEN, INTENT_PLAY, INTENT_CAMERA,
+    INTENT_OPEN_WEBCAM, INTENT_CLOSE_WEBCAM,
+    INTENT_GOOGLE_SEARCH, INTENT_YOUTUBE_SEARCH,
+}
+
+ROUTE_TO_INTENT = {
+    "open": INTENT_OPEN,
+    "play": INTENT_PLAY,
+    "camera": INTENT_CAMERA,
+    "open_webcam": INTENT_OPEN_WEBCAM,
+    "close_webcam": INTENT_CLOSE_WEBCAM,
+    "generate_image": INTENT_GENERATE_IMAGE,
+    "content": INTENT_CONTENT,
+    "google_search": INTENT_GOOGLE_SEARCH,
+    "youtube_search": INTENT_YOUTUBE_SEARCH,
+    "general": INTENT_CHAT,
+    "realtime": INTENT_CHAT,
+}

@@ -19,19 +19,11 @@
                 <span class="tagline">Just A Rather Very Intelligent System</span>
             </div>
             <div class="header-center">
-                <div class="mode-switch mode-switch-three" id="mode-switch">
+                <div class="mode-switch mode-switch-single" id="mode-switch">
                     <div class="mode-slider" id="mode-slider"></div>
-                    <button class="mode-btn active" data-mode="jarvis" id="btn-jarvis" title="Jarvis — brain auto-routes to General or Realtime">
+                    <button class="mode-btn active" data-mode="jarvis" id="btn-jarvis" title="Jarvis — task execution, vision, chat">
                         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
                         <span class="mode-btn-text">Jarvis</span>
-                    </button>
-                    <button class="mode-btn" data-mode="general" id="btn-general" title="General — no web search">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
-                        <span class="mode-btn-text">General</span>
-                    </button>
-                    <button class="mode-btn" data-mode="realtime" id="btn-realtime" title="Realtime — live web search">
-                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
-                        <span class="mode-btn-text">Realtime</span>
                     </button>
                 </div>
             </div>
@@ -97,6 +89,16 @@
                           rows="1"
                           maxlength="32000"></textarea>
                 <div class="input-actions">
+                    <button class="action-btn cam-btn" id="cam-btn" title="Camera — capture and send for vision">
+                        <svg class="cam-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                            <circle cx="12" cy="13" r="4"/>
+                        </svg>
+                        <svg class="cam-icon-active" width="20" height="20" viewBox="0 0 24 24" fill="currentColor" style="display: none;">
+                            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                            <circle cx="12" cy="13" r="4" fill="currentColor"/>
+                        </svg>
+                    </button>
                     <button class="action-btn mic-btn" id="mic-btn" title="Voice input — click to start auto-listen (restarts after each response)">
                         <svg class="mic-icon" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                             <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/>
@@ -167,7 +169,14 @@
                         <span class="toggle-slider"></span>
                     </label>
                 </div>
-                <p class="settings-hint">When enabled, the activity and search panels open automatically when data is available. Thinking sounds play a short cue while the AI processes your message.</p>
+                <div class="settings-item">
+                    <label class="settings-label" for="toggle-voice-interrupt">Voice interruption</label>
+                    <label class="toggle-switch">
+                        <input type="checkbox" id="toggle-voice-interrupt" checked>
+                        <span class="toggle-slider"></span>
+                    </label>
+                </div>
+                <p class="settings-hint">Activity and search panels open automatically when data is available. Thinking sounds play a short cue while the AI processes. Voice interruption lets you interrupt the AI by speaking — it will stop talking and listen to you.</p>
             </div>
         </div>
         <div class="panel-overlay" id="panel-overlay" aria-hidden="true"></div>
@@ -178,6 +187,30 @@
             </div>
         </div>
         <div class="toast-container" id="toast-container" aria-live="polite"></div>
+        <div class="cam-panel" id="cam-panel" aria-hidden="true">
+            <div class="cam-panel-header" id="cam-panel-header">
+                <span class="cam-panel-title">
+                    <span class="cam-panel-dot"></span>
+                    Vision
+                </span>
+                <div class="cam-panel-controls">
+                    <label class="cam-panel-vision-mode" title="Vision Mode — attach camera to every message">
+                        <input type="checkbox" id="cam-vision-mode" />
+                        <span class="cam-panel-vision-label">Live</span>
+                    </label>
+                    <button class="cam-panel-btn cam-minimize" id="cam-minimize" title="Minimize">−</button>
+                    <button class="cam-panel-btn cam-close" id="cam-close" title="Close camera">×</button>
+                </div>
+            </div>
+            <div class="cam-panel-body">
+                <video id="cam-video" autoplay playsinline muted></video>
+                <div class="cam-panel-overlay">
+                    <span class="cam-panel-status">Vision ready</span>
+                </div>
+            </div>
+            <div class="cam-panel-resize" id="cam-panel-resize" title="Drag to resize"></div>
+        </div>
+        <canvas id="cam-canvas" style="display: none;"></canvas>
     </div>
     <script src="orb.js"></script>
     <script src="script.js"></script>

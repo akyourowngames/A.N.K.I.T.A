@@ -6,7 +6,7 @@ This directory is the main Python package for the J.A.R.V.I.S backend.
 The presence of __init__.py makes Python treat 'app' as a package, so you can:
 
     from app.main import app
-    from app.models import ChatRequest
+    from app.model import ChatRequest
     from app.services.chat_service import ChatService
 
 FILE STRUCTURE:

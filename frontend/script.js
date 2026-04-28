@@ -1,210 +1,79 @@
-/* ================================================================
-   J.A.R.V.I.S Frontend — Main Application Logic
-   ================================================================
 
-   ARCHITECTURE OVERVIEW
-   ---------------------
-   This file powers the entire frontend of the J.A.R.V.I.S AI assistant.
-   It handles:
-
-   1. CHAT MESSAGING — The user types (or speaks) a message, which is
-      sent to the backend via a POST request. The backend responds using
-      Server-Sent Events (SSE), allowing the reply to stream in
-      token-by-token (like ChatGPT's typing effect).
-
-   2. TEXT-TO-SPEECH (TTS) — When TTS is enabled, the backend also
-      sends base64-encoded audio chunks inside the SSE stream. These
-      are queued up and played sequentially through a single <audio>
-      element. This queue-based approach prevents overlapping audio
-      and supports mobile browsers (especially iOS/Safari).
-
-   3. SPEECH RECOGNITION — The Web Speech API captures the user's
-      voice, transcribes it in real time, and auto-sends the final
-      transcript as a chat message.
-
-   4. ANIMATED ORB — A WebGL-powered visual orb (rendered by a
-      separate OrbRenderer class) acts as a visual indicator. It
-      "activates" when J.A.R.V.I.S is speaking and goes idle otherwise.
-
-   5. MODE SWITCHING — The UI supports two modes:
-      - "General" mode  → uses the /chat/stream endpoint
-      - "Realtime" mode → uses the /chat/realtime/stream endpoint
-      The mode determines which backend pipeline processes the message.
-
-   6. SESSION MANAGEMENT — A session ID is returned by the server on
-      the first message. Subsequent messages include that ID so the
-      backend can maintain conversation context. Starting a "New Chat"
-      clears the session.
-
-   DATA FLOW (simplified):
-   User input → sendMessage() → POST to backend → SSE stream opens →
-   tokens arrive as JSON chunks → rendered into the DOM in real time →
-   optional audio chunks are enqueued in TTSPlayer → played sequentially.
-
-   ================================================================ */
-
-/*
- * API — The base URL for all backend requests.
- *
- * In production, this resolves to the same origin the page was loaded from
- * (e.g., "https://jarvis.example.com"). During local development, it falls
- * back to "http://localhost:8000" (the default FastAPI dev server port).
- *
- * `window.location.origin` gives us the protocol + host + port of the
- * current page, making the frontend deployment-agnostic (no hardcoded URLs).
- */
 const API = (typeof window !== 'undefined' && window.location.origin)
     ? window.location.origin
     : 'http://localhost:8000';
 
-/* ================================================================
-   APPLICATION STATE
-   ================================================================
-   These variables track the global state of the application. They are
-   intentionally kept as simple top-level variables rather than in a
-   class or store, since this is a single-page app with one chat view.
-   ================================================================ */
-
-/*
- * sessionId — Unique conversation identifier returned by the server.
- * Starts as null (no conversation yet). Once the first server response
- * arrives, it contains a UUID string that we send back with every
- * subsequent message so the backend knows which conversation we're in.
- */
 let sessionId = null;
-
-/*
- * currentMode — Which AI pipeline to use: 'jarvis', 'general', or 'realtime'.
- * - jarvis:   Unified route; brain classifies, then routes to general or realtime.
- * - general:  Direct /chat/stream (no web search).
- * - realtime: Direct /chat/realtime/stream (with Tavily web search).
- */
 let currentMode = 'jarvis';
-
-/*
- * isStreaming — Guard flag that is true while an SSE response is being
- * received. Prevents the user from sending another message while the
- * assistant is still replying (avoids race conditions and garbled output).
- */
 let isStreaming = false;
-
-/*
- * isListening — True while the speech recognition engine is actively
- * capturing audio from the microphone. Used to toggle the mic button
- * styling and to decide whether to start or stop listening on click.
- */
 let isListening = false;
-
-/*
- * autoListenMode — When true, mic stays "on": after each voice-sent message,
- * we stop listening during the AI response, then auto-restart when the AI
- * and TTS playback are complete. User clicks mic again to turn off.
- */
+let camStream = null;
 let autoListenMode = false;
-
-/* Speech recognition config */
 const SPEECH_ERROR_MAX_RETRIES = 3;
 let speechErrorRetryCount = 0;
-const SPEECH_SEND_DELAY_MS = 500;   /* Pause after final transcript before sending (lets user add more) */
-const SPEECH_RESTART_DELAY_MS = 700; /* Delay before restarting mic after AI+TTS complete (avoids echo) */
+const SPEECH_SEND_DELAY_MS = 500;
+const SPEECH_RESTART_DELAY_MS = 700;
 let speechSendTimeout = null;
 let pendingSendTranscript = null;
 let safariVoiceHintShown = false;
-
-/*
- * orb — Reference to the OrbRenderer instance (the animated WebGL orb).
- * Null if OrbRenderer is unavailable or failed to initialize.
- * We call orb.setActive(true/false) to animate it during TTS playback.
- */
 let orb = null;
-
-/*
- * recognition — The SpeechRecognition instance from the Web Speech API.
- * Null if the browser doesn't support speech recognition.
- */
 let recognition = null;
-
-/*
- * ttsPlayer — Instance of the TTSPlayer class (defined below) that
- * manages queuing and playing audio segments received from the server.
- */
 let ttsPlayer = null;
-
-/*
- * settings — User preferences (auto-open panels). Stored in localStorage.
- */
 const SETTINGS_KEY = 'jarvis_settings';
-const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true };
-
-/* Pre-starter: pre-generated MP3 file names (from app.generate_thinking_audio) */
+const DEFAULT_SETTINGS = { autoOpenActivity: true, autoOpenSearchResults: true, thinkingSounds: true, voiceInterrupt: true };
 const PRE_STARTER_FILES = ['starter_1', 'starter_2', 'starter_3', 'starter_4', 'starter_5', 'starter_6', 'starter_7', 'starter_8', 'starter_9', 'starter_10'];
-/* Pre-loaded base64 audio cache — populated at init for instant playback */
 let PRE_STARTER_CACHE = {};
 let settings = { ...DEFAULT_SETTINGS };
-
-/* ================================================================
-   DOM REFERENCES
-   ================================================================
-   We grab references to frequently-used DOM elements once at startup
-   rather than querying for them every time we need them. This is both
-   a performance optimization and a readability convenience.
-   ================================================================ */
-
-/*
- * $ — Shorthand helper for document.getElementById. Writing $('foo')
- * is more concise than document.getElementById('foo').
- */
 const $ = id => document.getElementById(id);
+const chatMessages = $('chat-messages');
+const messageInput = $('message-input');
+const sendBtn      = $('send-btn');
+const micBtn       = $('mic-btn');
+const ttsBtn       = $('tts-btn');
+const newChatBtn   = $('new-chat-btn');
+const charCount    = $('char-count');
+const welcomeTitle = $('welcome-title');
+const modeSlider   = $('mode-slider');
+const btnJarvis    = $('btn-jarvis');
+const statusDot    = document.querySelector('.status-dot');
+const statusText   = document.querySelector('.status-text');
+const orbContainer = $('orb-container');
+const searchResultsToggle = $('search-results-toggle');
+const searchResultsWidget = $('search-results-widget');
+const searchResultsClose  = $('search-results-close');
+const searchResultsQuery  = $('search-results-query');
+const searchResultsAnswer = $('search-results-answer');
+const searchResultsList   = $('search-results-list');
+const activityPanel       = $('activity-panel');
+const activityToggle      = $('activity-toggle');
+const activityClose       = $('activity-close');
+const activityList        = $('activity-list');
+const panelOverlay        = $('panel-overlay');
+const speechWidget        = $('speech-widget');
+const speechWidgetText    = $('speech-widget-text');
+const settingsBtn         = $('settings-btn');
+const camBtn              = $('cam-btn');
+const camPanel            = $('cam-panel');
+const camVideo            = $('cam-video');
+const camCanvas           = $('cam-canvas');
+const camVisionModeInput  = $('cam-vision-mode');
+const camMinimize         = $('cam-minimize');
+const camClose            = $('cam-close');
+const camPanelHeader      = $('cam-panel-header');
+const camPanelResize      = $('cam-panel-resize');
+const settingsPanel       = $('settings-panel');
+const settingsClose       = $('settings-close');
+const toggleAutoActivity  = $('toggle-auto-activity');
+const toggleAutoSearch    = $('toggle-auto-search');
+const toggleThinkingSounds = $('toggle-thinking-sounds');
+const toggleVoiceInterrupt = $('toggle-voice-interrupt');
+const toastContainer     = $('toast-container');
 
-const chatMessages = $('chat-messages');   // The scrollable container that holds all chat messages
-const messageInput = $('message-input');   // The <textarea> where the user types their message
-const sendBtn      = $('send-btn');        // The send button (arrow icon)
-const micBtn       = $('mic-btn');         // The microphone button for speech-to-text
-const ttsBtn       = $('tts-btn');         // The speaker button to toggle text-to-speech
-const newChatBtn   = $('new-chat-btn');    // The "New Chat" button that resets the conversation
-const charCount    = $('char-count');      // Shows character count when the message gets long
-const welcomeTitle = $('welcome-title');   // The greeting text on the welcome screen ("Good morning.", etc.)
-const modeSlider   = $('mode-slider');     // The sliding pill indicator behind the mode toggle buttons
-const btnJarvis    = $('btn-jarvis');      // The "Jarvis" mode button (unified, brain-routed)
-const btnGeneral   = $('btn-general');     // The "General" mode button
-const btnRealtime  = $('btn-realtime');    // The "Realtime" mode button
-const statusDot    = document.querySelector('.status-dot');  // Green/red dot showing backend status
-const statusText   = document.querySelector('.status-text'); // Text next to the dot ("Online" / "Offline")
-const orbContainer = $('orb-container');   // The container <div> that holds the WebGL orb canvas
-const searchResultsToggle = $('search-results-toggle');   // Header button to open search results panel
-const searchResultsWidget = $('search-results-widget');   // Right-side panel for Tavily search data
-const searchResultsClose  = $('search-results-close');    // Close button inside the panel
-const searchResultsQuery  = $('search-results-query');    // Displays the search query
-const searchResultsAnswer = $('search-results-answer');   // Displays the AI answer from search
-const searchResultsList   = $('search-results-list');     // Container for source result cards
-const activityPanel       = $('activity-panel');          // Left panel for Jarvis activity flow
-const activityToggle      = $('activity-toggle');          // Header button to open activity panel
-const activityClose       = $('activity-close');           // Close button inside activity panel
-const activityList        = $('activity-list');            // Container for activity items
-const panelOverlay        = $('panel-overlay');            // Backdrop when a side panel is open
-const speechWidget        = $('speech-widget');            // Live speech-to-text display
-const speechWidgetText    = $('speech-widget-text');       // Transcript text element
-const settingsBtn         = $('settings-btn');              // Gear icon to open settings
-const settingsPanel       = $('settings-panel');            // Settings modal/panel
-const settingsClose       = $('settings-close');           // Close settings
-const toggleAutoActivity  = $('toggle-auto-activity');     // Auto-open activity panel
-const toggleAutoSearch    = $('toggle-auto-search');        // Auto-open search results
-const toggleThinkingSounds = $('toggle-thinking-sounds');   // Thinking sound effects
-const toastContainer     = $('toast-container');           // Toast container for error/status feedback
-
-/* ================================================================
-   PRE-STARTER PLAYER (Dedicated — never interrupted by TTS reset)
-   ================================================================
-   Plays one random pre-generated clip ("Oh wait.", etc.) on its own
-   audio element. Runs independently so ttsPlayer.reset() cannot stop it.
-   Flow: pre-starter plays; main TTS plays when first real chunk arrives.
-   ================================================================ */
 class PreStarterPlayer {
     constructor() {
         this.audio = document.createElement('audio');
         this.audio.preload = 'auto';
     }
-
     play(onComplete) {
         const loaded = PRE_STARTER_FILES.filter(f => PRE_STARTER_CACHE[f]);
         if (loaded.length === 0) {
@@ -236,82 +105,21 @@ class PreStarterPlayer {
 
 let preStarterPlayer = null;
 
-/* ================================================================
-   TTS AUDIO PLAYER (Text-to-Speech Queue System)
-   ================================================================
-
-   HOW THE TTS QUEUE WORKS — EXPLAINED FOR LEARNERS
-   -------------------------------------------------
-   When TTS is enabled, the backend doesn't send one giant audio file.
-   Instead, it sends many small base64-encoded MP3 *chunks* as part of
-   the SSE stream (one chunk per sentence or phrase). This approach has
-   two advantages:
-     1. Audio starts playing before the full response is generated
-        (lower latency — the user hears the first sentence immediately).
-     2. Each chunk is small, so there's no long download wait.
-
-   The TTSPlayer works like a conveyor belt:
-     - enqueue() adds a new audio chunk to the end of the queue.
-     - _playLoop() picks up chunks one by one and plays them.
-     - When a chunk finishes playing (audio.onended), the loop moves
-       to the next chunk.
-     - When the queue is empty and no more chunks are arriving, playback
-       stops and the orb goes back to idle.
-
-   WHY A SINGLE <audio> ELEMENT?
-   iOS Safari has strict autoplay policies — it only allows audio
-   playback from a user-initiated event. By reusing one <audio> element
-   that was "unlocked" during a user gesture, all subsequent plays
-   through that same element are allowed. Creating new Audio() objects
-   each time would trigger autoplay blocks on iOS.
-
-   ================================================================ */
 class TTSPlayer {
-    /**
-     * Creates a new TTSPlayer instance.
-     *
-     * Properties:
-     *   queue    — Array of base64 audio strings waiting to be played.
-     *   playing  — True if the play loop is currently running.
-     *   enabled  — True if the user has toggled TTS on (via the speaker button).
-     *   stopped  — True if playback was forcibly stopped (e.g., new chat).
-     *              This prevents queued audio from playing after a stop.
-     *   audio    — A single persistent <audio> element reused for all playback.
-     */
     constructor() {
         this.queue = [];
         this.playing = false;
-        this.enabled = true;   // TTS on by default
+        this.enabled = true;
         this.stopped = false;
         this.audio = document.createElement('audio');
         this.audio.preload = 'auto';
     }
-
-    /**
-     * unlock() — "Warms up" the audio element so browsers (especially iOS
-     * Safari) allow subsequent programmatic playback.
-     *
-     * This should be called during a user gesture (e.g., clicking "Send").
-     *
-     * It does two things:
-     *   1. Plays a tiny silent WAV file on the <audio> element, which
-     *      tells the browser "the user initiated audio playback."
-     *   2. Creates a brief AudioContext oscillator at zero volume — this
-     *      unlocks the Web Audio API context on iOS (a separate lock from
-     *      the <audio> element).
-     *
-     * After this, the browser treats subsequent .play() calls on the same
-     * <audio> element as user-initiated, even if they happen in an async
-     * callback (like our SSE stream handler).
-     */
     unlock() {
-        // A minimal valid WAV file (44-byte header + 2 bytes of silence)
         const silentWav = 'data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA';
         this.audio.src = silentWav;
         const p = this.audio.play();
         if (p) p.catch(() => {});
         try {
-            // Create a Web Audio context and play a zero-volume oscillator for <1ms
             const ctx = new (window.AudioContext || window.webkitAudioContext)();
             const g = ctx.createGain();
             g.gain.value = 0;
@@ -323,153 +131,67 @@ class TTSPlayer {
             setTimeout(() => ctx.close(), 200);
         } catch (_) {}
     }
-
-    /**
-     * enqueue(base64Audio) — Adds a base64-encoded MP3 chunk to the
-     * playback queue.
-     *
-     * @param {string} base64Audio - The base64 string of the MP3 audio data.
-     *
-     * If TTS is disabled or playback has been force-stopped, the chunk
-     * is silently discarded. Otherwise it's pushed onto the queue.
-     * If the play loop isn't already running, we kick it off.
-     */
     enqueue(base64Audio) {
         if (!this.enabled || this.stopped) return;
         this.queue.push(base64Audio);
         if (!this.playing) this._playLoop();
     }
-
-    /**
-     * stop() — Immediately halts all audio playback and clears the queue.
-     *
-     * Called when:
-     *   - The user starts a "New Chat"
-     *   - The user toggles TTS off while audio is playing
-     *   - We need to reset before a new streaming response
-     *
-     * It also removes visual indicators (CSS classes on the TTS button,
-     * the orb container, and deactivates the orb animation).
-     */
     stop() {
         this.stopped = true;
         this.audio.pause();
         this.audio.removeAttribute('src');
-        this.audio.load();                        // Fully resets the audio element
-        this.queue = [];                           // Discard any pending audio chunks
+        this.audio.load();
+        this.queue = [];
         this.playing = false;
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
         if (orb) orb.setActive(false);
-        if (typeof this.onPlaybackComplete === 'function') this.onPlaybackComplete();   // AI stopped — maybe restart mic
+        if (typeof this.onPlaybackComplete === 'function') this.onPlaybackComplete();
     }
-
-    /**
-     * reset() — Stops playback AND clears the "stopped" flag so new
-     * audio can be enqueued again.
-     *
-     * Called at the beginning of each new message send, or when the main
-     * response arrives (to cut off thinking audio). Increments _loopId so
-     * any in-flight _playLoop exits immediately.
-     */
     reset() {
         this.stop();
         this.stopped = false;
-        this._loopId = (this._loopId || 0) + 1;   // Supersede in-flight play loop
+        this._loopId = (this._loopId || 0) + 1;
     }
-
-    /**
-     * _playLoop() — The internal playback engine. Processes the queue
-     * one chunk at a time in a while-loop.
-     *
-     * WHY THE LOOP ID (_loopId)?
-     * If stop() is called and then a new stream starts, there could be
-     * two concurrent _playLoop() calls — the old one (still awaiting a
-     * Promise) and the new one. The loop ID lets us detect when a loop
-     * has been superseded: each invocation gets a unique ID, and if the
-     * ID changes mid-loop (because a new loop started), the old loop
-     * exits gracefully. This prevents double-playback or stale loops.
-     *
-     * VISUAL INDICATORS:
-     * While playing, we add CSS classes 'tts-speaking' (to the button)
-     * and 'speaking' (to the orb container) for visual feedback. These
-     * are removed when the queue is drained or playback is stopped.
-     */
     async _playLoop() {
         if (this.playing) return;
         this.playing = true;
         this._loopId = (this._loopId || 0) + 1;
         const myId = this._loopId;
-
-        // Activate visual indicators: button glow + orb animation
         if (ttsBtn) ttsBtn.classList.add('tts-speaking');
         if (orbContainer) orbContainer.classList.add('speaking');
         if (orb) orb.setActive(true);
-
-        // Process queued audio chunks one at a time
         while (this.queue.length > 0) {
-            if (this.stopped || myId !== this._loopId) break;  // Exit if stopped or superseded
-            const b64 = this.queue.shift();                     // Take the next chunk from the front
+            if (this.stopped || myId !== this._loopId) break;
+            const b64 = this.queue.shift();
             try {
-                await this._playB64(b64);                       // Wait for it to finish playing
+                await this._playB64(b64);
             } catch (e) {
                 console.warn('TTS segment error:', e);
             }
         }
-
-        // If another loop took over, don't touch the shared state
         if (myId !== this._loopId) {
-            this.playing = false;   // Allow new loop to start
+            this.playing = false;
             return;
         }
         this.playing = false;
-        // Deactivate visual indicators
         if (ttsBtn) ttsBtn.classList.remove('tts-speaking');
         if (orbContainer) orbContainer.classList.remove('speaking');
         if (orb) orb.setActive(false);
-        // Notify when playback is fully complete (for auto-restart listening)
         if (typeof this.onPlaybackComplete === 'function') this.onPlaybackComplete();
     }
-
-    /**
-     * _playB64(b64) — Plays a single base64-encoded MP3 chunk.
-     *
-     * @param {string} b64 - Base64-encoded MP3 audio data.
-     * @returns {Promise<void>} Resolves when the audio finishes playing
-     *                          (or errors out).
-     *
-     * Sets the <audio> element's src to a data URL and calls .play().
-     * Returns a Promise that resolves on 'ended' or 'error', so the
-     * _playLoop() can await it and move to the next chunk.
-     */
     _playB64(b64) {
         return new Promise(resolve => {
             this.audio.src = 'data:audio/mp3;base64,' + b64;
             const done = () => { resolve(); };
-            this.audio.onended = done;   // Normal completion
-            this.audio.onerror = done;   // Error — resolve anyway so the loop continues
+            this.audio.onended = done;
+            this.audio.onerror = done;
             const p = this.audio.play();
-            if (p) p.catch(done);        // Handle play() rejection (e.g., autoplay block)
+            if (p) p.catch(done);
         });
     }
 }
 
-/* ================================================================
-   INITIALIZATION
-   ================================================================
-   init() is the entry point for the entire application. It is called
-   once when the DOM is fully loaded (see the DOMContentLoaded listener
-   at the bottom of this file).
-
-   It sets up every subsystem in the correct order:
-     1. TTSPlayer — so audio is ready before any messages
-     2. Greeting  — display a time-appropriate welcome message
-     3. Orb       — initialize the WebGL visual
-     4. Speech    — set up the microphone / speech recognition
-     5. Health    — ping the backend to check if it's online
-     6. Events    — wire up all button clicks and keyboard shortcuts
-     7. Input     — auto-resize the textarea to fit content
-   ================================================================ */
 function init() {
     if (!chatMessages || !messageInput) {
         console.error('[JARVIS] Required DOM elements (chat-messages, message-input) not found.');
@@ -477,23 +199,19 @@ function init() {
     }
     loadSettings();
     ttsPlayer = new TTSPlayer();
-    ttsPlayer.onPlaybackComplete = maybeRestartListening;   // Auto-restart mic when TTS finishes
-    if (ttsBtn) ttsBtn.classList.add('tts-active');   // Show TTS as on by default
+    ttsPlayer.onPlaybackComplete = maybeRestartListening;
+    if (ttsBtn) ttsBtn.classList.add('tts-active');
     setGreeting();
     initOrb();
     initSpeech();
-    preloadStarterAudio();   // Pre-load MP3s for instant playback
-    preStarterPlayer = new PreStarterPlayer();   // Dedicated player for pre-starter (immune to ttsPlayer.reset)
+    preloadStarterAudio();
+    preStarterPlayer = new PreStarterPlayer();
     checkHealth();
     bindEvents();
-    setMode(currentMode);   // Sync mode slider, labels, and activity toggle
+    setMode(currentMode);
     autoResizeInput();
 }
 
-/**
- * preloadStarterAudio() — Fetches pre-generated starter MP3s and caches as base64.
- * Enables instant playback when user sends (no network delay).
- */
 async function preloadStarterAudio() {
     const base = (typeof window !== 'undefined' && window.location.origin) ? window.location.origin : '';
     for (const file of PRE_STARTER_FILES) {
@@ -522,6 +240,7 @@ function loadSettings() {
         if (toggleAutoActivity) toggleAutoActivity.checked = settings.autoOpenActivity;
         if (toggleAutoSearch) toggleAutoSearch.checked = settings.autoOpenSearchResults;
         if (toggleThinkingSounds) toggleThinkingSounds.checked = settings.thinkingSounds;
+        if (toggleVoiceInterrupt) toggleVoiceInterrupt.checked = settings.voiceInterrupt;
     } catch (_) {}
 }
 
@@ -531,22 +250,7 @@ function saveSettings() {
     } catch (_) {}
 }
 
-/* ================================================================
-   GREETING
-   ================================================================ */
 
-/**
- * setGreeting() — Sets the welcome screen title based on the current
- * time of day.
- *
- * Time ranges:
- *   00:00–11:59 → "Good morning."
- *   12:00–16:59 → "Good afternoon."
- *   17:00–21:59 → "Good evening."
- *   22:00–23:59 → "Burning the midnight oil?" (a fun late-night touch)
- *
- * This is called on page load and when starting a new chat.
- */
 function setGreeting() {
     const h = new Date().getHours();
     let g = 'Good evening.';
@@ -556,25 +260,6 @@ function setGreeting() {
     if (welcomeTitle) welcomeTitle.textContent = g;
 }
 
-/* ================================================================
-   WEBGL ORB INITIALIZATION
-   ================================================================ */
-
-/**
- * initOrb() — Creates the animated WebGL orb inside the orbContainer.
- *
- * OrbRenderer is defined in a separate JS file (orb.js). If that file
- * hasn't loaded (e.g., network error), OrbRenderer will be undefined
- * and we skip initialization gracefully.
- *
- * Configuration:
- *   hue: 0                           — The base hue of the orb color
- *   hoverIntensity: 0.3              — How much the orb reacts to mouse hover
- *   backgroundColor: [0.02,0.02,0.06] — Near-black dark blue background (RGB, 0–1 range)
- *
- * The orb's "active" state (pulsing animation) is toggled via
- * orb.setActive(true/false), which we call when TTS starts/stops.
- */
 function initOrb() {
     if (typeof OrbRenderer === 'undefined') return;
     try {
@@ -586,30 +271,6 @@ function initOrb() {
     } catch (e) { console.warn('Orb init failed:', e); }
 }
 
-/* ================================================================
-   SPEECH RECOGNITION (Speech-to-Text)
-   ================================================================
-
-   SPEECH-TO-TEXT REDESIGN — PC-FIRST, ACCURATE, AUTO-RESTART
-   ----------------------------------------------------------
-   Design goals:
-   1. Work reliably on every PC (Chrome, Edge, etc.)
-   2. Accurate transcription — no duplication or concatenation bugs
-   3. Auto-restart after AI finishes speaking (stream + TTS complete)
-   4. Single utterance per session — clean, predictable behavior
-
-   Flow:
-   - User clicks mic → startListening() → recognition.start()
-   - User speaks → interim results shown in real time
-   - User pauses → final result → brief delay → send message → stopListening()
-   - AI responds (stream + TTS) → when TTS queue empty → maybeRestartListening()
-   - After SPEECH_RESTART_DELAY_MS → startListening() again
-
-   Chrome sends INCREMENTAL results (each extends the previous). We use
-   ONLY the last result to avoid "hello Ja hello jar..." duplication.
-   ================================================================ */
-
-/** Detect Safari/iOS — needs different settings for stability */
 function isSafariOrIOS() {
     if (typeof navigator === 'undefined') return false;
     const ua = navigator.userAgent || '';
@@ -618,59 +279,31 @@ function isSafariOrIOS() {
         (/Safari/.test(ua) && !/Chrome|Chromium|CriOS/.test(ua));
 }
 
-/**
- * initSpeech() — Sets up SpeechRecognition with PC-optimized settings.
- * Uses single-utterance mode (continuous: false) for clean, accurate results.
- */
 function initSpeech() {
     const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
-    if (!SR) { 
-        console.warn('[SPEECH] Web Speech API not supported in this browser');
-        if (micBtn) micBtn.title = 'Speech not supported in this browser'; 
-        return; 
-    }
-
+    if (!SR) { micBtn.title = 'Speech not supported in this browser'; return; }
     recognition = new SR();
-
-    /* PC: single utterance, interim results for real-time feedback. Avoids Chrome incremental bug. */
-    /* Safari: no interim (unstable), single utterance. */
     const safariMode = isSafariOrIOS();
     recognition.continuous = false;
     recognition.interimResults = !safariMode;
     recognition.maxAlternatives = 1;
     recognition.lang = 'en-US';
-
-    console.log('[SPEECH] Initialized with settings:', {
-        continuous: recognition.continuous,
-        interimResults: recognition.interimResults,
-        lang: recognition.lang,
-        safariMode
-    });
-
     recognition.onresult = e => {
-        console.log('[SPEECH] onresult event:', e);
-        if (!e.results || e.results.length === 0) {
-            console.warn('[SPEECH] No results in event');
-            return;
-        }
-        /* Chrome sends incremental results — each extends the previous. Use ONLY the last. */
+        if (!e.results || e.results.length === 0) return;
         const last = e.results[e.results.length - 1];
         const transcript = (last && last[0]) ? last[0].transcript.trim() : '';
         const isFinal = last && last.isFinal;
-        const confidence = (last && last[0]) ? last[0].confidence : 0;
-
-        console.log('[SPEECH] Transcript:', transcript, '| Final:', isFinal, '| Confidence:', confidence);
-
-        if (speechWidgetText) speechWidgetText.textContent = transcript || 'Listening...';
+        if (speechWidgetText) speechWidgetText.textContent = transcript;
         if (speechWidget) speechWidget.classList.add('visible');
-
+        if (settings.voiceInterrupt && ttsPlayer && ttsPlayer.playing && transcript.length > 0) {
+            ttsPlayer.stop();
+            ttsPlayer.stopped = false;
+        }
         if (isFinal && transcript) {
-            console.log('[SPEECH] Final transcript received, will send in', SPEECH_SEND_DELAY_MS, 'ms');
             pendingSendTranscript = transcript;
             clearTimeout(speechSendTimeout);
             speechSendTimeout = setTimeout(() => {
                 if (pendingSendTranscript) {
-                    console.log('[SPEECH] Sending message:', pendingSendTranscript);
                     sendMessage(pendingSendTranscript);
                     pendingSendTranscript = null;
                 }
@@ -684,38 +317,17 @@ function initSpeech() {
         }
     };
 
-    recognition.onstart = () => { 
-        console.log('[SPEECH] Recognition started');
-        speechErrorRetryCount = 0; 
-    };
-
+    recognition.onstart = () => { speechErrorRetryCount = 0; };
     recognition.onerror = e => {
-        console.error('[SPEECH] Error:', e.error, '| Message:', e.message);
         stopListening();
         const msg = (e && e.error) ? String(e.error) : '';
         const isPermissionDenied = /denied|not-allowed|permission/i.test(msg);
-        
-        if (isPermissionDenied) {
-            showToast('Microphone access denied. Please allow microphone access in browser settings.');
-            if (micBtn) micBtn.title = 'Microphone access denied. Allow in browser settings.';
+        if (isPermissionDenied && micBtn) {
+            micBtn.title = 'Microphone access denied. Allow in browser settings.';
             speechErrorRetryCount = SPEECH_ERROR_MAX_RETRIES;
-        } else if (msg === 'no-speech') {
-            console.warn('[SPEECH] No speech detected');
-            showToast('No speech detected. Please speak clearly into your microphone.');
-        } else if (msg === 'audio-capture') {
-            console.error('[SPEECH] Audio capture failed - check microphone');
-            showToast('Microphone error. Check that your microphone is connected and working.');
-        } else if (msg === 'network') {
-            console.error('[SPEECH] Network error - speech recognition requires internet');
-            showToast('Network error. Speech recognition requires an internet connection.');
-        } else {
-            console.error('[SPEECH] Unknown error:', msg);
-            showToast(`Speech recognition error: ${msg}`);
         }
-        
         if (autoListenMode && !isStreaming && speechErrorRetryCount < SPEECH_ERROR_MAX_RETRIES) {
             speechErrorRetryCount++;
-            console.log('[SPEECH] Will retry, attempt', speechErrorRetryCount, 'of', SPEECH_ERROR_MAX_RETRIES);
             setTimeout(() => maybeRestartListening(), SPEECH_RESTART_DELAY_MS);
         } else if (speechErrorRetryCount >= SPEECH_ERROR_MAX_RETRIES && micBtn) {
             micBtn.title = 'Voice input — click to try again';
@@ -723,11 +335,9 @@ function initSpeech() {
     };
 
     recognition.onend = () => {
-        console.log('[SPEECH] Recognition ended');
         if (pendingSendTranscript) {
             clearTimeout(speechSendTimeout);
             speechSendTimeout = null;
-            console.log('[SPEECH] Sending pending transcript on end:', pendingSendTranscript);
             sendMessage(pendingSendTranscript);
             pendingSendTranscript = null;
         } else {
@@ -737,148 +347,504 @@ function initSpeech() {
         if (isListening) stopListening();
         maybeRestartListening();
     };
-
-    recognition.onnomatch = () => {
-        console.warn('[SPEECH] No match found for speech');
-        showToast('Could not understand speech. Please try again.');
-    };
-
-    recognition.onaudiostart = () => {
-        console.log('[SPEECH] Audio capture started');
-    };
-
-    recognition.onaudioend = () => {
-        console.log('[SPEECH] Audio capture ended');
-    };
-
-    recognition.onsoundstart = () => {
-        console.log('[SPEECH] Sound detected');
-    };
-
-    recognition.onsoundend = () => {
-        console.log('[SPEECH] Sound ended');
-    };
-
-    recognition.onspeechstart = () => {
-        console.log('[SPEECH] Speech detected');
-    };
-
-    recognition.onspeechend = () => {
-        console.log('[SPEECH] Speech ended');
-    };
 }
 
-/**
- * startListening() — Activates the microphone and begins speech recognition.
- *
- * Guards:
- *   - Does nothing if recognition isn't available (unsupported browser).
- *   - Does nothing if we're currently streaming a response (to avoid
- *     accidentally sending a voice message mid-stream).
- */
 function startListening() {
-    if (!recognition) {
-        console.error('[SPEECH] Recognition not initialized');
-        showToast('Speech recognition not available. Please use Chrome or Edge.');
-        return;
-    }
-    if (isStreaming) {
-        console.warn('[SPEECH] Cannot start while streaming');
-        return;
-    }
-    if (isListening) {
-        console.warn('[SPEECH] Already listening');
-        return;
-    }
-    
+    if (!recognition || isStreaming || isListening) return;
     if (isSafariOrIOS() && !safariVoiceHintShown) {
         showToast('Voice works best in Chrome. Safari has limited support.');
         safariVoiceHintShown = true;
     }
-    
-    console.log('[SPEECH] Starting recognition...');
     isListening = true;
     pendingSendTranscript = null;
     clearTimeout(speechSendTimeout);
     speechSendTimeout = null;
     if (micBtn) micBtn.classList.add('listening');
     if (speechWidget) speechWidget.classList.add('visible');
-    if (speechWidgetText) speechWidgetText.textContent = 'Listening...';
-    
+    if (speechWidgetText) speechWidgetText.textContent = '';
     try {
         recognition.start();
-        console.log('[SPEECH] Recognition.start() called successfully');
     } catch (err) {
-        console.error('[SPEECH] Failed to start recognition:', err);
         isListening = false;
         if (micBtn) micBtn.classList.remove('listening');
         if (speechWidget) speechWidget.classList.remove('visible');
-        
-        if (err.name === 'InvalidStateError') {
-            console.warn('[SPEECH] Recognition already started, stopping and restarting...');
-            try {
-                recognition.stop();
-                setTimeout(() => startListening(), 100);
-            } catch (e2) {
-                console.error('[SPEECH] Failed to restart:', e2);
-            }
-        } else {
-            showToast(`Failed to start voice input: ${err.message}`);
-        }
+        if (isSafariOrIOS()) showToast('Tap the mic to continue voice input.');
     }
 }
 
-/**
- * stopListening() — Deactivates the microphone and stops recognition.
- *
- * Called when:
- *   - A final transcript is received (auto-send).
- *   - The user clicks the mic button again (manual toggle off).
- *   - An error occurs.
- *   - The recognition engine stops unexpectedly.
- */
 function stopListening() {
     clearTimeout(speechSendTimeout);
     speechSendTimeout = null;
     pendingSendTranscript = null;
     isListening = false;
-    if (micBtn) micBtn.classList.remove('listening');  // Remove visual highlight
+    if (micBtn) micBtn.classList.remove('listening');
     if (speechWidget) speechWidget.classList.remove('visible');
     if (speechWidgetText) speechWidgetText.textContent = '';
     try { recognition.stop(); } catch (_) {}
 }
 
-/**
- * maybeRestartListening() — If autoListenMode is on and the AI response
- * (stream + TTS) is fully complete, restart listening after a short delay.
- * Called from: sendMessage finally block, TTSPlayer.onPlaybackComplete.
- */
 function maybeRestartListening() {
     if (!autoListenMode || !recognition) return;
     if (isStreaming) return;
-    if (ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0)) return;
+
+    const ttsActive = ttsPlayer && (ttsPlayer.playing || ttsPlayer.queue.length > 0);
+    if (ttsActive && !settings.voiceInterrupt) return;
+
+    const delay = ttsActive ? 150 : SPEECH_RESTART_DELAY_MS;
     setTimeout(() => {
         if (autoListenMode && !isStreaming && !isListening && recognition) {
             startListening();
         }
-    }, SPEECH_RESTART_DELAY_MS);
+    }, delay);
 }
 
-/* ================================================================
-   BACKEND HEALTH CHECK
-   ================================================================ */
+const CAM_BYPASS_TOKEN = 'TTCAMTOKENTT';
+const CAMERA_QUERY_PATTERNS = [
+    /what\s+(can|do)\s+you\s+see/i,
+    /can\s+you\s+see/i,
+    /describe\s+(what\s+you\s+see|this|the\s+image)/i,
+    /what('s|s)\sss+in\sss+(this\sss+)?(picture|image)/i,
+    /what\s+do\s+i\s+look\s+like/i,
+    /what\s+(am\s+i\s+)?holding/i,
+    /show\s+me\s+what\s+you\s+see/i,
+];
+function isCameraQuery(text) {
+    if (!text || typeof text !== 'string') return false;
+    const t = text.trim().toLowerCase();
+    return CAMERA_QUERY_PATTERNS.some(r => r.test(t)) ||
+        (t.includes('see') && (t.includes('what') || t.includes('describe')));
+}
 
-/**
- * checkHealth() — Pings the backend's /health endpoint to determine
- * if the server is running and healthy.
- *
- * Updates the status indicator in the UI:
- *   - Green dot + "Online"  if the server responds with { status: "healthy" }
- *   - Red dot   + "Offline" if the request fails or returns unhealthy
- *
- * Uses AbortSignal.timeout(5000) to avoid waiting forever if the
- * server is down — the request will automatically abort after 5 seconds.
- */
+function startCamera() {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        showToast('Camera not supported in this browser.');
+        return Promise.reject(new Error('Camera not supported'));
+    }
+    if (camStream) return Promise.resolve();
+    return navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' }, audio: false })
+        .then(stream => {
+            camStream = stream;
+            if (camVideo) camVideo.srcObject = stream;
+            if (camPanel) { camPanel.classList.add('visible'); camPanel.setAttribute('aria-hidden', 'false'); }
+            if (camBtn) {
+                camBtn.classList.add('cam-active');
+                camBtn.title = 'Camera on — click to turn off';
+                const icon = camBtn.querySelector('.cam-icon');
+                const iconActive = camBtn.querySelector('.cam-icon-active');
+                if (icon) icon.style.display = 'none';
+                if (iconActive) iconActive.style.display = '';
+            }
+        })
+        .catch(err => {
+            showToast('Camera access denied. ' + (err.message || ''));
+            throw err;
+        });
+}
+
+function stopCamera() {
+    if (camStream) {
+        camStream.getTracks().forEach(t => t.stop());
+        camStream = null;
+    }
+    if (camVideo) camVideo.srcObject = null;
+    if (camPanel) { camPanel.classList.remove('visible'); camPanel.setAttribute('aria-hidden', 'true'); }
+    if (camVisionModeInput) camVisionModeInput.checked = false;
+    if (camBtn) {
+        camBtn.classList.remove('cam-active');
+        camBtn.title = 'Camera — capture and send for vision';
+        const icon = camBtn.querySelector('.cam-icon');
+        const iconActive = camBtn.querySelector('.cam-icon-active');
+        if (icon) icon.style.display = '';
+        if (iconActive) iconActive.style.display = 'none';
+    }
+}
+
+function initCameraPanel() {
+    if (!camPanel) return;
+    let dragStart = { x: 0, y: 0, left: 0, top: 0 };
+    let resizeStart = { x: 0, y: 0, w: 0, h: 0 };
+    if (camClose) camClose.addEventListener('click', () => stopCamera());
+    if (camMinimize) camMinimize.addEventListener('click', () => {
+        camPanel.classList.toggle('minimized');
+    });
+    if (camPanelHeader) {
+        camPanelHeader.addEventListener('mousedown', (e) => {
+            if (e.target.closest('.cam-panel-btn, .cam-panel-vision-mode')) return;
+            e.preventDefault();
+            const r = camPanel.getBoundingClientRect();
+            dragStart = { x: e.clientX, y: e.clientY, left: r.left, top: r.top };
+            const onMove = (ev) => {
+                const dx = ev.clientX - dragStart.x;
+                const dy = ev.clientY - dragStart.y;
+                camPanel.style.left = (dragStart.left + dx) + 'px';
+                camPanel.style.top = (dragStart.top + dy) + 'px';
+                camPanel.style.right = 'auto';
+                camPanel.style.bottom = 'auto';
+            };
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+    if (camPanelResize) {
+        camPanelResize.addEventListener('mousedown', (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            const r = camPanel.getBoundingClientRect();
+            resizeStart = { x: e.clientX, y: e.clientY, w: r.width, h: r.height };
+            const onMove = (ev) => {
+                const dw = ev.clientX - resizeStart.x;
+                const dh = ev.clientY - resizeStart.y;
+                const nw = Math.max(200, Math.min(window.innerWidth, resizeStart.w + dw));
+                const nh = Math.max(150, Math.min(window.innerHeight * 0.7, resizeStart.h + dh));
+                camPanel.style.width = nw + 'px';
+                camPanel.style.height = nh + 'px';
+            };
+            const onUp = () => { document.removeEventListener('mousemove', onMove); document.removeEventListener('mouseup', onUp); };
+            document.addEventListener('mousemove', onMove);
+            document.addEventListener('mouseup', onUp);
+        });
+    }
+    camPanel.addEventListener('dblclick', (e) => {
+        if (e.target.closest('.cam-panel-header') && !e.target.closest('.cam-panel-btn, .cam-panel-vision-mode')) {
+            camPanel.classList.toggle('minimized');
+        }
+    });
+    camPanel.querySelector('.cam-panel-body')?.addEventListener('click', (e) => {
+        if (camPanel.classList.contains('minimized')) camPanel.classList.remove('minimized');
+    });
+}
+
+function handleActions(actions, contentEl) {
+    if (!actions) return;
+    if (!contentEl) return;
+    const safeOpen = url => {
+        if (url && (url.startsWith('http://') || url.startsWith('https://'))) {
+            try {
+                const w = window.open(url, '_blank', 'noopener');
+                if (!w) showToast('Pop-up blocked. Please allow pop-ups or copy the URL.');
+            } catch (_) {
+                showToast('Could not open link. Please try again.');
+            }
+        }
+    };
+    (actions.wopens || []).forEach(safeOpen);
+    (actions.plays || []).forEach(safeOpen);
+    (actions.googlesearches || []).forEach(safeOpen);
+    (actions.youtubesearches || []).forEach(safeOpen);
+    if (actions.images && actions.images.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg-actions-images';
+        actions.images.forEach(url => {
+            const img = document.createElement('img');
+            img.src = url;
+            img.alt = 'Generated image';
+            img.className = 'msg-action-image';
+            img.loading = 'lazy';
+            img.onerror = () => {
+                img.style.display = 'none';
+                const fallback = document.createElement('div');
+                fallback.className = 'msg-action-image-fallback';
+                fallback.textContent = 'Image failed to load.';
+                wrap.appendChild(fallback);
+            };
+            wrap.appendChild(img);
+        });
+        contentEl.appendChild(wrap);
+    }
+    if (actions.contents && actions.contents.length > 0) {
+        const wrap = document.createElement('div');
+        wrap.className = 'msg-actions-contents';
+        actions.contents.forEach(t => {
+            const p = document.createElement('div');
+            p.className = 'msg-action-content';
+            p.textContent = t;
+            wrap.appendChild(p);
+        });
+        contentEl.appendChild(wrap);
+    }
+    if (actions.cam) {
+        if (actions.cam.action === 'open') {
+            startCamera();
+        } else if (actions.cam.action === 'close') {
+            stopCamera();
+        } else if (actions.cam.action === 'open_and_capture') {
+            const resendMsg = actions.cam.resend_message || 'What do you see?';
+            (async () => {
+                try {
+                    await startCamera();
+                    await new Promise((resolve) => {
+                        if (!camVideo) { resolve(); return; }
+                        if (camVideo.readyState >= 2 && camVideo.videoWidth > 0) {
+                            setTimeout(resolve, 500);
+                            return;
+                        }
+                        const onReady = () => {
+                            camVideo.removeEventListener('loadeddata', onReady);
+                            clearTimeout(t);
+                            setTimeout(resolve, 600);
+                        };
+                        const t = setTimeout(() => {
+                            camVideo.removeEventListener('loadeddata', onReady);
+                            resolve();
+                        }, 4000);
+                        camVideo.addEventListener('loadeddata', onReady);
+                    });
+                    const frame = await captureFrameAsBase64Safe();
+                    if (frame) {
+                        sendMessageWithImage(resendMsg, frame);
+                    } else {
+                        showToast('Could not capture camera frame. Please try again.');
+                    }
+                } catch (err) {
+                    showToast('Camera access denied.');
+                }
+            })();
+        }
+    }
+}
+
+function handleBackgroundTasks(tasks, contentEl) {
+    if (!tasks || !tasks.length || !contentEl) return;
+    tasks.forEach(task => {
+        const card = document.createElement('div');
+        card.className = 'bg-task-card';
+        card.dataset.taskId = task.task_id;
+        const label = task.type === 'generate image' ? 'Image Generation' : task.type === 'content' ? 'Content Writing' : task.type;
+        const promptText = task.label ? `"${task.label}"` : '';
+        card.innerHTML =
+            '<div class="bg-task-header">' +
+                '<div class="bg-task-spinner"></div>' +
+                '<span class="bg-task-label">' + label + '</span>' +
+                '<span class="bg-task-status">Working...</span>' +
+            '</div>' +
+            (promptText ? '<div class="bg-task-prompt">' + promptText + '</div>' : '');
+        contentEl.appendChild(card);
+        scrollToBottom();
+        pollBackgroundTask(task.task_id, card);
+    });
+}
+
+function pollBackgroundTask(taskId, cardEl) {
+    let pollCount = 0;
+    const maxPolls = 120;
+    const interval = setInterval(() => {
+        pollCount++;
+        if (pollCount > maxPolls) {
+            clearInterval(interval);
+            updateTaskCard(cardEl, 'failed', 'Timed out');
+            return;
+        }
+        fetch(`${API}/tasks/${encodeURIComponent(taskId)}`)
+            .then(r => {
+                if (!r.ok) throw new Error(`HTTP ${r.status}`);
+                return r.json();
+            })
+            .then(data => {
+                if (data.status === 'completed') {
+                    clearInterval(interval);
+                    updateTaskCard(cardEl, 'completed', data);
+                } else if (data.status === 'failed') {
+                    clearInterval(interval);
+                    updateTaskCard(cardEl, 'failed', data.error || 'Task failed');
+                }
+            })
+            .catch(() => {  });
+    }, 1500);
+}
+
+function updateTaskCard(cardEl, status, data) {
+    if (!cardEl) return;
+    const spinner = cardEl.querySelector('.bg-task-spinner');
+    const statusEl = cardEl.querySelector('.bg-task-status');
+    if (status === 'completed') {
+        if (spinner) spinner.className = 'bg-task-done-icon';
+        if (statusEl) statusEl.textContent = 'Ready!';
+        cardEl.classList.add('bg-task-done');
+        const viewBtn = document.createElement('button');
+        viewBtn.className = 'bg-task-view-btn';
+        viewBtn.textContent = 'Open in new tab';
+        viewBtn.addEventListener('click', () => {
+            const taskId = cardEl.dataset.taskId;
+            window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
+        });
+        cardEl.appendChild(viewBtn);
+        try {
+            const taskId = cardEl.dataset.taskId;
+            const w = window.open(`${window.location.origin}/app/viewer.html?task_id=${taskId}`, '_blank');
+            if (!w) {
+                showToast('Result ready! Click "Open in new tab" to view.');
+            }
+        } catch (_) {  }
+    } else if (status === 'failed') {
+        if (spinner) spinner.className = 'bg-task-fail-icon';
+        if (statusEl) statusEl.textContent = typeof data === 'string' ? data : 'Failed';
+        cardEl.classList.add('bg-task-failed');
+    }
+    scrollToBottom();
+}
+
+function captureFrameAsBase64() {
+    if (!camVideo || !camStream || camVideo.readyState < 2) return null;
+    if (!camCanvas) return null;
+    const w = camVideo.videoWidth;
+    const h = camVideo.videoHeight;
+    if (!w || !h || w < 64 || h < 64) return null;
+    camCanvas.width = w;
+    camCanvas.height = h;
+    const ctx = camCanvas.getContext('2d');
+    if (!ctx) return null;
+    ctx.drawImage(camVideo, 0, 0, w, h);
+    try {
+        return camCanvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+    } catch (_) {
+        return null;
+    }
+}
+
+async function captureFrameAsBase64Safe() {
+    if (!camVideo || !camStream || !camCanvas) return null;
+    return new Promise((resolve) => {
+        const doCapture = () => {
+            const w = camVideo.videoWidth;
+            const h = camVideo.videoHeight;
+            if (!w || !h || w < 64 || h < 64) {
+                resolve(null);
+                return;
+            }
+            camCanvas.width = w;
+            camCanvas.height = h;
+            const ctx = camCanvas.getContext('2d');
+            if (!ctx) { resolve(null); return; }
+            ctx.drawImage(camVideo, 0, 0, w, h);
+            try {
+                const b64 = camCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                resolve(b64);
+            } catch (_) {
+                resolve(null);
+            }
+        };
+        if (camVideo.readyState < 2) {
+            const onReady = () => { camVideo.removeEventListener('loadeddata', onReady); doCapture(); };
+            camVideo.addEventListener('loadeddata', onReady);
+            setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); doCapture(); }, 3000);
+            return;
+        }
+        const w = camVideo.videoWidth;
+        const h = camVideo.videoHeight;
+        if (w && h && w >= 64 && h >= 64) {
+            if (typeof camVideo.requestVideoFrameCallback === 'function') {
+                camVideo.requestVideoFrameCallback(() => { doCapture(); });
+            } else {
+                setTimeout(doCapture, 150);
+            }
+        } else {
+            setTimeout(() => {
+                const w2 = camVideo.videoWidth || 0;
+                const h2 = camVideo.videoHeight || 0;
+                if (w2 && h2 && w2 >= 64 && h2 >= 64) doCapture();
+                else resolve(null);
+            }, 300);
+        }
+    });
+}
+
+async function sendMessageWithImage(text, imgBase64) {
+    if (!text || !imgBase64 || isStreaming) return;
+    const messageToSend = text + ' ' + CAM_BYPASS_TOKEN;
+    addMessage('user', text);
+    addTypingIndicator();
+    isStreaming = true;
+    if (sendBtn) sendBtn.disabled = true;
+    if (messageInput) messageInput.disabled = true;
+    if (orbContainer) orbContainer.classList.add('active');
+    if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
+    let timeoutId = null;
+    const controller = new AbortController();
+    try {
+        timeoutId = setTimeout(() => controller.abort(), 300000);
+        const res = await fetch(`${API}/chat/jarvis/stream`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: messageToSend,
+                session_id: sessionId,
+                tts: !!(ttsPlayer && ttsPlayer.enabled),
+                imgbase64: imgBase64,
+            }),
+            signal: controller.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        removeTypingIndicator();
+        const contentEl = addMessage('assistant', '');
+        contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
+        scrollToBottom();
+        if (!res.body) throw new Error('No response body');
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
+        let fullResponse = '';
+        let cursorEl = null;
+        let streamDone = false;
+        while (!streamDone) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            sseBuffer += decoder.decode(value, { stream: true });
+            const lines = sseBuffer.split('\n\n');
+            sseBuffer = lines.pop();
+            for (const line of lines) {
+                if (!line.startsWith('data: ')) continue;
+                try {
+                    const data = JSON.parse(line.slice(6));
+                    if (data.session_id) sessionId = data.session_id;
+                    if (data.activity) {
+                        appendActivity(data.activity);
+                        if (activityToggle) activityToggle.style.display = '';
+                        if (activityPanel && settings.autoOpenActivity) { activityPanel.classList.add('open'); updatePanelOverlay(); }
+                    }
+                    if (data.actions) handleActions(data.actions, contentEl);
+                    if (data.background_tasks) handleBackgroundTasks(data.background_tasks, contentEl);
+                    if ('chunk' in data) {
+                        const chunkText = data.chunk || '';
+                        fullResponse += chunkText;
+                        const textSpan = contentEl.querySelector('.msg-stream-text');
+                        if (textSpan) {
+                            textSpan.textContent = fullResponse;
+                            textSpan.classList.remove('stream-placeholder');
+                        }
+                        if (!cursorEl) {
+                            cursorEl = document.createElement('span');
+                            cursorEl.className = 'stream-cursor';
+                            cursorEl.textContent = '|';
+                            contentEl.appendChild(cursorEl);
+                        }
+                        scrollToBottom();
+                    }
+                    if (data.audio && ttsPlayer) ttsPlayer.enqueue(data.audio);
+                    if (data.error) throw new Error(data.error);
+                    if (data.done) { streamDone = true; break; }
+                } catch (parseErr) {
+                    if (parseErr.message && !parseErr.message.includes('JSON')) throw parseErr;
+                }
+            }
+            if (streamDone) break;
+        }
+        if (cursorEl) cursorEl.remove();
+        const textSpan = contentEl.querySelector('.msg-stream-text');
+        if (textSpan && !fullResponse) textSpan.textContent = '(No response)';
+    } catch (err) {
+        clearTimeout(timeoutId);
+        removeTypingIndicator();
+        addMessage('assistant', 'Something went wrong analyzing the image. Please try again.');
+    } finally {
+        clearTimeout(timeoutId);
+        isStreaming = false;
+        if (sendBtn) sendBtn.disabled = false;
+        if (messageInput) messageInput.disabled = false;
+        if (orbContainer) orbContainer.classList.remove('active');
+    }
+}
+
 async function checkHealth() {
     try {
         const controller = new AbortController();
@@ -896,17 +862,13 @@ async function checkHealth() {
     }
 }
 
-/**
- * showToast(msg, durationMs) — Brief feedback for errors/status.
- * Auto-dismisses after durationMs (default 5000).
- */
 function showToast(msg, durationMs = 5000) {
     if (!toastContainer || !msg) return;
     const el = document.createElement('div');
     el.className = 'toast';
     el.textContent = msg;
     toastContainer.appendChild(el);
-    el.offsetHeight;   // Force reflow for animation
+    el.offsetHeight;
     el.classList.add('toast-visible');
     const t = setTimeout(() => {
         el.classList.remove('toast-visible');
@@ -915,34 +877,21 @@ function showToast(msg, durationMs = 5000) {
     el.addEventListener('click', () => { clearTimeout(t); el.classList.remove('toast-visible'); setTimeout(() => el.remove(), 300); });
 }
 
-/* ================================================================
-   EVENT BINDING
-   ================================================================
-   All user-interaction event listeners are centralized here for
-   clarity. This function is called once during init().
-   ================================================================ */
-
-/**
- * bindEvents() — Wires up all click, keydown, and input event
- * listeners for the UI.
- */
 function bindEvents() {
-    // SEND BUTTON — Send the message when clicked (if not already streaming)
     if (sendBtn) sendBtn.addEventListener('click', () => { if (!isStreaming) sendMessage(); });
-
-    // ENTER KEY — Send on Enter (but allow Shift+Enter for new lines)
     if (messageInput) messageInput.addEventListener('keydown', e => {
         if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); if (!isStreaming) sendMessage(); }
     });
-
-    // INPUT CHANGE — Auto-resize the textarea and show character count for long messages
     if (messageInput) messageInput.addEventListener('input', () => {
         autoResizeInput();
         const len = messageInput.value.length;
         if (charCount) charCount.textContent = len > 100 ? `${len.toLocaleString()} / 32,000` : '';
     });
-
-    // MIC BUTTON — Toggle speech recognition. When ON: auto mode — listen, stop on send, restart after AI+TTS done.
+    if (camBtn) camBtn.addEventListener('click', () => {
+        if (camStream) stopCamera();
+        else startCamera();
+    });
+    initCameraPanel();
     if (micBtn) micBtn.addEventListener('click', () => {
         if (isListening) {
             autoListenMode = false;
@@ -950,7 +899,7 @@ function bindEvents() {
             if (micBtn) micBtn.classList.remove('auto-listen');
         } else {
             autoListenMode = true;
-            speechErrorRetryCount = 0;   // Reset retry count on fresh start
+            speechErrorRetryCount = 0;
             if (micBtn) {
                 micBtn.classList.add('auto-listen');
                 micBtn.title = 'Voice input — click to stop auto-listen';
@@ -958,29 +907,16 @@ function bindEvents() {
             startListening();
         }
     });
-
-    // TTS BUTTON — Toggle text-to-speech on/off
     if (ttsBtn) ttsBtn.addEventListener('click', () => {
         if (ttsPlayer) ttsPlayer.enabled = !ttsPlayer.enabled;
         ttsBtn.classList.toggle('tts-active', ttsPlayer && ttsPlayer.enabled);
         if (ttsPlayer && !ttsPlayer.enabled) ttsPlayer.stop();
     });
-
-    // NEW CHAT BUTTON — Reset the conversation
     if (newChatBtn) newChatBtn.addEventListener('click', newChat);
-
-    // MODE TOGGLE BUTTONS — Switch between Jarvis, General, and Realtime modes
-    if (btnJarvis)   btnJarvis.addEventListener('click',   () => setMode('jarvis'));
-    if (btnGeneral)  btnGeneral.addEventListener('click',   () => setMode('general'));
-    if (btnRealtime) btnRealtime.addEventListener('click',  () => setMode('realtime'));
-
-    // QUICK-ACTION CHIPS — Predefined messages on the welcome screen
-    // Each chip has a data-msg attribute containing the message to send
+    if (btnJarvis) btnJarvis.addEventListener('click', () => setMode('jarvis'));
     document.querySelectorAll('.chip').forEach(c => {
         c.addEventListener('click', () => { if (!isStreaming) sendMessage(c.dataset.msg); });
     });
-
-    // SEARCH RESULTS WIDGET — Toggle panel open/close from header button; close from panel button
     if (searchResultsToggle) {
         searchResultsToggle.addEventListener('click', () => {
             if (searchResultsWidget) { searchResultsWidget.classList.toggle('open'); updatePanelOverlay(); }
@@ -989,7 +925,6 @@ function bindEvents() {
     if (searchResultsClose && searchResultsWidget) {
         searchResultsClose.addEventListener('click', () => { searchResultsWidget.classList.remove('open'); updatePanelOverlay(); });
     }
-    // ACTIVITY PANEL — Toggle open/close from header button; close from panel button
     if (activityToggle) {
         activityToggle.addEventListener('click', () => {
             if (activityPanel) { activityPanel.classList.toggle('open'); updatePanelOverlay(); }
@@ -998,8 +933,6 @@ function bindEvents() {
     if (activityClose && activityPanel) {
         activityClose.addEventListener('click', () => { activityPanel.classList.remove('open'); updatePanelOverlay(); });
     }
-    // Panels close ONLY via their X button — overlay does not close on click
-    // SETTINGS
     if (settingsBtn && settingsPanel) {
         settingsBtn.addEventListener('click', () => {
             settingsPanel.classList.toggle('open');
@@ -1030,38 +963,19 @@ function bindEvents() {
             saveSettings();
         });
     }
+    if (toggleVoiceInterrupt) {
+        toggleVoiceInterrupt.addEventListener('change', () => {
+            settings.voiceInterrupt = toggleVoiceInterrupt.checked;
+            saveSettings();
+        });
+    }
 }
 
-/**
- * autoResizeInput() — Dynamically adjusts the textarea height to fit
- * its content, up to a maximum of 120px.
- *
- * How it works:
- *   1. Reset height to 'auto' so scrollHeight reflects actual content height.
- *   2. Set height to the smaller of scrollHeight or 120px.
- *   This creates a textarea that grows as the user types but doesn't
- *   take over the whole screen for very long messages.
- */
 function autoResizeInput() {
     messageInput.style.height = 'auto';
     messageInput.style.height = Math.min(messageInput.scrollHeight, 120) + 'px';
 }
 
-/* ================================================================
-   MODE SWITCH (General ↔ Realtime)
-   ================================================================
-   The app supports two AI modes, each hitting a different backend
-   endpoint:
-     - "General"  → /chat/stream         (standard LLM pipeline)
-     - "Realtime" → /chat/realtime/stream (realtime/low-latency pipeline)
-
-   The mode is purely a UI + routing concern — the frontend logic for
-   streaming and rendering is identical for both modes.
-   ================================================================ */
-
-/**
- * updatePanelOverlay() — Shows/hides the backdrop overlay when any side panel is open.
- */
 function updatePanelOverlay() {
     if (!panelOverlay) return;
     const anyOpen = (activityPanel && activityPanel.classList.contains('open')) ||
@@ -1070,48 +984,16 @@ function updatePanelOverlay() {
     panelOverlay.classList.toggle('visible', !!anyOpen);
 }
 
-/**
- * setMode(mode) — Switches the active mode and updates the UI.
- *
- * @param {string} mode - Either 'general' or 'realtime'.
- *
- * Updates:
- *   - currentMode variable (used when sending messages)
- *   - Button active states (highlights the selected button)
- *   - Slider position (slides the pill indicator left or right)
- */
 function setMode(mode) {
-    currentMode = mode;
-    if (btnJarvis)   btnJarvis.classList.toggle('active', mode === 'jarvis');
-    if (btnGeneral)  btnGeneral.classList.toggle('active', mode === 'general');
-    if (btnRealtime) btnRealtime.classList.toggle('active', mode === 'realtime');
-    if (modeSlider) {
-        modeSlider.classList.remove('center', 'right');
-        if (mode === 'general') modeSlider.classList.add('center');
-        else if (mode === 'realtime') modeSlider.classList.add('right');
-        /* jarvis: no class = left position */
-    }
-    // Activity toggle always visible — panel shows flow in all modes
+    currentMode = mode || 'jarvis';
+    if (btnJarvis) btnJarvis.classList.add('active');
+    if (modeSlider) modeSlider.classList.remove('center', 'right');
     if (activityToggle) activityToggle.style.display = '';
 }
 
-/* ================================================================
-   NEW CHAT
-   ================================================================ */
-
-/**
- * newChat() — Resets the entire conversation to a fresh state.
- *
- * Steps:
- *   1. Stop any playing TTS audio.
- *   2. Clear the session ID (server will create a new one on next message).
- *   3. Clear all messages from the chat container.
- *   4. Re-create and display the welcome screen.
- *   5. Clear the input field and reset its size.
- *   6. Update the greeting text (in case time-of-day changed).
- */
 function newChat() {
     if (ttsPlayer) ttsPlayer.stop();
+    if (camStream) stopCamera();
     sessionId = null;
     if (chatMessages) chatMessages.innerHTML = '';
     chatMessages.appendChild(createWelcome());
@@ -1129,28 +1011,12 @@ function newChat() {
     updatePanelOverlay();
 }
 
-/**
- * createWelcome() — Builds and returns the welcome screen DOM element.
- *
- * @returns {HTMLDivElement} The welcome screen element, ready to be
- *                           appended to the chat container.
- *
- * The welcome screen includes:
- *   - A decorative SVG icon
- *   - A time-based greeting (same logic as setGreeting)
- *   - A subtitle prompt ("How may I assist you today?")
- *   - Quick-action chip buttons with predefined messages
- *
- * The chip buttons get their own click listeners here because they
- * are dynamically created (not present in the original HTML).
- */
 function createWelcome() {
     const h = new Date().getHours();
     let g = 'Good evening.';
     if (h < 12) g = 'Good morning.';
     else if (h < 17) g = 'Good afternoon.';
     else if (h >= 22) g = 'Burning the midnight oil?';
-
     const div = document.createElement('div');
     div.className = 'welcome-screen';
     div.id = 'welcome-screen';
@@ -1166,37 +1032,18 @@ function createWelcome() {
             <button class="chip" data-msg="Tell me a fun fact">Fun fact</button>
             <button class="chip" data-msg="Play some music">Play music</button>
         </div>`;
-
-    // Attach click handlers to the dynamically created chip buttons
     div.querySelectorAll('.chip').forEach(c => {
         c.addEventListener('click', () => { if (!isStreaming) sendMessage(c.dataset.msg); });
     });
     return div;
 }
 
-/* ================================================================
-   MESSAGE RENDERING
-   ================================================================
-   These functions build the chat message DOM elements. Each message
-   consists of:
-     - An avatar circle ("J" for Jarvis, "U" for user)
-     - A body containing a label (name + mode) and the content text
-
-   The structure mirrors common chat UIs (Slack, Discord, ChatGPT).
-   ================================================================ */
-
-/**
- * isUrlLike(str) — True if the string looks like a URL or encoded path (not a readable title/snippet).
- */
 function isUrlLike(str) {
     if (!str || typeof str !== 'string') return false;
     const s = str.trim();
-    return s.length > 40 && (/^https?:\/\//i.test(s) || /\%2f|\%3a|\.com\/|\.org\//i.test(s));
+    return s.length > 40 && (/^https?:\/\//i.test(s));
 }
 
-/**
- * friendlyUrlLabel(url) — Short, readable label for a URL (domain + path hint) for display.
- */
 function friendlyUrlLabel(url) {
     if (!url || typeof url !== 'string') return 'View source';
     try {
@@ -1209,9 +1056,6 @@ function friendlyUrlLabel(url) {
     }
 }
 
-/**
- * truncateSnippet(text, maxLen) — Truncate to maxLen with ellipsis, one line for card content.
- */
 function truncateSnippet(text, maxLen) {
     if (!text || typeof text !== 'string') return '';
     const t = text.trim();
@@ -1219,11 +1063,6 @@ function truncateSnippet(text, maxLen) {
     return t.slice(0, maxLen).trim() + '…';
 }
 
-/**
- * renderSearchResults(payload) — Fills the right-side search results widget
- * with Tavily data (query, AI answer, and source cards). Filters junk, truncates
- * content, and shows friendly URL labels so layout stays clean and responsive.
- */
 function renderSearchResults(payload) {
     if (!payload) return;
     if (searchResultsQuery) searchResultsQuery.textContent = (payload.query || '').trim() || 'Search';
@@ -1257,10 +1096,6 @@ function renderSearchResults(payload) {
     }
 }
 
-/**
- * safeUrlForHref(url) — Returns URL only if it's http/https; otherwise empty.
- * Prevents XSS via javascript:, data:, or other dangerous protocols.
- */
 function safeUrlForHref(url) {
     if (!url || typeof url !== 'string') return '';
     const u = url.trim();
@@ -1268,10 +1103,6 @@ function safeUrlForHref(url) {
     return '';
 }
 
-/**
- * escapeAttr(str) — Escape for HTML attribute (e.g. href, title).
- * Order matters: & first, then ", <, >.
- */
 function escapeAttr(str) {
     if (typeof str !== 'string') return '';
     return String(str)
@@ -1281,51 +1112,89 @@ function escapeAttr(str) {
         .replace(/>/g, '&gt;');
 }
 
-/** Step labels for activity events (left panel). */
 const ACTIVITY_STEPS = {
     query_detected:      { step: 1, label: 'Query detected' },
-    decision:            { step: 2, label: 'Brain decision' },
-    routing:             { step: 3, label: 'Route selected' },
-    streaming_started:   { step: 4, label: 'Streaming response' },
+    decision:            { step: 2, label: 'Primary Brain' },
+    intent_classified:   { step: 3, label: 'Task Brain' },
+    routing:             { step: 4, label: 'Route selected' },
+    tasks_executing:     { step: 0, label: 'Executing tasks' },
+    tasks_completed:     { step: 0, label: 'Tasks completed' },
+    actions_emitted:     { step: 0, label: 'Actions sent' },
+    vision_analyzing:    { step: 0, label: 'Analyzing image' },
+    streaming_started:   { step: 5, label: 'Streaming response' },
     extracting_query:    { step: 0, label: 'Extracting query' },
     searching_web:       { step: 0, label: 'Searching web' },
     search_completed:    { step: 0, label: 'Search completed' },
     context_retrieved:   { step: 0, label: 'Context retrieved' },
-    first_chunk:         { step: 5, label: 'Core responded' },
+    background_dispatched: { step: 0, label: 'Background tasks' },
+    waiting_for_model:   { step: 0, label: 'Waiting for model' },
+    first_chunk:         { step: 6, label: 'Core responded' },
 };
 
-/**
- * appendActivity(activity) — Appends an activity event to the left panel.
- * Structured with step numbers, icons, and clear hierarchy.
- */
 function appendActivity(activity) {
     if (!activityList || !activity) return;
+    if (activity.event === 'waiting_for_model') {
+        const existing = activityList.querySelector('[data-event="waiting_for_model"]');
+        if (existing) {
+            const detailEl = existing.querySelector('.activity-detail');
+            const ms = activity.elapsed_ms;
+            const elapsed = ms != null ? ` (${ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'})` : '';
+            if (detailEl) detailEl.textContent = (activity.message || 'Waiting for model response...') + elapsed;
+            activityList.scrollTop = activityList.scrollHeight;
+            return;
+        }
+    }
     const item = document.createElement('div');
     item.className = 'activity-item';
     item.setAttribute('data-event', activity.event || '');
     const stepInfo = ACTIVITY_STEPS[activity.event] || { step: 0, label: activity.event || 'Activity', icon: 'dot' };
     let detail = '';
+    const addRouteClass = (route) => {
+        if (route === 'general') item.classList.add('route-general');
+        else if (route === 'realtime') item.classList.add('route-realtime');
+        else if (route === 'vision' || route === 'camera') item.classList.add('route-vision');
+        else if (route === 'task') item.classList.add('route-task');
+        else if (route === 'mixed') item.classList.add('route-task');
+        else if (route === 'chat') item.classList.add('route-chat');
+    };
     if (activity.event === 'query_detected') {
         detail = activity.message || '';
     } else if (activity.event === 'decision') {
         const ms = activity.elapsed_ms;
-        const timing = ms != null ? ` (Cortex: ${ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s'})` : '';
-        detail = `${(activity.query_type || '?').charAt(0).toUpperCase() + (activity.query_type || '').slice(1)} — ${activity.reasoning || ''}${timing}`;
-        if (activity.query_type === 'general') item.classList.add('route-general');
-        if (activity.query_type === 'realtime') item.classList.add('route-realtime');
+        const timing = ms != null ? ` (${ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s'})` : '';
+        const cat = (activity.query_type || '?').charAt(0).toUpperCase() + (activity.query_type || '').slice(1);
+        detail = `${cat} — ${activity.reasoning || ''}${timing}`;
+        addRouteClass(activity.query_type);
+    } else if (activity.event === 'intent_classified') {
+        detail = (activity.intent || '?').charAt(0).toUpperCase() + (activity.intent || '').slice(1);
+        item.classList.add('activity-sub', 'route-task');
     } else if (activity.event === 'routing') {
         detail = `→ ${(activity.route || '?').charAt(0).toUpperCase() + (activity.route || '').slice(1)}`;
-        if (activity.route === 'general') item.classList.add('route-general');
-        if (activity.route === 'realtime') item.classList.add('route-realtime');
+        addRouteClass(activity.route);
+    } else if (activity.event === 'tasks_executing') {
+        detail = activity.message || 'Running tasks...';
+        item.classList.add('activity-sub', 'route-task');
+    } else if (activity.event === 'tasks_completed') {
+        detail = activity.message || 'Completed';
+        item.classList.add('activity-sub', 'route-task');
+    } else if (activity.event === 'actions_emitted') {
+        detail = activity.message || 'Actions sent';
+        item.classList.add('activity-sub');
+    } else if (activity.event === 'vision_analyzing') {
+        detail = activity.message || 'Analyzing image...';
+        item.classList.add('activity-sub', 'route-vision');
     } else if (activity.event === 'streaming_started') {
         detail = `Generating via ${(activity.route || '?').charAt(0).toUpperCase() + (activity.route || '').slice(1)}`;
-        if (activity.route === 'general') item.classList.add('route-general');
-        if (activity.route === 'realtime') item.classList.add('route-realtime');
+        addRouteClass(activity.route);
+    } else if (activity.event === 'waiting_for_model') {
+        const ms = activity.elapsed_ms;
+        const elapsed = ms != null ? ` (${ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(1) + ' s'})` : '';
+        detail = (activity.message || 'Waiting for model response...') + elapsed;
+        item.classList.add('activity-sub');
     } else if (activity.event === 'first_chunk') {
         const ms = activity.elapsed_ms;
         detail = ms != null ? `Core responded in ${ms < 1000 ? ms + ' ms' : (ms / 1000).toFixed(2) + ' s'}` : 'Response started';
-        if (activity.route === 'general') item.classList.add('route-general');
-        if (activity.route === 'realtime') item.classList.add('route-realtime');
+        addRouteClass(activity.route);
     } else if (activity.event === 'extracting_query') {
         detail = activity.message || 'Parsing your question for search...';
         item.classList.add('activity-sub');
@@ -1351,9 +1220,6 @@ function appendActivity(activity) {
     activityList.scrollTop = activityList.scrollHeight;
 }
 
-/**
- * escapeHtml(str) — Escapes & < > " ' for safe insertion into HTML.
- */
 function escapeHtml(str) {
     if (typeof str !== 'string') return '';
     const div = document.createElement('div');
@@ -1361,37 +1227,11 @@ function escapeHtml(str) {
     return div.innerHTML;
 }
 
-/**
- * hideWelcome() — Removes the welcome screen from the DOM.
- *
- * Called before adding the first message, since the welcome screen
- * should disappear once a conversation begins.
- */
 function hideWelcome() {
     const w = document.getElementById('welcome-screen');
     if (w) w.remove();
 }
 
-/**
- * addMessage(role, text) — Creates and appends a chat message bubble.
- *
- * @param {string} role - Either 'user' or 'assistant'. Determines
- *                         styling, avatar letter, and label text.
- * @param {string} text - The message content to display.
- * @returns {HTMLDivElement} The inner content element — returned so
- *                           the caller (sendMessage) can update it
- *                           later during streaming.
- *
- * DOM structure created:
- *   <div class="message user|assistant">
- *     <div class="msg-avatar"><svg>...</svg></div>
- *     <div class="msg-body">
- *       <div class="msg-label">Jarvis (General) | You</div>
- *       <div class="msg-content">...text...</div>
- *     </div>
- *   </div>
- */
-/* Inline SVG icons for chat avatars (user = person, assistant = bot). */
 const AVATAR_ICON_USER = '<svg class="msg-avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
 const AVATAR_ICON_ASSISTANT = '<svg class="msg-avatar-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="10" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><circle cx="9" cy="16" r="1" fill="currentColor"/><circle cx="15" cy="16" r="1" fill="currentColor"/></svg>';
 
@@ -1399,65 +1239,19 @@ function addMessage(role, text) {
     hideWelcome();
     const msg = document.createElement('div');
     msg.className = `message ${role}`;
-
     const avatar = document.createElement('div');
     avatar.className = 'msg-avatar';
     avatar.innerHTML = role === 'assistant' ? AVATAR_ICON_ASSISTANT : AVATAR_ICON_USER;
-
     const body = document.createElement('div');
     body.className = 'msg-body';
-
     const label = document.createElement('div');
     label.className = 'msg-label';
     label.textContent = role === 'assistant'
         ? `Jarvis  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`
         : 'You';
-
     const content = document.createElement('div');
     content.className = 'msg-content';
     content.textContent = text;
-
-    body.appendChild(label);
-    body.appendChild(content);
-    msg.appendChild(avatar);
-    msg.appendChild(body);
-    chatMessages.appendChild(msg);
-    scrollToBottom();
-    return content;  // Returned so the streaming logic can update it in real time
-}
-
-/**
- * addTypingIndicator() — Shows an animated "..." typing indicator
- * while waiting for the assistant's response to begin streaming.
- *
- * @returns {HTMLDivElement} The content element (containing the dots).
- *
- * This creates a message bubble that looks like the assistant is
- * typing. It's removed once actual content starts arriving.
- * The three <span> elements inside .typing-dots are animated via CSS
- * to create the bouncing dots effect.
- */
-function addTypingIndicator() {
-    hideWelcome();
-    const msg = document.createElement('div');
-    msg.className = 'message assistant';
-    msg.id = 'typing-msg';               // ID so we can find and remove it later
-
-    const avatar = document.createElement('div');
-    avatar.className = 'msg-avatar';
-    avatar.innerHTML = AVATAR_ICON_ASSISTANT;
-
-    const body = document.createElement('div');
-    body.className = 'msg-body';
-
-    const label = document.createElement('div');
-    label.className = 'msg-label';
-    label.textContent = `Jarvis  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
-
-    const content = document.createElement('div');
-    content.className = 'msg-content';
-    content.innerHTML = '<span class="msg-stream-text">...</span>';
-
     body.appendChild(label);
     body.appendChild(content);
     msg.appendChild(avatar);
@@ -1467,223 +1261,159 @@ function addTypingIndicator() {
     return content;
 }
 
-/**
- * removeTypingIndicator() — Removes the typing indicator from the DOM.
- *
- * Called when:
- *   - The first token of the response arrives (replaced by real content).
- *   - An error occurs (replaced by an error message).
- */
+function addTypingIndicator() {
+    hideWelcome();
+    const msg = document.createElement('div');
+    msg.className = 'message assistant';
+    msg.id = 'typing-msg';
+    const avatar = document.createElement('div');
+    avatar.className = 'msg-avatar';
+    avatar.innerHTML = AVATAR_ICON_ASSISTANT;
+    const body = document.createElement('div');
+    body.className = 'msg-body';
+    const label = document.createElement('div');
+    label.className = 'msg-label';
+    label.textContent = `Jarvis  (${currentMode === 'jarvis' ? 'Jarvis' : currentMode === 'realtime' ? 'Realtime' : 'General'})`;
+    const content = document.createElement('div');
+    content.className = 'msg-content';
+    content.innerHTML = '<span class="msg-stream-text">...</span>';
+    body.appendChild(label);
+    body.appendChild(content);
+    msg.appendChild(avatar);
+    msg.appendChild(body);
+    chatMessages.appendChild(msg);
+    scrollToBottom();
+    return content;
+}
+
 function removeTypingIndicator() {
     const t = document.getElementById('typing-msg');
     if (t) t.remove();
 }
 
-/**
- * scrollToBottom() — Scrolls the chat container to show the latest message.
- *
- * Uses requestAnimationFrame so the scroll runs after the browser has
- * laid out newly added content (typing indicator, "Thinking...", or
- * streamed chunks). Without this, scroll can happen before layout and
- * the user would have to scroll manually to see new content.
- */
 function scrollToBottom() {
     requestAnimationFrame(() => {
         chatMessages.scrollTop = chatMessages.scrollHeight;
     });
 }
 
-/* ================================================================
-   SEND MESSAGE + SSE STREAMING
-   ================================================================
-
-   HOW SSE (Server-Sent Events) STREAMING WORKS — EXPLAINED FOR LEARNERS
-   ----------------------------------------------------------------------
-   Instead of waiting for the entire AI response to generate (which
-   could take seconds), we use SSE streaming to receive the response
-   token-by-token as it's generated. This creates the "typing" effect.
-
-   STANDARD SSE FORMAT:
-   The server sends a stream of lines like:
-     data: {"chunk": "Hello"}
-     data: {"chunk": " there"}
-     data: {"chunk": "!"}
-     data: {"done": true}
-
-   Each line starts with "data: " followed by a JSON payload. Lines
-   are separated by newlines ("\n"). An empty line separates events.
-
-   HOW WE READ THE STREAM:
-   1. We POST the user's message to the backend.
-   2. The server responds with Content-Type: text/event-stream.
-   3. We use res.body.getReader() to read the response body as a
-      stream of raw bytes (Uint8Array chunks).
-   4. We decode each chunk to text and append it to an SSE buffer.
-   5. We split the buffer by newlines and process each complete line.
-   6. Lines starting with "data: " are parsed as JSON.
-   7. Each JSON payload may contain:
-      - chunk: a piece of the text response (appended to the UI)
-      - audio: a base64 MP3 segment (enqueued for TTS playback)
-      - session_id: the conversation ID (saved for future messages)
-      - error: an error message from the server
-      - done: true when the response is complete
-
-   WHY NOT USE EventSource?
-   The native EventSource API only supports GET requests. We need POST
-   (to send the message body), so we use fetch() + manual SSE parsing.
-
-   THE SSE BUFFER:
-   Network chunks don't align with SSE line boundaries — one chunk
-   might contain half a line, or multiple lines. The sseBuffer variable
-   accumulates raw text. We split by '\n', process all complete lines,
-   and keep the last (potentially incomplete) line in the buffer for
-   the next iteration.
-
-   ================================================================ */
-
-/**
- * sendMessage(textOverride) — Sends a user message and streams the AI response.
- *
- * AUDIO WORKFLOW (minimizes waiting):
- *   1. Pre-starter: Play random cached audio on dedicated PreStarterPlayer (immune to reset).
- *   2. Main: Stream from chatbot; when first real chunk arrives, reset() and main TTS plays.
- */
 async function sendMessage(textOverride) {
-    // Step 1: Get the message text, trimming whitespace
-    const text = (textOverride || messageInput.value).trim();
-    if (!text || isStreaming) return;  // Ignore empty messages or if already streaming
-
-    // Step 2: Clear the input field immediately (responsive UX)
+    let text = (textOverride || messageInput.value).trim();
+    const visionModeOn = camVisionModeInput && camVisionModeInput.checked;
+    const wantsCamera = visionModeOn || isCameraQuery(text) || (camStream && text);
+    if (wantsCamera && !text) text = 'What do you see?';
+    if (!text || isStreaming) return;
+    if (isListening) {
+        pendingSendTranscript = null;
+        clearTimeout(speechSendTimeout);
+        speechSendTimeout = null;
+        stopListening();
+    }
+    if ((isCameraQuery(text) || visionModeOn) && !camStream) {
+        try {
+            await startCamera();
+            await new Promise((resolve) => {
+                if (!camVideo) { resolve(); return; }
+                if (camVideo.readyState >= 2 && camVideo.videoWidth > 0) { resolve(); return; }
+                const onReady = () => { camVideo.removeEventListener('loadeddata', onReady); clearTimeout(t); resolve(); };
+                const t = setTimeout(() => { camVideo.removeEventListener('loadeddata', onReady); resolve(); }, 3000);
+                camVideo.addEventListener('loadeddata', onReady);
+            });
+        } catch (_) {
+        }
+    }
+    let imgBase64 = null;
+    if (camStream && wantsCamera) {
+        imgBase64 = await captureFrameAsBase64Safe();
+        if (!imgBase64) showToast('Camera frame not ready. Please try again.');
+    }
     messageInput.value = '';
     autoResizeInput();
     charCount.textContent = '';
-
-    // Step 3: Display the user's message and show typing indicator
     addMessage('user', text);
     addTypingIndicator();
-
-    // Step 4: Lock the UI to prevent double-sending
     isStreaming = true;
     if (sendBtn) sendBtn.disabled = true;
     if (messageInput) messageInput.disabled = true;
     if (orbContainer) orbContainer.classList.add('active');
-
-    // Step 5: Reset TTS for this new response and unlock audio (iOS)
     if (ttsPlayer) { ttsPlayer.reset(); ttsPlayer.unlock(); }
-
-    // Step 6: Choose the endpoint based on the current mode
-    const endpoint = currentMode === 'jarvis'
-        ? '/chat/jarvis/stream'
-        : currentMode === 'realtime'
-            ? '/chat/realtime/stream'
-            : '/chat/stream';
-
-    // Clear activity panel (query_detected only — no duplicate user message)
+    const messageToSend = imgBase64 ? (text + ' ' + CAM_BYPASS_TOKEN) : text;
+    const endpoint = '/chat/jarvis/stream';
     if (activityList) {
         activityList.innerHTML = '<div class="activity-empty" id="activity-empty">Processing...</div>';
         if (activityToggle) activityToggle.style.display = '';
         if (activityPanel && settings.autoOpenActivity) { activityPanel.classList.add('open'); updatePanelOverlay(); }
     }
-
     let firstChunkReceived = false;
     let timeoutId = null;
     const controller = new AbortController();
-
     try {
-        // ─── Pre-starter + Main stream ───
-        // 1. Pre-starter: play immediately on dedicated audio element (immune to ttsPlayer.reset)
         if (ttsPlayer?.enabled && settings.thinkingSounds && preStarterPlayer) {
             preStarterPlayer.play(() => {});
         }
-        // 2. Main: stream from chatbot (general or realtime)
         timeoutId = setTimeout(() => controller.abort(), 300000);
         const res = await fetch(`${API}${endpoint}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                message: text,                                 // The user's message
-                session_id: sessionId,                         // null on first message; UUID after that
-                tts: !!(ttsPlayer && ttsPlayer.enabled)        // Tell the backend whether to generate audio
+                message: messageToSend,
+                session_id: sessionId,
+                tts: !!(ttsPlayer && ttsPlayer.enabled),
+                imgbase64: imgBase64 || null
             }),
             signal: controller.signal,
         });
-
-        // Handle HTTP errors (4xx, 5xx)
         if (!res.ok) {
-            const err = await res.json().catch(() => null);
-            throw new Error(err?.detail || `HTTP ${res.status}`);
+            let errMsg = `HTTP ${res.status}`;
+            try {
+                const err = await res.json();
+                errMsg = err.detail || (Array.isArray(err.detail) ? err.detail.map(d => d.msg || d.loc?.join('.')).join('; ') : err.message) || errMsg;
+            } catch (_) {}
+            throw new Error(errMsg);
         }
-
-        // Step 8: Replace the typing indicator with an empty assistant message
         removeTypingIndicator();
         const contentEl = addMessage('assistant', '');
         contentEl.innerHTML = '<span class="msg-stream-text">...</span>';
-        scrollToBottom();   // Scroll so placeholder is visible without manual scroll
-
-        // Set up the stream reader and SSE parser
+        scrollToBottom();
         if (!res.body) throw new Error('No response body');
-        const reader = res.body.getReader();       // ReadableStream reader for the response body
-        const decoder = new TextDecoder();          // Converts raw bytes (Uint8Array) to strings
-        let sseBuffer = '';                         // Accumulates partial SSE lines between chunks
-        let fullResponse = '';                      // The complete assistant response text so far
-        let cursorEl = null;                        // The blinking "|" cursor shown during streaming
-
-        // Step 9: Read the stream in a loop until it's done
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let sseBuffer = '';
+        let fullResponse = '';
+        let cursorEl = null;
         let streamDone = false;
         while (!streamDone) {
             const { done, value } = await reader.read();
-            if (done) break;  // Stream has ended
-
-            // Decode the bytes and add to our SSE buffer
+            if (done) break;
             sseBuffer += decoder.decode(value, { stream: true });
-
-            // Split by newlines to get individual SSE lines
-            const lines = sseBuffer.split('\n');
-
-            // The last element might be an incomplete line — keep it in the buffer
+            const lines = sseBuffer.split('\n\n');
             sseBuffer = lines.pop();
-
-            // Process each complete line
             for (const line of lines) {
-                // SSE lines that don't start with "data: " are empty lines or comments — skip them
                 if (!line.startsWith('data: ')) continue;
                 try {
-                    // Parse the JSON payload (everything after "data: ")
                     const data = JSON.parse(line.slice(6));
-
-                    // Save the session ID if the server sends one
                     if (data.session_id) sessionId = data.session_id;
-
-                    // ACTIVITY — Jarvis flow (query detected, decision, routing): show in left panel
                     if (data.activity) {
                         appendActivity(data.activity);
                         if (activityToggle) activityToggle.style.display = '';
                         if (activityPanel && settings.autoOpenActivity) { activityPanel.classList.add('open'); updatePanelOverlay(); }
-                        
-                        // Close search panel if route is General (not realtime)
-                        if (data.activity.event === 'routing' && data.activity.route === 'general') {
-                            if (searchResultsWidget) {
-                                searchResultsWidget.classList.remove('open');
-                                updatePanelOverlay();
-                            }
-                        }
                     }
-
-                    // SEARCH RESULTS — Tavily data (realtime only): show in right-side widget and reveal toggle
                     if (data.search_results) {
                         renderSearchResults(data.search_results);
                         if (searchResultsToggle) searchResultsToggle.style.display = '';
                         if (searchResultsWidget && settings.autoOpenSearchResults) { searchResultsWidget.classList.add('open'); updatePanelOverlay(); }
                     }
-
-                    // TEXT CHUNK — Append to the displayed response (chunk can be "" in some streams)
+                    if (data.actions) {
+                        handleActions(data.actions, contentEl);
+                    }
+                    if (data.background_tasks) {
+                        handleBackgroundTasks(data.background_tasks, contentEl);
+                    }
                     if ('chunk' in data) {
                         const chunkText = data.chunk || '';
-                        // Only treat as "main started" when we get actual content — the initial event
-                        // has chunk: "" for session_id; that would wrongly reset
                         if (chunkText && !firstChunkReceived) {
                             firstChunkReceived = true;
-                            if (ttsPlayer) ttsPlayer.reset();   // Stop pre-starter, play main immediately
+                            if (ttsPlayer) ttsPlayer.reset();
                         }
                         fullResponse += chunkText;
                         const textSpan = contentEl.querySelector('.msg-stream-text');
@@ -1691,8 +1421,6 @@ async function sendMessage(textOverride) {
                             textSpan.textContent = fullResponse;
                             textSpan.classList.remove('stream-placeholder');
                         }
-
-                        // Add a blinking cursor at the end (created once, on the first chunk)
                         if (!cursorEl) {
                             cursorEl = document.createElement('span');
                             cursorEl.className = 'stream-cursor';
@@ -1701,54 +1429,44 @@ async function sendMessage(textOverride) {
                         }
                         scrollToBottom();
                     }
-
-                    // AUDIO CHUNK — Enqueue for TTS playback
                     if (data.audio && ttsPlayer) {
                         ttsPlayer.enqueue(data.audio);
                     }
-
-                    // ERROR — The server reported an error in the stream
                     if (data.error) throw new Error(data.error);
-
-                    // DONE — The server signals that the response is complete
                     if (data.done) { streamDone = true; break; }
                 } catch (parseErr) {
-                    // Ignore JSON parse errors (e.g., partial lines) but re-throw real errors
                     if (parseErr.message && !parseErr.message.includes('JSON'))
                         throw parseErr;
                 }
             }
             if (streamDone) break;
         }
-
-        // Step 10: Clean up — remove the blinking cursor
         if (cursorEl) cursorEl.remove();
-
-        // If the server sent nothing, show a placeholder
         const textSpan = contentEl.querySelector('.msg-stream-text');
         if (textSpan && !fullResponse) textSpan.textContent = '(No response)';
-
     } catch (err) {
         clearTimeout(timeoutId);
         removeTypingIndicator();
-        const msg = err.name === 'AbortError' ? 'Request timed out. Please try again.' : `Something went wrong: ${err.message}`;
+        let msg = 'Something went wrong. Please try again.';
+        if (err.name === 'AbortError') {
+            msg = 'Request timed out. Please try again.';
+        } else if (err.message && err.message.includes('503')) {
+            msg = 'Service temporarily unavailable. Please try again in a moment.';
+        } else if (err.message && err.message.includes('429')) {
+            msg = 'Rate limit reached. Please wait a moment before trying again.';
+        } else if (err.message && err.message.length > 0) {
+            msg = err.message.length > 100 ? err.message.slice(0, 97) + '...' : err.message;
+        }
         addMessage('assistant', msg);
-        showToast(msg);
+        showToast(msg, 6000);
     } finally {
         clearTimeout(timeoutId);
         isStreaming = false;
         if (sendBtn) sendBtn.disabled = false;
         if (messageInput) messageInput.disabled = false;
         if (orbContainer) orbContainer.classList.remove('active');
-        maybeRestartListening();   // Auto-restart mic when stream ends (TTS may still be playing)
+        maybeRestartListening();
     }
 }
 
-/* ================================================================
-   BOOT — Application Entry Point
-   ================================================================
-   DOMContentLoaded fires when the HTML document has been fully parsed
-   (but before images/stylesheets finish loading). This is the ideal
-   time to initialize our app because all DOM elements are available.
-   ================================================================ */
 document.addEventListener('DOMContentLoaded', init);

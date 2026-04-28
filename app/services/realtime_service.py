@@ -3,63 +3,75 @@ from tavily import TavilyClient
 import logging
 import os
 import time
-
 from app.services.groq_service import GroqService, escape_curly_braces, AllGroqApisFailedError
+from app.services.nvidia_client import NvidiaClient
 from app.services.vector_store import VectorStoreService
 from app.utils.retry import with_retry
-from config import REALTIME_CHAT_ADDENDUM, GROQ_API_KEYS, GROQ_MODEL
+from config import REALTIME_CHAT_ADDENDUM, GROQ_API_KEYS, NVIDIA_BASE_URL, NVIDIA_FAST_MODEL
 
 logger = logging.getLogger("J.A.R.V.I.S")
-
 GROQ_REQUEST_TIMEOUT_FAST = 15
 
 _QUERY_EXTRACTION_PROMPT = (
-    "You are a search query optimizer. Given the user's message and recent conversation, "
-    "produce a single short, focused web search query (max 12 words) that will find the "
-    "information the user needs. Resolve any references (like 'that website', 'him', 'it') "
-    "using the conversation history. Output ONLY the search query, nothing else."
+    "You are a search query optimizer. Convert the user's message into a clean, focused "
+    "web search query (max 10 words). Rules:\n"
+    "- Remove filler words (you know, like, something, can you, tell me, search)\n"
+    "- Add specifics: dates (today, 2026), event names, full names\n"
+    "- For sports: include league name, team names, 'live score today'\n"
+    "- For people: include full name + what user wants to know\n"
+    "- Resolve references (him, that, it) from conversation history\n"
+    "Output ONLY the search query. Nothing else."
 )
 
 class RealtimeGroqService(GroqService):
+
     def __init__(self, vector_store_service: VectorStoreService):
         super().__init__(vector_store_service)
 
         tavily_api_key = os.getenv("TAVILY_API_KEY", "")
+
         if tavily_api_key:
             self.tavily_client = TavilyClient(api_key=tavily_api_key)
             logger.info("Tavily search client initialized successfully")
+
         else:
             self.tavily_client = None
             logger.warning("TAVILY_API_KEY not set. Realtime search will be unavailable.")
 
-        if GROQ_API_KEYS:
-            from langchain_groq import ChatGroq
-            self._fast_llm = ChatGroq(
-                groq_api_key=GROQ_API_KEYS[0],
-                model_name=GROQ_MODEL,
-                temperature=0.0,
-                request_timeout=GROQ_REQUEST_TIMEOUT_FAST,
-                max_tokens=50,
-            )
-        else:
-            self._fast_llm = None
+        self._fast_llm = (
+            NvidiaClient(GROQ_API_KEYS[0], NVIDIA_BASE_URL, timeout=GROQ_REQUEST_TIMEOUT_FAST)
+            if GROQ_API_KEYS
+            else None
+        )
 
     def _extract_search_query(
         self, question: str, chat_history: Optional[List[tuple]] = None
     ) -> str:
+
         if not self._fast_llm:
             return question
 
         q = question.strip()
-        if len(q) <= 60 and not any(p in q.lower() for p in (" it ", " that ", " him ", " her ", " them ")):
+        q_lower = q.lower()
+
+        has_filler = any(p in q_lower for p in (
+            " it ", " that ", " him ", " her ", " them ", " you know ",
+            " something ", " like ", " going on ", " can you ", " tell me ",
+            " search ", " right now", " please",
+        ))
+
+        if len(q) <= 30 and not has_filler:
             return q
 
         try:
             t0 = time.perf_counter()
+
             history_context = ""
+
             if chat_history:
                 recent = chat_history[-3:]
                 parts = []
+
                 for h, a in recent:
                     parts.append(f"User: {h[:200]}")
                     parts.append(f"Assistant: {a[:200]}")
@@ -72,6 +84,7 @@ class RealtimeGroqService(GroqService):
                     f"User's latest message: {question}\n\n"
                     f"Search query:"
                 )
+
             else:
                 full_prompt = (
                     f"{_QUERY_EXTRACTION_PROMPT}\n\n"
@@ -79,8 +92,12 @@ class RealtimeGroqService(GroqService):
                     f"Search query:"
                 )
 
-            response = self._fast_llm.invoke(full_prompt)
-            extracted = response.content.strip().strip('"').strip("'")
+            extracted = self._fast_llm.chat(
+                model=NVIDIA_FAST_MODEL,
+                messages=[{"role": "user", "content": full_prompt}],
+                temperature=0.0,
+                max_tokens=50,
+            ).strip().strip('"').strip("'")
 
             if extracted and 3 <= len(extracted) <= 200:
                 logger.info(
@@ -96,16 +113,17 @@ class RealtimeGroqService(GroqService):
             logger.warning("[REALTIME] Query extraction failed (%s), using raw question", e)
             return question
 
-    def search_tavily(self, query: str, num_results: int = 7) -> Tuple[str, Optional[dict]]:
+    def search_tavily(self, query: str, num_results: int = 5) -> str:
+
         if not self.tavily_client:
             logger.warning("Tavily client not initialized. TAVILY_API_KEY not set.")
             return ("", None)
+
         if not query or not str(query).strip():
             return ("", None)
 
         try:
             t0 = time.perf_counter()
-
             response = with_retry(
                 lambda: self.tavily_client.search(
                     query=query,
@@ -131,7 +149,7 @@ class RealtimeGroqService(GroqService):
                 "results": [
                     {
                         "title": r.get("title", "No title"),
-                        "content": (r.get("content") or "")[:500],
+                        "content": (r.get("content") or "")[:300],
                         "url": r.get("url", ""),
                         "score": round(float(r.get("score", 0)), 2),
                     }
@@ -139,11 +157,14 @@ class RealtimeGroqService(GroqService):
                 ],
             }
 
-            parts = [f"--- WEB SEARCH RESULTS FOR: {query} ---\n"]
+            parts = [f"=== WEB SEARCH RESULTS FOR: {query} ===\n"]
+
             if ai_answer:
                 parts.append(f"AI-SYNTHESIZED ANSWER (use this as your primary source):\n{ai_answer}\n")
+
             if results:
                 parts.append("INDIVIDUAL SOURCES:")
+
                 for i, result in enumerate(results[:num_results], 1):
                     title = result.get("title", "No title")
                     content = result.get("content", "")
@@ -151,10 +172,13 @@ class RealtimeGroqService(GroqService):
                     score = result.get("score", 0)
                     parts.append(f"\n[Source {i}] (relevance: {score:.2f})")
                     parts.append(f"Title: {title}")
+
                     if content:
                         parts.append(f"Content: {content}")
+
                     if url:
                         parts.append(f"URL: {url}")
+
             parts.append("\n=== END SEARCH RESULTS ===")
             formatted = "\n".join(parts)
 
@@ -163,7 +187,6 @@ class RealtimeGroqService(GroqService):
                 len(results), "yes" if ai_answer else "no",
                 len(formatted), time.perf_counter() - t0,
             )
-
             return (formatted, payload)
 
         except Exception as e:
@@ -171,26 +194,28 @@ class RealtimeGroqService(GroqService):
             return ("", None)
 
     def get_response(self, question: str, chat_history: Optional[List[tuple]] = None, key_start_index: int = 0) -> str:
+
         try:
             search_query = self._extract_search_query(question, chat_history)
             logger.info("[REALTIME] Searching Tavily for: %s", search_query)
+            formatted_results, _ = self.search_tavily(search_query, num_results=5)
 
-            formatted_results, _ = self.search_tavily(search_query, num_results=7)
             if formatted_results:
                 logger.info("[REALTIME] Tavily returned results (length: %d chars)", len(formatted_results))
+
             else:
                 logger.warning("[REALTIME] Tavily returned no results for: %s", search_query)
 
             extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
-            prompt, messages = self._build_prompt_and_messages(
+            messages = self._build_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
                 mode_addendum=REALTIME_CHAT_ADDENDUM,
             )
 
             t0 = time.perf_counter()
-            response_content = self._invoke_llm(prompt, messages, question, key_start_index=key_start_index)
-            logger.info("[TIMING] groq_api: %.3fs", time.perf_counter() - t0)
+            response_content = self._invoke_llm(messages, key_start_index=key_start_index)
+            logger.info("[TIMING] nvidia_api: %.3fs", time.perf_counter() - t0)
             logger.info(
                 "[RESPONSE] Realtime chat | Length: %d chars | Preview: %.120s",
                 len(response_content), response_content,
@@ -199,6 +224,7 @@ class RealtimeGroqService(GroqService):
 
         except AllGroqApisFailedError:
             raise
+
         except Exception as e:
             logger.error("Error in realtime get_response: %s", e, exc_info=True)
             raise
@@ -206,31 +232,37 @@ class RealtimeGroqService(GroqService):
     def prefetch_web_search(
         self, question: str, chat_history: Optional[List[tuple]] = None
     ) -> Tuple[str, Optional[dict]]:
+
         try:
             t0 = time.perf_counter()
             search_query = self._extract_search_query(question, chat_history)
             logger.info("[REALTIME] Pre-fetch: extracted query '%s' in %.3fs", search_query[:60], time.perf_counter() - t0)
-            formatted_results, payload = self.search_tavily(search_query, num_results=7)
+            formatted_results, payload = self.search_tavily(search_query, num_results=5)
+
             if formatted_results:
                 logger.info("[REALTIME] Pre-fetch: Tavily returned %d chars in %.3fs total",
                             len(formatted_results), time.perf_counter() - t0)
-            return (formatted_results or "", payload)
+                return (formatted_results or "", payload)
+
         except Exception as e:
             logger.warning("[REALTIME] Pre-fetch failed: %s", e)
             return ("", None)
 
     def stream_response(self, question: str, chat_history: Optional[List[tuple]] = None, key_start_index: int = 0) -> Iterator[Any]:
+
         try:
             yield {"_activity": {"event": "extracting_query", "message": "Extracting search query..."}}
             search_query = self._extract_search_query(question, chat_history)
             logger.info("[REALTIME] Searching Tavily for: %s", search_query)
             yield {"_activity": {"event": "searching_web", "query": search_query, "message": f"Searching web for: {search_query}"}}
 
-            formatted_results, payload = self.search_tavily(search_query, num_results=7)
+            formatted_results, payload = self.search_tavily(search_query, num_results=5)
             num_results = len(payload.get("results", [])) if payload else 0
+
             if formatted_results:
                 logger.info("[REALTIME] Tavily returned results (length: %d chars)", len(formatted_results))
                 yield {"_activity": {"event": "search_completed", "message": f"Search completed: {num_results} results, {len(formatted_results)} chars of context"}}
+
             else:
                 logger.warning("[REALTIME] Tavily returned no results for: %s", search_query)
                 yield {"_activity": {"event": "search_completed", "message": "No search results found"}}
@@ -239,16 +271,17 @@ class RealtimeGroqService(GroqService):
                 yield {"_search_results": payload}
 
             extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
-            prompt, messages = self._build_prompt_and_messages(
+            messages = self._build_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
                 mode_addendum=REALTIME_CHAT_ADDENDUM,
             )
-            yield from self._stream_llm(prompt, messages, question, key_start_index=key_start_index)
+            yield from self._stream_llm(messages, key_start_index=key_start_index)
             logger.info("[REALTIME] Stream completed for: %s", search_query)
 
         except AllGroqApisFailedError:
             raise
+
         except Exception as e:
             logger.error("Error in realtime stream_response: %s", e, exc_info=True)
             raise
@@ -261,17 +294,20 @@ class RealtimeGroqService(GroqService):
         payload: Optional[dict] = None,
         key_start_index: int = 0,
     ) -> Iterator[Any]:
+
         try:
             extra_parts = [escape_curly_braces(formatted_results)] if formatted_results else None
-            prompt, messages = self._build_prompt_and_messages(
+            messages = self._build_messages(
                 question, chat_history,
                 extra_system_parts=extra_parts,
                 mode_addendum=REALTIME_CHAT_ADDENDUM,
             )
-            yield from self._stream_llm(prompt, messages, question, key_start_index=key_start_index)
+            yield from self._stream_llm(messages, key_start_index=key_start_index)
             logger.info("[REALTIME] Stream completed (pre-fetched results)")
+
         except AllGroqApisFailedError:
             raise
+
         except Exception as e:
             logger.error("Error in realtime stream_response_with_prefetched: %s", e, exc_info=True)
             raise
