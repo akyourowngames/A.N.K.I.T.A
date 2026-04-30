@@ -9,6 +9,7 @@ from core.brain import Brain
 from core.logic import ProjectPaths, append_chat_turn, read_markdown_skills, read_memory, sanitize_skill_text, session_file
 from core.memory import EmbeddingModel, PermanentMemory, extract_durable_memories, normalize_memory_text, parse_key_value_line
 from tool.date_time import DateTimeTool
+from tool.registry import ToolRegistry
 from tool.tavily_search import TavilySearchTool
 
 
@@ -19,6 +20,33 @@ class FakeLLM:
     def chat(self, messages):
         self.messages = messages
         return "Test reply"
+
+
+class StreamingFakeLLM:
+    def __init__(self) -> None:
+        self.chat_calls = []
+        self.stream_messages = []
+
+    def chat(self, messages):
+        self.chat_calls.append(messages)
+        return '{"tool":"none","args":{}}'
+
+    def stream_chat(self, messages):
+        self.stream_messages = messages
+        yield "Hello"
+        yield " there"
+
+
+class ToolFakeLLM:
+    def __init__(self) -> None:
+        self.stream_messages = []
+
+    def chat(self, messages):
+        return '{"tool":"date_time","args":{"timezone":"UTC"}}'
+
+    def stream_chat(self, messages):
+        self.stream_messages = messages
+        yield "It is time."
 
 
 class CountingEmbedding:
@@ -94,7 +122,10 @@ class CoreTests(unittest.TestCase):
 
             fake_llm = FakeLLM()
             class FakeTools:
-                def context_for(self, user_text):
+                def planner_text(self):
+                    return ""
+
+                def run(self, name, args):
                     return ""
 
             class FakeMemory:
@@ -119,6 +150,72 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(records[0]["text"], "Hi")
             self.assertEqual(records[1]["speaker"], "Nova")
             self.assertEqual(records[1]["text"], "Test reply")
+
+    def test_persona_includes_jarvis_style(self) -> None:
+        text = Path("persona.md").read_text(encoding="utf-8")
+
+        self.assertIn("Name: JARVIS", text)
+        self.assertIn("sir", text)
+        self.assertIn("Krish", text)
+
+    def test_answer_stream_logs_streamed_reply(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ""
+
+                def run(self, name, args):
+                    return ""
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = StreamingFakeLLM()
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            reply = "".join(brain.answer_stream("Hi"))
+
+            self.assertEqual(reply, "Hello there")
+            records = [json.loads(line) for line in brain.current_chat.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual(records[-1]["text"], "Hello there")
+
+    def test_brain_can_pass_tool_observation_to_final_answer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = ToolFakeLLM()
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", ToolRegistry(), FakeMemory())
+
+            reply = "".join(brain.answer_stream("What time is it?"))
+            final_user_message = llm.stream_messages[-1]["content"]
+
+            self.assertEqual(reply, "It is time.")
+            self.assertIn("UTC", final_user_message)
+
+    def test_tool_decision_parser_handles_json(self) -> None:
+        parsed = Brain._parse_tool_decision('```json\n{"tool":"date_time","args":{"timezone":"UTC"}}\n```')
+
+        self.assertEqual(parsed["tool"], "date_time")
+        self.assertEqual(parsed["args"], {"timezone": "UTC"})
 
     def test_extracts_durable_memory(self) -> None:
         memories = list(extract_durable_memories("remember that I prefer short answers"))

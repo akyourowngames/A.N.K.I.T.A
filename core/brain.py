@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Iterator
 
 from core.llm_service import LLMConfig, NvidiaLLMService, load_dotenv
-from core.logic import ProjectPaths, append_chat_turn, read_markdown_skills, read_memory, session_file
+from core.logic import ProjectPaths, append_chat_turn, read_markdown_skills, session_file
 from core.memory import PermanentMemory
 from tool.registry import ToolRegistry
 
@@ -39,6 +41,20 @@ Response behavior:
 - Keep answers useful and compact.
 - Ask a question only when needed to avoid doing the wrong thing.
 - Prefer action over over-explaining.
+"""
+
+TOOL_PLANNER_PROMPT = """Decide whether the user request needs one tool before answering.
+
+Return only compact JSON, no markdown:
+{"tool":"none","args":{}}
+or:
+{"tool":"date_time","args":{"timezone":"Asia/Kolkata"}}
+or:
+{"tool":"tavily_search","args":{"query":"...","max_results":5}}
+
+Use date_time for current date, time, day, or timezone questions.
+Use tavily_search for live web, latest/current facts, external lookup, news, or online search.
+Use none for normal chat, coding help, personal-memory questions, and anything answerable from known facts.
 """
 
 
@@ -88,30 +104,113 @@ class Brain:
 
     def build_system_prompt(self, relevant_memory: str = "") -> str:
         skills = read_markdown_skills(self.paths.skills)
+        persona = self._read_persona()
         prompt = BRAIN_SYSTEM_PROMPT.format(user_name=self.user_name, ai_name=self.ai_name)
         relevant = relevant_memory or "No relevant permanent memories found."
         return (
-            f"{prompt}\n\nAvailable skills:\n{skills}"
+            f"{prompt}\n\nPersona:\n{persona}"
+            f"\n\nAvailable skills:\n{skills}"
             f"\n\nKnown user facts:\n{relevant}"
         )
 
     def answer(self, user_text: str) -> str:
+        return "".join(self.answer_stream(user_text))
+
+    def answer_stream(self, user_text: str) -> Iterator[str]:
         append_chat_turn(self.current_chat, self.user_name, user_text)
-        tool_context = self.tools.context_for(user_text)
         memory_context = self.memory.context_for(user_text)
+        tool_context = self._tool_context_for(user_text)
 
-        messages = [
-            {"role": "system", "content": self.build_system_prompt(memory_context)},
-            {"role": "user", "content": self._with_tool_context(user_text, tool_context)},
-        ]
-        reply = self.llm.chat(messages)
+        messages = self._answer_messages(user_text, memory_context, tool_context)
+        chunks: list[str] = []
+        stream_chat = getattr(self.llm, "stream_chat", None)
+        if callable(stream_chat):
+            for chunk in stream_chat(messages):
+                chunks.append(chunk)
+                yield chunk
+        else:
+            reply = self.llm.chat(messages)
+            chunks.append(reply)
+            yield reply
 
+        reply = "".join(chunks).strip()
         append_chat_turn(self.current_chat, self.ai_name, reply)
         self.memory.remember_from_user_text(user_text)
-        return reply
+
+    def _answer_messages(
+        self,
+        user_text: str,
+        memory_context: str,
+        tool_context: str,
+    ) -> list[dict[str, str]]:
+        user_content = user_text
+        if not tool_context:
+            return [
+                {"role": "system", "content": self.build_system_prompt(memory_context)},
+                {"role": "user", "content": user_content},
+            ]
+
+        user_content = (
+            f"{user_text}\n\n"
+            "Useful context from a just-completed action:\n"
+            f"{tool_context}\n\n"
+            "Answer naturally from this context. Do not mention the action unless the user asks."
+        )
+        return [
+            {"role": "system", "content": self.build_system_prompt(memory_context)},
+            {"role": "user", "content": user_content},
+        ]
+
+    def _tool_context_for(self, user_text: str) -> str:
+        decision = self._decide_tool(user_text)
+        tool = str(decision.get("tool") or "none").strip()
+        if tool == "none":
+            return ""
+        args = decision.get("args")
+        if not isinstance(args, dict):
+            args = {}
+        return self.tools.run(tool, args)
+
+    def _decide_tool(self, user_text: str) -> dict[str, object]:
+        messages = [
+            {
+                "role": "system",
+                "content": f"{TOOL_PLANNER_PROMPT}\n\nAvailable tools:\n{self.tools.planner_text()}",
+            },
+            {"role": "user", "content": user_text},
+        ]
+
+        try:
+            raw = self.llm.chat(messages).strip()
+            return self._parse_tool_decision(raw)
+        except Exception:
+            return {"tool": "none", "args": {}}
 
     @staticmethod
-    def _with_tool_context(user_text: str, tool_context: str) -> str:
-        if not tool_context:
-            return user_text
-        return f"{user_text}\n\nTool output:\n{tool_context}"
+    def _parse_tool_decision(raw: str) -> dict[str, object]:
+        text = raw.strip()
+        if text.startswith("```"):
+            text = text.strip("`")
+            if "\n" in text:
+                text = text.split("\n", 1)[1]
+        start = text.find("{")
+        end = text.rfind("}")
+        if start == -1 or end == -1 or end < start:
+            return {"tool": "none", "args": {}}
+
+        data = json.loads(text[start : end + 1])
+        if not isinstance(data, dict):
+            return {"tool": "none", "args": {}}
+        tool = data.get("tool")
+        if tool not in {"none", "date_time", "tavily_search"}:
+            return {"tool": "none", "args": {}}
+        args = data.get("args")
+        if not isinstance(args, dict):
+            args = {}
+        return {"tool": tool, "args": args}
+
+    def _read_persona(self) -> str:
+        path = self.paths.root / "persona.md"
+        if not path.exists():
+            return "No persona file found."
+        return path.read_text(encoding="utf-8").strip()

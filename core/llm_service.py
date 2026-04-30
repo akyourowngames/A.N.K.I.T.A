@@ -6,7 +6,7 @@ import urllib.error
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterator
 
 
 def load_dotenv(path: Path) -> None:
@@ -88,6 +88,44 @@ class NvidiaLLMService:
 
         return self._extract_text(body)
 
+    def stream_chat(self, messages: list[dict[str, str]]) -> Iterator[str]:
+        payload = {
+            "model": self.config.model,
+            "messages": messages,
+            "temperature": self.config.temperature,
+            "max_tokens": self.config.max_tokens,
+            "stream": True,
+        }
+
+        request = urllib.request.Request(
+            f"{self.config.base_url}/chat/completions",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {self.config.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "text/event-stream",
+            },
+            method="POST",
+        )
+
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                for raw_line in response:
+                    line = raw_line.decode("utf-8", errors="replace").strip()
+                    if not line or not line.startswith("data:"):
+                        continue
+                    data = line.removeprefix("data:").strip()
+                    if data == "[DONE]":
+                        break
+                    chunk = self._extract_stream_delta(json.loads(data))
+                    if chunk:
+                        yield chunk
+        except urllib.error.HTTPError as error:
+            details = error.read().decode("utf-8", errors="replace")
+            raise RuntimeError(f"NVIDIA streaming request failed: {error.code} {details}") from error
+        except urllib.error.URLError as error:
+            raise RuntimeError(f"Could not reach NVIDIA API: {error.reason}") from error
+
     @staticmethod
     def _extract_text(body: dict[str, Any]) -> str:
         try:
@@ -103,3 +141,19 @@ class NvidiaLLMService:
             return "\n".join(part for part in parts if part).strip()
 
         return str(content).strip()
+
+    @staticmethod
+    def _extract_stream_delta(body: dict[str, Any]) -> str:
+        try:
+            delta = body["choices"][0].get("delta", {})
+        except (KeyError, IndexError, TypeError):
+            return ""
+
+        content = delta.get("content", "")
+        if isinstance(content, str):
+            return content
+
+        if isinstance(content, list):
+            return "".join(part.get("text", "") for part in content if isinstance(part, dict))
+
+        return str(content) if content else ""

@@ -22,12 +22,13 @@ def main() -> None:
         if not user_text:
             continue
 
+        print(f"{brain.ai_name}> ", end="", flush=True)
         try:
-            reply = brain.answer(user_text)
+            for chunk in brain.answer_stream(user_text):
+                print(chunk, end="", flush=True)
         except Exception as error:
-            reply = f"Error: {error}"
-
-        print(f"{brain.ai_name}> {reply}")
+            print(f"Error: {error}", end="", flush=True)
+        print()
 
 
 if __name__ == "__main__":
