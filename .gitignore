@@ -8,5 +8,8 @@ memory/*.tmp
 memory/chats/*.txt
 memory/chats/*.jsonl
 memory/data/*.txt
+memory/data/daemon-report.md
 memory/store/*.sqlite
 memory/store/*.sqlite-*
+memory/store/*.jsonl
+daemon/state/

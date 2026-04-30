@@ -38,7 +38,7 @@ def read_markdown_skills(skills_dir: Path) -> str:
         file_path
         for file_path in sorted(skills_dir.glob("*.md"))
         if not file_path.name.startswith("_")
-        and "memory" not in file_path.stem.lower()
+        and file_path.stem.lower() != "permanent-memory"
     ]
     if not files:
         return "No skill files found yet."
@@ -65,7 +65,11 @@ def sanitize_skill_text(text: str) -> str:
 
 def read_memory(memory_dir: Path) -> str:
     data_dir = memory_dir / "data"
-    files = sorted(data_dir.glob("*.txt")) if data_dir.exists() else sorted(memory_dir.glob("*.txt"))
+    files = (
+        sorted([*data_dir.glob("*.txt"), *data_dir.glob("*.md")])
+        if data_dir.exists()
+        else sorted(memory_dir.glob("*.txt"))
+    )
     if not files:
         return "No memory files found yet."
 
@@ -92,3 +96,46 @@ def append_chat_turn(path: Path, speaker: str, text: str) -> None:
     }
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def read_chat_turns(path: Path, limit: int = 12) -> list[dict[str, str]]:
+    if not path.exists():
+        return []
+
+    records: list[dict[str, str]] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        speaker = str(record.get("speaker") or "").strip()
+        text = str(record.get("text") or "").strip()
+        if speaker and text:
+            records.append({"speaker": speaker, "text": text})
+    return records[-limit:]
+
+
+def chat_turns_as_messages(
+    turns: list[dict[str, str]],
+    user_name: str,
+    ai_name: str,
+) -> list[dict[str, str]]:
+    messages: list[dict[str, str]] = []
+    for turn in turns:
+        speaker = turn["speaker"]
+        role = "assistant" if speaker == ai_name else "user"
+        messages.append({"role": role, "content": turn["text"]})
+    return messages
+
+
+def summarize_chat_turns(turns: list[dict[str, str]], limit: int = 8) -> str:
+    if not turns:
+        return "No session messages yet."
+
+    lines = []
+    for turn in turns[-limit:]:
+        text = turn["text"]
+        if len(text) > 300:
+            text = f"{text[:297]}..."
+        lines.append(f"{turn['speaker']}: {text}")
+    return "\n".join(lines)

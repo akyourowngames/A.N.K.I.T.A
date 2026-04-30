@@ -300,7 +300,7 @@ class PermanentMemory:
 
     def ingest_data_files(self) -> int:
         count = 0
-        for file_path in sorted(self.data_dir.glob("*.txt")):
+        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
             text = file_path.read_text(encoding="utf-8").strip()
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if self._source_is_current(file_path.name, content_hash):
@@ -476,7 +476,7 @@ class PermanentMemory:
 
     def profile_context(self) -> list[str]:
         pinned: list[str] = []
-        for file_path in sorted(self.data_dir.glob("*.txt")):
+        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
             text = file_path.read_text(encoding="utf-8").strip()
             for line in text.splitlines():
                 key, value = parse_key_value_line(line)
@@ -486,7 +486,7 @@ class PermanentMemory:
 
     def profile_value(self, key_name: str) -> str | None:
         wanted = key_name.strip().lower()
-        for file_path in sorted(self.data_dir.glob("*.txt")):
+        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
             for line in file_path.read_text(encoding="utf-8").splitlines():
                 key, value = parse_key_value_line(line)
                 if key.lower() == wanted and value:
