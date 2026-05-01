@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, TimeoutError
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -19,6 +19,7 @@ from core.logic import (
 )
 from core.memory import PermanentMemory
 from core.pc_monitor import PcMonitor
+from core.tool_reasoning import decide_common_tool
 from tool.date_time import DateTimeTool
 from tool.registry import ToolRegistry
 
@@ -53,6 +54,10 @@ or:
 or:
 {"tool":"terminal","args":{"command":"Get-ChildItem","timeout":120},"needs_memory":false,"needs_pc":false,"needs_skills":false}
 or:
+{"tool":"local_files","args":{"action":"search","query":"resume","max_results":10},"needs_memory":false,"needs_pc":false,"needs_skills":false}
+or:
+{"tool":"image_generation","args":{"prompt":"a cinematic robot assistant at a desk","n":1},"needs_memory":false,"needs_pc":false,"needs_skills":false}
+or:
 {"tool":"gmail","args":{"action":"search","query":"from:example@example.com","max_results":5},"needs_memory":false,"needs_pc":false,"needs_skills":false}
 or:
 {"tool":"google_calendar","args":{"action":"list","calendar_id":"primary","max_results":10},"needs_memory":false,"needs_pc":false,"needs_skills":false}
@@ -64,6 +69,8 @@ Use tavily_search for live web, latest/current facts, external lookup, news, or 
 Use weather for weather, temperature, rain, forecast, or outdoor-condition questions.
 Use system_control for volume, brightness, Bluetooth settings, Windows settings, or opening apps.
 Use terminal for explicit terminal, shell, PowerShell, command-line, unrestricted command, install, git, process, filesystem, or fallback requests.
+Use local_files for normal requests to list, search, or read local files in allowed user folders, unless the user explicitly asks for terminal.
+Use image_generation for image, photo, picture, drawing, or artwork generation requests.
 Use gmail for email, inbox, Gmail search/read/draft/send requests.
 Use google_calendar for calendar, schedule, meetings, reminders, events, or agenda requests.
 Use date_time for questions about whether it is morning, afternoon, evening, or night.
@@ -72,7 +79,7 @@ If recent conversation is supplied, treat short confirmations as follow-ups to t
 If the user declines, says no, or does not confirm the offered action, use none.
 If the request requires a capability that is not named in Available tools, use unsupported.
 Never plan or imply execution through tools that are not in Available tools.
-Requests for image, photo, picture, drawing, video, audio, file, or other non-text artifact generation require a matching connected tool; if none is listed, use unsupported.
+Requests for video, audio, file, or other non-text artifact generation require a matching connected tool; if none is listed, use unsupported.
 Do not substitute ASCII art or a text-only workaround unless the user explicitly asks for that.
 Set needs_memory only when long-term user facts are needed.
 Set needs_pc only when observed local PC activity/state is needed.
@@ -179,17 +186,23 @@ class Brain:
             self.memory.remember_from_user_text(user_text)
             return
 
-        with ThreadPoolExecutor(max_workers=4) as executor:
+        with ThreadPoolExecutor(max_workers=3) as executor:
             memory_future = executor.submit(self._memory_context_from_plan, user_text, turn_plan)
-            tool_future = executor.submit(self._tool_context_from_decision, turn_plan)
             pc_future = executor.submit(self._pc_context_from_plan, user_text, turn_plan)
             skills_future = executor.submit(self._skills_context_from_plan, turn_plan)
+            tool_context = yield from self._tool_context_stream_from_decision(turn_plan)
             memory_context = memory_future.result()
-            tool_context = tool_future.result()
             pc_context = pc_future.result()
             skills_context = skills_future.result()
 
         direct_reply = self._direct_tool_failure_reply(tool_context)
+        if direct_reply:
+            yield direct_reply
+            append_chat_turn(self.current_chat, self.ai_name, direct_reply)
+            self.memory.remember_from_user_text(user_text)
+            return
+
+        direct_reply = self._direct_tool_success_reply(turn_plan, tool_context)
         if direct_reply:
             yield direct_reply
             append_chat_turn(self.current_chat, self.ai_name, direct_reply)
@@ -208,9 +221,16 @@ class Brain:
         chunks: list[str] = []
         stream_chat = getattr(self.llm, "stream_chat", None) if self._streaming_enabled() else None
         if callable(stream_chat):
-            for chunk in stream_chat(messages):
-                chunks.append(chunk)
-                yield chunk
+            try:
+                for chunk in stream_chat(messages):
+                    chunks.append(chunk)
+                    yield chunk
+            except Exception:
+                if chunks or not self._stream_fallback_enabled():
+                    raise
+                reply = self.llm.chat(messages)
+                chunks.append(reply)
+                yield reply
         else:
             reply = self.llm.chat(messages)
             chunks.append(reply)
@@ -225,16 +245,19 @@ class Brain:
         return bool(getattr(config, "stream", True))
 
     @staticmethod
+    def _stream_fallback_enabled() -> bool:
+        return os.getenv("NVIDIA_STREAM_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
     def _direct_tool_failure_reply(tool_context: str) -> str:
         text = tool_context.strip()
-        if not (text.startswith("FAILED:") or text.startswith("Tool error:")):
-            return ""
         lines = [line.strip() for line in text.splitlines() if line.strip()]
-        if not lines:
+        failed_lines = [line for line in lines if line.startswith("FAILED:") or line.startswith("Tool error:")]
+        if not failed_lines:
             return ""
 
         kept = []
-        for line in lines[:3]:
+        for line in failed_lines[:3]:
             if line.startswith("FAILED:"):
                 line = line.removeprefix("FAILED:").strip()
             kept.append(line)
@@ -246,6 +269,13 @@ class Brain:
             return ""
         reason = str(turn_plan.get("unsupported_reason") or "that capability is not connected in this project").strip()
         return f"Sir, I can't do that from here: {reason}"
+
+    @staticmethod
+    def _direct_tool_success_reply(turn_plan: dict[str, object], tool_context: str) -> str:
+        tool = str(turn_plan.get("tool") or "").strip()
+        if tool and tool != "none" and tool_context.strip():
+            return tool_context.strip()
+        return ""
 
     def _answer_messages(
         self,
@@ -337,7 +367,53 @@ class Brain:
             args = {}
         return self.tools.run(tool, args)
 
+    def _tool_context_stream_from_decision(self, decision: dict[str, object]) -> Iterator[str]:
+        tool = str(decision.get("tool") or "none").strip()
+        if tool == "none":
+            return ""
+        args = decision.get("args")
+        if not isinstance(args, dict):
+            args = {}
+
+        run_stream = getattr(self.tools, "run_stream", None)
+        if tool == "image_generation" and callable(run_stream):
+            result = yield from run_stream(tool, args)
+            return str(result or "").strip()
+
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(self.tools.run, tool, args)
+            try:
+                return future.result(timeout=self._tool_status_delay_seconds())
+            except TimeoutError:
+                status = self._slow_tool_status(tool)
+                yield status
+                result = future.result()
+                return str(result or "").strip()
+
+    @staticmethod
+    def _tool_status_delay_seconds() -> float:
+        try:
+            return max(0.0, float(os.getenv("TOOL_STATUS_DELAY_SECONDS", "0.8")))
+        except ValueError:
+            return 0.8
+
+    @staticmethod
+    def _slow_tool_status(tool: str) -> str:
+        labels = {
+            "terminal": "Running command...",
+            "tavily_search": "Searching...",
+            "weather": "Checking weather...",
+            "gmail": "Checking Gmail...",
+            "google_calendar": "Checking calendar...",
+            "system_control": "Working on system action...",
+        }
+        return labels.get(tool, "Working...") + "\n"
+
     def _decide_tool(self, user_text: str, prior_turns: list[dict[str, str]] | None = None) -> dict[str, object]:
+        quick_decision = decide_common_tool(user_text)
+        if quick_decision:
+            return quick_decision
+
         messages = [
             {
                 "role": "system",
@@ -393,7 +469,18 @@ class Brain:
         if not isinstance(data, dict):
             return {"tool": "none", "args": {}}
         tool = data.get("tool")
-        if tool not in {"none", "date_time", "tavily_search", "weather", "system_control", "terminal", "gmail", "google_calendar"}:
+        if tool not in {
+            "none",
+            "date_time",
+            "tavily_search",
+            "weather",
+            "system_control",
+            "terminal",
+            "local_files",
+            "image_generation",
+            "gmail",
+            "google_calendar",
+        }:
             if tool != "unsupported":
                 return {"tool": "none", "args": {}}
         args = data.get("args")

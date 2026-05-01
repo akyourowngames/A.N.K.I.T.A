@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import base64
+import time
 import tempfile
 import unittest
 from pathlib import Path
@@ -28,7 +30,16 @@ from core.memory import (
     parse_key_value_line,
 )
 from core.pc_monitor import PcMonitor, PcMonitorConfig, format_activity_record
-from core.speech import SpeechConfig, convert_to_english
+from core.speech import (
+    SpeechConfig,
+    TTSConfig,
+    _extract_nvidia_streaming_text,
+    _nvidia_metadata,
+    _nvidia_tts_text,
+    convert_to_english,
+    text_for_speech,
+)
+from core.tool_reasoning import decide_common_tool, mentioned_known_folder
 from daemon.config import DaemonConfig
 from daemon.analyzer import NEXT_ACTIONS_PROMPT, STATUS_REVIEW_PROMPT
 from daemon.project_daemon import ProjectDaemon
@@ -37,6 +48,8 @@ from daemon.tools import DaemonTools
 from tool.date_time import DateTimeTool
 from tool.gmail import GmailTool
 from tool.google_calendar import GoogleCalendarTool
+from tool.local_files import LocalFilesTool
+from tool.nvidia_image import NvidiaImageTool
 from tool.registry import ToolRegistry
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
@@ -67,6 +80,18 @@ class StreamingFakeLLM:
         self.stream_messages = messages
         yield "Hello"
         yield " there"
+
+
+class FailingStreamFakeLLM:
+    def __init__(self) -> None:
+        self.chat_calls = []
+
+    def chat(self, messages):
+        self.chat_calls.append(messages)
+        return '{"tool":"none","args":{}}' if len(self.chat_calls) == 1 else "Fallback reply"
+
+    def stream_chat(self, messages):
+        raise RuntimeError("stream failed")
 
 
 class ToolFakeLLM:
@@ -121,6 +146,57 @@ class EmptyTranslateSpeech:
 
     def translate_audio_to_english(self, audio_path):
         return ""
+
+
+class FakeWhisperSegment:
+    text = "hello"
+
+
+class FakeWhisperModel:
+    def __init__(self) -> None:
+        self.calls = []
+
+    def transcribe(self, audio_path, **kwargs):
+        self.calls.append((audio_path, kwargs))
+        return [FakeWhisperSegment()], None
+
+
+class FakeRivaAlternative:
+    def __init__(self, transcript: str) -> None:
+        self.transcript = transcript
+
+
+class FakeRivaResult:
+    def __init__(self, transcript: str, is_final: bool) -> None:
+        self.alternatives = [FakeRivaAlternative(transcript)]
+        self.is_final = is_final
+
+
+class FakeRivaResponse:
+    def __init__(self, *results: FakeRivaResult) -> None:
+        self.results = list(results)
+
+
+def _test_tts_config(**overrides):
+    values = {
+        "enabled": True,
+        "provider": "nvidia",
+        "voice": "Magpie-Multilingual.EN-US.Jason",
+        "rate": "+24%",
+        "volume": "+80%",
+        "pitch": "-8Hz",
+        "nvidia_api_key": "test-key",
+        "nvidia_tts_server": "grpc.nvcf.nvidia.com:443",
+        "nvidia_tts_function_id": "877104f7-e885-42b9-8de8-f6e4c6303969",
+        "nvidia_tts_language_code": "en-US",
+        "nvidia_tts_use_ssl": True,
+        "nvidia_tts_sample_rate": 44100,
+        "nvidia_tts_streaming": True,
+        "nvidia_tts_ssml": False,
+        "player": "auto",
+    }
+    values.update(overrides)
+    return TTSConfig(**values)
 
 
 class CountingEmbedding:
@@ -340,6 +416,35 @@ class CoreTests(unittest.TestCase):
             records = [json.loads(line) for line in brain.current_chat.read_text(encoding="utf-8").splitlines()]
             self.assertEqual(records[-1]["text"], "Hello there")
 
+    def test_answer_stream_falls_back_when_stream_fails_before_chunks(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ""
+
+                def run(self, name, args):
+                    return ""
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = FailingStreamFakeLLM()
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            with patch.dict(os.environ, {"NVIDIA_STREAM_FALLBACK": "true"}, clear=False):
+                reply = "".join(brain.answer_stream("Hi"))
+
+            self.assertEqual(reply, "Fallback reply")
+
     def test_answer_stream_includes_prior_session_messages(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -436,7 +541,7 @@ class CoreTests(unittest.TestCase):
             self.assertIn("Observed PC activity", llm.stream_messages[0]["content"])
             self.assertIn("Visual Studio Code", llm.stream_messages[0]["content"])
 
-    def test_brain_can_pass_tool_observation_to_final_answer(self) -> None:
+    def test_tool_success_returns_direct_output_without_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -454,10 +559,43 @@ class CoreTests(unittest.TestCase):
             brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", ToolRegistry(), FakeMemory())
 
             reply = "".join(brain.answer_stream("What time is it?"))
-            final_user_message = llm.stream_messages[-1]["content"]
 
-            self.assertEqual(reply, "It is time.")
-            self.assertIn("UTC", final_user_message)
+            self.assertIn("UTC", reply)
+            self.assertEqual(llm.stream_messages, [])
+
+    def test_slow_tool_yields_status_before_direct_output(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    time.sleep(0.05)
+                    return "terminal done"
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = ContextPlanFakeLLM(
+                '{"tool":"terminal","args":{"command":"slow"},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
+                reply="This should not be used.",
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            with patch.dict(os.environ, {"TOOL_STATUS_DELAY_SECONDS": "0.01"}, clear=False):
+                reply = "".join(brain.answer_stream("run a slow command"))
+
+            self.assertEqual(reply, "Running command...\nterminal done")
+            self.assertEqual(llm.stream_messages, [])
 
     def test_short_confirmation_uses_previous_tool_offer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -494,6 +632,33 @@ class CoreTests(unittest.TestCase):
             self.assertIn("No upcoming Google Calendar events", context)
             self.assertEqual(tools.calls[0][0], "google_calendar")
             self.assertIn("Shall I brief you", llm.messages[-1]["content"])
+
+    def test_common_tool_reasoning_local_roots_decision_skips_planner(self) -> None:
+        decision = decide_common_tool("Show me the local folders you are allowed to browse.")
+
+        self.assertEqual(decision["tool"], "local_files")
+        self.assertEqual(decision["args"], {"action": "roots"})
+
+    def test_common_tool_reasoning_desktop_list_decision_skips_planner(self) -> None:
+        decision = decide_common_tool("List files on my Desktop.")
+
+        self.assertEqual(decision["tool"], "local_files")
+        self.assertEqual(decision["args"]["action"], "list")
+        self.assertEqual(decision["args"]["path"], "Desktop")
+
+    def test_common_tool_reasoning_handles_download_singular_with_punctuation(self) -> None:
+        decision = decide_common_tool("list all files in download folder.")
+
+        self.assertEqual(decision["tool"], "local_files")
+        self.assertEqual(decision["args"]["path"], "Downloads")
+
+    def test_common_tool_reasoning_preserves_explicit_terminal(self) -> None:
+        decision = decide_common_tool("Run PowerShell: list files on my Desktop")
+
+        self.assertEqual(decision, {})
+
+    def test_common_tool_reasoning_uses_known_folder_aliases(self) -> None:
+        self.assertEqual(mentioned_known_folder(["download", "folder"]), "Downloads")
 
     def test_no_tool_prompt_forbids_external_claims(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -550,6 +715,38 @@ class CoreTests(unittest.TestCase):
             self.assertIn("couldn't complete", reply)
             self.assertIn("Google OAuth client secret file is missing", reply)
 
+    def test_local_file_tool_success_returns_without_final_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    return "Allowed local folders:\n- C:\\Users\\anime\\Desktop"
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = ContextPlanFakeLLM(
+                '{"tool":"local_files","args":{"action":"roots"},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
+                reply="This should not be used.",
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            reply = "".join(brain.answer_stream("show allowed folders"))
+
+            self.assertEqual(reply, "Allowed local folders:\n- C:\\Users\\anime\\Desktop")
+            self.assertEqual(llm.stream_messages, [])
+
     def test_unsupported_tool_plan_returns_direct_reply_without_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
@@ -590,7 +787,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parsed["args"], {"timezone": "UTC"})
 
     def test_tool_decision_parser_accepts_new_tools(self) -> None:
-        for tool_name in ("weather", "system_control", "terminal", "gmail", "google_calendar"):
+        for tool_name in ("weather", "system_control", "terminal", "local_files", "image_generation", "gmail", "google_calendar"):
             parsed = Brain._parse_tool_decision(f'{{"tool":"{tool_name}","args":{{}}}}')
 
             self.assertEqual(parsed["tool"], tool_name)
@@ -789,8 +986,174 @@ class CoreTests(unittest.TestCase):
 
         self.assertIn("gmail", specs)
         self.assertIn("google_calendar", specs)
+        self.assertIn("local_files", specs)
+        self.assertIn("image_generation", specs)
         self.assertIn("email", specs["gmail"].description.lower())
         self.assertIn("calendar", specs["google_calendar"].description.lower())
+        self.assertIn("allowed", specs["local_files"].description.lower())
+        self.assertIn("nvidia", specs["image_generation"].description.lower())
+
+    def test_local_files_tool_respects_allowed_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as allowed_dir, tempfile.TemporaryDirectory() as blocked_dir:
+            allowed = Path(allowed_dir)
+            blocked = Path(blocked_dir)
+            (allowed / "notes.txt").write_text("Allowed note.", encoding="utf-8")
+            (blocked / "secret.txt").write_text("Blocked note.", encoding="utf-8")
+
+            with patch.dict(os.environ, {"LOCAL_FILE_ALLOWED_PATHS": str(allowed)}, clear=False):
+                tool = LocalFilesTool()
+                allowed_result = tool.run("read", path=str(allowed / "notes.txt"))
+                blocked_result = tool.run("read", path=str(blocked / "secret.txt"))
+
+            self.assertIn("Allowed note.", allowed_result)
+            self.assertIn("FAILED:", blocked_result)
+            self.assertIn("outside allowed local folders", blocked_result)
+
+    def test_local_files_tool_resolves_known_folder_aliases(self) -> None:
+        desktop = Path.home() / "Desktop"
+        desktop.mkdir(exist_ok=True)
+
+        with patch.dict(os.environ, {"LOCAL_FILE_ALLOWED_PATHS": str(desktop)}, clear=False):
+            result = LocalFilesTool().run("list", path="Desktop", max_results=5)
+
+        self.assertIn(f"Folder: {desktop}", result)
+
+    def test_local_files_tool_treats_allowed_folders_phrase_as_roots(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch.dict(os.environ, {"LOCAL_FILE_ALLOWED_PATHS": temp_dir}, clear=False):
+                result = LocalFilesTool().run("list", path="allowed local folders")
+
+        self.assertIn("Allowed local folders:", result)
+        self.assertIn(temp_dir, result)
+
+    def test_nvidia_image_tool_saves_openai_image_response(self) -> None:
+        class FakeImageTool(NvidiaImageTool):
+            def _request(self, prompt: str, n: int, size: str = "", seed: int | None = None):
+                return {"data": [{"b64_json": base64.b64encode(b"image-bytes").decode("ascii")}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "generated.png"
+            env = {
+                "LOCAL_FILE_ALLOWED_PATHS": temp_dir,
+                "NVIDIA_IMAGE_MODEL": "black-forest-labs/flux.2-klein-4b",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                result = FakeImageTool(api_key="test-key", base_url="http://localhost:8000/v1").run(
+                    "small red cube",
+                    output_path=str(output),
+                )
+
+            self.assertEqual(output.read_bytes(), b"image-bytes")
+            self.assertIn("Generated 1 image", result)
+            self.assertIn(str(output), result)
+            metadata = json.loads(output.with_suffix(".png.json").read_text(encoding="utf-8"))
+            self.assertEqual(metadata["prompt"], "small red cube")
+            self.assertEqual(metadata["model"], "black-forest-labs/flux.2-klein-4b")
+
+    def test_nvidia_image_tool_saves_artifacts_response(self) -> None:
+        class FakeImageTool(NvidiaImageTool):
+            def _request(self, prompt: str, n: int, size: str = "", seed: int | None = None):
+                return {"artifacts": [{"base64": base64.b64encode(b"artifact-bytes").decode("ascii")}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output = Path(temp_dir) / "artifact.png"
+            env = {
+                "LOCAL_FILE_ALLOWED_PATHS": temp_dir,
+                "NVIDIA_IMAGE_ENDPOINT": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                result = FakeImageTool(api_key="test-key").run("small blue cube", output_path=str(output))
+
+            self.assertEqual(output.read_bytes(), b"artifact-bytes")
+            self.assertIn("black-forest-labs/flux.1-dev", result)
+
+    def test_nvidia_image_tool_splits_multi_image_genai_requests(self) -> None:
+        class FakeImageTool(NvidiaImageTool):
+            def __init__(self) -> None:
+                super().__init__(api_key="test-key")
+                self.payloads = []
+
+            def _endpoint(self) -> str:
+                return "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
+
+            def _post(self, endpoint: str, key: str, payload: dict[str, object]):
+                self.payloads.append(payload)
+                encoded = base64.b64encode(f"image-{len(self.payloads)}".encode("ascii")).decode("ascii")
+                return {"artifacts": [{"base64": encoded}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                "LOCAL_FILE_ALLOWED_PATHS": temp_dir,
+                "NVIDIA_IMAGE_MAX_SAMPLES_PER_REQUEST": "1",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                tool = FakeImageTool()
+                result = tool.run("small green cube", output_path=temp_dir, n=2)
+
+            self.assertEqual(len(tool.payloads), 2)
+            self.assertEqual([payload["samples"] for payload in tool.payloads], [1, 1])
+            self.assertIn("Generated 2 image", result)
+
+    def test_nvidia_image_tool_streams_progress_and_returns_final_result(self) -> None:
+        class FakeImageTool(NvidiaImageTool):
+            def __init__(self) -> None:
+                super().__init__(api_key="test-key")
+                self.calls = 0
+
+            def _request(self, prompt: str, n: int, size: str = "", seed: int | None = None):
+                self.calls += 1
+                encoded = base64.b64encode(f"stream-image-{self.calls}".encode("ascii")).decode("ascii")
+                return {"artifacts": [{"base64": encoded}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                "LOCAL_FILE_ALLOWED_PATHS": temp_dir,
+                "NVIDIA_IMAGE_ENDPOINT": "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                stream = FakeImageTool().run_stream("small orange cube", output_path=temp_dir, n=2, seed=10)
+                chunks: list[str] = []
+                while True:
+                    try:
+                        chunks.append(next(stream))
+                    except StopIteration as done:
+                        result = done.value
+                        break
+
+            self.assertEqual(chunks, ["Generating image 1/2...\n", "Generating image 2/2...\n"])
+            self.assertIn("Generated 2 image", result)
+            saved = sorted(Path(temp_dir).glob("*.png"))
+            self.assertEqual(len(saved), 2)
+            metadata = [json.loads(path.with_suffix(".png.json").read_text(encoding="utf-8")) for path in saved]
+            self.assertEqual([item["seed"] for item in metadata], [10, 11])
+
+    def test_nvidia_image_tool_retries_transient_failures_once(self) -> None:
+        class RetryImageTool(NvidiaImageTool):
+            def __init__(self) -> None:
+                super().__init__(api_key="test-key")
+                self.calls = 0
+
+            def _endpoint(self) -> str:
+                return "https://ai.api.nvidia.com/v1/genai/black-forest-labs/flux.1-dev"
+
+            def _post(self, endpoint: str, key: str, payload: dict[str, object]):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("429 rate limited")
+                return {"artifacts": [{"base64": base64.b64encode(b"retry-ok").decode("ascii")}]}
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                "LOCAL_FILE_ALLOWED_PATHS": temp_dir,
+                "NVIDIA_IMAGE_RETRY_ATTEMPTS": "2",
+                "NVIDIA_IMAGE_RETRY_DELAY_SECONDS": "0",
+            }
+            with patch.dict(os.environ, env, clear=False):
+                tool = RetryImageTool()
+                result = tool.run("small purple cube", output_path=temp_dir)
+
+            self.assertEqual(tool.calls, 2)
+            self.assertIn("Generated 1 image", result)
 
     def test_google_tools_return_setup_guidance_without_dependencies(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -983,13 +1346,169 @@ class CoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp_dir:
             (Path(temp_dir) / ".env").write_text("", encoding="utf-8")
 
-            config = SpeechConfig.from_env(Path(temp_dir))
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
 
             self.assertEqual(config.provider, "local")
             self.assertEqual(config.local_model, "small")
             self.assertEqual(config.local_compute_type, "int8")
             self.assertEqual(config.english_conversion, "auto")
+            self.assertEqual(config.language, "")
             self.assertEqual(config.sample_rate, 16000)
+            self.assertEqual(config.start_timeout_seconds, 4)
+
+    def test_speech_config_uses_language_hint_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text("STT_SPEECH_RECOGNITION_LANGUAGE=en-IN\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+
+            self.assertEqual(config.language, "en")
+
+    def test_speech_config_prefers_new_language_hint(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text(
+                "STT_LANGUAGE=hi-IN\nSTT_SPEECH_RECOGNITION_LANGUAGE=en-IN\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+
+            self.assertEqual(config.language, "hi")
+
+    def test_speech_config_supports_nvidia_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text(
+                "\n".join(
+                    [
+                        "STT_PROVIDER=nvidia",
+                        "NVIDIA_API_KEY=test-key",
+                        "STT_LANGUAGE=en-IN",
+                        "STT_NVIDIA_FUNCTION_ID=test-function",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+
+            self.assertEqual(config.provider, "nvidia")
+            self.assertEqual(config.nvidia_asr_server, "grpc.nvcf.nvidia.com:443")
+            self.assertEqual(config.nvidia_asr_language_code, "en-US")
+            self.assertEqual(config.nvidia_asr_function_id, "test-function")
+            self.assertTrue(config.nvidia_asr_use_ssl)
+            self.assertEqual(
+                _nvidia_metadata(config),
+                [["function-id", "test-function"], ["authorization", "Bearer test-key"]],
+            )
+
+    def test_nvidia_streaming_text_prefers_final_results(self) -> None:
+        responses = [
+            FakeRivaResponse(FakeRivaResult("partial text", is_final=False)),
+            FakeRivaResponse(FakeRivaResult("final one", is_final=True)),
+            FakeRivaResponse(FakeRivaResult("final two", is_final=True)),
+        ]
+
+        result = _extract_nvidia_streaming_text(responses)
+
+        self.assertEqual(result, "final one final two")
+
+    def test_nvidia_streaming_text_uses_partial_fallback(self) -> None:
+        responses = [
+            FakeRivaResponse(FakeRivaResult("first partial", is_final=False)),
+            FakeRivaResponse(FakeRivaResult("last partial", is_final=False)),
+        ]
+
+        result = _extract_nvidia_streaming_text(responses)
+
+        self.assertEqual(result, "last partial")
+
+    def test_tts_config_defaults_to_nvidia_voice(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text("", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = TTSConfig.from_env(Path(temp_dir))
+
+            self.assertTrue(config.enabled)
+            self.assertEqual(config.provider, "nvidia")
+            self.assertEqual(config.voice, "Magpie-Multilingual.EN-US.Jason")
+            self.assertEqual(config.rate, "+24%")
+            self.assertEqual(config.volume, "+80%")
+            self.assertEqual(config.pitch, "-8Hz")
+            self.assertEqual(config.nvidia_tts_server, "grpc.nvcf.nvidia.com:443")
+            self.assertEqual(config.nvidia_tts_function_id, "877104f7-e885-42b9-8de8-f6e4c6303969")
+            self.assertEqual(config.nvidia_tts_language_code, "en-US")
+            self.assertTrue(config.nvidia_tts_use_ssl)
+            self.assertEqual(config.nvidia_tts_sample_rate, 44100)
+            self.assertTrue(config.nvidia_tts_streaming)
+            self.assertFalse(config.nvidia_tts_ssml)
+
+    def test_tts_config_can_be_muted_from_env(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text(
+                "TTS_ENABLED=false\nTTS_VOICE=Magpie-Multilingual.EN-US.Aria\n",
+                encoding="utf-8",
+            )
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = TTSConfig.from_env(Path(temp_dir))
+
+            self.assertFalse(config.enabled)
+            self.assertEqual(config.voice, "Magpie-Multilingual.EN-US.Aria")
+
+    def test_nvidia_tts_text_wraps_ssml_prosody(self) -> None:
+        config = _test_tts_config(nvidia_tts_ssml=True)
+
+        result = _nvidia_tts_text("Use <NVIDIA> & speak.", config)
+
+        self.assertIn('<prosody rate="+24%" volume="+80%" pitch="-8Hz">', result)
+        self.assertIn("Use &lt;NVIDIA&gt; &amp; speak.", result)
+
+    def test_nvidia_tts_text_defaults_to_plain_text_for_magpie(self) -> None:
+        config = _test_tts_config()
+
+        result = _nvidia_tts_text("Plain NVIDIA speech.", config)
+
+        self.assertEqual(result, "Plain NVIDIA speech.")
+
+    def test_text_for_speech_removes_markdown(self) -> None:
+        text = "Here is `code`.\n```python\nprint('skip')\n```\n[Open docs](https://example.com) now."
+
+        result = text_for_speech(text, max_chars=1200)
+
+        self.assertNotIn("https://", result)
+        self.assertNotIn("print", result)
+        self.assertIn("code", result)
+
+    def test_text_for_speech_keeps_long_replies(self) -> None:
+        text = " ".join(f"word{i}" for i in range(90))
+
+        result = text_for_speech(text, max_chars=1200)
+
+        self.assertIn("word0", result)
+        self.assertIn("word40", result)
+        self.assertIn("word89", result)
+
+    def test_faster_whisper_receives_language_hint(self) -> None:
+        from core.speech import FasterWhisperSpeechToText
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text("STT_LANGUAGE=en-IN\n", encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+            model = FakeWhisperModel()
+            speech = object.__new__(FasterWhisperSpeechToText)
+            speech.config = config
+            speech.model = model
+
+            result = speech._transcribe_segments(Path(temp_dir) / "speech.wav", task="transcribe", vad_filter=True)
+
+            self.assertEqual(result, "hello")
+            self.assertEqual(model.calls[0][1]["language"], "en")
 
     def test_convert_to_english_preserves_user_intent(self) -> None:
         llm = TranslationFakeLLM()
@@ -1005,7 +1524,8 @@ class CoreTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as temp_dir:
             (Path(temp_dir) / ".env").write_text("", encoding="utf-8")
-            config = SpeechConfig.from_env(Path(temp_dir))
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
             llm = TranslationFakeLLM()
 
             result = speech_to_english(Path(temp_dir) / "empty.wav", EmptyTranslateSpeech(), llm, config)

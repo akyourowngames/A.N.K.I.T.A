@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Iterator
 
 from tool.date_time import DateTimeTool
 from tool.gmail import GmailTool
 from tool.google_calendar import GoogleCalendarTool
+from tool.local_files import LocalFilesTool
+from tool.nvidia_image import NvidiaImageTool
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
 from tool.terminal import TerminalTool
@@ -27,6 +29,8 @@ class ToolRegistry:
         self.weather = WeatherTool()
         self.system_control = SystemControlTool()
         self.terminal = TerminalTool()
+        self.local_files = LocalFilesTool()
+        self.image_generation = NvidiaImageTool()
         self.gmail = GmailTool()
         self.google_calendar = GoogleCalendarTool()
         self._planner_text_cache: str | None = None
@@ -61,6 +65,28 @@ class ToolRegistry:
                 name="terminal",
                 description="Run an unrestricted PowerShell terminal command.",
                 args={"command": "PowerShell command.", "cwd": "Optional working directory.", "timeout": "Optional seconds."},
+            ),
+            ToolSpec(
+                name="local_files",
+                description="List, search, or read files inside allowed local folders from LOCAL_FILE_ALLOWED_PATHS.",
+                args={
+                    "action": "roots, list, search, read.",
+                    "path": "Optional allowed folder or file path.",
+                    "query": "Filename search query for search.",
+                    "max_results": "Optional integer, default 20.",
+                },
+            ),
+            ToolSpec(
+                name="image_generation",
+                description="Generate an image using NVIDIA image models and save it to an allowed output folder.",
+                args={
+                    "prompt": "Image description.",
+                    "output_path": "Optional output file or folder path.",
+                    "size": "Optional image size if supported by the configured NVIDIA model.",
+                    "n": "Optional image count, default 1, max 4.",
+                    "seed": "Optional integer seed if supported by the configured NVIDIA model.",
+                    "open_after_save": "Optional boolean; open generated image files after saving.",
+                },
             ),
             ToolSpec(
                 name="gmail",
@@ -137,6 +163,24 @@ class ToolRegistry:
                 cwd = str(args.get("cwd") or "") or None
                 timeout = int(args.get("timeout") or 120)
                 return self.terminal.run(command=command, cwd=cwd, timeout=timeout)
+            if name == "local_files":
+                return self.local_files.run(
+                    action=str(args.get("action") or "roots"),
+                    path=str(args.get("path") or ""),
+                    query=str(args.get("query") or ""),
+                    max_results=int(args.get("max_results") or 20),
+                )
+            if name == "image_generation":
+                seed_value = args.get("seed")
+                seed = int(seed_value) if seed_value not in (None, "") else None
+                return self.image_generation.run(
+                    prompt=str(args.get("prompt") or ""),
+                    output_path=str(args.get("output_path") or ""),
+                    size=str(args.get("size") or ""),
+                    n=int(args.get("n") or 1),
+                    seed=seed,
+                    open_after_save=self._optional_bool(args.get("open_after_save")),
+                )
             if name == "gmail":
                 return self.gmail.run(
                     action=str(args.get("action") or "search"),
@@ -165,3 +209,28 @@ class ToolRegistry:
             return f"Tool error: {error}"
 
         return f"Unknown tool: {name}"
+
+    def run_stream(self, name: str, args: dict[str, Any] | None = None) -> Iterator[str]:
+        args = args or {}
+        if name == "image_generation":
+            seed_value = args.get("seed")
+            seed = int(seed_value) if seed_value not in (None, "") else None
+            result = yield from self.image_generation.run_stream(
+                prompt=str(args.get("prompt") or ""),
+                output_path=str(args.get("output_path") or ""),
+                size=str(args.get("size") or ""),
+                n=int(args.get("n") or 1),
+                seed=seed,
+                open_after_save=self._optional_bool(args.get("open_after_save")),
+            )
+            return result
+
+        yield self.run(name, args)
+
+    @staticmethod
+    def _optional_bool(value: Any) -> bool | None:
+        if value is None or value == "":
+            return None
+        if isinstance(value, bool):
+            return value
+        return str(value).strip().lower() in {"1", "true", "yes", "on"}

@@ -19,7 +19,7 @@ def load_dotenv(path: Path) -> None:
             continue
 
         key, value = line.split("=", 1)
-        key = key.strip()
+        key = key.strip().lstrip("\ufeff")
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
 
@@ -49,7 +49,7 @@ class LLMConfig:
             temperature=float(os.getenv("TEMPERATURE", "0.4")),
             max_tokens=int(os.getenv("MAX_TOKENS", "1024")),
             timeout_seconds=int(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
-            stream=os.getenv("NVIDIA_STREAM", "false").strip().lower() in {"1", "true", "yes", "on"},
+            stream=os.getenv("NVIDIA_STREAM", "true").strip().lower() in {"1", "true", "yes", "on"},
         )
 
 

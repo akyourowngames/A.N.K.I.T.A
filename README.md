@@ -51,6 +51,14 @@ pip install -r requirements.txt
 python main.py
 ```
 
+## Desktop Frontend
+
+```powershell
+python jarvis_frontend.py
+```
+
+The PyQt5 frontend opens a JARVIS-style dashboard with chat, files, image generation status, terminal output, voice state, animated orb, and live telemetry. Assistant replies run in a background thread so the interface keeps animating while tools or model calls are working.
+
 ## Project Structure
 
 ```text

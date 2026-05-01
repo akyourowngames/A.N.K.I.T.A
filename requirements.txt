@@ -2,3 +2,8 @@ google-api-python-client
 google-auth
 google-auth-oauthlib
 google-auth-httplib2
+nvidia-riva-client==2.25.1
+sounddevice
+numpy
+PyQt5==5.15.11
+psutil==7.2.2
