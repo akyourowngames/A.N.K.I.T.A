@@ -99,7 +99,7 @@ class DaemonTools:
 
     def project_overview(self) -> dict[str, Any]:
         important_dirs = ["core", "tool", "skills", "daemon", "memory", "tests"]
-        important_files = ["main.py", "persona.md", ".env.example"]
+        important_files = ["main.py", "telegram_bot.py", "persona.md", ".env.example"]
         dirs = [name for name in important_dirs if (self.project_root / name).exists()]
         files = [name for name in important_files if (self.project_root / name).exists()]
         python_files = [

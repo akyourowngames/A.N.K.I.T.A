@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from typing import Any
 
 from tool.date_time import DateTimeTool
+from tool.gmail import GmailTool
+from tool.google_calendar import GoogleCalendarTool
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
 from tool.terminal import TerminalTool
@@ -25,6 +27,9 @@ class ToolRegistry:
         self.weather = WeatherTool()
         self.system_control = SystemControlTool()
         self.terminal = TerminalTool()
+        self.gmail = GmailTool()
+        self.google_calendar = GoogleCalendarTool()
+        self._planner_text_cache: str | None = None
 
     def specs(self) -> list[ToolSpec]:
         return [
@@ -57,9 +62,38 @@ class ToolRegistry:
                 description="Run an unrestricted PowerShell terminal command.",
                 args={"command": "PowerShell command.", "cwd": "Optional working directory.", "timeout": "Optional seconds."},
             ),
+            ToolSpec(
+                name="gmail",
+                description="Search, read, draft, or send Gmail email messages.",
+                args={
+                    "action": "search, read, draft, send.",
+                    "query": "Gmail search query for search/list.",
+                    "message_id": "Message id for read.",
+                    "to": "Recipient email for draft/send.",
+                    "subject": "Email subject for draft/send.",
+                    "body": "Email body for draft/send.",
+                    "max_results": "Optional integer, default 5.",
+                },
+            ),
+            ToolSpec(
+                name="google_calendar",
+                description="List, create, or delete Google Calendar events.",
+                args={
+                    "action": "list, create, delete.",
+                    "calendar_id": "Optional calendar id, default primary.",
+                    "query": "Optional search text for list/search.",
+                    "summary": "Event title for create.",
+                    "start": "ISO datetime for create.",
+                    "end": "Optional ISO datetime for create.",
+                    "event_id": "Event id for delete.",
+                    "max_results": "Optional integer, default 10.",
+                },
+            ),
         ]
 
     def planner_text(self) -> str:
+        if self._planner_text_cache is not None:
+            return self._planner_text_cache
         lines = []
         for spec in self.specs():
             lines.append(
@@ -72,7 +106,8 @@ class ToolRegistry:
                     ensure_ascii=False,
                 )
             )
-        return "\n".join(lines)
+        self._planner_text_cache = "\n".join(lines)
+        return self._planner_text_cache
 
     def run(self, name: str, args: dict[str, Any] | None = None) -> str:
         args = args or {}
@@ -102,6 +137,30 @@ class ToolRegistry:
                 cwd = str(args.get("cwd") or "") or None
                 timeout = int(args.get("timeout") or 120)
                 return self.terminal.run(command=command, cwd=cwd, timeout=timeout)
+            if name == "gmail":
+                return self.gmail.run(
+                    action=str(args.get("action") or "search"),
+                    query=str(args.get("query") or ""),
+                    to=str(args.get("to") or ""),
+                    subject=str(args.get("subject") or ""),
+                    body=str(args.get("body") or ""),
+                    message_id=str(args.get("message_id") or ""),
+                    max_results=int(args.get("max_results") or 5),
+                )
+            if name == "google_calendar":
+                return self.google_calendar.run(
+                    action=str(args.get("action") or "list"),
+                    calendar_id=str(args.get("calendar_id") or "primary"),
+                    query=str(args.get("query") or ""),
+                    summary=str(args.get("summary") or ""),
+                    start=str(args.get("start") or ""),
+                    end=str(args.get("end") or ""),
+                    timezone_name=str(args.get("timezone_name") or "Asia/Kolkata"),
+                    location=str(args.get("location") or ""),
+                    description=str(args.get("description") or ""),
+                    event_id=str(args.get("event_id") or ""),
+                    max_results=int(args.get("max_results") or 10),
+                )
         except Exception as error:
             return f"Tool error: {error}"
 

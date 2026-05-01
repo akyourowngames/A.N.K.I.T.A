@@ -17,6 +17,8 @@ If .env is present, do not say it is missing; never request secret values.
 If persona evidence is present, use it when judging personality/persona status.
 If validation output shows tests passing, treat tests as run and mention only remaining live/manual validation gaps.
 Git status prefix `??` means the file is untracked, not that the file has a runtime problem.
+Do not call a feature incomplete, half-done, missing, broken, or risky just because its files changed or exist.
+Only mark something incomplete when evidence directly shows failure, TODO markers, errors, or failed validation.
 If something is uncertain, say "unclear from evidence".
 Write concise Markdown with these sections:
 - Project Identity
@@ -30,20 +32,21 @@ Use project-specific words from file names, skill documents, persona, tests, and
 Do not ask generic project-charter questions. If uncertain, give the best-supported inference and state what evidence is missing.
 """
 
-CODE_REVIEW_PROMPT = """You are a senior code-review daemon.
+STATUS_REVIEW_PROMPT = """You are a factual project-status daemon.
 
 Review the project evidence and changed files. Write concise Markdown:
-- Likely Risks
-- Missing Tests
-- Integration Concerns
-- Suggested Validation
+- Verified Status
+- Validation Already Done
+- Needs Manual Verification
+- Real Blockers
 
 Do not include code snippets, code blocks, raw excerpts, or line-by-line implementation dumps.
-Do not invent file contents beyond the evidence.
-Do not claim tests are missing if tests are visible; instead say which new behavior may need more validation.
+Do not invent file contents, risks, missing tests, blockers, or integration problems beyond the evidence.
+Do not create generic "likely risks" just because files changed.
 Use the discovered test inventory when judging test coverage.
-Never say "there are no tests for X" when discovered tests include X or a close variant.
-If validation output shows tests passed, do not recommend writing basic tests that already exist; recommend targeted live/manual validation instead.
+If validation output shows tests passed, clearly say tests passed.
+Only mention missing tests when evidence directly shows a specific untested behavior.
+Only mention manual verification for behavior that unit tests cannot prove, such as live LLM calls, Windows app opening, microphone input, or real external APIs.
 Git status prefix `??` means untracked file; do not say the file must "handle ?? status".
 Do not recommend tools, commands, or files that are not present in evidence.
 """
@@ -76,7 +79,7 @@ class DaemonAnalyzer:
         evidence = build_llm_evidence(snapshot, events)
         return {
             "project_analysis": self._safe_chat("review", PROJECT_ANALYSIS_PROMPT, evidence),
-            "code_review": self._safe_chat("code_review", CODE_REVIEW_PROMPT, evidence),
+            "status_review": self._safe_chat("code_review", STATUS_REVIEW_PROMPT, evidence),
             "next_actions": self._safe_chat("writing", NEXT_ACTIONS_PROMPT, evidence),
         }
 

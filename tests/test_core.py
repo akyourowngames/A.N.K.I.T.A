@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.brain import Brain
 from core.logic import (
@@ -21,16 +23,19 @@ from core.memory import EmbeddingModel, PermanentMemory, extract_durable_memorie
 from core.pc_monitor import PcMonitor, PcMonitorConfig, format_activity_record
 from core.speech import SpeechConfig, convert_to_english
 from daemon.config import DaemonConfig
-from daemon.analyzer import NEXT_ACTIONS_PROMPT
+from daemon.analyzer import NEXT_ACTIONS_PROMPT, STATUS_REVIEW_PROMPT
 from daemon.project_daemon import ProjectDaemon
 from daemon.report import build_report
 from daemon.tools import DaemonTools
 from tool.date_time import DateTimeTool
+from tool.gmail import GmailTool
+from tool.google_calendar import GoogleCalendarTool
 from tool.registry import ToolRegistry
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
 from tool.terminal import TerminalTool
 from tool.weather import WeatherTool
+from telegram_bot import split_message
 
 
 class FakeLLM:
@@ -127,7 +132,7 @@ class FakeDaemonAnalyzer:
     def analyze(self, snapshot, events):
         return {
             "project_analysis": "Project Identity\n\nA fake project.",
-            "code_review": "Likely Risks\n\nNone obvious.",
+            "status_review": "Verified Status\n\nTests passed.",
             "next_actions": "Immediate Next Step\n\nRun tests.",
         }
 
@@ -411,7 +416,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parsed["args"], {"timezone": "UTC"})
 
     def test_tool_decision_parser_accepts_new_tools(self) -> None:
-        for tool_name in ("weather", "system_control", "terminal"):
+        for tool_name in ("weather", "system_control", "terminal", "gmail", "google_calendar"):
             parsed = Brain._parse_tool_decision(f'{{"tool":"{tool_name}","args":{{}}}}')
 
             self.assertEqual(parsed["tool"], tool_name)
@@ -583,6 +588,46 @@ class CoreTests(unittest.TestCase):
         self.assertIn("31°C", result)
         self.assertIn("Clear", result)
 
+    def test_gmail_raw_email_encodes_content(self) -> None:
+        raw = GmailTool._raw_email("sir@example.com", "Status", "All systems green.")
+
+        self.assertIsInstance(raw, str)
+        self.assertIn("QWxsIHN5c3RlbXMgZ3JlZW4u", raw)
+
+    def test_google_calendar_parses_iso_datetime(self) -> None:
+        parsed = GoogleCalendarTool._parse_datetime("2026-05-01T10:30:00+05:30")
+
+        self.assertEqual(parsed.isoformat(), "2026-05-01T10:30:00+05:30")
+
+    def test_registry_includes_google_tools(self) -> None:
+        registry = ToolRegistry()
+        specs = {spec.name: spec for spec in registry.specs()}
+
+        self.assertIn("gmail", specs)
+        self.assertIn("google_calendar", specs)
+        self.assertIn("email", specs["gmail"].description.lower())
+        self.assertIn("calendar", specs["google_calendar"].description.lower())
+
+    def test_google_tools_return_setup_guidance_without_dependencies(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            env = {
+                "GOOGLE_CLIENT_SECRET_FILE": str(Path(temp_dir) / "missing-client-secret.json"),
+                "GOOGLE_TOKEN_FILE": str(Path(temp_dir) / "missing-token.json"),
+            }
+            with patch.dict(os.environ, env, clear=False):
+                result = GmailTool().run(action="search", query="newer_than:1d")
+
+        if result.startswith("FAILED: Google API libraries are not installed."):
+            self.assertIn("pip install google-api-python-client", result)
+        else:
+            self.assertIn("Google OAuth client secret file is missing", result)
+
+    def test_telegram_splits_long_messages(self) -> None:
+        chunks = split_message("x" * 8000)
+
+        self.assertEqual(len(chunks), 3)
+        self.assertLessEqual(max(len(chunk) for chunk in chunks), 3900)
+
     def test_terminal_runs_command(self) -> None:
         result = TerminalTool().run("Write-Output 'terminal-ok'", timeout=10)
 
@@ -595,6 +640,19 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Brightness set to 42%", tool.command_for("set_brightness", value=42))
         self.assertIn("ms-settings:bluetooth", tool.command_for("open_bluetooth"))
         self.assertIn("SetVolume(25)", tool.command_for("set_volume", value=25))
+        open_app_command = tool.command_for("open_app", target="notepad")
+        self.assertIn("VERIFIED: app opened", open_app_command)
+        self.assertIn("Get-Command $query", open_app_command)
+        self.assertIn("Test-AppMatch", open_app_command)
+        self.assertIn("$looksLikePathOrExe", open_app_command)
+        self.assertNotIn("$query.Substring", open_app_command)
+        self.assertNotIn("Get-Command \"$query*\"", open_app_command)
+        self.assertIn("Get-StartApps", open_app_command)
+        self.assertIn("*.lnk", open_app_command)
+        self.assertIn("App Paths", open_app_command)
+        self.assertIn("FALLBACK_COMMAND", open_app_command)
+        self.assertIn("Get-StartApps", tool._app_discovery_command("notepad"))
+        self.assertIn("App Paths", tool._app_discovery_command("notepad"))
 
     def test_registry_system_fallback_uses_terminal(self) -> None:
         class BadSystem:
@@ -624,22 +682,27 @@ class CoreTests(unittest.TestCase):
                 "diff_stat": "core/brain.py | 10 +++++",
                 "recent_commits": "abc123 test",
                 "file_context": {"core/brain.py": "class Brain: pass"},
+                "validation": "Ran 45 tests in 2.5s\n\nOK",
             },
             [{"timestamp": "now", "summary": "Project changed with 1 changed file."}],
             {
-                "project_analysis": "Project Identity\n\nTest project analysis.",
-                "code_review": "Likely Risks\n\nTest risk.\n```python\nclass Leaked: pass\n```\ndef leaked(): pass",
-                "next_actions": "Immediate Next Step\n\nTest next step.",
+                "project_analysis": "Project Identity\n\nTest project analysis.\nThis may have introduced new bugs.",
+                "status_review": "Verified Status\n\nTest status.\n```python\nclass Leaked: pass\n```\ndef leaked(): pass",
+                "next_actions": "Immediate Next Step\n\nTest next step.\nRun the existing test command to ensure that all tests pass.",
             },
         )
 
         self.assertIn("# Daemon Project Report", report)
         self.assertIn("## Project Overview", report)
-        self.assertIn("Test project analysis.", report)
-        self.assertIn("## Quality And Risks", report)
-        self.assertIn("Test risk.", report)
+        self.assertIn("local personal AI assistant", report)
+        self.assertIn("Brain and message flow", report)
+        self.assertIn("## Verified Status", report)
+        self.assertIn("Unit tests:", report)
+        self.assertIn("no speculative missing-test", report)
         self.assertIn("## Next Actions", report)
-        self.assertIn("Test next step.", report)
+        self.assertIn("Stage only the intended files by path", report)
+        self.assertNotIn("may have introduced", report)
+        self.assertNotIn("Run the existing test command", report)
         self.assertIn("## Evidence Sources", report)
         self.assertIn("core/brain.py", report)
         self.assertNotIn("class Brain", report)
@@ -725,6 +788,8 @@ class CoreTests(unittest.TestCase):
             self.assertIn("class Brain", context["core/brain.py"])
 
     def test_daemon_next_actions_prompt_avoids_blind_stage_all(self) -> None:
+        self.assertIn("Do not invent file contents, risks, missing tests", STATUS_REVIEW_PROMPT)
+        self.assertIn("If validation output shows tests passed, clearly say tests passed", STATUS_REVIEW_PROMPT)
         self.assertIn("Do not recommend `git add .`", NEXT_ACTIONS_PROMPT)
         self.assertIn("Do not mention non-existent scripts", NEXT_ACTIONS_PROMPT)
         self.assertIn("Do not include code snippets", NEXT_ACTIONS_PROMPT)

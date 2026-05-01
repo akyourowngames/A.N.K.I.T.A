@@ -1,4 +1,5 @@
 .env
+secrets/
 __pycache__/
 *.pyc
 .pytest_cache/
@@ -12,4 +13,6 @@ memory/data/daemon-report.md
 memory/store/*.sqlite
 memory/store/*.sqlite-*
 memory/store/*.jsonl
+memory/store/*token*.json
+memory/store/google-token.json
 daemon/state/

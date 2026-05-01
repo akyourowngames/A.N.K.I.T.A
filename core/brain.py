@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -55,6 +56,8 @@ Tool behavior:
 - Tools may be described inside skills/. Use them only when the current request needs them.
 - When tool output is provided, ground your answer in that output.
 - Use tool output silently unless the user asks how you know.
+- For system actions, claim success only when tool output confirms success or says VERIFIED.
+- If tool output says FAILED, unverified, or fallback failed, tell sir it did not verify and give the shortest useful next step.
 
 Response behavior:
 - Keep answers useful and compact.
@@ -76,12 +79,18 @@ or:
 {"tool":"system_control","args":{"action":"set_volume","value":35}}
 or:
 {"tool":"terminal","args":{"command":"Get-ChildItem","timeout":120}}
+or:
+{"tool":"gmail","args":{"action":"search","query":"from:example@example.com","max_results":5}}
+or:
+{"tool":"google_calendar","args":{"action":"list","calendar_id":"primary","max_results":10}}
 
 Use date_time for current date, time, day, or timezone questions.
 Use tavily_search for live web, latest/current facts, external lookup, news, or online search.
 Use weather for weather, temperature, rain, forecast, or outdoor-condition questions.
 Use system_control for volume, brightness, Bluetooth settings, Windows settings, or opening apps.
 Use terminal for explicit terminal, shell, PowerShell, command-line, unrestricted command, install, git, process, filesystem, or fallback requests.
+Use gmail for email, inbox, Gmail search/read/draft/send requests.
+Use google_calendar for calendar, schedule, meetings, reminders, events, or agenda requests.
 Use none for normal chat, coding help, personal-memory questions, and anything answerable from known facts.
 """
 
@@ -96,6 +105,7 @@ class Brain:
     tools: ToolRegistry
     memory: PermanentMemory
     pc_monitor: PcMonitor | None = None
+    _static_prompt_context: str | None = None
 
     @classmethod
     def create(cls, project_root: Path) -> "Brain":
@@ -140,15 +150,13 @@ class Brain:
         session_context: str = "",
         pc_context: str = "",
     ) -> str:
-        skills = read_markdown_skills(self.paths.skills)
-        persona = self._read_persona()
+        static_context = self._static_context()
         prompt = BRAIN_SYSTEM_PROMPT.format(user_name=self.user_name, ai_name=self.ai_name)
         relevant = relevant_memory or "No relevant permanent memories found."
         session = session_context or "No session messages yet."
         pc = pc_context or "No PC activity observed yet."
         return (
-            f"{prompt}\n\nPersona:\n{persona}"
-            f"\n\nAvailable skills:\n{skills}"
+            f"{prompt}\n\n{static_context}"
             f"\n\nKnown user facts:\n{relevant}"
             f"\n\nCurrent session so far:\n{session}"
             f"\n\nObserved PC activity:\n{pc}"
@@ -160,10 +168,15 @@ class Brain:
     def answer_stream(self, user_text: str) -> Iterator[str]:
         prior_turns = read_chat_turns(self.current_chat)
         append_chat_turn(self.current_chat, self.user_name, user_text)
-        memory_context = self.memory.context_for(user_text)
-        tool_context = self._tool_context_for(user_text)
         session_context = summarize_chat_turns(prior_turns)
-        pc_context = self._pc_context_for(user_text)
+
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            memory_future = executor.submit(self.memory.context_for, user_text)
+            tool_future = executor.submit(self._tool_context_for, user_text)
+            pc_future = executor.submit(self._pc_context_for, user_text)
+            memory_context = memory_future.result()
+            tool_context = tool_future.result()
+            pc_context = pc_future.result()
 
         messages = self._answer_messages(
             user_text,
@@ -264,7 +277,7 @@ class Brain:
         if not isinstance(data, dict):
             return {"tool": "none", "args": {}}
         tool = data.get("tool")
-        if tool not in {"none", "date_time", "tavily_search", "weather", "system_control", "terminal"}:
+        if tool not in {"none", "date_time", "tavily_search", "weather", "system_control", "terminal", "gmail", "google_calendar"}:
             return {"tool": "none", "args": {}}
         args = data.get("args")
         if not isinstance(args, dict):
@@ -276,3 +289,10 @@ class Brain:
         if not path.exists():
             return "No persona file found."
         return path.read_text(encoding="utf-8").strip()
+
+    def _static_context(self) -> str:
+        if self._static_prompt_context is None:
+            persona = self._read_persona()
+            skills = read_markdown_skills(self.paths.skills)
+            self._static_prompt_context = f"Persona:\n{persona}\n\nAvailable skills:\n{skills}"
+        return self._static_prompt_context

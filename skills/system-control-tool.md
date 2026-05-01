@@ -12,7 +12,11 @@ Use this when sir asks to control the local Windows system:
 Behavior:
 
 - Treat direct system control as the first path.
-- If direct control fails, use terminal fallback where possible.
+- For opening apps, resolve apps dynamically from Windows instead of relying on a hardcoded app list.
+- Try direct launch, command/exe lookup, Start Menu shortcuts, and Windows StartApps/AppID matches.
+- If direct control fails, use terminal fallback or return discovered matches where possible.
+- For opening apps, verify the app actually appeared in the process/window list before reporting success.
+- Say the action is unverified or failed when verification fails; do not say it opened just because the launch command ran.
 - Report the final outcome plainly.
 - Avoid long explanations unless the action fails.
 - Do not ask for confirmation for harmless changes like opening settings.

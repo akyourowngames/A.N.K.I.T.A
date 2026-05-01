@@ -33,7 +33,7 @@ def build_report(
         "",
         "## Project Overview",
         "",
-        clean_section(llm_sections.get("project_analysis"), "No project analysis available yet."),
+        build_project_overview(project, snapshot),
         "",
         "## Current Status",
         "",
@@ -45,13 +45,13 @@ def build_report(
         f"- Validation: {summarize_validation(snapshot.get('validation'))}",
         f"- Last daemon note: {recent_events[-1].get('summary') if recent_events else 'none yet'}",
         "",
-        "## Quality And Risks",
+        "## Verified Status",
         "",
-        clean_section(llm_sections.get("code_review"), "No quality/risk review available yet."),
+        build_verified_status(snapshot),
         "",
         "## Next Actions",
         "",
-        clean_section(llm_sections.get("next_actions"), "No next-action plan available yet."),
+        build_next_actions(snapshot),
         "",
         "## Evidence Sources",
         "",
@@ -142,6 +142,149 @@ def summarize_github(text: str | None) -> str:
 
     first_line = next((line.strip() for line in text.splitlines() if line.strip()), "")
     return first_line or "detected"
+
+
+def factual_status_fallback(snapshot: dict[str, Any]) -> str:
+    return (
+        "- Unit tests: "
+        f"{summarize_validation(snapshot.get('validation'))}\n"
+        "- Manual verification still useful for live LLM calls, Windows app control, microphone input, and external APIs.\n"
+        "- No unsupported missing-test or integration-risk claims were generated."
+    )
+
+
+def build_verified_status(snapshot: dict[str, Any]) -> str:
+    validation = summarize_validation(snapshot.get("validation"))
+    lines = [
+        f"- Unit tests: {validation}",
+        "- Report mode: factual status only; no speculative missing-test or integration-risk claims.",
+    ]
+    if "OK" in validation:
+        lines.append("- Known blockers from evidence: none.")
+    else:
+        lines.append("- Known blockers from evidence: validation needs attention.")
+    lines.append("- Manual checks still useful for live LLM calls, microphone input, Windows app opening, and real external APIs.")
+    return "\n".join(lines)
+
+
+def build_project_overview(project: dict[str, Any], snapshot: dict[str, Any]) -> str:
+    capabilities = capability_readings(project)
+    changed_files = snapshot.get("changed_files") or []
+    validation = summarize_validation(snapshot.get("validation"))
+
+    lines = [
+        "### Project Identity",
+        "",
+        f"- Name: {project.get('name') or 'unknown'}",
+        "- Reading: local personal AI assistant with core brain logic, tool use, skills, memory, chat sessions, and daemon project reporting.",
+        "",
+        "### Capabilities Visible From Files",
+        "",
+    ]
+    lines.extend(f"- {capability}" for capability in capabilities)
+    lines.extend(
+        [
+            "",
+            "### Completed / Working Evidence",
+            "",
+            f"- Validation: {validation}",
+            f"- Core directories present: {', '.join(project.get('directories') or []) or 'none detected'}",
+            f"- Python files scanned: {project.get('python_file_count', 0)}",
+            f"- Skill files scanned: {len(project.get('skill_files') or [])}",
+            "",
+            "### Active Work",
+            "",
+        ]
+    )
+    if changed_files:
+        lines.extend(f"- {path}" for path in changed_files)
+    else:
+        lines.append("- No changed files detected.")
+
+    lines.extend(
+        [
+            "",
+            "### Next Useful Checks",
+            "",
+            "- Review the changed files listed above before commit.",
+            "- Keep unit tests passing.",
+            "- Manually verify live-only behavior: LLM calls, microphone input, Windows app opening, and external APIs.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def capability_readings(project: dict[str, Any]) -> list[str]:
+    paths = set(project.get("python_files") or []) | set(project.get("skill_files") or []) | set(project.get("files") or [])
+    readings = []
+    checks = [
+        ("core/brain.py", "Brain and message flow"),
+        ("core/memory.py", "Permanent memory"),
+        ("core/pc_monitor.py", "PC activity awareness"),
+        ("core/speech.py", "Speech/listening support"),
+        ("tool/system_control.py", "Windows system control"),
+        ("tool/terminal.py", "PowerShell terminal execution"),
+        ("tool/weather.py", "Weather lookup"),
+        ("tool/gmail.py", "Gmail search/read/draft/send"),
+        ("tool/google_calendar.py", "Google Calendar events"),
+        ("skills/tavily-web-search-tool.md", "Tavily web search"),
+        ("telegram_bot.py", "Telegram bot bridge"),
+        ("daemon/project_daemon.py", "Background project daemon"),
+        ("daemon/report.py", "Clean project-status report generation"),
+        ("persona.md", "JARVIS-style persona"),
+    ]
+    for path, label in checks:
+        if path in paths:
+            readings.append(label)
+    return readings or ["Project files were scanned, but no named capabilities were detected."]
+
+
+def build_next_actions(snapshot: dict[str, Any]) -> str:
+    changed_files = snapshot.get("changed_files") or []
+    lines = [
+        "- Review the changed files listed in Active Work / Evidence Sources.",
+        "- Stage only the intended files by path when ready.",
+        "- Keep the existing unit test suite passing.",
+        "- Manually verify live-only behavior touched by this work: LLM calls, microphone input, Windows app opening, and external APIs.",
+    ]
+    if changed_files:
+        lines.append(f"- Current changed-file count: {len(changed_files)}.")
+    return "\n".join(lines)
+
+
+def remove_speculation(text: str) -> str:
+    return remove_lines_containing(
+        text,
+        [
+            "missing tests",
+            "integration concern",
+            "likely risks",
+            "not yet fully implemented",
+            "not fully implemented",
+            "incomplete or inconsistent",
+            "incomplete",
+            "needs to have",
+            "needs to continue development",
+            "needs further development",
+            "may have introduced",
+            "new bugs",
+            "broken existing functionality",
+            "not entirely clear",
+            "unclear",
+            "what is the purpose",
+        ],
+    )
+
+
+def remove_lines_containing(text: str, phrases: list[str]) -> str:
+    lower_phrases = [phrase.lower() for phrase in phrases]
+    kept = []
+    for line in text.splitlines():
+        lowered = line.lower()
+        if any(phrase in lowered for phrase in lower_phrases):
+            continue
+        kept.append(line)
+    return "\n".join(kept).strip()
 
 
 def clean_section(text: str | None, fallback: str) -> str:
