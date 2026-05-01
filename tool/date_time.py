@@ -12,7 +12,13 @@ class DateTimeTool:
 
     def run(self, timezone: str = "Asia/Kolkata") -> str:
         now = datetime.now(self._timezone(timezone))
-        return now.strftime("%A, %B %d, %Y at %I:%M:%S %p %Z")
+        return "\n".join(
+            [
+                f"Current date/time: {now.strftime('%A, %B %d, %Y at %I:%M:%S %p %Z')}",
+                f"Time of day: {self._time_of_day(now.hour)}",
+                f"Morning now: {'yes' if now.hour < 12 else 'no'}",
+            ]
+        )
 
     @staticmethod
     def _timezone(timezone: str):
@@ -30,3 +36,13 @@ class DateTimeTool:
             return ZoneInfo(normalized)
         except ZoneInfoNotFoundError:
             return datetime_timezone.utc
+
+    @staticmethod
+    def _time_of_day(hour: int) -> str:
+        if hour < 12:
+            return "morning"
+        if hour < 17:
+            return "afternoon"
+        if hour < 21:
+            return "evening"
+        return "night"

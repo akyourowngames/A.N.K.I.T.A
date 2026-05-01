@@ -44,7 +44,7 @@ class EmbeddingModel:
         use_sentence_transformers: bool | None = None,
     ) -> None:
         self.model_name = model_name or os.getenv("MEMORY_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        self.dimensions = dimensions
+        self.dimensions = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", str(dimensions)))
         self.backend = "hash"
         self._model = None
         backend = os.getenv("MEMORY_BACKEND", "fast").strip().lower()
@@ -92,6 +92,8 @@ class EmbeddingModel:
                 self._cache[key] = vector
                 return vector
             except Exception:
+                if os.getenv("MEMORY_ALLOW_HASH_FALLBACK", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+                    raise
                 self.backend = "hash"
 
         self._load_model()
@@ -115,6 +117,7 @@ class EmbeddingModel:
             "model": self.model_name,
             "input": [text],
             "input_type": input_type,
+            "dimensions": self.dimensions,
         }
         request = urllib.request.Request(
             f"{base_url}/embeddings",
@@ -127,7 +130,8 @@ class EmbeddingModel:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
+            timeout = int(os.getenv("MEMORY_EMBEDDING_TIMEOUT_SECONDS", "5"))
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             details = error.read().decode("utf-8", errors="replace")
@@ -153,46 +157,6 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     if not left or not right or len(left) != len(right):
         return 0.0
     return sum(a * b for a, b in zip(left, right))
-
-
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "about",
-    "am",
-    "are",
-    "do",
-    "does",
-    "i",
-    "is",
-    "me",
-    "my",
-    "of",
-    "the",
-    "to",
-    "what",
-    "who",
-}
-
-
-def normalized_tokens(text: str) -> set[str]:
-    tokens = set()
-    for token in re.findall(r"[a-zA-Z0-9_]+", text.lower()):
-        if token in STOPWORDS:
-            continue
-        if len(token) > 3 and token.endswith("s"):
-            token = token[:-1]
-        tokens.add(token)
-    return tokens
-
-
-def token_score(query: str, text: str) -> float:
-    query_tokens = normalized_tokens(query)
-    text_tokens = normalized_tokens(text)
-    if not query_tokens or not text_tokens:
-        return 0.0
-    return len(query_tokens & text_tokens) / len(query_tokens)
 
 
 @dataclass(frozen=True)
@@ -300,7 +264,7 @@ class PermanentMemory:
 
     def ingest_data_files(self) -> int:
         count = 0
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             text = file_path.read_text(encoding="utf-8").strip()
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if self._source_is_current(file_path.name, content_hash):
@@ -374,37 +338,9 @@ class PermanentMemory:
 
     def search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
         mode = os.getenv("MEMORY_SEARCH_MODE", "hybrid").strip().lower()
-        lexical_hits = self.keyword_search(query, top_k=top_k)
-        if mode in {"fast", "keyword", "lexical"}:
-            return lexical_hits
-
-        if mode == "hybrid" and lexical_hits and lexical_hits[0].score >= 0.25:
-            return lexical_hits
-
+        if mode in {"off", "none"}:
+            return []
         return self.semantic_search(query, top_k=top_k)
-
-    def keyword_search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
-        hits: list[MemoryHit] = []
-
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT text, source, kind FROM memories"
-            ).fetchall()
-
-        for row in rows:
-            score = token_score(query, row["text"])
-            if score > 0:
-                hits.append(
-                    MemoryHit(
-                        text=row["text"],
-                        source=row["source"],
-                        kind=row["kind"],
-                        score=score,
-                    )
-                )
-
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:top_k]
 
     def semantic_search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
         query_vector = self._cached_query_embedding(query)
@@ -476,7 +412,7 @@ class PermanentMemory:
 
     def profile_context(self) -> list[str]:
         pinned: list[str] = []
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             text = file_path.read_text(encoding="utf-8").strip()
             for line in text.splitlines():
                 key, value = parse_key_value_line(line)
@@ -486,12 +422,19 @@ class PermanentMemory:
 
     def profile_value(self, key_name: str) -> str | None:
         wanted = key_name.strip().lower()
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             for line in file_path.read_text(encoding="utf-8").splitlines():
                 key, value = parse_key_value_line(line)
                 if key.lower() == wanted and value:
                     return value
         return None
+
+    def _memory_data_files(self) -> list[Path]:
+        return [
+            file_path
+            for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")])
+            if file_path.stem.lower() != "readme"
+        ]
 
 
 def parse_key_value_line(line: str) -> tuple[str, str]:

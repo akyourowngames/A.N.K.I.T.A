@@ -49,7 +49,6 @@ class PcMonitor:
     def start(self) -> None:
         if not self.config.enabled or self._thread:
             return
-        self.sample_once()
         self._thread = threading.Thread(target=self._loop, name="pc-monitor", daemon=True)
         self._thread.start()
 
@@ -91,8 +90,10 @@ class PcMonitor:
         return "\n".join(line for line in lines if line)
 
     def _loop(self) -> None:
-        while not self._stop.wait(self.config.interval_seconds):
+        while not self._stop.is_set():
             self.sample_once()
+            if self._stop.wait(self.config.interval_seconds):
+                break
 
     def _append(self, snapshot: dict[str, Any]) -> None:
         with self.log_path.open("a", encoding="utf-8") as handle:

@@ -14,12 +14,19 @@ from core.logic import (
     chat_turns_as_messages,
     read_chat_turns,
     read_markdown_skills,
+    read_markdown_skill_summaries,
     read_memory,
     sanitize_skill_text,
     session_file,
     summarize_chat_turns,
 )
-from core.memory import EmbeddingModel, PermanentMemory, extract_durable_memories, normalize_memory_text, parse_key_value_line
+from core.memory import (
+    EmbeddingModel,
+    PermanentMemory,
+    extract_durable_memories,
+    normalize_memory_text,
+    parse_key_value_line,
+)
 from core.pc_monitor import PcMonitor, PcMonitorConfig, format_activity_record
 from core.speech import SpeechConfig, convert_to_english
 from daemon.config import DaemonConfig
@@ -72,6 +79,31 @@ class ToolFakeLLM:
     def stream_chat(self, messages):
         self.stream_messages = messages
         yield "It is time."
+
+
+class ContextPlanFakeLLM:
+    def __init__(self, plan: str, reply: str = "Test reply") -> None:
+        self.plan = plan
+        self.reply = reply
+        self.chat_calls = []
+        self.stream_messages = []
+
+    def chat(self, messages, **kwargs):
+        self.chat_calls.append(messages)
+        return self.plan
+
+    def stream_chat(self, messages):
+        self.stream_messages = messages
+        yield self.reply
+
+
+class CalendarFollowupFakeLLM:
+    def __init__(self) -> None:
+        self.messages = []
+
+    def chat(self, messages, **kwargs):
+        self.messages = messages
+        return '{"tool":"google_calendar","args":{"action":"list","calendar_id":"primary","max_results":10}}'
 
 
 class TranslationFakeLLM:
@@ -153,6 +185,19 @@ class CoreTests(unittest.TestCase):
             self.assertIn("Use observed activity.", result)
             self.assertNotIn("permanent-memory.md", result)
 
+    def test_reads_compact_skill_summaries_without_relevance_keywords(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            skills = Path(temp_dir)
+            (skills / "weather-tool.md").write_text("Use for weather and forecast requests.", encoding="utf-8")
+            (skills / "gmail-tool.md").write_text("Use for inbox and email requests.", encoding="utf-8")
+            (skills / "terminal-tool.md").write_text("Use for PowerShell commands.", encoding="utf-8")
+            (skills / "calendar-tool.md").write_text("Use for meetings and events.", encoding="utf-8")
+
+            result = read_markdown_skill_summaries(skills, max_chars_per_file=80)
+
+            self.assertIn("weather-tool.md", result)
+            self.assertIn("gmail-tool.md", result)
+
     def test_sanitizes_internal_skill_details(self) -> None:
         text = "Use search.\nTool code: tool/search.py\nAPI key lives in .env\nUse results."
 
@@ -225,7 +270,9 @@ class CoreTests(unittest.TestCase):
             (paths.skills / "notes.md").write_text("Always be helpful.", encoding="utf-8")
             (paths.memory_data / "profile.txt").write_text("User name is Sam.", encoding="utf-8")
 
-            fake_llm = FakeLLM()
+            fake_llm = ContextPlanFakeLLM(
+                '{"tool":"none","args":{},"needs_memory":true,"needs_pc":false,"needs_skills":true}'
+            )
             class FakeTools:
                 def planner_text(self):
                     return ""
@@ -245,7 +292,7 @@ class CoreTests(unittest.TestCase):
             reply = brain.answer("Hi")
 
             self.assertEqual(reply, "Test reply")
-            system_prompt = fake_llm.messages[0]["content"]
+            system_prompt = fake_llm.stream_messages[0]["content"]
             self.assertIn("You are Nova", system_prompt)
             self.assertIn("notes.md", system_prompt)
             self.assertIn("User name is Sam.", system_prompt)
@@ -378,7 +425,10 @@ class CoreTests(unittest.TestCase):
                 def context_for(self, user_text):
                     return "active window: Visual Studio Code"
 
-            llm = StreamingFakeLLM()
+            llm = ContextPlanFakeLLM(
+                '{"tool":"none","args":{},"needs_memory":false,"needs_pc":true,"needs_skills":false}',
+                reply="PC context noted.",
+            )
             brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory(), FakeMonitor())
 
             "".join(brain.answer_stream("what am I doing?"))
@@ -409,6 +459,130 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(reply, "It is time.")
             self.assertIn("UTC", final_user_message)
 
+    def test_short_confirmation_uses_previous_tool_offer(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def __init__(self):
+                    self.calls = []
+
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    self.calls.append((name, args))
+                    return "No upcoming Google Calendar events found."
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            tools = FakeTools()
+            llm = CalendarFollowupFakeLLM()
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", tools, FakeMemory())
+            prior_turns = [{"speaker": "Nova", "text": "Shall I brief you on your schedule for the day?"}]
+
+            context = brain._tool_context_for("yeah", prior_turns)
+
+            self.assertIn("No upcoming Google Calendar events", context)
+            self.assertEqual(tools.calls[0][0], "google_calendar")
+            self.assertIn("Shall I brief you", llm.messages[-1]["content"])
+
+    def test_no_tool_prompt_forbids_external_claims(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ""
+
+                def run(self, name, args):
+                    return ""
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            brain = Brain(paths, FakeLLM(), "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+            messages = brain._answer_messages("yeah", "", "", [], "No session messages yet.", "", "")
+
+            self.assertIn("No external tool output is supplied", messages[0]["content"])
+            self.assertIn("Do not claim calendar", messages[0]["content"])
+
+    def test_failed_tool_returns_direct_failure_without_final_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    return "FAILED: Google OAuth client secret file is missing.\nExpected: secrets/google-client-secret.json"
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            brain = Brain(paths, CalendarFollowupFakeLLM(), "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            reply = "".join(brain.answer_stream("brief me on my schedule"))
+
+            self.assertIn("couldn't complete", reply)
+            self.assertIn("Google OAuth client secret file is missing", reply)
+
+    def test_unsupported_tool_plan_returns_direct_reply_without_final_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+
+            class FakeTools:
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    raise AssertionError("Unsupported plans must not run a tool")
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            llm = ContextPlanFakeLLM(
+                '{"tool":"unsupported","args":{},"unsupported_reason":"image generation is not connected","needs_memory":false,"needs_pc":false,"needs_skills":false}',
+                reply="This should not be used.",
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+
+            reply = "".join(brain.answer_stream("generate an image of a car"))
+
+            self.assertIn("can't do that from here", reply)
+            self.assertIn("image generation is not connected", reply)
+            self.assertEqual(llm.stream_messages, [])
+
     def test_tool_decision_parser_handles_json(self) -> None:
         parsed = Brain._parse_tool_decision('```json\n{"tool":"date_time","args":{"timezone":"UTC"}}\n```')
 
@@ -420,6 +594,14 @@ class CoreTests(unittest.TestCase):
             parsed = Brain._parse_tool_decision(f'{{"tool":"{tool_name}","args":{{}}}}')
 
             self.assertEqual(parsed["tool"], tool_name)
+
+    def test_tool_decision_parser_accepts_unsupported(self) -> None:
+        parsed = Brain._parse_tool_decision(
+            '{"tool":"unsupported","args":{},"unsupported_reason":"image generation is not connected"}'
+        )
+
+        self.assertEqual(parsed["tool"], "unsupported")
+        self.assertEqual(parsed["unsupported_reason"], "image generation is not connected")
 
     def test_extracts_durable_memory(self) -> None:
         memories = list(extract_durable_memories("remember that I prefer short answers"))
@@ -546,6 +728,8 @@ class CoreTests(unittest.TestCase):
         result = DateTimeTool().run("UTC")
 
         self.assertIn("UTC", result)
+        self.assertIn("Time of day:", result)
+        self.assertIn("Morning now:", result)
 
     def test_tavily_formats_results(self) -> None:
         body = {

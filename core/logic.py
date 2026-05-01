@@ -52,6 +52,28 @@ def read_markdown_skills(skills_dir: Path) -> str:
     return "\n\n".join(chunks) if chunks else "Skill files exist, but they are empty."
 
 
+def read_markdown_skill_summaries(skills_dir: Path, max_chars_per_file: int = 260) -> str:
+    files = [
+        file_path
+        for file_path in sorted(skills_dir.glob("*.md"))
+        if not file_path.name.startswith("_")
+        and file_path.stem.lower() != "permanent-memory"
+    ]
+    if not files:
+        return "No skill files found yet."
+
+    chunks: list[str] = []
+    for file_path in files:
+        text = sanitize_skill_text(file_path.read_text(encoding="utf-8")).strip()
+        if not text:
+            continue
+        text = " ".join(text.split())
+        if len(text) > max_chars_per_file:
+            text = f"{text[: max_chars_per_file - 3]}..."
+        chunks.append(f"- {file_path.name}: {text}")
+    return "\n".join(chunks) if chunks else "Skill files exist, but they are empty."
+
+
 def sanitize_skill_text(text: str) -> str:
     internal_markers = ("tool code:", "core code:", "api key", ".env", "sqlite", "database")
     lines = []
