@@ -20,6 +20,8 @@ from core.llm_service import load_dotenv
 
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
+SIMPLE_STT_PROVIDERS = {"speech_recognition", "speechrecognition", "simple", "google", "google_web_speech"}
+
 
 class ChatService(Protocol):
     def chat(self, messages: list[dict[str, str]]) -> str:
@@ -54,6 +56,7 @@ class SpeechConfig:
     nvidia_asr_file_streaming_chunk: int
     transcription_model: str
     language: str
+    speech_recognition_language: str
     english_conversion: str
     translation_model: str
     local_model: str
@@ -73,8 +76,10 @@ class SpeechConfig:
     @classmethod
     def from_env(cls, project_root: Path) -> "SpeechConfig":
         load_dotenv(project_root / ".env")
+        provider = os.getenv("STT_PROVIDER", "speech_recognition").strip().lower()
+        default_conversion = "off" if provider in SIMPLE_STT_PROVIDERS else "auto"
         return cls(
-            provider=os.getenv("STT_PROVIDER", "local").strip().lower(),
+            provider=provider,
             openai_api_key=os.getenv("OPENAI_API_KEY", "").strip(),
             openai_base_url=os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/"),
             nvidia_api_key=os.getenv("NVIDIA_API_KEY", "").strip(),
@@ -90,7 +95,8 @@ class SpeechConfig:
             nvidia_asr_file_streaming_chunk=int(os.getenv("STT_NVIDIA_FILE_STREAMING_CHUNK", "1600")),
             transcription_model=os.getenv("STT_MODEL", "gpt-4o-transcribe").strip(),
             language=_speech_language_from_env(),
-            english_conversion=os.getenv("STT_ENGLISH_CONVERSION", "auto").strip().lower(),
+            speech_recognition_language=_speech_recognition_language_from_env(),
+            english_conversion=os.getenv("STT_ENGLISH_CONVERSION", default_conversion).strip().lower(),
             translation_model=os.getenv("STT_TRANSLATION_MODEL", "whisper-1").strip(),
             local_model=os.getenv("STT_LOCAL_MODEL", "small").strip(),
             local_device=os.getenv("STT_LOCAL_DEVICE", "auto").strip(),
@@ -108,8 +114,12 @@ class SpeechConfig:
         )
 
     def validate(self) -> None:
-        if self.provider not in {"local", "faster_whisper", "openai", "nvidia", "nvidia_riva", "riva"}:
-            raise ValueError("STT_PROVIDER must be local, faster_whisper, openai, nvidia, nvidia_riva, or riva.")
+        if self.provider not in SIMPLE_STT_PROVIDERS | {"local", "faster_whisper", "openai", "nvidia", "nvidia_riva", "riva"}:
+            raise ValueError(
+                "STT_PROVIDER must be speech_recognition, simple, local, faster_whisper, openai, nvidia, nvidia_riva, or riva."
+            )
+        if self.provider in SIMPLE_STT_PROVIDERS and not self.speech_recognition_language:
+            raise ValueError("Missing STT_SPEECH_RECOGNITION_LANGUAGE.")
         if self.provider == "openai" and not self.openai_api_key:
             raise ValueError("Missing OPENAI_API_KEY. Add it to .env before using listening mode.")
         if self.provider == "openai" and not self.transcription_model:
@@ -156,6 +166,9 @@ class TTSConfig:
     nvidia_tts_sample_rate: int
     nvidia_tts_streaming: bool
     nvidia_tts_ssml: bool
+    voice_effect: str
+    heavy_pitch_factor: float
+    heavy_darkness: float
     player: str
 
     @classmethod
@@ -164,7 +177,7 @@ class TTSConfig:
         return cls(
             enabled=_env_flag("TTS_ENABLED", default=True),
             provider=os.getenv("TTS_PROVIDER", "nvidia").strip().lower(),
-            voice=os.getenv("TTS_VOICE", "Magpie-Multilingual.EN-US.Jason").strip(),
+            voice=os.getenv("TTS_VOICE", "Magpie-Multilingual.EN-US.Ray.Neutral").strip(),
             rate=os.getenv("TTS_RATE", "+24%").strip(),
             volume=os.getenv("TTS_VOLUME", "+80%").strip(),
             pitch=os.getenv("TTS_PITCH", "-8Hz").strip(),
@@ -179,6 +192,9 @@ class TTSConfig:
             nvidia_tts_sample_rate=int(os.getenv("TTS_NVIDIA_SAMPLE_RATE", "44100")),
             nvidia_tts_streaming=_env_flag("TTS_NVIDIA_STREAMING", default=True),
             nvidia_tts_ssml=_env_flag("TTS_NVIDIA_SSML", default=False),
+            voice_effect=os.getenv("TTS_VOICE_EFFECT", "heavy").strip().lower(),
+            heavy_pitch_factor=float(os.getenv("TTS_HEAVY_PITCH_FACTOR", "1.06")),
+            heavy_darkness=float(os.getenv("TTS_HEAVY_DARKNESS", "0.62")),
             player=os.getenv("TTS_PLAYER", "auto").strip().lower(),
         )
 
@@ -197,6 +213,12 @@ class TTSConfig:
             raise ValueError("Missing TTS_NVIDIA_LANGUAGE_CODE.")
         if self.nvidia_tts_sample_rate <= 0:
             raise ValueError("TTS_NVIDIA_SAMPLE_RATE must be greater than 0.")
+        if self.voice_effect not in {"none", "off", "heavy", "cinematic"}:
+            raise ValueError("TTS_VOICE_EFFECT must be none, off, heavy, or cinematic.")
+        if not 0.5 <= self.heavy_pitch_factor <= 1.25:
+            raise ValueError("TTS_HEAVY_PITCH_FACTOR must be between 0.5 and 1.25.")
+        if not 0 <= self.heavy_darkness <= 1:
+            raise ValueError("TTS_HEAVY_DARKNESS must be between 0 and 1.")
 
 
 class MicrophoneListener:
@@ -204,6 +226,9 @@ class MicrophoneListener:
         self.config = config
 
     def listen_to_wav(self) -> Path:
+        if self.config.provider in SIMPLE_STT_PROVIDERS:
+            return self._listen_simple_to_wav()
+
         try:
             import numpy as np
             import sounddevice as sd
@@ -281,6 +306,78 @@ class MicrophoneListener:
         )
         if peak_rms < max(12, threshold * 0.25):
             print("Mic level is very low. Check Windows input device, microphone permission, or STT_INPUT_DEVICE.")
+        handle = tempfile.NamedTemporaryFile(prefix="speech-", suffix=".wav", delete=False)
+        path = Path(handle.name)
+        handle.close()
+        with wave.open(str(path), "wb") as wav_file:
+            wav_file.setnchannels(channels)
+            wav_file.setsampwidth(2)
+            wav_file.setframerate(sample_rate)
+            wav_file.writeframes(b"".join(frames))
+        return path
+
+    def _listen_simple_to_wav(self) -> Path:
+        try:
+            import numpy as np
+            import sounddevice as sd
+        except ImportError as error:
+            raise RuntimeError(
+                "Fast listening mode needs sounddevice and numpy. Install them with: "
+                "python -m pip install sounddevice numpy"
+            ) from error
+
+        sample_rate = self.config.sample_rate
+        chunk_seconds = 0.08
+        chunk_size = max(1, int(sample_rate * chunk_seconds))
+        channels = 1
+        max_chunks = max(1, int(self.config.max_seconds / chunk_seconds))
+        min_chunks = max(1, int(self.config.min_seconds / chunk_seconds))
+        start_timeout_chunks = max(1, int(self.config.start_timeout_seconds / chunk_seconds))
+        silence_chunks_needed = max(1, int(self.config.silence_seconds / chunk_seconds))
+        threshold = max(1.0, self.config.min_energy)
+        device = _sounddevice_device(self.config.input_device)
+
+        frames: list[bytes] = []
+        pre_roll: deque[bytes] = deque(maxlen=max(1, int(0.24 / chunk_seconds)))
+        speech_started = False
+        silent_chunks = 0
+        peak_rms = 0.0
+        input_device = sd.query_devices(device=device, kind="input") if device is not None else sd.query_devices(kind="input")
+        device_name = str(input_device.get("name", "default microphone"))
+
+        with sd.InputStream(samplerate=sample_rate, channels=channels, dtype="int16", device=device) as stream:
+            for index in range(max_chunks):
+                chunk, _ = stream.read(chunk_size)
+                chunk_bytes = chunk.tobytes()
+                rms = float(np.sqrt(np.mean(chunk.astype(np.float32) ** 2)))
+                peak_rms = max(peak_rms, rms)
+                is_speech = rms >= threshold
+
+                if not speech_started:
+                    pre_roll.append(chunk_bytes)
+                    if is_speech:
+                        speech_started = True
+                        frames.extend(pre_roll)
+                    elif index >= start_timeout_chunks:
+                        frames.extend(pre_roll)
+                        break
+                    continue
+
+                frames.append(chunk_bytes)
+                if is_speech:
+                    silent_chunks = 0
+                else:
+                    silent_chunks += 1
+
+                if len(frames) >= min_chunks and silent_chunks >= silence_chunks_needed:
+                    break
+
+        if not frames:
+            frames.extend(pre_roll)
+
+        duration = len(frames) * chunk_size / sample_rate
+        status = "speech" if speech_started else "no speech"
+        print(f"Mic: {device_name} | fast {status} | peak {peak_rms:.0f} | threshold {threshold:.0f} | captured {duration:.1f}s")
         handle = tempfile.NamedTemporaryFile(prefix="speech-", suffix=".wav", delete=False)
         path = Path(handle.name)
         handle.close()
@@ -409,6 +506,38 @@ class OpenAISpeechToText:
         raise RuntimeError(f"Unexpected OpenAI speech response: {body}")
 
 
+class SpeechRecognitionSpeechToText:
+    def __init__(self, config: SpeechConfig):
+        config.validate()
+        self.config = config
+        try:
+            import speech_recognition as sr
+        except ImportError as error:
+            raise RuntimeError(
+                "Fast listening mode needs SpeechRecognition. Install it with: "
+                "python -m pip install SpeechRecognition"
+            ) from error
+
+        self.sr = sr
+        self.recognizer = sr.Recognizer()
+
+    def transcribe(self, audio_path: Path) -> str:
+        with self.sr.AudioFile(str(audio_path)) as source:
+            audio = self.recognizer.record(source)
+        try:
+            return self.recognizer.recognize_google(
+                audio,
+                language=self.config.speech_recognition_language,
+            ).strip()
+        except self.sr.UnknownValueError:
+            return ""
+        except self.sr.RequestError as error:
+            raise RuntimeError(f"SpeechRecognition request failed: {error}") from error
+
+    def translate_audio_to_english(self, audio_path: Path) -> str:
+        return self.transcribe(audio_path)
+
+
 class NvidiaRivaSpeechToText:
     def __init__(self, config: SpeechConfig):
         config.validate()
@@ -489,6 +618,7 @@ class NvidiaRivaTextToSpeech:
 
         request_text = _nvidia_tts_text(spoken_text, self.config)
         volume = _volume_multiplier(self.config.volume)
+        pitch_factor, darkness = _voice_effect_settings(self.config)
         try:
             if self.config.nvidia_tts_streaming:
                 responses = self.service.synthesize_online(
@@ -498,7 +628,14 @@ class NvidiaRivaTextToSpeech:
                     encoding=self.riva_client.AudioEncoding.LINEAR_PCM,
                     sample_rate_hz=self.config.nvidia_tts_sample_rate,
                 )
-                play_pcm_stream(responses, self.config.nvidia_tts_sample_rate, self.config.player, volume=volume)
+                play_pcm_stream(
+                    responses,
+                    self.config.nvidia_tts_sample_rate,
+                    self.config.player,
+                    volume=volume,
+                    pitch_factor=pitch_factor,
+                    darkness=darkness,
+                )
                 return
 
             response = self.service.synthesize(
@@ -509,12 +646,21 @@ class NvidiaRivaTextToSpeech:
                 sample_rate_hz=self.config.nvidia_tts_sample_rate,
             )
             audio = bytes(getattr(response, "audio", b""))
-            play_pcm_audio(audio, self.config.nvidia_tts_sample_rate, self.config.player, volume=volume)
+            play_pcm_audio(
+                audio,
+                self.config.nvidia_tts_sample_rate,
+                self.config.player,
+                volume=volume,
+                pitch_factor=pitch_factor,
+                darkness=darkness,
+            )
         except Exception as error:
             raise RuntimeError(f"NVIDIA voice request failed: {error}") from error
 
 
 def create_speech_to_text(config: SpeechConfig) -> SpeechToText:
+    if config.provider in SIMPLE_STT_PROVIDERS:
+        return SpeechRecognitionSpeechToText(config)
     if config.provider in {"local", "faster_whisper"}:
         return FasterWhisperSpeechToText(config)
     if config.provider == "openai":
@@ -591,17 +737,61 @@ def _volume_multiplier(value: str) -> float:
         return 1.0
 
 
-def _scale_pcm16(audio: bytes, volume: float) -> bytes:
-    if not audio or abs(volume - 1.0) < 0.01:
+def _voice_effect_settings(config: TTSConfig) -> tuple[float, float]:
+    if config.voice_effect in {"none", "off"}:
+        return 1.0, 0.0
+    return config.heavy_pitch_factor, config.heavy_darkness
+
+
+def _effect_sample_rate(sample_rate: int, pitch_factor: float) -> int:
+    if abs(pitch_factor - 1.0) < 0.01:
+        return sample_rate
+    return max(8000, int(round(sample_rate * pitch_factor)))
+
+
+def _process_pcm16(audio: bytes, *, volume: float = 1.0, darkness: float = 0.0) -> bytes:
+    if not audio or (abs(volume - 1.0) < 0.01 and darkness <= 0.01):
         return audio
     try:
         import numpy as np
     except ImportError:
         return audio
+
     samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+    if darkness > 0.01 and samples.size:
+        window = max(3, int(round(3 + darkness * 12)))
+        if window % 2 == 0:
+            window += 1
+        if window <= samples.size:
+            kernel = np.ones(window, dtype=np.float32) / window
+            low_passed = np.convolve(samples, kernel, mode="same")
+            wet = min(0.9, darkness * 0.85)
+            samples = samples * (1.0 - wet) + low_passed * wet
+        drive = 1.0 + darkness * 0.45
+        normalized = np.clip(samples / 32768.0, -1.0, 1.0)
+        samples = np.tanh(normalized * drive) * (32767.0 / np.tanh(drive))
+
     samples *= volume
     samples = np.clip(samples, -32768, 32767).astype(np.int16)
     return samples.tobytes()
+
+
+def _pitch_down_pcm16(audio: bytes, pitch_factor: float) -> bytes:
+    if not audio or abs(pitch_factor - 1.0) < 0.01:
+        return audio
+    try:
+        import numpy as np
+    except ImportError:
+        return audio
+
+    samples = np.frombuffer(audio, dtype=np.int16).astype(np.float32)
+    if samples.size < 2:
+        return audio
+    target_size = max(2, int(round(samples.size / pitch_factor)))
+    source_positions = np.linspace(0, samples.size - 1, num=samples.size, dtype=np.float32)
+    target_positions = np.linspace(0, samples.size - 1, num=target_size, dtype=np.float32)
+    shifted = np.interp(target_positions, source_positions, samples)
+    return np.clip(shifted, -32768, 32767).astype(np.int16).tobytes()
 
 
 def play_pcm_stream(
@@ -610,25 +800,45 @@ def play_pcm_stream(
     player: str = "auto",
     *,
     volume: float = 1.0,
+    pitch_factor: float = 1.0,
+    darkness: float = 0.0,
 ) -> None:
     try:
         import sounddevice as sd
     except ImportError:
         audio = b"".join(bytes(getattr(response, "audio", b"")) for response in responses)
-        play_pcm_audio(audio, sample_rate, player, volume=volume)
+        play_pcm_audio(audio, sample_rate, player, volume=volume, pitch_factor=pitch_factor, darkness=darkness)
         return
 
-    with sd.RawOutputStream(samplerate=sample_rate, channels=1, dtype="int16") as stream:
-        for response in responses:
-            audio = bytes(getattr(response, "audio", b""))
-            if audio:
-                stream.write(_scale_pcm16(audio, volume))
+    playback_sample_rate = _effect_sample_rate(sample_rate, pitch_factor)
+    try:
+        with sd.RawOutputStream(samplerate=playback_sample_rate, channels=1, dtype="int16") as stream:
+            for response in responses:
+                audio = bytes(getattr(response, "audio", b""))
+                if audio:
+                    stream.write(_process_pcm16(audio, volume=volume, darkness=darkness))
+    except Exception:
+        with sd.RawOutputStream(samplerate=sample_rate, channels=1, dtype="int16") as stream:
+            for response in responses:
+                audio = bytes(getattr(response, "audio", b""))
+                if audio:
+                    audio = _pitch_down_pcm16(audio, pitch_factor)
+                    stream.write(_process_pcm16(audio, volume=volume, darkness=darkness))
 
 
-def play_pcm_audio(audio: bytes, sample_rate: int, player: str = "auto", *, volume: float = 1.0) -> None:
+def play_pcm_audio(
+    audio: bytes,
+    sample_rate: int,
+    player: str = "auto",
+    *,
+    volume: float = 1.0,
+    pitch_factor: float = 1.0,
+    darkness: float = 0.0,
+) -> None:
     if not audio:
         return
-    audio = _scale_pcm16(audio, volume)
+    audio = _process_pcm16(audio, volume=volume, darkness=darkness)
+    playback_sample_rate = _effect_sample_rate(sample_rate, pitch_factor)
     try:
         import sounddevice as sd
     except ImportError:
@@ -639,15 +849,21 @@ def play_pcm_audio(audio: bytes, sample_rate: int, player: str = "auto", *, volu
             with wave.open(str(audio_path), "wb") as wav_file:
                 wav_file.setnchannels(1)
                 wav_file.setsampwidth(2)
-                wav_file.setframerate(sample_rate)
+                wav_file.setframerate(playback_sample_rate)
                 wav_file.writeframes(audio)
             play_audio_file(audio_path, player)
         finally:
             audio_path.unlink(missing_ok=True)
         return
 
-    with sd.RawOutputStream(samplerate=sample_rate, channels=1, dtype="int16") as stream:
-        stream.write(audio)
+    try:
+        with sd.RawOutputStream(samplerate=playback_sample_rate, channels=1, dtype="int16") as stream:
+            stream.write(audio)
+    except Exception:
+        if playback_sample_rate != sample_rate:
+            audio = _pitch_down_pcm16(audio, pitch_factor)
+        with sd.RawOutputStream(samplerate=sample_rate, channels=1, dtype="int16") as stream:
+            stream.write(audio)
 
 
 def play_audio_file(audio_path: Path, player: str = "auto") -> None:
@@ -705,6 +921,14 @@ def _powershell_quote(value: str) -> str:
 def _speech_language_from_env() -> str:
     value = os.getenv("STT_LANGUAGE", "").strip() or os.getenv("STT_SPEECH_RECOGNITION_LANGUAGE", "").strip()
     return _normalize_speech_language(value)
+
+
+def _speech_recognition_language_from_env() -> str:
+    value = os.getenv("STT_SPEECH_RECOGNITION_LANGUAGE", "").strip() or os.getenv("STT_LANGUAGE", "").strip()
+    cleaned = value.strip().replace("_", "-")
+    if not cleaned or cleaned.lower() in {"auto", "detect", "default", "none", "false"}:
+        return "en-IN"
+    return cleaned
 
 
 def _nvidia_language_code_from_env() -> str:
@@ -843,6 +1067,8 @@ def speech_to_english(audio_path: Path, speech: SpeechToText, llm: ChatService, 
             return translated
         transcript = speech.transcribe(audio_path)
         return convert_to_english(transcript, llm) if transcript else ""
+    if config.provider in SIMPLE_STT_PROVIDERS and config.english_conversion == "auto":
+        return speech.transcribe(audio_path)
     if config.english_conversion in {"local_translate", "translate", "openai_translation"}:
         return speech.translate_audio_to_english(audio_path)
 

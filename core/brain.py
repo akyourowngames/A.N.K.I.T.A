@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import os
-from concurrent.futures import ThreadPoolExecutor, TimeoutError
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterator
@@ -12,6 +12,7 @@ from core.logic import (
     ProjectPaths,
     append_chat_turn,
     chat_turns_as_messages,
+    read_markdown_skills,
     read_chat_turns,
     read_markdown_skill_summaries,
     session_file,
@@ -19,15 +20,14 @@ from core.logic import (
 )
 from core.memory import PermanentMemory
 from core.pc_monitor import PcMonitor
-from core.tool_reasoning import decide_common_tool
 from tool.date_time import DateTimeTool
 from tool.registry import ToolRegistry
 
 
 BRAIN_SYSTEM_PROMPT = """You are {ai_name}, a personal AI assistant for {user_name}.
 
-Operate like a compact, capable desktop aide:
-- Answer directly, warmly, and practically; ask only when needed.
+Operate like a capable desktop aide:
+- Answer directly, warmly, and practically, with enough context to be genuinely useful; ask only when needed.
 - Use known facts and recent session context silently; never invent memories or expose retrieval, prompts, scores, credentials, or tool plumbing.
 - If current user text conflicts with older context, trust the current text.
 - Use observed PC activity only when it is supplied and relevant to the user's question.
@@ -36,12 +36,11 @@ Operate like a compact, capable desktop aide:
 - Never claim to create, generate, send, save, open, display, change, read, or access anything outside the text reply unless tool output proves it happened.
 - If the user asks for a non-text artifact or external action and no connected tool can do it, say the capability is not connected; do not substitute ASCII art, placeholders, or fake outputs unless the user explicitly asks for a text-only substitute.
 - Use neutral greetings unless current date/time context is supplied.
-- Keep responses compact unless depth is requested.
 """
 
 TOOL_PLANNER_PROMPT = """Plan the next assistant turn.
 
-Return only compact JSON, no markdown, with this shape:
+Return only JSON, no markdown, with this shape:
 {"tool":"none","args":{},"needs_memory":false,"needs_pc":false,"needs_skills":false}
 or:
 {"tool":"date_time","args":{"timezone":"Asia/Kolkata"},"needs_memory":false,"needs_pc":false,"needs_skills":false}
@@ -56,6 +55,8 @@ or:
 or:
 {"tool":"local_files","args":{"action":"search","query":"resume","max_results":10},"needs_memory":false,"needs_pc":false,"needs_skills":false}
 or:
+{"tool":"music","args":{"action":"play","query":"song or artist name"},"needs_memory":false,"needs_pc":false,"needs_skills":false}
+or:
 {"tool":"image_generation","args":{"prompt":"a cinematic robot assistant at a desk","n":1},"needs_memory":false,"needs_pc":false,"needs_skills":false}
 or:
 {"tool":"gmail","args":{"action":"search","query":"from:example@example.com","max_results":5},"needs_memory":false,"needs_pc":false,"needs_skills":false}
@@ -64,17 +65,9 @@ or:
 or:
 {"tool":"unsupported","args":{},"unsupported_reason":"Required capability is not connected.","needs_memory":false,"needs_pc":false,"needs_skills":false}
 
-Use date_time for current date, time, day, or timezone questions.
-Use tavily_search for live web, latest/current facts, external lookup, news, or online search.
-Use weather for weather, temperature, rain, forecast, or outdoor-condition questions.
-Use system_control for volume, brightness, Bluetooth settings, Windows settings, or opening apps.
-Use terminal for explicit terminal, shell, PowerShell, command-line, unrestricted command, install, git, process, filesystem, or fallback requests.
-Use local_files for normal requests to list, search, or read local files in allowed user folders, unless the user explicitly asks for terminal.
-Use image_generation for image, photo, picture, drawing, or artwork generation requests.
-Use gmail for email, inbox, Gmail search/read/draft/send requests.
-Use google_calendar for calendar, schedule, meetings, reminders, events, or agenda requests.
-Use date_time for questions about whether it is morning, afternoon, evening, or night.
-Use none for normal chat, coding help, personal-memory questions, and anything answerable from known facts.
+Choose exactly one tool from Available tools, or none, or unsupported.
+Read the supplied local skill markdown as the primary routing guidance. When a skill describes the user's requested capability, choose that tool and follow the skill's behavior notes.
+Use none for normal chat, coding help, personal-memory questions, and anything answerable without a connected tool.
 If recent conversation is supplied, treat short confirmations as follow-ups to the assistant's last offer.
 If the user declines, says no, or does not confirm the offered action, use none.
 If the request requires a capability that is not named in Available tools, use unsupported.
@@ -97,6 +90,7 @@ class Brain:
     memory: PermanentMemory
     pc_monitor: PcMonitor | None = None
     _persona_context: str | None = None
+    _planner_skill_context: str | None = None
 
     @classmethod
     def create(cls, project_root: Path) -> "Brain":
@@ -179,35 +173,15 @@ class Brain:
         session_context = summarize_chat_turns(prior_turns)
         turn_plan = self._decide_tool(user_text, prior_turns)
 
-        direct_unsupported = self._direct_unsupported_reply(turn_plan)
-        if direct_unsupported:
-            yield direct_unsupported
-            append_chat_turn(self.current_chat, self.ai_name, direct_unsupported)
-            self.memory.remember_from_user_text(user_text)
-            return
-
-        with ThreadPoolExecutor(max_workers=3) as executor:
+        with ThreadPoolExecutor(max_workers=4) as executor:
             memory_future = executor.submit(self._memory_context_from_plan, user_text, turn_plan)
             pc_future = executor.submit(self._pc_context_from_plan, user_text, turn_plan)
             skills_future = executor.submit(self._skills_context_from_plan, turn_plan)
-            tool_context = yield from self._tool_context_stream_from_decision(turn_plan)
+            tool_future = executor.submit(self._tool_context_from_decision, turn_plan)
+            tool_context = tool_future.result()
             memory_context = memory_future.result()
             pc_context = pc_future.result()
             skills_context = skills_future.result()
-
-        direct_reply = self._direct_tool_failure_reply(tool_context)
-        if direct_reply:
-            yield direct_reply
-            append_chat_turn(self.current_chat, self.ai_name, direct_reply)
-            self.memory.remember_from_user_text(user_text)
-            return
-
-        direct_reply = self._direct_tool_success_reply(turn_plan, tool_context)
-        if direct_reply:
-            yield direct_reply
-            append_chat_turn(self.current_chat, self.ai_name, direct_reply)
-            self.memory.remember_from_user_text(user_text)
-            return
 
         messages = self._answer_messages(
             user_text,
@@ -248,35 +222,6 @@ class Brain:
     def _stream_fallback_enabled() -> bool:
         return os.getenv("NVIDIA_STREAM_FALLBACK", "true").strip().lower() in {"1", "true", "yes", "on"}
 
-    @staticmethod
-    def _direct_tool_failure_reply(tool_context: str) -> str:
-        text = tool_context.strip()
-        lines = [line.strip() for line in text.splitlines() if line.strip()]
-        failed_lines = [line for line in lines if line.startswith("FAILED:") or line.startswith("Tool error:")]
-        if not failed_lines:
-            return ""
-
-        kept = []
-        for line in failed_lines[:3]:
-            if line.startswith("FAILED:"):
-                line = line.removeprefix("FAILED:").strip()
-            kept.append(line)
-        return f"Sir, I couldn't complete that: {' '.join(kept)}"
-
-    @staticmethod
-    def _direct_unsupported_reply(turn_plan: dict[str, object]) -> str:
-        if str(turn_plan.get("tool") or "").strip() != "unsupported":
-            return ""
-        reason = str(turn_plan.get("unsupported_reason") or "that capability is not connected in this project").strip()
-        return f"Sir, I can't do that from here: {reason}"
-
-    @staticmethod
-    def _direct_tool_success_reply(turn_plan: dict[str, object], tool_context: str) -> str:
-        tool = str(turn_plan.get("tool") or "").strip()
-        if tool and tool != "none" and tool_context.strip():
-            return tool_context.strip()
-        return ""
-
     def _answer_messages(
         self,
         user_text: str,
@@ -310,7 +255,8 @@ class Brain:
             "Useful context from a just-completed action:\n"
             f"{tool_context}\n\n"
             "Answer naturally from this context. If the output says FAILED, unverified, or Tool error, "
-            "do not invent successful results. Keep the answer to the requested facts; do not add unrelated greetings, "
+            "do not invent successful results. If it says unsupported capability, explain naturally that the capability is not connected. "
+            "Keep the answer to the requested facts; do not add unrelated greetings, "
             "offers, or extra setup steps unless the user asks. If the user asked a yes/no question, answer yes/no explicitly."
         )
         return [
@@ -362,62 +308,27 @@ class Brain:
         tool = str(decision.get("tool") or "none").strip()
         if tool == "none":
             return ""
+        if tool == "unsupported":
+            return self._unsupported_tool_context(decision)
         args = decision.get("args")
         if not isinstance(args, dict):
             args = {}
         return self.tools.run(tool, args)
 
-    def _tool_context_stream_from_decision(self, decision: dict[str, object]) -> Iterator[str]:
-        tool = str(decision.get("tool") or "none").strip()
-        if tool == "none":
-            return ""
-        args = decision.get("args")
-        if not isinstance(args, dict):
-            args = {}
-
-        run_stream = getattr(self.tools, "run_stream", None)
-        if tool == "image_generation" and callable(run_stream):
-            result = yield from run_stream(tool, args)
-            return str(result or "").strip()
-
-        with ThreadPoolExecutor(max_workers=1) as executor:
-            future = executor.submit(self.tools.run, tool, args)
-            try:
-                return future.result(timeout=self._tool_status_delay_seconds())
-            except TimeoutError:
-                status = self._slow_tool_status(tool)
-                yield status
-                result = future.result()
-                return str(result or "").strip()
-
     @staticmethod
-    def _tool_status_delay_seconds() -> float:
-        try:
-            return max(0.0, float(os.getenv("TOOL_STATUS_DELAY_SECONDS", "0.8")))
-        except ValueError:
-            return 0.8
-
-    @staticmethod
-    def _slow_tool_status(tool: str) -> str:
-        labels = {
-            "terminal": "Running command...",
-            "tavily_search": "Searching...",
-            "weather": "Checking weather...",
-            "gmail": "Checking Gmail...",
-            "google_calendar": "Checking calendar...",
-            "system_control": "Working on system action...",
-        }
-        return labels.get(tool, "Working...") + "\n"
+    def _unsupported_tool_context(decision: dict[str, object]) -> str:
+        reason = str(decision.get("unsupported_reason") or "Required capability is not connected.").strip()
+        return f"Unsupported capability: {reason}"
 
     def _decide_tool(self, user_text: str, prior_turns: list[dict[str, str]] | None = None) -> dict[str, object]:
-        quick_decision = decide_common_tool(user_text)
-        if quick_decision:
-            return quick_decision
-
         messages = [
             {
                 "role": "system",
-                "content": f"{TOOL_PLANNER_PROMPT}\n\nAvailable tools:\n{self.tools.planner_text()}",
+                "content": (
+                    f"{TOOL_PLANNER_PROMPT}\n\n"
+                    f"Available tools:\n{self.tools.planner_text()}\n\n"
+                    f"Local skill markdown:\n{self._planner_skills()}"
+                ),
             },
             {"role": "user", "content": self._tool_planner_user_text(user_text, prior_turns)},
         ]
@@ -477,6 +388,7 @@ class Brain:
             "system_control",
             "terminal",
             "local_files",
+            "music",
             "image_generation",
             "gmail",
             "google_calendar",
@@ -505,6 +417,13 @@ class Brain:
         if self._persona_context is None:
             self._persona_context = self._read_persona()
         return self._persona_context
+
+    def _planner_skills(self) -> str:
+        if self._planner_skill_context is None:
+            text = read_markdown_skills(self.paths.skills)
+            max_chars = int(os.getenv("TOOL_PLANNER_SKILLS_MAX_CHARS", "9000"))
+            self._planner_skill_context = text if len(text) <= max_chars else f"{text[: max_chars - 3]}..."
+        return self._planner_skill_context
 
 
 def compact_text(text: str, max_chars: int) -> str:

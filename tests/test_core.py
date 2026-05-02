@@ -5,6 +5,7 @@ import os
 import base64
 import time
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -32,14 +33,18 @@ from core.memory import (
 from core.pc_monitor import PcMonitor, PcMonitorConfig, format_activity_record
 from core.speech import (
     SpeechConfig,
+    SpeechRecognitionSpeechToText,
     TTSConfig,
+    _effect_sample_rate,
     _extract_nvidia_streaming_text,
     _nvidia_metadata,
     _nvidia_tts_text,
+    _process_pcm16,
+    _voice_effect_settings,
     convert_to_english,
+    create_speech_to_text,
     text_for_speech,
 )
-from core.tool_reasoning import decide_common_tool, mentioned_known_folder
 from daemon.config import DaemonConfig
 from daemon.analyzer import NEXT_ACTIONS_PROMPT, STATUS_REVIEW_PROMPT
 from daemon.project_daemon import ProjectDaemon
@@ -49,6 +54,7 @@ from tool.date_time import DateTimeTool
 from tool.gmail import GmailTool
 from tool.google_calendar import GoogleCalendarTool
 from tool.local_files import LocalFilesTool
+from tool.music import MusicTool, MusicTrack
 from tool.nvidia_image import NvidiaImageTool
 from tool.registry import ToolRegistry
 from tool.system_control import SystemControlTool
@@ -181,7 +187,7 @@ def _test_tts_config(**overrides):
     values = {
         "enabled": True,
         "provider": "nvidia",
-        "voice": "Magpie-Multilingual.EN-US.Jason",
+        "voice": "Magpie-Multilingual.EN-US.Ray.Neutral",
         "rate": "+24%",
         "volume": "+80%",
         "pitch": "-8Hz",
@@ -193,6 +199,9 @@ def _test_tts_config(**overrides):
         "nvidia_tts_sample_rate": 44100,
         "nvidia_tts_streaming": True,
         "nvidia_tts_ssml": False,
+        "voice_effect": "heavy",
+        "heavy_pitch_factor": 1.06,
+        "heavy_darkness": 0.62,
         "player": "auto",
     }
     values.update(overrides)
@@ -243,6 +252,43 @@ class FakeDaemonAnalyzer:
             "status_review": "Verified Status\n\nTests passed.",
             "next_actions": "Immediate Next Step\n\nRun tests.",
         }
+
+
+class FakeMusicStdin:
+    def __init__(self) -> None:
+        self.writes = []
+
+    def write(self, value):
+        self.writes.append(value)
+
+    def flush(self) -> None:
+        return None
+
+
+class FakeMusicProcess:
+    def __init__(self, command, **kwargs) -> None:
+        self.command = command
+        self.kwargs = kwargs
+        self.stdin = FakeMusicStdin()
+        self.terminated = threading.Event()
+        self.killed = False
+
+    def poll(self):
+        return 0 if self.terminated.is_set() else None
+
+    def wait(self, timeout=None):
+        if timeout is None:
+            self.terminated.wait(5)
+            return 0
+        self.terminated.wait(timeout)
+        return 0
+
+    def terminate(self) -> None:
+        self.terminated.set()
+
+    def kill(self) -> None:
+        self.killed = True
+        self.terminated.set()
 
 
 class CoreTests(unittest.TestCase):
@@ -541,7 +587,7 @@ class CoreTests(unittest.TestCase):
             self.assertIn("Observed PC activity", llm.stream_messages[0]["content"])
             self.assertIn("Visual Studio Code", llm.stream_messages[0]["content"])
 
-    def test_tool_success_returns_direct_output_without_final_llm(self) -> None:
+    def test_tool_success_is_answered_by_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -560,10 +606,12 @@ class CoreTests(unittest.TestCase):
 
             reply = "".join(brain.answer_stream("What time is it?"))
 
-            self.assertIn("UTC", reply)
-            self.assertEqual(llm.stream_messages, [])
+            self.assertEqual(reply, "It is time.")
+            self.assertTrue(llm.stream_messages)
+            self.assertIn("Useful context from a just-completed action", llm.stream_messages[-1]["content"])
+            self.assertIn("UTC", llm.stream_messages[-1]["content"])
 
-    def test_slow_tool_yields_status_before_direct_output(self) -> None:
+    def test_slow_tool_output_is_context_for_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -587,15 +635,14 @@ class CoreTests(unittest.TestCase):
 
             llm = ContextPlanFakeLLM(
                 '{"tool":"terminal","args":{"command":"slow"},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
-                reply="This should not be used.",
+                reply="The command finished.",
             )
             brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
 
-            with patch.dict(os.environ, {"TOOL_STATUS_DELAY_SECONDS": "0.01"}, clear=False):
-                reply = "".join(brain.answer_stream("run a slow command"))
+            reply = "".join(brain.answer_stream("run a slow command"))
 
-            self.assertEqual(reply, "Running command...\nterminal done")
-            self.assertEqual(llm.stream_messages, [])
+            self.assertEqual(reply, "The command finished.")
+            self.assertIn("terminal done", llm.stream_messages[-1]["content"])
 
     def test_short_confirmation_uses_previous_tool_offer(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -633,32 +680,81 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(tools.calls[0][0], "google_calendar")
             self.assertIn("Shall I brief you", llm.messages[-1]["content"])
 
-    def test_common_tool_reasoning_local_roots_decision_skips_planner(self) -> None:
-        decision = decide_common_tool("Show me the local folders you are allowed to browse.")
+    def test_tool_planner_receives_local_skill_markdown(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+            (paths.skills / "system-control-tool.md").write_text("Use this when sir asks to open apps.", encoding="utf-8")
+            (paths.skills / "local-files-tool.md").write_text("Use this when sir asks to inspect local files.", encoding="utf-8")
 
-        self.assertEqual(decision["tool"], "local_files")
-        self.assertEqual(decision["args"], {"action": "roots"})
+            class FakeTools:
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
 
-    def test_common_tool_reasoning_desktop_list_decision_skips_planner(self) -> None:
-        decision = decide_common_tool("List files on my Desktop.")
+                def run(self, name, args):
+                    return ""
 
-        self.assertEqual(decision["tool"], "local_files")
-        self.assertEqual(decision["args"]["action"], "list")
-        self.assertEqual(decision["args"]["path"], "Desktop")
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
 
-    def test_common_tool_reasoning_handles_download_singular_with_punctuation(self) -> None:
-        decision = decide_common_tool("list all files in download folder.")
+                def remember_from_user_text(self, user_text):
+                    return 0
 
-        self.assertEqual(decision["tool"], "local_files")
-        self.assertEqual(decision["args"]["path"], "Downloads")
+            llm = ContextPlanFakeLLM(
+                '{"tool":"system_control","args":{"action":"open_app","target":"notepa"},"needs_memory":false,"needs_pc":false,"needs_skills":false}'
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
 
-    def test_common_tool_reasoning_preserves_explicit_terminal(self) -> None:
-        decision = decide_common_tool("Run PowerShell: list files on my Desktop")
+            decision = brain._decide_tool("open notepa")
+            planner_prompt = llm.chat_calls[0][0]["content"]
 
-        self.assertEqual(decision, {})
+            self.assertEqual(decision["tool"], "system_control")
+            self.assertIn("system-control-tool.md", planner_prompt)
+            self.assertIn("Use this when sir asks to open apps.", planner_prompt)
+            self.assertIn("local-files-tool.md", planner_prompt)
 
-    def test_common_tool_reasoning_uses_known_folder_aliases(self) -> None:
-        self.assertEqual(mentioned_known_folder(["download", "folder"]), "Downloads")
+    def test_open_app_plan_feeds_system_control_output_to_final_llm(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            paths = ProjectPaths.from_root(root)
+            for folder in (paths.core, paths.skills, paths.memory, paths.memory_chats, paths.memory_data, paths.memory_store, paths.chat):
+                folder.mkdir()
+            (paths.skills / "system-control-tool.md").write_text("Use this when sir asks to open apps.", encoding="utf-8")
+            (paths.skills / "local-files-tool.md").write_text("Use this when sir asks to inspect local files.", encoding="utf-8")
+
+            class FakeTools:
+                def __init__(self):
+                    self.calls = []
+
+                def planner_text(self):
+                    return ToolRegistry().planner_text()
+
+                def run(self, name, args):
+                    self.calls.append((name, args))
+                    return "VERIFIED: app opened using shortcut: Notepad.lnk (process: notepad)"
+
+            class FakeMemory:
+                def context_for(self, user_text):
+                    return ""
+
+                def remember_from_user_text(self, user_text):
+                    return 0
+
+            tools = FakeTools()
+            llm = ContextPlanFakeLLM(
+                '{"tool":"system_control","args":{"action":"open_app","target":"notepa"},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
+                reply="Notepad is open now.",
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", tools, FakeMemory())
+
+            reply = "".join(brain.answer_stream("open notepa"))
+
+            self.assertEqual(reply, "Notepad is open now.")
+            self.assertEqual(tools.calls, [("system_control", {"action": "open_app", "target": "notepa"})])
+            self.assertIn("VERIFIED: app opened", llm.stream_messages[-1]["content"])
 
     def test_no_tool_prompt_forbids_external_claims(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -687,7 +783,7 @@ class CoreTests(unittest.TestCase):
             self.assertIn("No external tool output is supplied", messages[0]["content"])
             self.assertIn("Do not claim calendar", messages[0]["content"])
 
-    def test_failed_tool_returns_direct_failure_without_final_llm(self) -> None:
+    def test_failed_tool_output_is_answered_by_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -708,14 +804,18 @@ class CoreTests(unittest.TestCase):
                 def remember_from_user_text(self, user_text):
                     return 0
 
-            brain = Brain(paths, CalendarFollowupFakeLLM(), "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
+            llm = ContextPlanFakeLLM(
+                '{"tool":"google_calendar","args":{"action":"list","calendar_id":"primary","max_results":10},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
+                reply="Calendar setup is missing, so I could not check it.",
+            )
+            brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
 
             reply = "".join(brain.answer_stream("brief me on my schedule"))
 
-            self.assertIn("couldn't complete", reply)
-            self.assertIn("Google OAuth client secret file is missing", reply)
+            self.assertEqual(reply, "Calendar setup is missing, so I could not check it.")
+            self.assertIn("FAILED: Google OAuth client secret file is missing", llm.stream_messages[-1]["content"])
 
-    def test_local_file_tool_success_returns_without_final_llm(self) -> None:
+    def test_local_file_tool_success_is_answered_by_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -738,16 +838,16 @@ class CoreTests(unittest.TestCase):
 
             llm = ContextPlanFakeLLM(
                 '{"tool":"local_files","args":{"action":"roots"},"needs_memory":false,"needs_pc":false,"needs_skills":false}',
-                reply="This should not be used.",
+                reply="You can browse the Desktop folder.",
             )
             brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
 
             reply = "".join(brain.answer_stream("show allowed folders"))
 
-            self.assertEqual(reply, "Allowed local folders:\n- C:\\Users\\anime\\Desktop")
-            self.assertEqual(llm.stream_messages, [])
+            self.assertEqual(reply, "You can browse the Desktop folder.")
+            self.assertIn("Allowed local folders:", llm.stream_messages[-1]["content"])
 
-    def test_unsupported_tool_plan_returns_direct_reply_without_final_llm(self) -> None:
+    def test_unsupported_tool_plan_is_answered_by_final_llm(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             root = Path(temp_dir)
             paths = ProjectPaths.from_root(root)
@@ -770,15 +870,14 @@ class CoreTests(unittest.TestCase):
 
             llm = ContextPlanFakeLLM(
                 '{"tool":"unsupported","args":{},"unsupported_reason":"image generation is not connected","needs_memory":false,"needs_pc":false,"needs_skills":false}',
-                reply="This should not be used.",
+                reply="Image generation is not connected here.",
             )
             brain = Brain(paths, llm, "Sam", "Nova", paths.memory_chats / "session.jsonl", FakeTools(), FakeMemory())
 
             reply = "".join(brain.answer_stream("generate an image of a car"))
 
-            self.assertIn("can't do that from here", reply)
-            self.assertIn("image generation is not connected", reply)
-            self.assertEqual(llm.stream_messages, [])
+            self.assertEqual(reply, "Image generation is not connected here.")
+            self.assertIn("Unsupported capability: image generation is not connected", llm.stream_messages[-1]["content"])
 
     def test_tool_decision_parser_handles_json(self) -> None:
         parsed = Brain._parse_tool_decision('```json\n{"tool":"date_time","args":{"timezone":"UTC"}}\n```')
@@ -787,7 +886,7 @@ class CoreTests(unittest.TestCase):
         self.assertEqual(parsed["args"], {"timezone": "UTC"})
 
     def test_tool_decision_parser_accepts_new_tools(self) -> None:
-        for tool_name in ("weather", "system_control", "terminal", "local_files", "image_generation", "gmail", "google_calendar"):
+        for tool_name in ("weather", "system_control", "terminal", "local_files", "music", "image_generation", "gmail", "google_calendar"):
             parsed = Brain._parse_tool_decision(f'{{"tool":"{tool_name}","args":{{}}}}')
 
             self.assertEqual(parsed["tool"], tool_name)
@@ -987,11 +1086,75 @@ class CoreTests(unittest.TestCase):
         self.assertIn("gmail", specs)
         self.assertIn("google_calendar", specs)
         self.assertIn("local_files", specs)
+        self.assertIn("music", specs)
         self.assertIn("image_generation", specs)
         self.assertIn("email", specs["gmail"].description.lower())
         self.assertIn("calendar", specs["google_calendar"].description.lower())
         self.assertIn("allowed", specs["local_files"].description.lower())
+        self.assertIn("yt-dlp", specs["music"].description.lower())
         self.assertIn("nvidia", specs["image_generation"].description.lower())
+
+    def test_music_tool_resolves_user_query_and_starts_player(self) -> None:
+        queries = []
+        processes = []
+
+        def resolver(query):
+            queries.append(query)
+            return MusicTrack(
+                title=f"Resolved {query}",
+                webpage_url="https://example.com/watch",
+                stream_url="https://media.example.com/audio",
+                duration=187,
+                artist="Test Artist",
+            )
+
+        def process_factory(command, **kwargs):
+            process = FakeMusicProcess(command, **kwargs)
+            processes.append(process)
+            return process
+
+        with patch("tool.music._find_executable", return_value="mpv"):
+            tool = MusicTool(resolver=resolver, process_factory=process_factory)
+            result = tool.run(action="play", query="anything sir wants", player="mpv")
+            pause_result = tool.run(action="pause")
+            resume_result = tool.run(action="resume")
+            stop_result = tool.run(action="stop")
+
+        self.assertEqual(queries, ["anything sir wants"])
+        self.assertIn("Playing: Resolved anything sir wants by Test Artist (3:07)", result)
+        self.assertIn("Backend: mpv", result)
+        self.assertIn("https://example.com/watch", processes[0].command)
+        self.assertEqual(pause_result, "Music paused.")
+        self.assertEqual(resume_result, "Music resumed.")
+        self.assertEqual(processes[0].stdin.writes, [b"p\n", b"p\n"])
+        self.assertEqual(stop_result, "Music stopped.")
+
+    def test_music_tool_queues_when_track_is_already_playing(self) -> None:
+        processes = []
+
+        def resolver(query):
+            return MusicTrack(
+                title=query.title(),
+                webpage_url=f"https://example.com/{query}",
+                stream_url=f"https://media.example.com/{query}",
+            )
+
+        def process_factory(command, **kwargs):
+            process = FakeMusicProcess(command, **kwargs)
+            processes.append(process)
+            return process
+
+        with patch("tool.music._find_executable", return_value="mpv"):
+            tool = MusicTool(resolver=resolver, process_factory=process_factory)
+            play_result = tool.run(action="play", query="first", player="mpv")
+            queue_result = tool.run(action="queue", query="second", player="mpv")
+            status = tool.run(action="status")
+            tool.run(action="stop")
+
+        self.assertIn("Playing: First", play_result)
+        self.assertIn("Queued: Second", queue_result)
+        self.assertIn("Queue size: 1", status)
+        self.assertEqual(len(processes), 1)
 
     def test_local_files_tool_respects_allowed_paths(self) -> None:
         with tempfile.TemporaryDirectory() as allowed_dir, tempfile.TemporaryDirectory() as blocked_dir:
@@ -1342,20 +1505,30 @@ class CoreTests(unittest.TestCase):
         self.assertIn("Do not include code snippets", NEXT_ACTIONS_PROMPT)
         self.assertIn("untracked file", NEXT_ACTIONS_PROMPT)
 
-    def test_speech_config_defaults_to_local_transcription(self) -> None:
+    def test_speech_config_defaults_to_fast_speech_recognition(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             (Path(temp_dir) / ".env").write_text("", encoding="utf-8")
 
             with patch.dict(os.environ, {}, clear=True):
                 config = SpeechConfig.from_env(Path(temp_dir))
 
-            self.assertEqual(config.provider, "local")
+            self.assertEqual(config.provider, "speech_recognition")
+            self.assertEqual(config.speech_recognition_language, "en-IN")
             self.assertEqual(config.local_model, "small")
             self.assertEqual(config.local_compute_type, "int8")
-            self.assertEqual(config.english_conversion, "auto")
+            self.assertEqual(config.english_conversion, "off")
             self.assertEqual(config.language, "")
             self.assertEqual(config.sample_rate, 16000)
             self.assertEqual(config.start_timeout_seconds, 4)
+
+    def test_create_speech_to_text_uses_speech_recognition_provider(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text("STT_PROVIDER=simple\n", encoding="utf-8")
+
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+
+            self.assertIsInstance(create_speech_to_text(config), SpeechRecognitionSpeechToText)
 
     def test_speech_config_uses_language_hint_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1365,6 +1538,7 @@ class CoreTests(unittest.TestCase):
                 config = SpeechConfig.from_env(Path(temp_dir))
 
             self.assertEqual(config.language, "en")
+            self.assertEqual(config.speech_recognition_language, "en-IN")
 
     def test_speech_config_prefers_new_language_hint(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1377,6 +1551,7 @@ class CoreTests(unittest.TestCase):
                 config = SpeechConfig.from_env(Path(temp_dir))
 
             self.assertEqual(config.language, "hi")
+            self.assertEqual(config.speech_recognition_language, "en-IN")
 
     def test_speech_config_supports_nvidia_provider(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1435,7 +1610,7 @@ class CoreTests(unittest.TestCase):
 
             self.assertTrue(config.enabled)
             self.assertEqual(config.provider, "nvidia")
-            self.assertEqual(config.voice, "Magpie-Multilingual.EN-US.Jason")
+            self.assertEqual(config.voice, "Magpie-Multilingual.EN-US.Ray.Neutral")
             self.assertEqual(config.rate, "+24%")
             self.assertEqual(config.volume, "+80%")
             self.assertEqual(config.pitch, "-8Hz")
@@ -1446,6 +1621,9 @@ class CoreTests(unittest.TestCase):
             self.assertEqual(config.nvidia_tts_sample_rate, 44100)
             self.assertTrue(config.nvidia_tts_streaming)
             self.assertFalse(config.nvidia_tts_ssml)
+            self.assertEqual(config.voice_effect, "heavy")
+            self.assertEqual(config.heavy_pitch_factor, 1.06)
+            self.assertEqual(config.heavy_darkness, 0.62)
 
     def test_tts_config_can_be_muted_from_env(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1474,6 +1652,24 @@ class CoreTests(unittest.TestCase):
         result = _nvidia_tts_text("Plain NVIDIA speech.", config)
 
         self.assertEqual(result, "Plain NVIDIA speech.")
+
+    def test_voice_effect_settings_can_disable_heavy_processing(self) -> None:
+        heavy = _test_tts_config()
+        normal = _test_tts_config(voice_effect="none")
+
+        self.assertEqual(_voice_effect_settings(heavy), (1.06, 0.62))
+        self.assertEqual(_voice_effect_settings(normal), (1.0, 0.0))
+
+    def test_voice_effect_sample_rate_slightly_increases_default_speed(self) -> None:
+        self.assertEqual(_effect_sample_rate(44100, 1.06), 46746)
+
+    def test_voice_effect_processing_changes_audio(self) -> None:
+        audio = b"\x00\x00\x10\x00\x20\x00\x30\x00\x40\x00"
+
+        result = _process_pcm16(audio, volume=1.2, darkness=0.62)
+
+        self.assertEqual(len(result), len(audio))
+        self.assertNotEqual(result, audio)
 
     def test_text_for_speech_removes_markdown(self) -> None:
         text = "Here is `code`.\n```python\nprint('skip')\n```\n[Open docs](https://example.com) now."
@@ -1523,7 +1719,7 @@ class CoreTests(unittest.TestCase):
         from core.speech import speech_to_english
 
         with tempfile.TemporaryDirectory() as temp_dir:
-            (Path(temp_dir) / ".env").write_text("", encoding="utf-8")
+            (Path(temp_dir) / ".env").write_text("STT_PROVIDER=local\n", encoding="utf-8")
             with patch.dict(os.environ, {}, clear=True):
                 config = SpeechConfig.from_env(Path(temp_dir))
             llm = TranslationFakeLLM()
@@ -1531,6 +1727,20 @@ class CoreTests(unittest.TestCase):
             result = speech_to_english(Path(temp_dir) / "empty.wav", EmptyTranslateSpeech(), llm, config)
 
             self.assertEqual(result, "Open YouTube and play music.")
+
+    def test_simple_speech_recognition_returns_raw_transcript_without_refining(self) -> None:
+        from core.speech import speech_to_english
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            (Path(temp_dir) / ".env").write_text("STT_PROVIDER=speech_recognition\n", encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True):
+                config = SpeechConfig.from_env(Path(temp_dir))
+            llm = TranslationFakeLLM()
+
+            result = speech_to_english(Path(temp_dir) / "empty.wav", EmptyTranslateSpeech(), llm, config)
+
+            self.assertEqual(result, "YouTube kholo aur music chalao.")
+            self.assertEqual(llm.messages, [])
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ A.N.K.I.T.A is built as a private operating assistant for daily workflows. It co
 - Voice input through microphone or browser speech workflows
 - Persistent memory, chat history, and profile context
 - Telegram bot support for remote assistant access
-- Tool modules for search, weather, calendar, Gmail, image generation, screen vision, and system utilities
+- Tool modules for search, weather, calendar, Gmail, music playback, image generation, screen vision, and system utilities
 - Project daemon for monitoring local work and producing summaries
 
 ## Built For
@@ -58,6 +58,12 @@ python jarvis_frontend.py
 ```
 
 The PyQt5 frontend opens a JARVIS-style dashboard with chat, files, image generation status, terminal output, voice state, animated orb, and live telemetry. Assistant replies run in a background thread so the interface keeps animating while tools or model calls are working.
+
+## Music Playback
+
+A.N.K.I.T.A can route music requests like `play <song>`, `queue <track>`, `pause music`, `resume music`, `next song`, and `stop music` through the `music` tool. It uses `yt-dlp` for lookup and streams through the first available backend from `MUSIC_PLAYER_ORDER` (`mpv`, `ffplay`, `vlc`, then browser fallback by default).
+
+For best audio-only playback, install `mpv` or `ffmpeg`/`ffplay` and keep `MUSIC_PLAYER=auto`. Use `MUSIC_PLAYER_COMMAND` only when you want a custom player command with `{url}`, `{stream_url}`, or `{title}` placeholders.
 
 ## Project Structure
 

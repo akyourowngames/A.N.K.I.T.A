@@ -98,7 +98,8 @@ class VoiceOutput:
         state = "on" if self.enabled else "muted"
         return (
             f"Voice output is {state}. Voice={self.config.voice}, "
-            f"rate={self.config.rate}, pitch={self.config.pitch}."
+            f"effect={self.config.voice_effect}, depth={self.config.heavy_pitch_factor}, "
+            f"darkness={self.config.heavy_darkness}."
         )
 
     def mute(self) -> None:
@@ -126,6 +127,21 @@ class VoiceOutput:
     def set_pitch(self, pitch: str) -> None:
         with self._speaker_lock:
             self.config = replace(self.config, pitch=pitch)
+            self.speaker = None
+
+    def set_effect(self, effect: str) -> None:
+        with self._speaker_lock:
+            self.config = replace(self.config, voice_effect=effect.strip().lower())
+            self.speaker = None
+
+    def set_depth(self, depth: float) -> None:
+        with self._speaker_lock:
+            self.config = replace(self.config, heavy_pitch_factor=depth)
+            self.speaker = None
+
+    def set_darkness(self, darkness: float) -> None:
+        with self._speaker_lock:
+            self.config = replace(self.config, heavy_darkness=darkness)
             self.speaker = None
 
     def preload_async(self) -> None:
@@ -237,6 +253,15 @@ def _handle_tts_command(user_text: str, voice_output: VoiceOutput) -> bool:
         voice_output.set_volume("+100%")
         print("Voice volume changed to +100%.")
         return True
+    if lowered in {"/tts heavy", "/tts jarvis", "/tts cinematic"}:
+        voice_output.set_voice(_voice_alias("heavy"))
+        voice_output.set_effect("heavy")
+        print("Voice changed to heavy cinematic mode.")
+        return True
+    if lowered in {"/tts normal", "/tts clean"}:
+        voice_output.set_effect("none")
+        print("Voice effect disabled.")
+        return True
     if lowered.startswith("/tts voice "):
         voice = _voice_alias(command.split(maxsplit=2)[2].strip())
         voice_output.set_voice(voice)
@@ -257,19 +282,46 @@ def _handle_tts_command(user_text: str, voice_output: VoiceOutput) -> bool:
         voice_output.set_pitch(pitch)
         print(f"Voice pitch changed to {pitch}.")
         return True
+    if lowered.startswith("/tts depth "):
+        try:
+            depth = float(command.split(maxsplit=2)[2].strip())
+        except ValueError:
+            print("Voice depth must be a number like 0.78.")
+            return True
+        voice_output.set_depth(depth)
+        print(f"Voice depth changed to {depth}.")
+        return True
+    if lowered.startswith("/tts darkness "):
+        try:
+            darkness = float(command.split(maxsplit=2)[2].strip())
+        except ValueError:
+            print("Voice darkness must be a number from 0 to 1.")
+            return True
+        voice_output.set_darkness(darkness)
+        print(f"Voice darkness changed to {darkness}.")
+        return True
     return False
 
 
 def _voice_alias(value: str) -> str:
     aliases = {
-        "male": "Magpie-Multilingual.EN-US.Jason",
-        "man": "Magpie-Multilingual.EN-US.Jason",
-        "heavy": "Magpie-Multilingual.EN-US.Jason",
-        "deep": "Magpie-Multilingual.EN-US.Jason",
-        "jarvis": "Magpie-Multilingual.EN-US.Jason",
+        "male": "Magpie-Multilingual.EN-US.Ray.Neutral",
+        "man": "Magpie-Multilingual.EN-US.Ray.Neutral",
+        "heavy": "Magpie-Multilingual.EN-US.Ray.Neutral",
+        "deep": "Magpie-Multilingual.EN-US.Ray.Neutral",
+        "jarvis": "Magpie-Multilingual.EN-US.Ray.Neutral",
         "ray": "Magpie-Multilingual.EN-US.Ray",
+        "ray neutral": "Magpie-Multilingual.EN-US.Ray.Neutral",
+        "ray calm": "Magpie-Multilingual.EN-US.Ray.Calm",
+        "ray angry": "Magpie-Multilingual.EN-US.Ray.Angry",
         "jason": "Magpie-Multilingual.EN-US.Jason",
+        "jason calm": "Magpie-Multilingual.EN-US.Jason.Calm",
+        "jason angry": "Magpie-Multilingual.EN-US.Jason.Angry",
+        "jason neutral": "Magpie-Multilingual.EN-US.Jason.Neutral",
         "leo": "Magpie-Multilingual.EN-US.Leo",
+        "leo calm": "Magpie-Multilingual.EN-US.Leo.Calm",
+        "leo angry": "Magpie-Multilingual.EN-US.Leo.Angry",
+        "leo neutral": "Magpie-Multilingual.EN-US.Leo.Neutral",
         "diego": "Magpie-Multilingual.EN-US.Diego",
         "female": "Magpie-Multilingual.EN-US.Aria",
         "woman": "Magpie-Multilingual.EN-US.Aria",
@@ -300,7 +352,9 @@ def _handle_spoken_tts_command(spoken_text: str, voice_output: VoiceOutput) -> b
 
 
 def _load_speech_engine(config: SpeechConfig) -> SpeechToText | None:
-    if config.provider in {"local", "faster_whisper"}:
+    if config.provider in {"speech_recognition", "speechrecognition", "simple", "google", "google_web_speech"}:
+        print("Loading fast SpeechRecognition engine...")
+    elif config.provider in {"local", "faster_whisper"}:
         print(f"Loading local speech model '{config.local_model}'...")
     else:
         print("Loading speech engine...")

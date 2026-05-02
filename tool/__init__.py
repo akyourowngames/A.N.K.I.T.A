@@ -2,6 +2,7 @@ from tool.date_time import DateTimeTool
 from tool.gmail import GmailTool
 from tool.google_calendar import GoogleCalendarTool
 from tool.local_files import LocalFilesTool
+from tool.music import MusicTool
 from tool.nvidia_image import NvidiaImageTool
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
@@ -13,6 +14,7 @@ __all__ = [
     "GmailTool",
     "GoogleCalendarTool",
     "LocalFilesTool",
+    "MusicTool",
     "NvidiaImageTool",
     "SystemControlTool",
     "TavilySearchTool",

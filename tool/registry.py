@@ -8,6 +8,7 @@ from tool.date_time import DateTimeTool
 from tool.gmail import GmailTool
 from tool.google_calendar import GoogleCalendarTool
 from tool.local_files import LocalFilesTool
+from tool.music import MusicTool
 from tool.nvidia_image import NvidiaImageTool
 from tool.system_control import SystemControlTool
 from tool.tavily_search import TavilySearchTool
@@ -30,6 +31,7 @@ class ToolRegistry:
         self.system_control = SystemControlTool()
         self.terminal = TerminalTool()
         self.local_files = LocalFilesTool()
+        self.music = MusicTool()
         self.image_generation = NvidiaImageTool()
         self.gmail = GmailTool()
         self.google_calendar = GoogleCalendarTool()
@@ -74,6 +76,17 @@ class ToolRegistry:
                     "path": "Optional allowed folder or file path.",
                     "query": "Filename search query for search.",
                     "max_results": "Optional integer, default 20.",
+                },
+            ),
+            ToolSpec(
+                name="music",
+                description="Search, play, queue, pause, resume, skip, stop, or check music through yt-dlp and a local player.",
+                args={
+                    "action": "play, queue, stop, pause, resume, next, status, clear.",
+                    "query": "Song, artist, playlist/search text, or supported URL for play/queue.",
+                    "url": "Optional direct URL when the user provides one.",
+                    "player": "Optional backend override: auto, mpv, ffplay, vlc, browser, custom.",
+                    "clear_queue": "Optional boolean for play; clear queued tracks first.",
                 },
             ),
             ToolSpec(
@@ -169,6 +182,14 @@ class ToolRegistry:
                     path=str(args.get("path") or ""),
                     query=str(args.get("query") or ""),
                     max_results=int(args.get("max_results") or 20),
+                )
+            if name == "music":
+                return self.music.run(
+                    action=str(args.get("action") or "play"),
+                    query=str(args.get("query") or ""),
+                    url=str(args.get("url") or ""),
+                    player=str(args.get("player") or ""),
+                    clear_queue=self._optional_bool(args.get("clear_queue")),
                 )
             if name == "image_generation":
                 seed_value = args.get("seed")
