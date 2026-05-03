@@ -63,7 +63,7 @@ class NvidiaLLMService:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        timeout: int | None = None,
+        timeout: int | float | None = None,
     ) -> str:
         payload = {
             "model": self.config.model,
@@ -105,7 +105,7 @@ class NvidiaLLMService:
         *,
         max_tokens: int | None = None,
         temperature: float | None = None,
-        timeout: int | None = None,
+        timeout: int | float | None = None,
     ) -> Iterator[str]:
         payload = {
             "model": self.config.model,

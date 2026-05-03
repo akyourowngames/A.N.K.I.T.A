@@ -85,7 +85,8 @@ class PcMonitor:
             return "No PC activity observed yet."
 
         lines = []
-        for record in records:
+        visible_records = [record for record in records if not record.get("error")] or records
+        for record in visible_records:
             lines.append(format_activity_record(record))
         return "\n".join(line for line in lines if line)
 
@@ -160,7 +161,7 @@ $top = Get-Process |
         )
         if result.returncode != 0:
             return {"error": result.stderr.strip() or "PC monitor command failed"}
-        return json.loads(result.stdout)
+        return json.loads(_clean_json_text(result.stdout))
 
 
 def format_activity_record(record: dict[str, Any]) -> str:
@@ -184,3 +185,7 @@ def format_activity_record(record: dict[str, Any]) -> str:
     if record.get("battery_percent") is not None:
         parts.append(f"battery: {record['battery_percent']}%")
     return " | ".join(parts)
+
+
+def _clean_json_text(text: str) -> str:
+    return "".join(character for character in text if character in "\r\n\t" or ord(character) >= 32)

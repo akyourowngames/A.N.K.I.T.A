@@ -360,7 +360,8 @@ class NvidiaImageTool:
                 candidate = candidate.with_suffix(".png")
         else:
             candidate = self._default_output_dir() / self._filename(prompt, index, multiple)
-        return ensure_allowed_path(candidate, roots)
+        image_roots_configured = bool(os.getenv("IMAGE_OUTPUT_ALLOWED_PATHS", "").strip())
+        return ensure_allowed_path(candidate, roots, restrict=True if image_roots_configured else None)
 
     def _endpoint(self) -> str:
         endpoint = os.getenv("NVIDIA_IMAGE_ENDPOINT", "").strip()

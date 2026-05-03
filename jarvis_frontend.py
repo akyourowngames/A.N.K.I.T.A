@@ -124,34 +124,28 @@ class TTSWorker(QObject):
             self.failed.emit(str(error))
 
 
-class VoiceWorker(QObject):
-    transcript = pyqtSignal(str)
+class VoiceInputWorker(QObject):
+    status = pyqtSignal(str)
+    empty = pyqtSignal(str)
+    finished = pyqtSignal(str)
     failed = pyqtSignal(str)
 
-    def __init__(self, project_root: Path, brain: object) -> None:
+    def __init__(self, project_root: Path) -> None:
         super().__init__()
         self.project_root = project_root
-        self.brain = brain
 
     def run(self) -> None:
-        audio_path: Path | None = None
         try:
-            from core.speech import MicrophoneListener, SpeechConfig, create_speech_to_text, speech_to_english
+            from core.nvidia_stt import NvidiaSTTConfig
+            from core.voice_runtime import VoiceInputEmpty, listen_once_text
 
-            config = SpeechConfig.from_env(self.project_root)
-            speech = create_speech_to_text(config)
-            listener = MicrophoneListener(config)
-            audio_path = listener.listen_to_wav()
-            text = speech_to_english(audio_path, speech, getattr(self.brain, "llm"), config).strip()
-            if text:
-                self.transcript.emit(text)
-            else:
-                self.failed.emit("I could not detect speech.")
+            config = NvidiaSTTConfig.from_env(self.project_root)
+            transcript = listen_once_text(config, status=self.status.emit)
+            self.finished.emit(transcript)
+        except VoiceInputEmpty as notice:
+            self.empty.emit(str(notice))
         except Exception as error:
             self.failed.emit(str(error))
-        finally:
-            if audio_path is not None:
-                audio_path.unlink(missing_ok=True)
 
 
 class DarkCanvas(QWidget):
@@ -175,7 +169,9 @@ class JarvisWindow(QMainWindow):
         self.tts_thread: QThread | None = None
         self.tts_worker: TTSWorker | None = None
         self.voice_thread: QThread | None = None
-        self.voice_worker: VoiceWorker | None = None
+        self.voice_worker: VoiceInputWorker | None = None
+        self.voice_loop_enabled = False
+        self.voice_cancel_requested = False
         self.response_buffer = ""
         self.response_max_height = 180
 
@@ -232,18 +228,26 @@ class JarvisWindow(QMainWindow):
         prompt_shell_layout.setContentsMargins(18, 7, 7, 7)
         prompt_shell_layout.setSpacing(10)
 
+        self.mic_button = QPushButton("MIC")
+        self.mic_button.setObjectName("MicButton")
+        self.mic_button.setCursor(Qt.PointingHandCursor)
+        self.mic_button.setToolTip("Listen with NVIDIA STT")
+        self.mic_button.clicked.connect(self.start_voice_input)
+        prompt_shell_layout.addWidget(self.mic_button, 0)
+
+        self.loop_button = QPushButton("LOOP")
+        self.loop_button.setObjectName("LoopButton")
+        self.loop_button.setCheckable(True)
+        self.loop_button.setCursor(Qt.PointingHandCursor)
+        self.loop_button.setToolTip("Keep listening after each reply")
+        self.loop_button.toggled.connect(self.toggle_voice_loop)
+        prompt_shell_layout.addWidget(self.loop_button, 0)
+
         self.input = QLineEdit()
         self.input.setObjectName("Prompt")
         self.input.setPlaceholderText("Ask JARVIS...")
         self.input.returnPressed.connect(self.submit_current_prompt)
         prompt_shell_layout.addWidget(self.input, 1)
-
-        self.mic_button = QPushButton("MIC")
-        self.mic_button.setObjectName("MicButton")
-        self.mic_button.setCursor(Qt.PointingHandCursor)
-        self.mic_button.setFixedSize(70, 42)
-        self.mic_button.clicked.connect(self.listen_once)
-        prompt_shell_layout.addWidget(self.mic_button)
 
         prompt_row.addWidget(self.prompt_shell)
         prompt_row.addStretch(1)
@@ -256,6 +260,7 @@ class JarvisWindow(QMainWindow):
         else:
             self.brain = None
             self.input.setEnabled(True)
+            self.update_voice_loop_button()
             self.set_response("Yes, Sir.")
 
     def resizeEvent(self, event) -> None:  # noqa: N802
@@ -286,6 +291,7 @@ class JarvisWindow(QMainWindow):
     def start_brain_loader(self) -> None:
         self.input.setEnabled(False)
         self.mic_button.setEnabled(False)
+        self.loop_button.setEnabled(False)
         self.set_response("Loading core...")
         self.loader_thread = QThread(self)
         self.loader_worker = BrainLoader(self.project_root)
@@ -304,12 +310,16 @@ class JarvisWindow(QMainWindow):
         self.user_name = str(getattr(brain, "user_name", "You"))
         self.input.setEnabled(True)
         self.mic_button.setEnabled(True)
+        self.loop_button.setEnabled(True)
+        self.update_voice_loop_button()
         self.set_response("Yes, Sir.")
         quit_thread(self.loader_thread)
 
     def brain_failed(self, message: str) -> None:
         self.input.setEnabled(True)
         self.mic_button.setEnabled(True)
+        self.loop_button.setEnabled(True)
+        self.update_voice_loop_button()
         self.set_response(f"Core error: {message}")
         quit_thread(self.loader_thread)
 
@@ -356,14 +366,21 @@ class JarvisWindow(QMainWindow):
     def stream_finished(self, answer: str) -> None:
         final_answer = answer or self.response_buffer or "Done."
         self.set_response(final_answer)
-        self.input.setEnabled(True)
-        self.mic_button.setEnabled(True)
+        if self.voice_loop_enabled:
+            self.input.setEnabled(False)
+            self.mic_button.setEnabled(False)
+        else:
+            self.input.setEnabled(True)
+            self.mic_button.setEnabled(True)
         self.input.setFocus()
         self.speak(final_answer)
         quit_thread(self.stream_thread)
 
     def stream_failed(self, message: str) -> None:
         self.set_response(f"Error: {message}")
+        self.voice_loop_enabled = False
+        self.voice_cancel_requested = False
+        self.update_voice_loop_button()
         self.input.setEnabled(True)
         self.mic_button.setEnabled(True)
         self.input.setFocus()
@@ -401,43 +418,85 @@ class JarvisWindow(QMainWindow):
 
     def tts_done(self) -> None:
         quit_thread(self.tts_thread)
+        QTimer.singleShot(0, self.maybe_restart_voice_loop)
 
     def tts_failed(self, message: str) -> None:
         print(f"TTS error: {message}")
         quit_thread(self.tts_thread)
+        QTimer.singleShot(0, self.maybe_restart_voice_loop)
 
     def tts_thread_finished(self) -> None:
         self.tts_thread = None
         self.tts_worker = None
 
-    def listen_once(self) -> None:
+    def start_voice_input(self, checked: bool = False, from_loop: bool = False) -> None:
+        _ = checked, from_loop
         if self.brain is None:
             self.set_response("Brain is still loading.")
             return
-        if qt_thread_is_running(self.voice_thread) or qt_thread_is_running(self.stream_thread):
+        if qt_thread_is_running(self.stream_thread):
+            self.set_response("Still thinking.")
             return
-        self.set_response("Listening...")
+        if qt_thread_is_running(self.voice_thread):
+            self.set_response("Already listening.")
+            return
+
+        self.voice_cancel_requested = False
         self.input.setEnabled(False)
         self.mic_button.setEnabled(False)
+        self.set_response("Preparing microphone...")
+
         self.voice_thread = QThread(self)
-        self.voice_worker = VoiceWorker(self.project_root, self.brain)
+        self.voice_worker = VoiceInputWorker(self.project_root)
         self.voice_worker.moveToThread(self.voice_thread)
         self.voice_thread.started.connect(self.voice_worker.run)
-        self.voice_worker.transcript.connect(self.voice_transcript)
+        self.voice_worker.status.connect(self.voice_status)
+        self.voice_worker.empty.connect(self.voice_empty)
+        self.voice_worker.finished.connect(self.voice_finished)
         self.voice_worker.failed.connect(self.voice_failed)
-        self.voice_worker.transcript.connect(self.voice_worker.deleteLater)
+        self.voice_worker.empty.connect(self.voice_worker.deleteLater)
+        self.voice_worker.finished.connect(self.voice_worker.deleteLater)
         self.voice_worker.failed.connect(self.voice_worker.deleteLater)
         self.voice_thread.finished.connect(self.voice_thread_finished)
         self.voice_thread.start()
 
-    def voice_transcript(self, text: str) -> None:
+    def voice_status(self, message: str) -> None:
+        self.set_response(message)
+
+    def voice_finished(self, transcript: str) -> None:
+        if self.voice_cancel_requested:
+            self.voice_cancel_requested = False
+            self.set_response("Voice loop stopped.")
+            self.input.setEnabled(True)
+            self.mic_button.setEnabled(True)
+            quit_thread(self.voice_thread)
+            return
+        self.set_response(f"{self.user_name}: {transcript}")
         quit_thread(self.voice_thread)
-        self.input.setEnabled(True)
-        self.mic_button.setEnabled(True)
-        self.submit_prompt(text)
+        self.submit_prompt(transcript)
+
+    def voice_empty(self, message: str) -> None:
+        if self.voice_cancel_requested:
+            self.voice_cancel_requested = False
+            self.set_response("Voice loop stopped.")
+            self.input.setEnabled(True)
+            self.mic_button.setEnabled(True)
+            quit_thread(self.voice_thread)
+            return
+        self.set_response(f"Speech notice: {message}")
+        quit_thread(self.voice_thread)
+        if self.voice_loop_enabled:
+            QTimer.singleShot(350, self.maybe_restart_voice_loop)
+        else:
+            self.input.setEnabled(True)
+            self.mic_button.setEnabled(True)
+            self.input.setFocus()
 
     def voice_failed(self, message: str) -> None:
-        self.set_response(f"Mic error: {message}")
+        self.set_response(f"Speech error: {message}")
+        self.voice_loop_enabled = False
+        self.voice_cancel_requested = False
+        self.update_voice_loop_button()
         self.input.setEnabled(True)
         self.mic_button.setEnabled(True)
         self.input.setFocus()
@@ -446,6 +505,53 @@ class JarvisWindow(QMainWindow):
     def voice_thread_finished(self) -> None:
         self.voice_thread = None
         self.voice_worker = None
+
+    def toggle_voice_loop(self, enabled: bool) -> None:
+        if enabled and self.brain is None:
+            self.voice_loop_enabled = False
+            self.loop_button.setChecked(False)
+            self.update_voice_loop_button()
+            self.set_response("Brain is still loading.")
+            return
+
+        self.voice_loop_enabled = enabled
+        self.voice_cancel_requested = not enabled and qt_thread_is_running(self.voice_thread)
+        self.update_voice_loop_button()
+        if enabled:
+            self.start_voice_input(from_loop=True)
+        else:
+            if self.voice_cancel_requested:
+                self.set_response("Voice loop stopping after this listen window.")
+            else:
+                self.set_response("Voice loop stopped.")
+                if not qt_thread_is_running(self.stream_thread):
+                    self.input.setEnabled(True)
+                    self.mic_button.setEnabled(True)
+                    self.input.setFocus()
+
+    def maybe_restart_voice_loop(self) -> None:
+        if not self.voice_loop_enabled or self.voice_cancel_requested or self.brain is None:
+            if not qt_thread_is_running(self.stream_thread) and not qt_thread_is_running(self.voice_thread):
+                self.input.setEnabled(True)
+                self.mic_button.setEnabled(True)
+            return
+        if (
+            qt_thread_is_running(self.stream_thread)
+            or qt_thread_is_running(self.tts_thread)
+            or qt_thread_is_running(self.voice_thread)
+        ):
+            QTimer.singleShot(150, self.maybe_restart_voice_loop)
+            return
+        self.start_voice_input(from_loop=True)
+
+    def update_voice_loop_button(self) -> None:
+        self.loop_button.blockSignals(True)
+        self.loop_button.setChecked(self.voice_loop_enabled)
+        self.loop_button.blockSignals(False)
+        self.loop_button.setText("STOP" if self.voice_loop_enabled else "LOOP")
+        self.loop_button.setProperty("active", "true" if self.voice_loop_enabled else "false")
+        self.loop_button.style().unpolish(self.loop_button)
+        self.loop_button.style().polish(self.loop_button)
 
     def closeEvent(self, event) -> None:  # noqa: N802
         quit_thread(self.loader_thread)
@@ -548,23 +654,36 @@ QMainWindow, QWidget {
     selection-background-color: rgba(255, 255, 255, 76);
 }
 
-#MicButton {
+#MicButton,
+#LoopButton {
     background: rgba(255, 255, 255, 22);
-    border: 1px solid rgba(255, 255, 255, 70);
-    border-radius: 21px;
-    color: rgba(255, 255, 255, 238);
+    border: 1px solid rgba(255, 255, 255, 58);
+    border-radius: 16px;
+    color: rgba(255, 255, 255, 230);
     font-size: 12px;
-    font-weight: 800;
+    font-weight: 700;
+    min-width: 46px;
+    min-height: 32px;
+    padding: 0 10px;
 }
 
-#MicButton:hover {
-    border: 1px solid rgba(255, 255, 255, 150);
-    background: rgba(255, 255, 255, 36);
+#MicButton:hover,
+#LoopButton:hover {
+    background: rgba(255, 255, 255, 34);
+    border: 1px solid rgba(255, 255, 255, 88);
 }
 
-#MicButton:disabled {
-    color: rgba(255, 255, 255, 55);
-    border: 1px solid rgba(255, 255, 255, 18);
+#LoopButton[active="true"] {
+    background: rgba(120, 180, 255, 44);
+    border: 1px solid rgba(170, 210, 255, 130);
+    color: #ffffff;
+}
+
+#MicButton:disabled,
+#LoopButton:disabled {
+    color: rgba(255, 255, 255, 70);
+    background: rgba(255, 255, 255, 8);
+    border: 1px solid rgba(255, 255, 255, 22);
 }
 
 #Prompt:focus {

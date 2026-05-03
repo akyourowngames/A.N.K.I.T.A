@@ -7,17 +7,9 @@ from dataclasses import replace
 from pathlib import Path
 
 from core.brain import Brain
-from core.speech import (
-    MicrophoneListener,
-    SpeechConfig,
-    SpeechToText,
-    TTSConfig,
-    TextToSpeech,
-    create_speech_to_text,
-    create_text_to_speech,
-    list_input_devices,
-    speech_to_english,
-)
+from core.nvidia_stt import NvidiaSTTConfig, SpeechToText, list_input_devices
+from core.speech import TTSConfig, TextToSpeech, create_text_to_speech
+from core.voice_runtime import VoiceInputEmpty, listen_once_text, load_speech_engine
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -25,7 +17,7 @@ def main(argv: list[str] | None = None) -> None:
         sys.stdout.reconfigure(encoding="utf-8")
 
     parser = argparse.ArgumentParser(description="Chat with your personal AI assistant.")
-    parser.add_argument("--listen", "-l", action="store_true", help="Start directly in hands-free listening mode.")
+    parser.add_argument("--listen", "-l", action="store_true", help="Start directly in hands-free CLI listening mode.")
     parser.add_argument("--listen-once", action="store_true", help="Listen for one spoken prompt, answer, then exit.")
     parser.add_argument("--list-mics", action="store_true", help="List available microphone input devices.")
     parser.add_argument("--mute", action="store_true", help="Start with AI voice output muted.")
@@ -39,7 +31,7 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     brain = Brain.create(project_root)
-    speech_config = SpeechConfig.from_env(project_root)
+    stt_config = NvidiaSTTConfig.from_env(project_root)
     tts_config = TTSConfig.from_env(project_root)
     if args.mute:
         tts_config = replace(tts_config, enabled=False)
@@ -49,11 +41,11 @@ def main(argv: list[str] | None = None) -> None:
 
     print(
         f"{brain.ai_name} is ready. Type 'exit' to stop, '/listen' to speak once, "
-        f"'/voice' for listening mode, '/mute' to mute, or '/speak' to hear replies."
+        f"'/voice' for hands-free CLI listening, '/mute' to mute, or '/speak' to hear replies."
     )
     try:
         if args.listen or args.listen_once:
-            _voice_loop(brain, speech_config, voice_output, once=args.listen_once)
+            _voice_loop(brain, stt_config, voice_output, once=args.listen_once)
             return
 
         while True:
@@ -64,17 +56,17 @@ def main(argv: list[str] | None = None) -> None:
             if _handle_tts_command(user_text, voice_output):
                 continue
             if user_text.lower() == "/listen":
-                spoken_text = _listen_once(brain, speech_config)
+                spoken_text = _listen_once(brain, stt_config)
                 if spoken_text and spoken_text.lower() in {"exit", "quit"}:
                     print(f"{brain.ai_name}> Bye.")
                     break
-                if spoken_text and spoken_text.lower() == "stop listening":
+                if spoken_text and spoken_text.lower().strip(" .!?") == "stop listening":
                     continue
                 if spoken_text:
                     _answer(brain, spoken_text, voice_output)
                 continue
             if user_text.lower() == "/voice":
-                _voice_loop(brain, speech_config, voice_output)
+                _voice_loop(brain, stt_config, voice_output)
                 continue
             if not user_text:
                 continue
@@ -202,28 +194,28 @@ def _answer(
         voice_thread.join()
 
 
-def _listen_once(brain: Brain, config: SpeechConfig, speech: SpeechToText | None = None) -> str:
-    audio_path: Path | None = None
+def _listen_once(
+    brain: Brain,
+    config: NvidiaSTTConfig,
+    speech: SpeechToText | None = None,
+) -> str:
     try:
         if speech is None:
             speech = _load_speech_engine(config)
             if speech is None:
                 return ""
-        listener = MicrophoneListener(config)
-        print("Listening... speak naturally in any language. Pause when you are done.")
-        audio_path = listener.listen_to_wav()
-        text = speech_to_english(audio_path, speech, brain.llm, config).strip()
+        text = listen_once_text(config, speech, status=print)
+    except VoiceInputEmpty as notice:
+        print(f"Speech error: {notice}")
+        return ""
     except Exception as error:
         print(f"Speech error: {error}")
         return ""
-    finally:
-        if audio_path is not None:
-            audio_path.unlink(missing_ok=True)
 
     if text:
         print(f"{brain.user_name} (speech)> {text}")
     else:
-        print("Speech error: I could not detect any speech.")
+        print("Speech error: NVIDIA did not return a transcript.")
     return text
 
 
@@ -351,22 +343,16 @@ def _handle_spoken_tts_command(spoken_text: str, voice_output: VoiceOutput) -> b
     return False
 
 
-def _load_speech_engine(config: SpeechConfig) -> SpeechToText | None:
-    if config.provider in {"speech_recognition", "speechrecognition", "simple", "google", "google_web_speech"}:
-        print("Loading fast SpeechRecognition engine...")
-    elif config.provider in {"local", "faster_whisper"}:
-        print(f"Loading local speech model '{config.local_model}'...")
-    else:
-        print("Loading speech engine...")
+def _load_speech_engine(config: NvidiaSTTConfig) -> SpeechToText | None:
     try:
-        return create_speech_to_text(config)
+        return load_speech_engine(config, status=print)
     except Exception as error:
         print(f"Speech error: {error}")
         return None
 
 
-def _voice_loop(brain: Brain, config: SpeechConfig, voice_output: VoiceOutput, once: bool = False) -> None:
-    print("Listening mode is on. Say 'exit' or 'stop listening' to leave voice mode.")
+def _voice_loop(brain: Brain, config: NvidiaSTTConfig, voice_output: VoiceOutput, once: bool = False) -> None:
+    print("CLI listening mode is on. Say 'exit' or 'stop listening' to leave voice mode.")
     speech = _load_speech_engine(config)
     if speech is None:
         return
