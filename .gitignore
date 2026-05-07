@@ -1,0 +1,12 @@
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+memory/*.txt
+memory/transcripts/*.txt
+
+config/*results.json
+
+openclaw/

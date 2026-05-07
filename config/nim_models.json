@@ -1,0 +1,46 @@
+{
+  "default_profile": "balanced_long_context",
+  "profiles": [
+    {
+      "name": "best_runtime_latency",
+      "model": "microsoft/phi-4-mini-instruct",
+      "context_tokens": 128000,
+      "notes": "Small 128k-context model from NVIDIA's catalog. Live benchmark from this workspace timed out in both JSON and stream mode on 2026-05-07, so it is not the default.",
+      "source": "https://build.nvidia.com/microsoft/phi-4-mini-instruct/modelcard"
+    },
+    {
+      "name": "instant_long_context",
+      "model": "meta/llama-3.2-3b-instruct",
+      "context_tokens": 128000,
+      "notes": "Small current default with 128k context. Good for lowest latency simple chat.",
+      "source": "https://build.nvidia.com/meta/llama-3.2-3b-instruct/modelcard"
+    },
+    {
+      "name": "balanced_long_context",
+      "model": "meta/llama-3.1-8b-instruct",
+      "context_tokens": 128000,
+      "notes": "8B long-context option. Live discovery benchmark across 136 NVIDIA /models entries on this workspace had the fastest useful native stream result: 0.271s first token and 0.320s total.",
+      "source": "https://build.nvidia.com/meta/llama-3_1-8b-instruct/systemcard"
+    },
+    {
+      "name": "memory_json_latency",
+      "model": "nvidia/nemotron-mini-4b-instruct",
+      "notes": "Fastest useful JSON completion in live discovery benchmark: 0.290s total. Used for background memory extraction through NVIDIA_MEMORY_MODEL.",
+      "source": "NVIDIA /models endpoint"
+    },
+    {
+      "name": "nemotron_fast_agentic",
+      "model": "nvidia/nvidia-nemotron-nano-9b-v2",
+      "context_tokens": 128000,
+      "notes": "Hybrid Transformer-Mamba NVIDIA model aimed at efficient reasoning and agentic tasks.",
+      "source": "https://build.nvidia.com/nvidia/nvidia-nemotron-nano-9b-v2/modelcard"
+    },
+    {
+      "name": "llama_strong_runtime",
+      "model": "meta/llama-3.3-70b-instruct",
+      "context_tokens": 128000,
+      "notes": "70B long-context option. Strong model, but the broader live discovery stream benchmark picked the 8B model for lower latency.",
+      "source": "https://build.nvidia.com/meta/llama-3_3-70b-instruct/modelcard"
+    }
+  ]
+}

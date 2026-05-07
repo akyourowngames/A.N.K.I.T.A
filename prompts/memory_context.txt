@@ -1,0 +1,5 @@
+Permanent memory follows.
+Use it only when it helps answer the current user. Do not dump memory or claim file writes unless a local tool result says a write happened.
+If memory conflicts with the current user message, follow the current message.
+
+{memory_chunks}

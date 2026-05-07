@@ -1,0 +1,389 @@
+{
+  "tools": [
+    {
+      "name": "calculate",
+      "description": "Evaluate a safe numeric expression with arithmetic operators.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "expression": {
+            "type": "string",
+            "description": "Numeric expression to evaluate."
+          }
+        },
+        "required": [
+          "expression"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.calculator",
+        "function": "evaluate_expression"
+      },
+      "direct_response": "{result.result}"
+    },
+    {
+      "name": "get_current_datetime",
+      "description": "Get live current date, clock time, day, and timezone for the system timezone or an IANA timezone.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "timezone": {
+            "type": "string",
+            "description": "Optional IANA timezone such as Asia/Kolkata or America/New_York."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.date_time",
+        "function": "get_current_datetime"
+      },
+      "direct_response": "Current date and time: {result.date} {result.time} {result.timezone}"
+    },
+    {
+      "name": "get_weather",
+      "description": "Get current weather and a short forecast for a location.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "location": {
+            "type": "string",
+            "description": "City, address, or place name."
+          },
+          "units": {
+            "type": "string",
+            "enum": [
+              "metric",
+              "imperial"
+            ],
+            "description": "Optional unit system."
+          }
+        },
+        "required": [
+          "location"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.weather",
+        "function": "get_weather"
+      },
+      "direct_response": "Weather in {result.resolved_location.name}, {result.resolved_location.country}: {result.current.temperature_2m} {result.current_units.temperature_2m}, feels like {result.current.apparent_temperature} {result.current_units.apparent_temperature}, humidity {result.current.relative_humidity_2m}{result.current_units.relative_humidity_2m}, wind {result.current.wind_speed_10m} {result.current_units.wind_speed_10m}."
+    },
+    {
+      "name": "get_system_info",
+      "description": "Get grounded operating system and machine facts for the current workspace process.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_env_keys": {
+            "type": "boolean",
+            "description": "Whether to include environment variable names. Values are never returned."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.system_tools",
+        "function": "get_system_info"
+      },
+      "direct_response": "System: {result.system} {result.release}. Architecture: {result.architecture}. Current workspace: {result.cwd}"
+    },
+    {
+      "name": "get_pc_status",
+      "description": "Get grounded PC status with OS, architecture, CPU cores, memory, disk, and current workspace.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.system_tools",
+        "function": "get_pc_status"
+      },
+      "direct_response": "{result.summary}"
+    },
+    {
+      "name": "list_directory",
+      "description": "List files and folders in a local directory with names, types, sizes, and modified timestamps.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Directory path. Defaults to the current workspace."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum entries to return."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.filesystem_tools",
+        "function": "list_directory"
+      },
+      "direct_response": "{result.summary}"
+    },
+    {
+      "name": "read_text_file",
+      "description": "Read a local text file with a bounded character limit.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Text file path."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum characters to return."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.filesystem_tools",
+        "function": "read_text_file"
+      },
+      "direct_response": "{result.content}"
+    },
+    {
+      "name": "get_file_info",
+      "description": "Get local file or directory metadata such as type, size, and modified timestamp.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File or directory path."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.filesystem_tools",
+        "function": "get_file_info"
+      },
+      "direct_response": "{result.path}: {result.type}, {result.size_bytes} bytes, modified {result.modified}"
+    },
+    {
+      "name": "search_text_files",
+      "description": "Search local text files using exact text matching, not regular expressions.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "File or directory path. Defaults to the current workspace."
+          },
+          "query": {
+            "type": "string",
+            "description": "Exact text to find."
+          },
+          "max_files": {
+            "type": "integer",
+            "description": "Maximum files to scan."
+          },
+          "max_matches": {
+            "type": "integer",
+            "description": "Maximum matches to return."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.filesystem_tools",
+        "function": "search_text_files"
+      },
+      "direct_response": "Found matches for {result.query}: {result.matches}"
+    },
+    {
+      "name": "text_stats",
+      "description": "Count characters, non-space characters, words, and lines in supplied text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to count."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.text_tools",
+        "function": "text_stats"
+      },
+      "direct_response": "Characters: {result.characters}; words: {result.words}; lines: {result.lines}"
+    },
+    {
+      "name": "hash_text",
+      "description": "Compute a digest for supplied text using a hashlib algorithm such as sha256.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text to hash."
+          },
+          "algorithm": {
+            "type": "string",
+            "description": "Hash algorithm name supported by Python hashlib."
+          }
+        },
+        "required": [
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.text_tools",
+        "function": "hash_text"
+      },
+      "direct_response": "{result.algorithm}: {result.hash}"
+    },
+    {
+      "name": "generate_uuid",
+      "description": "Generate a new UUID value.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.text_tools",
+        "function": "generate_uuid"
+      },
+      "direct_response": "{result.uuid}"
+    },
+    {
+      "name": "fetch_url_text",
+      "description": "Fetch text from a URL with bounded output, status, and content type.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "HTTP or HTTPS URL."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum characters to return."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Request timeout in seconds."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.web_tools",
+        "function": "fetch_url_text"
+      },
+      "direct_response": "{result.summary}"
+    },
+    {
+      "name": "run_terminal",
+      "description": "Run a local terminal command for command output, installed software versions, PATH checks, tests, scripts, filesystem inspection, opening apps, opening files, opening URLs, and other grounded local actions.",
+      "sort_key": "zz_run_terminal",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "string",
+            "description": "Command line to run exactly as a terminal command."
+          },
+          "cwd": {
+            "type": "string",
+            "description": "Optional working directory. Defaults to the current workspace."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Optional timeout in seconds."
+          },
+          "max_output_chars": {
+            "type": "integer",
+            "description": "Optional maximum characters retained separately for stdout and stderr."
+          },
+          "stdin": {
+            "type": "string",
+            "description": "Optional stdin text."
+          },
+          "shell": {
+            "type": "string",
+            "enum": [
+              "system",
+              "powershell",
+              "cmd"
+            ],
+            "description": "Optional shell runner. Defaults to the configured terminal shell."
+          },
+          "background": {
+            "type": "boolean",
+            "description": "Run without waiting for completion. Use this for launch/open/start requests such as opening desktop applications."
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.terminal",
+        "function": "run_terminal"
+      },
+      "direct_response": "{result.user_output}"
+    },
+    {
+      "name": "get_runtime_info",
+      "description": "Get facts about the currently running Jarvis Python process, including Python version, executable, platform, argv, cwd, and environment keys. This is only for Jarvis runtime facts; do not use it for installed terminal, PATH, Node, npm, package, or system command versions.",
+      "sort_key": "zy_get_runtime_info",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_env_keys": {
+            "type": "boolean",
+            "description": "Whether to include environment variable names. Values are never returned."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.runtime_info",
+        "function": "get_runtime_info"
+      }
+    },
+    {
+      "name": "list_registered_tools",
+      "description": "List the local tools currently registered with Jarvis.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.capabilities",
+        "function": "list_registered_tools"
+      }
+    }
+  ]
+}

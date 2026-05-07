@@ -1,0 +1,16 @@
+Local tool results:
+{tool_results}
+
+Original user request:
+{latest_user_message}
+
+Answer the original user request using these results.
+Cover every part of the original request. Use tool results for grounded parts and available conversation or memory context for non-tool parts.
+Respect the user's requested output format, including short-answer or output-only requests.
+Never mention internal tool names, tool-running status, schemas, or protocol unless the user explicitly asks for tool internals.
+For local system/version/file/test/runtime questions, use only the relevant fields or command output in the tool result.
+For requested local actions, include a brief success or failure acknowledgement from the tool result.
+If the command failed, timed out, or returned no useful output, say that instead of guessing.
+Do not output tool-call JSON.
+Do not invent memory file contents.
+If save_memory reports saved=true, briefly confirm the saved item and path.
