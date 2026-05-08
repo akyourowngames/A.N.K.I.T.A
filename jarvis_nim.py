@@ -162,8 +162,12 @@ def chat_once(config: JarvisConfig, messages: list[dict[str, Any]], registry: An
 
 def chat_with_json_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
     working_messages = [dict(message) for message in messages]
-    requests = collect_tool_requests(config, working_messages, registry)
+    requests, model_reply = collect_tool_decision(config, working_messages, registry)
     if not requests:
+        if model_reply:
+            if config.stream:
+                print(model_reply)
+            return model_reply
         return final_chat_response(config, working_messages)
     return answer_with_tool_requests(config, working_messages, registry, requests)
 
@@ -188,15 +192,7 @@ def answer_with_tool_requests(
     registry: Any,
     requests: list[dict[str, Any]],
 ) -> str:
-    results = []
-    direct_responses = []
-    for request in requests:
-        result = registry.execute(request["name"], request["parameters"])
-        result_payload = json.loads(result)
-        results.append({"name": request["name"], "parameters": request["parameters"], "result": result_payload})
-        direct_response = registry.direct_response(request["name"], result_payload)
-        if direct_response:
-            direct_responses.append(direct_response)
+    results, direct_responses = execute_tool_requests(registry, requests)
 
     if len(results) == 1 and len(direct_responses) == 1:
         reply = "\n".join(direct_responses)
@@ -217,8 +213,31 @@ def answer_with_tool_requests(
     return final_chat_response(config, working_messages)
 
 
+def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+    results = []
+    direct_responses = []
+    for request in requests:
+        result = registry.execute(request["name"], request["parameters"])
+        result_payload = json.loads(result)
+        results.append({"name": request["name"], "parameters": request["parameters"], "result": result_payload})
+        direct_response = registry.direct_response(request["name"], result_payload)
+        if direct_response:
+            direct_responses.append(direct_response)
+    return results, direct_responses
+
+
 def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
+    requests, _model_reply = collect_tool_decision(config, messages, registry)
+    return requests
+
+
+def collect_tool_decision(
+    config: JarvisConfig,
+    messages: list[dict[str, Any]],
+    registry: Any,
+) -> tuple[list[dict[str, Any]], str]:
     requests: list[dict[str, Any]] = []
+    model_reply = ""
     passes = max(1, env_int("TOOL_PLANNER_PASSES", 1))
     for index in range(passes):
         planner_messages = tool_planner_messages(messages, registry)
@@ -228,31 +247,116 @@ def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], 
                 "model": tool_planner_model(config),
                 "messages": planner_messages,
                 "temperature": 0,
-                "max_tokens": min(config.max_tokens, 700),
+                "max_tokens": env_int("TOOL_PLANNER_MAX_TOKENS", min(config.max_tokens, 256)),
                 "stream": False,
             },
         )
         message = extract_choice_message(data)
-        parsed_requests = parse_tool_requests(message_content(message), registry)
+        content = message_content(message)
+        parsed_requests = parse_tool_requests(content, registry)
         for request in parsed_requests:
             if request not in requests:
                 requests.append(request)
         if parsed_requests:
             break
+        if env_bool("NIM_JSON_DIRECT_NO_TOOL_RESPONSE", False) and not is_empty_tool_calls_content(content):
+            model_reply = content
+            break
         if index + 1 >= passes:
             break
-    return requests
+    return requests, model_reply
+
+
+def is_empty_tool_calls_content(content: str) -> bool:
+    text = content.strip()
+    if not text:
+        return True
+    for value in scan_json_objects(text):
+        if is_empty_tool_call_response(value):
+            return True
+    try:
+        return is_empty_tool_call_response(json.loads(text))
+    except json.JSONDecodeError:
+        return False
 
 
 def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
     working_messages = [dict(message) for message in messages]
-    requests = collect_native_tool_requests(config, working_messages, registry)
-    if not requests:
-        return final_chat_response(config, working_messages)
-    return answer_with_tool_requests(config, working_messages, registry, requests)
+    original_user_message = latest_user_text(working_messages)
+    all_results: list[dict[str, Any]] = []
+    all_direct_responses: list[str] = []
+    seen_requests: set[str] = set()
+
+    for _round_index in range(max(1, config.max_tool_rounds)):
+        requests, model_reply = collect_native_tool_decision(config, working_messages, registry)
+        if not requests:
+            if model_reply:
+                if config.stream:
+                    print(model_reply)
+                return model_reply
+            break
+        if not all_results:
+            requests = confirm_native_tool_requests(config, working_messages, registry, requests)
+
+        new_requests = []
+        for request in requests:
+            key = json.dumps(request, sort_keys=True, ensure_ascii=True)
+            if key in seen_requests:
+                continue
+            seen_requests.add(key)
+            new_requests.append(request)
+        if not new_requests:
+            break
+
+        results, direct_responses = execute_tool_requests(registry, new_requests)
+        if (
+            not all_results
+            and env_bool("NIM_DIRECT_SINGLE_TOOL_RESULT", True)
+            and len(results) == 1
+            and len(direct_responses) == 1
+        ):
+            reply = "\n".join(direct_responses)
+            if config.stream:
+                print(reply)
+            return reply
+        all_results.extend(results)
+        all_direct_responses.extend(direct_responses)
+        working_messages.append(
+            {
+                "role": "user",
+                "content": tool_results_prompt(
+                    all_results,
+                    original_user_message,
+                    "\n".join(all_direct_responses),
+                ),
+            }
+        )
+
+    return final_chat_response(config, working_messages)
+
+
+def confirm_native_tool_requests(
+    config: JarvisConfig,
+    messages: list[dict[str, Any]],
+    registry: Any,
+    native_requests: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    if not env_bool("NIM_NATIVE_PLANNER_CONFIRM", True):
+        return native_requests
+    planned_requests = collect_tool_requests(config, messages, registry)
+    return planned_requests if planned_requests else native_requests
 
 
 def collect_native_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
+    requests, _model_reply = collect_native_tool_decision(config, messages, registry)
+    return requests
+
+
+def collect_native_tool_decision(
+    config: JarvisConfig,
+    messages: list[dict[str, Any]],
+    registry: Any,
+) -> tuple[list[dict[str, Any]], str]:
     tool_schemas = registry.openai_tools()
 
     data = post_json(
@@ -265,13 +369,13 @@ def collect_native_tool_requests(config: JarvisConfig, messages: list[dict[str, 
             "stream": False,
             "tools": tool_schemas,
             "tool_choice": "auto",
-            "parallel_tool_calls": False,
+            "parallel_tool_calls": env_bool("NIM_PARALLEL_TOOL_CALLS", True),
         },
     )
     message = extract_choice_message(data)
     tool_calls = message.get("tool_calls")
     if not isinstance(tool_calls, list) or not tool_calls:
-        return []
+        return [], message_content(message)
 
     requests: list[dict[str, Any]] = []
     visible_names = {tool.name for tool in registry.visible_tools()}
@@ -286,7 +390,7 @@ def collect_native_tool_requests(config: JarvisConfig, messages: list[dict[str, 
         request = {"name": name, "parameters": parse_native_arguments(arguments)}
         if request not in requests:
             requests.append(request)
-    return requests
+    return requests, message_content(message)
 
 
 def parse_native_arguments(arguments: Any) -> dict[str, Any]:

@@ -9,7 +9,11 @@ Original user request:
 
 Answer the original user request using these results.
 Cover every part of the original request. Use tool results for grounded parts and available conversation or memory context for non-tool parts.
-Prefer the clean tool summaries for concise final wording, and use the raw local tool results only to recover missing details.
+Prefer the clean tool summaries for concise final wording, and keep their factual content intact.
+If a clean tool summary is already the exact useful answer for a grounded part, preserve that wording instead of paraphrasing away details.
+If a command or local tool summary contains multiple output lines, include every relevant line unless the user asked for only one value.
+For fetched URL summaries, include the page title when it appears in the clean summary or content.
+Use the raw local tool results to recover any missing detail from the clean summaries.
 If the system or memory context gives the user's display name, that is available context for name questions.
 Respect the user's requested output format, including short-answer or output-only requests.
 Never mention internal tool names, tool-running status, schemas, or protocol unless the user explicitly asks for tool internals.

@@ -79,6 +79,7 @@ Optional:
 - `NIM_SYNTHETIC_CHUNK_CHARS`
 - `NIM_SYNTHETIC_CHUNK_DELAY_SECONDS`
 - `NVIDIA_TIMEOUT_SECONDS`
+- `NVIDIA_TOOL_MODEL`
 - `NVIDIA_MEMORY_MODEL`
 - `NVIDIA_EMBEDDING_MODEL`
 - `NIM_RETRY_ATTEMPTS`
@@ -91,7 +92,11 @@ Optional:
 - `TEMPERATURE`
 - `MAX_TOKENS`
 - `TOOL_MAX_ROUNDS`
+- `TOOL_PLANNER_MAX_TOKENS`
 - `NIM_TOOL_MODE`
+- `NIM_PARALLEL_TOOL_CALLS`
+- `NIM_NATIVE_PLANNER_CONFIRM`
+- `NIM_DIRECT_SINGLE_TOOL_RESULT`
 - `USER_NAME`
 - `AI_NAME`
 - `WEATHER_UNITS`
@@ -141,7 +146,15 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_STREAM_MODE` defaults to `native`: Jarvis reads NVIDIA NIM server-sent events and prints tokens as they arrive. Set `NIM_STREAM_MODE=synthetic` only if a provider endpoint is having temporary SSE trouble and you want local chunk printing after a JSON completion.
 
-`NIM_TOOL_MODE` controls the optional auto-tool path. Use `json` for text JSON tool calls or `native` for models/endpoints that support native OpenAI `tool_calls`.
+`NIM_TOOL_MODE=json` is the current low-latency default for auto tools. It uses the compact prompt protocol in `prompts/tool_protocol.txt`, keeps tool choice model-driven, and avoids provider-side native tool-call latency spikes.
+
+`NIM_TOOL_MODE=native` is still available for endpoints that handle OpenAI-compatible `tool_calls` quickly. In native mode, Jarvis reuses the same model response when no tool is needed, so normal chat does not pay for a separate planner plus answer call.
+
+`NIM_PARALLEL_TOOL_CALLS=true` allows the provider to return multiple tool calls for one request when the model decides the task needs them.
+
+`NIM_NATIVE_PLANNER_CONFIRM=true` keeps normal no-tool chat at one model call, but asks the compact JSON planner to verify the tool set only after native mode has already decided a tool is needed. This protects multi-tool requests without adding planner latency to ordinary conversation.
+
+`NIM_DIRECT_SINGLE_TOOL_RESULT=true` returns a clean display template immediately when one grounded tool fully supplies the useful result. Multi-tool requests still go through final answer composition.
 
 ## Tools
 
