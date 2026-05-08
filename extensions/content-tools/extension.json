@@ -1,0 +1,94 @@
+{
+  "id": "content-tools",
+  "name": "Content Tools",
+  "description": "Fast local text transforms, JSON cleanup, encoders, and small text comparisons.",
+  "prompt_files": [
+    "prompts/content-tools.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "transform_text",
+      "description": "Transform supplied text with explicit operations: json_format, json_minify, base64_encode, base64_decode, url_encode, url_decode, or slug.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "json_format",
+              "json_minify",
+              "base64_encode",
+              "base64_decode",
+              "url_encode",
+              "url_decode",
+              "slug"
+            ],
+            "description": "Transform operation."
+          },
+          "text": {
+            "type": "string",
+            "description": "Exact user-supplied text to transform. Preserve quotes, braces, punctuation, spacing, and escape characters."
+          },
+          "indent": {
+            "type": "integer",
+            "description": "Indent spaces for json_format."
+          }
+        },
+        "required": [
+          "operation",
+          "text"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.utility_tools",
+        "function": "transform_text"
+      }
+    },
+    {
+      "name": "compare_text",
+      "description": "Compare two supplied text blocks and return a unified diff.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "left": {
+            "type": "string",
+            "description": "Exact original text."
+          },
+          "right": {
+            "type": "string",
+            "description": "Exact changed text."
+          },
+          "from_label": {
+            "type": "string",
+            "description": "Label for the original text."
+          },
+          "to_label": {
+            "type": "string",
+            "description": "Label for the changed text."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum diff characters to return."
+          }
+        },
+        "required": [
+          "left",
+          "right"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.utility_tools",
+        "function": "compare_text"
+      }
+    }
+  ],
+  "display_templates": {
+    "transform_text": "{result.summary}",
+    "compare_text": "{result.summary}"
+  }
+}

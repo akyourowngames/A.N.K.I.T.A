@@ -1,0 +1,11 @@
+---
+name: latency-qa
+description: Test Jarvis latency with live CLI evidence before claiming a speed fix.
+---
+
+# Latency QA
+
+- Use `jarvis_latency_probe` when the user asks about slow replies or first-token delay.
+- Test both casual chat and grounded tool prompts.
+- Keep memory extraction off during latency probes so measurements target chat/tool latency.
+- Report first-content time and total time separately.

@@ -1,0 +1,4 @@
+Use diagnostics tools when the user asks to test Jarvis behavior, latency, first-token delay, or live CLI quality.
+Do not run diagnostics automatically during ordinary chat.
+When the user asks to latency-test multiple prompts, call `jarvis_latency_probe` with the `prompts` array and include only the exact prompt texts to test.
+For system hardening or host health questions, gather read-only facts first and ask before any state-changing command.

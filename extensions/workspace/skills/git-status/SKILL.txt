@@ -1,0 +1,10 @@
+---
+name: git-status
+description: Report git status honestly before commits, pushes, or branch decisions.
+---
+
+# Git Status
+
+- Call `workspace_inspect` with `git_status` for read-only git state.
+- Use `run_terminal` only when the user asks for actual git commands such as commit, branch, pull, or push.
+- Never say files are clean, committed, or pushed unless the current turn has tool evidence.

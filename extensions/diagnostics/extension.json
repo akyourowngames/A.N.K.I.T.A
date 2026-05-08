@@ -1,0 +1,45 @@
+{
+  "id": "diagnostics",
+  "name": "Diagnostics",
+  "description": "Latency checks and read-only health workflows for Jarvis.",
+  "prompt_files": [
+    "prompts/diagnostics.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "jarvis_latency_probe",
+      "description": "Measure live Jarvis CLI first-response and total latency for one or more prompts.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "prompt": {
+            "type": "string",
+            "description": "Single exact prompt text to test."
+          },
+          "prompts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Exact prompt texts to test when the user asks for multiple latency probes, up to five."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Timeout per prompt."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.diagnostics_tools",
+        "function": "jarvis_latency_probe"
+      }
+    }
+  ],
+  "display_templates": {
+    "jarvis_latency_probe": "{result.summary}"
+  }
+}

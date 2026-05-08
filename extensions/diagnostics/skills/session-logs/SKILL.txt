@@ -1,0 +1,11 @@
+---
+name: session-logs
+description: Inspect Jarvis transcript files when the user asks about earlier local chat history.
+---
+
+# Session Logs
+
+- Jarvis transcripts live under `memory/transcripts/`.
+- Use `search_text_files`, `read_text_file`, or `list_directory` for transcript questions.
+- Use exact text search for user-provided phrases; use vector memory only when the user asks for semantic recall.
+- Do not expose raw transcripts unless the user asks for them.

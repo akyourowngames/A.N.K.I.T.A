@@ -1,0 +1,4 @@
+Use content tools only for explicit transform, encoding, decoding, JSON formatting, slug creation, or text comparison requests.
+Do not call these tools for casual chat or because a user message merely contains text.
+When calling a transform or compare tool, copy the user's supplied snippet exactly into the tool argument; do not remove quotes, braces, punctuation, spacing, or escape characters.
+For URL or document summarization, use the web/document tools first, then answer from extracted content.

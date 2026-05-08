@@ -105,26 +105,41 @@ def embed_texts(
         "input": texts,
         "input_type": input_type,
     }
-    request = urllib.request.Request(
-        embedding_url(config),
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {config.api_key}",
-            "Content-Type": "application/json",
-            "Accept": "application/json",
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request, timeout=timeout_seconds or config.timeout_seconds) as response:
-            data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as error:
-        detail = error.read().decode("utf-8", errors="replace")
-        raise NimChatError(f"NIM embedding request failed: {error.code} {error.reason}\n{detail}") from error
-    except urllib.error.URLError as error:
-        raise NimChatError(f"NIM embedding request failed: {error.reason}") from error
-    except TimeoutError as error:
-        raise NimChatError("NIM embedding request timed out.") from error
+    data = None
+    attempts = embedding_retry_attempts(config, timeout_seconds)
+    delay_seconds = env_float("MEMORY_VECTOR_RETRY_DELAY_SECONDS", config.retry_delay_seconds)
+    for attempt in range(attempts + 1):
+        request = urllib.request.Request(
+            embedding_url(config),
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Authorization": f"Bearer {config.api_key}",
+                "Content-Type": "application/json",
+                "Accept": "application/json",
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=timeout_seconds or config.timeout_seconds) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as error:
+            detail = error.read().decode("utf-8", errors="replace")
+            if attempt >= attempts or not retryable_embedding_status(error.code):
+                raise NimChatError(f"NIM embedding request failed: {error.code} {error.reason}\n{detail}") from error
+            sleep_for = embedding_retry_delay(error, delay_seconds, attempt)
+            if sleep_for > 0:
+                time.sleep(sleep_for)
+        except urllib.error.URLError as error:
+            if attempt >= attempts:
+                raise NimChatError(f"NIM embedding request failed: {error.reason}") from error
+            if delay_seconds > 0:
+                time.sleep(delay_seconds * (attempt + 1))
+        except TimeoutError as error:
+            raise NimChatError("NIM embedding request timed out.") from error
+
+    if data is None:
+        raise NimChatError("NIM embedding request failed.")
 
     rows = data.get("data", []) if isinstance(data, dict) else []
     embeddings: list[list[float]] = []
@@ -137,6 +152,27 @@ def embed_texts(
     if len(embeddings) != len(texts):
         raise NimChatError("NIM embedding response did not include every input.")
     return embeddings
+
+
+def embedding_retry_attempts(config: JarvisConfig, timeout_seconds: float | None) -> int:
+    if timeout_seconds is not None:
+        return max(0, env_int("MEMORY_VECTOR_QUERY_RETRY_ATTEMPTS", 0))
+    return max(0, env_int("MEMORY_VECTOR_RETRY_ATTEMPTS", max(2, config.retry_attempts)))
+
+
+def retryable_embedding_status(status_code: int) -> bool:
+    return status_code in {408, 429, 500, 502, 503, 504}
+
+
+def embedding_retry_delay(error: urllib.error.HTTPError, fallback_seconds: float, attempt: int) -> float:
+    retry_after = error.headers.get("Retry-After") if error.headers else ""
+    try:
+        parsed = float(retry_after)
+    except (TypeError, ValueError):
+        parsed = 0.0
+    if parsed > 0:
+        return parsed
+    return max(0.0, fallback_seconds * (attempt + 1))
 
 
 def build_vector_index(

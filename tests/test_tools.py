@@ -7,15 +7,17 @@ import os
 import platform
 import sys
 import tempfile
+import urllib.error
 from pathlib import Path
 from unittest.mock import patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, final_chat_response, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, final_chat_response, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
 from tools.calculator import evaluate_expression
+from tools.diagnostics_tools import jarvis_latency_probe
 from tools.filesystem_tools import get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.registry import ToolInputError
@@ -24,8 +26,10 @@ from tools.skill_workshop import skill_workshop
 from tools.system_tools import get_pc_status, get_system_info
 from tools.terminal import resolve_shell_name, run_terminal
 from tools.text_tools import generate_uuid, hash_text, text_stats
+from tools.utility_tools import compare_text, transform_text
 from tools.web_tools import document_extract_text, parse_duckduckgo_results, readable_text, summarize_readable_text
-from vector_memory import VectorMemoryConfig, build_vector_index, load_vector_memory_context, vector_search
+from tools.workspace_tools import workspace_inspect
+from vector_memory import VectorMemoryConfig, build_vector_index, embed_texts, load_vector_memory_context, vector_search
 
 
 class ToolRegistryTests(unittest.TestCase):
@@ -61,6 +65,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("memory_vector_search", names)
         self.assertIn("skill_workshop", names)
         self.assertIn("run_jarvis_qa", names)
+        self.assertIn("transform_text", names)
+        self.assertIn("compare_text", names)
+        self.assertIn("workspace_inspect", names)
+        self.assertIn("jarvis_latency_probe", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -150,6 +158,16 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("uuid", generate_uuid({}))
         self.assertIn("system", get_system_info({}))
 
+    def test_content_tools_transform_and_compare(self) -> None:
+        formatted = transform_text({"operation": "json_format", "text": '{"b":2,"a":1}', "indent": 2})
+        self.assertIn('"a": 1', formatted["result"])
+        encoded = transform_text({"operation": "base64_encode", "text": "Jarvis"})
+        decoded = transform_text({"operation": "base64_decode", "text": encoded["result"]})
+        self.assertEqual(decoded["result"], "Jarvis")
+        diff = compare_text({"left": "one\ntwo", "right": "one\nthree"})
+        self.assertTrue(diff["changed"])
+        self.assertIn("three", diff["diff"])
+
     def test_filesystem_tools(self) -> None:
         current = list_directory({"path": ".", "limit": 5})
         self.assertGreaterEqual(current["count"], 1)
@@ -161,6 +179,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Jarvis", content["content"])
         matches = search_text_files({"path": "README.md", "query": "Jarvis", "max_files": 1})
         self.assertTrue(matches["matches"])
+
+    def test_workspace_inspect_tools(self) -> None:
+        status = workspace_inspect({"operation": "git_status"})
+        self.assertIn("Branch:", status["summary"])
+        tree = workspace_inspect({"operation": "project_tree", "path": ".", "depth": 1, "limit": 10})
+        self.assertTrue(tree["entries"])
+        digest = workspace_inspect({"operation": "file_hash", "path": "README.md", "algorithm": "sha256"})
+        self.assertEqual(len(digest["hash"]), 64)
 
     def test_runtime_info_reports_current_python_process(self) -> None:
         result = get_runtime_info({})
@@ -373,6 +399,48 @@ class ToolRegistryTests(unittest.TestCase):
             self.assertIn("Relevant vector memory", context)
             self.assertIn("low latency vector memory", context)
 
+    def test_vector_embedding_retries_temporary_throttle(self) -> None:
+        nim_config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=False,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        throttle = urllib.error.HTTPError(
+            "https://example.test/v1/embeddings",
+            429,
+            "Too Many Requests",
+            {},
+            io.BytesIO(b"slow down"),
+        )
+        response = FakeHttpResponse({"data": [{"embedding": [1.0, 2.0]}]})
+        with patch.dict(
+            os.environ,
+            {"MEMORY_VECTOR_RETRY_ATTEMPTS": "1", "MEMORY_VECTOR_RETRY_DELAY_SECONDS": "0"},
+            clear=False,
+        ):
+            with patch("vector_memory.urllib.request.urlopen", side_effect=[throttle, response]) as open_call:
+                vectors = embed_texts(nim_config, ["Jarvis memory"], "passage")
+
+        self.assertEqual(vectors, [[1.0, 2.0]])
+        self.assertEqual(open_call.call_count, 2)
+
     def test_skill_workshop_can_apply_skill_without_core_registration(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             with patch.dict(os.environ, {"JARVIS_SKILLS_DIR": str(Path(tmp) / "skills")}, clear=False):
@@ -454,6 +522,31 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(reply, "Hi Krish")
         self.assertIn("Hi Krish", output.getvalue())
 
+    def test_native_tool_stream_reader_converts_json_content_tool_call(self) -> None:
+        response = io.BytesIO(
+            b'data: {"choices":[{"delta":{"content":"{\\"name\\":\\"get_current_datetime\\","}}]}\n'
+            b'data: {"choices":[{"delta":{"content":"\\"parameters\\":{}}"}}]}\n'
+            b"data: [DONE]\n"
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            requests, reply = read_native_tool_stream(response, discover_tools())
+        self.assertEqual(requests, [{"name": "get_current_datetime", "parameters": {}}])
+        self.assertEqual(reply, "")
+        self.assertEqual(output.getvalue(), "")
+
+    def test_native_tool_stream_reader_suppresses_malformed_json_content(self) -> None:
+        response = io.BytesIO(
+            b'data: {"choices":[{"delta":{"content":"{\\"name\\": \\"transform_text\\", \\"parameters\\": {\\"text\\": \\"{\\"x\\": 1}\\"}}"}}]}\n'
+            b"data: [DONE]\n"
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            requests, reply = read_native_tool_stream(response, discover_tools())
+        self.assertEqual(requests, [])
+        self.assertEqual(reply, "")
+        self.assertEqual(output.getvalue(), "")
+
     def test_default_stream_mode_is_native(self) -> None:
         with patch.dict(
             os.environ,
@@ -515,9 +608,59 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(reply, "ok")
         post_stream.assert_called_once()
 
+    def test_native_stream_no_tool_reply_gets_planner_fallback(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=True,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="native_stream",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        messages = [{"role": "user", "content": "calculate 2+2"}]
+        with patch("jarvis_nim.collect_native_stream_tool_decision", return_value=([], "I can do that.")):
+            with patch(
+                "jarvis_nim.collect_tool_requests",
+                return_value=[{"name": "calculate", "parameters": {"expression": "2 + 2"}}],
+            ):
+                output = io.StringIO()
+                with contextlib.redirect_stdout(output):
+                    reply = chat_with_native_streaming_tools(config, messages, registry)
 
-if __name__ == "__main__":
-    unittest.main()
+        self.assertEqual(reply, "4")
+        self.assertIn("4", output.getvalue())
+        self.assertNotIn("I can do that", output.getvalue())
+
+
+class FakeHttpResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def __enter__(self) -> "FakeHttpResponse":
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        import json
+
+        return json.dumps(self.payload).encode("utf-8")
 
 
 def fake_memory_embedder(texts: list[str], input_type: str) -> list[list[float]]:
@@ -537,3 +680,7 @@ def fake_live_memory_embedder(
     timeout_seconds: float | None = None,
 ) -> list[list[float]]:
     return fake_memory_embedder(texts, input_type)
+
+
+if __name__ == "__main__":
+    unittest.main()

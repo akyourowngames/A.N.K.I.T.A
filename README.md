@@ -96,6 +96,7 @@ Optional:
 - `NIM_TOOL_MODE`
 - `NIM_PARALLEL_TOOL_CALLS`
 - `NIM_NATIVE_PLANNER_CONFIRM`
+- `NIM_NATIVE_VERIFY_NO_TOOL`
 - `NIM_DIRECT_SINGLE_TOOL_RESULT`
 - `USER_NAME`
 - `AI_NAME`
@@ -117,6 +118,9 @@ Optional:
 - `MEMORY_VECTOR_ACTIVE`
 - `MEMORY_VECTOR_BACKGROUND_REINDEX`
 - `MEMORY_VECTOR_QUERY_TIMEOUT_SECONDS`
+- `MEMORY_VECTOR_RETRY_ATTEMPTS`
+- `MEMORY_VECTOR_RETRY_DELAY_SECONDS`
+- `MEMORY_VECTOR_QUERY_RETRY_ATTEMPTS`
 - `MEMORY_VECTOR_CHUNK_CHARS`
 - `MEMORY_VECTOR_TOP_K`
 - `MEMORY_VECTOR_CONTEXT_CHARS`
@@ -154,7 +158,9 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_PARALLEL_TOOL_CALLS=true` allows the provider to return multiple tool calls for one request when the model decides the task needs them.
 
-`NIM_NATIVE_PLANNER_CONFIRM=true` keeps normal no-tool chat at one model call, but asks the compact JSON planner to verify the tool set only after native mode has already decided a tool is needed. This protects multi-tool requests without adding planner latency to ordinary conversation.
+`NIM_NATIVE_PLANNER_CONFIRM=true` asks the compact JSON planner to verify the tool set after native mode has already selected at least one tool. This protects multi-tool requests without replacing native tool calling.
+
+`NIM_NATIVE_VERIFY_NO_TOOL=true` asks the compact JSON planner to re-check a native-stream no-tool answer before it is shown. This prevents the model from promising local actions or current facts without actually using tools. Turn it off only when you want the absolute lowest latency and can accept native tool misses.
 
 `NIM_DIRECT_SINGLE_TOOL_RESULT=true` returns a clean display template immediately when one grounded tool fully supplies the useful result. Multi-tool requests still go through final answer composition.
 
@@ -169,6 +175,7 @@ Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvi
 Current tools:
 
 - `calculate`
+- `compare_text`
 - `fetch_url_text`
 - `document_extract_text`
 - `extract_url_content`
@@ -180,6 +187,7 @@ Current tools:
 - `get_system_info`
 - `get_weather`
 - `hash_text`
+- `jarvis_latency_probe`
 - `list_directory`
 - `run_terminal`
 - `run_jarvis_qa`
@@ -187,8 +195,10 @@ Current tools:
 - `search_text_files`
 - `skill_workshop`
 - `text_stats`
+- `transform_text`
 - `list_registered_tools`
 - `web_search`
+- `workspace_inspect`
 - `wiki_apply`
 - `wiki_get`
 - `wiki_lint`
@@ -227,6 +237,8 @@ python main.py "search deep vector memory for my preferences"
 
 `MEMORY_VECTOR_ACTIVE=false` by default so every casual message does not pay an embedding round trip. The model can still call `memory_vector_search` when semantic memory is useful, and you can set `MEMORY_VECTOR_ACTIVE=true` if you want existing-index recall injected every turn.
 
+Vector reindex retries temporary NIM embedding throttles with `MEMORY_VECTOR_RETRY_ATTEMPTS`. Query-side retries stay off by default through `MEMORY_VECTOR_QUERY_RETRY_ATTEMPTS=0` so semantic recall does not slow normal chat when the embedding endpoint is busy.
+
 ## Skills And Extensions
 
 Enabled extensions are loaded from `extensions/*/extension.json`. Each extension can declare tools, display templates, prompt fragments, skill roots, and env requirements.
@@ -239,3 +251,6 @@ Current bundled extensions:
 - `memory-wiki`
 - `skill-workshop`
 - `qa`
+- `content-tools`
+- `workspace`
+- `diagnostics`

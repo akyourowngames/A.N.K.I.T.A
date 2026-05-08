@@ -1,0 +1,11 @@
+---
+name: healthcheck
+description: Run read-only local health checks and produce grounded recommendations.
+---
+
+# Healthcheck
+
+- Start with read-only facts from `get_pc_status`, `workspace_inspect`, or `run_terminal`.
+- Do not change firewall, services, startup tasks, git state, files, or packages without explicit user approval.
+- Separate observed facts from recommendations.
+- If a check cannot be verified, say that directly instead of guessing.

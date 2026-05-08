@@ -341,14 +341,44 @@ def chat_with_native_streaming_tools(config: JarvisConfig, messages: list[dict[s
     working_messages = [dict(message) for message in messages]
     requests, streamed_reply = collect_native_stream_tool_decision(config, working_messages, registry)
     if not requests:
+        if env_bool("NIM_NATIVE_VERIFY_NO_TOOL", True):
+            planned_requests = collect_tool_requests(config, working_messages, registry)
+            if planned_requests:
+                return answer_with_tool_requests(config, working_messages, registry, planned_requests)
+        if not streamed_reply:
+            return chat_with_json_tools(config, working_messages, registry)
+        if config.stream:
+            print(streamed_reply)
         return streamed_reply
 
     if env_bool("NIM_NATIVE_PLANNER_CONFIRM", True):
         planned_requests = collect_tool_requests(config, working_messages, registry)
         if planned_requests:
-            requests = planned_requests
+            requests = merge_confirmed_native_requests(requests, planned_requests)
 
     return answer_with_tool_requests(config, working_messages, registry, requests)
+
+
+def merge_confirmed_native_requests(
+    native_requests: list[dict[str, Any]],
+    planned_requests: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    planned_by_name = {request.get("name"): request for request in planned_requests if isinstance(request.get("name"), str)}
+    merged = []
+    merged_names: set[str] = set()
+    for request in native_requests:
+        name = request.get("name")
+        replacement = planned_by_name.get(name)
+        selected = replacement if replacement is not None else request
+        merged.append(selected)
+        if isinstance(selected.get("name"), str):
+            merged_names.add(selected["name"])
+    for request in planned_requests:
+        name = request.get("name")
+        if isinstance(name, str) and name not in merged_names:
+            merged.append(request)
+            merged_names.add(name)
+    return merged
 
 
 def confirm_native_tool_requests(
@@ -394,11 +424,12 @@ def collect_native_stream_tool_decision(
         method="POST",
     )
     with open_url_with_retries(config, request) as response:
-        return read_native_tool_stream(response, registry)
+        return read_native_tool_stream(response, registry, emit_output=False)
 
 
-def read_native_tool_stream(response: Any, registry: Any) -> tuple[list[dict[str, Any]], str]:
+def read_native_tool_stream(response: Any, registry: Any, emit_output: bool = True) -> tuple[list[dict[str, Any]], str]:
     full_text = ""
+    buffered_text = ""
     tool_calls: dict[int, dict[str, str]] = {}
     for raw_line in response:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -422,14 +453,29 @@ def read_native_tool_stream(response: Any, registry: Any) -> tuple[list[dict[str
 
         content = delta.get("content")
         if isinstance(content, str) and content:
-            print(content, end="", flush=True)
             full_text += content
+            buffered_text += content
 
         merge_tool_call_deltas(tool_calls, delta.get("tool_calls"))
 
-    if full_text:
-        print()
-    return native_tool_requests_from_deltas(tool_calls, registry), full_text.strip()
+    native_requests = native_tool_requests_from_deltas(tool_calls, registry)
+    if native_requests:
+        return native_requests, ""
+    if buffered_text:
+        requests = parse_tool_requests(buffered_text, registry)
+        if requests:
+            return requests, ""
+        if is_json_shaped_text(buffered_text):
+            return [], ""
+        if emit_output:
+            print(buffered_text, end="", flush=True)
+            print()
+    return [], full_text.strip()
+
+
+def is_json_shaped_text(text: str) -> bool:
+    stripped = text.lstrip()
+    return bool(stripped) and stripped[0] in "{["
 
 
 def merge_tool_call_deltas(tool_calls: dict[int, dict[str, str]], deltas: Any) -> None:

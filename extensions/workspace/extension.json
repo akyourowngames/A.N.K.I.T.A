@@ -1,0 +1,59 @@
+{
+  "id": "workspace",
+  "name": "Workspace Tools",
+  "description": "Grounded workspace and git inspection without changing project files.",
+  "prompt_files": [
+    "prompts/workspace.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "workspace_inspect",
+      "description": "Inspect the local workspace with explicit operations: git_status, project_tree, file_hash, or recent_files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "git_status",
+              "project_tree",
+              "file_hash",
+              "recent_files"
+            ],
+            "description": "Workspace inspection operation."
+          },
+          "path": {
+            "type": "string",
+            "description": "File or directory path. Defaults to the current workspace."
+          },
+          "depth": {
+            "type": "integer",
+            "description": "Tree depth for project_tree."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum entries for project_tree or recent_files."
+          },
+          "algorithm": {
+            "type": "string",
+            "description": "Hash algorithm for file_hash."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.workspace_tools",
+        "function": "workspace_inspect"
+      }
+    }
+  ],
+  "display_templates": {
+    "workspace_inspect": "{result.summary}"
+  }
+}

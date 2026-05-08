@@ -1,0 +1,11 @@
+---
+name: summarize
+description: Summarize URLs, local documents, and extracted text using grounded extraction first.
+---
+
+# Summarize
+
+- For URLs, call `extract_url_content` or `fetch_url_text` before summarizing.
+- For local files, call `document_extract_text` or `read_text_file` before summarizing.
+- Keep raw HTML, schemas, and tool narration out of the answer.
+- If the extracted content is huge, summarize the available bounded content and say when it was truncated.

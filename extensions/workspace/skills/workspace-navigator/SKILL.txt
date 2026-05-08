@@ -1,0 +1,11 @@
+---
+name: workspace-navigator
+description: Inspect the current project with grounded read-only workspace tools.
+---
+
+# Workspace Navigator
+
+- Use `workspace_inspect` for quick git status, project tree, file hash, and recent file checks.
+- Use `read_text_file`, `document_extract_text`, or `search_text_files` when the user asks about file contents.
+- Use `run_terminal` for tests, package commands, and installed software facts.
+- Keep inspection bounded with `depth` and `limit` so responses stay fast.

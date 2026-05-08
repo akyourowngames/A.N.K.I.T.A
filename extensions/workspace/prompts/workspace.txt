@@ -1,0 +1,3 @@
+Use workspace tools for read-only project inspection: git status, small project trees, recent files, and file hashes.
+For command execution, installed software versions, tests, opening apps, or state-changing local actions, use `run_terminal`.
+Do not claim workspace or git state without a tool result from the current turn.

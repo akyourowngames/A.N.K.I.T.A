@@ -1,0 +1,11 @@
+---
+name: data-cleanup
+description: Clean, format, compare, encode, decode, or prepare small text and JSON snippets.
+---
+
+# Data Cleanup
+
+- Use `transform_text` only when the user asks for a specific transform.
+- Use `compare_text` when the user provides two text blocks and asks what changed.
+- For JSON, prefer `json_format` or `json_minify` instead of hand-editing strings.
+- Preserve user data exactly unless the requested transform changes it.
