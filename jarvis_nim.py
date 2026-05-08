@@ -155,6 +155,8 @@ def chat_once(config: JarvisConfig, messages: list[dict[str, Any]], registry: An
             return chat_with_hybrid_tools(config, messages, registry)
         if config.tool_mode == "native":
             return chat_with_native_tools(config, messages, registry)
+        if config.tool_mode == "native_stream":
+            return chat_with_native_streaming_tools(config, messages, registry)
         return chat_with_json_tools(config, messages, registry)
 
     return final_chat_response(config, messages)
@@ -335,6 +337,20 @@ def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]],
     return final_chat_response(config, working_messages)
 
 
+def chat_with_native_streaming_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
+    working_messages = [dict(message) for message in messages]
+    requests, streamed_reply = collect_native_stream_tool_decision(config, working_messages, registry)
+    if not requests:
+        return streamed_reply
+
+    if env_bool("NIM_NATIVE_PLANNER_CONFIRM", True):
+        planned_requests = collect_tool_requests(config, working_messages, registry)
+        if planned_requests:
+            requests = planned_requests
+
+    return answer_with_tool_requests(config, working_messages, registry, requests)
+
+
 def confirm_native_tool_requests(
     config: JarvisConfig,
     messages: list[dict[str, Any]],
@@ -349,6 +365,104 @@ def confirm_native_tool_requests(
 
 def collect_native_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
     requests, _model_reply = collect_native_tool_decision(config, messages, registry)
+    return requests
+
+
+def collect_native_stream_tool_decision(
+    config: JarvisConfig,
+    messages: list[dict[str, Any]],
+    registry: Any,
+) -> tuple[list[dict[str, Any]], str]:
+    payload = {
+        "model": config.model,
+        "messages": messages,
+        "temperature": config.temperature,
+        "max_tokens": config.max_tokens,
+        "stream": True,
+        "tools": registry.openai_tools(),
+        "tool_choice": "auto",
+        "parallel_tool_calls": env_bool("NIM_PARALLEL_TOOL_CALLS", True),
+    }
+    request = urllib.request.Request(
+        config.chat_url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {config.api_key}",
+            "Content-Type": "application/json",
+            "Accept": "text/event-stream",
+        },
+        method="POST",
+    )
+    with open_url_with_retries(config, request) as response:
+        return read_native_tool_stream(response, registry)
+
+
+def read_native_tool_stream(response: Any, registry: Any) -> tuple[list[dict[str, Any]], str]:
+    full_text = ""
+    tool_calls: dict[int, dict[str, str]] = {}
+    for raw_line in response:
+        line = raw_line.decode("utf-8", errors="replace").strip()
+        if not line.startswith("data:"):
+            continue
+
+        data_line = line[len("data:") :].strip()
+        if data_line == "[DONE]":
+            break
+
+        data = json.loads(data_line)
+        choices = data.get("choices", [])
+        if not isinstance(choices, list) or not choices:
+            continue
+        first = choices[0]
+        if not isinstance(first, dict):
+            continue
+        delta = first.get("delta", {})
+        if not isinstance(delta, dict):
+            continue
+
+        content = delta.get("content")
+        if isinstance(content, str) and content:
+            print(content, end="", flush=True)
+            full_text += content
+
+        merge_tool_call_deltas(tool_calls, delta.get("tool_calls"))
+
+    if full_text:
+        print()
+    return native_tool_requests_from_deltas(tool_calls, registry), full_text.strip()
+
+
+def merge_tool_call_deltas(tool_calls: dict[int, dict[str, str]], deltas: Any) -> None:
+    if not isinstance(deltas, list):
+        return
+    for entry in deltas:
+        if not isinstance(entry, dict):
+            continue
+        index_value = entry.get("index", 0)
+        index = index_value if isinstance(index_value, int) else 0
+        current = tool_calls.setdefault(index, {"name": "", "arguments": ""})
+        function = entry.get("function", {})
+        if not isinstance(function, dict):
+            continue
+        name = function.get("name")
+        arguments = function.get("arguments")
+        if isinstance(name, str) and name:
+            current["name"] += name
+        if isinstance(arguments, str) and arguments:
+            current["arguments"] += arguments
+
+
+def native_tool_requests_from_deltas(tool_calls: dict[int, dict[str, str]], registry: Any) -> list[dict[str, Any]]:
+    visible_names = {tool.name for tool in registry.visible_tools()}
+    requests: list[dict[str, Any]] = []
+    for index in sorted(tool_calls):
+        entry = tool_calls[index]
+        name = entry.get("name", "")
+        if name not in visible_names:
+            continue
+        request = {"name": name, "parameters": parse_native_arguments(entry.get("arguments", ""))}
+        if request not in requests:
+            requests.append(request)
     return requests
 
 

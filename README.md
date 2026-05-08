@@ -146,9 +146,11 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_STREAM_MODE` defaults to `native`: Jarvis reads NVIDIA NIM server-sent events and prints tokens as they arrive. Set `NIM_STREAM_MODE=synthetic` only if a provider endpoint is having temporary SSE trouble and you want local chunk printing after a JSON completion.
 
-`NIM_TOOL_MODE=json` is the current low-latency default for auto tools. It uses the compact prompt protocol in `prompts/tool_protocol.txt`, keeps tool choice model-driven, and avoids provider-side native tool-call latency spikes.
+`NIM_TOOL_MODE=native_stream` is the current low-latency default for auto tools. Jarvis sends one streaming request with the registered tool schemas, so normal no-tool chat starts printing tokens immediately instead of waiting for a separate planner call first. If the model emits tool calls, Jarvis executes the registered tools and then answers from the grounded results.
 
-`NIM_TOOL_MODE=native` is still available for endpoints that handle OpenAI-compatible `tool_calls` quickly. In native mode, Jarvis reuses the same model response when no tool is needed, so normal chat does not pay for a separate planner plus answer call.
+`NIM_TOOL_MODE=json` is still available as a compact prompt-protocol fallback through `prompts/tool_protocol.txt`.
+
+`NIM_TOOL_MODE=native` is still available for non-streaming OpenAI-compatible `tool_calls`.
 
 `NIM_PARALLEL_TOOL_CALLS=true` allows the provider to return multiple tool calls for one request when the model decides the task needs them.
 

@@ -11,7 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, final_chat_response, parse_tool_requests, planner_turn_context, read_streaming_response, stream_token, tool_planner_model
+from jarvis_nim import JarvisConfig, final_chat_response, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
@@ -428,6 +428,31 @@ class ToolRegistryTests(unittest.TestCase):
             result = read_streaming_response(response)
         self.assertEqual(result, "Hi")
         self.assertNotIn("late", output.getvalue())
+
+    def test_native_tool_stream_reader_collects_tool_calls(self) -> None:
+        response = io.BytesIO(
+            b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"name":"get_current_datetime","arguments":"{}"}}]}}]}\n'
+            b"data: [DONE]\n"
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            requests, reply = read_native_tool_stream(response, discover_tools())
+        self.assertEqual(requests, [{"name": "get_current_datetime", "parameters": {}}])
+        self.assertEqual(reply, "")
+        self.assertEqual(output.getvalue(), "")
+
+    def test_native_tool_stream_reader_streams_content(self) -> None:
+        response = io.BytesIO(
+            b'data: {"choices":[{"delta":{"content":"Hi"}}]}\n'
+            b'data: {"choices":[{"delta":{"content":" Krish"}}]}\n'
+            b"data: [DONE]\n"
+        )
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            requests, reply = read_native_tool_stream(response, discover_tools())
+        self.assertEqual(requests, [])
+        self.assertEqual(reply, "Hi Krish")
+        self.assertIn("Hi Krish", output.getvalue())
 
     def test_default_stream_mode_is_native(self) -> None:
         with patch.dict(
