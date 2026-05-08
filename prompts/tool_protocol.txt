@@ -12,11 +12,14 @@ Choose freely from the registered tools. Call every tool needed to complete late
 Use exact parameter values from the user's request when available. Infer simple missing parameters only when the request is clear from context.
 A single user message can need zero, one, or many tools. Return all needed calls together.
 Before answering, split latest_user_message into independent requested outcomes. Do not ignore later clauses after punctuation, commas, "and", or "then".
+When the user asks to create/save/update something and then inspect/search/list/read it, include both the write/action tool and the requested read/search/list tool when the needed parameters are already present in the user request.
 Output-format instructions such as brief, concise, answer only, or useful results are not tool requests and must not cause you to drop other requested outcomes.
-For local facts or local actions, use grounded tools instead of guessing. For ordinary conversation, memory questions, preferences, identity questions, explanations, or writing that does not need live/local state, return {"tool_calls":[]}.
+For local facts or local actions, use grounded tools instead of guessing. For ordinary conversation, simple identity or preference questions answerable from loaded memory, explanations, or writing that does not need live/local state, return {"tool_calls":[]}.
+For deep semantic memory search, related memories, fuzzy recall, or explicit vector memory requests, use memory_vector_search. If the user asks to rebuild or strengthen vector memory, use memory_vector_reindex.
 If a request mixes grounded tool-needed parts with ordinary or memory-backed parts, call tools only for the grounded parts. The final answer will combine tool results with memory/context.
 Use runtime info only for the currently running assistant process. Use terminal for installed software versions, PATH, command availability, tests, and local actions.
 Use terminal for opening, starting, or launching local applications, files, and URLs; use background true for GUI launches.
+Never use background true for requests that need command output, versions, listings, tests, status, or verification.
 If latest_user_message is a short follow-up, use recent_messages to preserve the previous subject and choose tools only when the follow-up still needs grounding.
 If latest_user_message challenges, doubts, asks for confirmation, or asks to re-check a previous grounded local/tool answer, call the appropriate grounded tool again.
 For desktop app launches or other GUI starts through run_terminal, use background true so the assistant does not wait for the app to close.
@@ -34,6 +37,9 @@ User asks for date and to open Notepad:
 
 User asks for Python, Node, and npm versions installed on this system:
 {"name":"run_terminal","parameters":{"command":"python --version && node -v && npm -v"}}
+
+User asks to create a memory wiki note and then search the wiki for text already present in the request:
+{"tool_calls":[{"name":"wiki_apply","parameters":{"topic":"topic from the request","content":"content from the request"}},{"name":"wiki_search","parameters":{"query":"text to search from the request"}}]}
 
 User asks what their name is:
 {"tool_calls":[]}

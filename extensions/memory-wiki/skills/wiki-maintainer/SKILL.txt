@@ -1,0 +1,20 @@
+---
+name: wiki-maintainer
+description: Maintain Jarvis memory wiki pages with source-backed claims and simple linting.
+---
+
+# Wiki Maintainer
+
+- Use wiki_status before broad wiki maintenance.
+- Use wiki_search before creating duplicate pages.
+- Use wiki_apply for narrow source-backed notes.
+- Use wiki_get before quoting or relying on a page.
+- Run wiki_lint after meaningful wiki updates.
+- Do not treat a wiki page as proof unless it carries a source or the current tool result proves it.
+
+## Vector Memory
+
+- Use memory_vector_status before diagnosing vector memory.
+- Use memory_vector_reindex when the user asks to rebuild, refresh, or strengthen semantic memory.
+- Use memory_vector_search for conceptual or fuzzy recall where exact wiki/text search may miss relevant notes.
+- Keep vector recall source-backed by mentioning the memory path when it matters.

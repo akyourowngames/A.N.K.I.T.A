@@ -6,20 +6,26 @@ import io
 import os
 import platform
 import sys
+import tempfile
 from pathlib import Path
 from unittest.mock import patch
 
+from extension_system import load_extension_catalog
 from jarvis_nim import JarvisConfig, final_chat_response, parse_tool_requests, planner_turn_context, read_streaming_response, stream_token, tool_planner_model
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
+from skill_system import load_skill_context
 from tools import discover_tools
 from tools.calculator import evaluate_expression
 from tools.filesystem_tools import get_file_info, list_directory, read_text_file, search_text_files
+from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
+from tools.skill_workshop import skill_workshop
 from tools.system_tools import get_pc_status, get_system_info
 from tools.terminal import resolve_shell_name, run_terminal
 from tools.text_tools import generate_uuid, hash_text, text_stats
-from tools.web_tools import readable_text, summarize_readable_text
+from tools.web_tools import document_extract_text, parse_duckduckgo_results, readable_text, summarize_readable_text
+from vector_memory import VectorMemoryConfig, build_vector_index, load_vector_memory_context, vector_search
 
 
 class ToolRegistryTests(unittest.TestCase):
@@ -42,6 +48,19 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("generate_uuid", names)
         self.assertIn("fetch_url_text", names)
         self.assertIn("list_registered_tools", names)
+        self.assertIn("web_search", names)
+        self.assertIn("extract_url_content", names)
+        self.assertIn("document_extract_text", names)
+        self.assertIn("wiki_status", names)
+        self.assertIn("wiki_search", names)
+        self.assertIn("wiki_get", names)
+        self.assertIn("wiki_apply", names)
+        self.assertIn("wiki_lint", names)
+        self.assertIn("memory_vector_status", names)
+        self.assertIn("memory_vector_reindex", names)
+        self.assertIn("memory_vector_search", names)
+        self.assertIn("skill_workshop", names)
+        self.assertIn("run_jarvis_qa", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -227,6 +246,149 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("2026-05-07", response)
         self.assertNotIn("get_current_datetime", response)
 
+    def test_extension_catalog_loads_prompt_skills_and_tools(self) -> None:
+        catalog = load_extension_catalog()
+        self.assertIn("web", [extension.id for extension in catalog.extensions])
+        self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
+        self.assertIn("Web And Document Tools", catalog.prompt_context())
+        self.assertTrue(catalog.skill_roots())
+
+    def test_skill_context_loads_extension_skill_files(self) -> None:
+        catalog = load_extension_catalog()
+        context = load_skill_context(catalog, Path.cwd())
+        self.assertIn("Skill: web-research", context)
+        self.assertIn("Skill: jarvis-qa", context)
+
+    def test_display_templates_live_outside_tool_manifest(self) -> None:
+        display = Path("tools/display.json").read_text(encoding="utf-8")
+        manifest = Path("tools/tools.json").read_text(encoding="utf-8")
+        self.assertIn("get_current_datetime", display)
+        self.assertIn("responses", display)
+        self.assertIn("direct_response", manifest)
+
+    def test_duckduckgo_result_parser_extracts_results(self) -> None:
+        html = (
+            '<html><body><a class="result__a" '
+            'href="/l/?uddg=https%3A%2F%2Fexample.com">Example Domain</a></body></html>'
+        )
+        results = parse_duckduckgo_results(html, 3)
+        self.assertEqual(results, [{"title": "Example Domain", "url": "https://example.com"}])
+
+    def test_document_extract_text_reads_local_text_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "note.txt"
+            path.write_text("Jarvis document extraction works.", encoding="utf-8")
+            result = document_extract_text({"path": str(path)})
+        self.assertIn("Jarvis document extraction works.", result["content"])
+        self.assertIn("note.txt", result["summary"])
+
+    def test_memory_wiki_tools_use_txt_vault(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"JARVIS_MEMORY_DIR": str(Path(tmp) / "memory")}, clear=False):
+                saved = wiki_apply(
+                    {
+                        "topic": "Live QA",
+                        "content": "Jarvis QA should use the live CLI.",
+                        "source": "unit test",
+                        "mode": "replace",
+                    }
+                )
+                self.assertTrue(saved["saved"])
+                found = wiki_search({"query": "live CLI"})
+                self.assertEqual(found["count"], 1)
+                status = wiki_status({})
+                self.assertEqual(status["page_count"], 1)
+                lint = wiki_lint({})
+                self.assertEqual(lint["finding_count"], 0)
+
+    def test_vector_memory_indexes_and_searches_with_cached_embeddings(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "memory"
+            root.mkdir()
+            (root / "user.txt").write_text(
+                "Name: Krish\nPreference: low latency vector memory for Jarvis\n",
+                encoding="utf-8",
+            )
+            (root / "extracted.txt").write_text("Weather notes are unrelated.\n", encoding="utf-8")
+            memory_config = MemoryConfig(
+                root=root,
+                max_context_chars=2000,
+                max_file_chars=1000,
+                include_transcripts=False,
+                extract_enabled=False,
+                extract_background=False,
+                extract_max_tokens=100,
+                context_prompt_file=Path("prompts/memory_context.txt"),
+            )
+            vector_config = VectorMemoryConfig(
+                root=root,
+                index_path=root / "vector" / "index.json",
+                model="fake-embedding-model",
+                chunk_chars=500,
+                max_index_files=20,
+                max_index_chunks=50,
+                search_top_k=2,
+                min_score=0.1,
+                context_chars=1000,
+                active=True,
+                query_timeout_seconds=2.0,
+                include_transcripts=False,
+                background_reindex=False,
+            )
+            nim_config = JarvisConfig(
+                api_key="test",
+                chat_url="https://example.test/v1/chat/completions",
+                model="chat",
+                temperature=0,
+                max_tokens=100,
+                stream=False,
+                stream_mode="native",
+                synthetic_chunk_chars=48,
+                synthetic_chunk_delay_seconds=0,
+                timeout_seconds=10,
+                retry_attempts=0,
+                retry_delay_seconds=0,
+                max_tool_rounds=1,
+                tool_mode="json",
+                auto_tools=True,
+                system_prompt_file=Path("prompts/chat_system.txt"),
+                persona_file=Path("prompts/persona.txt"),
+                tool_protocol_file=Path("prompts/tool_protocol.txt"),
+                user_name="Krish",
+                assistant_name="JARVIS",
+            )
+
+            build = build_vector_index(memory_config, vector_config, nim_config, fake_memory_embedder)
+            self.assertEqual(build["indexed_files"], 2)
+            result = vector_search("Jarvis latency memory", vector_config, nim_config, fake_memory_embedder)
+            self.assertTrue(result["matches"])
+            self.assertIn("low latency vector memory", result["matches"][0]["text"])
+            with patch("vector_memory.embed_texts", side_effect=fake_live_memory_embedder):
+                context = load_vector_memory_context(
+                    "what does Jarvis remember about latency",
+                    memory_config,
+                    vector_config,
+                    nim_config,
+                )
+            self.assertIn("Relevant vector memory", context)
+            self.assertIn("low latency vector memory", context)
+
+    def test_skill_workshop_can_apply_skill_without_core_registration(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.dict(os.environ, {"JARVIS_SKILLS_DIR": str(Path(tmp) / "skills")}, clear=False):
+                result = skill_workshop(
+                    {
+                        "action": "suggest",
+                        "skill_name": "Live QA",
+                        "title": "Live QA",
+                        "body": "# Live QA\n\n- Run live Jarvis checks before shipping.",
+                        "apply": True,
+                    }
+                )
+                self.assertEqual(result["status"], "applied")
+                read = skill_workshop({"action": "read", "skill_name": "Live QA"})
+                self.assertIn("Run live Jarvis checks", read["content"])
+
     def test_tool_protocol_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
         protocol = Path("prompts/tool_protocol.txt").read_text(encoding="utf-8")
@@ -331,3 +493,22 @@ class ToolRegistryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def fake_memory_embedder(texts: list[str], input_type: str) -> list[list[float]]:
+    vectors = []
+    for text in texts:
+        clean = text.lower()
+        latency_score = 1.0 if "latency" in clean or "memory" in clean or "jarvis" in clean else 0.0
+        weather_score = 1.0 if "weather" in clean else 0.0
+        vectors.append([latency_score, weather_score])
+    return vectors
+
+
+def fake_live_memory_embedder(
+    config: JarvisConfig,
+    texts: list[str],
+    input_type: str,
+    timeout_seconds: float | None = None,
+) -> list[list[float]]:
+    return fake_memory_embedder(texts, input_type)

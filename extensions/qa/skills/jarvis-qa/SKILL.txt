@@ -1,0 +1,11 @@
+---
+name: jarvis-qa
+description: Verify Jarvis through real CLI behavior before claiming assistant changes are shipped.
+---
+
+# Jarvis QA
+
+- Run unit tests for changed helpers and manifests.
+- Run the live Jarvis CLI verifier for user-facing behavior.
+- Include multi-tool and grounded local-state prompts in verification.
+- Do not claim a behavior is fixed from helper tests alone.

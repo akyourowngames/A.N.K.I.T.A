@@ -29,6 +29,13 @@
       "source": "NVIDIA /models endpoint"
     },
     {
+      "name": "vector_memory_embedding_latency",
+      "model": "nvidia/nv-embedqa-e5-v5",
+      "dimensions": 1024,
+      "notes": "Fastest successful QA-style embedding model in the live workspace check on 2026-05-08: about 0.395s for a small passage embedding. Used through NVIDIA_EMBEDDING_MODEL for vector memory.",
+      "source": "NVIDIA /models and /embeddings endpoints"
+    },
+    {
       "name": "nemotron_fast_agentic",
       "model": "nvidia/nvidia-nemotron-nano-9b-v2",
       "context_tokens": 128000,

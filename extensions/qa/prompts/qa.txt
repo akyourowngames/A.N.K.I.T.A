@@ -1,0 +1,2 @@
+Use Jarvis QA when the user asks to verify assistant behavior, run live checks, or prove changes before shipping.
+Prefer live mode for user-facing assistant behavior and unit mode for fast isolated regression checks.

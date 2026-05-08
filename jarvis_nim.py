@@ -151,6 +151,8 @@ class JarvisConfig:
 
 def chat_once(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any | None = None) -> str:
     if config.auto_tools and registry is not None and registry.visible_tools():
+        if config.tool_mode == "hybrid":
+            return chat_with_hybrid_tools(config, messages, registry)
         if config.tool_mode == "native":
             return chat_with_native_tools(config, messages, registry)
         return chat_with_json_tools(config, messages, registry)
@@ -163,7 +165,29 @@ def chat_with_json_tools(config: JarvisConfig, messages: list[dict[str, Any]], r
     requests = collect_tool_requests(config, working_messages, registry)
     if not requests:
         return final_chat_response(config, working_messages)
+    return answer_with_tool_requests(config, working_messages, registry, requests)
 
+
+def chat_with_hybrid_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
+    working_messages = [dict(message) for message in messages]
+    requests: list[dict[str, Any]] = []
+    for request in collect_native_tool_requests(config, working_messages, registry):
+        if request not in requests:
+            requests.append(request)
+    for request in collect_tool_requests(config, working_messages, registry):
+        if request not in requests:
+            requests.append(request)
+    if not requests:
+        return final_chat_response(config, working_messages)
+    return answer_with_tool_requests(config, working_messages, registry, requests)
+
+
+def answer_with_tool_requests(
+    config: JarvisConfig,
+    working_messages: list[dict[str, Any]],
+    registry: Any,
+    requests: list[dict[str, Any]],
+) -> str:
     results = []
     direct_responses = []
     for request in requests:
@@ -180,7 +204,16 @@ def chat_with_json_tools(config: JarvisConfig, messages: list[dict[str, Any]], r
             print(reply)
         return reply
 
-    working_messages.append({"role": "user", "content": tool_results_prompt(results, latest_user_text(working_messages))})
+    working_messages.append(
+        {
+            "role": "user",
+            "content": tool_results_prompt(
+                results,
+                latest_user_text(working_messages),
+                "\n".join(direct_responses),
+            ),
+        }
+    )
     return final_chat_response(config, working_messages)
 
 
@@ -200,10 +233,11 @@ def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], 
             },
         )
         message = extract_choice_message(data)
-        for request in parse_tool_requests(message_content(message), registry):
+        parsed_requests = parse_tool_requests(message_content(message), registry)
+        for request in parsed_requests:
             if request not in requests:
                 requests.append(request)
-        if not requests:
+        if parsed_requests:
             break
         if index + 1 >= passes:
             break
@@ -212,58 +246,66 @@ def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], 
 
 def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
     working_messages = [dict(message) for message in messages]
+    requests = collect_native_tool_requests(config, working_messages, registry)
+    if not requests:
+        return final_chat_response(config, working_messages)
+    return answer_with_tool_requests(config, working_messages, registry, requests)
+
+
+def collect_native_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
     tool_schemas = registry.openai_tools()
 
-    for _ in range(config.max_tool_rounds):
-        data = post_json(
-            config,
-            {
-                "model": config.model,
-                "messages": working_messages,
-                "temperature": config.temperature,
-                "max_tokens": config.max_tokens,
-                "stream": False,
-                "tools": tool_schemas,
-                "tool_choice": "auto",
-            },
-        )
-        message = extract_choice_message(data)
-        tool_calls = message.get("tool_calls")
-        if not isinstance(tool_calls, list) or not tool_calls:
-            content = message_content(message)
-            if config.stream:
-                print(content)
-            return content
+    data = post_json(
+        config,
+        {
+            "model": config.model,
+            "messages": messages,
+            "temperature": config.temperature,
+            "max_tokens": config.max_tokens,
+            "stream": False,
+            "tools": tool_schemas,
+            "tool_choice": "auto",
+            "parallel_tool_calls": False,
+        },
+    )
+    message = extract_choice_message(data)
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list) or not tool_calls:
+        return []
 
-        working_messages.append(
-            {
-                "role": "assistant",
-                "content": message.get("content") or "",
-                "tool_calls": tool_calls,
-            }
-        )
-        for tool_call in tool_calls:
-            tool_call_id = str(tool_call.get("id", ""))
-            function = tool_call.get("function", {})
-            name = str(function.get("name", ""))
-            arguments = function.get("arguments", "{}")
-            result = registry.execute(name, arguments)
-            working_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call_id,
-                    "name": name,
-                    "content": result,
-                }
-            )
-        return final_chat_response(config, working_messages)
+    requests: list[dict[str, Any]] = []
+    visible_names = {tool.name for tool in registry.visible_tools()}
+    for tool_call in tool_calls:
+        function = tool_call.get("function", {})
+        if not isinstance(function, dict):
+            continue
+        name = str(function.get("name", ""))
+        if name not in visible_names:
+            continue
+        arguments = function.get("arguments", "{}")
+        request = {"name": name, "parameters": parse_native_arguments(arguments)}
+        if request not in requests:
+            requests.append(request)
+    return requests
 
-    return final_chat_response(config, working_messages)
+
+def parse_native_arguments(arguments: Any) -> dict[str, Any]:
+    if isinstance(arguments, dict):
+        return arguments
+    if isinstance(arguments, str) and arguments.strip():
+        try:
+            data = json.loads(arguments)
+        except json.JSONDecodeError:
+            return {}
+        if isinstance(data, dict):
+            return data
+    return {}
 
 
 def json_tool_protocol(registry: Any) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_PROTOCOL_FILE", "prompts/tool_protocol.txt")))
-    return template.replace("{tool_schemas}", json.dumps(registry.openai_tools(), ensure_ascii=True))
+    tools = registry.planner_tools() if hasattr(registry, "planner_tools") else registry.openai_tools()
+    return template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True))
 
 
 def tool_planner_model(config: JarvisConfig) -> str:
@@ -418,12 +460,20 @@ def normalize_tool_request(value: Any, registry: Any) -> dict[str, Any] | None:
     return {"name": name, "parameters": parameters}
 
 
-def tool_results_prompt(results: list[dict[str, Any]], latest_user_message: str = "") -> str:
+def tool_results_prompt(
+    results: list[dict[str, Any]],
+    latest_user_message: str = "",
+    display_results: str = "",
+) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_RESULTS_PROMPT_FILE", "prompts/tool_results.txt")))
-    return template.replace("{latest_user_message}", latest_user_message).replace(
-        "{tool_results}",
-        json.dumps(results, ensure_ascii=True),
-    )
+    replacements = {
+        "{latest_user_message}": latest_user_message,
+        "{tool_results}": json.dumps(results, ensure_ascii=True),
+        "{tool_display_results}": display_results,
+    }
+    for marker, value in replacements.items():
+        template = template.replace(marker, value)
+    return template
 
 
 def final_chat_response(config: JarvisConfig, messages: list[dict[str, Any]]) -> str:

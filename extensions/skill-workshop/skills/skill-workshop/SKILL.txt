@@ -1,0 +1,11 @@
+---
+name: skill-workshop
+description: Capture repeatable procedures as workspace SKILL.txt files.
+---
+
+# Skill Workshop
+
+- Skills store reusable procedures, not raw transcripts.
+- Queue pending proposals when the user asks to remember a workflow but does not explicitly ask to write it.
+- Apply immediately only when the user clearly asks to create or update the skill now.
+- Keep skill text short and operational.

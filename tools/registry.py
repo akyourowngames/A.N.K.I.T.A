@@ -6,6 +6,8 @@ from importlib import import_module
 from pathlib import Path
 from typing import Any, Callable
 
+from extension_system import ExtensionCatalog, load_extension_catalog
+
 
 class ToolRegistryError(Exception):
     pass
@@ -40,8 +42,9 @@ class Tool:
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
+    def __init__(self, display_templates: dict[str, str] | None = None) -> None:
         self._tools: dict[str, Tool] = {}
+        self._display_templates = display_templates or {}
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -54,13 +57,19 @@ class ToolRegistry:
     def openai_tools(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self.visible_tools()]
 
+    def planner_tools(self) -> list[dict[str, Any]]:
+        return [planner_tool_schema(tool) for tool in self.visible_tools()]
+
     def direct_response(self, name: str, payload: dict[str, Any]) -> str:
         tool = self._tools.get(name)
-        if tool is None or not tool.direct_response:
+        template = self._display_templates.get(name)
+        if template is None and tool is not None and tool.direct_response:
+            template = tool.direct_response
+        if tool is None or not template:
             return ""
         if payload.get("ok") is False:
             return ""
-        return render_template(tool.direct_response, flatten_payload(payload))
+        return render_template(template, flatten_payload(payload))
 
     def execute(self, name: str, arguments: Any) -> str:
         tool = self._tools.get(name)
@@ -118,12 +127,36 @@ def tool_payload(payload: dict[str, Any]) -> str:
     return json.dumps(payload, ensure_ascii=True)
 
 
-def discover_tools(manifest_path: Path | None = None) -> ToolRegistry:
-    registry = ToolRegistry()
+def discover_tools(
+    manifest_path: Path | None = None,
+    extension_catalog: ExtensionCatalog | None = None,
+) -> ToolRegistry:
+    catalog = extension_catalog or load_extension_catalog()
+    registry = ToolRegistry(display_templates=load_display_templates(catalog))
     path = manifest_path or Path(__file__).with_name("tools.json")
     for descriptor in load_manifest(path):
         registry.register(tool_from_descriptor(descriptor))
+    for descriptor in catalog.tool_descriptors():
+        registry.register(tool_from_descriptor(descriptor))
     return registry
+
+
+def load_display_templates(catalog: ExtensionCatalog | None = None) -> dict[str, str]:
+    templates: dict[str, str] = {}
+    path = Path(__file__).with_name("display.json")
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8-sig"))
+        except json.JSONDecodeError as error:
+            raise ToolRegistryError(f"Tool display file is not valid JSON: {path}") from error
+        responses = data.get("responses") if isinstance(data, dict) else None
+        if isinstance(responses, dict):
+            for key, value in responses.items():
+                if isinstance(key, str) and isinstance(value, str):
+                    templates[key] = value
+    if catalog is not None:
+        templates.update(catalog.display_templates())
+    return templates
 
 
 def load_manifest(path: Path) -> list[dict[str, Any]]:
@@ -175,6 +208,36 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
         sort_key=sort_key,
         direct_response=direct_response,
     )
+
+
+def planner_tool_schema(tool: Tool) -> dict[str, Any]:
+    properties = tool.parameters.get("properties")
+    required = tool.parameters.get("required")
+    compact: dict[str, Any] = {
+        "name": tool.name,
+        "description": tool.description,
+        "parameters": {},
+    }
+    if isinstance(required, list):
+        compact["required"] = [item for item in required if isinstance(item, str)]
+    if isinstance(properties, dict):
+        compact_properties: dict[str, Any] = {}
+        for key, value in properties.items():
+            if not isinstance(key, str) or not isinstance(value, dict):
+                continue
+            field: dict[str, Any] = {}
+            value_type = value.get("type")
+            description = value.get("description")
+            enum_values = value.get("enum")
+            if isinstance(value_type, str):
+                field["type"] = value_type
+            if isinstance(description, str):
+                field["description"] = description
+            if isinstance(enum_values, list):
+                field["enum"] = enum_values
+            compact_properties[key] = field
+        compact["parameters"] = compact_properties
+    return compact
 
 
 def require_manifest_text(data: dict[str, Any], key: str) -> str:

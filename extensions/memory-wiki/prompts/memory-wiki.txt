@@ -1,0 +1,5 @@
+Use memory wiki tools when the user asks to store, search, inspect, or maintain durable knowledge pages.
+Wiki pages are source-backed working notes, not the only source of truth.
+Use wiki search or wiki get before making claims about wiki contents.
+Use vector memory tools when the user asks for semantic recall, deep memory, related memories, or memory search that is not an exact text lookup.
+Refresh vector memory with memory_vector_reindex after important memory changes when the user asks to rebuild or strengthen memory.

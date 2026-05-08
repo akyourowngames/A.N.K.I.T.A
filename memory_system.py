@@ -172,6 +172,7 @@ def extract_and_append_memory(
 
     if items:
         append_extracted_memory(config, items)
+        schedule_vector_reindex(config, nim_config)
 
 
 def append_transcript(config: MemoryConfig, user_text: str, assistant_text: str) -> None:
@@ -345,3 +346,20 @@ def append_extracted_memory(config: MemoryConfig, items: list[str]) -> None:
 
     with path.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines))
+
+
+def schedule_vector_reindex(config: MemoryConfig, nim_config: JarvisConfig) -> None:
+    if not env_bool("MEMORY_VECTOR_BACKGROUND_REINDEX", True):
+        return
+    thread = threading.Thread(target=reindex_vector_memory_safely, args=(config, nim_config), daemon=True)
+    thread.start()
+
+
+def reindex_vector_memory_safely(config: MemoryConfig, nim_config: JarvisConfig) -> None:
+    try:
+        from vector_memory import VectorMemoryConfig, build_vector_index
+
+        vector_config = VectorMemoryConfig.from_env(Path.cwd())
+        build_vector_index(config, vector_config, nim_config)
+    except Exception:
+        return

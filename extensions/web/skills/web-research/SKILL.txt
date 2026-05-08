@@ -1,0 +1,12 @@
+---
+name: web-research
+description: Ground web and document questions with search, extraction, and source-backed summaries.
+---
+
+# Web Research
+
+- Search when the user asks for current, external, or source-backed information.
+- Extract URLs when the user provides specific links.
+- Extract local documents when the user points to a file.
+- Keep raw HTML and large dumps out of the final answer.
+- Give useful source titles or URLs when they help verify the answer.

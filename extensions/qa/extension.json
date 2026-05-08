@@ -1,0 +1,38 @@
+{
+  "id": "qa",
+  "name": "Jarvis QA",
+  "description": "Live Jarvis behavior checks and regression workflow skill.",
+  "prompt_files": [
+    "prompts/qa.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "run_jarvis_qa",
+      "description": "Run Jarvis QA through unit tests or the live CLI verifier.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "mode": {
+            "type": "string",
+            "enum": [
+              "unit",
+              "live"
+            ],
+            "description": "QA mode to run."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.qa_tools",
+        "function": "run_jarvis_qa"
+      }
+    }
+  ],
+  "display_templates": {
+    "run_jarvis_qa": "{result.summary}"
+  }
+}

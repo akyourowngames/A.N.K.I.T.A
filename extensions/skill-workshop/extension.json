@@ -1,0 +1,66 @@
+{
+  "id": "skill-workshop",
+  "name": "Skill Workshop",
+  "description": "Create, queue, apply, reject, and read Jarvis workspace skills.",
+  "prompt_files": [
+    "prompts/skill-workshop.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "skill_workshop",
+      "description": "Create, queue, inspect, approve, reject, or read workspace SKILL.txt files for reusable procedures.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": [
+              "status",
+              "list_pending",
+              "suggest",
+              "apply",
+              "reject",
+              "read"
+            ],
+            "description": "Skill workshop action."
+          },
+          "id": {
+            "type": "string",
+            "description": "Pending proposal id for apply or reject."
+          },
+          "skill_name": {
+            "type": "string",
+            "description": "Skill folder name."
+          },
+          "title": {
+            "type": "string",
+            "description": "Short proposal title."
+          },
+          "reason": {
+            "type": "string",
+            "description": "Why this reusable skill should exist."
+          },
+          "body": {
+            "type": "string",
+            "description": "The SKILL.txt body to create or apply."
+          },
+          "apply": {
+            "type": "boolean",
+            "description": "Apply immediately instead of queueing."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.skill_workshop",
+        "function": "skill_workshop"
+      }
+    }
+  ],
+  "display_templates": {
+    "skill_workshop": "{result.summary}"
+  }
+}

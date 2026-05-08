@@ -32,6 +32,12 @@ List registered tools:
 python main.py --list-tools
 ```
 
+List enabled extensions:
+
+```powershell
+python main.py --list-extensions
+```
+
 Benchmark configured NIM models:
 
 ```powershell
@@ -74,6 +80,7 @@ Optional:
 - `NIM_SYNTHETIC_CHUNK_DELAY_SECONDS`
 - `NVIDIA_TIMEOUT_SECONDS`
 - `NVIDIA_MEMORY_MODEL`
+- `NVIDIA_EMBEDDING_MODEL`
 - `NIM_RETRY_ATTEMPTS`
 - `NIM_RETRY_DELAY_SECONDS`
 - `JARVIS_AUTO_TOOLS`
@@ -102,10 +109,23 @@ Optional:
 - `MEMORY_EXTRACT_BACKGROUND`
 - `MEMORY_EXTRACT_MAX_TOKENS`
 - `MEMORY_CONTEXT_PROMPT_FILE`
+- `MEMORY_VECTOR_ACTIVE`
+- `MEMORY_VECTOR_BACKGROUND_REINDEX`
+- `MEMORY_VECTOR_QUERY_TIMEOUT_SECONDS`
+- `MEMORY_VECTOR_CHUNK_CHARS`
+- `MEMORY_VECTOR_TOP_K`
+- `MEMORY_VECTOR_CONTEXT_CHARS`
+- `MEMORY_VECTOR_INDEX_PATH`
 - `JARVIS_MODEL_CATALOG`
 - `JARVIS_TERMINAL_SHELL`
 - `JARVIS_TERMINAL_TIMEOUT_SECONDS`
 - `JARVIS_TERMINAL_MAX_OUTPUT_CHARS`
+- `JARVIS_EXTENSIONS_DIR`
+- `JARVIS_ENABLED_EXTENSIONS`
+- `JARVIS_DISABLED_EXTENSIONS`
+- `JARVIS_SKILLS_DIR`
+- `JARVIS_SKILL_CONTEXT_CHARS`
+- `JARVIS_WEB_SEARCH_URL`
 
 The assistant does not invent a model if `NVIDIA_MODEL` is missing. The current `.env` decides which NIM model is used.
 
@@ -125,12 +145,18 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 ## Tools
 
-Tool definitions live in `tools/tools.json`. The Python files only provide executor functions. To add or remove a tool from the assistant surface, edit the JSON manifest; the chat loop does not need to change.
+Tool definitions live in `tools/tools.json` and `extensions/*/extension.json`. The Python files only provide executor functions. To add or remove a tool from the assistant surface, edit the JSON manifest; the chat loop does not need to change.
+
+Tool result display templates live in `tools/display.json` and extension `display_templates`. Jarvis uses those for clean user-facing direct results instead of leaking raw tool JSON.
+
+Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvis loads enabled extension prompts and skills into the system context.
 
 Current tools:
 
 - `calculate`
 - `fetch_url_text`
+- `document_extract_text`
+- `extract_url_content`
 - `generate_uuid`
 - `get_current_datetime`
 - `get_file_info`
@@ -141,10 +167,21 @@ Current tools:
 - `hash_text`
 - `list_directory`
 - `run_terminal`
+- `run_jarvis_qa`
 - `read_text_file`
 - `search_text_files`
+- `skill_workshop`
 - `text_stats`
 - `list_registered_tools`
+- `web_search`
+- `wiki_apply`
+- `wiki_get`
+- `wiki_lint`
+- `wiki_search`
+- `wiki_status`
+- `memory_vector_status`
+- `memory_vector_reindex`
+- `memory_vector_search`
 
 `run_terminal` is a manifest-registered local command tool. Its schema lives in `tools/tools.json`; the chat loop does not need to change when the tool is added or removed.
 
@@ -161,3 +198,29 @@ By default, active memory context includes hand-written memory and extracted fac
 The memory system does not use regex matching or keyword routing. It loads bounded context and lets the model use it as durable background.
 
 Memory extraction uses `NVIDIA_MEMORY_MODEL` when set, then `NVIDIA_TOOL_MODEL`, then the chat model.
+
+`memory-wiki` is an extension-backed TXT vault under `memory/wiki/`. It gives Jarvis source-backed wiki pages through `wiki_status`, `wiki_search`, `wiki_get`, `wiki_apply`, and `wiki_lint`.
+
+Vector memory is extension-backed and uses NVIDIA NIM embeddings. The default embedding model is `nvidia/nv-embedqa-e5-v5`, chosen from the live NVIDIA model catalog because it was the fastest successful QA-style embedding in this workspace check. Override it with `NVIDIA_EMBEDDING_MODEL`.
+
+Vector memory stores its cached index under `memory/vector/index.json`. Normal chat does not rebuild this index. Use:
+
+```powershell
+python main.py "reindex vector memory"
+python main.py "search deep vector memory for my preferences"
+```
+
+`MEMORY_VECTOR_ACTIVE=false` by default so every casual message does not pay an embedding round trip. The model can still call `memory_vector_search` when semantic memory is useful, and you can set `MEMORY_VECTOR_ACTIVE=true` if you want existing-index recall injected every turn.
+
+## Skills And Extensions
+
+Enabled extensions are loaded from `extensions/*/extension.json`. Each extension can declare tools, display templates, prompt fragments, skill roots, and env requirements.
+
+Workspace skills live as `skills/<name>/SKILL.txt`; extension skills live under their extension folder. Use `skill_workshop` to queue or apply reusable workflow skills without changing core code.
+
+Current bundled extensions:
+
+- `web`
+- `memory-wiki`
+- `skill-workshop`
+- `qa`

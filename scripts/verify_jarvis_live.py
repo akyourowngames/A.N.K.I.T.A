@@ -96,6 +96,36 @@ def main() -> int:
             "forbidden": ["<!doctype", "<html", "viewport", "tool is running", "schema"],
         },
         {
+            "name": "web_search_extension_direct_answer",
+            "expected": ["Example Domain", "example.com"],
+            "prompt": "search the web for Example Domain and give me the best title and URL only",
+            "forbidden": ["<!doctype", "<html", "tool", "running", "schema"],
+        },
+        {
+            "name": "document_extract_extension_direct_answer",
+            "expected": "Jarvis NIM Python Assistant",
+            "prompt": "extract README.md and tell me the project name only",
+            "forbidden": ["tool", "running", "schema"],
+        },
+        {
+            "name": "vector_memory_reindex_and_search",
+            "expected": ["Vector memory", "Krish", "15"],
+            "prompt": "reindex vector memory, then search vector memory for Krish age and name",
+            "forbidden": ["running", "schema"],
+        },
+        {
+            "name": "vector_memory_existing_index_search",
+            "expected": ["Krish", "15"],
+            "prompt": "search deep vector memory for my age and name",
+            "forbidden": ["running", "schema"],
+        },
+        {
+            "name": "extension_complex_multi_tool_answer",
+            "expected": [str(datetime.now().date()), "Delhi", "Jarvis NIM Python Assistant", "Example Domain"],
+            "prompt": "what is the current date and time, weather in Delhi, extract README.md and tell me the project name, and search the web for Example Domain; answer only useful results",
+            "forbidden": ["tool", "running", "schema", "<html"],
+        },
+        {
             "name": "hash_tool_direct_answer",
             "expected": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
             "prompt": "hash abc with sha256",

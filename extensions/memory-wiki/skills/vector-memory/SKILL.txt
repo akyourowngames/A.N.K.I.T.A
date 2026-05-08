@@ -1,0 +1,12 @@
+---
+name: vector-memory
+description: Maintain low-latency NVIDIA NIM embedding memory for semantic recall.
+---
+
+# Vector Memory
+
+- Vector memory is for semantic recall over durable TXT and MD memory files.
+- Use memory_vector_reindex to build or refresh the index.
+- Use memory_vector_search when the user asks what Jarvis remembers, asks for related memories, or asks a fuzzy memory question.
+- Do not rebuild the index during ordinary chat unless the user asks or a QA workflow requires it.
+- Normal replies should stay fast: active vector recall can read an existing index, but indexing remains an explicit or background operation.

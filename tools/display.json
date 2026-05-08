@@ -1,0 +1,19 @@
+{
+  "version": 1,
+  "responses": {
+    "calculate": "{result.result}",
+    "get_current_datetime": "Current date and time: {result.date} {result.time} {result.timezone}",
+    "get_weather": "Weather in {result.resolved_location.name}, {result.resolved_location.country}: {result.current.temperature_2m} {result.current_units.temperature_2m}, feels like {result.current.apparent_temperature} {result.current_units.apparent_temperature}, humidity {result.current.relative_humidity_2m}{result.current_units.relative_humidity_2m}, wind {result.current.wind_speed_10m} {result.current_units.wind_speed_10m}.",
+    "get_system_info": "System: {result.system} {result.release}. Architecture: {result.architecture}. Current workspace: {result.cwd}",
+    "get_pc_status": "{result.summary}",
+    "list_directory": "{result.summary}",
+    "read_text_file": "{result.content}",
+    "get_file_info": "{result.path}: {result.type}, {result.size_bytes} bytes, modified {result.modified}",
+    "search_text_files": "Found matches for {result.query}: {result.matches}",
+    "text_stats": "Characters: {result.characters}; words: {result.words}; lines: {result.lines}",
+    "hash_text": "{result.algorithm}: {result.hash}",
+    "generate_uuid": "{result.uuid}",
+    "fetch_url_text": "{result.summary}",
+    "run_terminal": "{result.user_output}"
+  }
+}

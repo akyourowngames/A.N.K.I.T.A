@@ -6,6 +6,9 @@ __pycache__/
 
 memory/*.txt
 memory/transcripts/*.txt
+memory/wiki/
+memory/vector/
+skills/_workshop/
 
 config/*results.json
 

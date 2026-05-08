@@ -1,0 +1,101 @@
+{
+  "id": "web",
+  "name": "Web And Document Tools",
+  "description": "Search the web, extract readable URL content, and extract local document text.",
+  "prompt_files": [
+    "prompts/web.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "web_search",
+      "description": "Search the web for current or external information and return grounded result titles and URLs.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Search query."
+          },
+          "count": {
+            "type": "integer",
+            "description": "Maximum search results to return."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Request timeout in seconds."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.web_tools",
+        "function": "web_search"
+      }
+    },
+    {
+      "name": "extract_url_content",
+      "description": "Fetch a URL and extract readable page text with a short summary.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "HTTP or HTTPS URL."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum readable characters to return."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Request timeout in seconds."
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.web_tools",
+        "function": "extract_url_content"
+      }
+    },
+    {
+      "name": "document_extract_text",
+      "description": "Extract text from a local document or readable text file with bounded output.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Local document path."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum characters to return."
+          }
+        },
+        "required": [
+          "path"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.web_tools",
+        "function": "document_extract_text"
+      }
+    }
+  ],
+  "display_templates": {
+    "web_search": "{result.summary}",
+    "extract_url_content": "{result.summary}",
+    "document_extract_text": "{result.summary}"
+  }
+}

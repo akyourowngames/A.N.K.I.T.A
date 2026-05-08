@@ -1,0 +1,189 @@
+{
+  "id": "memory-wiki",
+  "name": "Memory Wiki",
+  "description": "Persistent wiki pages with source-backed notes over Jarvis memory.",
+  "prompt_files": [
+    "prompts/memory-wiki.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "tools": [
+    {
+      "name": "wiki_status",
+      "description": "Show memory wiki status, page count, and page paths.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_wiki",
+        "function": "wiki_status"
+      }
+    },
+    {
+      "name": "wiki_search",
+      "description": "Search memory wiki pages and durable memory text for exact user-supplied text.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Text to search for."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum matching pages to return."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_wiki",
+        "function": "wiki_search"
+      }
+    },
+    {
+      "name": "wiki_get",
+      "description": "Read a memory wiki page by path or topic.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Wiki-relative page path."
+          },
+          "topic": {
+            "type": "string",
+            "description": "Wiki topic name."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum characters to return."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_wiki",
+        "function": "wiki_get"
+      }
+    },
+    {
+      "name": "wiki_apply",
+      "description": "Create or update a memory wiki page with a topic, content, and source.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "topic": {
+            "type": "string",
+            "description": "Stable wiki topic."
+          },
+          "content": {
+            "type": "string",
+            "description": "Source-backed note content."
+          },
+          "source": {
+            "type": "string",
+            "description": "Where this note came from."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "append",
+              "replace"
+            ],
+            "description": "Append to or replace the topic page."
+          }
+        },
+        "required": [
+          "topic",
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_wiki",
+        "function": "wiki_apply"
+      }
+    },
+    {
+      "name": "wiki_lint",
+      "description": "Check memory wiki pages for source and confidence fields.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_wiki",
+        "function": "wiki_lint"
+      }
+    },
+    {
+      "name": "memory_vector_status",
+      "description": "Show vector memory index status, model, active recall state, and chunk count.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.vector_memory_tools",
+        "function": "memory_vector_status"
+      }
+    },
+    {
+      "name": "memory_vector_reindex",
+      "description": "Build or refresh the vector memory index from memory TXT and MD files using the configured NVIDIA embedding model.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.vector_memory_tools",
+        "function": "memory_vector_reindex"
+      }
+    },
+    {
+      "name": "memory_vector_search",
+      "description": "Search vector memory semantically for durable user, project, wiki, and extracted memory.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Semantic memory search query."
+          },
+          "top_k": {
+            "type": "integer",
+            "description": "Maximum memory chunks to return."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.vector_memory_tools",
+        "function": "memory_vector_search"
+      }
+    }
+  ],
+  "display_templates": {
+    "wiki_status": "{result.summary}",
+    "wiki_search": "{result.summary}",
+    "wiki_get": "{result.content}",
+    "wiki_apply": "{result.summary}",
+    "wiki_lint": "{result.summary}",
+    "memory_vector_status": "{result.summary}",
+    "memory_vector_reindex": "{result.summary}",
+    "memory_vector_search": "{result.summary}"
+  }
+}

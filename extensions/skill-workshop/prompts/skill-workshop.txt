@@ -1,0 +1,3 @@
+Use skill workshop for durable procedural knowledge, not ordinary facts or user preferences.
+Prefer pending proposals unless the user clearly asks to apply a skill immediately.
+Skills must be concise, reusable, and safe to load into future Jarvis turns.
