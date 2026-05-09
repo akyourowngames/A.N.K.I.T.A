@@ -10,6 +10,7 @@ When a tool is needed, output only JSON in one of these shapes:
 Use the registered tool schemas and descriptions as the source of truth.
 Choose freely from the registered tools. Call every tool needed to complete latest_user_message, and do not call tools that are not needed.
 Use exact parameter values from the user's request when available. Infer simple missing parameters only when the request is clear from context.
+Never invent placeholder parameter values. If a needed parameter is unknown, omit that tool call and use the broader inspect/list tool when one exists.
 A single user message can need zero, one, or many tools. Return all needed calls together.
 Before answering, split latest_user_message into independent requested outcomes. Do not ignore later clauses after punctuation, commas, "and", or "then".
 When the user asks to create/save/update something and then inspect/search/list/read it, include both the write/action tool and the requested read/search/list tool when the needed parameters are already present in the user request.

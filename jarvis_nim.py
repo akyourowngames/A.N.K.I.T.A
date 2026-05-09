@@ -526,15 +526,12 @@ def merge_tool_call_deltas(tool_calls: dict[int, dict[str, str]], deltas: Any) -
 
 
 def native_tool_requests_from_deltas(tool_calls: dict[int, dict[str, str]], registry: Any) -> list[dict[str, Any]]:
-    visible_names = {tool.name for tool in registry.visible_tools()}
     requests: list[dict[str, Any]] = []
     for index in sorted(tool_calls):
         entry = tool_calls[index]
         name = entry.get("name", "")
-        if name not in visible_names:
-            continue
-        request = {"name": name, "parameters": parse_native_arguments(entry.get("arguments", ""))}
-        if request not in requests:
+        request = normalize_tool_request({"name": name, "parameters": parse_native_arguments(entry.get("arguments", ""))}, registry)
+        if request is not None and request not in requests:
             requests.append(request)
     return requests
 
@@ -574,8 +571,8 @@ def collect_native_tool_decision(
         if name not in visible_names:
             continue
         arguments = function.get("arguments", "{}")
-        request = {"name": name, "parameters": parse_native_arguments(arguments)}
-        if request not in requests:
+        request = normalize_tool_request({"name": name, "parameters": parse_native_arguments(arguments)}, registry)
+        if request is not None and request not in requests:
             requests.append(request)
     return requests, message_content(message)
 
@@ -748,7 +745,20 @@ def normalize_tool_request(value: Any, registry: Any) -> dict[str, Any] | None:
         return None
     if not isinstance(parameters, dict):
         parameters = {}
+    if contains_unresolved_placeholder(parameters):
+        return None
     return {"name": name, "parameters": parameters}
+
+
+def contains_unresolved_placeholder(value: Any) -> bool:
+    if isinstance(value, str):
+        text = value.strip()
+        return len(text) >= 2 and text[0] == "<" and text[-1] == ">"
+    if isinstance(value, dict):
+        return any(contains_unresolved_placeholder(item) for item in value.values())
+    if isinstance(value, list):
+        return any(contains_unresolved_placeholder(item) for item in value)
+    return False
 
 
 def tool_results_prompt(
@@ -760,13 +770,28 @@ def tool_results_prompt(
     template = load_text_file(Path(env_value("JARVIS_TOOL_RESULTS_PROMPT_FILE", "prompts/tool_results.txt")))
     replacements = {
         "{latest_user_message}": latest_user_message,
-        "{tool_results}": json.dumps(results, ensure_ascii=True),
+        "{tool_results}": json.dumps(public_tool_results(results), ensure_ascii=True),
         "{tool_display_results}": display_results,
         "{user_name}": user_name,
     }
     for marker, value in replacements.items():
         template = template.replace(marker, value)
     return template
+
+
+def public_tool_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    public_results: list[dict[str, Any]] = []
+    for index, entry in enumerate(results, start=1):
+        if not isinstance(entry, dict):
+            continue
+        public_results.append(
+            {
+                "result_index": index,
+                "parameters": entry.get("parameters", {}),
+                "result": entry.get("result", {}),
+            }
+        )
+    return public_results
 
 
 def final_chat_response(config: JarvisConfig, messages: list[dict[str, Any]]) -> str:

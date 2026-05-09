@@ -67,6 +67,7 @@ class VoiceConfig:
     tts_heavy_pitch_factor: float
     tts_heavy_darkness: float
     tts_playback_speed: float
+    tts_max_speak_chars: int
     tts_speak_oneshot: bool
 
     @classmethod
@@ -126,6 +127,7 @@ class VoiceConfig:
             tts_heavy_pitch_factor=voice_profile_float(profile, "tts_heavy_pitch_factor", "TTS_HEAVY_PITCH_FACTOR", 1.14),
             tts_heavy_darkness=voice_profile_float(profile, "tts_heavy_darkness", "TTS_HEAVY_DARKNESS", 0.34),
             tts_playback_speed=voice_profile_float(profile, "tts_playback_speed", "TTS_PLAYBACK_SPEED", 1.06),
+            tts_max_speak_chars=env_int("TTS_MAX_SPEAK_CHARS", 300),
             tts_speak_oneshot=env_bool("TTS_SPEAK_ONESHOT", False),
         )
 
@@ -546,6 +548,8 @@ def speakable_text(text: str) -> str:
         if is_timing_line(line):
             continue
         line = strip_markdown_speech_noise(line)
+        line = strip_speech_paths_and_urls(line)
+        line = clean_speech_symbols(line)
         if line:
             lines.append(line)
     return " ".join(lines).strip()
@@ -563,6 +567,153 @@ def strip_markdown_speech_noise(line: str) -> str:
         if line.startswith(marker):
             line = line[len(marker) :].strip()
     return line.replace("`", "").replace("#", "").strip()
+
+
+def strip_speech_paths_and_urls(line: str) -> str:
+    arrow_index = line.find(" -> ")
+    if arrow_index >= 0:
+        right_side = line[arrow_index + 4 :].strip()
+        if text_starts_with_path_or_url(right_side):
+            line = line[:arrow_index].rstrip()
+
+    result: list[str] = []
+    index = 0
+    while index < len(line):
+        if text_starts_with_path_or_url(line[index:]):
+            replacement = speech_path_replacement(line, index)
+            index = skip_path_or_url(line, index)
+            if replacement:
+                if result and result[-1] not in {" ", ".", ",", ":"}:
+                    result.append(" ")
+                result.append(replacement)
+            elif result and result[-1] not in {" ", ".", ",", ":"}:
+                result.append(" ")
+            continue
+        result.append(line[index])
+        index += 1
+    return collapse_spaces("".join(result)).strip(" ,:")
+
+
+def text_starts_with_path_or_url(text: str) -> bool:
+    if text.startswith("http://") or text.startswith("https://") or text.startswith("www."):
+        return True
+    if len(text) >= 3 and text[0].isalpha() and text[1] == ":" and text[2] in {"\\", "/"}:
+        return True
+    if text.startswith("\\\\"):
+        return True
+    return False
+
+
+def skip_path_or_url(text: str, start: int) -> int:
+    if text.startswith("http://", start) or text.startswith("https://", start) or text.startswith("www.", start):
+        index = start
+        while index < len(text) and not text[index].isspace():
+            index += 1
+        return index
+
+    index = start
+    while index < len(text):
+        char = text[index]
+        if char in {"\n", "\r", "\t"}:
+            break
+        if char in {".", "!", "?"} and index + 1 < len(text) and text[index + 1].isspace():
+            break
+        if char in {",", ";"}:
+            break
+        index += 1
+    return index
+
+
+def speech_path_replacement(text: str, start: int) -> str:
+    if text.startswith("http://", start) or text.startswith("https://", start) or text.startswith("www.", start):
+        return "link"
+    end = skip_path_or_url(text, start)
+    local_path = text[start:end].strip()
+    leaf = local_path.replace("\\", "/").split("/")[-1]
+    if "." in leaf and leaf.rsplit(".", 1)[-1]:
+        return "local file"
+    return "local folder"
+
+
+def clean_speech_symbols(line: str) -> str:
+    replacements = {
+        "|": ", ",
+        "\\": " ",
+        "/": " ",
+        "{": " ",
+        "}": " ",
+        "[": " ",
+        "]": " ",
+    }
+    cleaned: list[str] = []
+    for char in line:
+        cleaned.append(replacements.get(char, char))
+    return collapse_spaces("".join(cleaned))
+
+
+def collapse_spaces(text: str) -> str:
+    return " ".join(text.split())
+
+
+def speech_chunks(text: str, max_chars: int) -> list[str]:
+    clean_text = collapse_spaces(speakable_text(text))
+    if not clean_text:
+        return []
+    limit = max(80, min(380, max_chars))
+    pieces = split_speech_pieces(clean_text)
+    chunks: list[str] = []
+    current = ""
+    for piece in pieces:
+        for part in split_oversized_piece(piece, limit):
+            candidate = part if not current else f"{current} {part}"
+            if len(candidate) <= limit:
+                current = candidate
+                continue
+            if current:
+                chunks.append(current)
+            current = part
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def split_speech_pieces(text: str) -> list[str]:
+    pieces: list[str] = []
+    current: list[str] = []
+    for char in text:
+        current.append(char)
+        if char in {".", "!", "?", ";", ",", ":"}:
+            piece = "".join(current).strip()
+            if piece:
+                pieces.append(piece)
+            current = []
+    tail = "".join(current).strip()
+    if tail:
+        pieces.append(tail)
+    return pieces
+
+
+def split_oversized_piece(piece: str, limit: int) -> list[str]:
+    if len(piece) <= limit:
+        return [piece]
+    parts: list[str] = []
+    current = ""
+    for word in piece.split():
+        candidate = word if not current else f"{current} {word}"
+        if len(candidate) <= limit:
+            current = candidate
+            continue
+        if current:
+            parts.append(current)
+        if len(word) <= limit:
+            current = word
+        else:
+            for index in range(0, len(word), limit):
+                parts.append(word[index : index + limit])
+            current = ""
+    if current:
+        parts.append(current)
+    return parts
 
 
 def escape_ssml_text(text: str) -> str:
@@ -732,19 +883,20 @@ def play_pcm_audio(config: VoiceConfig, audio_bytes: bytes) -> None:
 def speak_text_blocking(config: VoiceConfig, text: str) -> None:
     if not config.tts_enabled:
         return
-    clean_text = speakable_text(text)
-    if not clean_text:
+    chunks = speech_chunks(text, config.tts_max_speak_chars)
+    if not chunks:
         return
-    if config.tts_streaming:
-        try:
-            stream_nvidia_tts_to_output(config, clean_text)
-            return
-        except Exception:
-            audio = synthesize_nvidia_tts(config, clean_text, streaming=False)
-            play_pcm_audio(config, audio)
-            return
-    audio = synthesize_nvidia_tts(config, clean_text, streaming=False)
-    play_pcm_audio(config, audio)
+    for chunk in chunks:
+        if config.tts_streaming:
+            try:
+                stream_nvidia_tts_to_output(config, chunk)
+                continue
+            except Exception:
+                audio = synthesize_nvidia_tts(config, chunk, streaming=False)
+                play_pcm_audio(config, audio)
+                continue
+        audio = synthesize_nvidia_tts(config, chunk, streaming=False)
+        play_pcm_audio(config, audio)
 
 
 def stream_nvidia_tts_to_output(config: VoiceConfig, text: str) -> None:
@@ -819,10 +971,23 @@ class VoiceSpeaker:
             except Exception as error:
                 if not self._failed:
                     self._failed = True
-                    print(f"Voice output failed: {error}", file=sys.stderr)
+                    print(short_voice_error(error), file=sys.stderr)
             finally:
                 if self._queue.empty():
                     self._idle.set()
+
+
+def short_voice_error(error: Exception) -> str:
+    message = str(error).strip()
+    compact = message.lower()
+    if "maximum sequence length" in compact or "longer than maximum" in compact:
+        return "Voice output failed: NVIDIA rejected an oversized speech segment."
+    if "triton" in compact or "grpc" in compact or "inactiverpcerror" in compact:
+        return "Voice output failed: NVIDIA voice service returned an audio error."
+    first_line = message.splitlines()[0] if message else error.__class__.__name__
+    if len(first_line) > 180:
+        first_line = first_line[:177].rstrip() + "..."
+    return f"Voice output failed: {first_line}"
 
 
 def listen_after_output_idle(

@@ -178,13 +178,21 @@ def entertainment_playlist(params: dict[str, Any]) -> dict[str, Any]:
         config["playlists"] = playlists
 
     if operation == "list":
-        names = sorted(str(name) for name in playlists)
-        return {"summary": f"Playlists: {', '.join(names) if names else 'none'}", "playlists": playlists}
+        overview = playlist_overview(config, index)
+        return {
+            "summary": overview["summary"],
+            "playlists": playlists,
+            "playlist_tracks": overview["playlist_tracks"],
+        }
     if operation == "show":
         playlist = require_text(params, "playlist")
         ids = playlist_ids(config, playlist)
         tracks = [index.get("tracks", {}).get(track_id, {"id": track_id}) for track_id in ids]
-        return {"summary": f"{playlist}: {len(ids)} track(s).", "playlist": playlist, "tracks": tracks}
+        return {
+            "summary": playlist_detail_summary(config, playlist, tracks),
+            "playlist": playlist,
+            "tracks": tracks,
+        }
     if operation == "create":
         playlist = require_text(params, "playlist")
         playlists.setdefault(playlist, [])
@@ -258,6 +266,7 @@ def default_config() -> dict[str, Any]:
         "audio_format_selector": "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio",
         "search_provider": "ytsearch",
         "search_limit": 5,
+        "playlist_display_limit": 12,
         "preferred_music_context": ["Hindi songs", "Haryanvi songs", "official audio"],
         "favorites": [],
         "playlists": {"favorites": []},
@@ -281,6 +290,7 @@ def merge_config(config: dict[str, Any], values: dict[str, Any]) -> None:
         "audio_format_selector",
         "search_provider",
         "search_limit",
+        "playlist_display_limit",
         "preferred_music_context",
         "favorites",
         "playlists",
@@ -616,6 +626,58 @@ def playlist_ids(config: dict[str, Any], playlist: str) -> list[str]:
     if isinstance(playlists, dict) and isinstance(playlists.get(playlist), list):
         return [str(item) for item in playlists[playlist]]
     return []
+
+
+def playlist_overview(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    playlists = config.get("playlists", {})
+    names = sorted(str(name) for name in playlists) if isinstance(playlists, dict) else []
+    if "favorites" not in names:
+        names.append("favorites")
+    names = sorted(unique_texts(names))
+    if not names:
+        return {"summary": "No playlists saved yet.", "playlist_tracks": {}}
+
+    playlist_tracks: dict[str, list[dict[str, Any]]] = {}
+    lines: list[str] = []
+    for name in names:
+        ids = playlist_ids(config, name)
+        tracks = [track_summary(index, track_id) for track_id in ids]
+        playlist_tracks[name] = tracks
+        lines.append(playlist_line(config, name, tracks))
+    return {"summary": "Playlists:\n" + "\n".join(lines), "playlist_tracks": playlist_tracks}
+
+
+def playlist_line(config: dict[str, Any], name: str, tracks: list[dict[str, Any]]) -> str:
+    if not tracks:
+        return f"{name}: empty"
+    limit = bounded_int(config.get("playlist_display_limit"), 1, 50, 12)
+    visible = tracks[:limit]
+    titles = [str(track.get("title") or track.get("id") or "Untitled") for track in visible]
+    suffix = ""
+    remaining = len(tracks) - len(visible)
+    if remaining > 0:
+        suffix = f"; plus {remaining} more"
+    return f"{name}: {len(tracks)} track(s) - {'; '.join(titles)}{suffix}"
+
+
+def playlist_detail_summary(config: dict[str, Any], playlist: str, tracks: list[dict[str, Any]]) -> str:
+    if not tracks:
+        return f"{playlist}: empty"
+    return playlist_line(config, playlist, tracks)
+
+
+def track_summary(index: dict[str, Any], track_id: str) -> dict[str, Any]:
+    track = index.get("tracks", {}).get(track_id)
+    if isinstance(track, dict):
+        return {
+            "id": str(track.get("id") or track_id),
+            "title": str(track.get("title") or track_id),
+            "file_path": str(track.get("file_path") or ""),
+            "webpage_url": str(track.get("webpage_url") or ""),
+            "duration": track.get("duration"),
+            "channel": track.get("channel"),
+        }
+    return {"id": track_id, "title": f"Missing local track {track_id}", "file_path": "", "webpage_url": ""}
 
 
 def append_queue(state: dict[str, Any], track_id: str) -> None:

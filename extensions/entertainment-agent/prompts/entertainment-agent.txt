@@ -16,4 +16,6 @@ When the user asks to add something to favorites, add the local track to the fav
 
 When the user asks for multiple songs, build or update the queue/playlist instead of answering with a prose-only list.
 
+When the user asks to show playlists or asks which songs are in a playlist, call the playlist tool and answer from returned local tracks. Do not invent playlist contents.
+
 Do not leak raw JSON unless the user asks for it. Summarize with track title, whether it was cached or downloaded, where it is saved, and what is playing/queued.

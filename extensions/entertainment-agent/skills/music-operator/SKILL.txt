@@ -10,6 +10,7 @@ Workflow:
 4. If a user asks to replay the same song, use the cached result returned by the library. Do not force a new download.
 5. For favorites, call `entertainment_playlist` with `add_favorite`; if the track is not local yet, use `auto_download=true`.
 6. For multiple songs, add tracks to the queue or a playlist, then call `entertainment_queue` with `play` or `play_playlist`.
-7. For next, previous, stop, or clear, use `entertainment_queue`.
+7. For playlist inspection, call `entertainment_playlist` with `list` for all playlists or `show` for one named playlist, then use the returned track titles.
+8. For next, previous, stop, or clear, use `entertainment_queue`.
 
-The answer should be short and grounded: say what is playing, what was downloaded or cached, and the saved path when useful.
+The answer should be short and grounded: say what is playing, what was downloaded or cached, and the saved path only when the user needs the file location.

@@ -1,4 +1,4 @@
-Local tool results:
+Grounded local results:
 {tool_results}
 
 Clean tool summaries:
@@ -11,7 +11,7 @@ Current user's display name:
 {user_name}
 
 Answer the original user request using these results.
-Cover every part of the original request. Use tool results for grounded parts and available conversation or memory context for non-tool parts.
+Cover every part of the original request. Use grounded local results for grounded parts and available conversation or memory context for non-tool parts.
 Prefer the clean tool summaries for concise final wording, and keep their factual content intact.
 If a clean tool summary is already the exact useful answer for a grounded part, preserve that wording instead of paraphrasing away details.
 If a command or local tool summary contains multiple output lines, include every relevant line unless the user asked for only one value.
@@ -19,7 +19,7 @@ For fetched URL summaries, include the page title when it appears in the clean s
 Use the raw local tool results to recover any missing detail from the clean summaries.
 If the user asks for their name, answer from the current user's display name above or other loaded user context. Do not claim the name is unavailable when a display name is present.
 Respect the user's requested output format, including short-answer or output-only requests.
-Never mention internal tool names, tool-running status, schemas, or protocol unless the user explicitly asks for tool internals.
+Never mention internal tool names, tool-running status, schemas, protocol, or notes like "generated using a tool" unless the user explicitly asks for tool internals.
 For local system/version/file/test/runtime questions, use only the relevant fields or command output in the tool result.
 For requested local actions, include a brief success or failure acknowledgement from the tool result.
 If the command failed, timed out, or returned no useful output, say that instead of guessing.

@@ -193,6 +193,7 @@ Optional:
 - `TTS_NVIDIA_SSML`
 - `TTS_VOICE_EFFECT`
 - `TTS_PLAYBACK_SPEED`
+- `TTS_MAX_SPEAK_CHARS`
 - `TTS_SPEAK_ONESHOT`
 
 The assistant does not invent a model if `NVIDIA_MODEL` is missing. The current `.env` decides which NIM model is used.
@@ -234,6 +235,8 @@ STT uses NVIDIA Riva/NVCF streaming recognition by default because the current m
 TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile. Profiles live in `config/voice_profiles.json`, so the voice can be swapped without touching the chat loop. The default profile is `heavy_english_jarvis`, currently using `Magpie-Multilingual.EN-US.Jason.Neutral`.
 
 TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path. If Space is pressed while Jarvis is still talking, the mic waits until speech output is idle plus a short cooldown before recording, which prevents Jarvis from listening to its own voice.
+
+Long spoken replies are split before they reach NVIDIA TTS, and speech output removes raw paths/URLs so music downloads do not get read as `C colon slash...`.
 
 ## Tools
 

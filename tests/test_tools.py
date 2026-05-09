@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
@@ -49,12 +49,15 @@ from tools.workspace_tools import workspace_inspect
 from vector_memory import VectorMemoryConfig, build_vector_index, embed_texts, load_vector_memory_context, vector_search
 from voice_system import (
     VoiceConfig,
+    VoiceError,
     VoiceSpeaker,
     listen_after_output_idle,
     load_voice_profile,
     normalized_energy_threshold,
     output_sample_rate,
     read_text_or_voice,
+    short_voice_error,
+    speech_chunks,
     speech_threshold,
     speakable_text,
     transcript_from_asr_response,
@@ -149,6 +152,16 @@ class ToolRegistryTests(unittest.TestCase):
             registry,
         )
         self.assertEqual(requests, [])
+
+    def test_tool_request_parser_drops_unresolved_placeholder_parameters(self) -> None:
+        registry = discover_tools()
+        requests = parse_tool_requests(
+            '{"tool_calls":[{"name":"entertainment_playlist","parameters":{"operation":"list"}},{"name":"entertainment_playlist","parameters":{"operation":"show","playlist":"<playlist_name>"}}]}',
+            registry,
+        )
+
+        self.assertEqual(requests, [{"name": "entertainment_playlist", "parameters": {"operation": "list"}}])
+        self.assertTrue(contains_unresolved_placeholder({"playlist": "<playlist_name>"}))
 
     def test_tool_modules_do_not_register_tools_in_code(self) -> None:
         for path in Path("tools").glob("*.py"):
@@ -418,6 +431,10 @@ class ToolRegistryTests(unittest.TestCase):
 
                 favorite = entertainment_playlist({"operation": "show", "playlist": "favorites"})
                 self.assertEqual(len(favorite["tracks"]), 1)
+                self.assertIn("Haryanvi Desi Track", favorite["summary"])
+                playlists = entertainment_playlist({"operation": "list"})
+                self.assertIn("roadtrip", playlists["summary"])
+                self.assertIn("Haryanvi Desi Track", playlists["summary"])
 
                 status = entertainment_status({})
                 self.assertIn("local tracks", status["summary"])
@@ -579,14 +596,29 @@ class ToolRegistryTests(unittest.TestCase):
     def test_tool_results_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
         prompt = Path("prompts/tool_results.txt").read_text(encoding="utf-8")
-        self.assertIn("Local tool results:", prompt)
-        self.assertNotIn("Local tool results:", client)
+        self.assertIn("Grounded local results:", prompt)
+        self.assertNotIn("Grounded local results:", client)
 
     def test_tool_results_prompt_includes_display_name_context(self) -> None:
         prompt = tool_results_prompt([], "what is my name", "", "Krish")
         self.assertIn("Current user's display name:", prompt)
         self.assertIn("Krish", prompt)
         self.assertNotIn("{user_name}", prompt)
+
+    def test_tool_results_prompt_does_not_expose_internal_tool_names(self) -> None:
+        results = [
+            {
+                "name": "entertainment_playlist",
+                "parameters": {"operation": "list"},
+                "result": {"summary": "Playlists:\ndefault: 1 track(s) - License Ka Asla"},
+            }
+        ]
+
+        prompt = tool_results_prompt(results, "show me playlist", "Playlists:\ndefault: 1 track(s) - License Ka Asla", "Krish")
+
+        self.assertIn("License Ka Asla", prompt)
+        self.assertNotIn("entertainment_playlist", prompt)
+        self.assertEqual(public_tool_results(results)[0]["result_index"], 1)
 
     def test_chat_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
@@ -931,6 +963,37 @@ class VoiceSystemTests(unittest.TestCase):
         text = speakable_text("First=1.911s total=1.917s\n# Hello `Krish`")
 
         self.assertEqual(text, "Hello Krish")
+
+    def test_speakable_text_skips_paths_and_urls(self) -> None:
+        text = speakable_text(
+            "Downloaded: License Ka Asla -> C:\\Users\\anime\\Music\\License Ka Asla.m4a\n"
+            "Saved to C:\\Users\\anime\\Music\\License Ka Asla.m4a. Playlist default is ready.\n"
+            "Source: https://www.youtube.com/watch?v=test123"
+        )
+
+        self.assertIn("Downloaded: License Ka Asla", text)
+        self.assertIn("Saved to local file. Playlist default is ready.", text)
+        self.assertNotIn("C:", text)
+        self.assertNotIn("youtube.com", text)
+
+    def test_speech_chunks_keep_tts_requests_below_limit(self) -> None:
+        long_playlist = "Playlists: " + "; ".join(f"Song {index}" for index in range(1, 60))
+
+        chunks = speech_chunks(long_playlist, 180)
+
+        self.assertGreater(len(chunks), 1)
+        self.assertTrue(all(len(chunk) <= 180 for chunk in chunks))
+
+    def test_short_voice_error_hides_raw_grpc_wall(self) -> None:
+        error = VoiceError(
+            "NVIDIA TTS failed: <_InactiveRpcError of RPC that terminated with details = Error: Triton model failed during inference. Input sentence is longer than maximum sequence length: 675 > 400>"
+        )
+
+        message = short_voice_error(error)
+
+        self.assertIn("Voice output failed", message)
+        self.assertNotIn("_InactiveRpcError", message)
+        self.assertNotIn("675 > 400", message)
 
     def test_voice_audio_threshold_and_playback_speed_are_config_driven(self) -> None:
         with patch.dict(

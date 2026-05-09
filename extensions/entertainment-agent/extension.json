@@ -189,7 +189,7 @@
     },
     {
       "name": "entertainment_playlist",
-      "description": "Edit or inspect playlists and favorites in the entertainment config JSON.",
+      "description": "Edit or inspect playlists and favorites in the entertainment config JSON. The list/show operations return grounded playlist contents from the local music library.",
       "parameters": {
         "type": "object",
         "properties": {
