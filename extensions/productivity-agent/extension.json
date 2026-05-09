@@ -1,0 +1,216 @@
+{
+  "id": "productivity-agent",
+  "name": "Codex Productivity Agent",
+  "description": "Grounded GitHub, Gmail, and Google Calendar operations through registered tools and config-driven URLs.",
+  "prompt_files": [
+    "prompts/productivity-agent.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "JARVIS_PRODUCTIVITY_CONFIG",
+    "JARVIS_PRODUCTIVITY_DRY_RUN",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "GOOGLE_OAUTH_CLIENT_SECRETS",
+    "GMAIL_TOKEN_FILE",
+    "GOOGLE_CALENDAR_TOKEN_FILE"
+  ],
+  "tools": [
+    {
+      "name": "productivity_status",
+      "description": "Inspect the productivity agent config, GitHub CLI availability/auth status, and Google workspace URL/credential environment readiness.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.productivity_agent",
+        "function": "productivity_status"
+      }
+    },
+    {
+      "name": "github_manage",
+      "description": "Manage GitHub through the authenticated gh CLI. Supports auth status, repo view, issue list, pull request list, workflow runs, notifications, and issue creation.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "auth_status",
+              "repo_view",
+              "issue_list",
+              "pr_list",
+              "workflow_runs",
+              "notifications",
+              "create_issue"
+            ],
+            "description": "GitHub operation."
+          },
+          "repo": {
+            "type": "string",
+            "description": "Repository in owner/name format. Optional inside a git repo or when config has github.default_repo."
+          },
+          "state": {
+            "type": "string",
+            "description": "Issue or PR state such as open, closed, merged, or all when supported by gh."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum returned items."
+          },
+          "title": {
+            "type": "string",
+            "description": "Issue title for create_issue."
+          },
+          "body": {
+            "type": "string",
+            "description": "Issue body for create_issue."
+          },
+          "timeout_seconds": {
+            "type": "integer",
+            "description": "Command timeout."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.productivity_agent",
+        "function": "github_manage"
+      }
+    },
+    {
+      "name": "gmail_manage",
+      "description": "Prepare or open Gmail inbox, search, and compose URLs from config templates. It does not claim to read private mail unless a future Gmail API tool returns message data.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "open_inbox",
+              "search",
+              "compose"
+            ],
+            "description": "Gmail operation."
+          },
+          "query": {
+            "type": "string",
+            "description": "Gmail search query."
+          },
+          "to": {
+            "type": "string",
+            "description": "Recipient email address for compose."
+          },
+          "subject": {
+            "type": "string",
+            "description": "Email subject for compose."
+          },
+          "body": {
+            "type": "string",
+            "description": "Email body for compose."
+          },
+          "open_browser": {
+            "type": "boolean",
+            "description": "Open the prepared Gmail URL in the system browser."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.productivity_agent",
+        "function": "gmail_manage"
+      }
+    },
+    {
+      "name": "calendar_manage",
+      "description": "Prepare or open Google Calendar URLs, including prefilled event creation links from config templates.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "open",
+              "create_event"
+            ],
+            "description": "Calendar operation."
+          },
+          "title": {
+            "type": "string",
+            "description": "Event title."
+          },
+          "details": {
+            "type": "string",
+            "description": "Event details."
+          },
+          "location": {
+            "type": "string",
+            "description": "Event location."
+          },
+          "dates": {
+            "type": "string",
+            "description": "Google Calendar dates value such as 20260510T090000/20260510T093000."
+          },
+          "start": {
+            "type": "string",
+            "description": "Start time text when dates is not supplied."
+          },
+          "end": {
+            "type": "string",
+            "description": "End time text when dates is not supplied."
+          },
+          "open_browser": {
+            "type": "boolean",
+            "description": "Open the prepared Calendar URL in the system browser."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.productivity_agent",
+        "function": "calendar_manage"
+      }
+    },
+    {
+      "name": "productivity_config",
+      "description": "Read or update the productivity agent config JSON for GitHub defaults and Gmail/Calendar URL templates.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "get",
+              "update"
+            ],
+            "description": "Config operation."
+          },
+          "values": {
+            "type": "object",
+            "description": "Top-level JSON values to merge into the config."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.productivity_agent",
+        "function": "productivity_config"
+      }
+    }
+  ]
+}

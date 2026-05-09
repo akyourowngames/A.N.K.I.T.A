@@ -38,8 +38,5 @@
         "function": "jarvis_latency_probe"
       }
     }
-  ],
-  "display_templates": {
-    "jarvis_latency_probe": "{result.summary}"
-  }
+  ]
 }

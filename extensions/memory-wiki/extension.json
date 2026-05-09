@@ -175,15 +175,5 @@
         "function": "memory_vector_search"
       }
     }
-  ],
-  "display_templates": {
-    "wiki_status": "{result.summary}",
-    "wiki_search": "{result.summary}",
-    "wiki_get": "{result.content}",
-    "wiki_apply": "{result.summary}",
-    "wiki_lint": "{result.summary}",
-    "memory_vector_status": "{result.summary}",
-    "memory_vector_reindex": "{result.summary}",
-    "memory_vector_search": "{result.summary}"
-  }
+  ]
 }

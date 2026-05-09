@@ -29,7 +29,6 @@ class Tool:
     handler: ToolHandler
     executor: dict[str, str]
     sort_key: str = ""
-    direct_response: str = ""
 
     def openai_schema(self) -> dict[str, Any]:
         return {
@@ -43,9 +42,8 @@ class Tool:
 
 
 class ToolRegistry:
-    def __init__(self, display_templates: dict[str, str] | None = None) -> None:
+    def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
-        self._display_templates = display_templates or {}
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -60,17 +58,6 @@ class ToolRegistry:
 
     def planner_tools(self) -> list[dict[str, Any]]:
         return [planner_tool_schema(tool) for tool in self.visible_tools()]
-
-    def direct_response(self, name: str, payload: dict[str, Any]) -> str:
-        tool = self._tools.get(name)
-        template = self._display_templates.get(name)
-        if template is None and tool is not None and tool.direct_response:
-            template = tool.direct_response
-        if tool is None or not template:
-            return ""
-        if payload.get("ok") is False:
-            return ""
-        return render_template(template, flatten_payload(payload))
 
     def execute(self, name: str, arguments: Any) -> str:
         tool = self._tools.get(name)
@@ -133,31 +120,13 @@ def discover_tools(
     extension_catalog: ExtensionCatalog | None = None,
 ) -> ToolRegistry:
     catalog = extension_catalog or load_extension_catalog()
-    registry = ToolRegistry(display_templates=load_display_templates(catalog))
+    registry = ToolRegistry()
     path = manifest_path or Path(__file__).with_name("tools.json")
     for descriptor in load_manifest(path):
         registry.register(tool_from_descriptor(descriptor))
     for descriptor in catalog.tool_descriptors():
         registry.register(tool_from_descriptor(descriptor))
     return registry
-
-
-def load_display_templates(catalog: ExtensionCatalog | None = None) -> dict[str, str]:
-    templates: dict[str, str] = {}
-    path = Path(__file__).with_name("display.json")
-    if path.exists():
-        try:
-            data = json.loads(path.read_text(encoding="utf-8-sig"))
-        except json.JSONDecodeError as error:
-            raise ToolRegistryError(f"Tool display file is not valid JSON: {path}") from error
-        responses = data.get("responses") if isinstance(data, dict) else None
-        if isinstance(responses, dict):
-            for key, value in responses.items():
-                if isinstance(key, str) and isinstance(value, str):
-                    templates[key] = value
-    if catalog is not None:
-        templates.update(catalog.display_templates())
-    return templates
 
 
 def load_manifest(path: Path) -> list[dict[str, Any]]:
@@ -186,7 +155,6 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
     parameters = descriptor.get("parameters")
     executor = descriptor.get("executor")
     sort_key = descriptor.get("sort_key", "")
-    direct_response = descriptor.get("direct_response", "")
 
     if not isinstance(parameters, dict):
         raise ToolRegistryError(f"Tool parameters must be an object: {name}")
@@ -194,8 +162,6 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
         raise ToolRegistryError(f"Tool executor must be an object: {name}")
     if not isinstance(sort_key, str):
         raise ToolRegistryError(f"Tool sort_key must be a string: {name}")
-    if not isinstance(direct_response, str):
-        raise ToolRegistryError(f"Tool direct_response must be a string: {name}")
 
     module_name = require_manifest_text(executor, "module")
     function_name = require_manifest_text(executor, "function")
@@ -207,7 +173,6 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
         handler=handler,
         executor={"module": module_name, "function": function_name},
         sort_key=sort_key,
-        direct_response=direct_response,
     )
 
 
@@ -276,26 +241,3 @@ def load_handler(module_name: str, function_name: str, tool_name: str) -> ToolHa
     if not callable(function):
         raise ToolRegistryError(f"Tool executor is not callable: {tool_name}")
     return function
-
-
-def flatten_payload(value: Any, prefix: str = "") -> dict[str, str]:
-    if isinstance(value, dict):
-        result: dict[str, str] = {}
-        for key, child in value.items():
-            if not isinstance(key, str):
-                continue
-            child_prefix = f"{prefix}.{key}" if prefix else key
-            result.update(flatten_payload(child, child_prefix))
-        return result
-    if isinstance(value, list):
-        return {prefix: json.dumps(value, ensure_ascii=True)}
-    if prefix:
-        return {prefix: str(value)}
-    return {}
-
-
-def render_template(template: str, values: dict[str, str]) -> str:
-    rendered = template
-    for key, value in values.items():
-        rendered = rendered.replace("{" + key + "}", value)
-    return rendered

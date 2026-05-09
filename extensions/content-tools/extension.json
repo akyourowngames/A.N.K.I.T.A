@@ -86,9 +86,5 @@
         "function": "compare_text"
       }
     }
-  ],
-  "display_templates": {
-    "transform_text": "{result.summary}",
-    "compare_text": "{result.summary}"
-  }
+  ]
 }

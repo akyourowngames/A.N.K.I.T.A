@@ -115,7 +115,6 @@ Optional:
 - `NIM_PARALLEL_TOOL_CALLS`
 - `NIM_NATIVE_PLANNER_CONFIRM`
 - `NIM_NATIVE_VERIFY_NO_TOOL`
-- `NIM_DIRECT_SINGLE_TOOL_RESULT`
 - `USER_NAME`
 - `AI_NAME`
 - `WEATHER_UNITS`
@@ -156,6 +155,8 @@ Optional:
 - `JARVIS_ENTERTAINMENT_CONFIG`
 - `JARVIS_ENTERTAINMENT_LIBRARY_DIR`
 - `JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER`
+- `JARVIS_PRODUCTIVITY_CONFIG`
+- `JARVIS_PRODUCTIVITY_DRY_RUN`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
 - `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
@@ -224,8 +225,6 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_NATIVE_VERIFY_NO_TOOL=false` is the low-latency streaming default. Native no-tool replies print as tokens arrive. Set it to `true` only when you want an extra planner check before showing no-tool replies, accepting slower first-token time.
 
-`NIM_DIRECT_SINGLE_TOOL_RESULT=true` returns a clean display template immediately when one grounded tool fully supplies the useful result. Multi-tool requests still go through final answer composition.
-
 ## Voice
 
 Interactive chat supports voice without changing the tool registry. Press Space on an empty prompt to record one utterance from the configured microphone. Typed spaces after any character stay normal text input.
@@ -242,7 +241,7 @@ Long spoken replies are split before they reach NVIDIA TTS, and speech output re
 
 Tool definitions live in `tools/tools.json` and `extensions/*/extension.json`. The Python files only provide executor functions. To add or remove a tool from the assistant surface, edit the JSON manifest; the chat loop does not need to change.
 
-Tool result display templates live in `tools/display.json` and extension `display_templates`. Jarvis uses those for clean user-facing direct results instead of leaking raw tool JSON.
+Tool results are grounded data, not final canned replies. Jarvis sends tool results to the model and lets the model write the final sentence naturally.
 
 Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvis loads enabled extension prompts and skills into the system context.
 
@@ -270,6 +269,11 @@ Current tools:
 - `hash_text`
 - `jarvis_latency_probe`
 - `list_directory`
+- `productivity_status`
+- `productivity_config`
+- `github_manage`
+- `gmail_manage`
+- `calendar_manage`
 - `run_terminal`
 - `run_jarvis_qa`
 - `read_text_file`
@@ -305,6 +309,14 @@ Default music files and playback state live under `media/music/`, which is ignor
 
 The entertainment prompt and skill explicitly treat Hindi, Haryanvi, Punjabi, Hinglish, and English requests as normal music requests. Jarvis should preserve the user's wording, search with the requested language context, and prefer the already downloaded local file when the same song is requested again.
 
+## Productivity Agent
+
+`productivity-agent` is an extension-backed specialist named Codex Productivity Agent. It registers GitHub, Gmail, and Google Calendar tools from `extensions/productivity-agent/extension.json`.
+
+GitHub operations use the local authenticated `gh` CLI. Gmail and Calendar operations are URL/template backed through `config/productivity_agent.json`, so Jarvis can prepare or open inbox/search/compose and event-create links without changing the chat loop.
+
+The agent is grounded: it should not claim private Gmail content was read or a Calendar event was created unless a tool result proves that action.
+
 ## Memory
 
 Jarvis reads durable memory on every turn. You can write stable details directly in `memory/user.txt`; Jarvis stores extracted chat memory in `memory/extracted.txt`.
@@ -332,7 +344,7 @@ Vector reindex retries temporary NIM embedding throttles with `MEMORY_VECTOR_RET
 
 ## Skills And Extensions
 
-Enabled extensions are loaded from `extensions/*/extension.json`. Each extension can declare tools, display templates, prompt fragments, skill roots, and env requirements.
+Enabled extensions are loaded from `extensions/*/extension.json`. Each extension can declare tools, prompt fragments, skill roots, and env requirements.
 
 Workspace skills live as `skills/<name>/SKILL.txt`; extension skills live under their extension folder. Use `skill_workshop` to queue or apply reusable workflow skills without changing core code.
 
@@ -345,3 +357,5 @@ Current bundled extensions:
 - `content-tools`
 - `workspace`
 - `diagnostics`
+- `entertainment-agent`
+- `productivity-agent`

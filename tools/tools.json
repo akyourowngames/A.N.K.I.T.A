@@ -19,8 +19,7 @@
       "executor": {
         "module": "tools.calculator",
         "function": "evaluate_expression"
-      },
-      "direct_response": "{result.result}"
+      }
     },
     {
       "name": "get_current_datetime",
@@ -38,8 +37,7 @@
       "executor": {
         "module": "tools.date_time",
         "function": "get_current_datetime"
-      },
-      "direct_response": "Current date and time: {result.date} {result.time} {result.timezone}"
+      }
     },
     {
       "name": "get_weather",
@@ -68,8 +66,7 @@
       "executor": {
         "module": "tools.weather",
         "function": "get_weather"
-      },
-      "direct_response": "Weather in {result.resolved_location.name}, {result.resolved_location.country}: {result.current.temperature_2m} {result.current_units.temperature_2m}, feels like {result.current.apparent_temperature} {result.current_units.apparent_temperature}, humidity {result.current.relative_humidity_2m}{result.current_units.relative_humidity_2m}, wind {result.current.wind_speed_10m} {result.current_units.wind_speed_10m}."
+      }
     },
     {
       "name": "get_system_info",
@@ -87,8 +84,7 @@
       "executor": {
         "module": "tools.system_tools",
         "function": "get_system_info"
-      },
-      "direct_response": "System: {result.system} {result.release}. Architecture: {result.architecture}. Current workspace: {result.cwd}"
+      }
     },
     {
       "name": "get_pc_status",
@@ -101,8 +97,7 @@
       "executor": {
         "module": "tools.system_tools",
         "function": "get_pc_status"
-      },
-      "direct_response": "{result.summary}"
+      }
     },
     {
       "name": "list_directory",
@@ -124,8 +119,7 @@
       "executor": {
         "module": "tools.filesystem_tools",
         "function": "list_directory"
-      },
-      "direct_response": "{result.summary}"
+      }
     },
     {
       "name": "read_text_file",
@@ -150,8 +144,7 @@
       "executor": {
         "module": "tools.filesystem_tools",
         "function": "read_text_file"
-      },
-      "direct_response": "{result.content}"
+      }
     },
     {
       "name": "get_file_info",
@@ -172,8 +165,7 @@
       "executor": {
         "module": "tools.filesystem_tools",
         "function": "get_file_info"
-      },
-      "direct_response": "{result.path}: {result.type}, {result.size_bytes} bytes, modified {result.modified}"
+      }
     },
     {
       "name": "search_text_files",
@@ -206,8 +198,7 @@
       "executor": {
         "module": "tools.filesystem_tools",
         "function": "search_text_files"
-      },
-      "direct_response": "Found matches for {result.query}: {result.matches}"
+      }
     },
     {
       "name": "text_stats",
@@ -228,8 +219,7 @@
       "executor": {
         "module": "tools.text_tools",
         "function": "text_stats"
-      },
-      "direct_response": "Characters: {result.characters}; words: {result.words}; lines: {result.lines}"
+      }
     },
     {
       "name": "hash_text",
@@ -254,8 +244,7 @@
       "executor": {
         "module": "tools.text_tools",
         "function": "hash_text"
-      },
-      "direct_response": "{result.algorithm}: {result.hash}"
+      }
     },
     {
       "name": "generate_uuid",
@@ -268,8 +257,7 @@
       "executor": {
         "module": "tools.text_tools",
         "function": "generate_uuid"
-      },
-      "direct_response": "{result.uuid}"
+      }
     },
     {
       "name": "fetch_url_text",
@@ -298,8 +286,7 @@
       "executor": {
         "module": "tools.web_tools",
         "function": "fetch_url_text"
-      },
-      "direct_response": "{result.summary}"
+      }
     },
     {
       "name": "run_terminal",
@@ -350,8 +337,7 @@
       "executor": {
         "module": "tools.terminal",
         "function": "run_terminal"
-      },
-      "direct_response": "{result.user_output}"
+      }
     },
     {
       "name": "get_runtime_info",

@@ -92,10 +92,5 @@
         "function": "document_extract_text"
       }
     }
-  ],
-  "display_templates": {
-    "web_search": "{result.summary}",
-    "extract_url_content": "{result.summary}",
-    "document_extract_text": "{result.summary}"
-  }
+  ]
 }

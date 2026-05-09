@@ -31,8 +31,5 @@
         "function": "run_jarvis_qa"
       }
     }
-  ],
-  "display_templates": {
-    "run_jarvis_qa": "{result.summary}"
-  }
+  ]
 }

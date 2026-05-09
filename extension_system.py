@@ -22,7 +22,6 @@ class Extension:
     prompt_files: list[Path]
     skill_dirs: list[Path]
     env: list[str]
-    display_templates: dict[str, str]
 
 
 @dataclass(frozen=True)
@@ -52,12 +51,6 @@ class ExtensionCatalog:
         for extension in self.extensions:
             roots.extend(extension.skill_dirs)
         return roots
-
-    def display_templates(self) -> dict[str, str]:
-        templates: dict[str, str] = {}
-        for extension in self.extensions:
-            templates.update(extension.display_templates)
-        return templates
 
     def status_lines(self) -> list[str]:
         lines: list[str] = []
@@ -114,7 +107,6 @@ def load_extension_manifest(path: Path) -> Extension:
     prompt_files = resolve_path_list(root, data.get("prompt_files"), path)
     skill_dirs = resolve_path_list(root, data.get("skill_dirs"), path)
     env = read_text_list(data.get("env"), path, "env")
-    display_templates = read_display_templates(data.get("display_templates"), path)
     return Extension(
         root=root,
         manifest_path=path.resolve(),
@@ -125,7 +117,6 @@ def load_extension_manifest(path: Path) -> Extension:
         prompt_files=prompt_files,
         skill_dirs=skill_dirs,
         env=env,
-        display_templates=display_templates,
     )
 
 
@@ -139,18 +130,6 @@ def read_tool_descriptors(data: dict[str, Any], path: Path) -> list[dict[str, An
             raise ExtensionError(f"Extension tool entries must be objects: {path}")
         descriptors.append(entry)
     return descriptors
-
-
-def read_display_templates(value: Any, path: Path) -> dict[str, str]:
-    if value is None:
-        return {}
-    if not isinstance(value, dict):
-        raise ExtensionError(f"Extension display_templates must be an object: {path}")
-    templates: dict[str, str] = {}
-    for key, template in value.items():
-        if isinstance(key, str) and isinstance(template, str):
-            templates[key] = template
-    return templates
 
 
 def resolve_path_list(root: Path, value: Any, manifest_path: Path) -> list[Path]:

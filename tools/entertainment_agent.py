@@ -140,15 +140,19 @@ def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
         save_state(config, state)
         return {"summary": f"Queued: {track.get('title', track['id'])}", "queue": state.get("queue", [])}
     if operation == "play_playlist":
-        playlist = require_text(params, "playlist")
-        ids = playlist_ids(config, playlist)
+        playlist, ids = resolve_playlist_for_play(config, index, optional_text(params, "playlist"))
         if not ids:
-            raise ToolInputError(f"Playlist is empty or missing: {playlist}")
+            raise ToolInputError("No playable playlist found")
         stop_player(state)
         state = {"queue": ids, "current_index": 0, "player_pid": None, "started_at": time.time()}
         start_queue_playback(config, index, state)
         save_state(config, state)
-        return {"summary": f"Playing playlist {playlist}: {len(ids)} track(s).", "queue": ids}
+        return {
+            "summary": f"Playing playlist {playlist}: {len(ids)} track(s).",
+            "playlist": playlist,
+            "queue": ids,
+            "tracks": tracks_from_ids(index, ids),
+        }
     if operation == "play":
         if not state.get("queue"):
             raise ToolInputError("Queue is empty")
@@ -217,7 +221,7 @@ def entertainment_playlist(params: dict[str, Any]) -> dict[str, Any]:
         save_config(config)
         return {"summary": f"Removed from {playlist}: {track_id}", "playlist": playlist}
     if operation == "play":
-        playlist = require_text(params, "playlist")
+        playlist = optional_text(params, "playlist")
         return entertainment_queue({"operation": "play_playlist", "playlist": playlist})
     raise ToolInputError(f"Unsupported playlist operation: {operation}")
 
@@ -267,6 +271,7 @@ def default_config() -> dict[str, Any]:
         "search_provider": "ytsearch",
         "search_limit": 5,
         "playlist_display_limit": 12,
+        "default_playlist": "",
         "preferred_music_context": ["Hindi songs", "Haryanvi songs", "official audio"],
         "favorites": [],
         "playlists": {"favorites": []},
@@ -291,6 +296,7 @@ def merge_config(config: dict[str, Any], values: dict[str, Any]) -> None:
         "search_provider",
         "search_limit",
         "playlist_display_limit",
+        "default_playlist",
         "preferred_music_context",
         "favorites",
         "playlists",
@@ -628,6 +634,76 @@ def playlist_ids(config: dict[str, Any], playlist: str) -> list[str]:
     return []
 
 
+def resolve_playlist_for_play(config: dict[str, Any], index: dict[str, Any], requested_playlist: str) -> tuple[str, list[str]]:
+    if requested_playlist:
+        matched = match_playlist_name(config, requested_playlist)
+        if matched:
+            return matched, playable_playlist_ids(config, index, matched)
+
+    configured_default = optional_config_text(config, "default_playlist")
+    if configured_default:
+        ids = playable_playlist_ids(config, index, configured_default)
+        if ids:
+            return configured_default, ids
+
+    playlists = config.get("playlists", {})
+    candidates: list[tuple[str, list[str]]] = []
+    if isinstance(playlists, dict):
+        for name in sorted(str(item) for item in playlists):
+            ids = playable_playlist_ids(config, index, name)
+            if ids:
+                candidates.append((name, ids))
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if candidates:
+        return candidates[0]
+
+    track_ids = playable_track_ids(index)
+    if track_ids:
+        return "library", track_ids
+    return "", []
+
+
+def match_playlist_name(config: dict[str, Any], requested_playlist: str) -> str:
+    requested_key = canonical_text(requested_playlist)
+    playlists = config.get("playlists", {})
+    if not requested_key or not isinstance(playlists, dict):
+        return ""
+    for name in sorted(str(item) for item in playlists):
+        if canonical_text(name) == requested_key:
+            return name
+    return ""
+
+
+def playable_playlist_ids(config: dict[str, Any], index: dict[str, Any], playlist: str) -> list[str]:
+    valid_tracks = index.get("tracks", {})
+    ids: list[str] = []
+    for track_id in playlist_ids(config, playlist):
+        track = valid_tracks.get(track_id)
+        if isinstance(track, dict) and Path(str(track.get("file_path", ""))).exists():
+            ids.append(track_id)
+    return ids
+
+
+def playable_track_ids(index: dict[str, Any]) -> list[str]:
+    tracks = index.get("tracks", {})
+    ids: list[str] = []
+    if not isinstance(tracks, dict):
+        return ids
+    for track_id, track in tracks.items():
+        if isinstance(track_id, str) and isinstance(track, dict) and Path(str(track.get("file_path", ""))).exists():
+            ids.append(track_id)
+    return sorted(ids)
+
+
+def optional_config_text(config: dict[str, Any], key: str) -> str:
+    value = config.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ""
+
+
 def playlist_overview(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
     playlists = config.get("playlists", {})
     names = sorted(str(name) for name in playlists) if isinstance(playlists, dict) else []
@@ -678,6 +754,10 @@ def track_summary(index: dict[str, Any], track_id: str) -> dict[str, Any]:
             "channel": track.get("channel"),
         }
     return {"id": track_id, "title": f"Missing local track {track_id}", "file_path": "", "webpage_url": ""}
+
+
+def tracks_from_ids(index: dict[str, Any], track_ids: list[str]) -> list[dict[str, Any]]:
+    return [track_summary(index, track_id) for track_id in track_ids]
 
 
 def append_queue(state: dict[str, Any], track_id: str) -> None:

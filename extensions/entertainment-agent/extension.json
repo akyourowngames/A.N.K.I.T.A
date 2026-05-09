@@ -158,7 +158,7 @@
               "clear",
               "play_playlist"
             ],
-            "description": "Queue operation."
+            "description": "Queue operation. play_playlist can resolve the configured default or only playable playlist when playlist is omitted."
           },
           "query": {
             "type": "string",
@@ -170,7 +170,7 @@
           },
           "playlist": {
             "type": "string",
-            "description": "Playlist name for play_playlist."
+            "description": "Playlist name for play_playlist. Optional when the request refers to the saved/default playlist."
           },
           "auto_download": {
             "type": "boolean",
@@ -205,11 +205,11 @@
               "remove_favorite",
               "play"
             ],
-            "description": "Playlist operation."
+            "description": "Playlist operation. play can resolve the configured default or only playable playlist when playlist is omitted."
           },
           "playlist": {
             "type": "string",
-            "description": "Playlist name."
+            "description": "Playlist name. Optional for play when the request refers to the saved/default playlist."
           },
           "track_id": {
             "type": "string",
@@ -263,14 +263,5 @@
         "function": "entertainment_config"
       }
     }
-  ],
-  "display_templates": {
-    "entertainment_status": "{result.summary}",
-    "entertainment_search": "{result.summary}",
-    "entertainment_download": "{result.summary}",
-    "entertainment_play": "{result.summary}",
-    "entertainment_queue": "{result.summary}",
-    "entertainment_playlist": "{result.summary}",
-    "entertainment_config": "{result.summary}"
-  }
+  ]
 }

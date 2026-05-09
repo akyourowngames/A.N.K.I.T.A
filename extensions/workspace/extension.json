@@ -52,8 +52,5 @@
         "function": "workspace_inspect"
       }
     }
-  ],
-  "display_templates": {
-    "workspace_inspect": "{result.summary}"
-  }
+  ]
 }

@@ -1,0 +1,20 @@
+{
+  "agent_name": "Codex Productivity Agent",
+  "dry_run": false,
+  "max_output_chars": 6000,
+  "github": {
+    "gh_executable": "gh",
+    "default_repo": "",
+    "default_limit": 20
+  },
+  "gmail": {
+    "base_url": "https://mail.google.com/mail/u/0/",
+    "inbox_url": "https://mail.google.com/mail/u/0/#inbox",
+    "search_url_template": "https://mail.google.com/mail/u/0/#search/{query}",
+    "compose_url_template": "https://mail.google.com/mail/?view=cm&fs=1&to={to}&su={subject}&body={body}"
+  },
+  "calendar": {
+    "base_url": "https://calendar.google.com/calendar/u/0/r",
+    "event_url_template": "https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={dates}&details={details}&location={location}"
+  }
+}

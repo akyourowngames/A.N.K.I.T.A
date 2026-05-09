@@ -5,6 +5,7 @@ import contextlib
 import io
 import os
 import platform
+import subprocess
 import sys
 import tempfile
 import threading
@@ -15,7 +16,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
@@ -37,6 +38,7 @@ from tools.entertainment_agent import (
 )
 from tools.filesystem_tools import get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
+from tools.productivity_agent import calendar_manage, github_manage, gmail_manage, productivity_config, productivity_status
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
 from tools.skill_workshop import skill_workshop
@@ -109,6 +111,11 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("entertainment_queue", names)
         self.assertIn("entertainment_playlist", names)
         self.assertIn("entertainment_config", names)
+        self.assertIn("productivity_status", names)
+        self.assertIn("github_manage", names)
+        self.assertIn("gmail_manage", names)
+        self.assertIn("calendar_manage", names)
+        self.assertIn("productivity_config", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -295,33 +302,6 @@ class ToolRegistryTests(unittest.TestCase):
         parsed = parse_memory_json('```json\n["User prefers JSON tool manifests."]\n```')
         self.assertEqual(parsed, ["User prefers JSON tool manifests."])
 
-    def test_direct_response_template_comes_from_manifest(self) -> None:
-        registry = discover_tools()
-        response = registry.direct_response(
-            "get_current_datetime",
-            {"ok": True, "result": {"date": "2026-05-07", "time": "16:00:00", "timezone": "India Standard Time"}},
-        )
-        self.assertEqual(response, "Current date and time: 2026-05-07 16:00:00 India Standard Time")
-
-    def test_direct_response_does_not_render_failed_payload(self) -> None:
-        registry = discover_tools()
-        response = registry.direct_response("get_current_datetime", {"ok": False, "error": "nope"})
-        self.assertEqual(response, "")
-
-    def test_datetime_direct_response_hides_tool_name(self) -> None:
-        registry = discover_tools()
-        payload = {
-            "ok": True,
-            "result": {
-                "date": "2026-05-07",
-                "time": "15:30:00",
-                "timezone": "India Standard Time",
-            },
-        }
-        response = registry.direct_response("get_current_datetime", payload)
-        self.assertIn("2026-05-07", response)
-        self.assertNotIn("get_current_datetime", response)
-
     def test_extension_catalog_loads_prompt_skills_and_tools(self) -> None:
         catalog = load_extension_catalog()
         self.assertIn("web", [extension.id for extension in catalog.extensions])
@@ -335,12 +315,12 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Skill: web-research", context)
         self.assertIn("Skill: jarvis-qa", context)
 
-    def test_display_templates_live_outside_tool_manifest(self) -> None:
-        display = Path("tools/display.json").read_text(encoding="utf-8")
+    def test_tool_manifests_do_not_define_canned_final_responses(self) -> None:
         manifest = Path("tools/tools.json").read_text(encoding="utf-8")
-        self.assertIn("get_current_datetime", display)
-        self.assertIn("responses", display)
-        self.assertIn("direct_response", manifest)
+        self.assertNotIn("direct_response", manifest)
+        for path in Path("extensions").glob("*/extension.json"):
+            content = path.read_text(encoding="utf-8")
+            self.assertNotIn("display_templates", content)
 
     def test_duckduckgo_result_parser_extracts_results(self) -> None:
         html = (
@@ -435,6 +415,11 @@ class ToolRegistryTests(unittest.TestCase):
                 playlists = entertainment_playlist({"operation": "list"})
                 self.assertIn("roadtrip", playlists["summary"])
                 self.assertIn("Haryanvi Desi Track", playlists["summary"])
+                default_play = entertainment_playlist({"operation": "play"})
+                self.assertIn(track_id, default_play["queue"])
+                self.assertEqual(default_play["tracks"][0]["title"], "Haryanvi Desi Track")
+                alias_play = entertainment_playlist({"operation": "play", "playlist": "my saved playlist"})
+                self.assertIn(track_id, alias_play["queue"])
 
                 status = entertainment_status({})
                 self.assertIn("local tracks", status["summary"])
@@ -455,6 +440,70 @@ class ToolRegistryTests(unittest.TestCase):
 
                 self.assertEqual(result["config"]["search_limit"], 7)
                 self.assertIn("Haryanvi songs", config_path.read_text(encoding="utf-8"))
+
+    def test_productivity_agent_builds_gmail_and_calendar_links_from_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_PRODUCTIVITY_CONFIG": str(config_path),
+                    "JARVIS_PRODUCTIVITY_DRY_RUN": "true",
+                },
+                clear=False,
+            ):
+                status = productivity_status({})
+                self.assertIn("github", status)
+                gmail = gmail_manage({"operation": "compose", "to": "krish@example.com", "subject": "Hello Jarvis", "body": "Ship it"})
+                calendar = calendar_manage(
+                    {
+                        "operation": "create_event",
+                        "title": "Jarvis QA",
+                        "details": "Live assistant test",
+                        "start": "20260510T090000",
+                        "end": "20260510T093000",
+                    }
+                )
+
+        self.assertIn("krish%40example.com", gmail["url"])
+        self.assertFalse(gmail["opened"])
+        self.assertIn("Jarvis%20QA", calendar["url"])
+        self.assertIn("20260510T090000%2F20260510T093000", calendar["url"])
+
+    def test_productivity_config_updates_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                result = productivity_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "github": {"default_repo": "akyourowngames/A.N.K.I.T.A"},
+                            "dry_run": True,
+                        },
+                    }
+                )
+
+        self.assertEqual(result["config"]["github"]["default_repo"], "akyourowngames/A.N.K.I.T.A")
+        self.assertTrue(result["config"]["dry_run"])
+
+    def test_github_manage_uses_gh_cli_without_shell(self) -> None:
+        completed = subprocess.CompletedProcess(
+            ["gh", "repo", "view"],
+            0,
+            stdout='{"nameWithOwner":"akyourowngames/A.N.K.I.T.A"}',
+            stderr="",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                with patch("tools.productivity_agent.subprocess.run", return_value=completed) as run_call:
+                    result = github_manage({"operation": "repo_view", "repo": "akyourowngames/A.N.K.I.T.A"})
+
+        self.assertEqual(result["data"]["nameWithOwner"], "akyourowngames/A.N.K.I.T.A")
+        called_args = run_call.call_args.args[0]
+        self.assertEqual(called_args[:3], ["gh", "repo", "view"])
+        self.assertIn("--repo", called_args)
 
     def test_vector_memory_indexes_and_searches_with_cached_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -600,7 +649,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("Grounded local results:", client)
 
     def test_tool_results_prompt_includes_display_name_context(self) -> None:
-        prompt = tool_results_prompt([], "what is my name", "", "Krish")
+        prompt = tool_results_prompt([], "what is my name", "Krish")
         self.assertIn("Current user's display name:", prompt)
         self.assertIn("Krish", prompt)
         self.assertNotIn("{user_name}", prompt)
@@ -614,11 +663,20 @@ class ToolRegistryTests(unittest.TestCase):
             }
         ]
 
-        prompt = tool_results_prompt(results, "show me playlist", "Playlists:\ndefault: 1 track(s) - License Ka Asla", "Krish")
+        prompt = tool_results_prompt(results, "show me playlist", "Krish")
 
         self.assertIn("License Ka Asla", prompt)
         self.assertNotIn("entertainment_playlist", prompt)
+        self.assertNotIn("Clean tool summaries", prompt)
         self.assertEqual(public_tool_results(results)[0]["result_index"], 1)
+
+    def test_public_tool_results_strip_internal_tool_field(self) -> None:
+        payload = {"ok": True, "tool": "get_current_datetime", "result": {"date": "2026-05-09"}}
+
+        public = public_result_payload(payload)
+
+        self.assertNotIn("tool", public)
+        self.assertEqual(public["result"]["date"], "2026-05-09")
 
     def test_chat_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
@@ -789,12 +847,13 @@ class ToolRegistryTests(unittest.TestCase):
                     "jarvis_nim.collect_tool_requests",
                     return_value=[{"name": "calculate", "parameters": {"expression": "2 + 2"}}],
                 ):
-                    output = io.StringIO()
-                    with contextlib.redirect_stdout(output):
-                        reply = chat_with_native_streaming_tools(config, messages, registry)
+                    with patch("jarvis_nim.final_chat_response", return_value="It is 4.") as final_response:
+                        output = io.StringIO()
+                        with contextlib.redirect_stdout(output):
+                            reply = chat_with_native_streaming_tools(config, messages, registry)
 
-        self.assertEqual(reply, "4")
-        self.assertIn("4", output.getvalue())
+        self.assertEqual(reply, "It is 4.")
+        final_response.assert_called_once()
         self.assertNotIn("I can do that", output.getvalue())
 
     def test_native_stream_default_no_tool_does_not_wait_for_planner(self) -> None:

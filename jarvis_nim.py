@@ -194,13 +194,7 @@ def answer_with_tool_requests(
     registry: Any,
     requests: list[dict[str, Any]],
 ) -> str:
-    results, direct_responses = execute_tool_requests(registry, requests)
-
-    if len(results) == 1 and len(direct_responses) == 1:
-        reply = "\n".join(direct_responses)
-        if config.stream:
-            print(reply)
-        return reply
+    results = execute_tool_requests(registry, requests)
 
     working_messages.append(
         {
@@ -208,7 +202,6 @@ def answer_with_tool_requests(
             "content": tool_results_prompt(
                 results,
                 latest_user_text(working_messages),
-                "\n".join(direct_responses),
                 config.user_name,
             ),
         }
@@ -216,17 +209,13 @@ def answer_with_tool_requests(
     return final_chat_response(config, working_messages)
 
 
-def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[str]]:
+def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
     results = []
-    direct_responses = []
     for request in requests:
         result = registry.execute(request["name"], request["parameters"])
         result_payload = json.loads(result)
         results.append({"name": request["name"], "parameters": request["parameters"], "result": result_payload})
-        direct_response = registry.direct_response(request["name"], result_payload)
-        if direct_response:
-            direct_responses.append(direct_response)
-    return results, direct_responses
+    return results
 
 
 def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
@@ -287,7 +276,6 @@ def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]],
     working_messages = [dict(message) for message in messages]
     original_user_message = latest_user_text(working_messages)
     all_results: list[dict[str, Any]] = []
-    all_direct_responses: list[str] = []
     seen_requests: set[str] = set()
 
     for _round_index in range(max(1, config.max_tool_rounds)):
@@ -311,26 +299,14 @@ def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]],
         if not new_requests:
             break
 
-        results, direct_responses = execute_tool_requests(registry, new_requests)
-        if (
-            not all_results
-            and env_bool("NIM_DIRECT_SINGLE_TOOL_RESULT", True)
-            and len(results) == 1
-            and len(direct_responses) == 1
-        ):
-            reply = "\n".join(direct_responses)
-            if config.stream:
-                print(reply)
-            return reply
+        results = execute_tool_requests(registry, new_requests)
         all_results.extend(results)
-        all_direct_responses.extend(direct_responses)
         working_messages.append(
             {
                 "role": "user",
                 "content": tool_results_prompt(
                     all_results,
                     original_user_message,
-                    "\n".join(all_direct_responses),
                     config.user_name,
                 ),
             }
@@ -764,14 +740,12 @@ def contains_unresolved_placeholder(value: Any) -> bool:
 def tool_results_prompt(
     results: list[dict[str, Any]],
     latest_user_message: str = "",
-    display_results: str = "",
     user_name: str = "",
 ) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_RESULTS_PROMPT_FILE", "prompts/tool_results.txt")))
     replacements = {
         "{latest_user_message}": latest_user_message,
         "{tool_results}": json.dumps(public_tool_results(results), ensure_ascii=True),
-        "{tool_display_results}": display_results,
         "{user_name}": user_name,
     }
     for marker, value in replacements.items():
@@ -788,10 +762,23 @@ def public_tool_results(results: list[dict[str, Any]]) -> list[dict[str, Any]]:
             {
                 "result_index": index,
                 "parameters": entry.get("parameters", {}),
-                "result": entry.get("result", {}),
+                "result": public_result_payload(entry.get("result", {})),
             }
         )
     return public_results
+
+
+def public_result_payload(payload: Any) -> Any:
+    if isinstance(payload, dict):
+        public: dict[str, Any] = {}
+        for key, value in payload.items():
+            if key == "tool":
+                continue
+            public[key] = public_result_payload(value)
+        return public
+    if isinstance(payload, list):
+        return [public_result_payload(item) for item in payload]
+    return payload
 
 
 def final_chat_response(config: JarvisConfig, messages: list[dict[str, Any]]) -> str:
