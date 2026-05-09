@@ -1,5 +1,5 @@
 {
-  "default_profile": "balanced_long_context",
+  "default_profile": "instant_long_context",
   "profiles": [
     {
       "name": "best_runtime_latency",
@@ -12,20 +12,26 @@
       "name": "instant_long_context",
       "model": "meta/llama-3.2-3b-instruct",
       "context_tokens": 128000,
-      "notes": "Small current default with 128k context. Good for lowest latency simple chat.",
+      "notes": "Small current default with 128k context. Live benchmark on 2026-05-09 had the fastest useful stream result among the bundled chat profiles: 0.326s first token and 0.338s total for a tiny reply.",
       "source": "https://build.nvidia.com/meta/llama-3.2-3b-instruct/modelcard"
     },
     {
       "name": "balanced_long_context",
       "model": "meta/llama-3.1-8b-instruct",
       "context_tokens": 128000,
-      "notes": "8B long-context option. Live discovery benchmark across 136 NVIDIA /models entries on this workspace had the fastest useful native stream result: 0.271s first token and 0.320s total.",
+      "notes": "8B long-context option. It was fast in an older discovery benchmark, but timed out in the 2026-05-09 bundled profile stream check and is no longer the default.",
       "source": "https://build.nvidia.com/meta/llama-3_1-8b-instruct/systemcard"
+    },
+    {
+      "name": "tool_planner_latency",
+      "model": "mistralai/mistral-nemotron",
+      "notes": "Chosen for compact JSON tool planning on 2026-05-09. Live Jarvis probes stayed grounded on multi-tool prompts with about 1.4-1.8s first content.",
+      "source": "NVIDIA /models endpoint"
     },
     {
       "name": "memory_json_latency",
       "model": "nvidia/nemotron-mini-4b-instruct",
-      "notes": "Fastest useful JSON completion in live discovery benchmark: 0.290s total. Used for background memory extraction through NVIDIA_MEMORY_MODEL.",
+      "notes": "Small fast JSON model used for background memory extraction. It is fast, but compact planner live tests on 2026-05-09 were less grounded than mistral-nemotron.",
       "source": "NVIDIA /models endpoint"
     },
     {

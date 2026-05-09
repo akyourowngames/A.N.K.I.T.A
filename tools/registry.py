@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -215,7 +216,7 @@ def planner_tool_schema(tool: Tool) -> dict[str, Any]:
     required = tool.parameters.get("required")
     compact: dict[str, Any] = {
         "name": tool.name,
-        "description": tool.description,
+        "description": clip_text(tool.description, env_int("TOOL_PLANNER_DESCRIPTION_CHARS", 120)),
         "parameters": {},
     }
     if isinstance(required, list):
@@ -231,13 +232,35 @@ def planner_tool_schema(tool: Tool) -> dict[str, Any]:
             enum_values = value.get("enum")
             if isinstance(value_type, str):
                 field["type"] = value_type
-            if isinstance(description, str):
-                field["description"] = description
+            if env_bool("TOOL_PLANNER_FIELD_DESCRIPTIONS", False) and isinstance(description, str):
+                field["description"] = clip_text(description, env_int("TOOL_PLANNER_FIELD_DESCRIPTION_CHARS", 80))
             if isinstance(enum_values, list):
                 field["enum"] = enum_values
             compact_properties[key] = field
         compact["parameters"] = compact_properties
     return compact
+
+
+def env_int(name: str, fallback: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return fallback
+    try:
+        return int(value)
+    except ValueError:
+        return fallback
+
+
+def env_bool(name: str, fallback: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return fallback
+    return value in {"1", "true", "yes", "on"}
+
+
+def clip_text(text: str, limit: int) -> str:
+    clean_limit = max(20, limit)
+    return text if len(text) <= clean_limit else text[:clean_limit].rstrip()
 
 
 def require_manifest_text(data: dict[str, Any], key: str) -> str:

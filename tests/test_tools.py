@@ -8,11 +8,12 @@ import platform
 import sys
 import tempfile
 import urllib.error
+import urllib.request
 from pathlib import Path
 from unittest.mock import patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, final_chat_response, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
@@ -470,6 +471,12 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Local tool results:", prompt)
         self.assertNotIn("Local tool results:", client)
 
+    def test_tool_results_prompt_includes_display_name_context(self) -> None:
+        prompt = tool_results_prompt([], "what is my name", "", "Krish")
+        self.assertIn("Current user's display name:", prompt)
+        self.assertIn("Krish", prompt)
+        self.assertNotIn("{user_name}", prompt)
+
     def test_chat_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
         prompt = Path("prompts/chat_system.txt").read_text(encoding="utf-8")
@@ -633,18 +640,91 @@ class ToolRegistryTests(unittest.TestCase):
         )
         registry = discover_tools()
         messages = [{"role": "user", "content": "calculate 2+2"}]
-        with patch("jarvis_nim.collect_native_stream_tool_decision", return_value=([], "I can do that.")):
-            with patch(
-                "jarvis_nim.collect_tool_requests",
-                return_value=[{"name": "calculate", "parameters": {"expression": "2 + 2"}}],
-            ):
-                output = io.StringIO()
-                with contextlib.redirect_stdout(output):
-                    reply = chat_with_native_streaming_tools(config, messages, registry)
+        with patch.dict(os.environ, {"NIM_NATIVE_VERIFY_NO_TOOL": "true"}, clear=False):
+            with patch("jarvis_nim.collect_native_stream_tool_decision", return_value=([], "I can do that.")):
+                with patch(
+                    "jarvis_nim.collect_tool_requests",
+                    return_value=[{"name": "calculate", "parameters": {"expression": "2 + 2"}}],
+                ):
+                    output = io.StringIO()
+                    with contextlib.redirect_stdout(output):
+                        reply = chat_with_native_streaming_tools(config, messages, registry)
 
         self.assertEqual(reply, "4")
         self.assertIn("4", output.getvalue())
         self.assertNotIn("I can do that", output.getvalue())
+
+    def test_native_stream_default_no_tool_does_not_wait_for_planner(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=True,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="native_stream",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        messages = [{"role": "user", "content": "hi"}]
+        with patch.dict(os.environ, {"NIM_NATIVE_VERIFY_NO_TOOL": "false"}, clear=False):
+            with patch("jarvis_nim.collect_native_stream_tool_decision", return_value=([], "Hi Krish.")):
+                with patch("jarvis_nim.collect_tool_requests") as planner:
+                    reply = chat_with_native_streaming_tools(config, messages, registry)
+
+        self.assertEqual(reply, "Hi Krish.")
+        planner.assert_not_called()
+
+    def test_nim_retry_uses_retry_after_for_throttle(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=True,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=1,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        headers = {"Retry-After": "0"}
+        throttle = urllib.error.HTTPError(
+            "https://example.test/v1/chat/completions",
+            429,
+            "Too Many Requests",
+            headers,
+            io.BytesIO(b"slow down"),
+        )
+        request = urllib.request.Request("https://example.test/v1/chat/completions")
+        response = FakeHttpResponse({"ok": True})
+        with patch("jarvis_nim.urllib.request.urlopen", side_effect=[throttle, response]) as open_call:
+            result = open_url_with_retries(config, request)
+
+        self.assertIs(result, response)
+        self.assertEqual(open_call.call_count, 2)
 
 
 class FakeHttpResponse:

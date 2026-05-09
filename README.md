@@ -93,6 +93,8 @@ Optional:
 - `MAX_TOKENS`
 - `TOOL_MAX_ROUNDS`
 - `TOOL_PLANNER_MAX_TOKENS`
+- `TOOL_PLANNER_DESCRIPTION_CHARS`
+- `TOOL_PLANNER_FIELD_DESCRIPTIONS`
 - `NIM_TOOL_MODE`
 - `NIM_PARALLEL_TOOL_CALLS`
 - `NIM_NATIVE_PLANNER_CONFIRM`
@@ -142,7 +144,7 @@ Model profiles live in `config/nim_models.json`; the benchmark script reads that
 
 The benchmark can also discover model IDs directly from NVIDIA's `/models` endpoint and writes the latest live timing report to `config/nim_benchmark_results.json`.
 
-For low latency, keep `NIM_STREAM_MODE=native`. `NIM_RETRY_ATTEMPTS` can stay low for speed or be raised slightly when the provider is returning temporary rate-limit errors.
+For low latency, keep `NVIDIA_MODEL=meta/llama-3.2-3b-instruct`, `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`, `NIM_STREAM_MODE=native`, and `NIM_TOOL_MODE=json`. The 2026-05-09 live profile benchmark found `meta/llama-3.1-8b-instruct` timing out, while `meta/llama-3.2-3b-instruct` streamed a tiny reply with a 0.326s first token. Live planner probes picked `mistralai/mistral-nemotron` because it kept the tool contract grounded with about 1.4-1.8s interactive first content. `NIM_RETRY_ATTEMPTS` can stay low for speed or be raised slightly when the provider is returning temporary rate-limit errors.
 
 `JARVIS_AUTO_TOOLS` controls whether Jarvis plans local tool calls before answering. Keep it `true` when you want tools such as `run_terminal` available in chat. Set it to `false` for pure no-tool conversation.
 
@@ -150,9 +152,11 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_STREAM_MODE` defaults to `native`: Jarvis reads NVIDIA NIM server-sent events and prints tokens as they arrive. Set `NIM_STREAM_MODE=synthetic` only if a provider endpoint is having temporary SSE trouble and you want local chunk printing after a JSON completion.
 
-`NIM_TOOL_MODE=native_stream` is the current low-latency default for auto tools. Jarvis sends one streaming request with the registered tool schemas, so normal no-tool chat starts printing tokens immediately instead of waiting for a separate planner call first. If the model emits tool calls, Jarvis executes the registered tools and then answers from the grounded results.
+`NIM_TOOL_MODE=json` is the current low-latency default for auto tools. Jarvis asks the compact planner for tool calls first, then streams the final NIM response without attaching the whole native tool schema wall to casual chat.
 
-`NIM_TOOL_MODE=json` is still available as a compact prompt-protocol fallback through `prompts/tool_protocol.txt`.
+`TOOL_PLANNER_DESCRIPTION_CHARS` and `TOOL_PLANNER_FIELD_DESCRIPTIONS` control how much manifest schema text is sent to the compact planner. The default keeps schemas small enough for the fast tool model while preserving tool names, required fields, types, and enums.
+
+`NIM_TOOL_MODE=native_stream` is still available for providers that handle many native tool schemas quickly. On the current 2026-05-09 NIM route it was slower than compact JSON planning for this assistant.
 
 `NIM_TOOL_MODE=native` is still available for non-streaming OpenAI-compatible `tool_calls`.
 
@@ -160,7 +164,7 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_NATIVE_PLANNER_CONFIRM=true` asks the compact JSON planner to verify the tool set after native mode has already selected at least one tool. This protects multi-tool requests without replacing native tool calling.
 
-`NIM_NATIVE_VERIFY_NO_TOOL=true` asks the compact JSON planner to re-check a native-stream no-tool answer before it is shown. This prevents the model from promising local actions or current facts without actually using tools. Turn it off only when you want the absolute lowest latency and can accept native tool misses.
+`NIM_NATIVE_VERIFY_NO_TOOL=false` is the low-latency streaming default. Native no-tool replies print as tokens arrive. Set it to `true` only when you want an extra planner check before showing no-tool replies, accepting slower first-token time.
 
 `NIM_DIRECT_SINGLE_TOOL_RESULT=true` returns a clean display template immediately when one grounded tool fully supplies the useful result. Multi-tool requests still go through final answer composition.
 

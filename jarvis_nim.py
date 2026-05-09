@@ -209,6 +209,7 @@ def answer_with_tool_requests(
                 results,
                 latest_user_text(working_messages),
                 "\n".join(direct_responses),
+                config.user_name,
             ),
         }
     )
@@ -330,6 +331,7 @@ def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]],
                     all_results,
                     original_user_message,
                     "\n".join(all_direct_responses),
+                    config.user_name,
                 ),
             }
         )
@@ -339,15 +341,22 @@ def chat_with_native_tools(config: JarvisConfig, messages: list[dict[str, Any]],
 
 def chat_with_native_streaming_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
     working_messages = [dict(message) for message in messages]
-    requests, streamed_reply = collect_native_stream_tool_decision(config, working_messages, registry)
+    verify_no_tool = env_bool("NIM_NATIVE_VERIFY_NO_TOOL", False)
+    emit_no_tool_reply = config.stream and not verify_no_tool
+    requests, streamed_reply = collect_native_stream_tool_decision(
+        config,
+        working_messages,
+        registry,
+        emit_output=emit_no_tool_reply,
+    )
     if not requests:
-        if env_bool("NIM_NATIVE_VERIFY_NO_TOOL", True):
+        if verify_no_tool:
             planned_requests = collect_tool_requests(config, working_messages, registry)
             if planned_requests:
                 return answer_with_tool_requests(config, working_messages, registry, planned_requests)
         if not streamed_reply:
             return chat_with_json_tools(config, working_messages, registry)
-        if config.stream:
+        if config.stream and not emit_no_tool_reply:
             print(streamed_reply)
         return streamed_reply
 
@@ -402,6 +411,7 @@ def collect_native_stream_tool_decision(
     config: JarvisConfig,
     messages: list[dict[str, Any]],
     registry: Any,
+    emit_output: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
     payload = {
         "model": config.model,
@@ -424,12 +434,13 @@ def collect_native_stream_tool_decision(
         method="POST",
     )
     with open_url_with_retries(config, request) as response:
-        return read_native_tool_stream(response, registry, emit_output=False)
+        return read_native_tool_stream(response, registry, emit_output=emit_output)
 
 
 def read_native_tool_stream(response: Any, registry: Any, emit_output: bool = True) -> tuple[list[dict[str, Any]], str]:
     full_text = ""
-    buffered_text = ""
+    pending_text = ""
+    streaming_plain_text = False
     tool_calls: dict[int, dict[str, str]] = {}
     for raw_line in response:
         line = raw_line.decode("utf-8", errors="replace").strip()
@@ -454,23 +465,39 @@ def read_native_tool_stream(response: Any, registry: Any, emit_output: bool = Tr
         content = delta.get("content")
         if isinstance(content, str) and content:
             full_text += content
-            buffered_text += content
+            if emit_output:
+                if streaming_plain_text:
+                    print(content, end="", flush=True)
+                else:
+                    pending_text += content
+                    if should_hold_pending_content(pending_text):
+                        continue
+                    print(pending_text, end="", flush=True)
+                    pending_text = ""
+                    streaming_plain_text = True
 
         merge_tool_call_deltas(tool_calls, delta.get("tool_calls"))
 
     native_requests = native_tool_requests_from_deltas(tool_calls, registry)
     if native_requests:
         return native_requests, ""
-    if buffered_text:
-        requests = parse_tool_requests(buffered_text, registry)
+    if full_text:
+        requests = parse_tool_requests(full_text, registry)
         if requests:
             return requests, ""
-        if is_json_shaped_text(buffered_text):
+        if is_json_shaped_text(full_text):
             return [], ""
         if emit_output:
-            print(buffered_text, end="", flush=True)
-            print()
+            if pending_text:
+                print(pending_text, end="", flush=True)
+            if streaming_plain_text or pending_text:
+                print()
     return [], full_text.strip()
+
+
+def should_hold_pending_content(text: str) -> bool:
+    stripped = text.lstrip()
+    return not stripped or stripped[0] in "{["
 
 
 def is_json_shaped_text(text: str) -> bool:
@@ -569,7 +596,7 @@ def parse_native_arguments(arguments: Any) -> dict[str, Any]:
 def json_tool_protocol(registry: Any) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_PROTOCOL_FILE", "prompts/tool_protocol.txt")))
     tools = registry.planner_tools() if hasattr(registry, "planner_tools") else registry.openai_tools()
-    return template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True))
+    return template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True, separators=(",", ":")))
 
 
 def tool_planner_model(config: JarvisConfig) -> str:
@@ -728,12 +755,14 @@ def tool_results_prompt(
     results: list[dict[str, Any]],
     latest_user_message: str = "",
     display_results: str = "",
+    user_name: str = "",
 ) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_RESULTS_PROMPT_FILE", "prompts/tool_results.txt")))
     replacements = {
         "{latest_user_message}": latest_user_message,
         "{tool_results}": json.dumps(results, ensure_ascii=True),
         "{tool_display_results}": display_results,
+        "{user_name}": user_name,
     }
     for marker, value in replacements.items():
         template = template.replace(marker, value)
@@ -808,6 +837,7 @@ def open_url_with_retries(config: JarvisConfig, request: urllib.request.Request)
     last_error: Exception | None = None
 
     for attempt in range(attempts):
+        sleep_seconds = config.retry_delay_seconds
         try:
             return urllib.request.urlopen(request, timeout=config.timeout_seconds)
         except urllib.error.HTTPError as error:
@@ -815,6 +845,7 @@ def open_url_with_retries(config: JarvisConfig, request: urllib.request.Request)
             last_error = NimChatError(f"NIM request failed: {error.code} {error.reason}\n{detail}")
             if not should_retry_http(error.code) or attempt + 1 >= attempts:
                 raise last_error from error
+            sleep_seconds = retry_delay_seconds(error, config.retry_delay_seconds, attempt)
         except urllib.error.URLError as error:
             last_error = NimChatError(f"NIM request failed: {error.reason}")
             if attempt + 1 >= attempts:
@@ -824,8 +855,8 @@ def open_url_with_retries(config: JarvisConfig, request: urllib.request.Request)
             if attempt + 1 >= attempts:
                 raise last_error from error
 
-        if config.retry_delay_seconds > 0:
-            time.sleep(config.retry_delay_seconds)
+        if sleep_seconds > 0:
+            time.sleep(sleep_seconds)
 
     if last_error is not None:
         raise last_error
@@ -834,6 +865,17 @@ def open_url_with_retries(config: JarvisConfig, request: urllib.request.Request)
 
 def should_retry_http(status: int) -> bool:
     return status in {429, 500, 502, 503, 504}
+
+
+def retry_delay_seconds(error: urllib.error.HTTPError, fallback_seconds: float, attempt: int) -> float:
+    retry_after = error.headers.get("Retry-After") if error.headers else ""
+    try:
+        parsed = float(retry_after)
+    except (TypeError, ValueError):
+        parsed = 0.0
+    if parsed > 0:
+        return parsed
+    return max(0.0, fallback_seconds * (attempt + 1))
 
 
 def stream_token(data: dict[str, Any]) -> str:
