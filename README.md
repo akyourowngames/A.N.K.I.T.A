@@ -50,6 +50,20 @@ Run the live Jarvis behavior checks:
 python scripts\verify_jarvis_live.py
 ```
 
+Check voice wiring and microphones:
+
+```powershell
+python main.py --check-voice
+python main.py --list-mics
+```
+
+Run live NVIDIA voice checks:
+
+```powershell
+python main.py --voice-say "Jarvis voice online."
+python main.py --voice-roundtrip "Jarvis voice online for Krish"
+```
+
 Discover and benchmark the live NVIDIA model catalog:
 
 ```powershell
@@ -137,6 +151,34 @@ Optional:
 - `JARVIS_SKILLS_DIR`
 - `JARVIS_SKILL_CONTEXT_CHARS`
 - `JARVIS_WEB_SEARCH_URL`
+- `VOICE_ENABLED`
+- `VOICE_SPACE_TRIGGER`
+- `STT_ENABLED`
+- `STT_PROVIDER`
+- `STT_NVIDIA_SERVER`
+- `STT_NVIDIA_FUNCTION_ID`
+- `STT_NVIDIA_LANGUAGE_CODE`
+- `STT_NVIDIA_STREAMING`
+- `STT_NVIDIA_STREAMING_CHUNK_BYTES`
+- `STT_INPUT_DEVICE`
+- `STT_SAMPLE_RATE`
+- `STT_START_TIMEOUT_SECONDS`
+- `STT_LISTEN_MAX_SECONDS`
+- `STT_SILENCE_SECONDS`
+- `TTS_ENABLED`
+- `TTS_PROVIDER`
+- `TTS_VOICE`
+- `TTS_RATE`
+- `TTS_VOLUME`
+- `TTS_PITCH`
+- `TTS_NVIDIA_SERVER`
+- `TTS_NVIDIA_FUNCTION_ID`
+- `TTS_NVIDIA_LANGUAGE_CODE`
+- `TTS_NVIDIA_STREAMING`
+- `TTS_NVIDIA_SSML`
+- `TTS_VOICE_EFFECT`
+- `TTS_PLAYBACK_SPEED`
+- `TTS_SPEAK_ONESHOT`
 
 The assistant does not invent a model if `NVIDIA_MODEL` is missing. The current `.env` decides which NIM model is used.
 
@@ -167,6 +209,14 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 `NIM_NATIVE_VERIFY_NO_TOOL=false` is the low-latency streaming default. Native no-tool replies print as tokens arrive. Set it to `true` only when you want an extra planner check before showing no-tool replies, accepting slower first-token time.
 
 `NIM_DIRECT_SINGLE_TOOL_RESULT=true` returns a clean display template immediately when one grounded tool fully supplies the useful result. Multi-tool requests still go through final answer composition.
+
+## Voice
+
+Interactive chat supports voice without changing the tool registry. Press Space on an empty prompt to record one utterance from the configured microphone. Typed spaces after any character stay normal text input.
+
+STT uses NVIDIA Riva/NVCF streaming recognition by default because the current managed ASR endpoint accepts streaming calls while rejecting offline recognition for this route. TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured Ray voice, SSML rate/pitch/volume controls, and a local heavy/darker playback effect.
+
+TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path and the next prompt is not blocked while Jarvis speaks.
 
 ## Tools
 

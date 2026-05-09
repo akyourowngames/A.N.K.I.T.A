@@ -10,7 +10,7 @@ import tempfile
 import urllib.error
 import urllib.request
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
 from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
@@ -31,6 +31,14 @@ from tools.utility_tools import compare_text, transform_text
 from tools.web_tools import document_extract_text, parse_duckduckgo_results, readable_text, summarize_readable_text
 from tools.workspace_tools import workspace_inspect
 from vector_memory import VectorMemoryConfig, build_vector_index, embed_texts, load_vector_memory_context, vector_search
+from voice_system import (
+    VoiceConfig,
+    normalized_energy_threshold,
+    output_sample_rate,
+    read_text_or_voice,
+    transcript_from_asr_response,
+    tts_input_text,
+)
 
 
 class ToolRegistryTests(unittest.TestCase):
@@ -725,6 +733,106 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertIs(result, response)
         self.assertEqual(open_call.call_count, 2)
+
+
+class VoiceSystemTests(unittest.TestCase):
+    def test_voice_config_uses_nvidia_defaults(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "STT_NVIDIA_FUNCTION_ID": "asr-id",
+                "TTS_NVIDIA_FUNCTION_ID": "tts-id",
+            },
+            clear=True,
+        ):
+            config = VoiceConfig.from_env()
+
+        self.assertTrue(config.space_trigger)
+        self.assertTrue(config.stt_enabled)
+        self.assertEqual(config.stt_provider, "nvidia")
+        self.assertTrue(config.tts_ssml)
+        self.assertEqual(config.tts_provider, "nvidia")
+        self.assertIn("Ray", config.tts_voice)
+
+    def test_space_on_empty_prompt_calls_voice_listener(self) -> None:
+        config = VoiceConfig.from_env()
+        listener = Mock(return_value="hello Jarvis")
+        chars = iter([" "])
+        output = io.StringIO()
+
+        text = read_text_or_voice(
+            "Krish: ",
+            config,
+            listener=listener,
+            char_reader=lambda: next(chars),
+            writer=output,
+        )
+
+        self.assertEqual(text, "hello Jarvis")
+        listener.assert_called_once()
+        self.assertIn("[listening...]", output.getvalue())
+        self.assertIn("hello Jarvis", output.getvalue())
+
+    def test_space_after_typed_text_stays_literal(self) -> None:
+        config = VoiceConfig.from_env()
+        listener = Mock(return_value="voice should not run")
+        chars = iter(["h", "i", " ", "b", "u", "d", "\r"])
+        output = io.StringIO()
+
+        text = read_text_or_voice(
+            "Krish: ",
+            config,
+            listener=listener,
+            char_reader=lambda: next(chars),
+            writer=output,
+        )
+
+        self.assertEqual(text, "hi bud")
+        listener.assert_not_called()
+
+    def test_tts_input_uses_configured_voice_style(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "TTS_NVIDIA_SSML": "true",
+                "TTS_RATE": "+24%",
+                "TTS_PITCH": "-8Hz",
+                "TTS_VOLUME": "+80%",
+            },
+            clear=False,
+        ):
+            config = VoiceConfig.from_env()
+
+        text = tts_input_text(config, "Jarvis <online>")
+
+        self.assertIn("<speak>", text)
+        self.assertIn('rate="124%"', text)
+        self.assertIn('pitch="-8Hz"', text)
+        self.assertIn('volume="+4.8dB"', text)
+        self.assertIn("Jarvis &lt;online&gt;", text)
+
+    def test_voice_audio_threshold_and_playback_speed_are_config_driven(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "STT_ENERGY_THRESHOLD": "35",
+                "TTS_PLAYBACK_SPEED": "1.10",
+                "TTS_HEAVY_PITCH_FACTOR": "1.05",
+            },
+            clear=False,
+        ):
+            config = VoiceConfig.from_env()
+
+        self.assertAlmostEqual(normalized_energy_threshold(35), 35 / 32768)
+        self.assertGreater(output_sample_rate(config), config.tts_sample_rate)
+
+    def test_asr_response_transcript_is_assembled_from_alternatives(self) -> None:
+        alternative = type("Alternative", (), {"transcript": "hello Krish"})()
+        result = type("Result", (), {"alternatives": [alternative]})()
+        response = type("Response", (), {"results": [result]})()
+
+        self.assertEqual(transcript_from_asr_response(response), "hello Krish")
 
 
 class FakeHttpResponse:
