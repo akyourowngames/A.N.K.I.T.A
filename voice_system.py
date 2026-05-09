@@ -523,7 +523,7 @@ def listen_once(config: VoiceConfig) -> str:
 
 
 def tts_input_text(config: VoiceConfig, text: str) -> str:
-    clean_text = text.strip()
+    clean_text = speakable_text(text)
     if not clean_text or not config.tts_ssml:
         return clean_text
     volume = ssml_volume_value(config.tts_volume)
@@ -532,9 +532,42 @@ def tts_input_text(config: VoiceConfig, text: str) -> str:
         f'rate="{html.escape(ssml_rate_value(config.tts_rate), quote=True)}" '
         f'pitch="{html.escape(config.tts_pitch, quote=True)}" '
         f'volume="{html.escape(volume, quote=True)}">'
-        f"{html.escape(clean_text)}"
+        f"{escape_ssml_text(clean_text)}"
         "</prosody></speak>"
     )
+
+
+def speakable_text(text: str) -> str:
+    lines: list[str] = []
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if is_timing_line(line):
+            continue
+        line = strip_markdown_speech_noise(line)
+        if line:
+            lines.append(line)
+    return " ".join(lines).strip()
+
+
+def is_timing_line(line: str) -> bool:
+    compact = "".join(line.lower().split())
+    return compact.startswith("first=") and "total=" in compact
+
+
+def strip_markdown_speech_noise(line: str) -> str:
+    while line.startswith("#"):
+        line = line[1:].strip()
+    for marker in ("- ", "* ", "> "):
+        if line.startswith(marker):
+            line = line[len(marker) :].strip()
+    return line.replace("`", "").replace("#", "").strip()
+
+
+def escape_ssml_text(text: str) -> str:
+    escaped = html.escape(text, quote=False)
+    return escaped.replace("&apos;", "'").replace("&#x27;", "'")
 
 
 def ssml_rate_value(value: str) -> str:
@@ -658,8 +691,6 @@ def voice_catalog_text(config: VoiceConfig, locale: str = "EN-US") -> str:
 def output_sample_rate(config: VoiceConfig) -> int:
     speed = config.tts_playback_speed if config.tts_playback_speed > 0 else 1.0
     rate = config.tts_sample_rate * speed
-    if config.tts_voice_effect == "heavy" and config.tts_heavy_pitch_factor > 0:
-        rate = rate / config.tts_heavy_pitch_factor
     return max(8000, int(rate))
 
 
@@ -669,7 +700,7 @@ def darken_pcm(config: VoiceConfig, samples):
 
     import numpy as np
 
-    darkness = min(0.95, max(0.0, config.tts_heavy_darkness))
+    darkness = min(0.45, max(0.0, config.tts_heavy_darkness))
     blend = max(0.05, 1.0 - darkness)
     source = samples.astype(np.float32)
     shaped = np.empty_like(source)
@@ -701,7 +732,7 @@ def play_pcm_audio(config: VoiceConfig, audio_bytes: bytes) -> None:
 def speak_text_blocking(config: VoiceConfig, text: str) -> None:
     if not config.tts_enabled:
         return
-    clean_text = text.strip()
+    clean_text = speakable_text(text)
     if not clean_text:
         return
     if config.tts_streaming:

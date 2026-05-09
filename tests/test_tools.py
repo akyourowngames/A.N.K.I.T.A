@@ -42,6 +42,7 @@ from voice_system import (
     output_sample_rate,
     read_text_or_voice,
     speech_threshold,
+    speakable_text,
     transcript_from_asr_response,
     tts_input_text,
 )
@@ -760,7 +761,7 @@ class VoiceSystemTests(unittest.TestCase):
         self.assertTrue(config.tts_ssml)
         self.assertEqual(config.tts_provider, "nvidia")
         self.assertEqual(config.profile_name, "heavy_english_jarvis")
-        self.assertIn("Leo", config.tts_voice)
+        self.assertIn("Jason", config.tts_voice)
 
     def test_space_on_empty_prompt_calls_voice_listener(self) -> None:
         config = VoiceConfig.from_env()
@@ -818,6 +819,22 @@ class VoiceSystemTests(unittest.TestCase):
         self.assertIn('pitch="-8Hz"', text)
         self.assertIn('volume="+4.8dB"', text)
         self.assertIn("Jarvis &lt;online&gt;", text)
+
+    def test_tts_input_does_not_make_apostrophes_spoken_as_hash_entities(self) -> None:
+        with patch.dict(os.environ, {"TTS_NVIDIA_SSML": "true"}, clear=False):
+            config = VoiceConfig.from_env()
+
+        text = tts_input_text(config, "How's your day? I'm online.")
+
+        self.assertIn("How's", text)
+        self.assertIn("I'm", text)
+        self.assertNotIn("&#x27;", text)
+        self.assertNotIn("&apos;", text)
+
+    def test_speakable_text_removes_timing_and_markdown_noise(self) -> None:
+        text = speakable_text("First=1.911s total=1.917s\n# Hello `Krish`")
+
+        self.assertEqual(text, "Hello Krish")
 
     def test_voice_audio_threshold_and_playback_speed_are_config_driven(self) -> None:
         with patch.dict(
