@@ -55,6 +55,8 @@ Check voice wiring and microphones:
 ```powershell
 python main.py --check-voice
 python main.py --list-mics
+python main.py --voice-levels
+python main.py --list-voices
 ```
 
 Run live NVIDIA voice checks:
@@ -153,6 +155,10 @@ Optional:
 - `JARVIS_WEB_SEARCH_URL`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
+- `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
+- `VOICE_LISTEN_AFTER_TTS_DELAY_SECONDS`
+- `JARVIS_VOICE_PROFILE_FILE`
+- `JARVIS_VOICE_PROFILE`
 - `STT_ENABLED`
 - `STT_PROVIDER`
 - `STT_NVIDIA_SERVER`
@@ -164,7 +170,13 @@ Optional:
 - `STT_SAMPLE_RATE`
 - `STT_START_TIMEOUT_SECONDS`
 - `STT_LISTEN_MAX_SECONDS`
-- `STT_SILENCE_SECONDS`
+- `STT_POST_SPEECH_SILENCE_SECONDS`
+- `STT_ENERGY_THRESHOLD`
+- `STT_MIN_SPEECH_RMS`
+- `STT_NOISE_SAMPLE_SECONDS`
+- `STT_NOISE_MULTIPLIER`
+- `STT_PREROLL_SECONDS`
+- `STT_INPUT_GAIN`
 - `TTS_ENABLED`
 - `TTS_PROVIDER`
 - `TTS_VOICE`
@@ -214,9 +226,11 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 Interactive chat supports voice without changing the tool registry. Press Space on an empty prompt to record one utterance from the configured microphone. Typed spaces after any character stay normal text input.
 
-STT uses NVIDIA Riva/NVCF streaming recognition by default because the current managed ASR endpoint accepts streaming calls while rejecting offline recognition for this route. TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured Ray voice, SSML rate/pitch/volume controls, and a local heavy/darker playback effect.
+STT uses NVIDIA Riva/NVCF streaming recognition by default because the current managed ASR endpoint accepts streaming calls while rejecting offline recognition for this route. Endpointing uses a local noise-floor threshold, preroll, and a short post-speech silence window so the mic stops after the user's sentence instead of waiting on room noise.
 
-TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path and the next prompt is not blocked while Jarvis speaks.
+TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile. Profiles live in `config/voice_profiles.json`, so the voice can be swapped without touching the chat loop. The default profile is `heavy_english_jarvis`, currently using `Magpie-Multilingual.EN-US.Leo.Calm`.
+
+TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path. If Space is pressed while Jarvis is still talking, the mic waits until speech output is idle plus a short cooldown before recording, which prevents Jarvis from listening to its own voice.
 
 ## Tools
 

@@ -7,6 +7,8 @@ import os
 import platform
 import sys
 import tempfile
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -33,9 +35,13 @@ from tools.workspace_tools import workspace_inspect
 from vector_memory import VectorMemoryConfig, build_vector_index, embed_texts, load_vector_memory_context, vector_search
 from voice_system import (
     VoiceConfig,
+    VoiceSpeaker,
+    listen_after_output_idle,
+    load_voice_profile,
     normalized_energy_threshold,
     output_sample_rate,
     read_text_or_voice,
+    speech_threshold,
     transcript_from_asr_response,
     tts_input_text,
 )
@@ -753,7 +759,8 @@ class VoiceSystemTests(unittest.TestCase):
         self.assertEqual(config.stt_provider, "nvidia")
         self.assertTrue(config.tts_ssml)
         self.assertEqual(config.tts_provider, "nvidia")
-        self.assertIn("Ray", config.tts_voice)
+        self.assertEqual(config.profile_name, "heavy_english_jarvis")
+        self.assertIn("Leo", config.tts_voice)
 
     def test_space_on_empty_prompt_calls_voice_listener(self) -> None:
         config = VoiceConfig.from_env()
@@ -826,6 +833,43 @@ class VoiceSystemTests(unittest.TestCase):
 
         self.assertAlmostEqual(normalized_energy_threshold(35), 35 / 32768)
         self.assertGreater(output_sample_rate(config), config.tts_sample_rate)
+
+    def test_voice_profile_can_be_changed_without_code_edits(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "voice_profiles.json"
+            path.write_text(
+                '{"default_profile":"ops","profiles":{"ops":{"tts_voice":"Magpie-Multilingual.EN-US.Jason.Calm","tts_playback_speed":1.03}}}',
+                encoding="utf-8",
+            )
+
+            name, profile = load_voice_profile(path, "")
+
+        self.assertEqual(name, "ops")
+        self.assertEqual(profile["tts_voice"], "Magpie-Multilingual.EN-US.Jason.Calm")
+
+    def test_noise_floor_raises_speech_threshold(self) -> None:
+        threshold = speech_threshold([0.018, 0.02, 0.022], 650 / 32768, 0.035, 2.4)
+
+        self.assertGreater(threshold, 0.04)
+
+    def test_listening_waits_for_speaker_idle_before_microphone(self) -> None:
+        config = VoiceConfig.from_env()
+        speaker = VoiceSpeaker(config)
+        called = []
+        speaker._idle.clear()
+
+        def release() -> None:
+            time.sleep(0.02)
+            speaker._idle.set()
+
+        threading.Thread(target=release, daemon=True).start()
+        with patch("voice_system.time.sleep", return_value=None) as sleep_call:
+            transcript = listen_after_output_idle(config, speaker, lambda _config: called.append("listen") or "user text")
+
+        self.assertEqual(transcript, "user text")
+        self.assertEqual(called, ["listen"])
+        sleep_call.assert_called()
+        speaker.close()
 
     def test_asr_response_transcript_is_assembled_from_alternatives(self) -> None:
         alternative = type("Alternative", (), {"transcript": "hello Krish"})()

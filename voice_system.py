@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import html
 import importlib.util
+import json
 import os
 import queue
 import sys
 import threading
 import time
+from collections import deque
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable, TextIO
 
 from jarvis_nim import env_bool, env_float, env_int, env_value
@@ -20,7 +23,11 @@ class VoiceError(Exception):
 @dataclass(frozen=True)
 class VoiceConfig:
     api_key: str
+    profile_name: str
+    profile_file: Path
     space_trigger: bool
+    listen_wait_timeout_seconds: float
+    listen_after_tts_delay_seconds: float
     stt_enabled: bool
     stt_provider: str
     stt_server: str
@@ -38,6 +45,10 @@ class VoiceConfig:
     stt_listen_min_seconds: float
     stt_silence_seconds: float
     stt_energy_threshold: float
+    stt_min_speech_rms: float
+    stt_noise_sample_seconds: float
+    stt_noise_multiplier: float
+    stt_preroll_seconds: float
     stt_input_gain: float
     tts_enabled: bool
     tts_provider: str
@@ -61,9 +72,15 @@ class VoiceConfig:
     @classmethod
     def from_env(cls) -> "VoiceConfig":
         voice_enabled = env_bool("VOICE_ENABLED", True)
+        profile_file = Path(env_value("JARVIS_VOICE_PROFILE_FILE", "config/voice_profiles.json"))
+        profile_name, profile = load_voice_profile(profile_file, env_value("JARVIS_VOICE_PROFILE"))
         return cls(
             api_key=env_value("NVIDIA_API_KEY"),
+            profile_name=profile_name,
+            profile_file=profile_file,
             space_trigger=env_bool("VOICE_SPACE_TRIGGER", True),
+            listen_wait_timeout_seconds=env_float("VOICE_LISTEN_WAIT_TIMEOUT_SECONDS", 20.0),
+            listen_after_tts_delay_seconds=env_float("VOICE_LISTEN_AFTER_TTS_DELAY_SECONDS", 0.35),
             stt_enabled=voice_enabled and env_bool("STT_ENABLED", True),
             stt_provider=env_value("STT_PROVIDER", "nvidia").lower(),
             stt_server=env_value("STT_NVIDIA_SERVER", "grpc.nvcf.nvidia.com:443"),
@@ -82,28 +99,82 @@ class VoiceConfig:
             stt_start_timeout_seconds=env_float("STT_START_TIMEOUT_SECONDS", env_float("STT_LISTEN_TIMEOUT_SECONDS", 3.0)),
             stt_listen_max_seconds=env_float("STT_LISTEN_MAX_SECONDS", env_float("STT_PHRASE_TIME_LIMIT_SECONDS", 6.0)),
             stt_listen_min_seconds=env_float("STT_LISTEN_MIN_SECONDS", 0.2),
-            stt_silence_seconds=env_float("STT_SILENCE_SECONDS", env_float("STT_PAUSE_THRESHOLD", 0.35)),
-            stt_energy_threshold=env_float("STT_ENERGY_THRESHOLD", 35.0),
+            stt_silence_seconds=env_float(
+                "STT_POST_SPEECH_SILENCE_SECONDS",
+                env_float("STT_SILENCE_SECONDS", env_float("STT_PAUSE_THRESHOLD", 0.25)),
+            ),
+            stt_energy_threshold=env_float("STT_ENERGY_THRESHOLD", 650.0),
+            stt_min_speech_rms=env_float("STT_MIN_SPEECH_RMS", 0.035),
+            stt_noise_sample_seconds=env_float("STT_NOISE_SAMPLE_SECONDS", 0.25),
+            stt_noise_multiplier=env_float("STT_NOISE_MULTIPLIER", 2.4),
+            stt_preroll_seconds=env_float("STT_PREROLL_SECONDS", 0.2),
             stt_input_gain=env_float("STT_INPUT_GAIN", 1.0),
             tts_enabled=voice_enabled and env_bool("TTS_ENABLED", False),
             tts_provider=env_value("TTS_PROVIDER", "nvidia").lower(),
             tts_server=env_value("TTS_NVIDIA_SERVER", "grpc.nvcf.nvidia.com:443"),
             tts_function_id=env_value("TTS_NVIDIA_FUNCTION_ID"),
             tts_language_code=env_value("TTS_NVIDIA_LANGUAGE_CODE", "en-US"),
-            tts_voice=env_value("TTS_VOICE", "Magpie-Multilingual.EN-US.Ray.Neutral"),
+            tts_voice=voice_profile_value(profile, "tts_voice", "TTS_VOICE", "Magpie-Multilingual.EN-US.Leo.Calm"),
             tts_use_ssl=env_bool("TTS_NVIDIA_USE_SSL", True),
             tts_sample_rate=env_int("TTS_NVIDIA_SAMPLE_RATE", 44100),
             tts_streaming=env_bool("TTS_NVIDIA_STREAMING", True),
             tts_ssml=env_bool("TTS_NVIDIA_SSML", True),
-            tts_rate=env_value("TTS_RATE", "+18%"),
-            tts_pitch=env_value("TTS_PITCH", "-6Hz"),
-            tts_volume=env_value("TTS_VOLUME", "+80%"),
-            tts_voice_effect=env_value("TTS_VOICE_EFFECT", "heavy").lower(),
-            tts_heavy_pitch_factor=env_float("TTS_HEAVY_PITCH_FACTOR", 1.04),
-            tts_heavy_darkness=env_float("TTS_HEAVY_DARKNESS", 0.55),
-            tts_playback_speed=env_float("TTS_PLAYBACK_SPEED", 1.08),
+            tts_rate=voice_profile_value(profile, "tts_rate", "TTS_RATE", "+12%"),
+            tts_pitch=voice_profile_value(profile, "tts_pitch", "TTS_PITCH", "-18Hz"),
+            tts_volume=voice_profile_value(profile, "tts_volume", "TTS_VOLUME", "+55%"),
+            tts_voice_effect=voice_profile_value(profile, "tts_voice_effect", "TTS_VOICE_EFFECT", "heavy").lower(),
+            tts_heavy_pitch_factor=voice_profile_float(profile, "tts_heavy_pitch_factor", "TTS_HEAVY_PITCH_FACTOR", 1.14),
+            tts_heavy_darkness=voice_profile_float(profile, "tts_heavy_darkness", "TTS_HEAVY_DARKNESS", 0.34),
+            tts_playback_speed=voice_profile_float(profile, "tts_playback_speed", "TTS_PLAYBACK_SPEED", 1.06),
             tts_speak_oneshot=env_bool("TTS_SPEAK_ONESHOT", False),
         )
+
+
+def load_voice_profile(path: Path, requested_profile: str) -> tuple[str, dict[str, object]]:
+    if not path.exists():
+        return "", {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError):
+        return "", {}
+    if not isinstance(data, dict):
+        return "", {}
+    profiles = data.get("profiles", {})
+    if not isinstance(profiles, dict):
+        return "", {}
+    name = requested_profile.strip() or str(data.get("default_profile", "")).strip()
+    profile = profiles.get(name)
+    if isinstance(profile, dict):
+        return name, profile
+    return "", {}
+
+
+def voice_profile_value(profile: dict[str, object], profile_key: str, env_name: str, fallback: str) -> str:
+    value = env_value(env_name)
+    if value:
+        return value
+    profile_value = profile.get(profile_key)
+    if isinstance(profile_value, str) and profile_value.strip():
+        return profile_value.strip()
+    return fallback
+
+
+def voice_profile_float(profile: dict[str, object], profile_key: str, env_name: str, fallback: float) -> float:
+    value = env_value(env_name)
+    if value:
+        try:
+            return float(value)
+        except ValueError:
+            return fallback
+    profile_value = profile.get(profile_key)
+    if isinstance(profile_value, (int, float)):
+        return float(profile_value)
+    if isinstance(profile_value, str):
+        try:
+            return float(profile_value)
+        except ValueError:
+            return fallback
+    return fallback
 
 
 def has_module(name: str) -> bool:
@@ -113,6 +184,7 @@ def has_module(name: str) -> bool:
 def voice_status_lines(config: VoiceConfig) -> list[str]:
     lines = [
         f"Voice space trigger -> {'on' if config.space_trigger else 'off'}",
+        f"Voice profile -> {config.profile_name or 'env/default'}",
         f"STT -> {'on' if config.stt_enabled else 'off'} ({config.stt_provider})",
         f"TTS -> {'on' if config.tts_enabled else 'off'} ({config.tts_provider})",
         f"NVIDIA_API_KEY -> {'set' if config.api_key else 'missing'}",
@@ -120,6 +192,7 @@ def voice_status_lines(config: VoiceConfig) -> list[str]:
         f"STT function -> {'set' if config.stt_function_id else 'missing'}",
         f"STT streaming -> {'on' if config.stt_streaming else 'off'}",
         f"STT input device -> {config.stt_input_device or 'system default'}",
+        f"STT endpointing -> threshold {config.stt_energy_threshold}, min RMS {config.stt_min_speech_rms}, silence {config.stt_silence_seconds}s",
         f"TTS server -> {config.tts_server}",
         f"TTS function -> {'set' if config.tts_function_id else 'missing'}",
         f"TTS voice -> {config.tts_voice or 'server default'}",
@@ -217,6 +290,52 @@ def microphone_report() -> str:
     return "\n".join(lines)
 
 
+def microphone_level_report(config: VoiceConfig, seconds: float = 1.5) -> str:
+    if not has_module("sounddevice"):
+        raise VoiceError("Missing python package: sounddevice")
+    if not has_module("numpy"):
+        raise VoiceError("Missing python package: numpy")
+
+    import numpy as np
+    import sounddevice as sd
+
+    sample_rate = max(8000, config.stt_sample_rate)
+    block_size = max(400, int(sample_rate * 0.05))
+    levels: list[float] = []
+    input_device = select_input_device(config)
+    with sd.InputStream(
+        samplerate=sample_rate,
+        channels=1,
+        dtype="float32",
+        blocksize=block_size,
+        device=input_device,
+    ) as stream:
+        end_at = time.monotonic() + max(0.2, seconds)
+        while time.monotonic() < end_at:
+            block, _overflow = stream.read(block_size)
+            levels.append(rms(block.reshape(-1)))
+
+    if not levels:
+        return "No microphone levels captured."
+    median = float(np.median(levels))
+    mean = float(np.mean(levels))
+    peak = max(levels)
+    threshold = speech_threshold(
+        levels,
+        normalized_energy_threshold(config.stt_energy_threshold),
+        config.stt_min_speech_rms,
+        config.stt_noise_multiplier,
+    )
+    return "\n".join(
+        [
+            f"Mic RMS median -> {median:.5f} ({median * 32768:.0f} / 32768)",
+            f"Mic RMS mean -> {mean:.5f} ({mean * 32768:.0f} / 32768)",
+            f"Mic RMS peak -> {peak:.5f} ({peak * 32768:.0f} / 32768)",
+            f"Speech threshold -> {threshold:.5f} ({threshold * 32768:.0f} / 32768)",
+        ]
+    )
+
+
 def select_input_device(config: VoiceConfig) -> int | None:
     requested = config.stt_input_device.strip()
     if not requested:
@@ -230,6 +349,24 @@ def select_input_device(config: VoiceConfig) -> int | None:
         if wanted in name:
             return int(microphone["index"])
     raise VoiceError(f"Input device not found: {requested}")
+
+
+def rms(samples: object) -> float:
+    import numpy as np
+
+    if not hasattr(samples, "size") or not samples.size:
+        return 0.0
+    return float(np.sqrt(np.mean(np.square(samples))))
+
+
+def speech_threshold(noise_levels: list[float], base_threshold: float, min_speech_rms: float, multiplier: float) -> float:
+    threshold = max(0.0, base_threshold, min_speech_rms)
+    if noise_levels:
+        import numpy as np
+
+        noise_floor = float(np.median(noise_levels))
+        threshold = max(threshold, noise_floor * max(1.0, multiplier))
+    return threshold
 
 
 def record_microphone_audio(config: VoiceConfig) -> bytes:
@@ -247,7 +384,12 @@ def record_microphone_audio(config: VoiceConfig) -> bytes:
     max_deadline = time.monotonic() + max(0.2, config.stt_listen_max_seconds)
     silence_seconds = max(0.05, config.stt_silence_seconds)
     min_seconds = max(0.0, config.stt_listen_min_seconds)
-    threshold = normalized_energy_threshold(config.stt_energy_threshold)
+    base_threshold = normalized_energy_threshold(config.stt_energy_threshold)
+    threshold = max(base_threshold, config.stt_min_speech_rms)
+    noise_sample_deadline = time.monotonic() + max(0.0, config.stt_noise_sample_seconds)
+    preroll_blocks = max(1, int(max(0.05, config.stt_preroll_seconds) * sample_rate / block_size))
+    preroll = deque(maxlen=preroll_blocks)
+    noise_levels: list[float] = []
     chunks: list[object] = []
     speech_started = False
     speech_started_at = 0.0
@@ -263,18 +405,33 @@ def record_microphone_audio(config: VoiceConfig) -> bytes:
     ) as stream:
         while time.monotonic() < max_deadline:
             block, _overflow = stream.read(block_size)
-            mono = block.reshape(-1)
+            raw_mono = block.reshape(-1)
+            energy = rms(raw_mono)
+            mono = raw_mono
             if config.stt_input_gain != 1.0:
                 mono = np.clip(mono * config.stt_input_gain, -1.0, 1.0)
-            energy = float(np.sqrt(np.mean(np.square(mono)))) if mono.size else 0.0
             now = time.monotonic()
+            if not speech_started:
+                preroll.append(mono.copy())
+                if now <= noise_sample_deadline:
+                    noise_levels.append(energy)
+                    threshold = speech_threshold(
+                        noise_levels,
+                        base_threshold,
+                        config.stt_min_speech_rms,
+                        config.stt_noise_multiplier,
+                    )
+            just_started = False
             if energy >= threshold:
                 if not speech_started:
                     speech_started = True
                     speech_started_at = now
+                    chunks.extend(item.copy() for item in preroll)
+                    just_started = True
                 last_voice_at = now
             if speech_started:
-                chunks.append(mono.copy())
+                if not just_started:
+                    chunks.append(mono.copy())
                 long_enough = now - speech_started_at >= min_seconds
                 quiet_enough = now - last_voice_at >= silence_seconds
                 if long_enough and quiet_enough:
@@ -463,6 +620,41 @@ def synthesize_nvidia_tts(config: VoiceConfig, text: str, streaming: bool | None
         raise VoiceError(f"NVIDIA TTS failed: {error}") from error
 
 
+def nvidia_tts_voice_names(config: VoiceConfig) -> list[str]:
+    ensure_nvidia_voice(config, "tts")
+    from riva.client.proto import riva_tts_pb2
+
+    auth = nvidia_auth(config, "tts")
+    import riva.client
+
+    service = riva.client.SpeechSynthesisService(auth)
+    response = service.stub.GetRivaSynthesisConfig(
+        riva_tts_pb2.RivaSynthesisConfigRequest(),
+        metadata=service.auth.get_auth_metadata(),
+    )
+    voices: list[str] = []
+    for model_config in getattr(response, "model_config", []):
+        parameters = getattr(model_config, "parameters", {})
+        prefix = str(parameters.get("voice_name", "")).strip()
+        subvoices = str(parameters.get("subvoices", "")).strip()
+        for entry in subvoices.split(","):
+            name = entry.split(":", 1)[0].strip()
+            if not name:
+                continue
+            full_name = f"{prefix}.{name}" if prefix and not name.startswith(prefix) else name
+            if full_name not in voices:
+                voices.append(full_name)
+    return voices
+
+
+def voice_catalog_text(config: VoiceConfig, locale: str = "EN-US") -> str:
+    locale_prefix = f"Magpie-Multilingual.{locale.upper()}."
+    voices = [voice for voice in nvidia_tts_voice_names(config) if voice.startswith(locale_prefix)]
+    if not voices:
+        return f"No voices found for {locale.upper()}."
+    return "\n".join(voices)
+
+
 def output_sample_rate(config: VoiceConfig) -> int:
     speed = config.tts_playback_speed if config.tts_playback_speed > 0 else 1.0
     rate = config.tts_sample_rate * speed
@@ -565,6 +757,8 @@ class VoiceSpeaker:
         self._queue: queue.Queue[str | None] = queue.Queue()
         self._thread: threading.Thread | None = None
         self._failed = False
+        self._idle = threading.Event()
+        self._idle.set()
         if config.tts_enabled:
             self._thread = threading.Thread(target=self._run, daemon=True)
             self._thread.start()
@@ -572,7 +766,11 @@ class VoiceSpeaker:
     def say(self, text: str) -> None:
         if not self._thread or not text.strip():
             return
+        self._idle.clear()
         self._queue.put(text)
+
+    def wait_until_idle(self, timeout: float | None = None) -> bool:
+        return self._idle.wait(timeout=timeout)
 
     def close(self) -> None:
         if not self._thread:
@@ -583,6 +781,7 @@ class VoiceSpeaker:
         while True:
             text = self._queue.get()
             if text is None:
+                self._idle.set()
                 return
             try:
                 speak_text_blocking(self.config, text)
@@ -590,12 +789,33 @@ class VoiceSpeaker:
                 if not self._failed:
                     self._failed = True
                     print(f"Voice output failed: {error}", file=sys.stderr)
+            finally:
+                if self._queue.empty():
+                    self._idle.set()
+
+
+def listen_after_output_idle(
+    config: VoiceConfig,
+    speaker: VoiceSpeaker,
+    listen_func: Callable[[VoiceConfig], str] | None = None,
+) -> str:
+    wait_for_output_idle(config, speaker)
+    if listen_func is None:
+        listen_func = listen_once
+    return listen_func(config)
+
+
+def wait_for_output_idle(config: VoiceConfig, speaker: VoiceSpeaker) -> None:
+    speaker.wait_until_idle(config.listen_wait_timeout_seconds)
+    if config.listen_after_tts_delay_seconds > 0:
+        time.sleep(config.listen_after_tts_delay_seconds)
 
 
 def read_text_or_voice(
     prompt: str,
     config: VoiceConfig,
     listener: Callable[[], str] | None = None,
+    before_listen: Callable[[], None] | None = None,
     char_reader: Callable[[], str] | None = None,
     writer: TextIO | None = None,
 ) -> str:
@@ -637,6 +857,11 @@ def read_text_or_voice(
                 writer.flush()
             continue
         if char == " " and not buffer:
+            if before_listen is not None:
+                writer.write("[waiting for speech output...]\n")
+                writer.flush()
+                before_listen()
+                writer.write(f"{prompt}")
             writer.write("[listening...]\n")
             writer.flush()
             transcript = listener().strip()

@@ -15,12 +15,15 @@ from voice_system import (
     VoiceError,
     VoiceSpeaker,
     listen_once,
+    microphone_level_report,
     microphone_report,
     read_text_or_voice,
     speak_text_blocking,
     synthesize_nvidia_tts,
     transcribe_nvidia_audio_at_rate,
+    voice_catalog_text,
     voice_status_text,
+    wait_for_output_idle,
 )
 
 
@@ -34,6 +37,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--check-env", action="store_true", help="Check required NVIDIA env without sending a chat request.")
     parser.add_argument("--check-voice", action="store_true", help="Check STT/TTS voice configuration and local audio packages.")
     parser.add_argument("--list-mics", action="store_true", help="List input microphones available to Jarvis voice mode.")
+    parser.add_argument("--voice-levels", action="store_true", help="Measure microphone noise level and the active speech threshold.")
+    parser.add_argument("--list-voices", action="store_true", help="List NVIDIA English TTS voices available to the configured endpoint.")
     parser.add_argument("--voice-say", help="Speak text through the configured TTS provider.")
     parser.add_argument("--voice-roundtrip", help="Live test NVIDIA TTS audio through NVIDIA STT without using the microphone.")
     parser.add_argument("--voice-listen-test", action="store_true", help="Listen once from the microphone and print the transcript.")
@@ -133,7 +138,12 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
     try:
         while True:
             try:
-                text = read_text_or_voice(f"{config.user_name}: ", voice_config).strip()
+                text = read_text_or_voice(
+                    f"{config.user_name}: ",
+                    voice_config,
+                    listener=lambda: listen_once(voice_config),
+                    before_listen=lambda: wait_for_output_idle(voice_config, speaker),
+                ).strip()
             except VoiceError as error:
                 print(f"Voice input failed: {error}")
                 continue
@@ -179,6 +189,14 @@ def main() -> int:
 
         if args.list_mics:
             print(microphone_report())
+            return 0
+
+        if args.voice_levels:
+            print(microphone_level_report(voice_config))
+            return 0
+
+        if args.list_voices:
+            print(voice_catalog_text(voice_config))
             return 0
 
         if args.voice_say:
