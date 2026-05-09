@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .path_resolver import resolve_local_path
 from .registry import ToolInputError, optional_text, require_text
 
 
@@ -102,10 +103,7 @@ def run_terminal(params: dict[str, Any]) -> dict[str, Any]:
 
 
 def resolve_cwd(value: str) -> Path:
-    path = Path(value).expanduser()
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    resolved = path.resolve()
+    resolved = resolve_local_path(value)
     if not resolved.exists() or not resolved.is_dir():
         raise ToolInputError(f"cwd is not a directory: {value}")
     return resolved

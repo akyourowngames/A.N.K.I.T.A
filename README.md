@@ -146,6 +146,10 @@ Optional:
 - `JARVIS_TERMINAL_SHELL`
 - `JARVIS_TERMINAL_TIMEOUT_SECONDS`
 - `JARVIS_TERMINAL_MAX_OUTPUT_CHARS`
+- `JARVIS_PATH_ALIASES_CONFIG`
+- `JARVIS_LIST_DIRECTORY_LIMIT`
+- `JARVIS_BROWSER_CONFIG`
+- `JARVIS_BROWSER_HEADLESS`
 - `JARVIS_EXTENSIONS_DIR`
 - `JARVIS_ENABLED_EXTENSIONS`
 - `JARVIS_DISABLED_EXTENSIONS`
@@ -248,6 +252,8 @@ Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvi
 Current tools:
 
 - `calculate`
+- `browser_manage`
+- `browser_status`
 - `compare_text`
 - `fetch_url_text`
 - `document_extract_text`
@@ -298,6 +304,16 @@ Current tools:
 For GUI launch requests, `run_terminal` supports background execution so Jarvis can start a local app without waiting for the app window to close.
 
 For local system facts such as installed Python, Node, npm, file, environment, and test state, Jarvis must use `run_terminal` before answering. For facts about the running Jarvis process itself, Jarvis must use `get_runtime_info`.
+
+Natural local folder names are resolved through `config/path_aliases.json`, so requests such as `desktop`, `download folder`, `screenshots`, and `documents` can map to real user folders before a file tool gives up.
+
+Directory listing output is compact by default through `JARVIS_LIST_DIRECTORY_LIMIT`, and each result includes total count plus whether the listing was truncated. Display names are normalized for the assistant response so unusual emoji/stylized filenames do not break Windows console streaming or spoken output.
+
+## Browser Agent
+
+`browser-agent` is an extension-backed specialist named Codex Browser Agent. Its tools are registered from `extensions/browser-agent/extension.json`, with settings in `config/browser_agent.json`.
+
+The agent can open URLs, run browser searches, inspect page text, click visible text, type into page fields, press keys, save screenshots, and close its browser session. It uses Playwright with a configured Chrome or Edge executable, and its browser profile/screenshots live under `media/` by default so local browsing state is not committed.
 
 ## Entertainment Agent
 
@@ -357,5 +373,6 @@ Current bundled extensions:
 - `content-tools`
 - `workspace`
 - `diagnostics`
+- `browser-agent`
 - `entertainment-agent`
 - `productivity-agent`

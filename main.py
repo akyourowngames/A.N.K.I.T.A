@@ -30,6 +30,22 @@ from voice_system import (
 EXIT_WORDS = {"exit", "quit", "bye"}
 
 
+def configure_stream_encoding(stream) -> bool:
+    reconfigure = getattr(stream, "reconfigure", None)
+    if not callable(reconfigure):
+        return False
+    try:
+        reconfigure(encoding="utf-8", errors="replace")
+    except (OSError, ValueError):
+        return False
+    return True
+
+
+def configure_console_output() -> None:
+    configure_stream_encoding(sys.stdout)
+    configure_stream_encoding(sys.stderr)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Simple NVIDIA NIM assistant CLI.")
     parser.add_argument("message", nargs="*", help="Optional one-shot message.")
@@ -178,6 +194,7 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
 
 
 def main() -> int:
+    configure_console_output()
     load_dotenv(Path.cwd() / ".env")
     args = build_parser().parse_args()
 

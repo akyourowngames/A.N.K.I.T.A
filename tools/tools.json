@@ -101,13 +101,13 @@
     },
     {
       "name": "list_directory",
-      "description": "List files and folders in a local directory with names, types, sizes, and modified timestamps.",
+      "description": "List files and folders in a local directory with names, types, sizes, and modified timestamps. Natural folder names are resolved through config/path_aliases.json before failing.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "Directory path. Defaults to the current workspace."
+            "description": "Directory path or configured alias such as desktop, downloads, documents, screenshots, or workspace. Defaults to the current workspace."
           },
           "limit": {
             "type": "integer",
@@ -123,13 +123,13 @@
     },
     {
       "name": "read_text_file",
-      "description": "Read a local text file with a bounded character limit.",
+      "description": "Read a local text file with a bounded character limit. Natural folder names are resolved through config/path_aliases.json before failing.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "Text file path."
+            "description": "Text file path, including paths under configured aliases."
           },
           "max_chars": {
             "type": "integer",
@@ -148,13 +148,13 @@
     },
     {
       "name": "get_file_info",
-      "description": "Get local file or directory metadata such as type, size, and modified timestamp.",
+      "description": "Get local file or directory metadata such as type, size, and modified timestamp. Natural folder names are resolved through config/path_aliases.json before failing.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "File or directory path."
+            "description": "File or directory path, including configured aliases."
           }
         },
         "required": [
@@ -169,13 +169,13 @@
     },
     {
       "name": "search_text_files",
-      "description": "Search local text files using exact text matching, not regular expressions.",
+      "description": "Search local text files using exact text matching, not regular expressions. Natural folder names are resolved through config/path_aliases.json before failing.",
       "parameters": {
         "type": "object",
         "properties": {
           "path": {
             "type": "string",
-            "description": "File or directory path. Defaults to the current workspace."
+            "description": "File or directory path or configured alias. Defaults to the current workspace."
           },
           "query": {
             "type": "string",

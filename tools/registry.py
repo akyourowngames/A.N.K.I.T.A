@@ -112,7 +112,7 @@ def optional_text(params: dict[str, Any], name: str, fallback: str = "") -> str:
 
 
 def tool_payload(payload: dict[str, Any]) -> str:
-    return json.dumps(payload, ensure_ascii=True)
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def discover_tools(

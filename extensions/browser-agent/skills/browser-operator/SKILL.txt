@@ -1,0 +1,15 @@
+# Codex Browser Agent Skill
+
+Use this skill when the user asks Jarvis to control or inspect a browser.
+
+Workflow:
+
+1. Use `browser_status` if readiness is unclear.
+2. Use `browser_manage` with `open_url` for direct URLs.
+3. Use `browser_manage` with `search` when the user wants a browser search.
+4. Use `snapshot` after opening or interacting when the user asks what is on the page.
+5. Use `click_text`, `type_text`, and `press_key` for page interaction.
+6. Use `screenshot` when the user asks to capture what is visible.
+7. Use `close` when the user asks to close the browser session.
+
+Answer from browser results and avoid internal tool narration.

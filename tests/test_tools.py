@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 import contextlib
 import io
+import json
 import os
 import platform
 import subprocess
@@ -17,9 +18,11 @@ from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
 from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
+from main import configure_stream_encoding
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
+from tools.browser_agent import browser_manage, browser_status, close_browser, normalize_url
 from tools.calculator import evaluate_expression
 from tools.diagnostics_tools import jarvis_latency_probe
 from tools.entertainment_agent import (
@@ -36,8 +39,9 @@ from tools.entertainment_agent import (
     save_index,
     stable_track_id,
 )
-from tools.filesystem_tools import get_file_info, list_directory, read_text_file, search_text_files
+from tools.filesystem_tools import display_name, get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
+from tools.path_resolver import resolve_local_path
 from tools.productivity_agent import calendar_manage, github_manage, gmail_manage, productivity_config, productivity_status
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
@@ -72,6 +76,8 @@ class ToolRegistryTests(unittest.TestCase):
         registry = discover_tools()
         names = [tool.name for tool in registry.visible_tools()]
         self.assertIn("calculate", names)
+        self.assertIn("browser_status", names)
+        self.assertIn("browser_manage", names)
         self.assertIn("get_current_datetime", names)
         self.assertIn("get_weather", names)
         self.assertIn("run_terminal", names)
@@ -228,14 +234,139 @@ class ToolRegistryTests(unittest.TestCase):
     def test_filesystem_tools(self) -> None:
         current = list_directory({"path": ".", "limit": 5})
         self.assertGreaterEqual(current["count"], 1)
+        self.assertIn("total_count", current)
+        self.assertNotIn("path", current["entries"][0])
         self.assertIn("summary", current)
         self.assertNotIn('"path"', current["summary"])
+        self.assertEqual(display_name("#🇯🇵𝙹𝚊𝚙𝚊𝚗.mp4"), "#Japan.mp4")
         info = get_file_info({"path": "README.md"})
         self.assertEqual(info["type"], "file")
         content = read_text_file({"path": "README.md", "max_chars": 100})
         self.assertIn("Jarvis", content["content"])
         matches = search_text_files({"path": "README.md", "query": "Jarvis", "max_files": 1})
         self.assertTrue(matches["matches"])
+
+    def test_natural_folder_aliases_resolve_for_filesystem_and_terminal(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            downloads = root / "Downloads"
+            downloads.mkdir()
+            (downloads / "sample.txt").write_text("alias works", encoding="utf-8")
+            config_path = root / "aliases.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "aliases": {
+                            "download folder": str(downloads),
+                        },
+                        "search_roots": [str(root)],
+                        "search_depth": 1,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_PATH_ALIASES_CONFIG": str(config_path)}, clear=False):
+                listed = list_directory({"path": "download folder", "limit": 5})
+                listed_natural = list_directory({"path": "my download folder", "limit": 5})
+                terminal = run_terminal(
+                    {
+                        "command": "Get-Location",
+                        "cwd": "download folder",
+                        "shell": "powershell",
+                        "timeout_seconds": 10,
+                        "max_output_chars": 2000,
+                    }
+                )
+
+        self.assertEqual(Path(listed["path"]), downloads.resolve())
+        self.assertEqual(Path(listed_natural["path"]), downloads.resolve())
+        self.assertEqual(listed["entries"][0]["name"], "sample.txt")
+        self.assertEqual(terminal["exit_code"], 0)
+        self.assertIn(str(downloads.resolve()), terminal["stdout"])
+
+    def test_explicit_new_paths_do_not_collapse_to_parent_aliases(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "media").mkdir()
+            target = resolve_local_path("media/browser-profile", root)
+
+        self.assertEqual(target, (root / "media" / "browser-profile").resolve())
+
+    def test_browser_agent_opens_and_snapshots_live_page(self) -> None:
+        import importlib.util
+
+        if importlib.util.find_spec("playwright") is None:
+            self.skipTest("playwright is not installed")
+        chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        edge = Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe")
+        executable = chrome if chrome.exists() else edge
+        if not executable.exists():
+            self.skipTest("Chrome or Edge executable is not installed")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "browser.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agent_name": "Test Browser Agent",
+                        "headless": True,
+                        "user_data_dir": str(root / "profile"),
+                        "default_timeout_ms": 15000,
+                        "screenshot_dir": str(root / "screens"),
+                        "search_url_template": "https://example.com/?q={query}",
+                        "browser_executable_candidates": [str(executable)],
+                        "launch_args": ["--disable-dev-shm-usage"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_BROWSER_CONFIG": str(config_path),
+                    "JARVIS_BROWSER_HEADLESS": "true",
+                },
+                clear=False,
+            ):
+                try:
+                    status = browser_status({})
+                    opened = browser_manage(
+                        {
+                            "operation": "open_url",
+                            "url": "data:text/html,<title>Jarvis Browser Test</title><main>Hello Browser Agent</main>",
+                        }
+                    )
+                    snapshot = browser_manage({"operation": "snapshot", "max_chars": 500})
+                    screenshot = browser_manage({"operation": "screenshot"})
+                    screenshot_exists = Path(screenshot["path"]).exists()
+                finally:
+                    close_browser()
+
+        self.assertTrue(status["playwright_available"])
+        self.assertEqual(Path(status["browser_executable"]), executable.resolve())
+        self.assertEqual(opened["title"], "Jarvis Browser Test")
+        self.assertIn("Hello Browser Agent", snapshot["text"])
+        self.assertTrue(screenshot_exists)
+        self.assertIn("screens", screenshot["path"])
+
+    def test_browser_url_normalization_is_config_free(self) -> None:
+        self.assertEqual(normalize_url("example.com"), "https://example.com")
+        self.assertEqual(normalize_url("https://example.com"), "https://example.com")
+        self.assertEqual(normalize_url("data:text/html,hi"), "data:text/html,hi")
+
+    def test_console_stream_encoding_is_utf8_safe_when_supported(self) -> None:
+        class FakeStream:
+            def __init__(self) -> None:
+                self.calls: list[dict[str, str]] = []
+
+            def reconfigure(self, **kwargs: str) -> None:
+                self.calls.append(kwargs)
+
+        stream = FakeStream()
+
+        self.assertTrue(configure_stream_encoding(stream))
+        self.assertEqual(stream.calls, [{"encoding": "utf-8", "errors": "replace"}])
 
     def test_workspace_inspect_tools(self) -> None:
         status = workspace_inspect({"operation": "git_status"})
@@ -304,15 +435,21 @@ class ToolRegistryTests(unittest.TestCase):
 
     def test_extension_catalog_loads_prompt_skills_and_tools(self) -> None:
         catalog = load_extension_catalog()
-        self.assertIn("web", [extension.id for extension in catalog.extensions])
+        extension_ids = [extension.id for extension in catalog.extensions]
+        self.assertIn("web", extension_ids)
+        self.assertIn("browser-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "browser_manage" for tool in catalog.tool_descriptors()))
         self.assertIn("Web And Document Tools", catalog.prompt_context())
+        self.assertIn("Browser Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
 
     def test_skill_context_loads_extension_skill_files(self) -> None:
         catalog = load_extension_catalog()
-        context = load_skill_context(catalog, Path.cwd())
+        with patch.dict(os.environ, {"JARVIS_SKILL_CONTEXT_CHARS": "30000"}, clear=False):
+            context = load_skill_context(catalog, Path.cwd())
         self.assertIn("Skill: web-research", context)
+        self.assertIn("Skill: browser-operator", context)
         self.assertIn("Skill: jarvis-qa", context)
 
     def test_tool_manifests_do_not_define_canned_final_responses(self) -> None:
@@ -670,6 +807,21 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("Clean tool summaries", prompt)
         self.assertEqual(public_tool_results(results)[0]["result_index"], 1)
 
+    def test_tool_results_prompt_preserves_non_ascii_names_for_model(self) -> None:
+        results = [
+            {
+                "name": "list_directory",
+                "parameters": {"path": "download folder"},
+                "result": {"ok": True, "result": {"entries": [{"name": "हिंदी-song.mp4"}]}},
+            }
+        ]
+
+        prompt = tool_results_prompt(results, "list files in download folder", "Krish")
+
+        self.assertIn("हिंदी-song.mp4", prompt)
+        self.assertNotIn("\\u0939", prompt)
+        self.assertIn("truncated=true", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
+
     def test_public_tool_results_strip_internal_tool_field(self) -> None:
         payload = {"ok": True, "tool": "get_current_datetime", "result": {"date": "2026-05-09"}}
 
@@ -677,6 +829,15 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertNotIn("tool", public)
         self.assertEqual(public["result"]["date"], "2026-05-09")
+
+    def test_public_tool_results_rename_count_when_total_count_exists(self) -> None:
+        payload = {"ok": True, "result": {"count": 10, "total_count": 191, "truncated": True}}
+
+        public = public_result_payload(payload)
+
+        self.assertNotIn("count", public["result"])
+        self.assertEqual(public["result"]["shown_count"], 10)
+        self.assertEqual(public["result"]["total_count"], 191)
 
     def test_chat_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")

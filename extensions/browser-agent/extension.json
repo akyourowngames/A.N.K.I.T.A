@@ -1,0 +1,101 @@
+{
+  "id": "browser-agent",
+  "name": "Codex Browser Agent",
+  "description": "Playwright-backed browser control for opening pages, searching, observing page text, clicking, typing, pressing keys, and screenshots.",
+  "prompt_files": [
+    "prompts/browser-agent.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "JARVIS_BROWSER_CONFIG",
+    "JARVIS_BROWSER_HEADLESS"
+  ],
+  "tools": [
+    {
+      "name": "browser_status",
+      "description": "Inspect Browser Agent readiness, Playwright availability, resolved browser executable, and current page state.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.browser_agent",
+        "function": "browser_status"
+      }
+    },
+    {
+      "name": "browser_manage",
+      "description": "Control the browser with Playwright: open URL, search, snapshot page text, click visible text, type text, press a key, save screenshot, or close the browser session.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "open_url",
+              "search",
+              "snapshot",
+              "click_text",
+              "type_text",
+              "press_key",
+              "screenshot",
+              "close"
+            ],
+            "description": "Browser operation."
+          },
+          "url": {
+            "type": "string",
+            "description": "URL for open_url."
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query for search."
+          },
+          "text": {
+            "type": "string",
+            "description": "Visible text to click or text to type."
+          },
+          "selector": {
+            "type": "string",
+            "description": "Optional CSS selector for type_text."
+          },
+          "key": {
+            "type": "string",
+            "description": "Keyboard key for press_key, such as Enter or Escape."
+          },
+          "path": {
+            "type": "string",
+            "description": "Screenshot output path."
+          },
+          "full_page": {
+            "type": "boolean",
+            "description": "Capture full page for screenshot."
+          },
+          "clear": {
+            "type": "boolean",
+            "description": "Clear the input before type_text."
+          },
+          "max_chars": {
+            "type": "integer",
+            "description": "Maximum text chars for snapshot."
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Operation timeout in milliseconds."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.browser_agent",
+        "function": "browser_manage"
+      }
+    }
+  ]
+}

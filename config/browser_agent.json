@@ -1,0 +1,20 @@
+{
+  "agent_name": "Codex Browser Agent",
+  "headless": false,
+  "user_data_dir": "media/browser-profile",
+  "default_timeout_ms": 15000,
+  "screenshot_dir": "media/browser-screenshots",
+  "search_url_template": "https://www.google.com/search?q={query}",
+  "browser_executable_candidates": [
+    "{programfiles}/Google/Chrome/Application/chrome.exe",
+    "{programfilesx86}/Google/Chrome/Application/chrome.exe",
+    "{localappdata}/Google/Chrome/Application/chrome.exe",
+    "{programfiles}/Microsoft/Edge/Application/msedge.exe",
+    "{programfilesx86}/Microsoft/Edge/Application/msedge.exe",
+    "{playwright_chromium}"
+  ],
+  "launch_args": [
+    "--disable-blink-features=AutomationControlled",
+    "--disable-dev-shm-usage"
+  ]
+}

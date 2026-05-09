@@ -745,7 +745,7 @@ def tool_results_prompt(
     template = load_text_file(Path(env_value("JARVIS_TOOL_RESULTS_PROMPT_FILE", "prompts/tool_results.txt")))
     replacements = {
         "{latest_user_message}": latest_user_message,
-        "{tool_results}": json.dumps(public_tool_results(results), ensure_ascii=True),
+        "{tool_results}": json.dumps(public_tool_results(results), ensure_ascii=False),
         "{user_name}": user_name,
     }
     for marker, value in replacements.items():
@@ -773,6 +773,9 @@ def public_result_payload(payload: Any) -> Any:
         public: dict[str, Any] = {}
         for key, value in payload.items():
             if key == "tool":
+                continue
+            if key == "count" and "total_count" in payload:
+                public["shown_count"] = public_result_payload(value)
                 continue
             public[key] = public_result_payload(value)
         return public

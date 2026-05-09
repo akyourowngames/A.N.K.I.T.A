@@ -1,0 +1,26 @@
+{
+  "aliases": {
+    "home": "{home}",
+    "user folder": "{home}",
+    "desktop": "{desktop}",
+    "desktop folder": "{desktop}",
+    "downloads": "{downloads}",
+    "download": "{downloads}",
+    "download folder": "{downloads}",
+    "downloads folder": "{downloads}",
+    "documents": "{documents}",
+    "documents folder": "{documents}",
+    "pictures": "{pictures}",
+    "pictures folder": "{pictures}",
+    "screenshots": "{pictures}/Screenshots",
+    "screenshots folder": "{pictures}/Screenshots",
+    "workspace": "{cwd}",
+    "project": "{cwd}",
+    "project folder": "{cwd}"
+  },
+  "search_roots": [
+    "{home}",
+    "{cwd}"
+  ],
+  "search_depth": 1
+}
