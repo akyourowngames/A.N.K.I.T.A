@@ -21,6 +21,20 @@ from skill_system import load_skill_context
 from tools import discover_tools
 from tools.calculator import evaluate_expression
 from tools.diagnostics_tools import jarvis_latency_probe
+from tools.entertainment_agent import (
+    apply_track_lists,
+    cached_track,
+    canonical_text,
+    entertainment_config,
+    entertainment_play,
+    entertainment_playlist,
+    entertainment_queue,
+    entertainment_status,
+    load_config,
+    load_index,
+    save_index,
+    stable_track_id,
+)
 from tools.filesystem_tools import get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.registry import ToolInputError
@@ -85,6 +99,13 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("compare_text", names)
         self.assertIn("workspace_inspect", names)
         self.assertIn("jarvis_latency_probe", names)
+        self.assertIn("entertainment_status", names)
+        self.assertIn("entertainment_search", names)
+        self.assertIn("entertainment_download", names)
+        self.assertIn("entertainment_play", names)
+        self.assertIn("entertainment_queue", names)
+        self.assertIn("entertainment_playlist", names)
+        self.assertIn("entertainment_config", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -342,6 +363,81 @@ class ToolRegistryTests(unittest.TestCase):
                 self.assertEqual(status["page_count"], 1)
                 lint = wiki_lint({})
                 self.assertEqual(lint["finding_count"], 0)
+
+    def test_entertainment_agent_config_cache_queue_and_favorites(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "entertainment.json"
+            library = root / "music"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(library),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                config = load_config()
+                self.assertEqual(config["agent_name"], "Codex Entertainment Agent")
+                audio = library / "desi track.m4a"
+                audio.parent.mkdir(parents=True, exist_ok=True)
+                audio.write_bytes(b"fake")
+                track_id = stable_track_id("yt-video-1")
+                index = {
+                    "tracks": {
+                        track_id: {
+                            "id": track_id,
+                            "title": "Haryanvi Desi Track",
+                            "file_path": str(audio),
+                            "webpage_url": "https://www.youtube.com/watch?v=yt-video-1",
+                        }
+                    },
+                    "aliases": {
+                        canonical_text("haryanvi desi track"): track_id,
+                    },
+                }
+                save_index(config, index)
+
+                cached = cached_track(load_index(config), ["Haryanvi Desi Track"])
+                self.assertIsNotNone(cached)
+                self.assertEqual(cached["id"], track_id)
+
+                apply_track_lists(config, track_id, True, "roadtrip")
+                updated = load_config()
+                self.assertIn(track_id, updated["favorites"])
+                self.assertIn(track_id, updated["playlists"]["roadtrip"])
+
+                play = entertainment_play({"query": "haryanvi desi track"})
+                self.assertIn("Playing", play["summary"])
+
+                queue = entertainment_queue({"operation": "add", "track_id": track_id})
+                self.assertIn(track_id, queue["queue"])
+                next_status = entertainment_queue({"operation": "next"})
+                self.assertIn("Queue:", next_status["summary"])
+
+                favorite = entertainment_playlist({"operation": "show", "playlist": "favorites"})
+                self.assertEqual(len(favorite["tracks"]), 1)
+
+                status = entertainment_status({})
+                self.assertIn("local tracks", status["summary"])
+
+    def test_entertainment_config_updates_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(os.environ, {"JARVIS_ENTERTAINMENT_CONFIG": str(config_path)}, clear=False):
+                result = entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "preferred_music_context": ["Hindi songs", "Haryanvi songs"],
+                            "search_limit": 7,
+                        },
+                    }
+                )
+
+                self.assertEqual(result["config"]["search_limit"], 7)
+                self.assertIn("Haryanvi songs", config_path.read_text(encoding="utf-8"))
 
     def test_vector_memory_indexes_and_searches_with_cached_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

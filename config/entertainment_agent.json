@@ -1,0 +1,23 @@
+{
+  "agent_name": "Codex Entertainment Agent",
+  "library_dir": "media/music",
+  "audio_format_selector": "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio",
+  "search_provider": "ytsearch",
+  "search_limit": 5,
+  "preferred_music_context": [
+    "Hindi songs",
+    "Haryanvi songs",
+    "Punjabi songs",
+    "Indian indie songs",
+    "official audio",
+    "lyrical video"
+  ],
+  "favorites": [],
+  "playlists": {
+    "favorites": []
+  },
+  "notes": [
+    "Download only media the user is allowed to access and keep.",
+    "If a track is already in the local library, play the saved file instead of downloading it again."
+  ]
+}

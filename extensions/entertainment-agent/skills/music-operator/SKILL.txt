@@ -1,0 +1,15 @@
+# Codex Entertainment Agent Skill
+
+Use this skill when the user asks Jarvis to search, download, play, queue, favorite, or manage music.
+
+Workflow:
+
+1. Inspect `entertainment_status` when you need to know the library folder, player state, or installed downloader status.
+2. For song discovery, call `entertainment_search` with the user's exact text and an optional context. Keep Hindi, Haryanvi, Punjabi, and Hinglish words intact.
+3. For playback, call `entertainment_play` with the query first. Set `auto_download=true` only when the user clearly wants the song obtained or played now.
+4. If a user asks to replay the same song, use the cached result returned by the library. Do not force a new download.
+5. For favorites, call `entertainment_playlist` with `add_favorite`; if the track is not local yet, use `auto_download=true`.
+6. For multiple songs, add tracks to the queue or a playlist, then call `entertainment_queue` with `play` or `play_playlist`.
+7. For next, previous, stop, or clear, use `entertainment_queue`.
+
+The answer should be short and grounded: say what is playing, what was downloaded or cached, and the saved path when useful.

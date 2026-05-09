@@ -153,6 +153,9 @@ Optional:
 - `JARVIS_SKILLS_DIR`
 - `JARVIS_SKILL_CONTEXT_CHARS`
 - `JARVIS_WEB_SEARCH_URL`
+- `JARVIS_ENTERTAINMENT_CONFIG`
+- `JARVIS_ENTERTAINMENT_LIBRARY_DIR`
+- `JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
 - `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
@@ -228,7 +231,7 @@ Interactive chat supports voice without changing the tool registry. Press Space 
 
 STT uses NVIDIA Riva/NVCF streaming recognition by default because the current managed ASR endpoint accepts streaming calls while rejecting offline recognition for this route. Endpointing uses a local noise-floor threshold, preroll, and a short post-speech silence window so the mic stops after the user's sentence instead of waiting on room noise.
 
-TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile. Profiles live in `config/voice_profiles.json`, so the voice can be swapped without touching the chat loop. The default profile is `heavy_english_jarvis`, currently using `Magpie-Multilingual.EN-US.Leo.Calm`.
+TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile. Profiles live in `config/voice_profiles.json`, so the voice can be swapped without touching the chat loop. The default profile is `heavy_english_jarvis`, currently using `Magpie-Multilingual.EN-US.Jason.Neutral`.
 
 TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path. If Space is pressed while Jarvis is still talking, the mic waits until speech output is idle plus a short cooldown before recording, which prevents Jarvis from listening to its own voice.
 
@@ -246,6 +249,13 @@ Current tools:
 - `compare_text`
 - `fetch_url_text`
 - `document_extract_text`
+- `entertainment_config`
+- `entertainment_download`
+- `entertainment_play`
+- `entertainment_playlist`
+- `entertainment_queue`
+- `entertainment_search`
+- `entertainment_status`
 - `extract_url_content`
 - `generate_uuid`
 - `get_current_datetime`
@@ -281,6 +291,16 @@ Current tools:
 For GUI launch requests, `run_terminal` supports background execution so Jarvis can start a local app without waiting for the app window to close.
 
 For local system facts such as installed Python, Node, npm, file, environment, and test state, Jarvis must use `run_terminal` before answering. For facts about the running Jarvis process itself, Jarvis must use `get_runtime_info`.
+
+## Entertainment Agent
+
+`entertainment-agent` is an extension-backed specialist named Codex Entertainment Agent. Its tools are registered from `extensions/entertainment-agent/extension.json`; the chat loop does not change when the agent gains or loses tools.
+
+The agent can search music with yt-dlp, download songs into the configured local library, play cached songs without downloading again, manage favorites/playlists in `config/entertainment_agent.json`, and control queue operations such as next, previous, stop, and clear.
+
+Default music files and playback state live under `media/music/`, which is ignored by git. Change `library_dir` in `config/entertainment_agent.json` or set `JARVIS_ENTERTAINMENT_LIBRARY_DIR` to use another folder.
+
+The entertainment prompt and skill explicitly treat Hindi, Haryanvi, Punjabi, Hinglish, and English requests as normal music requests. Jarvis should preserve the user's wording, search with the requested language context, and prefer the already downloaded local file when the same song is requested again.
 
 ## Memory
 

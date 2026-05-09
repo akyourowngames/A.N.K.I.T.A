@@ -1,0 +1,276 @@
+{
+  "id": "entertainment-agent",
+  "name": "Codex Entertainment Agent",
+  "description": "Music search, download, local library, favorites, playlists, and playback queue tools.",
+  "prompt_files": [
+    "prompts/entertainment-agent.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "JARVIS_ENTERTAINMENT_CONFIG",
+    "JARVIS_ENTERTAINMENT_LIBRARY_DIR",
+    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER"
+  ],
+  "tools": [
+    {
+      "name": "entertainment_status",
+      "description": "Inspect the entertainment agent config, local music library, player state, and availability of yt-dlp/player tools.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_status"
+      }
+    },
+    {
+      "name": "entertainment_search",
+      "description": "Search online for songs or music videos with yt-dlp. Use exact user language, including Hindi, Haryanvi, Hinglish, Punjabi, or English titles.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song, artist, lyric, or URL-like search text from the user."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional music context such as Hindi song, Haryanvi song, official audio, remix, or artist."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum search results."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_search"
+      }
+    },
+    {
+      "name": "entertainment_download",
+      "description": "Download a song to the configured local music folder. If the same query or URL is already saved, return the cached track instead of downloading again.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song search text when URL is not supplied."
+          },
+          "url": {
+            "type": "string",
+            "description": "Direct media URL."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional music context."
+          },
+          "result_index": {
+            "type": "integer",
+            "description": "One-based search result number to download."
+          },
+          "force": {
+            "type": "boolean",
+            "description": "Download again even if cached."
+          },
+          "add_to_favorites": {
+            "type": "boolean",
+            "description": "Also add the downloaded track to favorites."
+          },
+          "playlist": {
+            "type": "string",
+            "description": "Optional playlist name to add the downloaded track to."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_download"
+      }
+    },
+    {
+      "name": "entertainment_play",
+      "description": "Play a downloaded track by query, track id, path, or URL. Can auto-download when explicitly useful.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song title or prior user query to find in the local library."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Local library track id."
+          },
+          "path": {
+            "type": "string",
+            "description": "Local audio file path."
+          },
+          "url": {
+            "type": "string",
+            "description": "Direct URL to download before playback."
+          },
+          "context": {
+            "type": "string",
+            "description": "Optional music context for auto download."
+          },
+          "auto_download": {
+            "type": "boolean",
+            "description": "Download the track if it is not already in the local library."
+          },
+          "add_to_queue": {
+            "type": "boolean",
+            "description": "Add to queue instead of replacing playback."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_play"
+      }
+    },
+    {
+      "name": "entertainment_queue",
+      "description": "Control the local playback queue: status, add tracks, play, next, previous, stop, clear, or play a playlist.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "status",
+              "add",
+              "play",
+              "next",
+              "previous",
+              "stop",
+              "clear",
+              "play_playlist"
+            ],
+            "description": "Queue operation."
+          },
+          "query": {
+            "type": "string",
+            "description": "Track query for add."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Track id for add."
+          },
+          "playlist": {
+            "type": "string",
+            "description": "Playlist name for play_playlist."
+          },
+          "auto_download": {
+            "type": "boolean",
+            "description": "Download query if needed for add."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_queue"
+      }
+    },
+    {
+      "name": "entertainment_playlist",
+      "description": "Edit or inspect playlists and favorites in the entertainment config JSON.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "show",
+              "create",
+              "add_track",
+              "remove_track",
+              "add_favorite",
+              "remove_favorite",
+              "play"
+            ],
+            "description": "Playlist operation."
+          },
+          "playlist": {
+            "type": "string",
+            "description": "Playlist name."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Track id."
+          },
+          "query": {
+            "type": "string",
+            "description": "Song query to resolve to a downloaded track."
+          },
+          "auto_download": {
+            "type": "boolean",
+            "description": "Download query if needed before adding."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_playlist"
+      }
+    },
+    {
+      "name": "entertainment_config",
+      "description": "Read or update the entertainment agent config JSON, including library folder, search preferences, favorite contexts, and playlists.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "get",
+              "update"
+            ],
+            "description": "Config operation."
+          },
+          "values": {
+            "type": "object",
+            "description": "Top-level JSON values to merge into the config for update."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_config"
+      }
+    }
+  ],
+  "display_templates": {
+    "entertainment_status": "{result.summary}",
+    "entertainment_search": "{result.summary}",
+    "entertainment_download": "{result.summary}",
+    "entertainment_play": "{result.summary}",
+    "entertainment_queue": "{result.summary}",
+    "entertainment_playlist": "{result.summary}",
+    "entertainment_config": "{result.summary}"
+  }
+}
