@@ -14,6 +14,10 @@ class ToolRegistryError(Exception):
     pass
 
 
+class ToolExecutorError(ToolRegistryError):
+    pass
+
+
 class ToolInputError(Exception):
     pass
 
@@ -44,6 +48,7 @@ class Tool:
 class ToolRegistry:
     def __init__(self) -> None:
         self._tools: dict[str, Tool] = {}
+        self._disabled_tools: list[dict[str, str]] = []
 
     def register(self, tool: Tool) -> None:
         if tool.name in self._tools:
@@ -52,6 +57,12 @@ class ToolRegistry:
 
     def visible_tools(self) -> list[Tool]:
         return sorted(self._tools.values(), key=lambda tool: (tool.sort_key or tool.name, tool.name))
+
+    def disable_tool(self, name: str, reason: str) -> None:
+        self._disabled_tools.append({"name": name, "reason": reason})
+
+    def disabled_tools(self) -> list[dict[str, str]]:
+        return list(self._disabled_tools)
 
     def openai_tools(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self.visible_tools()]
@@ -125,7 +136,10 @@ def discover_tools(
     for descriptor in load_manifest(path):
         registry.register(tool_from_descriptor(descriptor))
     for descriptor in catalog.tool_descriptors():
-        registry.register(tool_from_descriptor(descriptor))
+        try:
+            registry.register(tool_from_descriptor(descriptor))
+        except ToolExecutorError as error:
+            registry.disable_tool(descriptor_name(descriptor), str(error))
     return registry
 
 
@@ -235,9 +249,16 @@ def require_manifest_text(data: dict[str, Any], key: str) -> str:
     return value.strip()
 
 
+def descriptor_name(descriptor: dict[str, Any]) -> str:
+    value = descriptor.get("name")
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return "unnamed"
+
+
 def load_handler(module_name: str, function_name: str, tool_name: str) -> ToolHandler:
     module = import_module(module_name)
     function = getattr(module, function_name, None)
     if not callable(function):
-        raise ToolRegistryError(f"Tool executor is not callable: {tool_name}")
+        raise ToolExecutorError(f"Tool executor is not callable: {tool_name}")
     return function

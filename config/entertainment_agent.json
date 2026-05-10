@@ -1,23 +1,259 @@
 {
   "agent_name": "Codex Entertainment Agent",
+  "media_root": "media/entertainment",
   "library_dir": "media/music",
+  "music_dir": "media/music",
+  "video_dir": "media/entertainment/video",
+  "podcast_dir": "media/entertainment/podcasts",
+  "lyrics_dir": "media/entertainment/lyrics",
+  "thumbnails_dir": "media/entertainment/thumbnails",
+  "playlists_dir": "media/entertainment/playlists",
+  "equalizer_dir": "media/entertainment/equalizer_profiles",
+  "library": {
+    "index_path": "media/music/library.json",
+    "auto_scan_on_start": true,
+    "watch_for_changes": false,
+    "supported_audio": [
+      "m4a",
+      "mp3",
+      "flac",
+      "ogg",
+      "wav",
+      "aac",
+      "opus"
+    ],
+    "supported_video": [
+      "mp4",
+      "webm",
+      "mkv",
+      "avi",
+      "mov"
+    ],
+    "supported_podcast": [
+      "mp3",
+      "m4a",
+      "opus"
+    ],
+    "scan_roots": [
+      "media/music",
+      "media/entertainment/music",
+      "media/entertainment/video",
+      "media/entertainment/podcasts"
+    ],
+    "max_search_results": 20
+  },
+  "player": {
+    "preferred_backend": "auto",
+    "backends_priority": [
+      "vlc",
+      "mpv",
+      "ffplay",
+      "system"
+    ],
+    "vlc_executable": "C:\\Program Files (x86)\\VideoLAN\\VLC\\vlc.exe",
+    "mpv_executable": "mpv",
+    "ffplay_executable": "ffplay",
+    "mpv_ipc_socket": "media/entertainment/mpv_socket",
+    "state_path": "media/music/player_state.json",
+    "queue_state_path": "media/entertainment/queue_state.json",
+    "crossfade_enabled": true,
+    "crossfade_seconds": 6,
+    "gapless_playback": true,
+    "normalize_volume": true,
+    "replay_gain": true,
+    "volume": 100,
+    "speed": 1.0,
+    "muted": false
+  },
+  "download": {
+    "audio_format_selector": "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio",
+    "video_format_selector": "bestvideo[height<=1080]+bestaudio/best",
+    "audio_quality": "best",
+    "embed_thumbnail": true,
+    "embed_metadata": true,
+    "write_subtitles": false,
+    "concurrent_downloads": 2,
+    "rate_limit_bytes": null,
+    "proxy": ""
+  },
+  "search": {
+    "provider": "ytsearch",
+    "providers": [
+      "local",
+      "youtube",
+      "soundcloud"
+    ],
+    "default_limit": 8,
+    "prefer_official": true,
+    "preferred_contexts": [
+      "Hindi songs",
+      "Haryanvi songs",
+      "Punjabi songs",
+      "Indian indie",
+      "official audio",
+      "lyrical video"
+    ],
+    "languages": [
+      "Hindi",
+      "English",
+      "Punjabi",
+      "Haryanvi",
+      "Bengali",
+      "Tamil",
+      "Telugu",
+      "Malayalam",
+      "Kannada",
+      "Marathi",
+      "Gujarati"
+    ]
+  },
+  "recommendations": {
+    "enabled": true,
+    "smart_queue_extend_at": 3,
+    "smart_queue_add_count": 5,
+    "discovery_ratio": 0.2,
+    "taste_profile_path": "media/entertainment/taste_profile.json",
+    "weekly_mix_size": 25
+  },
+  "lyrics": {
+    "auto_fetch_on_download": true,
+    "prefer_synced": true,
+    "genius_api_key_env": "GENIUS_API_KEY",
+    "cache_dir": "media/entertainment/lyrics"
+  },
+  "radio": {
+    "api_url": "https://de1.api.radio-browser.info",
+    "saved_stations_path": "media/entertainment/radio_stations.json",
+    "default_stations": {
+      "bollywood": {
+        "name": "Bollywood",
+        "query": "Bollywood hits",
+        "language": "Hindi"
+      },
+      "punjabi": {
+        "name": "Punjabi",
+        "query": "Punjabi hits",
+        "language": "Punjabi"
+      },
+      "lofi": {
+        "name": "Lo-fi",
+        "query": "lofi hip hop",
+        "language": "English"
+      }
+    },
+    "autosave_played_stations": false,
+    "last_search_ttl_seconds": 300
+  },
+  "podcast": {
+    "feeds_path": "media/entertainment/podcast_feeds.json",
+    "auto_update_on_start": false,
+    "keep_played_days": 30,
+    "save_position": true,
+    "default_speed": 1.5
+  },
+  "history": {
+    "path": "media/entertainment/history.json",
+    "max_entries": 10000,
+    "track_completion_threshold": 0.8
+  },
+  "mood": {
+    "auto_detect_context": false,
+    "default_context": "casual",
+    "context_path": "media/entertainment/mood_context.json",
+    "bpm_energetic_threshold": 120,
+    "bpm_calm_threshold": 80
+  },
+  "equalizer": {
+    "enabled": true,
+    "active_profile": "flat",
+    "profiles_dir": "media/entertainment/equalizer_profiles",
+    "built_in_profiles": {
+      "flat": {},
+      "bass_boost": {
+        "60": 4,
+        "170": 3
+      },
+      "treble_boost": {
+        "3500": 3,
+        "10000": 4
+      },
+      "vocal_enhance": {
+        "1000": 2,
+        "3500": 3
+      },
+      "club": {
+        "60": 5,
+        "170": 3,
+        "1000": -2
+      },
+      "acoustic": {
+        "170": 1,
+        "1000": 2,
+        "3500": 1
+      },
+      "classical": {
+        "60": 2,
+        "3500": 2,
+        "10000": 3
+      },
+      "podcast": {
+        "60": -3,
+        "1000": 3,
+        "3500": 3
+      },
+      "sleep": {
+        "60": -2,
+        "10000": -2
+      },
+      "workout": {
+        "60": 4,
+        "170": 2,
+        "3500": 1
+      }
+    }
+  },
+  "apis": {
+    "musicbrainz_user_agent": "Jarvis/1.0",
+    "spotify_client_id_env": "SPOTIFY_CLIENT_ID",
+    "spotify_client_secret_env": "SPOTIFY_CLIENT_SECRET",
+    "lastfm_api_key_env": "LASTFM_API_KEY",
+    "acoustid_api_key_env": "ACOUSTID_API_KEY"
+  },
+  "sleep_timer": {
+    "fade_out_seconds": 30
+  },
+  "dry_run_player": false,
+  "favorites": [
+    "abkemigjmcu_70c9a610e5c0"
+  ],
+  "playlists": {
+    "favorites": [
+      "abkemigjmcu_70c9a610e5c0"
+    ],
+    "default": [
+      "rqkv6sgjfk_c06a38b25113"
+    ],
+    "Tonight Power Mix": [
+      "cusersanimedocumentsnew__e24baa15fc88",
+      "cusersanimedocumentsnew__65f3aa6b4491"
+    ]
+  },
+  "notes": [
+    "Download only media the user is allowed to access and keep.",
+    "If a track is already in the local library, play the saved file instead of downloading it again.",
+    "This config preserves the existing media/music library while enabling the expanded media/entertainment state model."
+  ],
+  "playlist_display_limit": 12,
+  "default_playlist": "",
   "audio_format_selector": "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio",
   "search_provider": "ytsearch",
-  "search_limit": 5,
+  "search_limit": 8,
   "preferred_music_context": [
     "Hindi songs",
     "Haryanvi songs",
     "Punjabi songs",
-    "Indian indie songs",
+    "Indian indie",
     "official audio",
     "lyrical video"
-  ],
-  "favorites": [],
-  "playlists": {
-    "favorites": []
-  },
-  "notes": [
-    "Download only media the user is allowed to access and keep.",
-    "If a track is already in the local library, play the saved file instead of downloading it again."
   ]
 }

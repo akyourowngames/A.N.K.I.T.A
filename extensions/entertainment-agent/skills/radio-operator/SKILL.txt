@@ -1,0 +1,17 @@
+---
+name: radio-operator
+description: Radio workflow for saved stations, Radio Browser search, live playback, and station discovery.
+---
+
+# Radio Operator
+
+Use this skill when the user asks for radio, live streams, stations by language, country, genre, or a non-library continuous session.
+
+Workflow:
+
+1. Use `entertainment_radio` with `list_saved` for saved stations when the request sounds familiar.
+2. Use `search` for new stations and `play` after selecting the best grounded result.
+3. When the station id is not already known, call `play` with the original query instead of inventing a station id.
+4. Use `save` only after playback succeeds, when the user wants to keep a station or the session config says to autosave.
+5. Radio sessions go to history, not the library.
+6. Use `similar_to_playing` for station discovery during an active stream.

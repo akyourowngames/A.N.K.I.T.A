@@ -24,6 +24,7 @@ Jarvis can run as:
 - Interactive CLI: `python main.py`.
 - Voice-enabled interactive CLI: press Space on an empty prompt to listen.
 - Tool/debug CLI: `--list-tools`, `--list-extensions`, `--check-env`, `--check-voice`, `--list-mics`, `--voice-levels`, `--list-voices`.
+- Telegram bot channel: `python telegram_bot.py`.
 
 ## High-Level Flow
 
@@ -56,6 +57,7 @@ flowchart TD
 | File | Role |
 |---|---|
 | `main.py` | CLI entrypoint, interactive loop, one-shot mode, voice commands, startup wiring. |
+| `telegram_bot.py` | Telegram entrypoint that boots the same Jarvis config, registry, memory, extensions, skills, and `chat_once(...)`, then handles Telegram polling or webhook updates. |
 | `jarvis_nim.py` | NVIDIA NIM client, streaming, tool-planner calls, tool execution flow, final response handling. |
 | `extension_system.py` | Loads extension manifests from `extensions/*/extension.json`. |
 | `tools/registry.py` | Converts tool JSON descriptors into executable Python tool objects. |
@@ -77,6 +79,8 @@ flowchart TD
 7. Discover all tools with `discover_tools(extension_catalog=...)`.
 8. Load memory config and ensure memory files exist.
 9. Route into `--list-tools`, `--list-extensions`, `--check-env`, one-shot mode, or interactive mode.
+
+`telegram_bot.py` mirrors the shared startup path through config, extension catalog, tool discovery, and memory loading. After that shared boot, it loads `TelegramConfig` from env plus `config/telegram_bot.json`, starts polling or webhook mode, and registers one Telegram message handler.
 
 In interactive mode:
 
@@ -258,6 +262,7 @@ Current live extensions:
 | `productivity-agent` | 5 | 1 | GitHub, Gmail API, Google Calendar API. |
 | `qa` | 1 | 1 | Jarvis QA/test runner. |
 | `skill-workshop` | 1 | 1 | Create/read/update reusable skills. |
+| `telegram-bot` | 3 | 1 | Telegram runtime status, session info, and current-chat file delivery. |
 | `web` | 3 | 1 | Web search/fetch/readability tools. |
 | `workspace` | 1 | 1 | Git/file/project inspection. |
 
@@ -422,6 +427,12 @@ Speech text is sanitized before TTS:
 - `browser_status`
 - `browser_manage`
 
+### Telegram Channel
+
+- `telegram_status`
+- `telegram_session_info`
+- `telegram_send_file`
+
 ### Memory And Wiki
 
 - `wiki_status`
@@ -500,6 +511,23 @@ Capabilities:
 - Close browser session.
 
 It uses Playwright and a configured Chrome/Edge executable. Browser profile and screenshots live under ignored `media/`.
+
+### Telegram Bot
+
+Files:
+
+- `telegram_bot.py`
+- `extensions/telegram-bot/extension.json`
+- `tools/telegram_bot_tools.py`
+- `config/telegram_bot.json`
+
+Capabilities:
+
+- Run Jarvis as a Telegram polling or webhook bot without wrapping the CLI loop.
+- Persist one chat-compatible session JSON per Telegram chat.
+- Accept text, document, photo, audio, and voice-note inputs.
+- Queue and send local files to the current Telegram chat through `telegram_send_file`.
+- Keep chat work non-blocking by running the synchronous `chat_once(...)` call in a thread executor.
 
 ### Entertainment Agent
 
@@ -692,6 +720,7 @@ Important private locations:
 | `media/google/gmail_token.json` | Gmail OAuth token. |
 | `media/google/calendar_token.json` | Calendar OAuth token. |
 | `media/instagram/session.json` | Instagram session, when login succeeds. |
+| `media/telegram/` | Telegram sessions, uploads, downloads, outbox files, and optional per-user memory. |
 | `media/browser-profile/` | Browser agent profile state. |
 | `media/music/` | Downloaded music files. |
 | `memory/research/` | Local research dossiers, evidence caches, watchlists, and run logs. |
@@ -745,6 +774,13 @@ Docs and reports should never include raw secrets.
 - `INSTAGRAM_SESSION_FILE`
 - `INSTAGRAM_DRY_RUN`
 
+### Telegram
+
+- `JARVIS_TELEGRAM_CONFIG`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_CHATS`
+- `TELEGRAM_WEBHOOK_URL`
+
 ### Voice
 
 - `VOICE_ENABLED`
@@ -783,6 +819,7 @@ The current suite covers:
 - `/speakoff` and `/speakon`.
 - Gmail display text sanitization.
 - Streaming and native tool parser paths.
+- Telegram config, session pruning, response chunking, context-aware tools, and file outbox delivery.
 
 Live behavior checks use:
 
@@ -803,6 +840,7 @@ For user-facing behavior, live Jarvis CLI checks matter because unit tests alone
 - Browser control depends on Playwright and a local Chrome/Edge executable.
 - Music download/playback depends on `yt-dlp` and a playable local media environment.
 - Voice depends on NVIDIA Riva/NVCF function IDs and local audio packages.
+- Telegram voice-note transcription also depends on a working audio converter such as ffmpeg.
 
 ## Upgrade Pattern
 

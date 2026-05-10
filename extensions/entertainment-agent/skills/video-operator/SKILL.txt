@@ -1,0 +1,17 @@
+---
+name: video-operator
+description: Video workflow for search, download, playback, thumbnails, metadata, and subtitles.
+---
+
+# Video Operator
+
+Use this skill when the user asks for videos, music videos, live performances, clips, downloaded video files, or visual media playback.
+
+Workflow:
+
+1. Use `entertainment_search` with `media_type=video` for discovery.
+2. Use `entertainment_download` with `media_type=video` when the user wants to keep the file.
+3. Use `entertainment_stream_direct` when the user wants a quick watch without saving.
+4. Prefer `entertainment_playback` for local video playback; it will choose the configured backend.
+5. Use `entertainment_metadata` with `fetch_art` for thumbnails when needed.
+6. Do not claim subtitles or video quality unless returned by the tool.

@@ -1,0 +1,67 @@
+{
+  "id": "telegram-bot",
+  "name": "Telegram Bot",
+  "description": "Telegram channel tools and runtime guidance for Jarvis.",
+  "prompt_files": [
+    "prompts/telegram-bot.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "TELEGRAM_BOT_TOKEN"
+  ],
+  "tools": [
+    {
+      "name": "telegram_status",
+      "description": "Report Telegram bot runtime status for the active chat, including session count, memory mode, polling or webhook mode, and rate limit state.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.telegram_bot_tools",
+        "function": "telegram_status"
+      }
+    },
+    {
+      "name": "telegram_send_file",
+      "description": "Send a local file to the current Telegram chat. Use this when a report, dossier, chart, document, archive, or other generated file should be delivered to the user.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "file_path": {
+            "type": "string",
+            "description": "Absolute path, relative path, or configured path alias for the local file to send."
+          },
+          "caption": {
+            "type": "string",
+            "description": "Optional short Telegram caption."
+          }
+        },
+        "required": [
+          "file_path"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.telegram_bot_tools",
+        "function": "telegram_send_file"
+      }
+    },
+    {
+      "name": "telegram_session_info",
+      "description": "Report current Telegram session metadata such as turn count, message count, memory mode, session start time, and active uploaded file.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.telegram_bot_tools",
+        "function": "telegram_session_info"
+      }
+    }
+  ]
+}

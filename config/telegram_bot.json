@@ -1,0 +1,32 @@
+{
+  "agent_name": "Jarvis Telegram Bot",
+  "bot_token_env": "TELEGRAM_BOT_TOKEN",
+  "allowed_chat_ids": [],
+  "memory_mode": "shared",
+  "per_user_memory_root": "media/telegram/memory",
+  "session_dir": "media/telegram/sessions",
+  "upload_dir": "media/telegram/uploads",
+  "download_dir": "media/telegram/downloads",
+  "max_session_messages": 80,
+  "max_message_length": 4000,
+  "parse_mode": "MarkdownV2",
+  "typing_indicator": true,
+  "rate_limit_per_minute": 20,
+  "voice_transcription": true,
+  "send_files_inline": true,
+  "webhook_mode": false,
+  "webhook_url": "",
+  "webhook_port": 8443,
+  "rejection_message": "This Jarvis Telegram bot is private.",
+  "slow_down_message": "Slow down a bit and try again.",
+  "ffmpeg_command": "ffmpeg",
+  "auto_send_file_result_paths": [
+    "rendered_report.output_path",
+    "output_path",
+    "report_path",
+    "write_result.output_path",
+    "saved.report_path",
+    "file_path",
+    "track.file_path"
+  ]
+}

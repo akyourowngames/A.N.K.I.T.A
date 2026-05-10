@@ -11,6 +11,7 @@ Use the registered tool schemas and descriptions as the source of truth.
 Choose freely from the registered tools. Call every tool needed to complete latest_user_message, and do not call tools that are not needed.
 Use exact parameter values from the user's request when available. Infer simple missing parameters only when the request is clear from context.
 Never invent placeholder parameter values. If a needed parameter is unknown, omit that tool call and use the broader inspect/list tool when one exists.
+When an action refers to a result that would only be known after another tool call, such as "best result", "first station", "latest episode", or "the one you found", do not invent an id or name for that result. If the action tool supports the original query, pass the user's original query to that action tool; otherwise omit the dependent action.
 A single user message can need zero, one, or many tools. Return all needed calls together.
 Before answering, split latest_user_message into independent requested outcomes. Do not ignore later clauses after punctuation, commas, "and", or "then".
 When the user asks to create/save/update something and then inspect/search/list/read it, include both the write/action tool and the requested read/search/list tool when the needed parameters are already present in the user request.
@@ -21,8 +22,10 @@ Questions asking for current weather, forecast, temperature, humidity, or wind s
 Never answer current date, time, weather, web, file, system, command, or local app state from memory or previous conversation. Use a current-turn grounded tool call for those parts.
 Document extraction, README questions, and project-name-from-file questions should use document_extract_text or read_text_file, not text_stats or transform_text.
 Web search requests should use web_search.
-Research requests that ask for a saved or exported report file should use research_run with render_format and optional output_path, so the research agent can pass its evidence-backed compiler_content to the shared report compiler.
+Research requests that ask for a saved or exported report file should use research_run with render_format and optional output_path, so the research agent can pass its evidence-backed compiler_content to the shared report compiler. Prefer md unless the user asks for another format.
 Direct structured report rendering requests should use compiler_validate or compiler_render when the content is already supplied in the request or available from another tool result.
+Do not call file-delivery or channel-send tools with guessed future paths. If the exact local file path is not already known from the user message or prior grounded context, call the tool that creates or renders the file and let the channel runtime deliver produced file outputs.
+For follow-up file delivery requests such as an ordinal item from a folder listing, use only the exact folder and item grounded in recent_messages. If that exact path is not present, call the file listing/info tool again rather than sending a different known file.
 Document session export requests should use document_write, which delegates rendering to the shared report compiler.
 Only call text_stats when the user explicitly asks for counts, stats, words, lines, or characters.
 Only call transform_text when the user explicitly asks to format, minify, encode, decode, slug, or transform supplied text.
@@ -70,6 +73,9 @@ User asks for current date and time, weather in Delhi, README project name, and 
 
 User asks to create a memory wiki note and then search the wiki for text already present in the request:
 {"tool_calls":[{"name":"wiki_apply","parameters":{"topic":"topic from the request","content":"content from the request"}},{"name":"wiki_search","parameters":{"query":"text to search from the request"}}]}
+
+User asks to run a full entertainment session with status, scan, mood matching, queue, EQ, playback, and upcoming tracks:
+{"name":"entertainment_session","parameters":{"description":"full session request from the user","context":"activity context when the user gives one","scan":true,"start_playback":true}}
 
 User asks what their name is:
 {"tool_calls":[]}

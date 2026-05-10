@@ -1,14 +1,71 @@
 {
   "agent_name": "Codex Browser Agent",
+  "profiles_dir": "media/browser/profiles",
+  "sessions_dir": "media/browser/sessions",
+  "screenshots_dir": "media/browser/screenshots",
+  "downloads_dir": "media/browser/downloads",
+  "recordings_dir": "media/browser/recordings",
+  "cache_dir": "media/browser/cache",
+  "default_profile": "default",
   "headless": false,
-  "user_data_dir": "media/browser-profile",
+  "default_viewport": {
+    "width": 1280,
+    "height": 900
+  },
   "default_timeout_ms": 15000,
-  "screenshot_dir": "media/browser-screenshots",
+  "network_idle_timeout_ms": 2000,
+  "slow_mo_ms": 0,
   "search_url_template": "https://www.google.com/search?q={query}",
+  "human_simulation": {
+    "enabled": false,
+    "typing_delay_ms_min": 40,
+    "typing_delay_ms_max": 120,
+    "click_delay_ms_min": 80,
+    "click_delay_ms_max": 200,
+    "scroll_step_px": 300,
+    "scroll_delay_ms": 150
+  },
+  "anti_detection": {
+    "enabled": false,
+    "stealth_mode": true,
+    "randomize_user_agent": false,
+    "user_agents": []
+  },
+  "network_interception": {
+    "enabled": true,
+    "capture_patterns": [],
+    "max_captured_responses": 50,
+    "max_response_body_chars": 10000
+  },
+  "dom_snapshot": {
+    "max_elements_per_type": 50,
+    "include_hidden_inputs": true,
+    "include_accessibility_tree": true,
+    "max_text_per_element": 200,
+    "auto_snapshot_on_navigate": true
+  },
+  "workflow": {
+    "max_steps_per_workflow": 40,
+    "step_timeout_seconds": 30,
+    "retry_attempts": 2,
+    "checkpoint_every_n_steps": 5,
+    "resume_on_restart": true
+  },
+  "captcha": {
+    "auto_solve_checkbox": true,
+    "auto_solve_audio": false,
+    "escalate_to_user": true
+  },
+  "browser_executables": {
+    "chrome": "{localappdata}/Google/Chrome/Application/chrome.exe",
+    "edge": "{programfiles}/Microsoft/Edge/Application/msedge.exe",
+    "firefox": "{programfiles}/Mozilla Firefox/firefox.exe",
+    "playwright_chromium": "{playwright_chromium}"
+  },
   "browser_executable_candidates": [
+    "{localappdata}/Google/Chrome/Application/chrome.exe",
     "{programfiles}/Google/Chrome/Application/chrome.exe",
     "{programfilesx86}/Google/Chrome/Application/chrome.exe",
-    "{localappdata}/Google/Chrome/Application/chrome.exe",
     "{programfiles}/Microsoft/Edge/Application/msedge.exe",
     "{programfilesx86}/Microsoft/Edge/Application/msedge.exe",
     "{playwright_chromium}"
@@ -16,5 +73,52 @@
   "launch_args": [
     "--disable-blink-features=AutomationControlled",
     "--disable-dev-shm-usage"
-  ]
+  ],
+  "proxy": {
+    "enabled": false,
+    "server": "",
+    "username_env": "",
+    "password_env": ""
+  },
+  "workflow_defaults": {
+    "flight_search": {
+      "site": "google_flights"
+    },
+    "hotel_search": {
+      "site": "google_travel"
+    },
+    "video_watch": {
+      "site": "youtube"
+    },
+    "product_search": {
+      "site": "google_search"
+    }
+  },
+  "sites": {
+    "google_flights": {
+      "base_url": "https://www.google.com/travel/flights",
+      "requires_stealth": false,
+      "known_selectors": {}
+    },
+    "google_travel": {
+      "base_url": "https://www.google.com/travel/hotels",
+      "requires_stealth": false,
+      "known_selectors": {}
+    },
+    "google_search": {
+      "base_url": "https://www.google.com/search",
+      "requires_stealth": false,
+      "known_selectors": {}
+    },
+    "makemytrip": {
+      "base_url": "https://www.makemytrip.com",
+      "requires_stealth": true,
+      "known_selectors": {}
+    },
+    "youtube": {
+      "base_url": "https://www.youtube.com",
+      "requires_stealth": false,
+      "known_selectors": {}
+    }
+  }
 }

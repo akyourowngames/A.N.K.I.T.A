@@ -1,17 +1,21 @@
-# Codex Entertainment Agent Skill
+---
+name: music-operator
+description: Core music workflow for library-first playback, downloads, lyrics, queueing, and recommendations.
+---
 
-Use this skill when the user asks Jarvis to search, download, play, queue, favorite, or manage music.
+# Music Operator
+
+Use this skill when the user asks Jarvis to search, download, play, queue, favorite, inspect, or recommend music.
 
 Workflow:
 
-1. Inspect `entertainment_status` when you need to know the library folder, player state, or installed downloader status.
-2. For song discovery, call `entertainment_search` with the user's exact text and an optional context. Keep Hindi, Haryanvi, Punjabi, and Hinglish words intact.
-3. For playback, call `entertainment_play` with the query first. Set `auto_download=true` only when the user clearly wants the song obtained or played now.
-4. If a user asks to replay the same song, use the cached result returned by the library. Do not force a new download.
-5. For favorites, call `entertainment_playlist` with `add_favorite`; if the track is not local yet, use `auto_download=true`.
-6. For multiple songs, add tracks to the queue or a playlist, then call `entertainment_queue` with `play` or `play_playlist`.
-7. For playlist inspection, call `entertainment_playlist` with `list` for all playlists or `show` for one named playlist, then use the returned track titles.
-8. For requests to play the saved/default playlist without a named playlist, call `entertainment_playlist` with `play` or `entertainment_queue` with `play_playlist` and omit the playlist parameter.
-9. For next, previous, stop, or clear, use `entertainment_queue`.
+1. Use `entertainment_status` when you need library, dependency, backend, or player state.
+2. For playback, call `entertainment_play` with the user's exact query or track id. Let the tool check the library before any download.
+3. Set `auto_download=true` only when the user clearly wants the song obtained or played now.
+4. For temporary listening, set `stream=true` or use `entertainment_stream_direct`.
+5. For multiple songs, add resolved tracks to `entertainment_queue`, then start playback.
+6. For favorites, use `entertainment_playlist` with `add_favorite`. If the user means the current playing track, do not invent a query; omit track identity and let the tool use playback state.
+7. After explicit positive feedback, use `entertainment_recommend` with `similar` or `because_you_liked`.
+8. For lyrics questions, use `entertainment_lyrics` with `show` or `current_line`.
 
-The answer should be short and grounded: say what is playing, what was downloaded or cached, and the saved path only when the user needs the file location.
+Ground the answer in tool output: local, cached, downloaded, streamed, queued, unavailable, or unsupported.

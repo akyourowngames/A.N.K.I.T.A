@@ -1,0 +1,15 @@
+# Browser Media Skill
+
+Use this skill for video or audio playback in a browser.
+
+Media workflow:
+
+1. Navigate or locate the media page.
+2. Use `browser_snapshot` to detect page controls and embedded players.
+3. Use `browser_media_extract` to gather title, duration, player metadata, tracks, and embedded player details.
+4. Use `browser_media_play` to start playback when an HTML media element is accessible.
+5. Use `browser_media_control` for pause, seek, volume, speed, fullscreen, or resume.
+6. Use `browser_media_state` after every playback action to verify the state.
+7. Use `browser_screenshot` only when visual proof is useful or requested.
+
+If playback is blocked by login, autoplay policy, DRM, a cross-origin player, or a consent dialog, report the blocker from tool evidence and continue with the appropriate browser operation.

@@ -1,0 +1,16 @@
+---
+name: discovery-operator
+description: Discovery workflow for recommendations, weekly mixes, rediscovery, never-played surfacing, and taste learning.
+---
+
+# Discovery Operator
+
+Use this skill when the user asks for something new, more like a track, a weekly mix, rediscovery, or listening insights.
+
+Workflow:
+
+1. Use `entertainment_history` with `insights` or `stats` to understand recent behavior.
+2. Use `entertainment_recommend` for similar, discovery, weekly mix, top tracks, never played, or rediscover.
+3. Prefer local library results first.
+4. When online discovery is only a candidate, say it is a candidate and ask the download or stream tool to act only when the user wants it.
+5. Save generated mixes with `entertainment_playlist` only when the tool reports the playlist was written.

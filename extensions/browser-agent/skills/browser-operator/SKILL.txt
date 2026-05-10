@@ -1,15 +1,22 @@
-# Codex Browser Agent Skill
+# Codex Browser Operator Skill
 
-Use this skill when the user asks Jarvis to control or inspect a browser.
+Use this skill when the user asks Jarvis to control, inspect, verify, or complete work in a browser.
 
-Workflow:
+Operator workflow:
 
-1. Use `browser_status` if readiness is unclear.
-2. Use `browser_manage` with `open_url` for direct URLs.
-3. Use `browser_manage` with `search` when the user wants a browser search.
-4. Use `snapshot` after opening or interacting when the user asks what is on the page.
-5. Use `click_text`, `type_text`, and `press_key` for page interaction.
-6. Use `screenshot` when the user asks to capture what is visible.
-7. Use `close` when the user asks to close the browser session.
+1. Use the `browser` tool first for normal browser work.
+2. Check state with `{"action":"status"}` or `{"action":"tabs"}` when the current tab is unclear.
+3. Open important task tabs with a label, for example `{"action":"open","url":"https://example.com","label":"task"}`.
+4. Read before acting: `{"action":"snapshot","targetId":"task","interactive":true,"compact":true}`.
+5. Use the returned refs for action calls, for example `{"action":"act","targetId":"task","request":{"kind":"type","ref":"e3","text":"Delhi"}}`.
+6. After navigation, modal changes, autocomplete typing, or form submission, snapshot again before the next action.
+7. If a ref fails, snapshot the same `targetId` again and retry once with the fresh ref.
+8. Use lower-level `browser_*` tools only for debugging or specialized operations that the `browser` facade does not expose.
+9. Use `browser_screenshot` or `browser` `action="screenshot"` for visual proof. Do not use screenshots as the first page-understanding layer unless the user asks for visual inspection.
+10. Use close/stop only when the user asks to close or cleanup is necessary after verification.
 
-Answer from browser results and avoid internal tool narration.
+Grounding:
+
+- Answer from tool results and avoid internal tool narration.
+- If a browser task fails, return the exact blocked state and the evidence from the tool result.
+- If user input is required for CAPTCHA, 2FA, irreversible purchase, or missing secret values, stop and ask for that specific input.

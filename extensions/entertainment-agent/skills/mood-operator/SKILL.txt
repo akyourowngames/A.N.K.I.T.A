@@ -1,0 +1,17 @@
+---
+name: mood-operator
+description: Mood and context workflow for activity-based playback, queueing, and taste updates.
+---
+
+# Mood Operator
+
+Use this skill when the user describes a feeling, activity, time of day, energy level, or listening context instead of a specific song.
+
+Workflow:
+
+1. For full session requests that include status, scan, queue, EQ, playback, and upcoming tracks, use `entertainment_session`.
+2. Use `entertainment_mood` with `match` for simpler mood lookup.
+3. Add returned track ids to `entertainment_queue`.
+4. Start playback with `entertainment_playback` or `entertainment_queue`.
+5. Use `set_context` when the user names an activity.
+6. Update track mood tags with `entertainment_library` only when the user gives feedback or the tool has listening evidence.

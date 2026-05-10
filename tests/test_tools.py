@@ -22,7 +22,31 @@ from main import configure_stream_encoding, interactive_speech_command
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
-from tools.browser_agent import browser_manage, browser_status, close_browser, normalize_url
+from tools.browser_agent import (
+    browser,
+    browser_click,
+    browser_detect_state,
+    browser_find_element,
+    browser_get_text,
+    browser_intercept_start,
+    browser_launch,
+    browser_manage,
+    browser_media_extract,
+    browser_media_state,
+    browser_navigate,
+    browser_network_log,
+    browser_screenshot,
+    browser_snapshot,
+    browser_state,
+    browser_status,
+    browser_type,
+    browser_wait_for,
+    browser_workflow_start,
+    browser_workflow_status,
+    browser_workflow_step,
+    close_browser,
+    normalize_url,
+)
 from tools.calculator import evaluate_expression
 from tools.diagnostics_tools import jarvis_latency_probe
 from tools.entertainment_agent import (
@@ -30,9 +54,21 @@ from tools.entertainment_agent import (
     cached_track,
     canonical_text,
     entertainment_config,
+    entertainment_equalizer,
+    entertainment_history,
+    entertainment_library,
+    entertainment_lyrics,
+    entertainment_metadata,
+    entertainment_mood,
     entertainment_play,
+    entertainment_playback,
     entertainment_playlist,
+    entertainment_podcast,
     entertainment_queue,
+    entertainment_radio,
+    entertainment_recommend,
+    entertainment_share,
+    entertainment_session,
     entertainment_status,
     load_config,
     load_index,
@@ -91,7 +127,15 @@ class ToolRegistryTests(unittest.TestCase):
         names = [tool.name for tool in registry.visible_tools()]
         self.assertIn("calculate", names)
         self.assertIn("browser_status", names)
+        self.assertIn("browser", names)
         self.assertIn("browser_manage", names)
+        self.assertIn("browser_launch", names)
+        self.assertIn("browser_snapshot", names)
+        self.assertIn("browser_state", names)
+        self.assertIn("browser_find_element", names)
+        self.assertIn("browser_workflow_start", names)
+        self.assertIn("browser_network_log", names)
+        self.assertIn("browser_media_state", names)
         self.assertIn("get_current_datetime", names)
         self.assertIn("get_weather", names)
         self.assertIn("run_terminal", names)
@@ -125,11 +169,24 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("workspace_inspect", names)
         self.assertIn("jarvis_latency_probe", names)
         self.assertIn("entertainment_status", names)
+        self.assertIn("entertainment_session", names)
+        self.assertIn("entertainment_library", names)
         self.assertIn("entertainment_search", names)
         self.assertIn("entertainment_download", names)
         self.assertIn("entertainment_play", names)
+        self.assertIn("entertainment_stream_direct", names)
+        self.assertIn("entertainment_playback", names)
         self.assertIn("entertainment_queue", names)
         self.assertIn("entertainment_playlist", names)
+        self.assertIn("entertainment_mood", names)
+        self.assertIn("entertainment_recommend", names)
+        self.assertIn("entertainment_lyrics", names)
+        self.assertIn("entertainment_radio", names)
+        self.assertIn("entertainment_podcast", names)
+        self.assertIn("entertainment_history", names)
+        self.assertIn("entertainment_equalizer", names)
+        self.assertIn("entertainment_metadata", names)
+        self.assertIn("entertainment_share", names)
         self.assertIn("entertainment_config", names)
         self.assertIn("productivity_status", names)
         self.assertIn("github_manage", names)
@@ -371,6 +428,217 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(screenshot_exists)
         self.assertIn("screens", screenshot["path"])
 
+    def test_browser_operator_surface_tracks_state_dom_network_workflow_and_media_live(self) -> None:
+        import http.server
+        import importlib.util
+        import socketserver
+
+        if importlib.util.find_spec("playwright") is None:
+            self.skipTest("playwright is not installed")
+        chrome = Path(r"C:\Program Files\Google\Chrome\Application\chrome.exe")
+        edge = Path(r"C:\Program Files\Microsoft\Edge\Application\msedge.exe")
+        executable = chrome if chrome.exists() else edge
+        if not executable.exists():
+            self.skipTest("Chrome or Edge executable is not installed")
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            def do_GET(self) -> None:
+                if self.path == "/api/data":
+                    payload = b'{"status":"api-ok","price":123}'
+                    self.send_response(200)
+                    self.send_header("Content-Type", "application/json")
+                    self.send_header("Content-Length", str(len(payload)))
+                    self.end_headers()
+                    self.wfile.write(payload)
+                    return
+                html = b"""<!doctype html>
+<html>
+<head><title>Browser Operator Test</title></head>
+<body>
+<main>
+  <h1>Operator Form</h1>
+  <form id="booking">
+    <label for="name">Name</label>
+    <input id="name" name="name" aria-label="Name" autocomplete="name" required>
+    <label id="from-label">From</label>
+    <div id="from" role="combobox" contenteditable="true" aria-labelledby="from-label" aria-controls="from-options" aria-expanded="false" style="display:block; width:240px; min-height:24px; border:1px solid #777;"></div>
+    <ul id="from-options" role="listbox" hidden>
+      <li role="option" data-value="DEL" onclick="chooseFrom(this)">Delhi DEL</li>
+      <li role="option" data-value="BOM" onclick="chooseFrom(this)">Mumbai BOM</li>
+    </ul>
+    <button id="submit" type="button" onclick="submitForm()">Submit</button>
+  </form>
+  <p id="api"></p>
+  <p id="result"></p>
+  <video id="player" controls></video>
+</main>
+<script>
+async function submitForm() {
+  const response = await fetch('/api/data');
+  const data = await response.json();
+  document.getElementById('api').textContent = data.status;
+  document.getElementById('result').textContent = 'Hello ' + document.getElementById('name').value + ' from ' + document.getElementById('from').textContent;
+}
+document.getElementById('from').addEventListener('input', () => {
+  document.getElementById('from-options').hidden = false;
+  document.getElementById('from').setAttribute('aria-expanded', 'true');
+});
+function chooseFrom(item) {
+  document.getElementById('from').textContent = item.textContent;
+  document.getElementById('from-options').hidden = true;
+  document.getElementById('from').setAttribute('aria-expanded', 'false');
+}
+</script>
+</body>
+</html>"""
+                self.send_response(200)
+                self.send_header("Content-Type", "text/html")
+                self.send_header("Content-Length", str(len(html)))
+                self.end_headers()
+                self.wfile.write(html)
+
+            def log_message(self, _format: str, *_args: object) -> None:
+                return
+
+        class Server(socketserver.TCPServer):
+            allow_reuse_address = True
+
+        server = Server(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "browser.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "agent_name": "Operator Test Browser Agent",
+                        "profiles_dir": str(root / "profiles"),
+                        "sessions_dir": str(root / "sessions"),
+                        "screenshots_dir": str(root / "screens"),
+                        "downloads_dir": str(root / "downloads"),
+                        "recordings_dir": str(root / "recordings"),
+                        "cache_dir": str(root / "cache"),
+                        "default_profile": "operator",
+                        "headless": True,
+                        "default_timeout_ms": 15000,
+                        "network_idle_timeout_ms": 500,
+                        "browser_executable_candidates": [str(executable)],
+                        "launch_args": ["--disable-dev-shm-usage"],
+                        "network_interception": {
+                            "enabled": True,
+                            "capture_patterns": [],
+                            "max_captured_responses": 20,
+                            "max_response_body_chars": 2000,
+                        },
+                        "dom_snapshot": {
+                            "max_elements_per_type": 25,
+                            "include_hidden_inputs": True,
+                            "include_accessibility_tree": True,
+                            "max_text_per_element": 200,
+                            "auto_snapshot_on_navigate": True,
+                        },
+                        "workflow": {
+                            "max_steps_per_workflow": 10,
+                            "step_timeout_seconds": 10,
+                            "retry_attempts": 1,
+                            "checkpoint_every_n_steps": 2,
+                            "resume_on_restart": True,
+                        },
+                        "sites": {},
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_BROWSER_CONFIG": str(config_path),
+                    "JARVIS_BROWSER_HEADLESS": "true",
+                },
+                clear=False,
+            ):
+                try:
+                    launched = browser_launch({"profile_name": "operator", "headless": True})
+                    session_id = launched["session_id"]
+                    browser_intercept_start({"session_id": session_id, "patterns": ["/api/data"], "capture_bodies": True})
+                    navigated = browser_navigate(
+                        {
+                            "session_id": session_id,
+                            "url": f"http://127.0.0.1:{server.server_address[1]}/",
+                            "capture_snapshot": True,
+                        }
+                    )
+                    snapshot = browser_snapshot({"session_id": session_id})
+                    found = browser_find_element({"session_id": session_id, "description": "name field"})
+                    from_field = browser_find_element({"session_id": session_id, "description": "from field"})
+                    browser_type({"session_id": session_id, "selector": "#name", "text": "Krish", "clear": True})
+                    ref_snapshot = browser({"action": "snapshot", "targetId": session_id, "interactive": True, "compact": True})
+                    from_ref = next(
+                        item["ref"]
+                        for item in ref_snapshot["refs"].values()
+                        if item.get("selector") == from_field["selector"]
+                    )
+                    typed_from = browser(
+                        {
+                            "action": "act",
+                            "targetId": session_id,
+                            "request": {"kind": "type", "ref": from_ref, "text": "Delhi"},
+                        }
+                    )
+                    browser_wait_for({"session_id": session_id, "condition": "element_appears", "selector": "#from-options [role='option']"})
+                    options_snapshot = browser({"action": "snapshot", "targetId": session_id, "interactive": True, "compact": True})
+                    option_ref = next(
+                        item["ref"]
+                        for item in options_snapshot["refs"].values()
+                        if item.get("text") == "Delhi DEL"
+                    )
+                    browser(
+                        {
+                            "action": "act",
+                            "targetId": session_id,
+                            "request": {"kind": "click", "ref": option_ref},
+                        }
+                    )
+                    browser_click({"session_id": session_id, "selector": "#submit"})
+                    browser_wait_for({"session_id": session_id, "condition": "text_appears", "text": "Hello Krish from Delhi DEL"})
+                    page_text_result = browser_get_text({"session_id": session_id, "selector": "#result", "max_chars": 100})
+                    network = browser_network_log({"session_id": session_id, "limit": 10, "include_bodies": True})
+                    media_state = browser_media_state({"session_id": session_id})
+                    media_extract = browser_media_extract({"session_id": session_id})
+                    detected = browser_detect_state({"session_id": session_id})
+                    workflow = browser_workflow_start({"session_id": session_id, "type": "form_fill", "parameters": {"fields": {"name": "Krish"}}})
+                    workflow_step = browser_workflow_step({"session_id": session_id})
+                    workflow_status = browser_workflow_status({"session_id": session_id})
+                    screenshot = browser_screenshot({"session_id": session_id})
+                    state = browser_state({"session_id": session_id})
+                    snapshot_exists = Path(snapshot["snapshot_path"]).exists()
+                    screenshot_exists = Path(screenshot["path"]).exists()
+                finally:
+                    close_browser()
+                    server.shutdown()
+                    server.server_close()
+
+        self.assertEqual(navigated["title"], "Browser Operator Test")
+        self.assertIn("inputs", snapshot["interactive_elements"])
+        self.assertIn("comboboxes", snapshot["interactive_elements"])
+        self.assertTrue(snapshot_exists)
+        self.assertEqual(found["selector"], "#name")
+        self.assertEqual(from_field["selector"], "#from")
+        self.assertIn(typed_from["result"]["strategy"], {"filled_element", "clicked_and_typed", "dom_input_event"})
+        self.assertIn("Delhi DEL", options_snapshot["snapshot"])
+        self.assertIn("Hello Krish from Delhi DEL", page_text_result["text"])
+        self.assertTrue(any("/api/data" in entry.get("url", "") for entry in network["entries"]))
+        self.assertEqual(len(media_state["state"]["media"]), 1)
+        self.assertEqual(media_extract["title"], "Browser Operator Test")
+        self.assertEqual(detected["state"], "form")
+        self.assertEqual(workflow["workflow"]["name"], "form_fill")
+        self.assertEqual(workflow_step["workflow"]["current_step"], 1)
+        self.assertEqual(workflow_status["workflow"]["status"], "running")
+        self.assertTrue(screenshot_exists)
+        self.assertEqual(state["current_title"], "Browser Operator Test")
+
     def test_browser_url_normalization_is_config_free(self) -> None:
         self.assertEqual(normalize_url("example.com"), "https://example.com")
         self.assertEqual(normalize_url("https://example.com"), "https://example.com")
@@ -462,7 +730,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("instagram-agent", extension_ids)
         self.assertIn("research-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "browser" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser_manage" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "browser_workflow_start" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "browser_snapshot" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "instagram_manage" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "gmail_api" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "calendar_api" for tool in catalog.tool_descriptors()))
@@ -472,6 +743,21 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Instagram Agent Protocol", catalog.prompt_context())
         self.assertIn("Research Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
+
+    def test_jarvis_cli_lists_expanded_browser_tool_surface(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, "main.py", "--list-tools"],
+            cwd=str(Path.cwd()),
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("- browser:", completed.stdout)
+        self.assertIn("browser_snapshot", completed.stdout)
+        self.assertIn("browser_workflow_start", completed.stdout)
+        self.assertIn("browser_network_log", completed.stdout)
 
     def test_skill_context_loads_extension_skill_files(self) -> None:
         catalog = load_extension_catalog()
@@ -753,6 +1039,409 @@ class ToolRegistryTests(unittest.TestCase):
 
                 self.assertEqual(result["config"]["search_limit"], 7)
                 self.assertIn("Haryanvi songs", config_path.read_text(encoding="utf-8"))
+
+    def test_entertainment_os_tools_cover_user_facing_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "entertainment.json"
+            library = root / "music"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(library),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "lyrics_dir": str(root / "lyrics"),
+                            "podcast_dir": str(root / "podcasts"),
+                            "equalizer_dir": str(root / "eq"),
+                            "radio": {
+                                "saved_stations_path": str(root / "radio.json"),
+                                "default_stations": {
+                                    "test": {
+                                        "name": "Test Radio",
+                                        "query": "test radio",
+                                        "language": "English",
+                                        "url": "https://example.com/radio.mp3",
+                                    }
+                                },
+                            },
+                            "podcast": {"feeds_path": str(root / "feeds.json")},
+                            "history": {"path": str(root / "history.json")},
+                            "mood": {"context_path": str(root / "context.json")},
+                        },
+                    }
+                )
+                config = load_config()
+                audio = library / "late night coding.m4a"
+                second_audio = library / "focus drive.m4a"
+                audio.parent.mkdir(parents=True, exist_ok=True)
+                audio.write_bytes(b"fake")
+                second_audio.write_bytes(b"fake")
+                track_id = stable_track_id("night-drive")
+                second_id = stable_track_id("focus-drive")
+                index = {
+                    "tracks": {
+                        track_id: {
+                            "id": track_id,
+                            "type": "music",
+                            "title": "Late Night Coding",
+                            "artist": "Jarvis Test",
+                            "language": "English",
+                            "genre": ["lofi"],
+                            "tags": ["coding"],
+                            "mood_tags": ["calm", "night", "focus"],
+                            "bpm": 72,
+                            "rating": 5,
+                            "file_path": str(audio),
+                            "source_url": "https://www.youtube.com/watch?v=night-drive",
+                            "duration_seconds": 120,
+                            "aliases": ["late night coding"],
+                        },
+                        second_id: {
+                            "id": second_id,
+                            "type": "music",
+                            "title": "Focus Drive",
+                            "artist": "Jarvis Test",
+                            "language": "English",
+                            "genre": ["lofi"],
+                            "tags": ["coding"],
+                            "mood_tags": ["calm", "focus"],
+                            "bpm": 78,
+                            "rating": 4,
+                            "file_path": str(second_audio),
+                            "source_url": "https://www.youtube.com/watch?v=focus-drive",
+                            "duration_seconds": 140,
+                            "aliases": ["focus drive"],
+                        },
+                    },
+                    "aliases": {
+                        canonical_text("late night coding"): track_id,
+                        canonical_text("focus drive"): second_id,
+                    },
+                }
+                save_index(config, index)
+                lyrics_dir = Path(config["lyrics_dir"])
+                lyrics_dir.mkdir(parents=True, exist_ok=True)
+                (lyrics_dir / f"{track_id}.lrc").write_text("[00:01.00]hello night\n[00:10.00]keep coding\n", encoding="utf-8")
+
+                stats = entertainment_library({"operation": "stats"})
+                self.assertEqual(stats["stats"]["total_tracks"], 2)
+                search = entertainment_library({"operation": "search", "query": "night coding"})
+                self.assertEqual(search["results"][0]["id"], track_id)
+
+                mood = entertainment_mood({"operation": "match", "description": "calm night coding", "limit": 5})
+                self.assertEqual(mood["tracks"][0]["id"], track_id)
+                entertainment_mood({"operation": "set_context", "context": "working"})
+                queue = entertainment_queue({"operation": "add", "track_ids": [track_id, second_id]})
+                self.assertEqual(queue["queue"], [track_id, second_id])
+                playing = entertainment_playback({"operation": "play"})
+                self.assertEqual(playing["current_track"]["id"], track_id)
+                volume = entertainment_playback({"operation": "volume", "value": 42})
+                self.assertEqual(volume["volume"], 42)
+
+                shown = entertainment_lyrics({"operation": "show", "track_id": track_id})
+                self.assertTrue(shown["available"])
+                current_line = entertainment_lyrics({"operation": "current_line", "track_id": track_id, "position_seconds": 11})
+                self.assertEqual(current_line["line"], "keep coding")
+
+                similar = entertainment_recommend({"operation": "similar", "track_id": track_id, "limit": 5})
+                self.assertEqual(similar["tracks"][0]["id"], second_id)
+                eq_created = entertainment_equalizer({"operation": "create", "profile": "focus-test", "bands": {"1000": 2}})
+                self.assertIn("focus-test", eq_created["summary"])
+                eq = entertainment_equalizer({"operation": "apply", "profile": "focus-test"})
+                self.assertEqual(eq["profile"], "focus-test")
+
+                metadata = entertainment_metadata({"operation": "write_tags", "track_id": track_id, "values": {"album": "Tests"}})
+                self.assertEqual(metadata["track"]["album"], "Tests")
+                history = entertainment_history({"operation": "stats", "range": "all"})
+                self.assertGreaterEqual(history["stats"]["entry_count"], 1)
+                share = entertainment_share({"operation": "now_playing"})
+                self.assertIn("Late Night Coding", share["text"])
+
+                radio = entertainment_radio({"operation": "play", "query": "test radio"})
+                self.assertEqual(radio["station"]["name"], "Test Radio")
+
+                rss = root / "feed.xml"
+                rss.write_text(
+                    "<rss><channel><title>Test Podcast</title><description>Tests</description>"
+                    "<item><title>Episode One</title><description>Hello</description>"
+                    "<enclosure url=\"https://example.com/episode.mp3\" type=\"audio/mpeg\" />"
+                    "</item></channel></rss>",
+                    encoding="utf-8",
+                )
+                subscribed = entertainment_podcast({"operation": "subscribe", "url": str(rss)})
+                podcast_id = subscribed["podcast"]["id"]
+                episodes = entertainment_podcast({"operation": "episodes", "podcast": podcast_id})
+                self.assertEqual(episodes["episodes"][0]["title"], "Episode One")
+                podcast_play = entertainment_podcast({"operation": "play_episode", "podcast": podcast_id})
+                self.assertIn("Episode One", podcast_play["summary"])
+
+                status = entertainment_status({})
+                self.assertEqual(status["library"]["total_tracks"], 2)
+
+    def test_entertainment_radio_curated_query_without_url_searches_real_station_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "api_url": "https://radio.test",
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {
+                                    "punjabi": {
+                                        "name": "Punjabi",
+                                        "query": "Punjabi hits",
+                                        "language": "Punjabi",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                )
+                payload = [
+                    {
+                        "stationuuid": "air-punjabi",
+                        "name": "AIR Punjabi",
+                        "url_resolved": "https://example.test/punjabi.m3u8",
+                    }
+                ]
+                with patch("tools.entertainment_agent.urllib.request.urlopen", return_value=FakeHttpResponse(payload)) as open_call:
+                    search = entertainment_radio({"operation": "search", "query": "Punjabi live radio", "limit": 5})
+                    play = entertainment_radio({"operation": "play", "query": "Punjabi live radio"})
+
+                self.assertEqual(search["stations"][0]["name"], "AIR Punjabi")
+                self.assertEqual(play["station"]["name"], "AIR Punjabi")
+                self.assertTrue(open_call.called)
+
+    def test_entertainment_radio_play_failure_returns_safe_reason(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(os.environ, {"JARVIS_ENTERTAINMENT_CONFIG": str(config_path)}, clear=False):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {
+                                    "punjabi": {
+                                        "name": "AIR Punjabi",
+                                        "url": "https://example.test/punjabi.m3u8",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                )
+                with patch(
+                    "tools.entertainment_agent.choose_player_backend",
+                    return_value={"name": "", "available": False, "supports_stream": False, "supports_eq": False},
+                ):
+                    result = entertainment_radio({"operation": "play", "query": "Punjabi"})
+
+                self.assertFalse(result["action_completed"])
+                self.assertIn("Direct streaming requires", result["safe_user_output"])
+                self.assertEqual(result["station"]["name"], "AIR Punjabi")
+
+    def test_entertainment_radio_play_can_use_latest_grounded_search_result(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "api_url": "https://radio.test",
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {},
+                            }
+                        },
+                    }
+                )
+                payload = [
+                    {
+                        "stationuuid": "air-punjabi",
+                        "name": "AIR Punjabi",
+                        "url_resolved": "https://example.test/punjabi.m3u8",
+                    }
+                ]
+                with patch("tools.entertainment_agent.urllib.request.urlopen", return_value=FakeHttpResponse(payload)):
+                    entertainment_radio({"operation": "search", "query": "Punjabi live radio", "limit": 1})
+                    result = entertainment_radio({"operation": "play", "station_id": "best grounded station"})
+
+                self.assertEqual(result["station"]["name"], "AIR Punjabi")
+                self.assertEqual(result["backend"], "dry_run")
+
+    def test_entertainment_favorite_without_query_uses_current_playing_track(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "entertainment.json"
+            library = root / "music"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(library),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                config = load_config()
+                audio = library / "current song.m4a"
+                audio.parent.mkdir(parents=True, exist_ok=True)
+                audio.write_bytes(b"fake")
+                track_id = stable_track_id("current-song")
+                save_index(
+                    config,
+                    {
+                        "tracks": {
+                            track_id: {
+                                "id": track_id,
+                                "type": "music",
+                                "title": "Current Song",
+                                "file_path": str(audio),
+                                "source_url": "https://example.test/current-song",
+                            }
+                        },
+                        "aliases": {},
+                    },
+                )
+                entertainment_play({"track_id": track_id})
+
+                favorite = entertainment_playlist({"operation": "add_favorite"})
+                playlist_add = entertainment_playlist({"operation": "add_track", "playlist": "roadtrip"})
+
+                self.assertEqual(favorite["track"]["id"], track_id)
+                self.assertEqual(playlist_add["track"]["id"], track_id)
+                updated = load_config()
+                self.assertIn(track_id, updated["favorites"])
+                self.assertIn(track_id, updated["playlists"]["roadtrip"])
+
+    def test_entertainment_session_handles_thin_library_without_download(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                result = entertainment_session(
+                    {
+                        "description": "calm focus low energy coding",
+                        "context": "working",
+                        "limit": 5,
+                        "minimum_local_tracks": 2,
+                        "scan": True,
+                    }
+                )
+
+                self.assertFalse(result["action_completed"])
+                self.assertIn("No downloads were started", result["summary"])
+                self.assertIn("Evidence used:", result["safe_user_output"])
+                self.assertIn("Search/download candidates:", result["safe_user_output"])
+                self.assertTrue(result["search_candidates"])
+                self.assertEqual(entertainment_mood({"operation": "get_context"})["context"], "working")
+
+    def test_entertainment_session_queues_and_starts_matching_local_tracks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "entertainment.json"
+            library = root / "music"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(library),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                config = load_config()
+                first = library / "focus one.m4a"
+                second = library / "focus two.m4a"
+                first.parent.mkdir(parents=True, exist_ok=True)
+                first.write_bytes(b"fake")
+                second.write_bytes(b"fake")
+                first_id = stable_track_id("focus-one")
+                second_id = stable_track_id("focus-two")
+                save_index(
+                    config,
+                    {
+                        "tracks": {
+                            first_id: {
+                                "id": first_id,
+                                "type": "music",
+                                "title": "Focus One",
+                                "file_path": str(first),
+                                "mood_tags": ["calm", "focus"],
+                                "tags": ["coding"],
+                            },
+                            second_id: {
+                                "id": second_id,
+                                "type": "music",
+                                "title": "Focus Two",
+                                "file_path": str(second),
+                                "mood_tags": ["calm", "focus"],
+                                "tags": ["coding"],
+                            },
+                        },
+                        "aliases": {},
+                    },
+                )
+
+                result = entertainment_session(
+                    {
+                        "description": "calm focus coding",
+                        "context": "working",
+                        "limit": 2,
+                        "minimum_local_tracks": 2,
+                        "start_playback": True,
+                        "playlist": "Coding Session",
+                        "volume": 70,
+                        "crossfade_seconds": 6,
+                        "fetch_lyrics": True,
+                        "include_history": True,
+                        "target_minutes": 30,
+                        "upcoming_limit": 1,
+                    }
+                )
+
+                self.assertTrue(result["action_completed"])
+                self.assertEqual(len(result["queue"]), 2)
+                self.assertEqual(result["playlist"], "Coding Session")
+                self.assertIn("Playing queue", result["playback"]["summary"])
+                self.assertIn("Requested duration: 30 minute(s). Actual queued duration:", result["safe_user_output"])
+                self.assertIn("Volume: 70.", result["safe_user_output"])
+                self.assertIn("lyrics", result["safe_user_output"])
 
     def test_productivity_agent_builds_gmail_and_calendar_links_from_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

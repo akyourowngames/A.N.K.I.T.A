@@ -1,0 +1,15 @@
+# Browser Research Skill
+
+Use this skill when browser rendering, DOM state, or network-captured page data is needed for research.
+
+Research workflow:
+
+1. Use `browser_navigate` and `browser_snapshot` for JavaScript-heavy pages.
+2. Use `browser_get_text` for readable main content and selector-specific extraction.
+3. Use `browser_get_attribute` for precise values not present in the snapshot.
+4. Use `browser_intercept_start` and `browser_network_log` when data appears through API responses or infinite scroll.
+5. Use `browser_scroll` plus `browser_wait_for` for paginated and infinite-scroll pages.
+6. Use `browser_screenshot` to preserve visual evidence when layout, charts, maps, or media matter.
+7. Use `browser_workflow_checkpoint` before a long research sequence so the session can resume.
+
+When reporting findings, separate browser-observed facts from model inference.

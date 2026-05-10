@@ -38,6 +38,13 @@ List enabled extensions:
 python main.py --list-extensions
 ```
 
+Run Jarvis through Telegram without changing the CLI brain:
+
+```powershell
+python telegram_bot.py --check
+python telegram_bot.py
+```
+
 Benchmark configured NIM models:
 
 ```powershell
@@ -155,6 +162,10 @@ Optional:
 - `JARVIS_DISABLED_EXTENSIONS`
 - `JARVIS_SKILLS_DIR`
 - `JARVIS_SKILL_CONTEXT_CHARS`
+- `JARVIS_TELEGRAM_CONFIG`
+- `TELEGRAM_BOT_TOKEN`
+- `TELEGRAM_ALLOWED_CHATS`
+- `TELEGRAM_WEBHOOK_URL`
 - `JARVIS_WEB_SEARCH_URL`
 - `JARVIS_RESEARCH_CONFIG`
 - `TAVILY_API_KEY`
@@ -314,6 +325,9 @@ Current tools:
 - `search_text_files`
 - `skill_workshop`
 - `text_stats`
+- `telegram_send_file`
+- `telegram_session_info`
+- `telegram_status`
 - `transform_text`
 - `list_registered_tools`
 - `web_search`
@@ -336,6 +350,25 @@ For local system facts such as installed Python, Node, npm, file, environment, a
 Natural local folder names are resolved through `config/path_aliases.json`, so requests such as `desktop`, `download folder`, `screenshots`, and `documents` can map to real user folders before a file tool gives up.
 
 Directory listing output is compact by default through `JARVIS_LIST_DIRECTORY_LIMIT`, and each result includes total count plus whether the listing was truncated. Display names are normalized for the assistant response so unusual emoji/stylized filenames do not break Windows console streaming or spoken output.
+
+## Telegram Bot
+
+`telegram_bot.py` is a parallel Jarvis entrypoint, not a wrapper around `main.py`. It boots the same config, extension catalog, registry, memory, skills, and `chat_once(...)`, then uses Telegram polling or webhook delivery as the input/output channel.
+
+Default personal-assistant mode is polling with shared memory:
+
+```powershell
+python telegram_bot.py --check
+python telegram_bot.py
+```
+
+Settings live in `config/telegram_bot.json`. `TELEGRAM_BOT_TOKEN` supplies the bot token. `TELEGRAM_ALLOWED_CHATS` can override the config allowlist with comma-separated chat IDs; when the allowlist is empty the bot is open for development.
+
+Each chat gets a persisted session JSON under `media/telegram/sessions/`. Uploads are saved under `media/telegram/uploads/<chat_id>/`, and file deliveries are queued under `media/telegram/downloads/outbox/` before the handler sends them through Telegram.
+
+When Jarvis creates or locates a report, dossier, chart, document, archive, or any other requested file, the Telegram prompt tells it to call `telegram_send_file` with the real local path. The handler can send any readable local file path, including files outside the project folder, while the user-facing reply avoids exposing private paths unless you explicitly ask for them.
+
+Voice notes are downloaded and converted through the configured `ffmpeg_command`, then transcribed with the existing NVIDIA STT path when `voice_transcription` is true. If STT is not configured, Telegram replies with that grounded reason instead of pretending it heard the message.
 
 ## Research Agent
 
@@ -432,3 +465,4 @@ Current bundled extensions:
 - `productivity-agent`
 - `instagram-agent`
 - `research-agent`
+- `telegram-bot`

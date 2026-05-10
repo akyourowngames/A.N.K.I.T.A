@@ -1,7 +1,7 @@
 {
   "id": "entertainment-agent",
   "name": "Codex Entertainment Agent",
-  "description": "Music search, download, local library, favorites, playlists, and playback queue tools.",
+  "description": "Entertainment operating system for local media, streaming, playback, queues, playlists, mood, recommendations, lyrics, radio, podcasts, history, metadata, EQ, and sharing.",
   "prompt_files": [
     "prompts/entertainment-agent.txt"
   ],
@@ -11,12 +11,17 @@
   "env": [
     "JARVIS_ENTERTAINMENT_CONFIG",
     "JARVIS_ENTERTAINMENT_LIBRARY_DIR",
-    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER"
+    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER",
+    "GENIUS_API_KEY",
+    "SPOTIFY_CLIENT_ID",
+    "SPOTIFY_CLIENT_SECRET",
+    "LASTFM_API_KEY",
+    "ACOUSTID_API_KEY"
   ],
   "tools": [
     {
       "name": "entertainment_status",
-      "description": "Inspect the entertainment agent config, local music library, player state, and availability of yt-dlp/player tools.",
+      "description": "Status-only entertainment check. For combined status, scan, mood, queue, EQ, playback, or upcoming workflows, prefer entertainment_session.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -28,22 +33,187 @@
       }
     },
     {
+      "name": "entertainment_config",
+      "description": "Read or update entertainment config without changing the chat loop. Use this for paths, providers, playback, lyrics, radio, podcast, history, recommendation, and EQ settings.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "get",
+              "update"
+            ]
+          },
+          "values": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_config"
+      }
+    },
+    {
+      "name": "entertainment_session",
+      "description": "Prefer this for complex entertainment sessions: status, scan, history, mood, queue, playlist, EQ, volume, crossfade, lyrics, playback.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "description": {
+            "type": "string",
+            "description": "The user's full session request or desired mood/activity/media mix."
+          },
+          "context": {
+            "type": "string",
+            "description": "Activity context such as working, workout, sleeping, driving, studying, partying, or casual."
+          },
+          "local_only": {
+            "type": "boolean"
+          },
+          "scan": {
+            "type": "boolean"
+          },
+          "start_playback": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "minimum_local_tracks": {
+            "type": "integer"
+          },
+          "shuffle_mode": {
+            "type": "string"
+          },
+          "eq_profile": {
+            "type": "string"
+          },
+          "volume": {
+            "type": "integer",
+            "description": "Requested playback volume, 0-100."
+          },
+          "crossfade_seconds": {
+            "type": "integer",
+            "description": "Requested crossfade overlap in seconds."
+          },
+          "fetch_lyrics": {
+            "type": "boolean",
+            "description": "True when the user asks to fetch, show, or check lyrics."
+          },
+          "include_history": {
+            "type": "boolean",
+            "description": "True when the user asks for listening history or history summary."
+          },
+          "target_minutes": {
+            "type": "integer",
+            "description": "Requested target session duration in minutes."
+          },
+          "playlist": {
+            "type": "string"
+          },
+          "upcoming_limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "description"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_session"
+      }
+    },
+    {
+      "name": "entertainment_library",
+      "description": "Library-only operations: scan, stats, search, get, update, delete, deduplicate, export, and import metadata.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "scan",
+              "stats",
+              "search",
+              "get",
+              "update",
+              "delete",
+              "deduplicate",
+              "export",
+              "import_metadata"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
+          },
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "json",
+              "csv"
+            ]
+          },
+          "delete_file": {
+            "type": "boolean"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_library"
+      }
+    },
+    {
       "name": "entertainment_search",
-      "description": "Search online for songs or music videos with yt-dlp. Use exact user language, including Hindi, Haryanvi, Hinglish, Punjabi, or English titles.",
+      "description": "Search local library first, then configured streaming/search providers for music, video, podcasts, or radio using the user's original language.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
-            "type": "string",
-            "description": "Song, artist, lyric, or URL-like search text from the user."
+            "type": "string"
           },
           "context": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "media_type": {
             "type": "string",
-            "description": "Optional music context such as Hindi song, Haryanvi song, official audio, remix, or artist."
+            "enum": [
+              "music",
+              "video",
+              "podcast",
+              "radio",
+              "any"
+            ]
           },
           "limit": {
-            "type": "integer",
-            "description": "Maximum search results."
+            "type": "integer"
           }
         },
         "required": [
@@ -58,37 +228,53 @@
     },
     {
       "name": "entertainment_download",
-      "description": "Download a song to the configured local music folder. If the same query or URL is already saved, return the cached track instead of downloading again.",
+      "description": "Download audio or video from a URL, search query, batch, playlist, or channel; deduplicate before saving; enrich library metadata after saving.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
-            "type": "string",
-            "description": "Song search text when URL is not supplied."
+            "type": "string"
+          },
+          "queries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "url": {
-            "type": "string",
-            "description": "Direct media URL."
+            "type": "string"
           },
           "context": {
+            "type": "string"
+          },
+          "media_type": {
             "type": "string",
-            "description": "Optional music context."
+            "enum": [
+              "music",
+              "video",
+              "podcast"
+            ]
+          },
+          "quality": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
           },
           "result_index": {
-            "type": "integer",
-            "description": "One-based search result number to download."
+            "type": "integer"
           },
           "force": {
-            "type": "boolean",
-            "description": "Download again even if cached."
+            "type": "boolean"
           },
           "add_to_favorites": {
-            "type": "boolean",
-            "description": "Also add the downloaded track to favorites."
+            "type": "boolean"
           },
           "playlist": {
-            "type": "string",
-            "description": "Optional playlist name to add the downloaded track to."
+            "type": "string"
+          },
+          "fetch_lyrics": {
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -100,37 +286,33 @@
     },
     {
       "name": "entertainment_play",
-      "description": "Play a downloaded track by query, track id, path, or URL. Can auto-download when explicitly useful.",
+      "description": "Main play intent. Resolve local library, optionally download, or stream directly depending on user intent and configured player capability.",
       "parameters": {
         "type": "object",
         "properties": {
           "query": {
-            "type": "string",
-            "description": "Song title or prior user query to find in the local library."
+            "type": "string"
           },
           "track_id": {
-            "type": "string",
-            "description": "Local library track id."
+            "type": "string"
           },
           "path": {
-            "type": "string",
-            "description": "Local audio file path."
+            "type": "string"
           },
           "url": {
-            "type": "string",
-            "description": "Direct URL to download before playback."
+            "type": "string"
           },
           "context": {
-            "type": "string",
-            "description": "Optional music context for auto download."
+            "type": "string"
           },
           "auto_download": {
-            "type": "boolean",
-            "description": "Download the track if it is not already in the local library."
+            "type": "boolean"
+          },
+          "stream": {
+            "type": "boolean"
           },
           "add_to_queue": {
-            "type": "boolean",
-            "description": "Add to queue instead of replacing playback."
+            "type": "boolean"
           }
         },
         "additionalProperties": false
@@ -141,8 +323,92 @@
       }
     },
     {
+      "name": "entertainment_stream_direct",
+      "description": "Stream a URL or search result without saving it to the library, using VLC or mpv when available and reporting honestly when direct streaming is unavailable.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_stream_direct"
+      }
+    },
+    {
+      "name": "entertainment_playback",
+      "description": "Playback-only control: play, pause, resume, stop, seek, volume, speed, mute, next, previous, state, crossfade, sleep timer, replay.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "play",
+              "pause",
+              "resume",
+              "stop",
+              "seek",
+              "volume",
+              "speed",
+              "mute",
+              "unmute",
+              "next",
+              "previous",
+              "get_state",
+              "crossfade",
+              "sleep_timer",
+              "replay"
+            ]
+          },
+          "query": {
+            "type": "string"
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "seconds": {
+            "type": "number"
+          },
+          "percentage": {
+            "type": "number"
+          },
+          "value": {
+            "type": "number"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "minutes": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_playback"
+      }
+    },
+    {
       "name": "entertainment_queue",
-      "description": "Control the local playback queue: status, add tracks, play, next, previous, stop, clear, or play a playlist.",
+      "description": "Queue-only operations: add, remove, clear, shuffle, repeat, move, reorder, save as playlist, smart extend, upcoming, history, play.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -151,30 +417,66 @@
             "enum": [
               "status",
               "add",
+              "remove",
+              "clear",
+              "shuffle",
+              "repeat",
+              "move",
+              "reorder",
+              "save_as_playlist",
+              "smart_extend",
+              "upcoming",
+              "history_in_session",
               "play",
               "next",
               "previous",
               "stop",
-              "clear",
               "play_playlist"
-            ],
-            "description": "Queue operation. play_playlist can resolve the configured default or only playable playlist when playlist is omitted."
+            ]
           },
           "query": {
-            "type": "string",
-            "description": "Track query for add."
+            "type": "string"
           },
           "track_id": {
-            "type": "string",
-            "description": "Track id for add."
+            "type": "string"
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "playlist": {
+            "type": "string"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "position": {
+            "type": "integer"
+          },
+          "from_position": {
+            "type": "integer"
+          },
+          "to_position": {
+            "type": "integer"
+          },
+          "repeat_mode": {
             "type": "string",
-            "description": "Playlist name for play_playlist. Optional when the request refers to the saved/default playlist."
+            "enum": [
+              "off",
+              "one",
+              "queue"
+            ]
+          },
+          "by": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
           },
           "auto_download": {
-            "type": "boolean",
-            "description": "Download query if needed for add."
+            "type": "boolean"
           }
         },
         "required": [
@@ -189,7 +491,7 @@
     },
     {
       "name": "entertainment_playlist",
-      "description": "Edit or inspect playlists and favorites in the entertainment config JSON. The list/show operations return grounded playlist contents from the local music library.",
+      "description": "Create, inspect, play, merge, export, import, duplicate, favorite, and smart-create playlists. For add_favorite/add_track with no query or track_id, the tool uses the current playing local track.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -199,29 +501,52 @@
               "list",
               "show",
               "create",
+              "delete",
               "add_track",
               "remove_track",
+              "reorder",
+              "play",
+              "merge",
+              "smart_create",
+              "export",
+              "import",
+              "duplicate",
               "add_favorite",
-              "remove_favorite",
-              "play"
-            ],
-            "description": "Playlist operation. play can resolve the configured default or only playable playlist when playlist is omitted."
+              "remove_favorite"
+            ]
           },
           "playlist": {
-            "type": "string",
-            "description": "Playlist name. Optional for play when the request refers to the saved/default playlist."
+            "type": "string"
+          },
+          "target_playlist": {
+            "type": "string"
+          },
+          "source_playlists": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
           },
           "track_id": {
-            "type": "string",
-            "description": "Track id."
+            "type": "string"
           },
           "query": {
-            "type": "string",
-            "description": "Song query to resolve to a downloaded track."
+            "type": "string"
+          },
+          "criteria": {
+            "type": "object"
+          },
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
           },
           "auto_download": {
-            "type": "boolean",
-            "description": "Download query if needed before adding."
+            "type": "boolean"
+          },
+          "shuffled": {
+            "type": "boolean"
           }
         },
         "required": [
@@ -235,22 +560,34 @@
       }
     },
     {
-      "name": "entertainment_config",
-      "description": "Read or update the entertainment agent config JSON, including library folder, search preferences, favorite contexts, and playlists.",
+      "name": "entertainment_mood",
+      "description": "Mood-only operations: detect queue mood, match tracks to a mood or activity, and persist current entertainment context.",
       "parameters": {
         "type": "object",
         "properties": {
           "operation": {
             "type": "string",
             "enum": [
-              "get",
-              "update"
-            ],
-            "description": "Config operation."
+              "detect",
+              "match",
+              "set_context",
+              "get_context"
+            ]
           },
-          "values": {
-            "type": "object",
-            "description": "Top-level JSON values to merge into the config for update."
+          "description": {
+            "type": "string"
+          },
+          "context": {
+            "type": "string"
+          },
+          "track_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "limit": {
+            "type": "integer"
           }
         },
         "required": [
@@ -260,7 +597,369 @@
       },
       "executor": {
         "module": "tools.entertainment_agent",
-        "function": "entertainment_config"
+        "function": "entertainment_mood"
+      }
+    },
+    {
+      "name": "entertainment_recommend",
+      "description": "Recommend similar tracks, mood mixes, artist deep dives, discovery picks, weekly mixes, liked-track chains, top tracks, never-played tracks, and rediscovery tracks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "similar",
+              "for_mood",
+              "artist_deep",
+              "discovery",
+              "weekly_mix",
+              "because_you_liked",
+              "top_tracks",
+              "never_played",
+              "rediscover"
+            ]
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "artist": {
+            "type": "string"
+          },
+          "mood": {
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          },
+          "playlist": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_recommend"
+      }
+    },
+    {
+      "name": "entertainment_lyrics",
+      "description": "Fetch, cache, show, sync, translate, search, and annotate lyrics without claiming uncached lyrics unless a source actually returns them.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "fetch",
+              "fetch_synced",
+              "show",
+              "current_line",
+              "translate",
+              "search_lyrics",
+              "annotate"
+            ]
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "position_seconds": {
+            "type": "number"
+          },
+          "target_language": {
+            "type": "string"
+          },
+          "line": {
+            "type": "string"
+          },
+          "annotation": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_lyrics"
+      }
+    },
+    {
+      "name": "entertainment_radio",
+      "description": "For radio play/save, use query unless an exact stationuuid is already known; never invent station_id. Search, stop, save, list, inspect, trend, and discover live radio stations.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "search",
+              "play",
+              "stop",
+              "save",
+              "list_saved",
+              "remove_saved",
+              "get_state",
+              "trending",
+              "similar_to_playing"
+            ]
+          },
+          "query": {
+            "type": "string",
+            "description": "Station search text or the user's original radio request. Use this for play/save when the station id is not already known."
+          },
+          "station_id": {
+            "type": "string",
+            "description": "Exact saved station id or Radio Browser stationuuid from a prior grounded result. Do not use descriptive placeholders like best station."
+          },
+          "country": {
+            "type": "string"
+          },
+          "genre": {
+            "type": "string"
+          },
+          "language": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_radio"
+      }
+    },
+    {
+      "name": "entertainment_podcast",
+      "description": "Subscribe, update, list, search, queue, download, play, resume, mark, and clean up podcast episodes.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "subscribe",
+              "unsubscribe",
+              "list",
+              "episodes",
+              "download_episode",
+              "play_episode",
+              "resume_episode",
+              "mark_played",
+              "mark_unplayed",
+              "update",
+              "queue_new",
+              "delete_played",
+              "search_episodes"
+            ]
+          },
+          "podcast": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "episode_id": {
+            "type": "string"
+          },
+          "query": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_podcast"
+      }
+    },
+    {
+      "name": "entertainment_history",
+      "description": "Log, inspect, summarize, compare, export, and generate grounded insights from listening history.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "log",
+              "recent",
+              "stats",
+              "timeline",
+              "streak",
+              "compare",
+              "export",
+              "insights"
+            ]
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          },
+          "start": {
+            "type": "string"
+          },
+          "end": {
+            "type": "string"
+          },
+          "duration_listened": {
+            "type": "number"
+          },
+          "skipped_at": {
+            "type": "number"
+          },
+          "context": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "format": {
+            "type": "string"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_history"
+      }
+    },
+    {
+      "name": "entertainment_equalizer",
+      "description": "Equalizer-only operations: list, apply, create, delete, inspect, and reset audio EQ profiles when supported.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list_profiles",
+              "apply",
+              "create",
+              "delete",
+              "get_active",
+              "reset"
+            ]
+          },
+          "profile": {
+            "type": "string"
+          },
+          "bands": {
+            "type": "object"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_equalizer"
+      }
+    },
+    {
+      "name": "entertainment_metadata",
+      "description": "Fetch, write, enrich, identify, and attach metadata or artwork using configured providers and local files.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "fetch",
+              "write_tags",
+              "fetch_art",
+              "batch_enrich",
+              "identify"
+            ]
+          },
+          "track_id": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          },
+          "values": {
+            "type": "object"
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_metadata"
+      }
+    },
+    {
+      "name": "entertainment_share",
+      "description": "Format grounded now-playing, playlist, stats, or source-link summaries for sharing.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "now_playing",
+              "playlist_summary",
+              "stats_card",
+              "export_playlist_links"
+            ]
+          },
+          "playlist": {
+            "type": "string"
+          },
+          "range": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.entertainment_agent",
+        "function": "entertainment_share"
       }
     }
   ]
