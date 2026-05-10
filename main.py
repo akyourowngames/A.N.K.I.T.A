@@ -28,6 +28,8 @@ from voice_system import (
 
 
 EXIT_WORDS = {"exit", "quit", "bye"}
+SPEECH_OFF_COMMAND = "/speakoff"
+SPEECH_ON_COMMAND = "/speakon"
 
 
 def configure_stream_encoding(stream) -> bool:
@@ -119,6 +121,17 @@ def should_print_reply(config: JarvisConfig) -> bool:
     return not config.stream
 
 
+def interactive_speech_command(text: str, current_enabled: bool, voice_config: VoiceConfig) -> tuple[bool, bool, str]:
+    command = text.strip().casefold()
+    if command == SPEECH_OFF_COMMAND:
+        return True, False, "Speech output is off."
+    if command == SPEECH_ON_COMMAND:
+        if not voice_config.tts_enabled:
+            return True, False, "Speech output is unavailable because TTS is disabled."
+        return True, True, "Speech output is on."
+    return False, current_enabled, ""
+
+
 def one_shot(config: JarvisConfig, text: str, registry, memory_config: MemoryConfig) -> None:
     voice_config = VoiceConfig.from_env()
     extension_catalog = load_extension_catalog()
@@ -138,6 +151,7 @@ def one_shot(config: JarvisConfig, text: str, registry, memory_config: MemoryCon
 def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> None:
     voice_config = VoiceConfig.from_env()
     speaker = VoiceSpeaker(voice_config)
+    speech_enabled = voice_config.tts_enabled
     extension_catalog = load_extension_catalog()
     messages = build_messages(config, registry, memory_config, extension_catalog)
 
@@ -149,6 +163,7 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
         print("Voice: press Space on an empty prompt to talk.")
     if voice_config.tts_enabled:
         print(f"Speech: {voice_config.tts_provider} / {voice_config.tts_voice or 'server default'}")
+        print("Speech commands: /speakoff, /speakon")
     print("Type exit, quit, or bye to leave.\n")
 
     try:
@@ -171,6 +186,10 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
                 continue
             if text.lower() in EXIT_WORDS:
                 return
+            handled, speech_enabled, command_reply = interactive_speech_command(text, speech_enabled, voice_config)
+            if handled:
+                print(f"{config.assistant_name}: {command_reply}")
+                continue
 
             turn_messages = [*messages]
             vector_message = vector_memory_system_message(text, memory_config, config)
@@ -185,7 +204,8 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
                 continue
             if should_print_reply(config):
                 print(reply)
-            speaker.say(reply)
+            if speech_enabled:
+                speaker.say(reply)
             messages.append({"role": "user", "content": text})
             messages.append({"role": "assistant", "content": reply})
             remember_chat(memory_config, config, text, reply)

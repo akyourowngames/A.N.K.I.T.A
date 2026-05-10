@@ -241,6 +241,8 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 Interactive chat supports voice without changing the tool registry. Press Space on an empty prompt to record one utterance from the configured microphone. Typed spaces after any character stay normal text input.
 
+Use `/speakoff` in interactive mode to stop spoken assistant replies. Use `/speakon` to turn spoken replies back on.
+
 STT uses NVIDIA Riva/NVCF streaming recognition by default because the current managed ASR endpoint accepts streaming calls while rejecting offline recognition for this route. Endpointing uses a local noise-floor threshold, preroll, and a short post-speech silence window so the mic stops after the user's sentence instead of waiting on room noise.
 
 TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile. Profiles live in `config/voice_profiles.json`, so the voice can be swapped without touching the chat loop. The default profile is `heavy_english_jarvis`, currently using `Magpie-Multilingual.EN-US.Jason.Neutral`.

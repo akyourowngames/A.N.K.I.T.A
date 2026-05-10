@@ -11,6 +11,8 @@ memory/vector/
 skills/_workshop/
 
 config/*results.json
+config/google/
+client_secret_*.json
 
 media/
 

@@ -18,7 +18,7 @@ from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
 from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
-from main import configure_stream_encoding
+from main import configure_stream_encoding, interactive_speech_command
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
 from tools import discover_tools
@@ -44,7 +44,7 @@ from tools.google_auth import dependency_status
 from tools.instagram_agent import instagram_config, instagram_manage, instagram_status
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.path_resolver import resolve_local_path
-from tools.productivity_agent import calendar_api, calendar_manage, github_manage, gmail_api, gmail_manage, productivity_config, productivity_status
+from tools.productivity_agent import calendar_api, calendar_manage, display_text, github_manage, gmail_api, gmail_manage, productivity_config, productivity_status
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
 from tools.skill_workshop import skill_workshop
@@ -623,7 +623,16 @@ class ToolRegistryTests(unittest.TestCase):
     def test_productivity_google_api_status_is_grounded_without_login(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "productivity.json"
-            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_PRODUCTIVITY_CONFIG": str(config_path),
+                    "GOOGLE_OAUTH_CLIENT_SECRETS": str(Path(tmp) / "missing-client.json"),
+                    "GMAIL_TOKEN_FILE": str(Path(tmp) / "missing-gmail-token.json"),
+                    "GOOGLE_CALENDAR_TOKEN_FILE": str(Path(tmp) / "missing-calendar-token.json"),
+                },
+                clear=False,
+            ):
                 status = gmail_api({"operation": "auth_status"})
                 calendar = calendar_api({"operation": "auth_status"})
 
@@ -634,6 +643,15 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("not connected", status["status_text"])
         self.assertIn("not connected", calendar["status_text"])
         self.assertTrue(dependency_status()["googleapiclient"])
+
+    def test_gmail_display_text_preserves_words_without_console_wide_symbols(self) -> None:
+        text = display_text("Hi Krish, 📝Only 13 hours remain to ✍complete &amp; publish नमस्ते\u200d")
+
+        self.assertIn("Only 13 hours remain to complete", text)
+        self.assertIn("& publish", text)
+        self.assertIn("नमस्ते", text)
+        self.assertNotIn("📝", text)
+        self.assertNotIn("\u200d", text)
 
     def test_gmail_api_list_messages_uses_google_service(self) -> None:
         class FakeMessages:
@@ -675,7 +693,16 @@ class ToolRegistryTests(unittest.TestCase):
     def test_google_api_list_operations_return_grounded_not_connected_status(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             config_path = Path(tmp) / "productivity.json"
-            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_PRODUCTIVITY_CONFIG": str(config_path),
+                    "GOOGLE_OAUTH_CLIENT_SECRETS": str(Path(tmp) / "missing-client.json"),
+                    "GMAIL_TOKEN_FILE": str(Path(tmp) / "missing-gmail-token.json"),
+                    "GOOGLE_CALENDAR_TOKEN_FILE": str(Path(tmp) / "missing-calendar-token.json"),
+                },
+                clear=False,
+            ):
                 with patch("tools.productivity_agent.google_service") as service_call:
                     gmail = gmail_api({"operation": "list_messages", "limit": 5})
                     calendar = calendar_api({"operation": "list_events", "limit": 5})
@@ -1264,6 +1291,32 @@ class ToolRegistryTests(unittest.TestCase):
 
 
 class VoiceSystemTests(unittest.TestCase):
+    def test_interactive_speech_commands_toggle_tts_output(self) -> None:
+        voice_config = type("VoiceConfigStub", (), {"tts_enabled": True})()
+
+        handled, enabled, message = interactive_speech_command("/speakoff", True, voice_config)
+        self.assertTrue(handled)
+        self.assertFalse(enabled)
+        self.assertIn("off", message)
+
+        handled, enabled, message = interactive_speech_command("/speakon", False, voice_config)
+        self.assertTrue(handled)
+        self.assertTrue(enabled)
+        self.assertIn("on", message)
+
+        handled, enabled, _message = interactive_speech_command("hello", False, voice_config)
+        self.assertFalse(handled)
+        self.assertFalse(enabled)
+
+    def test_interactive_speech_on_stays_off_when_tts_disabled(self) -> None:
+        voice_config = type("VoiceConfigStub", (), {"tts_enabled": False})()
+
+        handled, enabled, message = interactive_speech_command("/speakon", False, voice_config)
+
+        self.assertTrue(handled)
+        self.assertFalse(enabled)
+        self.assertIn("disabled", message)
+
     def test_voice_config_uses_nvidia_defaults(self) -> None:
         with patch.dict(
             os.environ,

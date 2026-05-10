@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import unicodedata
 import urllib.parse
 import webbrowser
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -520,7 +521,7 @@ def gmail_message_metadata(service: Any, message_id: str) -> dict[str, Any]:
     return {
         "id": message.get("id"),
         "thread_id": message.get("threadId"),
-        "snippet": message.get("snippet"),
+        "snippet": display_text(message.get("snippet")),
         "headers": message_headers(message),
     }
 
@@ -529,9 +530,9 @@ def gmail_message_detail(message: dict[str, Any]) -> dict[str, Any]:
     return {
         "id": message.get("id"),
         "thread_id": message.get("threadId"),
-        "snippet": message.get("snippet"),
+        "snippet": display_text(message.get("snippet")),
         "headers": message_headers(message),
-        "body_text": gmail_body_text(message),
+        "body_text": display_text(gmail_body_text(message)),
     }
 
 
@@ -545,8 +546,28 @@ def message_headers(message: dict[str, Any]) -> dict[str, str]:
         name = item.get("name")
         value = item.get("value")
         if isinstance(name, str) and isinstance(value, str):
-            result[name] = value
+            result[name] = display_text(value)
     return result
+
+
+def display_text(value: Any) -> str:
+    if not isinstance(value, str):
+        return ""
+    text = urllib.parse.unquote(html_unescape(value))
+    cleaned: list[str] = []
+    for char in text:
+        category = unicodedata.category(char)
+        if category in {"Cc", "Cf", "Cs", "So"}:
+            cleaned.append(" ")
+            continue
+        cleaned.append(char)
+    return " ".join("".join(cleaned).split())
+
+
+def html_unescape(value: str) -> str:
+    import html
+
+    return html.unescape(value)
 
 
 def gmail_body_text(message: dict[str, Any]) -> str:
