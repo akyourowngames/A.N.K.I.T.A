@@ -156,6 +156,8 @@ Optional:
 - `JARVIS_SKILLS_DIR`
 - `JARVIS_SKILL_CONTEXT_CHARS`
 - `JARVIS_WEB_SEARCH_URL`
+- `JARVIS_RESEARCH_CONFIG`
+- `TAVILY_API_KEY`
 - `JARVIS_ENTERTAINMENT_CONFIG`
 - `JARVIS_ENTERTAINMENT_LIBRARY_DIR`
 - `JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER`
@@ -215,7 +217,7 @@ Model profiles live in `config/nim_models.json`; the benchmark script reads that
 
 The benchmark can also discover model IDs directly from NVIDIA's `/models` endpoint and writes the latest live timing report to `config/nim_benchmark_results.json`.
 
-For low latency, keep `NVIDIA_MODEL=meta/llama-3.2-3b-instruct`, `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`, `NIM_STREAM_MODE=native`, and `NIM_TOOL_MODE=json`. The 2026-05-09 live profile benchmark found `meta/llama-3.1-8b-instruct` timing out, while `meta/llama-3.2-3b-instruct` streamed a tiny reply with a 0.326s first token. Live planner probes picked `mistralai/mistral-nemotron` because it kept the tool contract grounded with about 1.4-1.8s interactive first content. `NIM_RETRY_ATTEMPTS` can stay low for speed or be raised slightly when the provider is returning temporary rate-limit errors.
+For grounded tool-heavy chat, keep `NVIDIA_MODEL=mistralai/mistral-nemotron`, `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`, `NIM_STREAM_MODE=native`, and `NIM_TOOL_MODE=json`. Earlier tiny-model latency was faster for plain greetings, but live research-agent checks showed `meta/llama-3.2-3b-instruct` ignoring the tool-result contract. `mistralai/mistral-nemotron` kept the final answer grounded while staying usable for interactive research. `NIM_RETRY_ATTEMPTS` can stay low for speed or be raised slightly when the provider is returning temporary rate-limit errors.
 
 `JARVIS_AUTO_TOOLS` controls whether Jarvis plans local tool calls before answering. Keep it `true` when you want tools such as `run_terminal` available in chat. Set it to `false` for pure no-tool conversation.
 
@@ -294,6 +296,18 @@ Current tools:
 - `github_manage`
 - `gmail_api`
 - `calendar_api`
+- `research_status`
+- `research_config`
+- `research_plan`
+- `research_search`
+- `research_fetch_sources`
+- `research_rank_sources`
+- `research_extract_claims`
+- `research_verify_claims`
+- `research_synthesize`
+- `research_save`
+- `research_watchlist`
+- `research_run`
 - `run_terminal`
 - `run_jarvis_qa`
 - `read_text_file`
@@ -322,6 +336,22 @@ For local system facts such as installed Python, Node, npm, file, environment, a
 Natural local folder names are resolved through `config/path_aliases.json`, so requests such as `desktop`, `download folder`, `screenshots`, and `documents` can map to real user folders before a file tool gives up.
 
 Directory listing output is compact by default through `JARVIS_LIST_DIRECTORY_LIMIT`, and each result includes total count plus whether the listing was truncated. Display names are normalized for the assistant response so unusual emoji/stylized filenames do not break Windows console streaming or spoken output.
+
+## Research Agent
+
+`research-agent` is an extension-backed specialist named Jarvis Research Agent. Its tools are registered from `extensions/research-agent/extension.json`; behavior lives in `extensions/research-agent/prompts/research-agent.txt`, `extensions/research-agent/skills/research/SKILL.txt`, and `config/research_agent.json`.
+
+The agent runs an evidence pipeline: plan, multi-query search, source fetch, source ranking, claim extraction, claim verification, evidence synthesis, dossier saving, and watchlist updates. `research_run` performs the whole local pipeline for quick briefings, while the stage tools are available for deep or audited research.
+
+The config owns source policy, query families, provider order, quality limits, scoring weights, and research storage paths. `TAVILY_API_KEY` enables Tavily search when present; DuckDuckGo HTML search remains the fallback. Dossiers and cache files are stored under ignored `memory/research/` runtime folders.
+
+Try:
+
+```powershell
+python main.py --message "Research AI agents from the last week. Give me top developments, confidence labels, and sources."
+python main.py --message "Give me verified headlines on Israel and US diplomacy in the Middle East from the last 24 hours."
+python main.py --message "Track NVIDIA AI chip news weekly and save it to my research watchlist."
+```
 
 ## Browser Agent
 
@@ -401,3 +431,4 @@ Current bundled extensions:
 - `entertainment-agent`
 - `productivity-agent`
 - `instagram-agent`
+- `research-agent`

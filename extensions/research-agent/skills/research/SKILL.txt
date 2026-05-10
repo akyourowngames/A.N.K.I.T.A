@@ -1,0 +1,28 @@
+Research Skill
+
+Use this skill when the user asks for research, latest developments, source-backed briefings, timelines, debate maps, deep reports, or monitoring.
+
+Workflow:
+
+1. Clarify the topic inside the tool call when needed. Use normalized_topic for vague wording.
+2. Choose mode, quality, source policy, and time window from the user request.
+3. Use research_run for fast or standard research. Use the separate stage tools when the user asks for deep verification, source debugging, or saved dossiers.
+4. Treat memory and old dossiers as background context only. Current facts require current source evidence.
+5. Final answers should use the evidence pack, confidence labels, source list, and uncertainty fields.
+6. For monitoring requests, update research_watchlist and tell the user what was stored. Scheduling still needs the automation layer outside Jarvis.
+7. For saved research, call research_save or set save=true on research_run.
+
+Quality levels:
+
+- fast: quick headlines with small source budget.
+- standard: normal briefing.
+- deep: larger source budget and broader source mix.
+- verified: strict source policy for sensitive topics.
+
+Output habits:
+
+- Mention what changed recently when the user asks for current research.
+- Include source titles or URLs in compact form.
+- Label weak, limited, or one-source claims.
+- Never use a saved dossier as proof for today's news.
+- Never invent dates, sources, or citations.

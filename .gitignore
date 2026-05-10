@@ -8,6 +8,10 @@ memory/*.txt
 memory/transcripts/*.txt
 memory/wiki/
 memory/vector/
+memory/research/dossiers/
+memory/research/cache/
+memory/research/watchlists.json
+memory/research/runs.jsonl
 skills/_workshop/
 
 config/*results.json

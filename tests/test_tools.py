@@ -45,6 +45,18 @@ from tools.instagram_agent import instagram_config, instagram_manage, instagram_
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.path_resolver import resolve_local_path
 from tools.productivity_agent import calendar_api, calendar_manage, display_text, github_manage, gmail_api, gmail_manage, productivity_config, productivity_status
+from tools.research_agent import (
+    research_extract_claims,
+    research_plan,
+    research_rank_sources,
+    research_run,
+    research_save,
+    research_search,
+    research_status,
+    research_synthesize,
+    research_verify_claims,
+    research_watchlist,
+)
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
 from tools.skill_workshop import skill_workshop
@@ -127,6 +139,10 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("instagram_status", names)
         self.assertIn("instagram_config", names)
         self.assertIn("instagram_manage", names)
+        self.assertIn("research_status", names)
+        self.assertIn("research_plan", names)
+        self.assertIn("research_run", names)
+        self.assertIn("research_watchlist", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -444,14 +460,17 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("web", extension_ids)
         self.assertIn("browser-agent", extension_ids)
         self.assertIn("instagram-agent", extension_ids)
+        self.assertIn("research-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser_manage" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "instagram_manage" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "gmail_api" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "calendar_api" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "research_run" for tool in catalog.tool_descriptors()))
         self.assertIn("Web And Document Tools", catalog.prompt_context())
         self.assertIn("Browser Agent Protocol", catalog.prompt_context())
         self.assertIn("Instagram Agent Protocol", catalog.prompt_context())
+        self.assertIn("Research Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
 
     def test_skill_context_loads_extension_skill_files(self) -> None:
@@ -462,6 +481,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("Skill: browser-operator", context)
         self.assertIn("Skill: instagram-operator", context)
         self.assertIn("Skill: jarvis-qa", context)
+        self.assertIn("Skill: research", context)
 
     def test_tool_manifests_do_not_define_canned_final_responses(self) -> None:
         manifest = Path("tools/tools.json").read_text(encoding="utf-8")
@@ -477,6 +497,151 @@ class ToolRegistryTests(unittest.TestCase):
         )
         results = parse_duckduckgo_results(html, 3)
         self.assertEqual(results, [{"title": "Example Domain", "url": "https://example.com"}])
+
+    def test_research_agent_plans_from_config_and_status(self) -> None:
+        status = research_status({})
+        self.assertIn("Research Agent", status["summary"])
+        self.assertIn("breaking_news", status["source_policies"])
+
+        result = research_plan(
+            {
+                "topic": "AI agents latest news",
+                "mode": "headlines",
+                "quality": "fast",
+                "time_window": "last 7 days",
+            }
+        )
+
+        self.assertEqual(result["plan"]["mode"], "headlines")
+        self.assertEqual(result["plan"]["quality"], "fast")
+        self.assertEqual(result["plan"]["source_policy"], "breaking_news")
+        self.assertGreaterEqual(len(result["plan"]["queries"]), 1)
+        self.assertIn("AI agents latest news", result["plan"]["queries"][0]["query"])
+
+    def test_research_search_uses_configured_provider_without_core_registration(self) -> None:
+        payload = {
+            "results": [
+                {
+                    "title": "Example Domain",
+                    "url": "https://example.com/",
+                    "content": "Example Domain page",
+                    "score": 0.9,
+                    "published_date": "2026-05-10T00:00:00Z",
+                }
+            ]
+        }
+        with patch.dict(os.environ, {"TAVILY_API_KEY": "test-key"}, clear=False):
+            with patch("tools.research_agent.urllib.request.urlopen", return_value=FakeHttpResponse(payload)):
+                result = research_search({"queries": [{"type": "test", "query": "Example Domain"}], "count": 1})
+
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(result["results"][0]["source_provider"], "tavily")
+        self.assertEqual(result["results"][0]["publisher"], "example.com")
+
+    def test_research_pipeline_ranks_verifies_synthesizes_and_saves(self) -> None:
+        sentence = "Jarvis Research Agent gathers current sources, ranks evidence, and saves grounded dossiers for users."
+        sources = [
+            {
+                "source_id": "s1",
+                "ok": True,
+                "url": "https://reuters.com/world/jarvis-research",
+                "title": "Jarvis research update",
+                "published_date": "2026-05-10T00:00:00+00:00",
+                "text": sentence + " The system keeps memory separate from current source proof.",
+                "text_hash": "one",
+            },
+            {
+                "source_id": "s2",
+                "ok": True,
+                "url": "https://apnews.com/article/jarvis-research",
+                "title": "Research agent evidence update",
+                "published_date": "2026-05-10T00:00:00+00:00",
+                "text": sentence + " Reports include source links and confidence labels.",
+                "text_hash": "two",
+            },
+        ]
+
+        ranked = research_rank_sources({"sources": sources, "source_policy": "general"})
+        claims = research_extract_claims({"sources": ranked["ranked_sources"], "max_claims": 4})
+        verified = research_verify_claims(
+            {
+                "claims": claims["claims"],
+                "sources": ranked["ranked_sources"],
+                "minimum_independent_sources": 2,
+            }
+        )
+        synth = research_synthesize(
+            {
+                "verified_claims": verified["verified_claims"],
+                "sources": ranked["ranked_sources"],
+                "topic": "Jarvis Research Agent",
+            }
+        )
+
+        self.assertEqual(len(ranked["ranked_sources"]), 2)
+        self.assertGreaterEqual(claims["count"], 1)
+        self.assertEqual(verified["verified_claims"][0]["confidence"], "high")
+        self.assertEqual(len(synth["evidence_pack"]["source_list"]), 2)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "research.json"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "dossier_dir": str(Path(tmp) / "dossiers"),
+                        "cache_dir": str(Path(tmp) / "cache"),
+                        "watchlist_path": str(Path(tmp) / "watchlists.json"),
+                        "run_log_path": str(Path(tmp) / "runs.jsonl"),
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_RESEARCH_CONFIG": str(config_path)}, clear=False):
+                saved = research_save({"topic": "Jarvis Research Agent", "evidence_pack": synth["evidence_pack"]})
+                watch = research_watchlist({"operation": "upsert", "topic": "AI agents", "frequency": "weekly", "source_policy": "preferred"})
+                listed = research_watchlist({"operation": "list"})
+                report_exists = Path(saved["report_path"]).exists()
+                evidence_exists = Path(saved["evidence_path"]).exists()
+
+        self.assertTrue(report_exists)
+        self.assertTrue(evidence_exists)
+        self.assertTrue(watch["saved"])
+        self.assertEqual(watch["watchlist"]["source_policy"], "general")
+        self.assertEqual(listed["count"], 1)
+
+    def test_research_run_executes_full_pipeline_with_mocked_external_io(self) -> None:
+        source_a = {
+            "source_id": "a",
+            "ok": True,
+            "url": "https://reuters.com/technology/ai-agents",
+            "title": "AI agents research",
+            "published_date": "2026-05-10T00:00:00+00:00",
+            "text": "AI agent systems now combine planning, tool use, source reading, and verification before writing reports.",
+            "text_hash": "a",
+        }
+        source_b = {
+            "source_id": "b",
+            "ok": True,
+            "url": "https://openai.com/research/agents",
+            "title": "Agent systems",
+            "published_date": "2026-05-10T00:00:00+00:00",
+            "text": "AI agent systems now combine planning, tool use, source reading, and verification before writing reports.",
+            "text_hash": "b",
+        }
+        search_results = [
+            {"title": source_a["title"], "url": source_a["url"], "source_provider": "test"},
+            {"title": source_b["title"], "url": source_b["url"], "source_provider": "test"},
+        ]
+        with patch("tools.research_agent.search_one_query", return_value=(search_results, [])):
+            with patch("tools.research_agent.fetch_source", side_effect=[source_a, source_b]):
+                result = research_run({"topic": "AI agents", "mode": "market_tech_trend", "quality": "fast", "max_sources": 2})
+
+        self.assertEqual(result["plan"]["mode"], "market_tech_trend")
+        self.assertEqual(result["pipeline"]["ranked_source_count"], 2)
+        self.assertGreaterEqual(result["pipeline"]["verified_claim_count"], 1)
+        self.assertTrue(result["evidence_pack"]["source_list"])
+        self.assertIn("Confidence:", result["report_draft"])
+        self.assertEqual(result["safe_user_output"], result["report_draft"])
 
     def test_document_extract_text_reads_local_text_file(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

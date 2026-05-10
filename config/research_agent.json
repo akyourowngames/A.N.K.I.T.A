@@ -1,0 +1,369 @@
+{
+  "agent_name": "Jarvis Research Agent",
+  "research_root": "memory/research",
+  "dossier_dir": "memory/research/dossiers",
+  "cache_dir": "memory/research/cache",
+  "watchlist_path": "memory/research/watchlists.json",
+  "run_log_path": "memory/research/runs.jsonl",
+  "report_extension": ".txt",
+  "default_mode": "briefing",
+  "default_quality": "standard",
+  "default_time_window": "last 7 days",
+  "default_region": "global",
+  "default_language": "English",
+  "default_risk_level": "normal",
+  "default_source_policy": "general",
+  "default_source_types": [
+    "news",
+    "official",
+    "primary",
+    "analysis"
+  ],
+  "user_agent": "Jarvis-Research-Agent",
+  "search_provider_order": [
+    "tavily",
+    "duckduckgo"
+  ],
+  "tavily_api_key_env": "TAVILY_API_KEY",
+  "tavily_search_url": "https://api.tavily.com/search",
+  "tavily_search_depth": "basic",
+  "tavily_news_for_recent_windows": true,
+  "duckduckgo_search_url": "https://duckduckgo.com/html/",
+  "search_timeout_seconds": 15,
+  "fetch_timeout_seconds": 15,
+  "max_chars_per_source": 8000,
+  "claim_scan_chars": 12000,
+  "claim_min_words": 8,
+  "claim_max_words": 44,
+  "claims_per_source": 3,
+  "run_claims_per_source": 1,
+  "max_claims": 24,
+  "synthesis_claims": 12,
+  "claim_support_similarity": 0.34,
+  "claim_support_min_tokens": 6,
+  "claim_support_cross_scan": false,
+  "minimum_independent_sources": 2,
+  "minimum_sources_after_freshness": 2,
+  "fallback_query_template": "{topic} {time_window}",
+  "published_date_fields": [
+    "article:published_time",
+    "published_time",
+    "date",
+    "pubdate",
+    "dc.date",
+    "datepublished"
+  ],
+  "quality_limits": {
+    "fast": {
+      "queries": 4,
+      "results_per_query": 4,
+      "sources": 5
+    },
+    "standard": {
+      "queries": 8,
+      "results_per_query": 5,
+      "sources": 8
+    },
+    "deep": {
+      "queries": 12,
+      "results_per_query": 6,
+      "sources": 14
+    },
+    "verified": {
+      "queries": 14,
+      "results_per_query": 7,
+      "sources": 18
+    }
+  },
+  "modes": {
+    "headlines": {
+      "source_policy": "breaking_news",
+      "source_types": [
+        "news",
+        "official"
+      ],
+      "success_criteria": [
+        "Return the newest important developments.",
+        "Show dates and source links.",
+        "Separate confirmed items from unclear items."
+      ]
+    },
+    "briefing": {
+      "source_policy": "general",
+      "source_types": [
+        "news",
+        "official",
+        "primary",
+        "analysis"
+      ],
+      "success_criteria": [
+        "Explain what changed recently.",
+        "Give context and why it matters.",
+        "Cite sources actually read."
+      ]
+    },
+    "deep_research": {
+      "source_policy": "general",
+      "source_types": [
+        "news",
+        "official",
+        "primary",
+        "documents",
+        "analysis"
+      ],
+      "success_criteria": [
+        "Build a structured report.",
+        "Rank source quality.",
+        "Include evidence, uncertainty, and what to watch next."
+      ]
+    },
+    "timeline": {
+      "source_policy": "breaking_news",
+      "source_types": [
+        "news",
+        "official",
+        "timeline"
+      ],
+      "success_criteria": [
+        "Order claims by date.",
+        "Prefer current source timestamps over memory.",
+        "Mention stale or conflicting information."
+      ]
+    },
+    "debate_map": {
+      "source_policy": "general",
+      "source_types": [
+        "news",
+        "official",
+        "analysis",
+        "opinion"
+      ],
+      "success_criteria": [
+        "Separate fact from interpretation.",
+        "Show competing viewpoints.",
+        "Label weak or one-source claims."
+      ]
+    },
+    "market_tech_trend": {
+      "source_policy": "ai_technology",
+      "source_types": [
+        "company",
+        "research",
+        "news",
+        "filings",
+        "developer"
+      ],
+      "success_criteria": [
+        "Group trends by technology, companies, adoption, and risks.",
+        "Prefer primary releases and technical sources.",
+        "Include what changed recently."
+      ]
+    },
+    "monitoring": {
+      "source_policy": "general",
+      "source_types": [
+        "watchlist",
+        "news",
+        "official"
+      ],
+      "success_criteria": [
+        "Store the topic as a watchlist when requested.",
+        "Compare current findings with prior saved reports.",
+        "Report important changes since last check."
+      ]
+    }
+  },
+  "query_families": [
+    {
+      "name": "broad",
+      "templates": [
+        "{topic} latest developments {time_window}"
+      ]
+    },
+    {
+      "name": "official",
+      "templates": [
+        "{topic} official statement {time_window}"
+      ]
+    },
+    {
+      "name": "primary",
+      "templates": [
+        "{topic} press release filing report document {time_window}"
+      ]
+    },
+    {
+      "name": "timeline",
+      "templates": [
+        "{topic} timeline recent events {time_window}"
+      ]
+    },
+    {
+      "name": "regional",
+      "templates": [
+        "{topic} {region} perspective {time_window}"
+      ]
+    },
+    {
+      "name": "explainer",
+      "templates": [
+        "{topic} background explainer why it matters {time_window}"
+      ]
+    },
+    {
+      "name": "technical",
+      "templates": [
+        "{topic} technical details research paper model card github {time_window}"
+      ]
+    },
+    {
+      "name": "risk",
+      "templates": [
+        "{topic} risks concerns criticism uncertainty {time_window}"
+      ]
+    }
+  ],
+  "source_score_weights": {
+    "base": 0.2,
+    "authority": 0.35,
+    "primary_source": 0.3,
+    "recency": 0.2,
+    "content_depth": 0.1,
+    "missing_date_penalty": 0.08,
+    "missing_title_penalty": 0.04
+  },
+  "source_policies": {
+    "general": {
+      "preferred_domains": [
+        "reuters.com",
+        "apnews.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "theguardian.com",
+        "nytimes.com",
+        "washingtonpost.com"
+      ],
+      "primary_domains": [
+        "gov",
+        "who.int",
+        "un.org",
+        "sec.gov",
+        "nvidia.com",
+        "openai.com",
+        "googleblog.com",
+        "anthropic.com"
+      ],
+      "minimum_independent_sources": 2,
+      "minimum_text_chars": 500,
+      "success_criteria": [
+        "Use multiple independent sources when possible.",
+        "Prefer primary sources for important claims.",
+        "Keep uncertainty visible."
+      ]
+    },
+    "breaking_news": {
+      "preferred_domains": [
+        "reuters.com",
+        "apnews.com",
+        "bbc.com",
+        "bbc.co.uk",
+        "aljazeera.com",
+        "whitehouse.gov",
+        "state.gov",
+        "defense.gov",
+        "un.org",
+        "gov.il"
+      ],
+      "primary_domains": [
+        "whitehouse.gov",
+        "state.gov",
+        "defense.gov",
+        "un.org",
+        "gov.il"
+      ],
+      "minimum_independent_sources": 3,
+      "minimum_text_chars": 500,
+      "success_criteria": [
+        "Use at least three independent credible sources for sensitive current events when available.",
+        "Separate official statements, confirmed reporting, analysis, and uncertainty.",
+        "Prefer newer dated sources over older conflicting sources."
+      ]
+    },
+    "ai_technology": {
+      "preferred_domains": [
+        "openai.com",
+        "deepmind.google",
+        "anthropic.com",
+        "ai.meta.com",
+        "nvidia.com",
+        "arxiv.org",
+        "github.com",
+        "techcrunch.com",
+        "theverge.com",
+        "venturebeat.com"
+      ],
+      "primary_domains": [
+        "openai.com",
+        "deepmind.google",
+        "anthropic.com",
+        "ai.meta.com",
+        "nvidia.com",
+        "arxiv.org",
+        "github.com"
+      ],
+      "minimum_independent_sources": 2,
+      "minimum_text_chars": 600,
+      "success_criteria": [
+        "Prefer model cards, papers, official blogs, docs, repos, and filings.",
+        "Group claims by model releases, agent tools, chips, regulation, funding, adoption, and safety.",
+        "Do not treat rumors as confirmed releases."
+      ]
+    },
+    "finance": {
+      "preferred_domains": [
+        "sec.gov",
+        "investor.nvidia.com",
+        "nasdaq.com",
+        "marketwatch.com",
+        "reuters.com",
+        "apnews.com"
+      ],
+      "primary_domains": [
+        "sec.gov",
+        "investor.nvidia.com"
+      ],
+      "minimum_independent_sources": 3,
+      "minimum_text_chars": 600,
+      "success_criteria": [
+        "Prefer filings, earnings releases, investor relations, and reputable financial news.",
+        "Avoid unsupported investment advice.",
+        "Separate current facts from analysis."
+      ]
+    },
+    "science": {
+      "preferred_domains": [
+        "arxiv.org",
+        "nature.com",
+        "science.org",
+        "nih.gov",
+        "who.int",
+        "acm.org",
+        "ieee.org"
+      ],
+      "primary_domains": [
+        "arxiv.org",
+        "nature.com",
+        "science.org",
+        "nih.gov",
+        "who.int"
+      ],
+      "minimum_independent_sources": 2,
+      "minimum_text_chars": 700,
+      "success_criteria": [
+        "Prefer papers, official datasets, and institutional statements.",
+        "Mention study limits.",
+        "Do not overstate preliminary results."
+      ]
+    }
+  }
+}
