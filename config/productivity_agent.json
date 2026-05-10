@@ -11,10 +11,27 @@
     "base_url": "https://mail.google.com/mail/u/0/",
     "inbox_url": "https://mail.google.com/mail/u/0/#inbox",
     "search_url_template": "https://mail.google.com/mail/u/0/#search/{query}",
-    "compose_url_template": "https://mail.google.com/mail/?view=cm&fs=1&to={to}&su={subject}&body={body}"
+    "compose_url_template": "https://mail.google.com/mail/?view=cm&fs=1&to={to}&su={subject}&body={body}",
+    "client_secrets_file": "config/google/client_secret.json",
+    "token_file": "media/google/gmail_token.json",
+    "scopes": [
+      "https://www.googleapis.com/auth/gmail.readonly",
+      "https://www.googleapis.com/auth/gmail.send",
+      "https://www.googleapis.com/auth/gmail.compose"
+    ],
+    "default_limit": 10
   },
   "calendar": {
     "base_url": "https://calendar.google.com/calendar/u/0/r",
-    "event_url_template": "https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={dates}&details={details}&location={location}"
+    "event_url_template": "https://calendar.google.com/calendar/render?action=TEMPLATE&text={title}&dates={dates}&details={details}&location={location}",
+    "client_secrets_file": "config/google/client_secret.json",
+    "token_file": "media/google/calendar_token.json",
+    "scopes": [
+      "https://www.googleapis.com/auth/calendar.events",
+      "https://www.googleapis.com/auth/calendar.readonly"
+    ],
+    "default_calendar_id": "primary",
+    "default_limit": 10,
+    "timezone": "Asia/Kolkata"
   }
 }

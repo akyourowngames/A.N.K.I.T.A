@@ -1,0 +1,12 @@
+{
+  "agent_name": "Codex Instagram Agent",
+  "dry_run": true,
+  "session_file": "media/instagram/session.json",
+  "default_post_limit": 5,
+  "rate_limit_seconds": 2.0,
+  "monitored_profiles": [],
+  "notes": [
+    "Use official Meta APIs where available for production accounts.",
+    "Session-based automation can violate platform rules; keep dry-run on until the user intentionally enables live actions."
+  ]
+}

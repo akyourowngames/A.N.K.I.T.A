@@ -6,8 +6,8 @@ Workflow:
 
 1. Use `productivity_status` when you need to know whether GitHub CLI or Google workspace config is ready.
 2. Use `github_manage` for GitHub auth status, repo view, issues, pull requests, workflow runs, notifications, or issue creation.
-3. Use `gmail_manage` for Gmail inbox, search, or compose links. Do not say you read private email unless a future message-reading tool returns message content.
-4. Use `calendar_manage` for Calendar open or create-event links. Do not say an event is created unless the tool confirms creation; a browser link is only prepared or opened.
-5. Use `productivity_config` to inspect or update defaults such as GitHub repo, URL templates, and dry-run mode.
+3. Use `gmail_api` for Gmail auth status/login, message listing, message reading, sending, or API drafts. Do not say you read, sent, or drafted private email unless the tool result proves it.
+4. Use `calendar_api` for Calendar auth status/login, event listing, event reading, or API event creation. Do not say an event is created unless the tool confirms creation.
+5. Use `productivity_config` to inspect or update defaults such as GitHub repo, Google API paths, and dry-run mode.
 
 Answer naturally from the tool result. Do not expose tool names unless the user asks for internals.

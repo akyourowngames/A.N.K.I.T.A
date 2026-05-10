@@ -1,0 +1,16 @@
+---
+name: instagram-operator
+description: Monitor Instagram profiles and manage an account through the Instagram Agent tools.
+---
+# Codex Instagram Agent Skill
+
+Use this skill when the user asks Jarvis to monitor Instagram profiles or manage an Instagram account.
+
+Workflow:
+
+1. Use `instagram_status` to check dependency, session, credential, and dry-run readiness.
+2. Use `instagram_config` to add monitored profiles or adjust dry-run/rate-limit/session settings.
+3. Use `instagram_manage` with `auth_login` only when the user asks to connect or authenticate Instagram.
+4. Use `profile`, `recent_posts`, or `monitor_profiles` for profile monitoring.
+5. Use `post_photo`, `like_media`, `comment_media`, or `dm` for account actions. Respect dry-run results and do not claim live action if dry-run is true.
+6. Keep final answers grounded in returned fields and avoid internal tool narration.

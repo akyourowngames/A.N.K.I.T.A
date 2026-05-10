@@ -40,9 +40,11 @@ from tools.entertainment_agent import (
     stable_track_id,
 )
 from tools.filesystem_tools import display_name, get_file_info, list_directory, read_text_file, search_text_files
+from tools.google_auth import dependency_status
+from tools.instagram_agent import instagram_config, instagram_manage, instagram_status
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.path_resolver import resolve_local_path
-from tools.productivity_agent import calendar_manage, github_manage, gmail_manage, productivity_config, productivity_status
+from tools.productivity_agent import calendar_api, calendar_manage, github_manage, gmail_api, gmail_manage, productivity_config, productivity_status
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
 from tools.skill_workshop import skill_workshop
@@ -119,9 +121,12 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("entertainment_config", names)
         self.assertIn("productivity_status", names)
         self.assertIn("github_manage", names)
-        self.assertIn("gmail_manage", names)
-        self.assertIn("calendar_manage", names)
+        self.assertIn("gmail_api", names)
+        self.assertIn("calendar_api", names)
         self.assertIn("productivity_config", names)
+        self.assertIn("instagram_status", names)
+        self.assertIn("instagram_config", names)
+        self.assertIn("instagram_manage", names)
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -438,10 +443,15 @@ class ToolRegistryTests(unittest.TestCase):
         extension_ids = [extension.id for extension in catalog.extensions]
         self.assertIn("web", extension_ids)
         self.assertIn("browser-agent", extension_ids)
+        self.assertIn("instagram-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser_manage" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "instagram_manage" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "gmail_api" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "calendar_api" for tool in catalog.tool_descriptors()))
         self.assertIn("Web And Document Tools", catalog.prompt_context())
         self.assertIn("Browser Agent Protocol", catalog.prompt_context())
+        self.assertIn("Instagram Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
 
     def test_skill_context_loads_extension_skill_files(self) -> None:
@@ -450,6 +460,7 @@ class ToolRegistryTests(unittest.TestCase):
             context = load_skill_context(catalog, Path.cwd())
         self.assertIn("Skill: web-research", context)
         self.assertIn("Skill: browser-operator", context)
+        self.assertIn("Skill: instagram-operator", context)
         self.assertIn("Skill: jarvis-qa", context)
 
     def test_tool_manifests_do_not_define_canned_final_responses(self) -> None:
@@ -604,8 +615,128 @@ class ToolRegistryTests(unittest.TestCase):
 
         self.assertIn("krish%40example.com", gmail["url"])
         self.assertFalse(gmail["opened"])
+        self.assertFalse(gmail["action_completed"])
         self.assertIn("Jarvis%20QA", calendar["url"])
         self.assertIn("20260510T090000%2F20260510T093000", calendar["url"])
+        self.assertFalse(calendar["action_completed"])
+
+    def test_productivity_google_api_status_is_grounded_without_login(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                status = gmail_api({"operation": "auth_status"})
+                calendar = calendar_api({"operation": "auth_status"})
+
+        self.assertIn("dependencies", status)
+        self.assertIn("token_exists", status)
+        self.assertIn("client_secrets_exists", calendar)
+        self.assertFalse(status["ready"])
+        self.assertIn("not connected", status["status_text"])
+        self.assertIn("not connected", calendar["status_text"])
+        self.assertTrue(dependency_status()["googleapiclient"])
+
+    def test_gmail_api_list_messages_uses_google_service(self) -> None:
+        class FakeMessages:
+            def list(self, **_kwargs: object) -> object:
+                return FakeExecute({"messages": [{"id": "m1"}], "resultSizeEstimate": 1})
+
+            def get(self, **kwargs: object) -> object:
+                return FakeExecute(
+                    {
+                        "id": kwargs["id"],
+                        "threadId": "t1",
+                        "snippet": "hello",
+                        "payload": {"headers": [{"name": "Subject", "value": "Jarvis QA"}]},
+                    }
+                )
+
+            def send(self, **_kwargs: object) -> object:
+                return FakeExecute({"id": "sent1"})
+
+        class FakeUsers:
+            def messages(self) -> FakeMessages:
+                return FakeMessages()
+
+        class FakeService:
+            def users(self) -> FakeUsers:
+                return FakeUsers()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                with patch("tools.productivity_agent.google_service", return_value=FakeService()) as service_call:
+                    result = gmail_api({"operation": "list_messages", "query": "from:krish", "limit": 1, "allow_interactive_auth": True})
+                    sent = gmail_api({"operation": "send", "to": "krish@example.com", "subject": "Hi", "body": "Ship", "allow_interactive_auth": True})
+
+        self.assertEqual(result["messages"][0]["headers"]["Subject"], "Jarvis QA")
+        self.assertEqual(sent["result"]["id"], "sent1")
+        service_call.assert_called()
+
+    def test_google_api_list_operations_return_grounded_not_connected_status(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                with patch("tools.productivity_agent.google_service") as service_call:
+                    gmail = gmail_api({"operation": "list_messages", "limit": 5})
+                    calendar = calendar_api({"operation": "list_events", "limit": 5})
+
+        self.assertFalse(gmail["ready"])
+        self.assertFalse(calendar["ready"])
+        self.assertEqual(gmail["messages"], [])
+        self.assertEqual(calendar["events"], [])
+        self.assertIn("not connected", gmail["status_text"])
+        self.assertIn("not connected", calendar["status_text"])
+        self.assertEqual(gmail["safe_user_output"], gmail["status_text"])
+        self.assertEqual(calendar["safe_user_output"], calendar["status_text"])
+        service_call.assert_not_called()
+
+    def test_gmail_send_honors_productivity_dry_run(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(
+                os.environ,
+                {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path), "JARVIS_PRODUCTIVITY_DRY_RUN": "true"},
+                clear=False,
+            ):
+                with patch("tools.productivity_agent.google_service") as service_call:
+                    result = gmail_api({"operation": "send", "to": "krish@example.com", "subject": "Hi", "body": "Ship"})
+
+        self.assertTrue(result["dry_run"])
+        self.assertFalse(result["action_completed"])
+        self.assertFalse(result["external_state_changed"])
+        self.assertIn("No Gmail message was sent", result["summary"])
+        self.assertIn("No external action happened", result["safe_user_output"])
+        service_call.assert_not_called()
+
+    def test_calendar_api_list_and_create_use_google_service(self) -> None:
+        class FakeEvents:
+            def list(self, **_kwargs: object) -> object:
+                return FakeExecute({"items": [{"id": "e1", "summary": "Jarvis QA", "status": "confirmed"}]})
+
+            def insert(self, **_kwargs: object) -> object:
+                return FakeExecute({"id": "e2", "summary": "Created", "status": "confirmed"})
+
+        class FakeService:
+            def events(self) -> FakeEvents:
+                return FakeEvents()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "productivity.json"
+            with patch.dict(os.environ, {"JARVIS_PRODUCTIVITY_CONFIG": str(config_path)}, clear=False):
+                with patch("tools.productivity_agent.google_service", return_value=FakeService()):
+                    listed = calendar_api({"operation": "list_events", "limit": 1, "allow_interactive_auth": True})
+                    created = calendar_api(
+                        {
+                            "operation": "api_create_event",
+                            "title": "Created",
+                            "start": "2026-05-10T09:00:00+05:30",
+                            "end": "2026-05-10T09:30:00+05:30",
+                            "allow_interactive_auth": True,
+                        }
+                    )
+
+        self.assertEqual(listed["events"][0]["summary"], "Jarvis QA")
+        self.assertEqual(created["event"]["id"], "e2")
 
     def test_productivity_config_updates_json(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -641,6 +772,38 @@ class ToolRegistryTests(unittest.TestCase):
         called_args = run_call.call_args.args[0]
         self.assertEqual(called_args[:3], ["gh", "repo", "view"])
         self.assertIn("--repo", called_args)
+
+    def test_instagram_agent_config_and_missing_dependency_are_grounded(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "instagram.json"
+            with patch.dict(os.environ, {"JARVIS_INSTAGRAM_CONFIG": str(config_path), "INSTAGRAM_DRY_RUN": "true"}, clear=False):
+                status = instagram_status({})
+                updated = instagram_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "monitored_profiles": ["nvidia"],
+                            "rate_limit_seconds": 0,
+                        },
+                    }
+                )
+                dry_run = instagram_manage({"operation": "post_photo", "path": "README.md", "caption": "Jarvis QA"})
+
+        self.assertIn("instagrapi_available", status)
+        self.assertFalse(status["ready"])
+        self.assertIn("not connected", status["status_text"])
+        self.assertIn("nvidia", updated["config"]["monitored_profiles"])
+        self.assertTrue(dry_run["dry_run"])
+        self.assertFalse(dry_run["action_completed"])
+        self.assertFalse(dry_run["external_state_changed"])
+        self.assertIn("No external action happened", dry_run["safe_user_output"])
+
+    def test_instagram_live_operation_requires_dependency_instead_of_faking(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "instagram.json"
+            with patch.dict(os.environ, {"JARVIS_INSTAGRAM_CONFIG": str(config_path), "INSTAGRAM_DRY_RUN": "false"}, clear=False):
+                with self.assertRaises(ToolInputError):
+                    instagram_manage({"operation": "profile", "username": "nvidia"})
 
     def test_vector_memory_indexes_and_searches_with_cached_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -821,6 +984,8 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("हिंदी-song.mp4", prompt)
         self.assertNotIn("\\u0939", prompt)
         self.assertIn("truncated=true", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
+        self.assertIn("action_completed=false", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
+        self.assertIn("No external action happened", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
 
     def test_public_tool_results_strip_internal_tool_field(self) -> None:
         payload = {"ok": True, "tool": "get_current_datetime", "result": {"date": "2026-05-09"}}
@@ -838,6 +1003,14 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("count", public["result"])
         self.assertEqual(public["result"]["shown_count"], 10)
         self.assertEqual(public["result"]["total_count"], 191)
+
+    def test_public_tool_results_rename_dry_run_operation(self) -> None:
+        payload = {"ok": True, "result": {"operation": "api_create_event", "dry_run": True, "action_completed": False}}
+
+        public = public_result_payload(payload)
+
+        self.assertNotIn("operation", public["result"])
+        self.assertEqual(public["result"]["requested_action"], "api_create_event")
 
     def test_chat_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
@@ -1289,6 +1462,14 @@ class FakeHttpResponse:
         import json
 
         return json.dumps(self.payload).encode("utf-8")
+
+
+class FakeExecute:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self.payload = payload
+
+    def execute(self) -> dict[str, object]:
+        return self.payload
 
 
 def fake_memory_embedder(texts: list[str], input_type: str) -> list[list[float]]:

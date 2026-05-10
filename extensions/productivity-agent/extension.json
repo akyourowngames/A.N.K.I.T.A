@@ -1,7 +1,7 @@
 {
   "id": "productivity-agent",
   "name": "Codex Productivity Agent",
-  "description": "Grounded GitHub, Gmail, and Google Calendar operations through registered tools and config-driven URLs.",
+  "description": "Grounded GitHub, Gmail, and Google Calendar operations through registered tools and OAuth-backed Google APIs.",
   "prompt_files": [
     "prompts/productivity-agent.txt"
   ],
@@ -19,7 +19,7 @@
   "tools": [
     {
       "name": "productivity_status",
-      "description": "Inspect the productivity agent config, GitHub CLI availability/auth status, and Google workspace URL/credential environment readiness.",
+      "description": "Inspect the productivity agent config, GitHub CLI availability/auth status, and Google API credential readiness.",
       "parameters": {
         "type": "object",
         "properties": {},
@@ -85,39 +85,58 @@
       }
     },
     {
-      "name": "gmail_manage",
-      "description": "Prepare or open Gmail inbox, search, and compose URLs from config templates. It does not claim to read private mail unless a future Gmail API tool returns message data.",
+      "name": "gmail_api",
+      "description": "Use the real Gmail API through OAuth for auth status/login, listing messages, reading a message, sending mail, or creating a draft. This is the correct tool for private Gmail data or sending/drafting email.",
       "parameters": {
         "type": "object",
         "properties": {
           "operation": {
             "type": "string",
             "enum": [
-              "open_inbox",
-              "search",
-              "compose"
+              "auth_status",
+              "auth_login",
+              "list_messages",
+              "read_message",
+              "send",
+              "draft"
             ],
-            "description": "Gmail operation."
+            "description": "Gmail API operation."
           },
           "query": {
             "type": "string",
-            "description": "Gmail search query."
+            "description": "Gmail search query for list_messages."
+          },
+          "message_id": {
+            "type": "string",
+            "description": "Gmail message id for read_message."
           },
           "to": {
             "type": "string",
-            "description": "Recipient email address for compose."
+            "description": "Recipient email address for send or draft."
+          },
+          "cc": {
+            "type": "string",
+            "description": "Optional CC recipient list."
+          },
+          "bcc": {
+            "type": "string",
+            "description": "Optional BCC recipient list."
           },
           "subject": {
             "type": "string",
-            "description": "Email subject for compose."
+            "description": "Email subject for send or draft."
           },
           "body": {
             "type": "string",
-            "description": "Email body for compose."
+            "description": "Email body for send or draft."
           },
-          "open_browser": {
+          "allow_interactive_auth": {
             "type": "boolean",
-            "description": "Open the prepared Gmail URL in the system browser."
+            "description": "Allow OAuth browser login if the token is missing or expired."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum Gmail messages to return."
           }
         },
         "required": [
@@ -127,26 +146,29 @@
       },
       "executor": {
         "module": "tools.productivity_agent",
-        "function": "gmail_manage"
+        "function": "gmail_api"
       }
     },
     {
-      "name": "calendar_manage",
-      "description": "Prepare or open Google Calendar URLs, including prefilled event creation links from config templates.",
+      "name": "calendar_api",
+      "description": "Use the real Google Calendar API through OAuth for auth status/login, listing events, reading an event, or creating an event. This is the correct tool for private Calendar data or actual event creation.",
       "parameters": {
         "type": "object",
         "properties": {
           "operation": {
             "type": "string",
             "enum": [
-              "open",
-              "create_event"
+              "auth_status",
+              "auth_login",
+              "list_events",
+              "get_event",
+              "api_create_event"
             ],
-            "description": "Calendar operation."
+            "description": "Google Calendar API operation."
           },
           "title": {
             "type": "string",
-            "description": "Event title."
+            "description": "Event title for api_create_event."
           },
           "details": {
             "type": "string",
@@ -156,21 +178,33 @@
             "type": "string",
             "description": "Event location."
           },
-          "dates": {
-            "type": "string",
-            "description": "Google Calendar dates value such as 20260510T090000/20260510T093000."
-          },
           "start": {
             "type": "string",
-            "description": "Start time text when dates is not supplied."
+            "description": "Start time text or RFC3339 dateTime for API event creation."
           },
           "end": {
             "type": "string",
-            "description": "End time text when dates is not supplied."
+            "description": "End time text or RFC3339 dateTime for API event creation."
           },
-          "open_browser": {
+          "time_min": {
+            "type": "string",
+            "description": "RFC3339 lower bound for list_events."
+          },
+          "time_max": {
+            "type": "string",
+            "description": "RFC3339 upper bound for list_events."
+          },
+          "timezone": {
+            "type": "string",
+            "description": "IANA timezone for API event creation."
+          },
+          "allow_interactive_auth": {
             "type": "boolean",
-            "description": "Open the prepared Calendar URL in the system browser."
+            "description": "Allow OAuth browser login if the token is missing or expired."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum calendar events to return."
           }
         },
         "required": [
@@ -180,12 +214,12 @@
       },
       "executor": {
         "module": "tools.productivity_agent",
-        "function": "calendar_manage"
+        "function": "calendar_api"
       }
     },
     {
       "name": "productivity_config",
-      "description": "Read or update the productivity agent config JSON for GitHub defaults and Gmail/Calendar URL templates.",
+      "description": "Read or update the productivity agent config JSON for GitHub defaults, Google API paths, and dry-run settings.",
       "parameters": {
         "type": "object",
         "properties": {

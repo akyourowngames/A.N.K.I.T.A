@@ -161,6 +161,14 @@ Optional:
 - `JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER`
 - `JARVIS_PRODUCTIVITY_CONFIG`
 - `JARVIS_PRODUCTIVITY_DRY_RUN`
+- `GOOGLE_OAUTH_CLIENT_SECRETS`
+- `GMAIL_TOKEN_FILE`
+- `GOOGLE_CALENDAR_TOKEN_FILE`
+- `JARVIS_INSTAGRAM_CONFIG`
+- `INSTAGRAM_USERNAME`
+- `INSTAGRAM_PASSWORD`
+- `INSTAGRAM_SESSION_FILE`
+- `INSTAGRAM_DRY_RUN`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
 - `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
@@ -254,6 +262,7 @@ Current tools:
 - `calculate`
 - `browser_manage`
 - `browser_status`
+- `calendar_api`
 - `compare_text`
 - `fetch_url_text`
 - `document_extract_text`
@@ -273,13 +282,16 @@ Current tools:
 - `get_system_info`
 - `get_weather`
 - `hash_text`
+- `instagram_config`
+- `instagram_manage`
+- `instagram_status`
 - `jarvis_latency_probe`
 - `list_directory`
 - `productivity_status`
 - `productivity_config`
 - `github_manage`
-- `gmail_manage`
-- `calendar_manage`
+- `gmail_api`
+- `calendar_api`
 - `run_terminal`
 - `run_jarvis_qa`
 - `read_text_file`
@@ -329,9 +341,19 @@ The entertainment prompt and skill explicitly treat Hindi, Haryanvi, Punjabi, Hi
 
 `productivity-agent` is an extension-backed specialist named Codex Productivity Agent. It registers GitHub, Gmail, and Google Calendar tools from `extensions/productivity-agent/extension.json`.
 
-GitHub operations use the local authenticated `gh` CLI. Gmail and Calendar operations are URL/template backed through `config/productivity_agent.json`, so Jarvis can prepare or open inbox/search/compose and event-create links without changing the chat loop.
+GitHub operations use the local authenticated `gh` CLI. `gmail_api` and `calendar_api` use OAuth-backed Google APIs for Gmail auth/list/read/send/draft and Calendar auth/list/read/create.
+
+Google OAuth client secrets and tokens are config/env driven. Defaults point at `config/google/client_secret.json`, `media/google/gmail_token.json`, and `media/google/calendar_token.json`; token files live under ignored `media/` by default.
 
 The agent is grounded: it should not claim private Gmail content was read or a Calendar event was created unless a tool result proves that action.
+
+## Instagram Agent
+
+`instagram-agent` is an extension-backed specialist named Codex Instagram Agent. Its tools are registered from `extensions/instagram-agent/extension.json`, with settings in `config/instagram_agent.json`.
+
+The agent can check Instagram readiness, store monitored profiles, log in through a session file, inspect profiles, fetch recent posts, monitor multiple profiles, and prepare or run account actions such as photo post, like, comment, and DM. It uses `instagrapi` when installed; if that package or credentials are missing, the tool reports the missing piece instead of pretending.
+
+Instagram sessions live under `media/instagram/session.json` by default. `INSTAGRAM_DRY_RUN=true` keeps account actions as prepared operations until you intentionally enable live behavior.
 
 ## Memory
 
@@ -376,3 +398,4 @@ Current bundled extensions:
 - `browser-agent`
 - `entertainment-agent`
 - `productivity-agent`
+- `instagram-agent`

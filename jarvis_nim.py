@@ -774,6 +774,9 @@ def public_result_payload(payload: Any) -> Any:
         for key, value in payload.items():
             if key == "tool":
                 continue
+            if key == "operation" and payload.get("dry_run") is True:
+                public["requested_action"] = public_result_payload(value)
+                continue
             if key == "count" and "total_count" in payload:
                 public["shown_count"] = public_result_payload(value)
                 continue
