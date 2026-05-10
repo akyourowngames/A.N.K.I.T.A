@@ -1,0 +1,136 @@
+{
+  "id": "report-compiler",
+  "name": "Report Compiler",
+  "description": "Shared rendering pipeline for structured Jarvis reports across research, document, data, and memory agents.",
+  "prompt_files": [
+    "prompts/report-compiler.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "JARVIS_REPORT_COMPILER_CONFIG"
+  ],
+  "tools": [
+    {
+      "name": "compiler_status",
+      "description": "Inspect report compiler readiness, templates, output formats, and rendering dependencies.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.report_compiler",
+        "function": "compiler_status"
+      },
+      "sort_key": "compiler.00"
+    },
+    {
+      "name": "compiler_list_templates",
+      "description": "List report templates with expected sections, required fields, and citation style.",
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.report_compiler",
+        "function": "compiler_list_templates"
+      },
+      "sort_key": "compiler.01"
+    },
+    {
+      "name": "compiler_validate",
+      "description": "Validate a structured report content object against the compiler schema and optional template.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "object",
+            "description": "Report content object with title, metadata, sections, bibliography, and appendix."
+          },
+          "template": {
+            "type": "string",
+            "description": "Template name."
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.report_compiler",
+        "function": "compiler_validate"
+      },
+      "sort_key": "compiler.02"
+    },
+    {
+      "name": "compiler_preview",
+      "description": "Render structured report content to an inline Markdown preview without writing a file.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "object",
+            "description": "Report content object with title, metadata, sections, bibliography, and appendix."
+          },
+          "template": {
+            "type": "string",
+            "description": "Template name."
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.report_compiler",
+        "function": "compiler_preview"
+      },
+      "sort_key": "compiler.03"
+    },
+    {
+      "name": "compiler_render",
+      "description": "Render structured report content to md, txt, docx, or pdf using a named template and return the saved file path.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "content": {
+            "type": "object",
+            "description": "Report content object with title, metadata, sections, bibliography, and appendix."
+          },
+          "format": {
+            "type": "string",
+            "enum": [
+              "md",
+              "txt",
+              "docx",
+              "pdf"
+            ],
+            "description": "Target output format."
+          },
+          "template": {
+            "type": "string",
+            "description": "Template name."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Optional output path. Extension is adjusted to match format."
+          }
+        },
+        "required": [
+          "content"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.report_compiler",
+        "function": "compiler_render"
+      },
+      "sort_key": "compiler.04"
+    }
+  ]
+}

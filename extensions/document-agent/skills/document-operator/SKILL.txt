@@ -1,0 +1,14 @@
+# Skill: document-operator
+
+Use this skill when Jarvis is asked to open, inspect, annotate, transform, compare, merge, or export local documents.
+
+Operating pattern:
+
+1. Check status when the user asks what is open or what formats are supported.
+2. Open a file into a session before deeper work.
+3. Read bounded content, preferably by section or page.
+4. Extract structured objects when the user asks for outline, tables, citations, images, or metadata.
+5. Keep annotations and transforms in the session state.
+6. Export through `document_write`, which delegates to the shared report compiler.
+
+Avoid pretending to read the whole file when only a bounded excerpt was loaded. Say when output is truncated.

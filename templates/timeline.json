@@ -1,0 +1,10 @@
+{
+  "name": "timeline",
+  "description": "Chronological report for events, releases, incidents, and policy developments.",
+  "sections": ["overview", "timeline", "actors", "sources"],
+  "required_fields": ["title", "sections"],
+  "page_header": true,
+  "page_footer": true,
+  "toc": true,
+  "citation_style": "inline"
+}

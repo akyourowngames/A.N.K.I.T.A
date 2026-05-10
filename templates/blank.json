@@ -1,0 +1,10 @@
+{
+  "name": "blank",
+  "description": "Flexible blank layout for structured content from any Jarvis agent.",
+  "sections": [],
+  "required_fields": ["title"],
+  "page_header": false,
+  "page_footer": false,
+  "toc": false,
+  "citation_style": "inline"
+}

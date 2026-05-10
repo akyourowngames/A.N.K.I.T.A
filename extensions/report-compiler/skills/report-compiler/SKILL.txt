@@ -1,0 +1,21 @@
+# Skill: report-compiler
+
+Use this skill when rendering structured Jarvis output into Markdown, TXT, DOCX, or PDF.
+
+Workflow:
+
+1. Ask the owning agent to produce content in the compiler schema.
+2. Validate with `compiler_validate` when the content shape is uncertain.
+3. Preview with `compiler_preview` for inline review.
+4. Render with `compiler_render` when the user wants a file.
+
+The compiler owns the content schema. Other agents should send:
+
+- title
+- subtitle
+- metadata
+- sections
+- bibliography
+- appendix
+
+The compiler is not a research engine, document reader, or data extractor. It only validates and renders structured content.

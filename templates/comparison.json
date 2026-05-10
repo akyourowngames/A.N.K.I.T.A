@@ -1,0 +1,10 @@
+{
+  "name": "comparison",
+  "description": "Comparison report with shared context, differences, similarity, and recommendations.",
+  "sections": ["overview", "document_a", "document_b", "differences", "similarity"],
+  "required_fields": ["title", "sections"],
+  "page_header": true,
+  "page_footer": true,
+  "toc": true,
+  "citation_style": "inline"
+}

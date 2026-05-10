@@ -338,9 +338,11 @@ def research_synthesize(params: dict[str, Any]) -> dict[str, Any]:
         "source_policy": params.get("source_policy") or plan.get("source_policy") or config.get("default_source_policy"),
     }
     report_draft = report_from_evidence(evidence_pack)
+    compiler_content = compiler_content_from_evidence(evidence_pack)
     return {
         "summary": f"Evidence pack ready with {len(top_claims)} claim(s) and {len(evidence_pack['source_list'])} source(s).",
         "evidence_pack": evidence_pack,
+        "compiler_content": compiler_content,
         "report_draft": report_draft,
         "safe_user_output": report_draft,
     }
@@ -470,6 +472,7 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
     )
     evidence_pack = slim_evidence_pack(synth_result.get("evidence_pack", {}), bounded_int(params.get("max_claims"), 6, 1, 20))
     report_draft = report_from_evidence(evidence_pack)
+    compiler_content = compiler_content_from_evidence(evidence_pack)
     saved: dict[str, Any] = {}
     if bool(params.get("save", False)):
         saved = research_save(
@@ -479,6 +482,19 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
                 "run_id": short_hash(topic + utc_now()),
             }
         )
+    rendered_report: dict[str, Any] = {}
+    render_format = optional_text(params, "render_format")
+    if render_format:
+        rendered_report = render_research_report(
+            compiler_content,
+            render_format,
+            optional_text(params, "render_template", "research_briefing"),
+            optional_text(params, "output_path"),
+        )
+    safe_user_output = report_draft
+    if rendered_report:
+        path = str(rendered_report.get("output_path") or "")
+        safe_user_output = f"Research report saved to {path}.\n\n{report_draft}".strip() + "\n"
     return {
         "summary": "Research pipeline completed.",
         "plan": compact_plan(plan),
@@ -491,8 +507,10 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
             "provider_errors": search_result.get("provider_errors", []),
         },
         "evidence_pack": evidence_pack,
+        "compiler_content": compiler_content,
         "report_draft": report_draft,
-        "safe_user_output": report_draft,
+        "rendered_report": rendered_report,
+        "safe_user_output": safe_user_output,
         "saved": saved,
     }
 
@@ -1112,6 +1130,124 @@ def report_from_evidence(evidence: dict[str, Any]) -> str:
             suffix = f" ({date})" if date else ""
             lines.append(f"- {title}{suffix}: {url}")
     return "\n".join(line.rstrip() for line in lines).strip() + "\n"
+
+
+def compiler_content_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+    topic = str(evidence.get("topic") or "Research")
+    time_window = str(evidence.get("time_window") or "current search window")
+    generated_at = str(evidence.get("generated_at") or utc_now())
+    claims = [claim for claim in evidence.get("top_claims", []) if isinstance(claim, dict)]
+    sources = [source for source in evidence.get("source_list", []) if isinstance(source, dict)]
+    findings = []
+    for claim in claims:
+        finding = {
+            "claim": claim.get("claim", ""),
+            "confidence": claim.get("confidence", ""),
+            "status": claim.get("conflict_status", ""),
+            "sources": claim_source_text(claim, evidence),
+        }
+        findings.append(finding)
+    timeline_items = [
+        {"date": item.get("date", ""), "event": item.get("claim", "")}
+        for item in evidence.get("timeline", [])
+        if isinstance(item, dict)
+    ]
+    uncertainty = [
+        {
+            "claim": claim.get("claim", ""),
+            "confidence": claim.get("confidence", ""),
+            "status": claim.get("conflict_status", ""),
+        }
+        for claim in claims
+        if claim.get("confidence") != "high"
+    ]
+    sections = [
+        {
+            "heading": "Summary",
+            "level": 1,
+            "body": f"Research briefing for {topic} covering {time_window}. Generated from current source results at {generated_at}.",
+            "items": [],
+            "table": None,
+            "citations": [],
+        },
+        {
+            "heading": "Key Findings",
+            "level": 1,
+            "body": "",
+            "items": findings,
+            "table": None,
+            "citations": [],
+        },
+    ]
+    if timeline_items:
+        sections.append(
+            {
+                "heading": "Timeline",
+                "level": 1,
+                "body": "",
+                "items": timeline_items,
+                "table": None,
+                "citations": [],
+            }
+        )
+    if uncertainty:
+        sections.append(
+            {
+                "heading": "Uncertainty",
+                "level": 1,
+                "body": "Claims below need more confirmation or have limited source support.",
+                "items": uncertainty,
+                "table": None,
+                "citations": [],
+            }
+        )
+    bibliography = []
+    for index, source in enumerate(sources, start=1):
+        bibliography.append(
+            {
+                "index": index,
+                "title": source.get("title") or source.get("publisher") or source.get("url") or f"Source {index}",
+                "url": source.get("url", ""),
+                "publisher": source.get("publisher", ""),
+                "date": source.get("published_date", ""),
+            }
+        )
+    return {
+        "title": f"{topic} Research Briefing",
+        "subtitle": time_window,
+        "metadata": {
+            "author": "Jarvis",
+            "date": generated_at,
+            "topic": topic,
+            "version": "1",
+            "source_policy": evidence.get("source_policy", ""),
+        },
+        "sections": sections,
+        "bibliography": bibliography,
+        "appendix": [],
+    }
+
+
+def render_research_report(content: dict[str, Any], target_format: str, template: str, output_path: str) -> dict[str, Any]:
+    from tools.registry import discover_tools
+
+    payload = json.loads(
+        discover_tools().execute(
+            "compiler_render",
+            {
+                "content": content,
+                "format": target_format,
+                "template": template,
+                "output_path": output_path,
+            },
+        )
+    )
+    if not payload.get("ok"):
+        raise ToolInputError(str(payload.get("error") or "compiler_render failed"))
+    result = payload.get("result")
+    if not isinstance(result, dict):
+        raise ToolInputError("compiler_render returned an invalid result")
+    return result
 
 
 def claim_source_text(claim: dict[str, Any], evidence: dict[str, Any]) -> str:
