@@ -1,6 +1,12 @@
 .env
 .venv/
 venv/
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.next-dev*.log
+artifacts/
 __pycache__/
 *.py[cod]
 
