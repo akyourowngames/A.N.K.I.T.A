@@ -195,6 +195,11 @@ def answer_with_tool_requests(
     requests: list[dict[str, Any]],
 ) -> str:
     results = execute_tool_requests(registry, requests)
+    direct_reply = direct_single_tool_reply(results)
+    if direct_reply:
+        if config.stream:
+            print(direct_reply)
+        return direct_reply
 
     working_messages.append(
         {
@@ -218,6 +223,24 @@ def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list
     return results
 
 
+def direct_single_tool_reply(results: list[dict[str, Any]]) -> str:
+    if not env_bool("NIM_DIRECT_SINGLE_TOOL_RESULT", False):
+        return ""
+    if len(results) != 1:
+        return ""
+    wrapper = results[0].get("result", {})
+    if not isinstance(wrapper, dict) or wrapper.get("ok") is not True:
+        return ""
+    payload = wrapper.get("result", {})
+    if not isinstance(payload, dict):
+        return ""
+    for key in ["safe_user_output", "user_output", "summary", "status_text"]:
+        value = payload.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
 def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
     requests, _model_reply = collect_tool_decision(config, messages, registry)
     return requests
@@ -232,6 +255,18 @@ def collect_tool_decision(
     model_reply = ""
     passes = max(1, env_int("TOOL_PLANNER_PASSES", 1))
     planner_registry = selected_planner_registry(config, messages, registry)
+    direct_response = getattr(planner_registry, "direct_response", "")
+    if isinstance(direct_response, str) and direct_response.strip() and can_accept_selector_direct_response(messages):
+        return [], direct_response.strip()
+    direct_requests = getattr(planner_registry, "direct_requests", [])
+    if isinstance(direct_requests, list) and direct_requests:
+        return direct_requests, ""
+    if not planner_registry.visible_tools() and env_bool("NIM_JSON_SKIP_EMPTY_SELECTION", True):
+        fallback_registry = getattr(planner_registry, "registry", planner_registry)
+        if fallback_registry is not planner_registry and fallback_registry.visible_tools():
+            planner_registry = fallback_registry
+        else:
+            return [], ""
     for index in range(passes):
         planner_messages = tool_planner_messages(messages, planner_registry)
         data = post_json(
@@ -260,6 +295,18 @@ def collect_tool_decision(
     return requests, model_reply
 
 
+def can_accept_selector_direct_response(messages: list[dict[str, Any]]) -> bool:
+    if env_bool("NIM_SELECTOR_DIRECT_RESPONSE_WITH_HISTORY", False):
+        return True
+    conversational = []
+    for message in messages:
+        role = message.get("role")
+        content = message.get("content", "")
+        if role in {"user", "assistant"} and isinstance(content, str) and content.strip():
+            conversational.append(role)
+    return conversational == ["user"]
+
+
 def selected_planner_registry(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> Any:
     if not env_bool("TOOL_PLANNER_DYNAMIC_SCHEMAS", False):
         return registry
@@ -267,19 +314,33 @@ def selected_planner_registry(config: JarvisConfig, messages: list[dict[str, Any
     minimum = env_int("TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS", 40)
     if len(tools) < minimum:
         return registry
-    names = select_planner_tool_names(config, messages, registry)
+    names, direct_response, direct_requests = select_planner_tool_decision(config, messages, registry)
     if not names:
-        return ToolSubsetRegistry(registry, [])
-    return ToolSubsetRegistry(registry, names)
+        return ToolSubsetRegistry(registry, [], direct_response, direct_requests)
+    return ToolSubsetRegistry(registry, names, "", direct_requests, include_always=True)
 
 
 class ToolSubsetRegistry:
-    def __init__(self, registry: Any, names: list[str]) -> None:
+    def __init__(
+        self,
+        registry: Any,
+        names: list[str],
+        direct_response: str = "",
+        direct_requests: list[dict[str, Any]] | None = None,
+        include_always: bool = False,
+    ) -> None:
         self.registry = registry
         self.names = set(names)
+        self.direct_response = direct_response
+        self.direct_requests = direct_requests or []
+        self.include_always = include_always
 
     def visible_tools(self) -> list[Any]:
-        return [tool for tool in self.registry.visible_tools() if tool.name in self.names]
+        return [
+            tool
+            for tool in self.registry.visible_tools()
+            if tool.name in self.names or (self.include_always and getattr(tool, "planner_always_include", False))
+        ]
 
     def openai_tools(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self.visible_tools()]
@@ -301,32 +362,23 @@ class ToolSubsetRegistry:
 
 
 def select_planner_tool_names(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[str]:
+    names, _direct_response, _direct_requests = select_planner_tool_decision(config, messages, registry)
+    return names
+
+
+def select_planner_tool_decision(
+    config: JarvisConfig,
+    messages: list[dict[str, Any]],
+    registry: Any,
+) -> tuple[list[str], str, list[dict[str, Any]]]:
     tools = registry.visible_tools()
     available_names = {tool.name for tool in tools}
-    candidates = [
-        {
-            "name": tool.name,
-            "description": clip_planner_text(tool.description, env_int("TOOL_PLANNER_SELECTOR_DESCRIPTION_CHARS", 160)),
-        }
-        for tool in tools
-    ]
+    candidates = selector_tool_candidates(registry, tools)
+    prompt = tool_selector_prompt(candidates)
     selector_messages = [
         {
             "role": "system",
-            "content": "\n".join(
-                [
-                    "You select local tool names for a later tool-planning step.",
-                    "Return JSON only in this shape: {\"tool_names\":[\"tool_name\"]}.",
-                    "If no local tool is needed, return {\"tool_names\":[]}.",
-                    "Choose from the available tool names only.",
-                    "Include every tool that may be needed to complete all requested outcomes.",
-                    "Prefer broad pipeline tools when one tool can complete a multi-step job.",
-                    "Include channel or delivery tools when the requested outcome includes delivering an artifact through the active channel.",
-                    "Do not answer the user.",
-                    "Available tools:",
-                    json.dumps(candidates, ensure_ascii=True, separators=(",", ":")),
-                ]
-            ),
+            "content": prompt,
         },
         {
             "role": "user",
@@ -337,7 +389,7 @@ def select_planner_tool_names(config: JarvisConfig, messages: list[dict[str, Any
         data = post_json(
             config,
             {
-                "model": tool_planner_model(config),
+                "model": tool_selector_model(config),
                 "messages": selector_messages,
                 "temperature": 0,
                 "max_tokens": env_int("TOOL_PLANNER_SELECTOR_MAX_TOKENS", 160),
@@ -345,14 +397,40 @@ def select_planner_tool_names(config: JarvisConfig, messages: list[dict[str, Any
             },
         )
     except NimChatError:
-        return [tool.name for tool in tools]
+        return [tool.name for tool in tools], "", []
 
-    names = tool_names_from_selector_content(message_content(extract_choice_message(data)), available_names)
+    content = message_content(extract_choice_message(data))
+    direct_requests = parse_tool_requests(content, registry)
+    names, direct_response = tool_selection_from_selector_content(content, available_names)
+    for request in direct_requests:
+        name = request.get("name")
+        if isinstance(name, str) and name not in names:
+            names.append(name)
     limit = env_int("TOOL_PLANNER_SELECTOR_MAX_TOOLS", 12)
-    return names[: max(1, limit)] if names else []
+    limited_names = names[: max(1, limit)] if names else []
+    return limited_names, (direct_response if not direct_requests else ""), direct_requests
+
+
+def selector_tool_candidates(registry: Any, tools: list[Any]) -> list[dict[str, Any]]:
+    if hasattr(registry, "planner_tools"):
+        schemas = registry.planner_tools()
+        if isinstance(schemas, list):
+            return [schema for schema in schemas if isinstance(schema, dict)]
+    return [
+        {
+            "name": tool.name,
+            "description": clip_planner_text(tool.description, env_int("TOOL_PLANNER_SELECTOR_DESCRIPTION_CHARS", 160)),
+        }
+        for tool in tools
+    ]
 
 
 def tool_names_from_selector_content(content: str, available_names: set[str]) -> list[str]:
+    names, _direct_response = tool_selection_from_selector_content(content, available_names)
+    return names
+
+
+def tool_selection_from_selector_content(content: str, available_names: set[str]) -> tuple[list[str], str]:
     text = content.strip()
     values: list[Any] = []
     if text:
@@ -363,11 +441,24 @@ def tool_names_from_selector_content(content: str, available_names: set[str]) ->
     values.extend(scan_json_objects(text))
 
     names: list[str] = []
+    direct_response = ""
     for value in values:
         for name in tool_names_from_selector_value(value):
             if name in available_names and name not in names:
                 names.append(name)
-    return names
+        if not direct_response and env_bool("NIM_SELECTOR_DIRECT_RESPONSE", True):
+            direct_response = direct_response_from_selector_value(value)
+    return names, direct_response if not names else ""
+
+
+def direct_response_from_selector_value(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    tool_names = value.get("tool_names")
+    if isinstance(tool_names, list) and tool_names:
+        return ""
+    response = value.get("direct_response")
+    return response.strip() if isinstance(response, str) and response.strip() else ""
 
 
 def tool_names_from_selector_value(value: Any) -> list[str]:
@@ -381,6 +472,11 @@ def tool_names_from_selector_value(value: Any) -> list[str]:
     if isinstance(value, list):
         return [item for item in value if isinstance(item, str)]
     return []
+
+
+def tool_selector_prompt(candidates: list[dict[str, str]]) -> str:
+    template = load_text_file(Path(env_value("JARVIS_TOOL_SELECTOR_PROMPT_FILE", "prompts/tool_selector.txt")))
+    return template.replace("{tool_candidates}", json.dumps(candidates, ensure_ascii=True, separators=(",", ":")))
 
 
 def clip_planner_text(text: str, limit: int) -> str:
@@ -704,6 +800,11 @@ def json_tool_protocol(registry: Any) -> str:
 def tool_planner_model(config: JarvisConfig) -> str:
     value = env_value("NVIDIA_TOOL_MODEL")
     return value if value else config.model
+
+
+def tool_selector_model(config: JarvisConfig) -> str:
+    value = env_value("NVIDIA_TOOL_SELECTOR_MODEL")
+    return value if value else tool_planner_model(config)
 
 
 def load_text_file(path: Path) -> str:

@@ -18,6 +18,7 @@ from telegram_bot import (
     TelegramSession,
     chunk_telegram_response,
     prune_session_messages,
+    refreshed_session_messages,
 )
 from tools import discover_tools
 from tools.telegram_bot_tools import (
@@ -76,6 +77,94 @@ class TelegramBotSessionTests(unittest.TestCase):
         pruned = prune_session_messages(messages, 2)
 
         self.assertEqual(pruned, [messages[0], messages[3], messages[4]])
+
+    def test_session_load_refreshes_system_context_but_keeps_history(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            telegram_config = TelegramConfig(
+                agent_name="Test Telegram",
+                bot_token_env="TELEGRAM_BOT_TOKEN",
+                allowed_chat_ids=(),
+                memory_mode="shared",
+                per_user_memory_root=root / "memory-users",
+                session_dir=root / "sessions",
+                upload_dir=root / "uploads",
+                download_dir=root / "downloads",
+                max_session_messages=4,
+                max_message_length=4000,
+                parse_mode="plain",
+                typing_indicator=False,
+                rate_limit_per_minute=0,
+                voice_transcription=False,
+                send_files_inline=True,
+                webhook_mode=False,
+                webhook_url="",
+                webhook_port=8443,
+                rejection_message="private",
+                slow_down_message="slow",
+                ffmpeg_command="ffmpeg",
+                auto_send_file_result_paths=(),
+                config_path=root / "telegram.json",
+            )
+            telegram_config.session_dir.mkdir(parents=True)
+            memory_config = MemoryConfig(
+                root=root / "memory",
+                max_context_chars=2000,
+                max_file_chars=1000,
+                include_transcripts=False,
+                extract_enabled=False,
+                extract_background=False,
+                extract_max_tokens=100,
+                context_prompt_file=Path("prompts/memory_context.txt"),
+            )
+            jarvis_config = JarvisConfig(
+                api_key="test",
+                chat_url="https://example.test/v1/chat/completions",
+                model="test-model",
+                temperature=0,
+                max_tokens=100,
+                stream=False,
+                stream_mode="native",
+                synthetic_chunk_chars=48,
+                synthetic_chunk_delay_seconds=0,
+                timeout_seconds=10,
+                retry_attempts=0,
+                retry_delay_seconds=0,
+                max_tool_rounds=1,
+                tool_mode="json",
+                auto_tools=True,
+                system_prompt_file=Path("prompts/chat_system.txt"),
+                persona_file=Path("prompts/persona.txt"),
+                tool_protocol_file=Path("prompts/tool_protocol.txt"),
+                user_name="User",
+                assistant_name="JARVIS",
+            )
+            runtime = TelegramRuntime(telegram_config, jarvis_config, Mock(), memory_config, load_extension_catalog())
+            saved = {
+                "chat_id": 123,
+                "user_name": "Old",
+                "memory_dir": "old-memory",
+                "created_at": "2026-05-10T00:00:00+05:30",
+                "last_active": "2026-05-10T00:00:00+05:30",
+                "messages": [
+                    {"role": "system", "content": "stale context"},
+                    {"role": "user", "content": "old user turn"},
+                    {"role": "assistant", "content": "old assistant turn"},
+                ],
+            }
+            (telegram_config.session_dir / "123.json").write_text(json.dumps(saved), encoding="utf-8")
+            fresh = [{"role": "system", "content": "fresh context"}]
+            with patch("telegram_bot.build_messages", return_value=fresh):
+                loaded = runtime.sessions.load(123, "Krish", "new text")
+
+        self.assertEqual(loaded.messages, [fresh[0], {"role": "user", "content": "old user turn"}, {"role": "assistant", "content": "old assistant turn"}])
+        self.assertEqual(loaded.memory_dir, str(memory_config.root))
+
+    def test_refreshed_session_messages_keeps_only_fresh_system_messages(self) -> None:
+        fresh = [{"role": "system", "content": "fresh"}]
+        saved = [{"role": "system", "content": "stale"}, {"role": "user", "content": "hello"}]
+
+        self.assertEqual(refreshed_session_messages(fresh, saved), [{"role": "system", "content": "fresh"}, {"role": "user", "content": "hello"}])
 
     def test_runtime_turn_uses_chat_once_and_saves_session(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

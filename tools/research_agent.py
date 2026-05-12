@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from tools.registry import ToolInputError, optional_text, require_text
+from tools.registry import ToolInputError, active_or_discovered_registry, optional_text, require_text
 import tools.web_tools as web_tools
 
 
@@ -1229,10 +1229,9 @@ def compiler_content_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
 
 
 def render_research_report(content: dict[str, Any], target_format: str, template: str, output_path: str) -> dict[str, Any]:
-    from tools.registry import discover_tools
-
+    registry = active_or_discovered_registry()
     payload = json.loads(
-        discover_tools().execute(
+        registry.execute(
             "compiler_render",
             {
                 "content": content,

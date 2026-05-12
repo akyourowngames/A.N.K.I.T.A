@@ -9,6 +9,7 @@ from jarvis_nim import JarvisConfig, NimChatError, chat_once, load_dotenv
 from memory_system import MemoryConfig, load_memory_context, memory_system_message, remember_chat
 from skill_system import load_skill_context
 from tools import discover_tools
+from tools.registry import set_active_registry
 from vector_memory import VectorMemoryConfig, load_vector_memory_context
 from voice_system import (
     VoiceConfig,
@@ -255,6 +256,7 @@ def main() -> int:
         config = JarvisConfig.from_env()
         extension_catalog = load_extension_catalog()
         registry = discover_tools(extension_catalog=extension_catalog)
+        set_active_registry(registry)
         memory_config = MemoryConfig.from_env(Path.cwd())
         load_memory_context(memory_config)
         if args.list_tools:

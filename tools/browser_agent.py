@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import random
+import subprocess
 import time
 import urllib.parse
 from dataclasses import dataclass
@@ -30,10 +31,12 @@ from tools.registry import ToolInputError, optional_text, require_text
 
 
 _PLAYWRIGHT: Any | None = None
+_PLAYWRIGHT_CHROMIUM_EXECUTABLE = ""
 _SESSIONS: dict[str, "BrowserRuntimeSession"] = {}
 _ACTIVE_SESSION_ID: str = ""
 _PENDING_DIALOGS: dict[str, Any] = {}
 _POPUPS: dict[str, list[Any]] = {}
+_ATTACHED_PAGE_EVENTS: set[int] = set()
 
 
 @dataclass
@@ -50,14 +53,16 @@ class BrowserRuntimeSession:
 
 def browser_status(_params: dict[str, Any] | None = None) -> dict[str, Any]:
     config = load_config()
-    executable = resolve_browser_executable(config)
+    executable = resolve_browser_executable(config, playwright=_PLAYWRIGHT)
     session = active_session()
     page = session.page if session else None
+    warning = browser_engine_warning("", executable, _PLAYWRIGHT)
     return {
         "summary": f"{config.get('agent_name', 'Browser Agent')} ready.",
         "config_path": str(config_path()),
         "playwright_available": playwright_available(),
         "browser_executable": str(executable) if executable else "",
+        "browser_engine_warning": warning,
         "connected": page is not None and not page.is_closed(),
         "active_session_id": session.session_id if session else "",
         "current_url": page.url if page is not None and not page.is_closed() else "",
@@ -162,9 +167,11 @@ def browser_launch(params: dict[str, Any] | None = None) -> dict[str, Any]:
 
     if _PLAYWRIGHT is None:
         _PLAYWRIGHT = sync_playwright().start()
+    remember_playwright_chromium_executable(_PLAYWRIGHT)
 
     profile_path = profile_dir(config, profile_name)
     profile_path.mkdir(parents=True, exist_ok=True)
+    removed_locks = cleanup_profile_locks(profile_path)
     launch_args = [str(item) for item in config.get("launch_args", []) if isinstance(item, str)]
     kwargs: dict[str, Any] = {
         "headless": browser_headless(params, config),
@@ -174,8 +181,6 @@ def browser_launch(params: dict[str, Any] | None = None) -> dict[str, Any]:
         "slow_mo": bounded_int(config.get("slow_mo_ms"), 0, 0, 10000),
     }
     viewport = viewport_from_params(params.get("viewport"), config)
-    if viewport:
-        kwargs["viewport"] = viewport
     proxy = proxy_options(config)
     if proxy:
         kwargs["proxy"] = proxy
@@ -187,6 +192,7 @@ def browser_launch(params: dict[str, Any] | None = None) -> dict[str, Any]:
     context = engine.launch_persistent_context(str(profile_path), **kwargs)
     pages = context.pages
     page = pages[0] if pages else context.new_page()
+    viewport_applied = apply_page_viewport(page, viewport)
     session_id = new_session_id()
     state = create_session_state(session_id, profile_name)
     session = BrowserRuntimeSession(
@@ -201,7 +207,18 @@ def browser_launch(params: dict[str, Any] | None = None) -> dict[str, Any]:
     _ACTIVE_SESSION_ID = session_id
     attach_context_events(session)
     sync_state(session, {"page_load_state": "launched"})
-    return {"summary": "Browser session launched.", "session_id": session_id, "profile_name": profile_name, "state": public_state(session.state)}
+    warning = browser_engine_warning(browser_name, executable, _PLAYWRIGHT)
+    result = {
+        "summary": "Browser session launched.",
+        "session_id": session_id,
+        "profile_name": profile_name,
+        "state": public_state(session.state),
+        "profile_locks_removed": removed_locks,
+        "viewport_applied": viewport_applied,
+    }
+    if warning:
+        result["browser_engine_warning"] = warning
+    return result
 
 
 def browser_navigate(params: dict[str, Any]) -> dict[str, Any]:
@@ -951,6 +968,11 @@ def close_session(session_id: str) -> None:
     except Exception:
         pass
     try:
+        for page in session.context.pages:
+            _ATTACHED_PAGE_EVENTS.discard(id(page))
+    except Exception:
+        _ATTACHED_PAGE_EVENTS.discard(id(session.page))
+    try:
         session.context.close()
     finally:
         config = load_config()
@@ -969,6 +991,7 @@ def close_browser() -> None:
         _PLAYWRIGHT.stop()
     _PLAYWRIGHT = None
     _ACTIVE_SESSION_ID = ""
+    _ATTACHED_PAGE_EVENTS.clear()
 
 
 def attach_context_events(session: BrowserRuntimeSession) -> None:
@@ -984,6 +1007,10 @@ def attach_context_events(session: BrowserRuntimeSession) -> None:
 
 def attach_page_events(session: BrowserRuntimeSession, page: Any) -> None:
     browser_network.attach_network_listeners(page, session.session_id, load_config())
+    page_key = id(page)
+    if page_key in _ATTACHED_PAGE_EVENTS:
+        return
+    _ATTACHED_PAGE_EVENTS.add(page_key)
 
     def on_dialog(dialog: Any) -> None:
         _PENDING_DIALOGS[session.session_id] = dialog
@@ -1304,13 +1331,6 @@ def wait_for_stability(session: BrowserRuntimeSession, params: dict[str, Any] | 
         session.page_load_state = "domcontentloaded"
     except Exception:
         pass
-    try:
-        idle_timeout = bounded_int(load_config().get("network_idle_timeout_ms"), 2000, 0, timeout)
-        if idle_timeout > 0:
-            session.page.wait_for_load_state("networkidle", timeout=idle_timeout)
-            session.page_load_state = "networkidle"
-    except Exception:
-        pass
 
 
 def set_checked(params: dict[str, Any], checked: bool) -> dict[str, Any]:
@@ -1484,6 +1504,110 @@ def safe_page_title(page: Any) -> str:
         return ""
 
 
+def remember_playwright_chromium_executable(playwright: Any | None) -> str:
+    global _PLAYWRIGHT_CHROMIUM_EXECUTABLE
+    if playwright is None:
+        return _PLAYWRIGHT_CHROMIUM_EXECUTABLE
+    try:
+        executable = str(playwright.chromium.executable_path or "")
+    except Exception:
+        executable = ""
+    if executable:
+        _PLAYWRIGHT_CHROMIUM_EXECUTABLE = executable
+    return _PLAYWRIGHT_CHROMIUM_EXECUTABLE
+
+
+def apply_page_viewport(page: Any, viewport: dict[str, int] | None) -> bool:
+    if not viewport:
+        return False
+    try:
+        page.set_viewport_size(viewport)
+        return True
+    except Exception:
+        return False
+
+
+def cleanup_profile_locks(profile_path: Path) -> list[str]:
+    removed: list[str] = []
+    for lock_path in profile_lock_paths(profile_path):
+        if not lock_path.exists() and not lock_path.is_symlink():
+            continue
+        pid = lock_pid(lock_path)
+        if pid is not None and process_is_running(pid):
+            continue
+        if lock_path.is_dir() and not lock_path.is_symlink():
+            continue
+        try:
+            lock_path.unlink()
+            removed.append(str(lock_path))
+        except Exception:
+            continue
+    return removed
+
+
+def profile_lock_paths(profile_path: Path) -> list[Path]:
+    return [profile_path / "SingletonLock", profile_path / "Default" / "LOCK"]
+
+
+def lock_pid(path: Path) -> int | None:
+    texts: list[str] = []
+    try:
+        if path.is_symlink():
+            texts.append(os.readlink(path))
+    except Exception:
+        pass
+    try:
+        texts.append(path.read_text(encoding="utf-8-sig", errors="ignore"))
+    except Exception:
+        pass
+    for text in texts:
+        pid = last_positive_int(text)
+        if pid is not None:
+            return pid
+    return None
+
+
+def last_positive_int(text: str) -> int | None:
+    current = ""
+    numbers: list[int] = []
+    for char in text:
+        if char.isdigit():
+            current += char
+        elif current:
+            numbers.append(int(current))
+            current = ""
+    if current:
+        numbers.append(int(current))
+    for number in reversed(numbers):
+        if number > 0:
+            return number
+    return None
+
+
+def process_is_running(pid: int) -> bool:
+    if pid <= 0:
+        return False
+    if os.name == "nt":
+        try:
+            completed = subprocess.run(
+                ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+                capture_output=True,
+                text=True,
+                timeout=5,
+                check=False,
+            )
+        except Exception:
+            return True
+        return str(pid) in completed.stdout
+    try:
+        os.kill(pid, 0)
+    except PermissionError:
+        return True
+    except OSError:
+        return False
+    return True
+
+
 def playwright_available() -> bool:
     try:
         import importlib.util
@@ -1520,18 +1644,9 @@ def template_values(playwright: Any | None = None) -> dict[str, str]:
         "playwright_chromium": "",
     }
     if playwright is not None:
-        values["playwright_chromium"] = playwright.chromium.executable_path
-    elif playwright_available():
-        try:
-            from playwright.sync_api import sync_playwright
-
-            temp = sync_playwright().start()
-            try:
-                values["playwright_chromium"] = temp.chromium.executable_path
-            finally:
-                temp.stop()
-        except Exception:
-            values["playwright_chromium"] = ""
+        values["playwright_chromium"] = remember_playwright_chromium_executable(playwright)
+    else:
+        values["playwright_chromium"] = _PLAYWRIGHT_CHROMIUM_EXECUTABLE
     return values
 
 
@@ -1547,6 +1662,24 @@ def browser_engine(browser_name: str, playwright: Any) -> Any:
     if key == "firefox":
         return playwright.firefox
     return playwright.chromium
+
+
+def browser_engine_warning(browser_name: str, executable: Path | None, playwright: Any | None) -> str:
+    if executable is None or playwright is None:
+        return ""
+    bundled = remember_playwright_chromium_executable(playwright)
+    if not bundled:
+        return ""
+    try:
+        if executable.resolve() == Path(bundled).resolve():
+            return ""
+    except Exception:
+        return ""
+    key = browser_name.casefold().strip()
+    label = key or executable.stem
+    if key == "firefox":
+        return ""
+    return f"Using Playwright chromium driver with external {label} executable at {executable}."
 
 
 def browser_headless(params: dict[str, Any], config: dict[str, Any]) -> bool:

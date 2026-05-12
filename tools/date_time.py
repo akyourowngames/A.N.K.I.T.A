@@ -22,11 +22,15 @@ def get_current_datetime(params: dict[str, Any]) -> dict[str, Any]:
     else:
         now = datetime.now().astimezone()
 
+    date_text = now.date().isoformat()
+    time_text = now.strftime("%H:%M:%S")
+    timezone_text = str(now.tzinfo)
     return {
+        "summary": f"Current date and time: {date_text} {time_text} {timezone_text}",
         "timezone": str(now.tzinfo),
         "iso": now.isoformat(),
-        "date": now.date().isoformat(),
-        "time": now.strftime("%H:%M:%S"),
+        "date": date_text,
+        "time": time_text,
         "utc_offset": now.strftime("%z"),
     }
 
@@ -54,11 +58,16 @@ def get_network_datetime(timezone: str, original_error: Exception) -> dict[str, 
         raise ToolInputError(f"time service did not return datetime for timezone: {timezone}")
 
     parsed = parse_service_datetime(raw_datetime)
+    date_text = parsed.date().isoformat() if parsed else ""
+    time_text = parsed.strftime("%H:%M:%S") if parsed else ""
+    timezone_text = str(data.get("timezone") or data.get("timeZone") or timezone)
+    summary_parts = [item for item in [date_text, time_text, timezone_text] if item]
     return {
+        "summary": f"Current date and time: {' '.join(summary_parts)}".strip(),
         "timezone": data.get("timezone") or data.get("timeZone") or timezone,
         "iso": raw_datetime,
-        "date": parsed.date().isoformat() if parsed else "",
-        "time": parsed.strftime("%H:%M:%S") if parsed else "",
+        "date": date_text,
+        "time": time_text,
         "utc_offset": data.get("utc_offset") or data.get("utcOffset") or offset_from_service_data(data),
     }
 

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import os
+import subprocess
+import time
 from dataclasses import dataclass
 from importlib import import_module
 from pathlib import Path
@@ -31,8 +33,9 @@ class Tool:
     description: str
     parameters: dict[str, Any]
     handler: ToolHandler
-    executor: dict[str, str]
+    executor: dict[str, Any]
     sort_key: str = ""
+    planner_always_include: bool = False
 
     def openai_schema(self) -> dict[str, Any]:
         return {
@@ -93,6 +96,23 @@ class ToolRegistry:
         for tool in tools:
             lines.append(f"- {tool.name}: {tool.description}")
         return "\n".join(lines)
+
+
+_ACTIVE_REGISTRY: ToolRegistry | None = None
+
+
+def set_active_registry(registry: ToolRegistry | None) -> None:
+    global _ACTIVE_REGISTRY
+    _ACTIVE_REGISTRY = registry
+
+
+def active_registry() -> ToolRegistry | None:
+    return _ACTIVE_REGISTRY
+
+
+def active_or_discovered_registry() -> ToolRegistry:
+    registry = active_registry()
+    return registry if registry is not None else discover_tools()
 
 
 def parse_arguments(arguments: Any) -> dict[str, Any]:
@@ -169,6 +189,7 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
     parameters = descriptor.get("parameters")
     executor = descriptor.get("executor")
     sort_key = descriptor.get("sort_key", "")
+    planner_always_include = bool(descriptor.get("planner_always_include", False))
 
     if not isinstance(parameters, dict):
         raise ToolRegistryError(f"Tool parameters must be an object: {name}")
@@ -177,17 +198,193 @@ def tool_from_descriptor(descriptor: dict[str, Any]) -> Tool:
     if not isinstance(sort_key, str):
         raise ToolRegistryError(f"Tool sort_key must be a string: {name}")
 
-    module_name = require_manifest_text(executor, "module")
-    function_name = require_manifest_text(executor, "function")
-    handler = load_handler(module_name, function_name, name)
+    manifest_root = descriptor_manifest_root(descriptor)
+    executor_type = optional_manifest_text(executor, "type", "python").casefold()
+    if executor_type == "command":
+        handler = command_handler_from_executor(executor, manifest_root, name)
+        executor_ref = command_executor_reference(executor)
+    else:
+        module_name = require_manifest_text(executor, "module")
+        function_name = require_manifest_text(executor, "function")
+        handler = load_handler(module_name, function_name, name)
+        executor_ref = {"type": "python", "module": module_name, "function": function_name}
     return Tool(
         name=name,
         description=description,
         parameters=parameters,
         handler=handler,
-        executor={"module": module_name, "function": function_name},
+        executor=executor_ref,
         sort_key=sort_key,
+        planner_always_include=planner_always_include,
     )
+
+
+def descriptor_manifest_root(descriptor: dict[str, Any]) -> Path:
+    raw = descriptor.get("_extension_root")
+    if isinstance(raw, str) and raw.strip():
+        return Path(raw).resolve()
+    return Path.cwd().resolve()
+
+
+def command_handler_from_executor(executor: dict[str, Any], manifest_root: Path, tool_name: str) -> ToolHandler:
+    command = command_argv_from_executor(executor, manifest_root, tool_name)
+    cwd = executor_cwd(executor, manifest_root)
+    timeout_seconds = executor_int(executor, "timeout_seconds", env_int("JARVIS_COMMAND_TOOL_TIMEOUT_SECONDS", 30), 1, 3600)
+    max_output_chars = executor_int(executor, "max_output_chars", env_int("JARVIS_COMMAND_TOOL_MAX_OUTPUT_CHARS", 20000), 100, 200000)
+    stdin_mode = optional_manifest_text(executor, "stdin", "json").casefold()
+    output_mode = optional_manifest_text(executor, "output", "auto").casefold()
+    extra_env = executor_env(executor, manifest_root)
+
+    def run_command_tool(params: dict[str, Any]) -> dict[str, Any]:
+        started = time.perf_counter()
+        env = os.environ.copy()
+        env.update(extra_env)
+        env["JARVIS_TOOL_NAME"] = tool_name
+        env["JARVIS_EXTENSION_ROOT"] = str(manifest_root)
+        env["JARVIS_WORKSPACE"] = str(Path.cwd().resolve())
+        stdin = json.dumps(params, ensure_ascii=False) if stdin_mode == "json" else None
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(cwd),
+                input=stdin,
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as error:
+            elapsed = round(time.perf_counter() - started, 3)
+            raise ToolInputError(
+                command_error_message(
+                    tool_name,
+                    None,
+                    text_value(error.stdout),
+                    text_value(error.stderr),
+                    max_output_chars,
+                    elapsed,
+                    timed_out=True,
+                )
+            ) from error
+
+        elapsed = round(time.perf_counter() - started, 3)
+        stdout = text_value(completed.stdout)
+        stderr = text_value(completed.stderr)
+        if completed.returncode != 0:
+            raise ToolInputError(
+                command_error_message(
+                    tool_name,
+                    completed.returncode,
+                    stdout,
+                    stderr,
+                    max_output_chars,
+                    elapsed,
+                    timed_out=False,
+                )
+            )
+        return command_result_payload(tool_name, command, cwd, stdout, stderr, output_mode, max_output_chars, elapsed)
+
+    return run_command_tool
+
+
+def command_argv_from_executor(executor: dict[str, Any], manifest_root: Path, tool_name: str) -> list[str]:
+    command = executor.get("command")
+    if isinstance(command, list):
+        values = [expand_executor_value(item, manifest_root) for item in command if isinstance(item, str) and item.strip()]
+        if values:
+            return values
+    program = optional_manifest_text(executor, "program", "")
+    args = executor.get("args", [])
+    if program:
+        values = [expand_executor_value(program, manifest_root)]
+        if isinstance(args, list):
+            values.extend(expand_executor_value(item, manifest_root) for item in args if isinstance(item, str))
+        return values
+    raise ToolExecutorError(f"Command tool executor needs command or program: {tool_name}")
+
+
+def executor_cwd(executor: dict[str, Any], manifest_root: Path) -> Path:
+    raw = optional_manifest_text(executor, "cwd", "{workspace_root}")
+    expanded = expand_executor_value(raw, manifest_root)
+    return Path(expanded).resolve()
+
+
+def executor_env(executor: dict[str, Any], manifest_root: Path) -> dict[str, str]:
+    raw = executor.get("env", {})
+    env: dict[str, str] = {}
+    if isinstance(raw, dict):
+        for key, value in raw.items():
+            if isinstance(key, str) and isinstance(value, str):
+                env[key] = expand_executor_value(value, manifest_root)
+    return env
+
+
+def expand_executor_value(value: str, manifest_root: Path) -> str:
+    workspace = str(Path.cwd().resolve())
+    extension = str(manifest_root)
+    return value.replace("{workspace_root}", workspace).replace("{extension_root}", extension)
+
+
+def command_result_payload(
+    tool_name: str,
+    command: list[str],
+    cwd: Path,
+    stdout: str,
+    stderr: str,
+    output_mode: str,
+    max_output_chars: int,
+    elapsed: float,
+) -> dict[str, Any]:
+    clipped_stdout = clip_text(stdout, max_output_chars)
+    clipped_stderr = clip_text(stderr, max_output_chars)
+    payload: dict[str, Any] = {
+        "tool": tool_name,
+        "command": command,
+        "cwd": str(cwd),
+        "exit_code": 0,
+        "elapsed_seconds": elapsed,
+        "stdout": clipped_stdout,
+        "stderr": clipped_stderr,
+        "stdout_truncated": len(stdout) > max_output_chars,
+        "stderr_truncated": len(stderr) > max_output_chars,
+    }
+    if output_mode in {"json", "auto"} and stdout.strip():
+        try:
+            payload["json"] = json.loads(stdout)
+        except json.JSONDecodeError as error:
+            if output_mode == "json":
+                raise ToolInputError(f"{tool_name} produced invalid JSON output: {error}") from error
+    if not payload.get("json"):
+        payload["user_output"] = clipped_stdout.strip() or clipped_stderr.strip() or "Done."
+    return payload
+
+
+def command_error_message(
+    tool_name: str,
+    exit_code: int | None,
+    stdout: str,
+    stderr: str,
+    max_output_chars: int,
+    elapsed: float,
+    timed_out: bool,
+) -> str:
+    status = "timed out" if timed_out else f"exited with code {exit_code}"
+    parts = [f"{tool_name} command {status} after {elapsed}s."]
+    clipped_stdout = clip_text(stdout, max_output_chars).strip()
+    clipped_stderr = clip_text(stderr, max_output_chars).strip()
+    if clipped_stdout:
+        parts.append(f"stdout: {clipped_stdout}")
+    if clipped_stderr:
+        parts.append(f"stderr: {clipped_stderr}")
+    return " ".join(parts)
+
+
+def command_executor_reference(executor: dict[str, Any]) -> dict[str, Any]:
+    reference: dict[str, Any] = {"type": "command"}
+    for key in ["command", "program", "args", "cwd", "stdin", "output", "timeout_seconds", "max_output_chars"]:
+        if key in executor:
+            reference[key] = executor[key]
+    return reference
 
 
 def planner_tool_schema(tool: Tool) -> dict[str, Any]:
@@ -247,6 +444,37 @@ def require_manifest_text(data: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ToolRegistryError(f"Tool manifest field is required: {key}")
     return value.strip()
+
+
+def optional_manifest_text(data: dict[str, Any], key: str, fallback: str) -> str:
+    value = data.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return fallback
+
+
+def executor_int(data: dict[str, Any], key: str, fallback: int, minimum: int, maximum: int) -> int:
+    value = data.get(key)
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            number = int(value.strip())
+        except ValueError:
+            number = fallback
+    else:
+        number = fallback
+    return max(minimum, min(maximum, number))
+
+
+def text_value(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return ""
+    return str(value)
 
 
 def descriptor_name(descriptor: dict[str, Any]) -> str:

@@ -292,6 +292,7 @@
       "name": "run_terminal",
       "description": "Run a local terminal command for command output, installed software versions, PATH checks, tests, scripts, filesystem inspection, opening apps, opening files, opening URLs, and other grounded local actions.",
       "sort_key": "zz_run_terminal",
+      "planner_always_include": true,
       "parameters": {
         "type": "object",
         "properties": {

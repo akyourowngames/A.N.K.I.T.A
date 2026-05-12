@@ -112,10 +112,11 @@ Current low-latency defaults are designed around:
 
 - `NVIDIA_MODEL=mistralai/mistral-nemotron`
 - `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`
+- `NVIDIA_TOOL_SELECTOR_MODEL=mistralai/mistral-nemotron`
 - `NIM_STREAM_MODE=native`
 - `NIM_TOOL_MODE=json`
 
-The JSON planner is intentionally compact. It sees the registered tool names, descriptions, required fields, types, and enums, not giant code blobs.
+The JSON path is intentionally compact. The selector sees manifest tool descriptors and can return a direct no-tool answer, complete tool calls, or a narrowed tool-name set for the planner. If a single tool returns `safe_user_output`, `user_output`, `summary`, or `status_text`, `NIM_DIRECT_SINGLE_TOOL_RESULT=true` lets Jarvis return that grounded result without a final model rewrite.
 
 ## Prompt Stack
 
@@ -126,6 +127,7 @@ Jarvis behavior is not buried in the NIM client. It is assembled from files:
 | `prompts/chat_system.txt` | Main assistant behavior, grounding rules, current-fact rules, persona injection. |
 | `prompts/persona.txt` | Jarvis persona/voice. |
 | `prompts/tool_protocol.txt` | Planner-only protocol for deciding tool calls. |
+| `prompts/tool_selector.txt` | Low-latency descriptor-first selector and direct no-tool answer policy. |
 | `prompts/tool_results.txt` | Final-answer shaping from tool results. |
 | `prompts/memory_context.txt` | Wraps durable memory chunks into system context. |
 | `extensions/*/prompts/*.txt` | Extension-specific behavior, loaded into system context by the extension loader. |
@@ -133,6 +135,7 @@ Jarvis behavior is not buried in the NIM client. It is assembled from files:
 The important split:
 
 - `tool_protocol.txt` is for choosing tools only.
+- `tool_selector.txt` is for quickly deciding direct answer, complete tool calls, or a narrowed tool subset.
 - `tool_results.txt` is for converting grounded results into natural final answers.
 - `chat_system.txt` is for ordinary assistant behavior and grounding boundaries.
 
@@ -168,7 +171,30 @@ Optional:
 
 ```json
 {
-  "sort_key": "zz_run_terminal"
+  "sort_key": "zz_run_terminal",
+  "planner_always_include": true
+}
+```
+
+Command-backed tools can avoid new Python handler modules:
+
+```json
+{
+  "name": "manifest_command_tool",
+  "description": "Run an extension-owned script.",
+  "parameters": {
+    "type": "object",
+    "properties": {},
+    "additionalProperties": false
+  },
+  "executor": {
+    "type": "command",
+    "command": ["python", "{extension_root}/scripts/tool.py"],
+    "cwd": "{workspace_root}",
+    "stdin": "json",
+    "output": "json",
+    "timeout_seconds": 30
+  }
 }
 ```
 
@@ -176,9 +202,8 @@ Optional:
 
 1. Reading JSON.
 2. Validating `name`, `description`, `parameters`, and `executor`.
-3. Importing `executor.module`.
-4. Looking up `executor.function`.
-5. Registering the callable as a `Tool`.
+3. Loading either a Python executor or a command executor.
+4. Registering the callable as a `Tool`.
 
 Tool execution always returns a JSON payload:
 
@@ -206,12 +231,14 @@ The model never calls Python functions directly. It asks for registered tool nam
 
 The standard process:
 
-1. Add or edit a Python executor function under `tools/`.
-2. Register it in `tools/tools.json` or an extension `extension.json`.
-3. Add prompt guidance in an extension prompt when behavior matters.
-4. Add a `SKILL.txt` if the model needs a reusable workflow.
-5. Add config in `config/*.json` or env names in `.env.example`.
-6. Add tests for discovery, direct executor behavior, and live Jarvis behavior when the tool affects user-facing output.
+1. Prefer an extension-owned command tool when the task can be done by a script or terminal command.
+2. Put the script under `extensions/<id>/scripts/`.
+3. Register it in `extensions/<id>/extension.json` with `executor.type="command"`.
+4. Add or edit a Python executor function only when the tool needs a reusable in-process API.
+5. Add prompt guidance in an extension prompt when behavior matters.
+6. Add a `SKILL.txt` if the model needs a reusable workflow.
+7. Add config in `config/*.json` or env names in `.env.example`.
+8. Add tests for discovery, direct executor behavior, and live Jarvis behavior when the tool affects user-facing output.
 
 Do not edit `main.py` or `jarvis_nim.py` just to make a normal tool visible. The registry and extension loader already handle that.
 

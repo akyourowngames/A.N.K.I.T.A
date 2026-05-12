@@ -347,7 +347,7 @@
     },
     {
       "name": "entertainment_playback",
-      "description": "Playback-only control: play, pause, resume, stop, seek, volume, speed, mute, next, previous, state, crossfade, sleep timer, replay.",
+      "description": "Playback-only control: play, pause, resume, stop, seek, volume, speed, mute, next, previous, state, crossfade, sleep timer, replay. Replay uses the active grounded media type, including current radio when radio is active.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -698,7 +698,7 @@
     },
     {
       "name": "entertainment_radio",
-      "description": "For radio play/save, use query unless an exact stationuuid is already known; never invent station_id. Search, stop, save, list, inspect, trend, and discover live radio stations.",
+      "description": "For radio play/save, use query unless an exact stationuuid is already known; never invent station_id. For user requests to play radio, call operation=play directly; it can search and start the best grounded station. For short follow-ups to the same live station, call play with no query or station_id; it reuses current grounded radio state or the latest grounded radio search. Search-only is for listing or inspecting options.",
       "parameters": {
         "type": "object",
         "properties": {

@@ -4,6 +4,7 @@ import json
 import os
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -23,7 +24,9 @@ from tools.document_agent import (
     document_write,
 )
 from tools.report_compiler import compiler_list_templates, compiler_preview, compiler_render, compiler_status, compiler_validate
+from tools.registry import ToolInputError
 from tools.research_agent import research_run
+from tools.registry import set_active_registry
 
 
 class ReportCompilerAndDocumentAgentTests(unittest.TestCase):
@@ -96,6 +99,51 @@ class ReportCompilerAndDocumentAgentTests(unittest.TestCase):
         self.assertIn("| Name | Status |", rendered_text)
         self.assertIn("https://example.com", rendered_text)
 
+    def test_report_compiler_toc_and_docx_page_numbers_are_real_output(self) -> None:
+        content = {
+            "title": "Visible Layout Options",
+            "sections": [
+                {"heading": "Alpha Section", "level": 1, "body": "Alpha body.", "items": [], "table": None, "citations": []},
+                {"heading": "Beta Section", "level": 2, "body": "Beta body.", "items": [], "table": None, "citations": []},
+            ],
+            "bibliography": [],
+            "appendix": [],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "compiler.json"
+            md_path = root / "toc.md"
+            txt_path = root / "toc.txt"
+            docx_path = root / "toc.docx"
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "output_dir": str(root / "reports"),
+                        "templates_dir": str(Path.cwd() / "templates"),
+                        "include_toc": True,
+                        "include_page_numbers": True,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_REPORT_COMPILER_CONFIG": str(config_path)}, clear=False):
+                compiler_render({"content": content, "format": "md", "template": "research_briefing", "output_path": str(md_path)})
+                compiler_render({"content": content, "format": "txt", "template": "research_briefing", "output_path": str(txt_path)})
+                compiler_render({"content": content, "format": "docx", "template": "research_briefing", "output_path": str(docx_path)})
+            md_text = md_path.read_text(encoding="utf-8")
+            txt_text = txt_path.read_text(encoding="utf-8")
+            with zipfile.ZipFile(docx_path) as package:
+                document_xml = package.read("word/document.xml").decode("utf-8")
+                footer_files = [name for name in package.namelist() if name.startswith("word/footer")]
+                footer_xml = "\n".join(package.read(name).decode("utf-8") for name in footer_files)
+
+        self.assertIn("## Table of Contents", md_text)
+        self.assertIn("[Alpha Section](#alpha-section)", md_text)
+        self.assertIn("Table of Contents", txt_text)
+        self.assertIn("TOC", document_xml)
+        self.assertIn("PAGE", footer_xml)
+        self.assertIn("NUMPAGES", footer_xml)
+
     def test_document_agent_sessions_extract_transform_compare_and_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -154,6 +202,96 @@ class ReportCompilerAndDocumentAgentTests(unittest.TestCase):
         self.assertTrue(merged["merged"])
         self.assertTrue(closed["closed"])
 
+    def test_document_transform_model_operations_call_nim_or_fail_before_mutation(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.md"
+            source.write_text("# Intro\nRewrite this sentence clearly.", encoding="utf-8")
+            document_config = root / "document.json"
+            document_config.write_text(json.dumps({"session_dir": str(root / "sessions")}), encoding="utf-8")
+            with patch.dict(os.environ, {"JARVIS_DOCUMENT_AGENT_CONFIG": str(document_config), "NVIDIA_API_KEY": ""}, clear=False):
+                opened = document_open({"path": str(source)})
+                with self.assertRaises(ToolInputError) as error:
+                    document_transform({"session_id": opened["session_id"], "operation": "rewrite", "instruction": "make it concise"})
+                session_file = root / "sessions" / f"{opened['session_id']}.json"
+                state = json.loads(session_file.read_text(encoding="utf-8"))
+
+        self.assertIn("requires a working NVIDIA NIM chat configuration", str(error.exception))
+        self.assertEqual(state["transforms_applied"], [])
+        self.assertFalse(state["dirty"])
+
+    def test_document_transform_model_operation_stores_real_model_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source = root / "source.md"
+            source.write_text("# Intro\nRewrite this sentence clearly.", encoding="utf-8")
+            document_config = root / "document.json"
+            document_config.write_text(json.dumps({"session_dir": str(root / "sessions")}), encoding="utf-8")
+            env = {
+                "JARVIS_DOCUMENT_AGENT_CONFIG": str(document_config),
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_BASE_URL": "https://example.test/v1",
+                "NVIDIA_MODEL": "test-model",
+            }
+            response = {"choices": [{"message": {"content": "Clear rewritten sentence."}}]}
+            with patch.dict(os.environ, env, clear=False):
+                opened = document_open({"path": str(source)})
+                with patch("jarvis_nim.post_json", return_value=response) as post_json:
+                    transformed = document_transform({"session_id": opened["session_id"], "operation": "rewrite", "instruction": "make it concise"})
+
+        self.assertEqual(transformed["transform"]["result"], "Clear rewritten sentence.")
+        post_json.assert_called_once()
+
+    def test_document_write_uses_active_registry_for_compiler(self) -> None:
+        registry = discover_tools()
+        set_active_registry(registry)
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                source = root / "doc.md"
+                source.write_text("# Intro\nShared registry compiler path.", encoding="utf-8")
+                document_config = root / "document.json"
+                compiler_config = root / "compiler.json"
+                output_path = root / "document-output.md"
+                document_config.write_text(
+                    json.dumps(
+                        {
+                            "session_dir": str(root / "sessions"),
+                            "output_dir": str(root / "documents"),
+                            "cache_dir": str(root / "cache"),
+                            "default_output_format": "md",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                compiler_config.write_text(
+                    json.dumps({"output_dir": str(root / "reports"), "templates_dir": str(Path.cwd() / "templates")}),
+                    encoding="utf-8",
+                )
+                with patch.dict(
+                    os.environ,
+                    {
+                        "JARVIS_DOCUMENT_AGENT_CONFIG": str(document_config),
+                        "JARVIS_REPORT_COMPILER_CONFIG": str(compiler_config),
+                    },
+                    clear=False,
+                ):
+                    opened = document_open({"path": str(source)})
+                    with patch("tools.registry.discover_tools", side_effect=AssertionError("nested discovery should not run")):
+                        written = document_write(
+                            {
+                                "session_id": opened["session_id"],
+                                "format": "md",
+                                "output_path": str(output_path),
+                                "title": "Shared Registry Export",
+                            }
+                        )
+
+                self.assertTrue(written["written"])
+                self.assertTrue(output_path.exists())
+        finally:
+            set_active_registry(None)
+
     def test_research_run_can_render_through_shared_compiler(self) -> None:
         source_a = {
             "source_id": "a",
@@ -209,6 +347,53 @@ class ReportCompilerAndDocumentAgentTests(unittest.TestCase):
         self.assertEqual(result["rendered_report"]["format"], "md")
         self.assertTrue(rendered_exists)
         self.assertIn("Research report saved to", result["safe_user_output"])
+
+    def test_research_render_uses_active_registry_for_compiler(self) -> None:
+        registry = discover_tools()
+        set_active_registry(registry)
+        try:
+            source_a = {
+                "source_id": "a",
+                "ok": True,
+                "url": "https://example.com/ai-agents",
+                "title": "AI agents research",
+                "published_date": "2026-05-10T00:00:00+00:00",
+                "text": "AI agent systems combine planning, tool use, source reading, and verification.",
+                "text_hash": "a",
+            }
+            search_results = [{"title": source_a["title"], "url": source_a["url"], "source_provider": "test"}]
+            with tempfile.TemporaryDirectory() as tmp:
+                compiler_config = Path(tmp) / "compiler.json"
+                output_path = Path(tmp) / "ai-agents.md"
+                compiler_config.write_text(
+                    json.dumps(
+                        {
+                            "output_dir": str(Path(tmp) / "reports"),
+                            "templates_dir": str(Path.cwd() / "templates"),
+                            "default_format": "md",
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+                with patch.dict(os.environ, {"JARVIS_REPORT_COMPILER_CONFIG": str(compiler_config)}, clear=False):
+                    with patch("tools.research_agent.search_one_query", return_value=(search_results, [])):
+                        with patch("tools.research_agent.fetch_source", return_value=source_a):
+                            with patch("tools.registry.discover_tools", side_effect=AssertionError("nested discovery should not run")):
+                                result = research_run(
+                                    {
+                                        "topic": "AI agents",
+                                        "mode": "market_tech_trend",
+                                        "quality": "fast",
+                                        "max_sources": 1,
+                                        "render_format": "md",
+                                        "output_path": str(output_path),
+                                    }
+                                )
+
+                self.assertEqual(result["rendered_report"]["format"], "md")
+                self.assertTrue(output_path.exists())
+        finally:
+            set_active_registry(None)
 
 
 if __name__ == "__main__":

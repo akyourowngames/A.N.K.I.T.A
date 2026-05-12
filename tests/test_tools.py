@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import unittest
 import contextlib
 import io
@@ -17,7 +18,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_results_prompt
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, collect_tool_decision, contains_unresolved_placeholder, direct_single_tool_reply, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_selector_model, tool_selection_from_selector_content, tool_results_prompt
 from main import configure_stream_encoding, interactive_speech_command
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
@@ -72,6 +73,7 @@ from tools.entertainment_agent import (
     entertainment_status,
     load_config,
     load_index,
+    load_state,
     save_index,
     stable_track_id,
 )
@@ -122,6 +124,18 @@ from voice_system import (
 
 
 class ToolRegistryTests(unittest.TestCase):
+    def test_entertainment_agent_has_no_duplicate_top_level_functions(self) -> None:
+        module = ast.parse(Path("tools/entertainment_agent.py").read_text(encoding="utf-8"))
+        seen: dict[str, int] = {}
+        duplicates: list[tuple[str, int, int]] = []
+        for node in module.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                if node.name in seen:
+                    duplicates.append((node.name, seen[node.name], node.lineno))
+                else:
+                    seen[node.name] = node.lineno
+        self.assertEqual([], duplicates)
+
     def test_discovers_registered_tools(self) -> None:
         registry = discover_tools()
         names = [tool.name for tool in registry.visible_tools()]
@@ -200,6 +214,114 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("research_plan", names)
         self.assertIn("research_run", names)
         self.assertIn("research_watchlist", names)
+
+    def test_manifest_command_tool_runs_without_python_handler_module(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            extension = root / "extensions" / "command-tools"
+            scripts = extension / "scripts"
+            scripts.mkdir(parents=True)
+            script = scripts / "echo_tool.py"
+            script.write_text(
+                "\n".join(
+                    [
+                        "import json",
+                        "import os",
+                        "import sys",
+                        "",
+                        "params = json.loads(sys.stdin.read() or '{}')",
+                        "message = str(params.get('message', ''))",
+                        "print(json.dumps({",
+                        "    'message': message.upper(),",
+                        "    'tool': os.environ.get('JARVIS_TOOL_NAME'),",
+                        "    'has_workspace': bool(os.environ.get('JARVIS_WORKSPACE')),",
+                        "}))",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (extension / "extension.json").write_text(
+                json.dumps(
+                    {
+                        "id": "command-tools",
+                        "name": "Command Tools",
+                        "tools": [
+                            {
+                                "name": "manifest_command_echo",
+                                "description": "Echo a message through a manifest-declared command.",
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"message": {"type": "string"}},
+                                    "required": ["message"],
+                                },
+                                "executor": {
+                                    "type": "command",
+                                    "command": [sys.executable, "{extension_root}/scripts/echo_tool.py"],
+                                    "output": "json",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = load_extension_catalog(root / "extensions")
+            registry = discover_tools(extension_catalog=catalog)
+            payload = json.loads(registry.execute("manifest_command_echo", {"message": "jarvis"}))
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["result"]["json"]["message"], "JARVIS")
+        self.assertEqual(payload["result"]["json"]["tool"], "manifest_command_echo")
+        self.assertTrue(payload["result"]["json"]["has_workspace"])
+
+    def test_manifest_command_tool_failure_is_reported_as_tool_error(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            extension = root / "extensions" / "command-tools"
+            scripts = extension / "scripts"
+            scripts.mkdir(parents=True)
+            script = scripts / "fail_tool.py"
+            script.write_text(
+                "\n".join(
+                    [
+                        "import sys",
+                        "print('visible stdout')",
+                        "print('visible stderr', file=sys.stderr)",
+                        "raise SystemExit(7)",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            (extension / "extension.json").write_text(
+                json.dumps(
+                    {
+                        "id": "command-tools",
+                        "tools": [
+                            {
+                                "name": "manifest_command_fail",
+                                "description": "Fail through a manifest-declared command.",
+                                "parameters": {"type": "object", "properties": {}},
+                                "executor": {
+                                    "type": "command",
+                                    "command": [sys.executable, "{extension_root}/scripts/fail_tool.py"],
+                                    "output": "text",
+                                },
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            catalog = load_extension_catalog(root / "extensions")
+            registry = discover_tools(extension_catalog=catalog)
+            payload = json.loads(registry.execute("manifest_command_fail", {}))
+
+        self.assertFalse(payload["ok"])
+        self.assertIn("exited with code 7", payload["error"])
+        self.assertIn("visible stdout", payload["error"])
+        self.assertIn("visible stderr", payload["error"])
 
     def test_calculator_evaluates_numeric_expression(self) -> None:
         result = evaluate_expression({"expression": "2 + 3 * 4"})
@@ -1193,6 +1315,7 @@ function chooseFrom(item) {
                 os.environ,
                 {
                     "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
                     "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
                 },
                 clear=False,
@@ -1267,6 +1390,7 @@ function chooseFrom(item) {
                 os.environ,
                 {
                     "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
                     "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
                 },
                 clear=False,
@@ -1296,6 +1420,195 @@ function chooseFrom(item) {
 
                 self.assertEqual(result["station"]["name"], "AIR Punjabi")
                 self.assertEqual(result["backend"], "dry_run")
+
+    def test_entertainment_radio_ranks_grounded_candidates_before_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "api_url": "https://radio.test",
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {},
+                                "search_candidate_limit": 5,
+                            }
+                        },
+                    }
+                )
+                payload = [
+                    {
+                        "stationuuid": "general-news",
+                        "name": "Morning News Radio",
+                        "url_resolved": "https://example.test/general.m3u8",
+                        "votes": 5000,
+                        "lastcheckok": 1,
+                    },
+                    {
+                        "stationuuid": "abc-news",
+                        "name": "ABC News Radio",
+                        "url_resolved": "https://example.test/abc.m3u8",
+                        "votes": 10,
+                        "lastcheckok": 1,
+                    },
+                ]
+                with patch("tools.entertainment_agent.urllib.request.urlopen", return_value=FakeHttpResponse(payload)):
+                    search = entertainment_radio({"operation": "search", "query": "ABC News Radio", "limit": 1})
+                    play = entertainment_radio({"operation": "play", "query": "ABC News Radio"})
+
+                self.assertEqual(search["stations"][0]["name"], "ABC News Radio")
+                self.assertEqual(play["station"]["name"], "ABC News Radio")
+
+    def test_entertainment_radio_play_without_query_uses_latest_grounded_search_when_idle(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "api_url": "https://radio.test",
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {},
+                            }
+                        },
+                    }
+                )
+                payload = [
+                    {
+                        "stationuuid": "abc-news",
+                        "name": "ABC News Radio",
+                        "url_resolved": "https://example.test/abc.m3u8",
+                        "votes": 10,
+                        "lastcheckok": 1,
+                    }
+                ]
+                with patch("tools.entertainment_agent.urllib.request.urlopen", return_value=FakeHttpResponse(payload)):
+                    entertainment_radio({"operation": "search", "query": "ABC News Radio", "limit": 1})
+                result = entertainment_radio({"operation": "play"})
+
+                self.assertEqual(result["station"]["name"], "ABC News Radio")
+                self.assertEqual(load_state(load_config())["active_media_type"], "radio")
+
+    def test_entertainment_radio_replay_uses_current_station_state(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            config_path = Path(tmp) / "entertainment.json"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(Path(tmp) / "music"),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "saved_stations_path": str(Path(tmp) / "radio.json"),
+                                "default_stations": {
+                                    "news": {
+                                        "name": "Test News Radio",
+                                        "query": "news radio",
+                                        "country": "Testland",
+                                        "url": "https://example.test/news.m3u8",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                )
+                first = entertainment_radio({"operation": "play", "query": "news radio"})
+                replay = entertainment_radio({"operation": "play"})
+                state = load_state(load_config())
+
+                self.assertTrue(first["action_completed"])
+                self.assertTrue(replay["action_completed"])
+                self.assertEqual(replay["station"]["name"], "Test News Radio")
+                self.assertEqual(state["active_media_type"], "radio")
+                self.assertEqual(state["radio"]["station"]["name"], "Test News Radio")
+                self.assertEqual(state["stream"]["url"], "https://example.test/news.m3u8")
+
+    def test_entertainment_playback_replay_prefers_active_radio_over_stale_queue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "entertainment.json"
+            library = root / "music"
+            with patch.dict(
+                os.environ,
+                {
+                    "JARVIS_ENTERTAINMENT_CONFIG": str(config_path),
+                    "JARVIS_ENTERTAINMENT_LIBRARY_DIR": str(library),
+                    "JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER": "true",
+                },
+                clear=False,
+            ):
+                entertainment_config(
+                    {
+                        "operation": "update",
+                        "values": {
+                            "radio": {
+                                "saved_stations_path": str(root / "radio.json"),
+                                "default_stations": {
+                                    "news": {
+                                        "name": "Test News Radio",
+                                        "query": "news radio",
+                                        "url": "https://example.test/news.m3u8",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                )
+                config = load_config()
+                audio = library / "local song.m4a"
+                audio.parent.mkdir(parents=True, exist_ok=True)
+                audio.write_bytes(b"fake")
+                track_id = stable_track_id("local-song")
+                save_index(
+                    config,
+                    {
+                        "tracks": {
+                            track_id: {
+                                "id": track_id,
+                                "type": "music",
+                                "title": "Local Song",
+                                "file_path": str(audio),
+                            }
+                        },
+                        "aliases": {canonical_text("local song"): track_id},
+                    },
+                )
+                entertainment_play({"query": "local song"})
+                entertainment_radio({"operation": "play", "query": "news radio"})
+
+                replay = entertainment_playback({"operation": "replay"})
+                state = load_state(load_config())
+
+                self.assertEqual(replay["station"]["name"], "Test News Radio")
+                self.assertEqual(state["active_media_type"], "radio")
+                self.assertEqual(state["radio"]["station"]["name"], "Test News Radio")
 
     def test_entertainment_favorite_without_query_uses_current_playing_track(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -1823,6 +2136,13 @@ function chooseFrom(item) {
         self.assertIn("installed software", protocol)
         self.assertNotIn("Local tool protocol:", client)
 
+    def test_tool_selector_prompt_lives_outside_nim_client(self) -> None:
+        client = Path("jarvis_nim.py").read_text(encoding="utf-8")
+        prompt = Path("prompts/tool_selector.txt").read_text(encoding="utf-8")
+        self.assertIn("{tool_candidates}", prompt)
+        self.assertIn("direct_response", prompt)
+        self.assertNotIn("direct_response only when no local tool", client)
+
     def test_tool_results_prompt_lives_outside_nim_client(self) -> None:
         client = Path("jarvis_nim.py").read_text(encoding="utf-8")
         prompt = Path("prompts/tool_results.txt").read_text(encoding="utf-8")
@@ -1997,6 +2317,227 @@ function chooseFrom(item) {
         ):
             config = JarvisConfig.from_env()
             self.assertEqual(tool_planner_model(config), "tool-model")
+
+    def test_tool_selector_uses_env_model(self) -> None:
+        with patch.dict(
+            os.environ,
+            {
+                "NVIDIA_API_KEY": "test-key",
+                "NVIDIA_BASE_URL": "https://example.test/v1",
+                "NVIDIA_MODEL": "chat-model",
+                "NVIDIA_TOOL_MODEL": "tool-model",
+                "NVIDIA_TOOL_SELECTOR_MODEL": "selector-model",
+            },
+            clear=False,
+        ):
+            config = JarvisConfig.from_env()
+            self.assertEqual(tool_selector_model(config), "selector-model")
+
+    def test_selector_direct_response_skips_empty_planner_call(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=False,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        selector_payload = {"choices": [{"message": {"content": json.dumps({"tool_names": [], "direct_response": "Hi."})}}]}
+        with patch.dict(os.environ, {"TOOL_PLANNER_DYNAMIC_SCHEMAS": "true", "TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS": "1"}, clear=False):
+            with patch("jarvis_nim.post_json", return_value=selector_payload) as post_json_call:
+                requests, reply = collect_tool_decision(config, [{"role": "user", "content": "hi"}], registry)
+
+        self.assertEqual(requests, [])
+        self.assertEqual(reply, "Hi.")
+        self.assertEqual(post_json_call.call_count, 1)
+
+    def test_selector_direct_response_with_history_falls_back_to_grounded_planner(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=False,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        selector_payload = {"choices": [{"message": {"content": json.dumps({"tool_names": [], "direct_response": "Today is 2024-02-20."})}}]}
+        planner_payload = {"choices": [{"message": {"content": json.dumps({"name": "get_current_datetime", "parameters": {}})}}]}
+        calls: list[dict[str, Any]] = []
+
+        def fake_post_json(_config: JarvisConfig, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append(payload)
+            return selector_payload if len(calls) == 1 else planner_payload
+
+        messages = [
+            {"role": "user", "content": "hi"},
+            {"role": "assistant", "content": "Hello."},
+            {"role": "user", "content": "what is the date today"},
+        ]
+        with patch.dict(os.environ, {"TOOL_PLANNER_DYNAMIC_SCHEMAS": "true", "TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS": "1"}, clear=False):
+            with patch("jarvis_nim.post_json", side_effect=fake_post_json):
+                requests, reply = collect_tool_decision(config, messages, registry)
+
+        self.assertEqual(requests, [{"name": "get_current_datetime", "parameters": {}}])
+        self.assertEqual(reply, "")
+        self.assertEqual(len(calls), 2)
+
+    def test_selector_direct_tool_call_skips_second_planner_call(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=False,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        selector_payload = {
+            "choices": [
+                {
+                    "message": {
+                        "content": json.dumps(
+                            {"name": "get_current_datetime", "parameters": {"timezone": "Asia/Kolkata"}}
+                        )
+                    }
+                }
+            ]
+        }
+        with patch.dict(os.environ, {"TOOL_PLANNER_DYNAMIC_SCHEMAS": "true", "TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS": "1"}, clear=False):
+            with patch("jarvis_nim.post_json", return_value=selector_payload) as post_json_call:
+                requests, reply = collect_tool_decision(config, [{"role": "user", "content": "what time is it"}], registry)
+
+        self.assertEqual(requests, [{"name": "get_current_datetime", "parameters": {"timezone": "Asia/Kolkata"}}])
+        self.assertEqual(reply, "")
+        self.assertEqual(post_json_call.call_count, 1)
+
+    def test_manifest_can_keep_terminal_available_after_selector_subset(self) -> None:
+        config = JarvisConfig(
+            api_key="test",
+            chat_url="https://example.test/v1/chat/completions",
+            model="chat",
+            temperature=0,
+            max_tokens=100,
+            stream=False,
+            stream_mode="native",
+            synthetic_chunk_chars=48,
+            synthetic_chunk_delay_seconds=0,
+            timeout_seconds=10,
+            retry_attempts=0,
+            retry_delay_seconds=0,
+            max_tool_rounds=1,
+            tool_mode="json",
+            auto_tools=True,
+            system_prompt_file=Path("prompts/chat_system.txt"),
+            persona_file=Path("prompts/persona.txt"),
+            tool_protocol_file=Path("prompts/tool_protocol.txt"),
+            user_name="Krish",
+            assistant_name="JARVIS",
+        )
+        registry = discover_tools()
+        selector_payload = {"choices": [{"message": {"content": json.dumps({"tool_names": ["get_runtime_info"]})}}]}
+        planner_payload = {
+            "choices": [
+                {"message": {"content": json.dumps({"name": "run_terminal", "parameters": {"command": "python --version"}})}}
+            ]
+        }
+        calls: list[dict[str, Any]] = []
+
+        def fake_post_json(_config: JarvisConfig, payload: dict[str, Any]) -> dict[str, Any]:
+            calls.append(payload)
+            return selector_payload if len(calls) == 1 else planner_payload
+
+        with patch.dict(os.environ, {"TOOL_PLANNER_DYNAMIC_SCHEMAS": "true", "TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS": "1"}, clear=False):
+            with patch("jarvis_nim.post_json", side_effect=fake_post_json):
+                requests, reply = collect_tool_decision(config, [{"role": "user", "content": "check python version"}], registry)
+
+        self.assertEqual(requests, [{"name": "run_terminal", "parameters": {"command": "python --version"}}])
+        self.assertEqual(reply, "")
+        self.assertEqual(len(calls), 2)
+        planner_prompt = calls[1]["messages"][0]["content"]
+        self.assertIn("run_terminal", planner_prompt)
+        self.assertIn("get_runtime_info", planner_prompt)
+
+    def test_tool_selection_parser_accepts_direct_response_only_when_no_tools(self) -> None:
+        names, direct = tool_selection_from_selector_content(
+            '{"tool_names":[],"direct_response":"Hello."}',
+            {"calculate"},
+        )
+        self.assertEqual(names, [])
+        self.assertEqual(direct, "Hello.")
+
+        names, direct = tool_selection_from_selector_content(
+            '{"tool_names":["calculate"],"direct_response":"Hello."}',
+            {"calculate"},
+        )
+        self.assertEqual(names, ["calculate"])
+        self.assertEqual(direct, "")
+
+    def test_direct_single_tool_reply_uses_structured_tool_output(self) -> None:
+        result = [
+            {
+                "name": "get_current_datetime",
+                "parameters": {},
+                "result": {
+                    "ok": True,
+                    "tool": "get_current_datetime",
+                    "result": {"summary": "Current date and time: 2026-05-12 10:00:00 IST"},
+                },
+            }
+        ]
+        with patch.dict(os.environ, {"NIM_DIRECT_SINGLE_TOOL_RESULT": "true"}, clear=False):
+            self.assertEqual(direct_single_tool_reply(result), "Current date and time: 2026-05-12 10:00:00 IST")
+
+    def test_direct_single_tool_reply_does_not_hide_multi_tool_results(self) -> None:
+        results = [
+            {"result": {"ok": True, "result": {"summary": "one"}}},
+            {"result": {"ok": True, "result": {"summary": "two"}}},
+        ]
+        with patch.dict(os.environ, {"NIM_DIRECT_SINGLE_TOOL_RESULT": "true"}, clear=False):
+            self.assertEqual(direct_single_tool_reply(results), "")
 
     def test_planner_context_includes_recent_assistant_message(self) -> None:
         context = planner_turn_context(

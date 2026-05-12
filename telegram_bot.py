@@ -21,6 +21,7 @@ from jarvis_nim import JarvisConfig, NimChatError, chat_once, load_dotenv
 from main import build_messages, configure_console_output, vector_memory_system_message
 from memory_system import MemoryConfig, load_memory_context, remember_chat
 from tools import discover_tools
+from tools.registry import set_active_registry
 from tools.telegram_bot_tools import (
     TelegramToolContext,
     auto_queue_file_outputs,
@@ -158,30 +159,24 @@ class TelegramSessionStore:
     def load(self, chat_id: int, user_name: str, initial_user_text: str = "") -> TelegramSession:
         path = self.path_for_chat(chat_id)
         memory_config = memory_config_for_chat(self.base_memory_config, self.telegram_config, chat_id)
-        if path.exists():
-            session = session_from_json(path.read_text(encoding="utf-8-sig"), chat_id, user_name, memory_config.root)
-            if not session.messages:
-                session.messages = build_messages(
-                    self.jarvis_config,
-                    self.registry,
-                    memory_config,
-                    self.extension_catalog,
-                    initial_user_text,
-                )
-            return session
-
-        now = now_text()
-        messages = build_messages(
+        fresh_messages = build_messages(
             self.jarvis_config,
             self.registry,
             memory_config,
             self.extension_catalog,
             initial_user_text,
         )
+        if path.exists():
+            session = session_from_json(path.read_text(encoding="utf-8-sig"), chat_id, user_name, memory_config.root)
+            session.messages = refreshed_session_messages(fresh_messages, session.messages)
+            session.memory_dir = str(memory_config.root)
+            return session
+
+        now = now_text()
         return TelegramSession(
             chat_id=chat_id,
             user_name=user_name,
-            messages=messages,
+            messages=fresh_messages,
             memory_dir=str(memory_config.root),
             created_at=now,
             last_active=now,
@@ -678,6 +673,12 @@ def prune_session_messages(messages: list[dict[str, str]], max_non_system_messag
     return [*system_messages, *turn_messages[-max_non_system_messages:]]
 
 
+def refreshed_session_messages(fresh_messages: list[dict[str, str]], saved_messages: list[dict[str, str]]) -> list[dict[str, str]]:
+    fresh_system = [message for message in fresh_messages if message.get("role") == "system"]
+    saved_history = [message for message in saved_messages if message.get("role") != "system"]
+    return [*fresh_system, *saved_history]
+
+
 def file_user_text(kind: str, path: Path, text: str) -> str:
     parts = [f"User uploaded a {kind} available at {path}."]
     if text.strip():
@@ -948,6 +949,7 @@ def build_runtime() -> TelegramRuntime:
     jarvis_config = JarvisConfig.from_env()
     extension_catalog = load_extension_catalog()
     registry = discover_tools(extension_catalog=extension_catalog)
+    set_active_registry(registry)
     memory_config = MemoryConfig.from_env(workspace)
     load_memory_context(memory_config)
     return TelegramRuntime(telegram_config, jarvis_config, registry, memory_config, extension_catalog)

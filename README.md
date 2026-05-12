@@ -228,7 +228,7 @@ Model profiles live in `config/nim_models.json`; the benchmark script reads that
 
 The benchmark can also discover model IDs directly from NVIDIA's `/models` endpoint and writes the latest live timing report to `config/nim_benchmark_results.json`.
 
-For grounded tool-heavy chat, keep `NVIDIA_MODEL=mistralai/mistral-nemotron`, `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`, `NIM_STREAM_MODE=native`, and `NIM_TOOL_MODE=json`. Earlier tiny-model latency was faster for plain greetings, but live research-agent checks showed `meta/llama-3.2-3b-instruct` ignoring the tool-result contract. `mistralai/mistral-nemotron` kept the final answer grounded while staying usable for interactive research. `NIM_RETRY_ATTEMPTS` can stay low for speed or be raised slightly when the provider is returning temporary rate-limit errors.
+For grounded tool-heavy chat, keep `NVIDIA_MODEL=mistralai/mistral-nemotron`, `NVIDIA_TOOL_MODEL=mistralai/mistral-nemotron`, `NVIDIA_TOOL_SELECTOR_MODEL=mistralai/mistral-nemotron`, `NIM_STREAM_MODE=native`, and `NIM_TOOL_MODE=json`. Earlier tiny-model latency was faster for plain greetings, but live checks showed `meta/llama-3.2-3b-instruct` making unsafe selector decisions for current facts and local actions. `mistralai/mistral-nemotron` kept the selector and final answers grounded while staying usable for interactive turns.
 
 `JARVIS_AUTO_TOOLS` controls whether Jarvis plans local tool calls before answering. Keep it `true` when you want tools such as `run_terminal` available in chat. Set it to `false` for pure no-tool conversation.
 
@@ -236,7 +236,9 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_STREAM_MODE` defaults to `native`: Jarvis reads NVIDIA NIM server-sent events and prints tokens as they arrive. Set `NIM_STREAM_MODE=synthetic` only if a provider endpoint is having temporary SSE trouble and you want local chunk printing after a JSON completion.
 
-`NIM_TOOL_MODE=json` is the current low-latency default for auto tools. Jarvis asks the compact planner for tool calls first, then streams the final NIM response without attaching the whole native tool schema wall to casual chat.
+`NIM_TOOL_MODE=json` is the current low-latency default for auto tools. Jarvis asks the descriptor-first selector in `prompts/tool_selector.txt` for one of three outcomes: direct no-tool answer, complete tool calls, or a narrowed tool subset for the planner. This keeps casual chat fast without dropping multi-tool planning.
+
+`NIM_DIRECT_SINGLE_TOOL_RESULT=true` lets Jarvis return one grounded tool result directly when that tool already provides `safe_user_output`, `user_output`, `summary`, or `status_text`. This avoids a final model call for simple date/time, terminal-output, and status-style requests.
 
 `TOOL_PLANNER_DESCRIPTION_CHARS` and `TOOL_PLANNER_FIELD_DESCRIPTIONS` control how much manifest schema text is sent to the compact planner. The default keeps schemas small enough for the fast tool model while preserving tool names, required fields, types, and enums.
 

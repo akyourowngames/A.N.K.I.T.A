@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from tools.path_resolver import resolve_local_path
-from tools.registry import ToolInputError, optional_text, require_text
+from tools.registry import ToolInputError, active_or_discovered_registry, optional_text, require_text
 
 
 DEFAULT_CONFIG_PATH = Path("config/document_agent.json")
@@ -580,14 +580,43 @@ def key_points_text(state: dict[str, Any], text: str, limit: int) -> str:
 
 def model_followup_transform(operation: str, text: str, params: dict[str, Any]) -> str:
     instruction = optional_text(params, "instruction", operation.replace("_", " "))
-    return "\n".join(
-        [
-            f"Requested transform: {instruction}",
-            "Use the assistant model to complete this transformation from the source excerpt below.",
-            "",
-            text,
-        ]
-    ).strip()
+    if not text.strip():
+        return ""
+    try:
+        from jarvis_nim import JarvisConfig, NimChatError, extract_message, post_json
+
+        config = JarvisConfig.from_env()
+        max_tokens = bounded_int(params.get("max_output_tokens"), min(config.max_tokens, 1200), 100, 4000)
+        payload = {
+            "model": config.model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "Transform the supplied document excerpt. Return only the transformed text.",
+                },
+                {
+                    "role": "user",
+                    "content": "\n".join(
+                        [
+                            f"Operation: {operation}",
+                            f"Instruction: {instruction}",
+                            "",
+                            "Document excerpt:",
+                            text,
+                        ]
+                    ),
+                },
+            ],
+            "temperature": config.temperature,
+            "max_tokens": max_tokens,
+            "stream": False,
+        }
+        result = extract_message(post_json(config, payload)).strip()
+    except NimChatError as error:
+        raise ToolInputError(f"{operation} requires a working NVIDIA NIM chat configuration: {error}") from error
+    if not result:
+        raise ToolInputError(f"{operation} returned no transformed text")
+    return result
 
 
 def split_sentences(text: str) -> list[str]:
@@ -653,9 +682,8 @@ def session_to_compiler_content(state: dict[str, Any], params: dict[str, Any]) -
 
 
 def execute_registered_tool(name: str, params: dict[str, Any]) -> dict[str, Any]:
-    from tools.registry import discover_tools
-
-    payload = json.loads(discover_tools().execute(name, params))
+    registry = active_or_discovered_registry()
+    payload = json.loads(registry.execute(name, params))
     if not payload.get("ok"):
         raise ToolInputError(str(payload.get("error") or f"{name} failed"))
     result = payload.get("result")
@@ -666,9 +694,8 @@ def execute_registered_tool(name: str, params: dict[str, Any]) -> dict[str, Any]
 
 def registered_tool_ready(name: str) -> bool:
     try:
-        from tools.registry import discover_tools
-
-        return name in [tool.name for tool in discover_tools().visible_tools()]
+        registry = active_or_discovered_registry()
+        return name in [tool.name for tool in registry.visible_tools()]
     except Exception:
         return False
 

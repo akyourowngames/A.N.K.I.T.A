@@ -142,7 +142,8 @@
       }
     },
     "autosave_played_stations": false,
-    "last_search_ttl_seconds": 300
+    "last_search_ttl_seconds": 300,
+    "search_candidate_limit": 12
   },
   "podcast": {
     "feeds_path": "media/entertainment/podcast_feeds.json",

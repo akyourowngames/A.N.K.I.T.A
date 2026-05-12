@@ -11,6 +11,9 @@ from tools.path_resolver import resolve_local_path
 
 
 DEFAULT_CONFIG_PATH = Path("config/browser_agent.json")
+_CONFIG_CACHE: dict[str, Any] | None = None
+_CONFIG_CACHE_PATH = ""
+_CONFIG_CACHE_MTIME_NS: int | None = None
 
 
 def config_path() -> Path:
@@ -89,20 +92,33 @@ def default_config() -> dict[str, Any]:
 
 
 def load_config() -> dict[str, Any]:
+    global _CONFIG_CACHE, _CONFIG_CACHE_PATH, _CONFIG_CACHE_MTIME_NS
     path = config_path()
+    cache_key = str(path.resolve())
     if path.exists():
+        mtime_ns = path.stat().st_mtime_ns
+        if _CONFIG_CACHE is not None and _CONFIG_CACHE_PATH == cache_key and _CONFIG_CACHE_MTIME_NS == mtime_ns:
+            return _CONFIG_CACHE
         data = json.loads(path.read_text(encoding="utf-8-sig"))
         if isinstance(data, dict):
-            return ensure_config_shape(data)
+            _CONFIG_CACHE = ensure_config_shape(data)
+            _CONFIG_CACHE_PATH = cache_key
+            _CONFIG_CACHE_MTIME_NS = mtime_ns
+            return _CONFIG_CACHE
     config = default_config()
     save_config(config)
     return config
 
 
 def save_config(config: dict[str, Any]) -> None:
+    global _CONFIG_CACHE, _CONFIG_CACHE_PATH, _CONFIG_CACHE_MTIME_NS
     path = config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(ensure_config_shape(config), indent=2, ensure_ascii=False), encoding="utf-8")
+    shaped = ensure_config_shape(config)
+    path.write_text(json.dumps(shaped, indent=2, ensure_ascii=False), encoding="utf-8")
+    _CONFIG_CACHE = shaped
+    _CONFIG_CACHE_PATH = str(path.resolve())
+    _CONFIG_CACHE_MTIME_NS = path.stat().st_mtime_ns
 
 
 def ensure_config_shape(config: dict[str, Any]) -> dict[str, Any]:

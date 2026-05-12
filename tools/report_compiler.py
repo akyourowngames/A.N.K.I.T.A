@@ -285,6 +285,10 @@ def render_to_markdown(content: dict[str, Any], template: dict[str, Any], config
     metadata_lines = metadata_as_lines(metadata)
     if metadata_lines:
         lines.extend(["", *metadata_lines])
+    if include_template_option(config, template, "toc"):
+        toc = markdown_toc(content)
+        if toc:
+            lines.extend(["", "## Table of Contents", "", *toc])
     for section in content.get("sections", []):
         level = int(section.get("level") or 1)
         lines.extend(["", f"{'#' * min(level + 1, 6)} {section.get('heading', '')}"])
@@ -353,6 +357,8 @@ def render_to_docx(content: dict[str, Any], template: dict[str, Any], config: di
         document.add_paragraph(str(content.get("subtitle")))
     for line in metadata_as_lines(object_value(content.get("metadata"))):
         document.add_paragraph(line)
+    if include_template_option(config, template, "toc"):
+        add_docx_toc(document)
     for section in content.get("sections", []):
         document.add_heading(str(section.get("heading") or "Section"), level=min(int(section.get("level") or 1), 4))
         add_docx_body(document, str(section.get("body") or ""))
@@ -370,6 +376,8 @@ def render_to_docx(content: dict[str, Any], template: dict[str, Any], config: di
         document.add_heading("Appendix", level=1)
         for item in content.get("appendix", []):
             document.add_paragraph(format_item(item))
+    if include_page_numbers(config, template):
+        add_docx_page_numbers(document)
     document.save(str(output_path))
 
 
@@ -418,6 +426,12 @@ def render_pdf_reportlab(content: dict[str, Any], template: dict[str, Any], conf
         story.extend([Spacer(1, 8), Paragraph(escape(str(content["subtitle"])), styles["Normal"])])
     for line in metadata_as_lines(object_value(content.get("metadata"))):
         story.append(Paragraph(escape(line), styles["Normal"]))
+    if include_template_option(config, template, "toc"):
+        toc = plain_toc_items(content)
+        if toc:
+            story.extend([Spacer(1, 12), Paragraph("Table of Contents", styles["Heading1"])])
+            for item in toc:
+                story.append(Paragraph(escape(item), styles["BodyText"]))
     for section in content.get("sections", []):
         story.extend([Spacer(1, 12), Paragraph(escape(str(section.get("heading") or "Section")), styles["Heading1"])])
         for paragraph in body_paragraphs(str(section.get("body") or "")):
@@ -436,12 +450,57 @@ def render_pdf_reportlab(content: dict[str, Any], template: dict[str, Any], conf
         story.extend([Spacer(1, 12), Paragraph("Sources", styles["Heading1"])])
         for source in content.get("bibliography", []):
             story.append(Paragraph(escape(source_line(source)), styles["BodyText"]))
-    doc.build(story)
+    if include_page_numbers(config, template):
+        doc.build(story, onFirstPage=draw_pdf_page_number, onLaterPages=draw_pdf_page_number)
+    else:
+        doc.build(story)
 
 
 def add_docx_body(document: Any, body: str) -> None:
     for paragraph in body_paragraphs(body):
         document.add_paragraph(paragraph)
+
+
+def add_docx_toc(document: Any) -> None:
+    document.add_paragraph("Table of Contents", style="Heading 1")
+    paragraph = document.add_paragraph()
+    add_docx_field(paragraph, 'TOC \\o "1-3" \\h \\z \\u')
+    document.add_paragraph("Update fields in your document editor to refresh page numbers.")
+
+
+def add_docx_page_numbers(document: Any) -> None:
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    for section in document.sections:
+        paragraph = section.footer.paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        paragraph.text = "Page "
+        add_docx_field(paragraph, "PAGE")
+        paragraph.add_run(" of ")
+        add_docx_field(paragraph, "NUMPAGES")
+
+
+def add_docx_field(paragraph: Any, instruction: str) -> None:
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+
+    run = paragraph.add_run()
+    field_begin = OxmlElement("w:fldChar")
+    field_begin.set(qn("w:fldCharType"), "begin")
+    run._r.append(field_begin)
+
+    instruction_text = OxmlElement("w:instrText")
+    instruction_text.set(qn("xml:space"), "preserve")
+    instruction_text.text = instruction
+    run._r.append(instruction_text)
+
+    field_separate = OxmlElement("w:fldChar")
+    field_separate.set(qn("w:fldCharType"), "separate")
+    run._r.append(field_separate)
+
+    field_end = OxmlElement("w:fldChar")
+    field_end.set(qn("w:fldCharType"), "end")
+    run._r.append(field_end)
 
 
 def add_docx_table(document: Any, table: Any) -> None:
@@ -482,6 +541,73 @@ def markdown_table(table: Any) -> str:
     for row in rows[1:]:
         output.append("| " + " | ".join(str(item) for item in row) + " |")
     return "\n".join(output)
+
+
+def markdown_toc(content: dict[str, Any]) -> list[str]:
+    items = []
+    for label, level in section_heading_items(content):
+        indent = "  " * max(0, level - 1)
+        items.append(f"{indent}- [{label}](#{markdown_anchor(label)})")
+    return items
+
+
+def plain_toc_items(content: dict[str, Any]) -> list[str]:
+    return [("  " * max(0, level - 1)) + label for label, level in section_heading_items(content)]
+
+
+def section_heading_items(content: dict[str, Any]) -> list[tuple[str, int]]:
+    items: list[tuple[str, int]] = []
+    for section in content.get("sections", []):
+        if not isinstance(section, dict):
+            continue
+        label = str(section.get("heading") or "").strip()
+        if not label:
+            continue
+        try:
+            level = int(section.get("level") or 1)
+        except (TypeError, ValueError):
+            level = 1
+        items.append((label, max(1, min(level, 6))))
+    if content.get("bibliography"):
+        items.append(("Sources", 1))
+    if content.get("appendix"):
+        items.append(("Appendix", 1))
+    return items
+
+
+def markdown_anchor(label: str) -> str:
+    output: list[str] = []
+    last_dash = False
+    for char in label.casefold():
+        if char.isalnum():
+            output.append(char)
+            last_dash = False
+            continue
+        if char.isspace() or char in {"-", "_"}:
+            if not last_dash:
+                output.append("-")
+                last_dash = True
+    return "".join(output).strip("-")
+
+
+def include_template_option(config: dict[str, Any], template: dict[str, Any], key: str) -> bool:
+    if key in template:
+        return bool(template.get(key))
+    config_key = "include_" + key
+    return bool(config.get(config_key, False))
+
+
+def include_page_numbers(config: dict[str, Any], template: dict[str, Any]) -> bool:
+    if "page_footer" in template and not bool(template.get("page_footer")):
+        return False
+    return bool(config.get("include_page_numbers", False))
+
+
+def draw_pdf_page_number(canvas: Any, document: Any) -> None:
+    canvas.saveState()
+    canvas.setFont("Helvetica", 9)
+    canvas.drawRightString(document.pagesize[0] - 54, 28, f"Page {document.page}")
+    canvas.restoreState()
 
 
 def table_rows(table: Any) -> list[list[str]]:

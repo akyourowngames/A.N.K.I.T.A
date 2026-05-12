@@ -1,21 +1,21 @@
 from __future__ import annotations
 
 import time
+from weakref import WeakSet
 from typing import Any
 
 
 _CAPTURES: dict[str, list[dict[str, Any]]] = {}
 _CAPTURE_SETTINGS: dict[str, dict[str, Any]] = {}
 _PENDING_COUNTS: dict[str, int] = {}
-_ATTACHED_PAGES: set[int] = set()
+_ATTACHED_PAGES: WeakSet[Any] = WeakSet()
 _MOCKS: dict[str, list[dict[str, Any]]] = {}
 
 
 def attach_network_listeners(page: Any, session_id: str, config: dict[str, Any]) -> None:
-    page_key = id(page)
-    if page_key in _ATTACHED_PAGES:
+    if page in _ATTACHED_PAGES:
         return
-    _ATTACHED_PAGES.add(page_key)
+    _ATTACHED_PAGES.add(page)
     _CAPTURES.setdefault(session_id, [])
     _PENDING_COUNTS.setdefault(session_id, 0)
     ensure_capture_settings(session_id, config)

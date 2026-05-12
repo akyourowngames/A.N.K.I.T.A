@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from .registry import discover_tools
+from .registry import active_or_discovered_registry
 
 
 def list_registered_tools(params: dict[str, Any]) -> dict[str, Any]:
-    registry = discover_tools()
+    registry = active_or_discovered_registry()
     return {
         "tools": [
             {"name": tool.name, "description": tool.description}

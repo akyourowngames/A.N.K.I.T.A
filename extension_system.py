@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -28,11 +29,15 @@ class Extension:
 class ExtensionCatalog:
     root: Path
     extensions: list[Extension]
+    errors: tuple[str, ...] = ()
 
     def tool_descriptors(self) -> list[dict[str, Any]]:
         descriptors: list[dict[str, Any]] = []
         for extension in self.extensions:
-            descriptors.extend(extension.tools)
+            for tool in extension.tools:
+                descriptor = dict(tool)
+                descriptor.setdefault("_extension_root", str(extension.root))
+                descriptors.append(descriptor)
         return descriptors
 
     def prompt_context(self) -> str:
@@ -58,6 +63,8 @@ class ExtensionCatalog:
             tool_count = len(extension.tools)
             skill_count = len(extension.skill_dirs)
             lines.append(f"- {extension.id}: {tool_count} tools, {skill_count} skill roots")
+        for error in self.errors:
+            lines.append(f"- skipped extension: {error}")
         return lines
 
 
@@ -69,17 +76,24 @@ def load_extension_catalog(root: Path | None = None) -> ExtensionCatalog:
     disabled = split_env_list(os.environ.get("JARVIS_DISABLED_EXTENSIONS", ""))
     enabled_filter = split_env_list(os.environ.get("JARVIS_ENABLED_EXTENSIONS", ""))
     extensions: list[Extension] = []
+    errors: list[str] = []
     for child in sorted((item for item in extension_root.iterdir() if item.is_dir()), key=lambda item: item.name.lower()):
         manifest_path = child / "extension.json"
         if not manifest_path.exists():
             continue
-        extension = load_extension_manifest(manifest_path)
+        try:
+            extension = load_extension_manifest(manifest_path)
+        except ExtensionError as error:
+            message = f"{manifest_path}: {error}"
+            errors.append(message)
+            print(f"Skipping invalid extension: {message}", file=sys.stderr)
+            continue
         if extension.id in disabled:
             continue
         if enabled_filter and extension.id not in enabled_filter:
             continue
         extensions.append(extension)
-    return ExtensionCatalog(root=extension_root, extensions=extensions)
+    return ExtensionCatalog(root=extension_root, extensions=extensions, errors=tuple(errors))
 
 
 def split_env_list(value: str) -> set[str]:

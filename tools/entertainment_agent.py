@@ -22,538 +22,12 @@ from tools.registry import ToolInputError, optional_text, require_text
 DEFAULT_CONFIG_PATH = Path("config/entertainment_agent.json")
 DEFAULT_LIBRARY_DIR = Path("media/music")
 
+# Expanded entertainment operating-system layer. These definitions intentionally
+# live behind the extension manifest so the normal Jarvis chat loop stays clean.
 
-def entertainment_status(_params: dict[str, Any] | None = None) -> dict[str, Any]:
-    config = load_config()
-    index = load_index(config)
-    state = load_state(config)
-    player_running = process_is_running(state.get("player_pid"))
-    summary = (
-        f"{config.get('agent_name', 'Entertainment Agent')} ready. "
-        f"{len(index.get('tracks', {}))} local tracks. "
-        f"Library: {library_dir(config)}. "
-        f"yt-dlp: {'available' if ytdlp_available() else 'missing'}. "
-        f"Player: {'running' if player_running else 'idle'}."
-    )
-    return {
-        "summary": summary,
-        "config_path": str(config_path()),
-        "library_dir": str(library_dir(config)),
-        "track_count": len(index.get("tracks", {})),
-        "queue": state.get("queue", []),
-        "current_index": state.get("current_index", -1),
-        "player_running": player_running,
-        "yt_dlp_available": ytdlp_available(),
-        "preferred_music_context": config.get("preferred_music_context", []),
-    }
 
-
-def entertainment_search(params: dict[str, Any]) -> dict[str, Any]:
-    query = require_text(params, "query")
-    context = optional_text(params, "context")
-    limit = bounded_int(params.get("limit"), 1, 20, int(load_config().get("search_limit", 5)))
-    search_text = combined_query(query, context)
-    results = search_ytdlp(search_text, limit)
-    if results:
-        summary = f"Found {len(results)} result(s) for {search_text}. First: {results[0].get('title', 'Untitled')}"
-    else:
-        summary = f"Found 0 result(s) for {search_text}."
-    return {"summary": summary, "query": search_text, "results": results}
-
-
-def entertainment_download(params: dict[str, Any]) -> dict[str, Any]:
-    config = load_config()
-    index = load_index(config)
-    query = optional_text(params, "query")
-    url = optional_text(params, "url")
-    context = optional_text(params, "context")
-    force = bool(params.get("force", False))
-    add_to_favorites = bool(params.get("add_to_favorites", False))
-    playlist = optional_text(params, "playlist")
-    result_index = bounded_int(params.get("result_index"), 1, 20, 1)
-
-    if not query and not url:
-        raise ToolInputError("query or url is required")
-
-    aliases = aliases_for(query, url)
-    if not force:
-        cached = cached_track(index, aliases)
-        if cached is not None:
-            apply_track_lists(config, cached["id"], add_to_favorites, playlist)
-            summary = f"Already saved: {cached.get('title', cached['id'])} -> {cached.get('file_path')}"
-            return {"summary": summary, "cached": True, "track": cached}
-
-    source_url = url
-    selected_result: dict[str, Any] | None = None
-    if not source_url:
-        results = search_ytdlp(combined_query(query, context), max(result_index, 3))
-        if len(results) < result_index:
-            raise ToolInputError("No search result found to download")
-        selected_result = results[result_index - 1]
-        source_url = str(selected_result.get("webpage_url") or selected_result.get("url") or "")
-    if not source_url:
-        raise ToolInputError("No downloadable URL found")
-
-    track = download_with_ytdlp(config, source_url, aliases, selected_result)
-    upsert_track(index, track, aliases)
-    save_index(config, index)
-    apply_track_lists(config, track["id"], add_to_favorites, playlist)
-    summary = f"Downloaded: {track.get('title', track['id'])} -> {track.get('file_path')}"
-    return {"summary": summary, "cached": False, "track": track}
-
-
-def entertainment_play(params: dict[str, Any]) -> dict[str, Any]:
-    config = load_config()
-    index = load_index(config)
-    add_to_queue = bool(params.get("add_to_queue", False))
-    track = resolve_track(config, index, params, auto_download=bool(params.get("auto_download", False)))
-    if track is None:
-        raise ToolInputError("Track is not downloaded yet. Use entertainment_download or set auto_download.")
-    if add_to_queue:
-        state = load_state(config)
-        append_queue(state, track["id"])
-        save_state(config, state)
-        return {"summary": f"Queued: {track.get('title', track['id'])}", "track": track, "queue": state.get("queue", [])}
-
-    state = {"queue": [track["id"]], "current_index": 0, "player_pid": None, "started_at": time.time()}
-    start_queue_playback(config, index, state)
-    save_state(config, state)
-    return {"summary": f"Playing: {track.get('title', track['id'])}", "track": track, "queue": state.get("queue", [])}
-
-
-def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
-    operation = require_text(params, "operation")
-    config = load_config()
-    index = load_index(config)
-    state = load_state(config)
-
-    if operation == "status":
-        return queue_status(config, index, state)
-    if operation == "clear":
-        stop_player(state)
-        state = default_state()
-        save_state(config, state)
-        return {"summary": "Queue cleared.", "queue": []}
-    if operation == "stop":
-        stop_player(state)
-        state["player_pid"] = None
-        save_state(config, state)
-        return {"summary": "Playback stopped.", "queue": state.get("queue", [])}
-    if operation == "add":
-        track = resolve_track(config, index, params, auto_download=bool(params.get("auto_download", False)))
-        if track is None:
-            raise ToolInputError("Track is not downloaded yet. Use entertainment_download or auto_download.")
-        append_queue(state, track["id"])
-        save_state(config, state)
-        return {"summary": f"Queued: {track.get('title', track['id'])}", "queue": state.get("queue", [])}
-    if operation == "play_playlist":
-        playlist, ids = resolve_playlist_for_play(config, index, optional_text(params, "playlist"))
-        if not ids:
-            raise ToolInputError("No playable playlist found")
-        stop_player(state)
-        state = {"queue": ids, "current_index": 0, "player_pid": None, "started_at": time.time()}
-        start_queue_playback(config, index, state)
-        save_state(config, state)
-        return {
-            "summary": f"Playing playlist {playlist}: {len(ids)} track(s).",
-            "playlist": playlist,
-            "queue": ids,
-            "tracks": tracks_from_ids(index, ids),
-        }
-    if operation == "play":
-        if not state.get("queue"):
-            raise ToolInputError("Queue is empty")
-        state["current_index"] = bounded_int(state.get("current_index"), 0, len(state["queue"]) - 1, 0)
-        start_queue_playback(config, index, state)
-        save_state(config, state)
-        return queue_status(config, index, state, prefix="Playing queue.")
-    if operation in {"next", "previous"}:
-        if not state.get("queue"):
-            raise ToolInputError("Queue is empty")
-        step = 1 if operation == "next" else -1
-        current = bounded_int(state.get("current_index"), 0, len(state["queue"]) - 1, 0)
-        state["current_index"] = max(0, min(len(state["queue"]) - 1, current + step))
-        start_queue_playback(config, index, state)
-        save_state(config, state)
-        return queue_status(config, index, state, prefix=f"{operation.title()} track.")
-    raise ToolInputError(f"Unsupported queue operation: {operation}")
-
-
-def entertainment_playlist(params: dict[str, Any]) -> dict[str, Any]:
-    operation = require_text(params, "operation")
-    config = load_config()
-    index = load_index(config)
-    playlists = config.setdefault("playlists", {})
-    if not isinstance(playlists, dict):
-        playlists = {}
-        config["playlists"] = playlists
-
-    if operation == "list":
-        overview = playlist_overview(config, index)
-        return {
-            "summary": overview["summary"],
-            "playlists": playlists,
-            "playlist_tracks": overview["playlist_tracks"],
-        }
-    if operation == "show":
-        playlist = require_text(params, "playlist")
-        ids = playlist_ids(config, playlist)
-        tracks = [index.get("tracks", {}).get(track_id, {"id": track_id}) for track_id in ids]
-        return {
-            "summary": playlist_detail_summary(config, playlist, tracks),
-            "playlist": playlist,
-            "tracks": tracks,
-        }
-    if operation == "create":
-        playlist = require_text(params, "playlist")
-        playlists.setdefault(playlist, [])
-        save_config(config)
-        return {"summary": f"Playlist ready: {playlist}", "playlist": playlist}
-    if operation in {"add_track", "add_favorite"}:
-        playlist = "favorites" if operation == "add_favorite" else require_text(params, "playlist")
-        track = resolve_track(config, index, params, auto_download=bool(params.get("auto_download", False)))
-        if track is None:
-            track = current_playing_track(config, index)
-        if track is None:
-            raise ToolInputError("No local track was resolved. Name a downloaded track, play a local track first, or use auto_download.")
-        add_track_to_playlist(config, playlist, track["id"])
-        if operation == "add_favorite":
-            add_favorite(config, track["id"])
-        save_config(config)
-        return {"summary": f"Added to {playlist}: {track.get('title', track['id'])}", "track": track, "playlist": playlist}
-    if operation in {"remove_track", "remove_favorite"}:
-        playlist = "favorites" if operation == "remove_favorite" else require_text(params, "playlist")
-        track_id = require_text(params, "track_id")
-        remove_track_from_playlist(config, playlist, track_id)
-        if operation == "remove_favorite":
-            remove_favorite(config, track_id)
-        save_config(config)
-        return {"summary": f"Removed from {playlist}: {track_id}", "playlist": playlist}
-    if operation == "play":
-        playlist = optional_text(params, "playlist")
-        return entertainment_queue({"operation": "play_playlist", "playlist": playlist})
-    raise ToolInputError(f"Unsupported playlist operation: {operation}")
-
-
-def current_playing_track(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any] | None:
-    state = load_state(config)
-    track = current_track(index, state)
-    if track and track_file_available(track):
-        return track
-    return None
-
-
-def entertainment_config(params: dict[str, Any]) -> dict[str, Any]:
-    operation = require_text(params, "operation")
-    config = load_config()
-    if operation == "get":
-        return {"summary": f"Entertainment config: {config_path()}", "config": config}
-    if operation == "update":
-        values = params.get("values", {})
-        if not isinstance(values, dict):
-            raise ToolInputError("values must be an object")
-        merge_config(config, values)
-        save_config(config)
-        return {"summary": f"Updated entertainment config: {config_path()}", "config": config}
-    raise ToolInputError(f"Unsupported config operation: {operation}")
-
-
-def config_path() -> Path:
-    value = os.environ.get("JARVIS_ENTERTAINMENT_CONFIG", "").strip()
-    return Path(value) if value else DEFAULT_CONFIG_PATH
-
-
-def load_config() -> dict[str, Any]:
-    path = config_path()
-    if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8-sig"))
-        if isinstance(data, dict):
-            ensure_config_shape(data)
-            return data
-    data = default_config()
-    save_config(data)
-    return data
-
-
-def save_config(config: dict[str, Any]) -> None:
-    ensure_config_shape(config)
-    write_json(config_path(), config)
-
-
-def default_config() -> dict[str, Any]:
-    return {
-        "agent_name": "Codex Entertainment Agent",
-        "library_dir": str(DEFAULT_LIBRARY_DIR),
-        "audio_format_selector": "bestaudio[ext=m4a]/bestaudio[acodec*=mp4a]/bestaudio",
-        "search_provider": "ytsearch",
-        "search_limit": 5,
-        "playlist_display_limit": 12,
-        "default_playlist": "",
-        "preferred_music_context": ["Hindi songs", "Haryanvi songs", "official audio"],
-        "favorites": [],
-        "playlists": {"favorites": []},
-    }
-
-
-def ensure_config_shape(config: dict[str, Any]) -> None:
-    fallback = default_config()
-    for key, value in fallback.items():
-        config.setdefault(key, value)
-    if not isinstance(config.get("playlists"), dict):
-        config["playlists"] = {"favorites": []}
-    if not isinstance(config.get("favorites"), list):
-        config["favorites"] = []
-
-
-def merge_config(config: dict[str, Any], values: dict[str, Any]) -> None:
-    allowed = {
-        "agent_name",
-        "library_dir",
-        "audio_format_selector",
-        "search_provider",
-        "search_limit",
-        "playlist_display_limit",
-        "default_playlist",
-        "preferred_music_context",
-        "favorites",
-        "playlists",
-        "notes",
-    }
-    for key, value in values.items():
-        if key in allowed:
-            config[key] = value
-    ensure_config_shape(config)
-
-
-def library_dir(config: dict[str, Any]) -> Path:
-    override = os.environ.get("JARVIS_ENTERTAINMENT_LIBRARY_DIR", "").strip()
-    raw = override or str(config.get("library_dir", DEFAULT_LIBRARY_DIR))
-    path = Path(raw)
-    if not path.is_absolute():
-        path = Path.cwd() / path
-    path.mkdir(parents=True, exist_ok=True)
-    return path.resolve()
-
-
-def index_path(config: dict[str, Any]) -> Path:
-    return library_dir(config) / "library.json"
-
-
-def state_path(config: dict[str, Any]) -> Path:
-    return library_dir(config) / "player_state.json"
-
-
-def load_index(config: dict[str, Any]) -> dict[str, Any]:
-    path = index_path(config)
-    if not path.exists():
-        return {"tracks": {}, "aliases": {}}
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
-    if not isinstance(data, dict):
-        return {"tracks": {}, "aliases": {}}
-    data.setdefault("tracks", {})
-    data.setdefault("aliases", {})
-    return data
-
-
-def save_index(config: dict[str, Any], index: dict[str, Any]) -> None:
-    write_json(index_path(config), index)
-
-
-def default_state() -> dict[str, Any]:
-    return {"queue": [], "current_index": -1, "player_pid": None, "started_at": None}
-
-
-def load_state(config: dict[str, Any]) -> dict[str, Any]:
-    path = state_path(config)
-    if not path.exists():
-        return default_state()
-    data = json.loads(path.read_text(encoding="utf-8-sig"))
-    return data if isinstance(data, dict) else default_state()
-
-
-def save_state(config: dict[str, Any], state: dict[str, Any]) -> None:
-    write_json(state_path(config), state)
-
-
-def write_json(path: Path, data: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
-
-
-def ytdlp_available() -> bool:
-    try:
-        import yt_dlp  # noqa: F401
-
-        return True
-    except Exception:
-        return False
-
-
-def search_ytdlp(query: str, limit: int) -> list[dict[str, Any]]:
-    try:
-        import yt_dlp
-    except Exception as error:
-        raise ToolInputError("yt-dlp is not installed") from error
-
-    search_url = f"ytsearch{limit}:{query}"
-    options = {"quiet": True, "no_warnings": True, "noprogress": True, "skip_download": True, "extract_flat": True, "noplaylist": True}
-    with yt_dlp.YoutubeDL(options) as ydl:
-        info = ydl.extract_info(search_url, download=False)
-    entries = info.get("entries", []) if isinstance(info, dict) else []
-    results: list[dict[str, Any]] = []
-    for index, entry in enumerate(entries, start=1):
-        if not isinstance(entry, dict):
-            continue
-        video_id = str(entry.get("id") or "")
-        webpage_url = str(entry.get("webpage_url") or entry.get("url") or "")
-        if video_id and "youtube.com" not in webpage_url and "youtu.be" not in webpage_url:
-            webpage_url = f"https://www.youtube.com/watch?v={video_id}"
-        results.append(
-            {
-                "index": index,
-                "id": video_id,
-                "title": str(entry.get("title") or "Untitled"),
-                "webpage_url": webpage_url,
-                "duration": entry.get("duration"),
-                "channel": entry.get("channel") or entry.get("uploader"),
-            }
-        )
-    return results
-
-
-def download_with_ytdlp(
-    config: dict[str, Any],
-    url: str,
-    aliases: list[str],
-    selected_result: dict[str, Any] | None = None,
-) -> dict[str, Any]:
-    try:
-        import yt_dlp
-    except Exception as error:
-        raise ToolInputError("yt-dlp is not installed") from error
-
-    target_dir = library_dir(config)
-    options = {
-        "format": str(config.get("audio_format_selector") or default_config()["audio_format_selector"]),
-        "outtmpl": str(target_dir / "%(title).180B [%(id)s].%(ext)s"),
-        "quiet": True,
-        "no_warnings": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "windowsfilenames": True,
-    }
-    try:
-        with yt_dlp.YoutubeDL(options) as ydl:
-            info = ydl.extract_info(url, download=True)
-            if isinstance(info, dict) and "entries" in info:
-                entries = [entry for entry in info.get("entries", []) if isinstance(entry, dict)]
-                info = entries[0] if entries else info
-            file_path = Path(ydl.prepare_filename(info)).resolve()
-    except Exception as error:
-        raise ToolInputError(f"Download failed: {error}") from error
-
-    if not file_path.exists():
-        file_path = find_downloaded_file(target_dir, str(info.get("id") or ""))
-    track = track_from_info(info, file_path, selected_result)
-    track["aliases"] = unique_texts([*aliases, track.get("title", ""), track.get("webpage_url", "")])
-    return track
-
-
-def find_downloaded_file(directory: Path, video_id: str) -> Path:
-    if video_id:
-        marker = f"[{video_id}]"
-        for path in directory.iterdir():
-            if marker in path.name:
-                return path.resolve()
-    raise ToolInputError("Download finished but the saved file was not found")
-
-
-def track_from_info(info: dict[str, Any], file_path: Path, selected_result: dict[str, Any] | None = None) -> dict[str, Any]:
-    title = str(info.get("title") or (selected_result or {}).get("title") or file_path.stem)
-    webpage_url = str(info.get("webpage_url") or info.get("original_url") or (selected_result or {}).get("webpage_url") or "")
-    source_id = str(info.get("id") or (selected_result or {}).get("id") or "")
-    track_id = stable_track_id(source_id or webpage_url or str(file_path))
-    return {
-        "id": track_id,
-        "source_id": source_id,
-        "title": title,
-        "webpage_url": webpage_url,
-        "file_path": str(file_path),
-        "duration": info.get("duration") or (selected_result or {}).get("duration"),
-        "channel": info.get("channel") or info.get("uploader") or (selected_result or {}).get("channel"),
-        "saved_at": time.time(),
-    }
-
-
-def stable_track_id(value: str) -> str:
-    clean = value.strip()
-    digest = hashlib.sha1(clean.encode("utf-8")).hexdigest()[:12]
-    prefix = canonical_text(clean)[:24].replace(" ", "_")
-    return f"{prefix}_{digest}" if prefix else digest
-
-
-def upsert_track(index: dict[str, Any], track: dict[str, Any], aliases: list[str]) -> None:
-    tracks = index.setdefault("tracks", {})
-    tracks[track["id"]] = track
-    alias_map = index.setdefault("aliases", {})
-    for alias in unique_texts([*aliases, *track.get("aliases", [])]):
-        key = canonical_text(alias)
-        if key:
-            alias_map[key] = track["id"]
-
-
-def cached_track(index: dict[str, Any], aliases: list[str]) -> dict[str, Any] | None:
-    tracks = index.get("tracks", {})
-    alias_map = index.get("aliases", {})
-    for alias in aliases:
-        track_id = alias_map.get(canonical_text(alias))
-        track = tracks.get(track_id) if track_id else None
-        if isinstance(track, dict) and Path(str(track.get("file_path", ""))).exists():
-            return track
-    query_key = canonical_text(" ".join(aliases))
-    if query_key:
-        for track in tracks.values():
-            if not isinstance(track, dict):
-                continue
-            title_key = canonical_text(str(track.get("title", "")))
-            if query_key and title_key and (query_key in title_key or title_key in query_key):
-                if Path(str(track.get("file_path", ""))).exists():
-                    return track
-    return None
-
-
-def resolve_track(
-    config: dict[str, Any],
-    index: dict[str, Any],
-    params: dict[str, Any],
-    auto_download: bool = False,
-) -> dict[str, Any] | None:
-    track_id = optional_text(params, "track_id")
-    if track_id:
-        track = index.get("tracks", {}).get(track_id)
-        if isinstance(track, dict):
-            return track
-    path = optional_text(params, "path")
-    if path:
-        local = Path(path)
-        if local.exists():
-            return {"id": stable_track_id(str(local.resolve())), "title": local.stem, "file_path": str(local.resolve())}
-    query = optional_text(params, "query")
-    url = optional_text(params, "url")
-    cached = cached_track(index, aliases_for(query, url))
-    if cached is not None:
-        return cached
-    if auto_download and (query or url):
-        downloaded = entertainment_download(
-            {
-                "query": query,
-                "url": url,
-                "context": optional_text(params, "context"),
-                "force": False,
-            }
-        )
-        return downloaded["track"]
-    return None
+def now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def aliases_for(query: str, url: str) -> list[str]:
@@ -599,309 +73,21 @@ def bounded_int(value: Any, minimum: int, maximum: int, fallback: int) -> int:
     return max(minimum, min(maximum, parsed))
 
 
-def apply_track_lists(config: dict[str, Any], track_id: str, add_to_favorites: bool, playlist: str) -> None:
-    changed = False
-    if add_to_favorites:
-        add_favorite(config, track_id)
-        add_track_to_playlist(config, "favorites", track_id)
-        changed = True
-    if playlist:
-        add_track_to_playlist(config, playlist, track_id)
-        changed = True
-    if changed:
-        save_config(config)
+def stable_track_id(value: str) -> str:
+    clean = value.strip()
+    digest = hashlib.sha1(clean.encode("utf-8")).hexdigest()[:12]
+    prefix = canonical_text(clean)[:24].replace(" ", "_")
+    return f"{prefix}_{digest}" if prefix else digest
 
 
-def add_favorite(config: dict[str, Any], track_id: str) -> None:
-    favorites = config.setdefault("favorites", [])
-    if isinstance(favorites, list) and track_id not in favorites:
-        favorites.append(track_id)
+def config_path() -> Path:
+    value = os.environ.get("JARVIS_ENTERTAINMENT_CONFIG", "").strip()
+    return Path(value) if value else DEFAULT_CONFIG_PATH
 
 
-def remove_favorite(config: dict[str, Any], track_id: str) -> None:
-    favorites = config.get("favorites", [])
-    if isinstance(favorites, list):
-        config["favorites"] = [item for item in favorites if item != track_id]
-
-
-def add_track_to_playlist(config: dict[str, Any], playlist: str, track_id: str) -> None:
-    playlists = config.setdefault("playlists", {})
-    if not isinstance(playlists, dict):
-        playlists = {}
-        config["playlists"] = playlists
-    items = playlists.setdefault(playlist, [])
-    if isinstance(items, list) and track_id not in items:
-        items.append(track_id)
-
-
-def remove_track_from_playlist(config: dict[str, Any], playlist: str, track_id: str) -> None:
-    playlists = config.get("playlists", {})
-    if isinstance(playlists, dict) and isinstance(playlists.get(playlist), list):
-        playlists[playlist] = [item for item in playlists[playlist] if item != track_id]
-
-
-def playlist_ids(config: dict[str, Any], playlist: str) -> list[str]:
-    if playlist == "favorites":
-        favorites = config.get("favorites", [])
-        if isinstance(favorites, list) and favorites:
-            return [str(item) for item in favorites]
-    playlists = config.get("playlists", {})
-    if isinstance(playlists, dict) and isinstance(playlists.get(playlist), list):
-        return [str(item) for item in playlists[playlist]]
-    return []
-
-
-def resolve_playlist_for_play(config: dict[str, Any], index: dict[str, Any], requested_playlist: str) -> tuple[str, list[str]]:
-    if requested_playlist:
-        matched = match_playlist_name(config, requested_playlist)
-        if matched:
-            return matched, playable_playlist_ids(config, index, matched)
-
-    configured_default = optional_config_text(config, "default_playlist")
-    if configured_default:
-        ids = playable_playlist_ids(config, index, configured_default)
-        if ids:
-            return configured_default, ids
-
-    playlists = config.get("playlists", {})
-    candidates: list[tuple[str, list[str]]] = []
-    if isinstance(playlists, dict):
-        for name in sorted(str(item) for item in playlists):
-            ids = playable_playlist_ids(config, index, name)
-            if ids:
-                candidates.append((name, ids))
-
-    if len(candidates) == 1:
-        return candidates[0]
-    if candidates:
-        return candidates[0]
-
-    track_ids = playable_track_ids(index)
-    if track_ids:
-        return "library", track_ids
-    return "", []
-
-
-def match_playlist_name(config: dict[str, Any], requested_playlist: str) -> str:
-    requested_key = canonical_text(requested_playlist)
-    playlists = config.get("playlists", {})
-    if not requested_key or not isinstance(playlists, dict):
-        return ""
-    for name in sorted(str(item) for item in playlists):
-        if canonical_text(name) == requested_key:
-            return name
-    return ""
-
-
-def playable_playlist_ids(config: dict[str, Any], index: dict[str, Any], playlist: str) -> list[str]:
-    valid_tracks = index.get("tracks", {})
-    ids: list[str] = []
-    for track_id in playlist_ids(config, playlist):
-        track = valid_tracks.get(track_id)
-        if isinstance(track, dict) and Path(str(track.get("file_path", ""))).exists():
-            ids.append(track_id)
-    return ids
-
-
-def playable_track_ids(index: dict[str, Any]) -> list[str]:
-    tracks = index.get("tracks", {})
-    ids: list[str] = []
-    if not isinstance(tracks, dict):
-        return ids
-    for track_id, track in tracks.items():
-        if isinstance(track_id, str) and isinstance(track, dict) and Path(str(track.get("file_path", ""))).exists():
-            ids.append(track_id)
-    return sorted(ids)
-
-
-def optional_config_text(config: dict[str, Any], key: str) -> str:
-    value = config.get(key)
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return ""
-
-
-def playlist_overview(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
-    playlists = config.get("playlists", {})
-    names = sorted(str(name) for name in playlists) if isinstance(playlists, dict) else []
-    if "favorites" not in names:
-        names.append("favorites")
-    names = sorted(unique_texts(names))
-    if not names:
-        return {"summary": "No playlists saved yet.", "playlist_tracks": {}}
-
-    playlist_tracks: dict[str, list[dict[str, Any]]] = {}
-    lines: list[str] = []
-    for name in names:
-        ids = playlist_ids(config, name)
-        tracks = [track_summary(index, track_id) for track_id in ids]
-        playlist_tracks[name] = tracks
-        lines.append(playlist_line(config, name, tracks))
-    return {"summary": "Playlists:\n" + "\n".join(lines), "playlist_tracks": playlist_tracks}
-
-
-def playlist_line(config: dict[str, Any], name: str, tracks: list[dict[str, Any]]) -> str:
-    if not tracks:
-        return f"{name}: empty"
-    limit = bounded_int(config.get("playlist_display_limit"), 1, 50, 12)
-    visible = tracks[:limit]
-    titles = [str(track.get("title") or track.get("id") or "Untitled") for track in visible]
-    suffix = ""
-    remaining = len(tracks) - len(visible)
-    if remaining > 0:
-        suffix = f"; plus {remaining} more"
-    return f"{name}: {len(tracks)} track(s) - {'; '.join(titles)}{suffix}"
-
-
-def playlist_detail_summary(config: dict[str, Any], playlist: str, tracks: list[dict[str, Any]]) -> str:
-    if not tracks:
-        return f"{playlist}: empty"
-    return playlist_line(config, playlist, tracks)
-
-
-def track_summary(index: dict[str, Any], track_id: str) -> dict[str, Any]:
-    track = index.get("tracks", {}).get(track_id)
-    if isinstance(track, dict):
-        return {
-            "id": str(track.get("id") or track_id),
-            "title": str(track.get("title") or track_id),
-            "file_path": str(track.get("file_path") or ""),
-            "webpage_url": str(track.get("webpage_url") or ""),
-            "duration": track.get("duration"),
-            "channel": track.get("channel"),
-        }
-    return {"id": track_id, "title": f"Missing local track {track_id}", "file_path": "", "webpage_url": ""}
-
-
-def tracks_from_ids(index: dict[str, Any], track_ids: list[str]) -> list[dict[str, Any]]:
-    return [track_summary(index, track_id) for track_id in track_ids]
-
-
-def append_queue(state: dict[str, Any], track_id: str) -> None:
-    queue = state.setdefault("queue", [])
-    if not isinstance(queue, list):
-        queue = []
-        state["queue"] = queue
-    queue.append(track_id)
-    if state.get("current_index", -1) < 0:
-        state["current_index"] = 0
-
-
-def queue_status(config: dict[str, Any], index: dict[str, Any], state: dict[str, Any], prefix: str = "") -> dict[str, Any]:
-    queue = state.get("queue", [])
-    current_index = bounded_int(state.get("current_index"), 0, max(0, len(queue) - 1), 0) if queue else -1
-    current_id = queue[current_index] if queue and current_index >= 0 else ""
-    track = index.get("tracks", {}).get(current_id, {}) if current_id else {}
-    running = process_is_running(state.get("player_pid"))
-    summary_parts = [prefix.strip()] if prefix else []
-    summary_parts.append(f"Queue: {len(queue)} track(s).")
-    if track:
-        summary_parts.append(f"Current: {track.get('title', current_id)}.")
-    summary_parts.append(f"Player: {'running' if running else 'idle'}.")
-    return {"summary": " ".join(summary_parts), "queue": queue, "current_index": current_index, "current_track": track, "player_running": running}
-
-
-def start_queue_playback(config: dict[str, Any], index: dict[str, Any], state: dict[str, Any]) -> None:
-    stop_player(state)
-    queue = state.get("queue", [])
-    if not isinstance(queue, list) or not queue:
-        raise ToolInputError("Queue is empty")
-    start = bounded_int(state.get("current_index"), 0, len(queue) - 1, 0)
-    paths: list[Path] = []
-    for track_id in queue[start:]:
-        track = index.get("tracks", {}).get(track_id)
-        if isinstance(track, dict):
-            path = Path(str(track.get("file_path", "")))
-            if path.exists():
-                paths.append(path.resolve())
-    if not paths:
-        raise ToolInputError("No playable files found in queue")
-    pid = start_player_process(paths)
-    state["player_pid"] = pid
-    state["started_at"] = time.time()
-
-
-def start_player_process(paths: list[Path]) -> int | None:
-    if os.environ.get("JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER", "").strip().lower() in {"1", "true", "yes", "on"}:
-        return 0
-    if os.name == "nt":
-        command = powershell_media_player_command(paths)
-        encoded = command.encode("utf-16le")
-        import base64
-
-        process = subprocess.Popen(
-            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", base64.b64encode(encoded).decode("ascii")],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            creationflags=subprocess.CREATE_NO_WINDOW,
-        )
-        return process.pid
-    opener = "open" if sys.platform == "darwin" else "xdg-open"
-    process = subprocess.Popen([opener, str(paths[0])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return process.pid
-
-
-def powershell_media_player_command(paths: list[Path]) -> str:
-    escaped_paths = []
-    for path in paths:
-        uri = path.as_uri().replace("'", "''")
-        escaped_paths.append(f"'{uri}'")
-    uri_array = "@(" + ",".join(escaped_paths) + ")"
-    return f"""
-Add-Type -AssemblyName PresentationCore
-$uris = {uri_array}
-foreach ($rawUri in $uris) {{
-  $player = New-Object System.Windows.Media.MediaPlayer
-  $player.Open([Uri]::new($rawUri))
-  $started = Get-Date
-  while (-not $player.NaturalDuration.HasTimeSpan) {{
-    Start-Sleep -Milliseconds 100
-    if (((Get-Date) - $started).TotalSeconds -gt 10) {{ break }}
-  }}
-  $player.Volume = 1.0
-  $player.Play()
-  while ($player.NaturalDuration.HasTimeSpan -and $player.Position -lt $player.NaturalDuration.TimeSpan) {{
-    Start-Sleep -Milliseconds 250
-  }}
-  Start-Sleep -Milliseconds 300
-  $player.Stop()
-  $player.Close()
-}}
-"""
-
-
-def stop_player(state: dict[str, Any]) -> None:
-    pid = state.get("player_pid")
-    if not isinstance(pid, int) or pid <= 0:
-        return
-    if os.name == "nt":
-        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    else:
-        try:
-            os.kill(pid, 15)
-        except OSError:
-            pass
-
-
-def process_is_running(pid: Any) -> bool:
-    if not isinstance(pid, int) or pid <= 0:
-        return False
-    if os.name == "nt":
-        result = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True)
-        return str(pid) in result.stdout
-    try:
-        os.kill(pid, 0)
-        return True
-    except OSError:
-        return False
-
-
-# Expanded entertainment operating-system layer. These definitions intentionally
-# live behind the extension manifest so the normal Jarvis chat loop stays clean.
-
-
-def now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+def write_json(path: Path, data: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 def default_config() -> dict[str, Any]:
@@ -982,6 +168,7 @@ def default_config() -> dict[str, Any]:
             "default_stations": {},
             "autosave_played_stations": False,
             "last_search_ttl_seconds": 300,
+            "search_candidate_limit": 12,
         },
         "podcast": {
             "feeds_path": "media/entertainment/podcast_feeds.json",
@@ -1402,6 +589,30 @@ def upsert_track(index: dict[str, Any], track: dict[str, Any], aliases: list[str
     rebuild_library_indexes(index)
 
 
+def apply_track_lists(config: dict[str, Any], track_id: str, add_to_favorites: bool, playlist: str) -> None:
+    changed = False
+    if add_to_favorites:
+        favorites = config.setdefault("favorites", [])
+        if isinstance(favorites, list) and track_id not in favorites:
+            favorites.append(track_id)
+            changed = True
+        playlists = config.setdefault("playlists", {})
+        if isinstance(playlists, dict):
+            favorite_tracks = playlists.setdefault("favorites", [])
+            if isinstance(favorite_tracks, list) and track_id not in favorite_tracks:
+                favorite_tracks.append(track_id)
+                changed = True
+    if playlist:
+        playlists = config.setdefault("playlists", {})
+        if isinstance(playlists, dict):
+            tracks = playlists.setdefault(playlist, [])
+            if isinstance(tracks, list) and track_id not in tracks:
+                tracks.append(track_id)
+                changed = True
+    if changed:
+        save_config(config)
+
+
 def cached_track(index: dict[str, Any], aliases: list[str]) -> dict[str, Any] | None:
     prepared = ensure_index_shape(index)
     tracks = prepared.get("tracks", {})
@@ -1422,6 +633,16 @@ def cached_track(index: dict[str, Any], aliases: list[str]) -> dict[str, Any] | 
         if title_key and (query_key in title_key or title_key in query_key) and track_file_available(track):
             return track
     return None
+
+
+def append_queue(state: dict[str, Any], track_id: str) -> None:
+    queue = state.setdefault("queue", [])
+    if not isinstance(queue, list):
+        queue = []
+        state["queue"] = queue
+    queue.append(track_id)
+    if state.get("current_index", -1) < 0:
+        state["current_index"] = 0
 
 
 def track_file_available(track: dict[str, Any]) -> bool:
@@ -1469,7 +690,7 @@ def dependency_report(config: dict[str, Any]) -> dict[str, dict[str, Any]]:
     player = config.get("player", {})
     return {
         "yt-dlp": {"available": ytdlp_available(), "source": "python"},
-        "VLC": {"available": python_package_available("vlc") or executable_available(str(player.get("vlc_executable", "vlc"))), "source": str(player.get("vlc_executable", "vlc"))},
+        "VLC": {"available": executable_available(str(player.get("vlc_executable", "vlc"))), "source": str(player.get("vlc_executable", "vlc"))},
         "mpv": {"available": executable_available(str(player.get("mpv_executable", "mpv"))), "source": str(player.get("mpv_executable", "mpv"))},
         "ffmpeg": {"available": executable_available("ffmpeg"), "source": "ffmpeg"},
         "ffplay": {"available": executable_available(str(player.get("ffplay_executable", "ffplay"))), "source": str(player.get("ffplay_executable", "ffplay"))},
@@ -1502,7 +723,7 @@ def choose_player_backend(config: dict[str, Any], direct_stream: bool = False) -
     ordered = [preferred] if preferred != "auto" else []
     ordered.extend(str(item) for item in priority if str(item) not in ordered)
     for backend in ordered:
-        if backend == "vlc" and (python_package_available("vlc") or executable_available(str(player.get("vlc_executable", "vlc")))):
+        if backend == "vlc" and executable_available(str(player.get("vlc_executable", "vlc"))):
             return {"name": "vlc", "available": True, "supports_stream": True, "supports_eq": True}
         if backend == "mpv" and executable_available(str(player.get("mpv_executable", "mpv"))):
             return {"name": "mpv", "available": True, "supports_stream": True, "supports_eq": True}
@@ -1518,6 +739,133 @@ def dry_run_enabled(config: dict[str, Any]) -> bool:
     if value:
         return value in {"1", "true", "yes", "on"}
     return bool(config.get("dry_run_player", False))
+
+
+def start_queue_playback(config: dict[str, Any], index: dict[str, Any], state: dict[str, Any]) -> None:
+    stop_player(state)
+    queue = state.get("queue", [])
+    if not isinstance(queue, list) or not queue:
+        raise ToolInputError("Queue is empty")
+    start = bounded_int(state.get("current_index"), 0, len(queue) - 1, 0)
+    paths: list[Path] = []
+    for track_id in queue[start:]:
+        track = index.get("tracks", {}).get(track_id)
+        if isinstance(track, dict):
+            path = Path(str(track.get("file_path", "")))
+            if path.exists():
+                paths.append(path.resolve())
+    if not paths:
+        raise ToolInputError("No playable files found in queue")
+    backend = choose_player_backend(config)
+    if not backend.get("available"):
+        raise ToolInputError("No available local player backend")
+    pid = start_local_player_process(config, str(backend.get("name") or ""), paths)
+    state["player_pid"] = pid
+    state["backend"] = backend.get("name") or ""
+    state["started_at"] = time.time()
+
+
+def start_local_player_process(config: dict[str, Any], backend: str, paths: list[Path]) -> int | None:
+    if dry_run_enabled(config):
+        return 0
+    player = config.get("player", {})
+    if backend == "vlc":
+        executable = str(player.get("vlc_executable") or "vlc")
+        return start_configured_player(executable, paths)
+    if backend == "mpv":
+        executable = str(player.get("mpv_executable") or "mpv")
+        return start_configured_player(executable, paths)
+    if backend == "ffplay":
+        executable = str(player.get("ffplay_executable") or "ffplay")
+        return start_configured_player(executable, paths[:1])
+    if backend == "system":
+        return start_system_player_process(paths)
+    raise ToolInputError("Selected backend does not support local playback")
+
+
+def start_configured_player(executable: str, paths: list[Path]) -> int | None:
+    if not executable_available(executable):
+        raise ToolInputError(f"Player executable is missing: {executable}")
+    process = subprocess.Popen(
+        [executable, *[str(path) for path in paths]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
+    )
+    return process.pid
+
+
+def start_system_player_process(paths: list[Path]) -> int | None:
+    if os.name == "nt":
+        command = powershell_media_player_command(paths)
+        encoded = command.encode("utf-16le")
+        import base64
+
+        process = subprocess.Popen(
+            ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass", "-EncodedCommand", base64.b64encode(encoded).decode("ascii")],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=subprocess.CREATE_NO_WINDOW,
+        )
+        return process.pid
+    opener = "open" if sys.platform == "darwin" else "xdg-open"
+    process = subprocess.Popen([opener, str(paths[0])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return process.pid
+
+
+def powershell_media_player_command(paths: list[Path]) -> str:
+    escaped_paths = []
+    for path in paths:
+        uri = path.as_uri().replace("'", "''")
+        escaped_paths.append(f"'{uri}'")
+    uri_array = "@(" + ",".join(escaped_paths) + ")"
+    return f"""
+Add-Type -AssemblyName PresentationCore
+$uris = {uri_array}
+foreach ($rawUri in $uris) {{
+  $player = New-Object System.Windows.Media.MediaPlayer
+  $player.Open([Uri]::new($rawUri))
+  $started = Get-Date
+  while (-not $player.NaturalDuration.HasTimeSpan) {{
+    Start-Sleep -Milliseconds 100
+    if (((Get-Date) - $started).TotalSeconds -gt 10) {{ break }}
+  }}
+  $player.Volume = 1.0
+  $player.Play()
+  while ($player.NaturalDuration.HasTimeSpan -and $player.Position -lt $player.NaturalDuration.TimeSpan) {{
+    Start-Sleep -Milliseconds 250
+  }}
+  Start-Sleep -Milliseconds 300
+  $player.Stop()
+  $player.Close()
+}}
+"""
+
+
+def stop_player(state: dict[str, Any]) -> None:
+    pid = state.get("player_pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return
+    if os.name == "nt":
+        subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    else:
+        try:
+            os.kill(pid, 15)
+        except OSError:
+            pass
+
+
+def process_is_running(pid: Any) -> bool:
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    if os.name == "nt":
+        result = subprocess.run(["tasklist", "/FI", f"PID eq {pid}", "/NH"], capture_output=True, text=True)
+        return str(pid) in result.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
 
 
 def entertainment_config(params: dict[str, Any]) -> dict[str, Any]:
@@ -2037,6 +1385,98 @@ def remove_track_from_all_lists(config: dict[str, Any], track_id: str) -> None:
                 playlists[name] = [item for item in playlists[name] if item != track_id]
 
 
+def ytdlp_available() -> bool:
+    try:
+        import yt_dlp  # noqa: F401
+
+        return True
+    except Exception:
+        return False
+
+
+def search_ytdlp(query: str, limit: int) -> list[dict[str, Any]]:
+    try:
+        import yt_dlp
+    except Exception as error:
+        raise ToolInputError("yt-dlp is not installed") from error
+
+    search_url = f"ytsearch{limit}:{query}"
+    options = {"quiet": True, "no_warnings": True, "noprogress": True, "skip_download": True, "extract_flat": True, "noplaylist": True}
+    with yt_dlp.YoutubeDL(options) as ydl:
+        info = ydl.extract_info(search_url, download=False)
+    entries = info.get("entries", []) if isinstance(info, dict) else []
+    results: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries, start=1):
+        if not isinstance(entry, dict):
+            continue
+        video_id = str(entry.get("id") or "")
+        webpage_url = str(entry.get("webpage_url") or entry.get("url") or "")
+        if video_id and "youtube.com" not in webpage_url and "youtu.be" not in webpage_url:
+            webpage_url = f"https://www.youtube.com/watch?v={video_id}"
+        results.append(
+            {
+                "index": index,
+                "id": video_id,
+                "title": str(entry.get("title") or "Untitled"),
+                "webpage_url": webpage_url,
+                "duration": entry.get("duration"),
+                "channel": entry.get("channel") or entry.get("uploader"),
+            }
+        )
+    return results
+
+
+def download_with_ytdlp(
+    config: dict[str, Any],
+    url: str,
+    aliases: list[str],
+    selected_result: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    try:
+        import yt_dlp
+    except Exception as error:
+        raise ToolInputError("yt-dlp is not installed") from error
+
+    target_dir = library_dir(config)
+    download_settings = config.get("download", {})
+    if not isinstance(download_settings, dict):
+        download_settings = {}
+    selector = str(config.get("audio_format_selector") or download_settings.get("audio_format_selector") or default_config()["download"]["audio_format_selector"])
+    options = {
+        "format": selector,
+        "outtmpl": str(target_dir / "%(title).180B [%(id)s].%(ext)s"),
+        "quiet": True,
+        "no_warnings": True,
+        "noprogress": True,
+        "noplaylist": True,
+        "windowsfilenames": True,
+    }
+    try:
+        with yt_dlp.YoutubeDL(options) as ydl:
+            info = ydl.extract_info(url, download=True)
+            if isinstance(info, dict) and "entries" in info:
+                entries = [entry for entry in info.get("entries", []) if isinstance(entry, dict)]
+                info = entries[0] if entries else info
+            file_path = Path(ydl.prepare_filename(info)).resolve()
+    except Exception as error:
+        raise ToolInputError(f"Download failed: {error}") from error
+
+    if not file_path.exists():
+        file_path = find_downloaded_file(target_dir, str(info.get("id") or ""))
+    track = track_from_info(info, file_path, selected_result)
+    track["aliases"] = unique_texts([*aliases, track.get("title", ""), track.get("webpage_url", "")])
+    return track
+
+
+def find_downloaded_file(directory: Path, video_id: str) -> Path:
+    if video_id:
+        marker = f"[{video_id}]"
+        for path in directory.iterdir():
+            if marker in path.name:
+                return path.resolve()
+    raise ToolInputError("Download finished but the saved file was not found")
+
+
 def entertainment_search(params: dict[str, Any]) -> dict[str, Any]:
     config = load_config()
     index = load_index(config)
@@ -2196,6 +1636,9 @@ def entertainment_play(params: dict[str, Any]) -> dict[str, Any]:
     state["player_pid"] = None
     state["started_at"] = time.time()
     state["playback_status"] = "playing"
+    state["active_media_type"] = "music"
+    state["radio"] = {}
+    state["stream"] = {}
     start_queue_playback(config, index, state)
     state["backend"] = choose_player_backend(config)["name"]
     update_track_play(index, track["id"])
@@ -2228,7 +1671,9 @@ def entertainment_stream_direct(params: dict[str, Any]) -> dict[str, Any]:
     state["player_pid"] = pid
     state["playback_status"] = "playing"
     state["backend"] = backend["name"]
+    state["active_media_type"] = "stream"
     state["stream"] = {"url": url, "query": query, "started_at": now_iso()}
+    state["radio"] = {}
     save_state(config, state)
     return {"summary": f"Streaming: {query or url}", "url": url, "backend": backend["name"], "player": playback_state_payload(config, load_index(config), state)}
 
@@ -2267,11 +1712,18 @@ def entertainment_playback(params: dict[str, Any]) -> dict[str, Any]:
     if operation in {"next", "previous"}:
         return entertainment_queue({"operation": operation})
     if operation == "replay":
+        active_type = str(state.get("active_media_type") or "")
+        station = state.get("radio", {}).get("station", {}) if isinstance(state.get("radio"), dict) else {}
+        if active_type == "radio" and isinstance(station, dict) and (station.get("url") or station.get("url_resolved")):
+            path = json_store_path(config, "radio", "saved_stations_path", "media/entertainment/radio_stations.json")
+            store = load_json_store(path, {"stations": {}})
+            return play_radio_station(config, path, store, station)
         if not state.get("queue"):
             raise ToolInputError("Queue is empty")
         state["current_index"] = bounded_int(state.get("current_index"), 0, len(state["queue"]) - 1, 0)
         start_queue_playback(config, index, state)
         state["playback_status"] = "playing"
+        state["active_media_type"] = "music"
         save_state(config, state)
         return playback_state_payload(config, index, state, "Replaying current track.")
     if operation == "pause":
@@ -2358,6 +1810,11 @@ def current_track(index: dict[str, Any], state: dict[str, Any]) -> dict[str, Any
     return normalize_track(track, track_id) if isinstance(track, dict) else {}
 
 
+def current_playing_track(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any] | None:
+    track = current_track(index, load_state(config))
+    return track if track else None
+
+
 def update_track_play(index: dict[str, Any], track_id: str) -> None:
     track = index.get("tracks", {}).get(track_id)
     if not isinstance(track, dict):
@@ -2395,6 +1852,9 @@ def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
         stop_player(state)
         state["player_pid"] = None
         state["playback_status"] = "stopped"
+        state["active_media_type"] = ""
+        state["radio"] = {}
+        state["stream"] = {}
         save_state(config, state)
         return {"summary": "Playback stopped.", "queue": state.get("queue", [])}
     if operation == "add":
@@ -2454,6 +1914,9 @@ def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
         state["current_index"] = 0
         state["started_at"] = time.time()
         state["playback_status"] = "playing"
+        state["active_media_type"] = "music"
+        state["radio"] = {}
+        state["stream"] = {}
         start_queue_playback(config, index, state)
         state["backend"] = choose_player_backend(config)["name"]
         append_session_history(state, ids[0])
@@ -2467,6 +1930,9 @@ def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
             raise ToolInputError("Queue is empty")
         state["current_index"] = bounded_int(state.get("current_index"), 0, len(state["queue"]) - 1, 0)
         state["playback_status"] = "playing"
+        state["active_media_type"] = "music"
+        state["radio"] = {}
+        state["stream"] = {}
         start_queue_playback(config, index, state)
         state["backend"] = choose_player_backend(config)["name"]
         current_id = str(state["queue"][state["current_index"]])
@@ -2486,6 +1952,9 @@ def entertainment_queue(params: dict[str, Any]) -> dict[str, Any]:
         else:
             state["current_index"] = max(0, min(len(state["queue"]) - 1, current + step))
         state["playback_status"] = "playing"
+        state["active_media_type"] = "music"
+        state["radio"] = {}
+        state["stream"] = {}
         start_queue_playback(config, index, state)
         current_id = str(state["queue"][state["current_index"]])
         append_session_history(state, current_id)
@@ -2632,6 +2101,151 @@ def queue_status(config: dict[str, Any], index: dict[str, Any], state: dict[str,
         "shuffle": state.get("shuffle", "off"),
         "remaining_count": max(0, len(queue) - current_index - 1) if queue else 0,
     }
+
+
+def add_favorite(config: dict[str, Any], track_id: str) -> None:
+    favorites = config.setdefault("favorites", [])
+    if isinstance(favorites, list) and track_id not in favorites:
+        favorites.append(track_id)
+
+
+def remove_favorite(config: dict[str, Any], track_id: str) -> None:
+    favorites = config.get("favorites", [])
+    if isinstance(favorites, list):
+        config["favorites"] = [item for item in favorites if item != track_id]
+
+
+def add_track_to_playlist(config: dict[str, Any], playlist: str, track_id: str) -> None:
+    playlists = config.setdefault("playlists", {})
+    if not isinstance(playlists, dict):
+        playlists = {}
+        config["playlists"] = playlists
+    items = playlists.setdefault(playlist, [])
+    if isinstance(items, list) and track_id not in items:
+        items.append(track_id)
+
+
+def remove_track_from_playlist(config: dict[str, Any], playlist: str, track_id: str) -> None:
+    playlists = config.get("playlists", {})
+    if isinstance(playlists, dict) and isinstance(playlists.get(playlist), list):
+        playlists[playlist] = [item for item in playlists[playlist] if item != track_id]
+
+
+def playlist_ids(config: dict[str, Any], playlist: str) -> list[str]:
+    if playlist == "favorites":
+        favorites = config.get("favorites", [])
+        if isinstance(favorites, list) and favorites:
+            return [str(item) for item in favorites]
+    playlists = config.get("playlists", {})
+    if isinstance(playlists, dict) and isinstance(playlists.get(playlist), list):
+        return [str(item) for item in playlists[playlist]]
+    return []
+
+
+def resolve_playlist_for_play(config: dict[str, Any], index: dict[str, Any], requested_playlist: str) -> tuple[str, list[str]]:
+    if requested_playlist:
+        matched = match_playlist_name(config, requested_playlist)
+        if matched:
+            return matched, playable_playlist_ids(config, index, matched)
+
+    configured_default = optional_config_text(config, "default_playlist")
+    if configured_default:
+        ids = playable_playlist_ids(config, index, configured_default)
+        if ids:
+            return configured_default, ids
+
+    playlists = config.get("playlists", {})
+    candidates: list[tuple[str, list[str]]] = []
+    if isinstance(playlists, dict):
+        for name in sorted(str(item) for item in playlists):
+            ids = playable_playlist_ids(config, index, name)
+            if ids:
+                candidates.append((name, ids))
+
+    if candidates:
+        return candidates[0]
+
+    track_ids = playable_track_ids(index)
+    if track_ids:
+        return "library", track_ids
+    return "", []
+
+
+def match_playlist_name(config: dict[str, Any], requested_playlist: str) -> str:
+    requested_key = canonical_text(requested_playlist)
+    playlists = config.get("playlists", {})
+    if not requested_key or not isinstance(playlists, dict):
+        return ""
+    for name in sorted(str(item) for item in playlists):
+        if canonical_text(name) == requested_key:
+            return name
+    return ""
+
+
+def playable_playlist_ids(config: dict[str, Any], index: dict[str, Any], playlist: str) -> list[str]:
+    valid_tracks = index.get("tracks", {})
+    ids: list[str] = []
+    for track_id in playlist_ids(config, playlist):
+        track = valid_tracks.get(track_id)
+        if isinstance(track, dict) and track_file_available(track):
+            ids.append(track_id)
+    return ids
+
+
+def playable_track_ids(index: dict[str, Any]) -> list[str]:
+    tracks = index.get("tracks", {})
+    ids: list[str] = []
+    if not isinstance(tracks, dict):
+        return ids
+    for track_id, track in tracks.items():
+        if isinstance(track_id, str) and isinstance(track, dict) and track_file_available(track):
+            ids.append(track_id)
+    return sorted(ids)
+
+
+def optional_config_text(config: dict[str, Any], key: str) -> str:
+    value = config.get(key)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return ""
+
+
+def playlist_overview(config: dict[str, Any], index: dict[str, Any]) -> dict[str, Any]:
+    playlists = config.get("playlists", {})
+    names = sorted(str(name) for name in playlists) if isinstance(playlists, dict) else []
+    if "favorites" not in names:
+        names.append("favorites")
+    names = sorted(unique_texts(names))
+    if not names:
+        return {"summary": "No playlists saved yet.", "playlist_tracks": {}}
+
+    playlist_tracks: dict[str, list[dict[str, Any]]] = {}
+    lines: list[str] = []
+    for name in names:
+        ids = playlist_ids(config, name)
+        tracks = [track_summary(index, track_id) for track_id in ids]
+        playlist_tracks[name] = tracks
+        lines.append(playlist_line(config, name, tracks))
+    return {"summary": "Playlists:\n" + "\n".join(lines), "playlist_tracks": playlist_tracks}
+
+
+def playlist_line(config: dict[str, Any], name: str, tracks: list[dict[str, Any]]) -> str:
+    if not tracks:
+        return f"{name}: empty"
+    limit = bounded_int(config.get("playlist_display_limit"), 1, 50, 12)
+    visible = tracks[:limit]
+    titles = [str(track.get("title") or track.get("id") or "Untitled") for track in visible]
+    suffix = ""
+    remaining = len(tracks) - len(visible)
+    if remaining > 0:
+        suffix = f"; plus {remaining} more"
+    return f"{name}: {len(tracks)} track(s) - {'; '.join(titles)}{suffix}"
+
+
+def playlist_detail_summary(config: dict[str, Any], playlist: str, tracks: list[dict[str, Any]]) -> str:
+    if not tracks:
+        return f"{playlist}: empty"
+    return playlist_line(config, playlist, tracks)
 
 
 def entertainment_playlist(params: dict[str, Any]) -> dict[str, Any]:
@@ -3053,36 +2667,13 @@ def entertainment_radio(params: dict[str, Any]) -> dict[str, Any]:
         station = resolve_radio_station(config, store, params)
         if not station:
             raise ToolInputError("No playable radio station found")
-        url = str(station.get("url") or station.get("url_resolved") or "")
-        if not url:
-            raise ToolInputError("Selected station has no stream URL")
-        try:
-            result = entertainment_stream_direct({"url": url, "query": str(station.get("name") or "")})
-        except ToolInputError as error:
-            station_name = str(station.get("name") or "the selected station")
-            message = f"I found {station_name}, but I could not start the radio stream because {error}."
-            return {
-                "summary": message,
-                "action_completed": False,
-                "safe_user_output": message,
-                "station": station,
-                "stream_url": url,
-                "error": str(error),
-            }
-        state = load_state(config)
-        state["radio"] = {"station": station, "started_at": now_iso()}
-        save_state(config, state)
-        if bool(config.get("radio", {}).get("autosave_played_stations", False)):
-            station_id = str(station.get("stationuuid") or stable_track_id(url))
-            store.setdefault("stations", {})[station_id] = station
-            write_json(path, store)
-        result["summary"] = f"Playing radio: {station.get('name', url)}"
-        result["station"] = station
-        return result
+        return play_radio_station(config, path, store, station)
     if operation == "stop":
         state = load_state(config)
         stop_player(state)
         state["radio"] = {}
+        state["stream"] = {}
+        state["active_media_type"] = ""
         state["playback_status"] = "stopped"
         save_state(config, state)
         return {"summary": "Radio stopped."}
@@ -3114,6 +2705,8 @@ def radio_search(config: dict[str, Any], query: str, country: str, genre: str, l
     defaults = config.get("radio", {}).get("default_stations", {})
     matches: list[dict[str, Any]] = []
     search_terms = unique_texts([query, genre, language])
+    radio_config = config.get("radio", {})
+    candidate_limit = max(limit, bounded_int(radio_config.get("search_candidate_limit") if isinstance(radio_config, dict) else None, 1, 100, 12))
     if isinstance(defaults, dict):
         query_key = canonical_text(" ".join([query, country, genre, language]))
         for key, station in defaults.items():
@@ -3123,6 +2716,7 @@ def radio_search(config: dict[str, Any], query: str, country: str, genre: str, l
                     prepared = dict(station)
                     prepared.setdefault("stationuuid", str(key))
                     if prepared.get("url") or prepared.get("url_resolved"):
+                        prepared["_source"] = "config"
                         matches.append(prepared)
                     else:
                         search_terms.extend(
@@ -3135,15 +2729,15 @@ def radio_search(config: dict[str, Any], query: str, country: str, genre: str, l
                                 ]
                             )
                         )
-    if len(matches) >= limit:
-        return matches[:limit]
+    if len(matches) >= candidate_limit:
+        return ranked_radio_stations(matches, query, country, genre, language)[:limit]
     api_url = str(config.get("radio", {}).get("api_url") or "").rstrip("/")
     if not api_url:
-        return matches[:limit]
+        return ranked_radio_stations(matches, query, country, genre, language)[:limit]
     seen = set(canonical_text(str(station.get("stationuuid") or station.get("url_resolved") or station.get("url") or station.get("name") or "")) for station in matches)
     for term in unique_texts(search_terms):
         for field in ["name", "tag"]:
-            params = {"limit": str(limit - len(matches)), "hidebroken": "true", field: term}
+            params = {"limit": str(candidate_limit - len(matches)), "hidebroken": "true", field: term}
             if country:
                 params["country"] = country
             url = api_url + "/json/stations/search?" + urllib.parse.urlencode(params)
@@ -3161,13 +2755,122 @@ def radio_search(config: dict[str, Any], query: str, country: str, genre: str, l
                     if stream_url and station_key and station_key not in seen:
                         seen.add(station_key)
                         matches.append(item)
-                        if len(matches) >= limit:
-                            return matches[:limit]
-    return matches[:limit]
+                        if len(matches) >= candidate_limit:
+                            return ranked_radio_stations(matches, query, country, genre, language)[:limit]
+    return ranked_radio_stations(matches, query, country, genre, language)[:limit]
+
+
+def ranked_radio_stations(stations: list[dict[str, Any]], query: str, country: str, genre: str, language: str) -> list[dict[str, Any]]:
+    return sorted(
+        stations,
+        key=lambda station: (
+            -radio_station_score(station, query, country, genre, language),
+            canonical_text(str(station.get("name") or "")),
+        ),
+    )
+
+
+def radio_station_score(station: dict[str, Any], query: str, country: str, genre: str, language: str) -> float:
+    score = 0.0
+    name = canonical_text(str(station.get("name") or ""))
+    haystack = canonical_text(
+        " ".join(
+            str(station.get(key) or "")
+            for key in ["name", "tags", "country", "countrycode", "state", "language", "languagecodes", "homepage"]
+        )
+    )
+    requested = canonical_text(" ".join([query, genre, language]))
+    if requested and requested == name:
+        score += 120
+    elif requested and requested in name:
+        score += 90
+    for term in unique_texts(requested.split()):
+        if term in name:
+            score += 20
+        elif term in haystack:
+            score += 8
+    requested_country = canonical_text(country)
+    if requested_country:
+        station_country = canonical_text(str(station.get("country") or ""))
+        station_country_code = canonical_text(str(station.get("countrycode") or ""))
+        if requested_country in {station_country, station_country_code}:
+            score += 40
+    requested_language = canonical_text(language)
+    if requested_language:
+        station_language = canonical_text(str(station.get("language") or ""))
+        station_language_codes = canonical_text(str(station.get("languagecodes") or ""))
+        if requested_language == station_language or requested_language in station_language_codes.split():
+            score += 40
+    if station.get("url") or station.get("url_resolved"):
+        score += 10
+    if station.get("_source") == "config":
+        score += 200
+    if station.get("lastcheckok") in {1, True, "1", "true", "True"}:
+        score += 20
+    if not station.get("ssl_error"):
+        score += 5
+    score += min(numeric_radio_value(station.get("votes")), 10000.0) / 100.0
+    score += min(numeric_radio_value(station.get("clicktrend")), 100.0) / 5.0
+    return score
+
+
+def numeric_radio_value(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def play_radio_station(config: dict[str, Any], path: Path, store: dict[str, Any], station: dict[str, Any]) -> dict[str, Any]:
+    url = str(station.get("url") or station.get("url_resolved") or "")
+    if not url:
+        raise ToolInputError("Selected station has no stream URL")
+    backend = choose_player_backend(config, direct_stream=True)
+    if not backend["available"] or not backend["supports_stream"]:
+        error = "Direct streaming requires VLC, mpv, ffplay, or dry-run player mode"
+        station_name = str(station.get("name") or "the selected station")
+        message = f"I found {station_name}, but I could not start the radio stream because {error}."
+        return {
+            "summary": message,
+            "action_completed": False,
+            "safe_user_output": message,
+            "station": station,
+            "stream_url": url,
+            "error": error,
+        }
+    state = load_state(config)
+    stop_player(state)
+    pid = start_stream_process(config, backend["name"], url)
+    started_at = now_iso()
+    state["player_pid"] = pid
+    state["playback_status"] = "playing"
+    state["backend"] = backend["name"]
+    state["active_media_type"] = "radio"
+    state["stream"] = {"url": url, "query": str(station.get("name") or ""), "started_at": started_at}
+    state["radio"] = {"station": station, "started_at": started_at}
+    save_state(config, state)
+    if bool(config.get("radio", {}).get("autosave_played_stations", False)):
+        station_id = str(station.get("stationuuid") or stable_track_id(url))
+        store.setdefault("stations", {})[station_id] = station
+        write_json(path, store)
+    result = playback_state_payload(config, load_index(config), state)
+    return {
+        "summary": f"Playing radio: {station.get('name', url)}",
+        "url": url,
+        "backend": backend["name"],
+        "player": result,
+        "station": station,
+        "action_completed": True,
+        "safe_user_output": f"Now playing: {station.get('name', url)}.",
+    }
 
 
 def resolve_radio_station(config: dict[str, Any], store: dict[str, Any], params: dict[str, Any]) -> dict[str, Any]:
     station_id = optional_text(params, "station_id")
+    query = optional_text(params, "query")
+    country = optional_text(params, "country")
+    genre = optional_text(params, "genre")
+    language = optional_text(params, "language")
     stations = store.get("stations", {})
     if station_id and isinstance(stations, dict) and isinstance(stations.get(station_id), dict):
         return stations[station_id]
@@ -3175,8 +2878,36 @@ def resolve_radio_station(config: dict[str, Any], store: dict[str, Any], params:
         latest = latest_radio_search_station(config, station_id)
         if latest:
             return latest
-    found = radio_search(config, optional_text(params, "query") or station_id, optional_text(params, "country"), optional_text(params, "genre"), optional_text(params, "language"), 1)
+    if not any([station_id, query, country, genre, language]):
+        state = load_state(config)
+        station = state.get("radio", {}).get("station", {}) if isinstance(state.get("radio"), dict) else {}
+        if isinstance(station, dict) and (station.get("url") or station.get("url_resolved")):
+            return station
+        station = latest_radio_search_first(config)
+        if station:
+            return station
+    found = radio_search(config, query or station_id, country, genre, language, 1)
     return found[0] if found else {}
+
+
+def latest_radio_search_first(config: dict[str, Any]) -> dict[str, Any]:
+    state = load_state(config)
+    latest = state.get("radio_last_search", {})
+    if not isinstance(latest, dict):
+        return {}
+    try:
+        created_at = datetime.fromisoformat(str(latest.get("created_at", "")).replace("Z", "+00:00"))
+    except ValueError:
+        created_at = datetime.fromtimestamp(0, tz=timezone.utc)
+    ttl = int(config.get("radio", {}).get("last_search_ttl_seconds") or 300)
+    if datetime.now(timezone.utc) - created_at > timedelta(seconds=ttl):
+        return {}
+    stations = latest.get("stations", [])
+    if isinstance(stations, list):
+        for station in stations:
+            if isinstance(station, dict) and (station.get("url") or station.get("url_resolved")):
+                return station
+    return {}
 
 
 def latest_radio_search_station(config: dict[str, Any], station_id: str) -> dict[str, Any]:
@@ -3674,3 +3405,7 @@ def track_summary(index: dict[str, Any], track_id: str) -> dict[str, Any]:
             "play_count": normalized.get("play_count"),
         }
     return {"id": track_id, "title": f"Missing local track {track_id}", "file_path": "", "webpage_url": ""}
+
+
+def tracks_from_ids(index: dict[str, Any], track_ids: list[str]) -> list[dict[str, Any]]:
+    return [track_summary(index, track_id) for track_id in track_ids]

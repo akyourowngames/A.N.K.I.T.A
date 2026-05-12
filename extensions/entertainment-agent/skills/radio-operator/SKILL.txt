@@ -10,8 +10,10 @@ Use this skill when the user asks for radio, live streams, stations by language,
 Workflow:
 
 1. Use `entertainment_radio` with `list_saved` for saved stations when the request sounds familiar.
-2. Use `search` for new stations and `play` after selecting the best grounded result.
-3. When the station id is not already known, call `play` with the original query instead of inventing a station id.
-4. Use `save` only after playback succeeds, when the user wants to keep a station or the session config says to autosave.
-5. Radio sessions go to history, not the library.
-6. Use `similar_to_playing` for station discovery during an active stream.
+2. For play requests, call `play` directly with the original query. The tool searches, ranks grounded candidates, and starts the best station.
+3. Use `search` when the user asks to see, compare, inspect, or choose station options before playback.
+4. When the station id is not already known, call `play` with the original query instead of inventing a station id.
+5. For a short follow-up to the currently active station, call `play` without `query` or `station_id`; the tool will replay the grounded station from state or the latest grounded radio search.
+6. Use `save` only after playback succeeds, when the user wants to keep a station or the session config says to autosave.
+7. Radio sessions go to history, not the library.
+8. Use `similar_to_playing` for station discovery during an active stream.
