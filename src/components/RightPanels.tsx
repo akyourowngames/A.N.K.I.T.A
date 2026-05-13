@@ -21,6 +21,7 @@ export function RightPanels() {
       className="right-panel-stack"
       initial={{ opacity: 0, x: 18 }}
       animate={{ opacity: 1, x: 0 }}
+      exit={{ opacity: 0, x: 28, filter: "blur(10px)" }}
       transition={{ duration: 0.75, delay: 0.12, ease: [0.22, 1, 0.36, 1] }}
     >
       <section className="glass-card tasks-card">

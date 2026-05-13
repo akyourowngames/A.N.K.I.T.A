@@ -2,14 +2,14 @@
 
 import { AudioLines } from "lucide-react";
 
-export function StatusHeader() {
+export function StatusHeader({ title, detail }: { title: string; detail: string }) {
   return (
     <header className="status-header">
       <div className="status-title">
         <AudioLines size={22} strokeWidth={1.65} />
-        <span>Listening...</span>
+        <span>{title}</span>
       </div>
-      <p>Ready when you are.</p>
+      <p>{detail}</p>
     </header>
   );
 }

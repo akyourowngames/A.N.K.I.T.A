@@ -6,6 +6,7 @@ node_modules/
 out/
 *.tsbuildinfo
 .next-dev*.log
+.api-dev*.log
 artifacts/
 __pycache__/
 *.py[cod]
