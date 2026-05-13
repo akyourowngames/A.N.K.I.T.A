@@ -1,7 +1,7 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { ConversationPanel } from "./components/ConversationPanel";
 import { InputBar } from "./components/InputBar";
 import { MobileLayout } from "./components/MobileLayout";
@@ -15,20 +15,24 @@ import { useBrowserSpeechRecognition } from "./hooks/useBrowserSpeechRecognition
 export default function App() {
   const assistant = useAssistantChat();
   const speech = useBrowserSpeechRecognition();
-  const setAssistantInput = assistant.setInput;
+  const submittedSpeechTurn = useRef(0);
   const conversationActive = Boolean(assistant.lastUserText || assistant.reply || assistant.isStreaming);
 
   useEffect(() => {
-    if (speech.isListening && speech.transcript) {
-      setAssistantInput(speech.transcript);
+    if (!speech.finalTurn || submittedSpeechTurn.current === speech.finalTurn) {
+      return;
     }
-  }, [setAssistantInput, speech.isListening, speech.transcript]);
+    submittedSpeechTurn.current = speech.finalTurn;
+    if (speech.finalTranscript) {
+      assistant.submit(speech.finalTranscript);
+    }
+  }, [assistant, speech.finalTranscript, speech.finalTurn]);
 
   const status = useMemo(() => {
     if (speech.isListening) {
       return {
         title: "Listening...",
-        detail: assistant.input ? `Transcribing: ${assistant.input}` : "Speak now. I am transcribing in the browser."
+        detail: speech.transcript ? `Transcribing: ${speech.transcript}` : "Speak now. I will send it when you pause."
       };
     }
     if (assistant.phase === "thinking") {
@@ -65,7 +69,7 @@ export default function App() {
       title: "Listening...",
       detail: "Ready when you are."
     };
-  }, [assistant.error, assistant.input, assistant.phase, assistant.reply, speech.error, speech.isListening]);
+  }, [assistant.error, assistant.phase, assistant.reply, speech.error, speech.isListening, speech.transcript]);
 
   const inputProps = {
     value: assistant.input,
@@ -75,7 +79,7 @@ export default function App() {
     voiceActive: speech.isListening,
     voiceSupported: speech.supported,
     disabled: assistant.isStreaming,
-    placeholder: assistant.isStreaming ? "Jarvis is responding..." : "Ask anything..."
+    placeholder: assistant.isStreaming ? "Jarvis is responding..." : speech.isListening ? "Listening..." : "Ask anything..."
   };
 
   return (

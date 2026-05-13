@@ -14,8 +14,8 @@
   --status-gold: #bfa66a;
   --sidebar-width: 132px;
   --hero-x: calc(50vw - 36px);
-  --orb-size: clamp(430px, 30.8vw, 540px);
-  --orb-top: 209px;
+  --orb-size: clamp(405px, 29.2vw, 510px);
+  --orb-top: 188px;
   --right-panel-width: 388px;
   --right-panel-right: 38px;
   --right-panel-top: 152px;
@@ -266,40 +266,14 @@ button {
   z-index: 3;
   width: 100%;
   height: 100%;
-  overflow: hidden;
-  border-radius: 999px;
   object-fit: contain;
-  clip-path: circle(49.8% at 50% 50%);
-  scale: 1.34;
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 0 38%, #000 42% 79%, transparent 84%);
-  mask-image: radial-gradient(circle at 50% 50%, transparent 0 38%, #000 42% 79%, transparent 84%);
-  filter:
-    grayscale(1)
-    saturate(0)
-    contrast(1.34)
-    brightness(1.06)
-    drop-shadow(0 0 13px rgba(255, 255, 255, 0.36))
-    drop-shadow(0 0 22px rgba(255, 255, 255, 0.1));
-  mix-blend-mode: screen;
-  opacity: 0.98;
+  scale: 1.62;
+  opacity: 1;
   user-select: none;
 }
 
 .orb-stars {
-  position: absolute;
-  z-index: 1;
-  inset: 13.6%;
-  border-radius: inherit;
-  background:
-    radial-gradient(circle at 22% 30%, rgba(255, 255, 255, 0.78) 0 0.55px, transparent 1.1px),
-    radial-gradient(circle at 58% 22%, rgba(255, 255, 255, 0.55) 0 0.5px, transparent 1px),
-    radial-gradient(circle at 74% 62%, rgba(255, 255, 255, 0.64) 0 0.58px, transparent 1.08px),
-    radial-gradient(circle at 43% 73%, rgba(255, 255, 255, 0.5) 0 0.5px, transparent 1.1px),
-    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.16) 0 0.62px, transparent 1.2px);
-  background-size: 94px 98px, 126px 118px, 104px 110px, 146px 138px, 16px 16px;
-  opacity: 0.28;
-  animation: driftStars 18s linear infinite;
-  mask-image: radial-gradient(circle, black 0 65%, transparent 78%);
+  display: none;
 }
 
 .orb-core {
@@ -933,15 +907,6 @@ button {
 }
 
 .mobile-orb-shell .orb-asset {
-  scale: 1.12;
-  -webkit-mask-image: radial-gradient(circle at 50% 50%, transparent 0 42%, #000 48% 72%, transparent 78%);
-  mask-image: radial-gradient(circle at 50% 50%, transparent 0 42%, #000 48% 72%, transparent 78%);
-  filter:
-    grayscale(1)
-    saturate(0)
-    contrast(1.2)
-    brightness(1.2)
-    drop-shadow(0 0 11px rgba(255, 255, 255, 0.34));
   opacity: 1;
 }
 
