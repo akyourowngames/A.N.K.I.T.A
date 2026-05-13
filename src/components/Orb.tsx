@@ -2,10 +2,10 @@
 
 import { motion } from "framer-motion";
 
-export function Orb() {
+export function Orb({ variant = "desktop" }: { variant?: "desktop" | "mobile" }) {
   return (
     <motion.div
-      className="orb-shell"
+      className={variant === "mobile" ? "orb-shell mobile-orb-shell" : "orb-shell"}
       animate={{ scale: [1, 1.025, 1] }}
       transition={{ duration: 5.8, repeat: Infinity, ease: "easeInOut" }}
       aria-label="Listening assistant orb"
