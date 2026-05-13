@@ -3,18 +3,24 @@
 import { Bot, CheckCircle2, Copy, ThumbsDown, ThumbsUp, UserRound } from "lucide-react";
 import { motion } from "framer-motion";
 import type { ReactNode } from "react";
+import type { EntertainmentContext, EntertainmentResultCard } from "../lib/assistantClient";
 
 export function ConversationPanel({
   userText,
   reply,
   isStreaming,
-  error
+  error,
+  entertainmentContext,
+  onEntertainmentAction
 }: {
   userText: string;
   reply: string;
   isStreaming: boolean;
   error: string;
+  entertainmentContext: EntertainmentContext | null;
+  onEntertainmentAction: (text: string) => void;
 }) {
+  const results = entertainmentContext?.lastSearchResults?.slice(0, 6) ?? [];
   return (
     <motion.aside
       className="conversation-panel"
@@ -40,6 +46,15 @@ export function ConversationPanel({
           muted={!reply && !error}
           streaming={isStreaming && !error}
         />
+
+        {!error && results.length > 0 ? (
+          <EntertainmentResults
+            results={results}
+            resultType={entertainmentContext?.lastSearchType ?? ""}
+            query={entertainmentContext?.lastSearchQuery ?? ""}
+            onAction={onEntertainmentAction}
+          />
+        ) : null}
       </div>
 
       <div className="conversation-actions" aria-label="Conversation actions">
@@ -55,6 +70,55 @@ export function ConversationPanel({
         <span>{isStreaming ? "Streaming..." : "Was this helpful?"}</span>
       </div>
     </motion.aside>
+  );
+}
+
+function EntertainmentResults({
+  results,
+  resultType,
+  query,
+  onAction
+}: {
+  results: EntertainmentResultCard[];
+  resultType: string;
+  query: string;
+  onAction: (text: string) => void;
+}) {
+  return (
+    <section className="entertainment-results" aria-label="Entertainment results">
+      <div className="entertainment-results-head">
+        <span>{resultType || "media"}</span>
+        <strong>{query || "recent results"}</strong>
+      </div>
+      <div className="entertainment-result-list">
+        {results.map((item, index) => {
+          const position = item.position ?? index + 1;
+          const title = item.title || item.name || "Untitled";
+          const detail = [item.artist, item.country, item.language, item.source].filter(Boolean).join(" - ");
+          const isRadio = (item.media_type || item.type) === "radio";
+          return (
+            <article className="entertainment-result-card" key={`${position}-${title}`}>
+              <div>
+                <span>{position}</span>
+                <strong>{title}</strong>
+                {detail ? <p>{detail}</p> : null}
+              </div>
+              <div className="entertainment-result-actions">
+                <button type="button" onClick={() => onAction(`play result ${position}`)}>
+                  Play
+                </button>
+                <button
+                  type="button"
+                  onClick={() => onAction(isRadio ? `save result ${position}` : `add result ${position} to my playlist`)}
+                >
+                  {isRadio ? "Save" : "Add"}
+                </button>
+              </div>
+            </article>
+          );
+        })}
+      </div>
+    </section>
   );
 }
 

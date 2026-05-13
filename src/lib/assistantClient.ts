@@ -11,6 +11,53 @@ export type AssistantStreamHandlers = {
   onError: (message: string) => void;
 };
 
+export type EntertainmentResultCard = {
+  position?: number;
+  type?: string;
+  media_type?: string;
+  title?: string;
+  name?: string;
+  artist?: string;
+  country?: string;
+  language?: string;
+  source?: string;
+  playable?: boolean;
+};
+
+export type EntertainmentContext = {
+  lastSearchResults?: EntertainmentResultCard[];
+  lastSearchType?: string;
+  lastSearchQuery?: string;
+  lastSearchAt?: string;
+  currentPlaying?: EntertainmentResultCard;
+  activePlaylist?: string;
+};
+
+export type DashboardState = {
+  ok: boolean;
+  assistant: {
+    name: string;
+    model: string;
+    streaming: boolean;
+    tools: number;
+  };
+  music: {
+    status: string;
+    title: string;
+    artist: string;
+    source: string;
+    backend: string;
+    volume: number;
+    queue_length: number;
+    library_tracks: number;
+    duration_seconds: number | null;
+    elapsed_seconds: number;
+    progress_percent: number;
+    running: boolean;
+    detail: string;
+  };
+};
+
 export async function streamAssistantReply(
   message: string,
   sessionId: string,
@@ -57,6 +104,23 @@ export async function streamAssistantReply(
   if (buffer.trim()) {
     dispatchBlock(buffer, handlers);
   }
+}
+
+export async function fetchEntertainmentContext(): Promise<EntertainmentContext | null> {
+  const response = await fetch(`${apiBaseUrl()}/api/entertainment/context`);
+  if (!response.ok) {
+    return null;
+  }
+  const payload = (await response.json()) as EntertainmentContext;
+  return payload;
+}
+
+export async function fetchDashboardState(): Promise<DashboardState | null> {
+  const response = await fetch(`${apiBaseUrl()}/api/dashboard`, { cache: "no-store" });
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as DashboardState;
 }
 
 function dispatchBlock(block: string, handlers: AssistantStreamHandlers) {
