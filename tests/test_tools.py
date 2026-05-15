@@ -27,7 +27,7 @@ from tools.calculator import evaluate_expression
 from tools.diagnostics_tools import jarvis_latency_probe
 from tools.filesystem_tools import display_name, get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
-from tools.music_agent import music_download, music_library, music_play, music_playlist, music_search, music_status
+from tools.music_agent import music_control, music_download, music_library, music_play, music_playlist, music_search, music_status
 from tools.path_resolver import resolve_local_path
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
@@ -547,6 +547,102 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertTrue(added["changed"])
         self.assertEqual(added["playlist"]["track_count"], 1)
         self.assertTrue(played["played"])
+
+    def test_music_playlist_add_top_downloads_remembered_remote_results(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": True,
+                        "download_command": sys.executable,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            remote_results = [
+                {"title": "License Ka Asla", "artist": "Masoom Sharma", "url": "https://example.test/license"},
+                {"title": "Yaari", "artist": "Masoom Sharma", "url": "https://example.test/yaari"},
+                {"title": "Yaha Ke Bahubali", "artist": "Masoom Sharma", "url": "https://example.test/bahubali"},
+            ]
+
+            def fake_download(context: dict[str, object], source: str) -> Path:
+                title_by_source = {
+                    "https://example.test/license": "License Ka Asla",
+                    "https://example.test/yaari": "Yaari",
+                    "https://example.test/bahubali": "Yaha Ke Bahubali",
+                }
+                title = title_by_source[source]
+                path = Path(context["library_dir"]) / f"Masoom Sharma - {title}.mp3"
+                path.write_text("fake audio", encoding="utf-8")
+                return path
+
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                with patch("tools.music_agent.remote_search", return_value=remote_results):
+                    music_search({"query": "Masoom Sharma songs", "include_remote": True, "limit": 3})
+                with patch("tools.music_agent.run_download", side_effect=fake_download):
+                    added = music_playlist({"operation": "add_top", "name": "fav", "count": 3})
+                    shown = music_playlist({"operation": "show", "name": "fav"})
+
+        self.assertTrue(added["changed"])
+        self.assertEqual(len(added["added_tracks"]), 3)
+        self.assertEqual(added["failed"], [])
+        self.assertEqual(shown["playlist"]["track_count"], 3)
+        self.assertEqual([track["title"] for track in shown["playlist"]["tracks"]], ["License Ka Asla", "Yaari", "Yaha Ke Bahubali"])
+
+    def test_music_playlist_play_sends_all_tracks_to_vlc(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Serena - Safari.mp3").write_text("fake audio", encoding="utf-8")
+            (library / "Masoom Sharma - License Ka Asla.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "download_enabled": False,
+                        "vlc_command": sys.executable,
+                        "vlc_extra_args": ["-c", "import time; time.sleep(2)"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                music_library({"operation": "scan"})
+                music_playlist({"operation": "add", "name": "fav", "query": "safari", "allow_download": False})
+                music_playlist({"operation": "add", "name": "fav", "query": "license asla", "allow_download": False})
+                played = music_playlist({"operation": "play", "name": "fav"})
+                music_control_result = None
+                try:
+                    music_control_result = music_control({"operation": "stop"})
+                finally:
+                    pid = played["playback"].get("pid")
+                    if isinstance(pid, int):
+                        if os.name == "nt":
+                            subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=10)
+                        else:
+                            try:
+                                os.kill(pid, 15)
+                            except OSError:
+                                pass
+
+        self.assertTrue(played["played"])
+        self.assertEqual(played["playback"]["backend"], "vlc")
+        self.assertEqual(played["playback"]["track_count"], 2)
+        self.assertEqual(len(played["playback"]["paths"]), 2)
+        self.assertEqual(played["queue"]["length"], 2)
+        self.assertIsNotNone(music_control_result)
 
 
 

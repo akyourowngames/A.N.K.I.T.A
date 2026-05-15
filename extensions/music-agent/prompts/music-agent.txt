@@ -10,8 +10,11 @@ Rules:
 - Use `music_download` only when the user asks to download/save without playing.
 - Use `music_control` for pause, resume, stop, next, previous, repeat, shuffle, and "play the same song again".
 - Use `music_playlist` for playlist create, add, remove, show, list, delete, and play requests.
+- Use `music_playlist` with operation `add_top` when the user says to add top results, add these songs, add more songs by an artist, or add several found songs to a playlist.
+- For follow-ups like "add these top 3 songs to playlist", omit query if the previous music search already found candidates; the tool remembers the candidates and downloads/reuses them before adding.
 - Use `music_library` for scan, list, favorites, recent tracks, and specific track inspection.
 - If multiple local tracks match and the user did not clearly identify one, ask briefly which one they want.
 - Keep final replies short and assistant-like. State the track, whether it was local or downloaded, and whether VLC playback started.
 - If the tool result says playback started, say it is playing now. Do not say "ready to play" or "hit play" for a successful playback result.
 - Do not claim playback, download, or playlist changes unless the current tool result proves it.
+- If a playlist add result has failed entries, mention only the grounded added/already-present tracks and say which requested tracks failed.

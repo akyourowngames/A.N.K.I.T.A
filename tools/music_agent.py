@@ -68,12 +68,13 @@ def music_search(params: dict[str, Any]) -> dict[str, Any]:
     state = load_state(context)
     state["last_query"] = query
     state["last_query_at"] = time.time()
-    save_state(context, state)
     limit = bounded_int(params.get("limit"), 5, 1, 20)
     local_matches = local_search(database, query, limit, context["match_cutoff"])
     remote_results: list[dict[str, Any]] = []
     if bool(params.get("include_remote")):
         remote_results = remote_search(context, query, limit)
+        remember_remote_results(state, query, remote_results)
+    save_state(context, state)
     return {
         "query": query,
         "local_matches": local_matches,
@@ -172,7 +173,33 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
             return {"played": False, "blocked_reason": "playlist_not_found_or_empty", "playlist": playlist_name}
         state["queue"] = track_ids
         state["queue_index"] = 0
-        track = database["tracks"].get(track_ids[0])
+        tracks = [database["tracks"][track_id] for track_id in track_ids if track_id in database["tracks"]]
+        if not tracks:
+            save_database(context, database)
+            return {"played": False, "blocked_reason": "playlist_tracks_missing", "playlist": playlist_name}
+        stop_playback(state)
+        playback = start_playlist_playback(context, tracks)
+        track = tracks[0]
+        state["current_track_id"] = track["id"]
+        state["playback_status"] = playback["status"]
+        state["backend"] = playback["backend"]
+        state["player_pid"] = playback.get("pid")
+        state["started_at"] = time.time()
+        state["last_position_seconds"] = 0
+        for queued_track in tracks:
+            add_recent(database, queued_track["id"])
+        save_state(context, state)
+        save_database(context, database)
+        return {
+            "played": playback["started"],
+            "downloaded_before_play": False,
+            "track": track_public(track),
+            "tracks": tracks_public(tracks),
+            "playlist": playlist_public(database, playlist_key(playlist_name)),
+            "playback": playback,
+            "queue": queue_public(database, state),
+            "searched_local_first": True,
+        }
     else:
         if not optional_text(params, "query") and not optional_text(params, "track_id") and not optional_text(params, "path"):
             last_query = optional_text(state, "last_query")
@@ -214,6 +241,7 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
     if query:
         state["last_query"] = query
         state["last_query_at"] = time.time()
+    stop_playback(state)
     playback = start_playback(context, track)
     state["current_track_id"] = track["id"]
     state["playback_status"] = playback["status"]
@@ -249,6 +277,7 @@ def music_control(params: dict[str, Any]) -> dict[str, Any]:
         track = database["tracks"].get(track_id)
         if not track:
             return {"changed": False, "blocked_reason": "current_track_missing"}
+        stop_playback(state)
         playback = start_playback(context, track)
         state["playback_status"] = playback["status"]
         state["backend"] = playback["backend"]
@@ -299,12 +328,78 @@ def music_playlist(params: dict[str, Any]) -> dict[str, Any]:
         return {"changed": existed, "playlist": name}
     if operation == "show":
         return {"playlist": playlist_public(database, key)}
+    if operation == "add_top":
+        playlist = database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
+        count = bounded_int(params.get("count"), 3, 1, 20)
+        allow_download = bool(params.get("allow_download", True))
+        query = optional_text(params, "query")
+        state = load_state(context)
+        candidates = remote_candidates_for_followup(context, state, query, count)
+        if query:
+            state["last_query"] = query
+            state["last_query_at"] = time.time()
+            remember_remote_results(state, query, candidates)
+            save_state(context, state)
+        added_tracks: list[dict[str, Any]] = []
+        already_present: list[dict[str, Any]] = []
+        failed: list[dict[str, Any]] = []
+        for candidate in candidates[:count]:
+            track = track_from_candidate(database, candidate, context["match_cutoff"])
+            download_result: dict[str, Any] | None = None
+            if track is None and allow_download:
+                download_result = download_candidate(candidate)
+                if download_result.get("downloaded") or download_result.get("already_existed"):
+                    database = load_database(context)
+                    raw_track = download_result.get("track")
+                    if isinstance(raw_track, dict):
+                        track = database["tracks"].get(str(raw_track.get("id", "")))
+            if track is None:
+                failed.append(candidate_failure(candidate, download_result))
+                continue
+            playlist = database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
+            if track["id"] in playlist["track_ids"]:
+                public = track_public(track)
+                if public:
+                    already_present.append(public)
+            else:
+                playlist["track_ids"].append(track["id"])
+                public = track_public(track)
+                if public:
+                    added_tracks.append(public)
+            playlist["updated_at"] = time.time()
+            save_database(context, database)
+        save_database(context, database)
+        return {
+            "changed": bool(added_tracks),
+            "operation": operation,
+            "requested_count": count,
+            "candidate_count": len(candidates),
+            "added_tracks": added_tracks,
+            "already_present": already_present,
+            "failed": failed,
+            "playlist": playlist_public(database, key),
+            "downloaded_or_reused_only": True,
+        }
     if operation in {"add", "remove"}:
         playlist = database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
         track = resolve_track_from_params(database, params, context["match_cutoff"])
+        download_result: dict[str, Any] | None = None
+        if track is None and operation == "add" and bool(params.get("allow_download", True)):
+            query = optional_text(params, "query")
+            if query:
+                download_result = music_download({"query": query})
+                if download_result.get("downloaded") or download_result.get("already_existed"):
+                    database = load_database(context)
+                    raw_track = download_result.get("track")
+                    if isinstance(raw_track, dict):
+                        track = database["tracks"].get(str(raw_track.get("id", "")))
+                    playlist = database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
         if track is None:
             save_database(context, database)
-            return {"changed": False, "blocked_reason": "track_not_found", "playlist": playlist_public(database, key)}
+            result = {"changed": False, "blocked_reason": "track_not_found", "playlist": playlist_public(database, key)}
+            if download_result is not None:
+                result["download"] = download_result
+            return result
         if operation == "add" and track["id"] not in playlist["track_ids"]:
             playlist["track_ids"].append(track["id"])
         if operation == "remove" and track["id"] in playlist["track_ids"]:
@@ -401,6 +496,8 @@ def default_state() -> dict[str, Any]:
         "player_pid": None,
         "last_query": "",
         "last_query_at": None,
+        "last_remote_results": [],
+        "last_remote_query": "",
     }
 
 
@@ -448,6 +545,8 @@ def load_state(context: dict[str, Any]) -> dict[str, Any]:
                 state[key] = data[key]
     if not isinstance(state["queue"], list):
         state["queue"] = []
+    if not isinstance(state["last_remote_results"], list):
+        state["last_remote_results"] = []
     return state
 
 
@@ -641,6 +740,102 @@ def remote_search(context: dict[str, Any], query: str, limit: int) -> list[dict[
     return results
 
 
+def remember_remote_results(state: dict[str, Any], query: str, results: list[dict[str, Any]]) -> None:
+    remembered: list[dict[str, Any]] = []
+    for index, item in enumerate(results, start=1):
+        if not isinstance(item, dict):
+            continue
+        remembered.append(
+            {
+                "index": index,
+                "query": query,
+                "title": clean_text(item.get("title")),
+                "artist": clean_text(item.get("artist")),
+                "duration": item.get("duration"),
+                "url": clean_text(item.get("url")),
+            }
+        )
+    state["last_remote_query"] = query
+    state["last_remote_results"] = remembered
+
+
+def remote_candidates_for_followup(context: dict[str, Any], state: dict[str, Any], query: str | None, count: int) -> list[dict[str, Any]]:
+    if query:
+        return remote_search(context, query, count)
+    remembered = state.get("last_remote_results")
+    if not isinstance(remembered, list):
+        return []
+    candidates: list[dict[str, Any]] = []
+    for item in remembered:
+        if isinstance(item, dict):
+            candidates.append(item)
+        if len(candidates) >= count:
+            break
+    return candidates
+
+
+def track_from_candidate(database: dict[str, Any], candidate: dict[str, Any], cutoff: float) -> dict[str, Any] | None:
+    url = clean_text(candidate.get("url"))
+    if url:
+        existing = existing_by_source(database, url)
+        if existing:
+            return existing
+    title = clean_text(candidate.get("title"))
+    artist = clean_text(candidate.get("artist"))
+    normalized_title = normalize_text(title)
+    normalized_artist = normalize_text(artist)
+    for track in database["tracks"].values():
+        if not isinstance(track, dict):
+            continue
+        track_title = normalize_text(str(track.get("title") or ""))
+        track_artist = normalize_text(str(track.get("artist") or ""))
+        if normalized_title and track_title == normalized_title:
+            if not normalized_artist or not track_artist or track_artist == normalized_artist:
+                return track
+    if title:
+        strict_matches = local_search(database, title, 1, max(cutoff, 0.86))
+        if strict_matches:
+            return database["tracks"].get(strict_matches[0]["id"])
+    return None
+
+
+def download_candidate(candidate: dict[str, Any]) -> dict[str, Any]:
+    title = clean_text(candidate.get("title"))
+    artist = clean_text(candidate.get("artist"))
+    url = clean_text(candidate.get("url"))
+    params: dict[str, Any] = {}
+    if url:
+        params["url"] = url
+    else:
+        query = " ".join(part for part in [artist, title] if part).strip()
+        if query:
+            params["query"] = query
+    if title:
+        params["title"] = title
+    if artist:
+        params["artist"] = artist
+    if not params.get("url") and not params.get("query"):
+        return {"downloaded": False, "already_existed": False, "blocked_reason": "candidate_missing_source"}
+    try:
+        return music_download(params)
+    except (ToolInputError, OSError, subprocess.SubprocessError) as exc:
+        return {"downloaded": False, "already_existed": False, "blocked_reason": "download_failed", "error": str(exc)}
+
+
+def candidate_failure(candidate: dict[str, Any], download_result: dict[str, Any] | None) -> dict[str, Any]:
+    failure = {
+        "title": clean_text(candidate.get("title")),
+        "artist": clean_text(candidate.get("artist")),
+        "url": clean_text(candidate.get("url")),
+        "reason": "track_not_available",
+    }
+    if download_result is not None:
+        failure["reason"] = str(download_result.get("blocked_reason") or "download_failed")
+        if download_result.get("error"):
+            failure["error"] = str(download_result.get("error"))
+    return failure
+
+
 def run_download(context: dict[str, Any], source: str) -> Path:
     library_dir = context["library_dir"]
     command = resolve_download_command(context)
@@ -678,32 +873,47 @@ def start_playback(context: dict[str, Any], track: dict[str, Any]) -> dict[str, 
     path = Path(str(track.get("path", "")))
     if not path.is_file():
         return {"started": False, "status": "missing_file", "backend": "", "path": str(path)}
+    playback = start_playlist_playback(context, [track])
+    if "paths" in playback:
+        playback["path"] = str(path)
+    return playback
+
+
+def start_playlist_playback(context: dict[str, Any], tracks: list[dict[str, Any]]) -> dict[str, Any]:
+    paths = [Path(str(track.get("path", ""))) for track in tracks]
+    missing = [str(path) for path in paths if not path.is_file()]
+    if missing:
+        return {"started": False, "status": "missing_file", "backend": "", "paths": [str(path) for path in paths], "missing_paths": missing, "track_count": len(paths)}
     if bool(context["config"].get("dry_run_player")):
-        return {"started": True, "status": "dry_run", "backend": "dry_run", "path": str(path)}
+        return {"started": True, "status": "dry_run", "backend": "dry_run", "paths": [str(path) for path in paths], "track_count": len(paths)}
     player_name = str(context["config"].get("player") or "vlc").casefold()
     player_command = context["config"].get("player_command")
     if isinstance(player_command, list) and player_command:
-        argv = [str(item).replace("{path}", str(path)) for item in player_command]
+        first_path = str(paths[0])
+        path_values = [str(path) for path in paths]
+        argv = [str(item).replace("{path}", first_path).replace("{paths}", os.pathsep.join(path_values)) for item in player_command]
+        if not any("{path}" in str(item) or "{paths}" in str(item) for item in player_command):
+            argv.extend(path_values)
         process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         remember_player_process(process)
-        return {"started": True, "status": "playing", "backend": "configured_player", "path": str(path), "pid": process.pid}
+        return {"started": True, "status": "playing", "backend": "configured_player", "paths": path_values, "pid": process.pid, "track_count": len(paths)}
     if player_name == "vlc":
         vlc = resolve_vlc(context)
         if not vlc:
-            return {"started": False, "status": "vlc_not_available", "backend": "vlc", "path": str(path)}
+            return {"started": False, "status": "vlc_not_available", "backend": "vlc", "paths": [str(path) for path in paths], "track_count": len(paths)}
         extra_args = [str(item) for item in context["config"].get("vlc_extra_args", DEFAULT_CONFIG["vlc_extra_args"]) if isinstance(item, str)]
-        process = subprocess.Popen([vlc, *extra_args, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen([vlc, *extra_args, *[str(path) for path in paths]], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         remember_player_process(process)
-        return {"started": True, "status": "playing", "backend": "vlc", "path": str(path), "pid": process.pid, "command": vlc}
+        return {"started": True, "status": "playing", "backend": "vlc", "paths": [str(path) for path in paths], "pid": process.pid, "command": vlc, "track_count": len(paths)}
     if os.name == "nt":
-        os.startfile(str(path))  # type: ignore[attr-defined]
-        return {"started": True, "status": "playing", "backend": "windows_default", "path": str(path)}
+        os.startfile(str(paths[0]))  # type: ignore[attr-defined]
+        return {"started": True, "status": "playing", "backend": "windows_default", "paths": [str(path) for path in paths], "track_count": 1}
     opener = shutil.which("xdg-open") or shutil.which("open")
     if opener:
-        process = subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        process = subprocess.Popen([opener, str(paths[0])], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         remember_player_process(process)
-        return {"started": True, "status": "playing", "backend": Path(opener).name, "path": str(path), "pid": process.pid}
-    return {"started": False, "status": "no_player_available", "backend": "", "path": str(path)}
+        return {"started": True, "status": "playing", "backend": Path(opener).name, "paths": [str(path) for path in paths], "pid": process.pid, "track_count": 1}
+    return {"started": False, "status": "no_player_available", "backend": "", "paths": [str(path) for path in paths], "track_count": len(paths)}
 
 
 def remember_player_process(process: subprocess.Popen[Any]) -> None:
@@ -754,6 +964,7 @@ def play_relative(context: dict[str, Any], database: dict[str, Any], state: dict
     state["queue"] = queue
     state["queue_index"] = index
     track = database["tracks"][queue[index]]
+    stop_playback(state)
     playback = start_playback(context, track)
     state["current_track_id"] = track["id"]
     state["playback_status"] = playback["status"]
