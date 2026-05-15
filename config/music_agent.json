@@ -6,6 +6,12 @@
   "download_format": "bestaudio/best",
   "download_enabled": true,
   "dry_run_player": false,
+  "player": "vlc",
+  "vlc_command": "vlc",
+  "vlc_extra_args": [
+    "--no-video",
+    "--play-and-exit"
+  ],
   "player_command": [],
   "media_extensions": [
     ".mp3",

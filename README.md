@@ -316,7 +316,7 @@ Directory listing output is compact by default through `JARVIS_LIST_DIRECTORY_LI
 
 `music-agent` is a lightweight local-first specialist named Jarvis Music Agent. It registers music-only tools from `extensions/music-agent/extension.json`; behavior guidance lives in `extensions/music-agent/prompts/music-agent.txt`, and settings live in `config/music_agent.json`.
 
-The agent searches the local music library before any download, stores downloaded/local tracks in `media/music/music_db.json`, avoids duplicate downloads, and maintains queue, favorites, playlists, and recent history. Playback uses the configured player command when present, otherwise the OS default media opener.
+The agent searches the local music library before any download, stores downloaded/local tracks in `media/music/music_db.json`, avoids duplicate downloads, and maintains queue, favorites, playlists, and recent history. Missing songs are downloaded through `yt-dlp`; playback starts through VLC by default.
 
 Key tools:
 

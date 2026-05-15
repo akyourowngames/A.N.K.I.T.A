@@ -490,9 +490,9 @@ Files:
 Capabilities:
 
 - Search local files first by title, artist, album, filename, and close spelling match.
-- Download missing songs through the configured downloader only when no local match exists.
+- Download missing songs through `yt-dlp` only when no local match exists.
 - Store local track metadata and paths in a JSON music database.
-- Play songs and playlists through the configured player or OS media opener.
+- Play songs and playlists through VLC by default.
 - Maintain queue, repeat, shuffle, favorites, and recent history.
 
 ### Telegram Bot

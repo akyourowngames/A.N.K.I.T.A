@@ -32,7 +32,7 @@
     },
     {
       "name": "music_search",
-      "description": "Search the local music library first by title, artist, album, filename, or close spelling match; optionally include remote candidates.",
+      "description": "Search the local music library first by title, artist, album, filename, or close spelling match; optionally include yt-dlp remote candidates.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -61,7 +61,7 @@
     },
     {
       "name": "music_download",
-      "description": "Download one song only when it is not already present locally; record metadata and avoid duplicate downloads.",
+      "description": "Download one song with yt-dlp only when it is not already present locally; record metadata and avoid duplicate downloads. Uses the last music query when query/url is omitted in a follow-up.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -91,7 +91,7 @@
     },
     {
       "name": "music_play",
-      "description": "Play a local song or playlist. Search local files first, download only if allowed and not already present, then update queue and history.",
+      "description": "Play or retry a song through VLC, or play a playlist. Search local files first, download with yt-dlp if allowed and not already present, then launch playback and update queue/history. Uses the last music query when query is omitted in a follow-up like play it, download it and play it, or not playing.",
       "parameters": {
         "type": "object",
         "properties": {

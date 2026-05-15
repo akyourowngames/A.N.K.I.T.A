@@ -15,6 +15,9 @@ from typing import Any
 from .registry import ToolInputError, optional_text, require_text
 
 
+_PLAYER_PROCESSES: list[subprocess.Popen[Any]] = []
+
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "library_dir": "media/music/library",
     "database_path": "media/music/music_db.json",
@@ -23,6 +26,9 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "download_format": "bestaudio/best",
     "download_enabled": True,
     "dry_run_player": False,
+    "player": "vlc",
+    "vlc_command": "vlc",
+    "vlc_extra_args": ["--no-video", "--play-and-exit"],
     "player_command": [],
     "media_extensions": [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".webm", ".mp4"],
     "match_cutoff": 0.52,
@@ -36,6 +42,8 @@ def music_status(params: dict[str, Any]) -> dict[str, Any]:
         database = scan_library(context, database)
         save_database(context, database)
     state = load_state(context)
+    state = refresh_state(context, state)
+    save_state(context, state)
     return {
         "library_dir": str(context["library_dir"]),
         "database_path": str(context["database_path"]),
@@ -48,6 +56,7 @@ def music_status(params: dict[str, Any]) -> dict[str, Any]:
         "playback": state_public(state),
         "download_enabled": bool(context["config"].get("download_enabled")),
         "downloader_available": downloader_available(context),
+        "player": player_status(context),
     }
 
 
@@ -56,6 +65,10 @@ def music_search(params: dict[str, Any]) -> dict[str, Any]:
     context = music_context()
     database = scan_library(context, load_database(context))
     save_database(context, database)
+    state = load_state(context)
+    state["last_query"] = query
+    state["last_query_at"] = time.time()
+    save_state(context, state)
     limit = bounded_int(params.get("limit"), 5, 1, 20)
     local_matches = local_search(database, query, limit, context["match_cutoff"])
     remote_results: list[dict[str, Any]] = []
@@ -72,11 +85,18 @@ def music_search(params: dict[str, Any]) -> dict[str, Any]:
 def music_download(params: dict[str, Any]) -> dict[str, Any]:
     query = optional_text(params, "query")
     url = optional_text(params, "url")
+    context = music_context()
+    state = load_state(context)
+    if not query and not url:
+        query = optional_text(state, "last_query")
     if not query and not url:
         raise ToolInputError("query or url is required")
 
-    context = music_context()
     database = scan_library(context, load_database(context))
+    if query:
+        state["last_query"] = query
+        state["last_query_at"] = time.time()
+        save_state(context, state)
     existing = best_existing_track(database, query or url, context["match_cutoff"]) if query else existing_by_source(database, url)
     if existing:
         save_database(context, database)
@@ -120,6 +140,17 @@ def music_download(params: dict[str, Any]) -> dict[str, Any]:
             },
         )
         save_database(context, database)
+    else:
+        update_track_metadata(
+            track,
+            downloaded_path,
+            {
+                "title": optional_text(params, "title") or query or downloaded_path.stem,
+                "artist": optional_text(params, "artist"),
+                "source": source,
+            },
+        )
+        save_database(context, database)
     return {
         "downloaded": True,
         "already_existed": False,
@@ -133,6 +164,7 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
     database = scan_library(context, load_database(context))
     state = load_state(context)
     playlist_name = optional_text(params, "playlist")
+    downloaded_before_play = False
     if playlist_name:
         track_ids = playlist_tracks(database, playlist_name)
         if not track_ids:
@@ -142,12 +174,23 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
         state["queue_index"] = 0
         track = database["tracks"].get(track_ids[0])
     else:
+        if not optional_text(params, "query") and not optional_text(params, "track_id") and not optional_text(params, "path"):
+            last_query = optional_text(state, "last_query")
+            if last_query:
+                params = dict(params)
+                params["query"] = last_query
+            else:
+                current_track_id = optional_text(state, "current_track_id")
+                if current_track_id:
+                    params = dict(params)
+                    params["track_id"] = current_track_id
         track = resolve_track_from_params(database, params, context["match_cutoff"])
         if track is None and bool(params.get("allow_download", True)):
             query = optional_text(params, "query")
             if query:
                 download_result = music_download({"query": query})
                 if download_result.get("downloaded") or download_result.get("already_existed"):
+                    downloaded_before_play = bool(download_result.get("downloaded"))
                     database = load_database(context)
                     raw_track = download_result.get("track")
                     if isinstance(raw_track, dict):
@@ -160,13 +203,17 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
                     }
         if track is None:
             save_database(context, database)
-            return {"played": False, "blocked_reason": "track_not_found", "searched_local_first": True}
+            return {"played": False, "blocked_reason": "track_not_found", "searched_local_first": True, "query": optional_text(params, "query")}
         if track["id"] not in state["queue"]:
             state["queue"].append(track["id"])
             state["queue_index"] = state["queue"].index(track["id"])
 
     if track is None:
         raise ToolInputError("track could not be resolved")
+    query = optional_text(params, "query")
+    if query:
+        state["last_query"] = query
+        state["last_query_at"] = time.time()
     playback = start_playback(context, track)
     state["current_track_id"] = track["id"]
     state["playback_status"] = playback["status"]
@@ -179,6 +226,7 @@ def music_play(params: dict[str, Any]) -> dict[str, Any]:
     save_database(context, database)
     return {
         "played": playback["started"],
+        "downloaded_before_play": downloaded_before_play,
         "track": track_public(track),
         "playback": playback,
         "queue": queue_public(database, state),
@@ -190,8 +238,9 @@ def music_control(params: dict[str, Any]) -> dict[str, Any]:
     operation = require_text(params, "operation").lower()
     context = music_context()
     database = load_database(context)
-    state = load_state(context)
+    state = refresh_state(context, load_state(context))
     if operation == "state":
+        save_state(context, state)
         return {"playback": state_public(state), "queue": queue_public(database, state)}
     if operation == "again":
         track_id = str(state.get("current_track_id") or "")
@@ -202,6 +251,7 @@ def music_control(params: dict[str, Any]) -> dict[str, Any]:
             return {"changed": False, "blocked_reason": "current_track_missing"}
         playback = start_playback(context, track)
         state["playback_status"] = playback["status"]
+        state["backend"] = playback["backend"]
         state["player_pid"] = playback.get("pid")
         state["started_at"] = time.time()
         save_state(context, state)
@@ -349,6 +399,8 @@ def default_state() -> dict[str, Any]:
         "shuffle": False,
         "repeat": False,
         "player_pid": None,
+        "last_query": "",
+        "last_query_at": None,
     }
 
 
@@ -557,9 +609,9 @@ def resolve_track_from_params(database: dict[str, Any], params: dict[str, Any], 
 
 
 def remote_search(context: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
-    if not downloader_available(context):
+    command = resolve_download_command(context)
+    if not command:
         return []
-    command = str(context["config"].get("download_command") or "yt-dlp")
     source = f"ytsearch{limit}:{query}"
     completed = subprocess.run(
         [command, "--dump-json", "--no-playlist", source],
@@ -591,7 +643,9 @@ def remote_search(context: dict[str, Any], query: str, limit: int) -> list[dict[
 
 def run_download(context: dict[str, Any], source: str) -> Path:
     library_dir = context["library_dir"]
-    command = str(context["config"].get("download_command") or "yt-dlp")
+    command = resolve_download_command(context)
+    if not command:
+        raise ToolInputError("yt-dlp is not available")
     output_template = "%(title).200B [%(id)s].%(ext)s"
     argv = [
         command,
@@ -626,19 +680,63 @@ def start_playback(context: dict[str, Any], track: dict[str, Any]) -> dict[str, 
         return {"started": False, "status": "missing_file", "backend": "", "path": str(path)}
     if bool(context["config"].get("dry_run_player")):
         return {"started": True, "status": "dry_run", "backend": "dry_run", "path": str(path)}
+    player_name = str(context["config"].get("player") or "vlc").casefold()
     player_command = context["config"].get("player_command")
     if isinstance(player_command, list) and player_command:
         argv = [str(item).replace("{path}", str(path)) for item in player_command]
         process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        remember_player_process(process)
         return {"started": True, "status": "playing", "backend": "configured_player", "path": str(path), "pid": process.pid}
+    if player_name == "vlc":
+        vlc = resolve_vlc(context)
+        if not vlc:
+            return {"started": False, "status": "vlc_not_available", "backend": "vlc", "path": str(path)}
+        extra_args = [str(item) for item in context["config"].get("vlc_extra_args", DEFAULT_CONFIG["vlc_extra_args"]) if isinstance(item, str)]
+        process = subprocess.Popen([vlc, *extra_args, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        remember_player_process(process)
+        return {"started": True, "status": "playing", "backend": "vlc", "path": str(path), "pid": process.pid, "command": vlc}
     if os.name == "nt":
         os.startfile(str(path))  # type: ignore[attr-defined]
         return {"started": True, "status": "playing", "backend": "windows_default", "path": str(path)}
     opener = shutil.which("xdg-open") or shutil.which("open")
     if opener:
         process = subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        remember_player_process(process)
         return {"started": True, "status": "playing", "backend": Path(opener).name, "path": str(path), "pid": process.pid}
     return {"started": False, "status": "no_player_available", "backend": "", "path": str(path)}
+
+
+def remember_player_process(process: subprocess.Popen[Any]) -> None:
+    reap_player_processes()
+    _PLAYER_PROCESSES.append(process)
+
+
+def reap_player_processes() -> None:
+    _PLAYER_PROCESSES[:] = [process for process in _PLAYER_PROCESSES if process.poll() is None]
+
+
+def player_status(context: dict[str, Any]) -> dict[str, Any]:
+    player_name = str(context["config"].get("player") or "vlc").casefold()
+    if player_name == "vlc":
+        command = resolve_vlc(context)
+        return {"name": "vlc", "available": bool(command), "command": command or ""}
+    player_command = context["config"].get("player_command")
+    if isinstance(player_command, list) and player_command:
+        return {"name": "configured_player", "available": True, "command": " ".join(str(item) for item in player_command)}
+    return {"name": player_name, "available": False, "command": ""}
+
+
+def resolve_vlc(context: dict[str, Any]) -> str:
+    configured = clean_text(os.environ.get("VLC_PATH")) or clean_text(context["config"].get("vlc_command"))
+    if configured:
+        path = Path(configured).expanduser()
+        if path.is_file():
+            return str(path.resolve())
+        found = shutil.which(configured)
+        if found:
+            return found
+    found = shutil.which("vlc")
+    return found or ""
 
 
 def play_relative(context: dict[str, Any], database: dict[str, Any], state: dict[str, Any], offset: int) -> dict[str, Any]:
@@ -680,6 +778,41 @@ def stop_playback(state: dict[str, Any]) -> bool:
         except OSError:
             return False
     return send_media_key("stop")
+
+
+def refresh_state(context: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    if state.get("playback_status") not in {"playing", "paused"}:
+        return state
+    if state.get("backend") == "dry_run":
+        return state
+    pid = state.get("player_pid")
+    if isinstance(pid, int) and pid > 0 and not process_is_running(pid):
+        state["playback_status"] = "stopped"
+        state["player_pid"] = None
+        state["last_position_seconds"] = elapsed_since(state.get("started_at"))
+    return state
+
+
+def process_is_running(pid: int) -> bool:
+    if os.name == "nt":
+        completed = subprocess.run(
+            ["tasklist", "/FI", f"PID eq {pid}", "/FO", "CSV", "/NH"],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        return completed.returncode == 0 and str(pid) in completed.stdout
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def elapsed_since(value: Any) -> int:
+    if isinstance(value, int | float):
+        return max(0, int(time.time() - float(value)))
+    return 0
 
 
 def send_media_key(operation: str) -> bool:
@@ -771,8 +904,17 @@ def state_public(state: dict[str, Any]) -> dict[str, Any]:
 
 
 def downloader_available(context: dict[str, Any]) -> bool:
+    return bool(resolve_download_command(context))
+
+
+def resolve_download_command(context: dict[str, Any]) -> str:
     command = str(context["config"].get("download_command") or "")
-    return bool(command and shutil.which(command))
+    if not command:
+        return ""
+    path = Path(command).expanduser()
+    if path.is_file():
+        return str(path.resolve())
+    return shutil.which(command) or ""
 
 
 def clean_text(value: Any) -> str:

@@ -456,6 +456,70 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertEqual(recent["tracks"][0]["title"], "One More Time")
         self.assertEqual(status["current_track"]["title"], "One More Time")
 
+    def test_music_play_uses_last_query_for_followup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Serena - Safari.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                music_search({"query": "serena safari"})
+                play_result = music_play({})
+
+        self.assertTrue(play_result["played"])
+        self.assertEqual(play_result["track"]["title"], "Safari")
+        self.assertEqual(play_result["track"]["artist"], "Serena")
+
+    def test_music_play_uses_vlc_command_when_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "VLC Test - Tone.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "download_enabled": False,
+                        "vlc_command": sys.executable,
+                        "vlc_extra_args": ["-c", "import time; time.sleep(2)"],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                play_result = music_play({"query": "tone"})
+                status = music_status({})
+
+        pid = play_result["playback"].get("pid")
+        if isinstance(pid, int):
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=10)
+            else:
+                try:
+                    os.kill(pid, 15)
+                except OSError:
+                    pass
+        self.assertTrue(play_result["played"])
+        self.assertEqual(play_result["playback"]["backend"], "vlc")
+        self.assertTrue(status["player"]["available"])
+
     def test_music_playlist_adds_and_plays_local_track(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
