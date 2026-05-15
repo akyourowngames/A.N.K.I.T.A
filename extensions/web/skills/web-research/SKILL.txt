@@ -10,3 +10,5 @@ description: Ground web and document questions with search, extraction, and sour
 - Extract local documents when the user points to a file.
 - Keep raw HTML and large dumps out of the final answer.
 - Give useful source titles or URLs when they help verify the answer.
+- Never claim live verification unless the current tool result contains source evidence.
+- If the search result is empty, stale, blocked, or only a search page shell, say that clearly and do not fill the answer from model memory.

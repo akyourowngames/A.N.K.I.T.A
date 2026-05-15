@@ -42,6 +42,7 @@ def probe_prompts(params: dict[str, Any]) -> list[str]:
 def measure_prompt(prompt: str, timeout_seconds: int) -> dict[str, Any]:
     env = os.environ.copy()
     env["MEMORY_EXTRACT_FROM_CHAT"] = "false"
+    env["JARVIS_LATENCY_DEBUG"] = "true"
     process = subprocess.Popen(
         [sys.executable, "main.py"],
         cwd=str(Path.cwd()),

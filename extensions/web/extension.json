@@ -11,7 +11,12 @@
   "tools": [
     {
       "name": "web_search",
-      "description": "Search the web for current or external information and return grounded result titles and URLs.",
+      "description": "Search the web for current, new, latest, right-now, news, public-office, time-sensitive, or external information and return grounded result titles and URLs.",
+      "category": "web",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "skill": "Use for current, new, latest, right-now, news, public office, time-sensitive, source-backed, or external facts. Return only grounded result titles and URLs; if results are empty or blocked, do not invent updates.",
       "parameters": {
         "type": "object",
         "properties": {

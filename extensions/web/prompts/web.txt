@@ -2,3 +2,4 @@ For external or current web facts, use web search or URL extraction before answe
 Prefer search first when the user gives a topic and URL extraction when the user gives a specific URL.
 When a local document path is supplied, use document extraction or file reading instead of guessing from memory.
 Summaries should cite useful titles or URLs when the user needs source grounding.
+If search returns no usable results, a blocked page, or only generic search-interface text, do not invent headlines or source names. Say the search did not return enough evidence and ask whether to try browser research.

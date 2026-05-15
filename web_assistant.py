@@ -13,6 +13,8 @@ from typing import Any, AsyncIterator
 
 from extension_system import ExtensionCatalog, load_extension_catalog
 from jarvis_nim import JarvisConfig, NimChatError, chat_once, env_int, load_dotenv
+from latency_trace import LatencyTrace, latency_debug_enabled, trace_mark, use_latency_trace
+from local_router import ROUTE_DIRECT_CHAT, route_chat_turn
 from main import build_messages, configure_console_output, vector_memory_system_message
 from memory_system import MemoryConfig, remember_chat
 from tools import discover_tools
@@ -107,9 +109,13 @@ class WebAssistantRuntime:
         if not clean_text:
             raise WebAssistantError("Message is empty.")
         session = self.load_session(session_id, clean_text)
+        trace_mark("session_loaded")
         memory_config = self.memory_config
         turn_messages = [*session.messages]
-        if count_role(session.messages, "user") > 0:
+        direct_chat = route_chat_turn(clean_text, turn_messages, self.registry).mode == ROUTE_DIRECT_CHAT
+        if count_role(session.messages, "user") > 0 and not (
+            direct_chat and env_bool("JARVIS_DIRECT_CHAT_SKIP_VECTOR_MEMORY", True)
+        ):
             vector_message = vector_memory_system_message(clean_text, memory_config, self.jarvis_config)
             if vector_message is not None:
                 turn_messages.append(vector_message)
@@ -127,6 +133,7 @@ class WebAssistantRuntime:
         async with self.chat_lock:
             queue: asyncio.Queue[dict[str, str]] = asyncio.Queue()
             loop = asyncio.get_running_loop()
+            debug_latency = latency_debug_enabled()
 
             def push(event: dict[str, str]) -> None:
                 loop.call_soon_threadsafe(queue.put_nowait, event)
@@ -134,10 +141,27 @@ class WebAssistantRuntime:
             def emit_token(text: str) -> None:
                 push({"type": "token", "content": text})
 
+            def emit_latency(event: dict[str, Any]) -> None:
+                if not debug_latency:
+                    return
+                stage = str(event.get("stage", ""))
+                if stage == "local_router_started":
+                    push({"type": "status", "stage": "checking_tools"})
+                if stage == "tool_execution_started":
+                    push({"type": "status", "stage": "running_tool"})
+                if stage == "final_model_started":
+                    push({"type": "status", "stage": "finalizing"})
+                push({"type": "latency", **event})
+
             def worker() -> None:
+                trace = LatencyTrace(enabled=True, sink=emit_latency if debug_latency else None)
                 try:
-                    with contextlib.redirect_stdout(QueueWriter(emit_token)):
-                        result = self.run_chat_turn(user_text, session_id)
+                    trace.mark("request_received")
+                    with use_latency_trace(trace):
+                        with contextlib.redirect_stdout(QueueWriter(emit_token)):
+                            result = self.run_chat_turn(user_text, session_id)
+                    if debug_latency:
+                        push({"type": "latency_summary", "trace": trace.finish()})
                     push({"type": "done", **result})
                 except (NimChatError, WebAssistantError) as error:
                     push({"type": "error", "message": str(error)})
@@ -245,3 +269,10 @@ def count_role(messages: list[dict[str, str]], role: str) -> int:
 
 def now_text() -> str:
     return datetime.now(timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
+def env_bool(name: str, fallback: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return fallback
+    return value in {"1", "true", "yes", "on"}

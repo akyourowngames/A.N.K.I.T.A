@@ -10,6 +10,22 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from latency_trace import (
+    current_trace,
+    trace_mark,
+    trace_mark_once,
+    trace_model_call,
+)
+from local_router import (
+    ROUTE_CONFIRMATION_REQUIRED,
+    ROUTE_DIRECT_CHAT,
+    ROUTE_TOOL_REQUIRED,
+    ROUTE_UNCERTAIN,
+    ToolDescriptor,
+    direct_tool_requests_for_decision,
+    route_chat_turn,
+)
+
 
 class NimChatError(Exception):
     pass
@@ -154,16 +170,48 @@ class JarvisConfig:
 
 
 def chat_once(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any | None = None) -> str:
-    if config.auto_tools and registry is not None and registry.visible_tools():
-        if config.tool_mode == "hybrid":
-            return chat_with_hybrid_tools(config, messages, registry)
-        if config.tool_mode == "native":
-            return chat_with_native_tools(config, messages, registry)
-        if config.tool_mode == "native_stream":
-            return chat_with_native_streaming_tools(config, messages, registry)
-        return chat_with_json_tools(config, messages, registry)
+    trace_mark_once("request_received")
+    try:
+        if config.auto_tools and registry is not None and registry.visible_tools():
+            decision = route_chat_turn(latest_user_text(messages), messages, registry)
+            trace = current_trace()
+            if trace is not None:
+                trace.set_route(decision.mode, decision.selected_tool_names)
+            if decision.mode == ROUTE_DIRECT_CHAT and env_bool("JARVIS_DIRECT_CHAT_SKIP_TOOLS", True):
+                return final_chat_response(config, messages)
+            if decision.mode == ROUTE_CONFIRMATION_REQUIRED:
+                return confirmation_required_reply(decision.selected_tool_names)
+            if decision.mode == ROUTE_TOOL_REQUIRED:
+                direct_requests = direct_tool_requests_for_decision(decision, registry, latest_user_text(messages))
+                subset = ToolSubsetRegistry(registry, decision.selected_tool_names, include_always=False)
+                if direct_requests:
+                    return answer_with_tool_requests(config, [dict(message) for message in messages], subset, direct_requests)
+                return chat_with_json_tools(config, messages, subset)
+            if decision.mode == ROUTE_UNCERTAIN and not decision.allow_remote_selector:
+                return final_chat_response(config, messages)
+            return chat_with_configured_tool_mode(config, messages, registry)
 
-    return final_chat_response(config, messages)
+        return final_chat_response(config, messages)
+    finally:
+        trace_mark_once("response_done")
+
+
+def chat_with_configured_tool_mode(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
+    if config.tool_mode == "hybrid":
+        return chat_with_hybrid_tools(config, messages, registry)
+    if config.tool_mode == "native":
+        return chat_with_native_tools(config, messages, registry)
+    if config.tool_mode == "native_stream":
+        return chat_with_native_streaming_tools(config, messages, registry)
+    return chat_with_json_tools(config, messages, registry)
+
+
+def confirmation_required_reply(tool_names: list[str]) -> str:
+    selected = ", ".join(tool_names) if tool_names else "that action"
+    return (
+        f"{selected} needs explicit approval before I run it because it can affect local or external state. "
+        "Tell me to approve the action and I will continue."
+    )
 
 
 def chat_with_json_tools(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> str:
@@ -198,7 +246,14 @@ def answer_with_tool_requests(
     registry: Any,
     requests: list[dict[str, Any]],
 ) -> str:
+    trace_mark("tool_execution_started", selected_tools=[request.get("name", "") for request in requests])
     results = execute_tool_requests(registry, requests)
+    trace_mark("tool_execution_done")
+    direct_answer = grounded_direct_tool_answer(results)
+    if direct_answer:
+        if config.stream:
+            print(direct_answer)
+        return direct_answer
     working_messages.append(
         {
             "role": "user",
@@ -210,6 +265,44 @@ def answer_with_tool_requests(
         }
     )
     return final_chat_response(config, working_messages)
+
+
+def grounded_direct_tool_answer(results: list[dict[str, Any]]) -> str:
+    if not env_bool("JARVIS_DETERMINISTIC_WEB_SEARCH_RESULTS", True):
+        return ""
+    if not results or any(result.get("name") != "web_search" for result in results):
+        return ""
+    parts: list[str] = []
+    for result in results:
+        payload = result.get("result")
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            error = payload.get("error") if isinstance(payload, dict) else ""
+            return f"Search did not return usable evidence. {error}".strip()
+        search_result = payload.get("result")
+        if not isinstance(search_result, dict):
+            return "Search did not return usable evidence."
+        if not search_result.get("evidence_ok"):
+            return "Search did not return enough current evidence to answer safely."
+        query = search_result.get("query", "")
+        fetched_at = search_result.get("fetched_at_utc", "")
+        source_rows = search_result.get("results", [])
+        if not isinstance(source_rows, list) or not source_rows:
+            return "Search did not return enough current evidence to answer safely."
+        heading = "I found current source results"
+        if isinstance(query, str) and query.strip():
+            heading += f" for {query.strip()}"
+        if isinstance(fetched_at, str) and fetched_at.strip():
+            heading += f" (fetched {fetched_at.strip()})"
+        parts.append(heading + ". I will not infer details beyond these titles without opening the pages:")
+        for index, row in enumerate(source_rows[:5], start=1):
+            if not isinstance(row, dict):
+                continue
+            title = str(row.get("title", "")).strip() or "Untitled result"
+            url = str(row.get("url", "")).strip()
+            parts.append(f"{index}. {title}" + (f" - {url}" if url else ""))
+    if parts:
+        parts.append("For a real summary, ask me to open/extract the top sources with the browser controller.")
+    return "\n".join(parts).strip()
 
 
 def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -300,6 +393,7 @@ def collect_tool_decision(
             return [], ""
     for index in range(passes):
         planner_messages = tool_planner_messages(messages, planner_registry)
+        trace_mark("planner_started")
         data = post_json(
             config,
             {
@@ -310,6 +404,7 @@ def collect_tool_decision(
                 "stream": False,
             },
         )
+        trace_mark("planner_done")
         message = extract_choice_message(data)
         content = message_content(message)
         parsed_requests = parse_tool_requests(content, planner_registry)
@@ -432,6 +527,7 @@ def select_planner_tool_decision(
         },
     ]
     try:
+        trace_mark("selector_started")
         data = post_json(
             selector_request_config(config),
             {
@@ -442,7 +538,9 @@ def select_planner_tool_decision(
                 "stream": False,
             },
         )
+        trace_mark("selector_done")
     except NimChatError:
+        trace_mark("selector_done", fallback=True)
         return fallback_selector_tool_names(registry), "", []
 
     content = message_content(extract_choice_message(data))
@@ -460,8 +558,14 @@ def select_planner_tool_decision(
 
 
 def selector_request_config(config: JarvisConfig) -> JarvisConfig:
-    timeout = env_int("TOOL_PLANNER_SELECTOR_TIMEOUT_SECONDS", min(config.timeout_seconds, 8))
-    clean_timeout = max(1, min(timeout, config.timeout_seconds))
+    timeout_ms = env_int("JARVIS_SELECTOR_TIMEOUT_MS", 700)
+    legacy_seconds = env_value("TOOL_PLANNER_SELECTOR_TIMEOUT_SECONDS")
+    if legacy_seconds:
+        try:
+            timeout_ms = int(float(legacy_seconds) * 1000)
+        except ValueError:
+            timeout_ms = 700
+    clean_timeout = max(0.1, min(timeout_ms / 1000.0, float(config.timeout_seconds)))
     return replace(config, timeout_seconds=clean_timeout, retry_attempts=0)
 
 
@@ -730,6 +834,7 @@ def collect_native_stream_tool_decision(
     direct_requests = getattr(selected_registry, "direct_requests", [])
     if isinstance(direct_requests, list) and direct_requests:
         return direct_requests, ""
+    trace_mark("planner_started")
     payload = {
         "model": config.model,
         "messages": messages_with_tool_skill_context(messages, selected_registry),
@@ -740,6 +845,8 @@ def collect_native_stream_tool_decision(
         "tool_choice": "auto",
         "parallel_tool_calls": env_bool("NIM_PARALLEL_TOOL_CALLS", True),
     }
+    trace_mark_once("first_model_request_started")
+    trace_model_call()
     request = urllib.request.Request(
         config.chat_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -751,7 +858,9 @@ def collect_native_stream_tool_decision(
         method="POST",
     )
     with open_url_with_retries(config, request) as response:
-        return read_native_tool_stream(response, selected_registry, emit_output=emit_output)
+        result = read_native_tool_stream(response, selected_registry, emit_output=emit_output)
+    trace_mark("planner_done")
+    return result
 
 
 def read_native_tool_stream(response: Any, registry: Any, emit_output: bool = True) -> tuple[list[dict[str, Any]], str]:
@@ -867,6 +976,7 @@ def collect_native_tool_decision(
         return direct_requests, ""
     tool_schemas = selected_registry.openai_tools()
 
+    trace_mark("planner_started")
     data = post_json(
         config,
         {
@@ -880,6 +990,7 @@ def collect_native_tool_decision(
             "parallel_tool_calls": env_bool("NIM_PARALLEL_TOOL_CALLS", True),
         },
     )
+    trace_mark("planner_done")
     message = extract_choice_message(data)
     tool_calls = message.get("tool_calls")
     if not isinstance(tool_calls, list) or not tool_calls:
@@ -915,13 +1026,30 @@ def parse_native_arguments(arguments: Any) -> dict[str, Any]:
 
 
 def json_tool_protocol(registry: Any) -> str:
-    template = load_text_file(Path(env_value("JARVIS_TOOL_PROTOCOL_FILE", "prompts/tool_protocol.txt")))
     tools = registry.planner_tools() if hasattr(registry, "planner_tools") else registry.openai_tools()
+    if isinstance(registry, ToolSubsetRegistry) and env_bool("JARVIS_COMPACT_SELECTED_TOOL_PROTOCOL", True):
+        return compact_tool_protocol(tools, registry_tool_skill_context(registry))
+    template = load_text_file(Path(env_value("JARVIS_TOOL_PROTOCOL_FILE", "prompts/tool_protocol.txt")))
     protocol = template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True, separators=(",", ":")))
     skill_context = registry_tool_skill_context(registry)
     if skill_context:
         return protocol.rstrip() + "\n\n" + skill_context
     return protocol
+
+
+def compact_tool_protocol(tools: list[dict[str, Any]], skill_context: str) -> str:
+    parts = [
+        "Local tool planner.",
+        "Return JSON only; do not answer in prose.",
+        'Use {"tool_calls":[]} when none of these selected tools are needed.',
+        'Use {"name":"tool_name","parameters":{}} or {"tool_calls":[{"name":"tool_name","parameters":{}}]} when a selected tool is needed.',
+        "Use exact user-provided parameter values. Do not invent placeholders.",
+        "Selected tool schemas:",
+        json.dumps(tools, ensure_ascii=True, separators=(",", ":")),
+    ]
+    if skill_context:
+        parts.append(skill_context)
+    return "\n".join(parts)
 
 
 def messages_with_tool_skill_context(messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
@@ -1165,6 +1293,7 @@ def public_result_payload(payload: Any) -> Any:
 
 
 def final_chat_response(config: JarvisConfig, messages: list[dict[str, Any]]) -> str:
+    trace_mark("final_model_started")
     payload = {
         "model": config.model,
         "messages": messages,
@@ -1176,12 +1305,19 @@ def final_chat_response(config: JarvisConfig, messages: list[dict[str, Any]]) ->
         if config.stream_mode == "native":
             return post_stream(config, payload)
         content = extract_message(post_json(config, payload))
+        trace_mark_once("first_model_token")
+        trace_mark_once("final_first_token")
         write_synthetic_stream(config, content)
         return content
-    return extract_message(post_json(config, payload))
+    content = extract_message(post_json(config, payload))
+    trace_mark_once("first_model_token")
+    trace_mark_once("final_first_token")
+    return content
 
 
 def post_stream(config: JarvisConfig, payload: dict[str, Any]) -> str:
+    trace_mark_once("first_model_request_started")
+    trace_model_call()
     request = urllib.request.Request(
         config.chat_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -1208,6 +1344,8 @@ def write_synthetic_stream(config: JarvisConfig, content: str) -> None:
 
 
 def post_json(config: JarvisConfig, payload: dict[str, Any]) -> dict[str, Any]:
+    trace_mark_once("first_model_request_started")
+    trace_model_call()
     request = urllib.request.Request(
         config.chat_url,
         data=json.dumps(payload).encode("utf-8"),
@@ -1301,6 +1439,8 @@ def read_streaming_response(response: Any) -> str:
         data = json.loads(data_line)
         token = stream_token(data)
         if token:
+            trace_mark_once("first_model_token")
+            trace_mark_once("final_first_token")
             print(token, end="", flush=True)
             full_text += token
 

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 
 from extension_system import ExtensionCatalog, load_extension_catalog
 from jarvis_nim import JarvisConfig, NimChatError, chat_once, load_dotenv
+from latency_trace import LatencyTrace, latency_debug_enabled, trace_mark, use_latency_trace
+from local_router import ROUTE_DIRECT_CHAT, route_chat_turn
 from memory_system import MemoryConfig, load_memory_context, memory_system_message, remember_chat
 from skill_system import load_global_skill_context
 from tools import discover_tools
@@ -63,6 +66,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--voice-listen-test", action="store_true", help="Listen once from the microphone and print the transcript.")
     parser.add_argument("--list-tools", action="store_true", help="List registered local tools.")
     parser.add_argument("--list-extensions", action="store_true", help="List enabled Jarvis extensions.")
+    parser.add_argument("--latency-debug", action="store_true", help="Print per-stage latency trace for this CLI run.")
+    parser.add_argument("--latency-benchmark", action="store_true", help="Run built-in Jarvis latency benchmark prompts.")
     return parser
 
 
@@ -80,14 +85,20 @@ def build_messages(
     extension_catalog: ExtensionCatalog,
     user_text: str = "",
 ) -> list[dict[str, str]]:
-    capability_text = build_capability_context(config, registry, extension_catalog)
+    route_decision = route_chat_turn(user_text, [], registry) if user_text else None
+    direct_chat = route_decision is not None and route_decision.mode == ROUTE_DIRECT_CHAT
+    include_tools = not (direct_chat and env_bool("JARVIS_DIRECT_CHAT_SKIP_TOOLS", True))
+    capability_text = build_capability_context(config, registry, extension_catalog, include_tools=include_tools)
     messages = [config.system_message(capability_text)]
+    trace_mark("memory_started")
     memory_message = memory_system_message(load_memory_context(memory_config))
     if memory_message is not None:
         messages.append(memory_message)
-    vector_message = vector_memory_system_message(user_text, memory_config, config)
-    if vector_message is not None:
-        messages.append(vector_message)
+    if not (direct_chat and env_bool("JARVIS_DIRECT_CHAT_SKIP_VECTOR_MEMORY", True)):
+        vector_message = vector_memory_system_message(user_text, memory_config, config)
+        if vector_message is not None:
+            messages.append(vector_message)
+    trace_mark("memory_done")
     return messages
 
 
@@ -103,9 +114,14 @@ def vector_memory_system_message(
     return {"role": "system", "content": context}
 
 
-def build_capability_context(config: JarvisConfig, registry, extension_catalog: ExtensionCatalog) -> str:
+def build_capability_context(
+    config: JarvisConfig,
+    registry,
+    extension_catalog: ExtensionCatalog,
+    include_tools: bool = True,
+) -> str:
     parts: list[str] = []
-    if config.auto_tools:
+    if config.auto_tools and include_tools:
         parts.append(registry.capability_text())
     extension_prompt = extension_catalog.prompt_context()
     if extension_prompt:
@@ -136,14 +152,19 @@ def interactive_speech_command(text: str, current_enabled: bool, voice_config: V
 def one_shot(config: JarvisConfig, text: str, registry, memory_config: MemoryConfig) -> None:
     voice_config = VoiceConfig.from_env()
     extension_catalog = load_extension_catalog()
-    messages = [
-        *build_messages(config, registry, memory_config, extension_catalog, text),
-        {"role": "user", "content": text},
-    ]
-    print(f"{config.assistant_name}:")
-    reply = chat_once(config, messages, registry)
+    trace = LatencyTrace(enabled=True)
+    trace.mark("request_received")
+    with use_latency_trace(trace):
+        messages = [
+            *build_messages(config, registry, memory_config, extension_catalog, text),
+            {"role": "user", "content": text},
+        ]
+        print(f"{config.assistant_name}:")
+        reply = chat_once(config, messages, registry)
     if should_print_reply(config):
         print(reply)
+    if latency_debug_enabled():
+        print_latency_trace(trace)
     if voice_config.tts_speak_oneshot:
         speak_text_blocking(voice_config, reply)
     remember_chat(memory_config, config, text, reply)
@@ -193,18 +214,24 @@ def interactive(config: JarvisConfig, registry, memory_config: MemoryConfig) -> 
                 continue
 
             turn_messages = [*messages]
-            vector_message = vector_memory_system_message(text, memory_config, config)
-            if vector_message is not None:
-                turn_messages.append(vector_message)
+            if not direct_chat_should_skip_vector(text, registry):
+                vector_message = vector_memory_system_message(text, memory_config, config)
+                if vector_message is not None:
+                    turn_messages.append(vector_message)
             turn_messages.append({"role": "user", "content": text})
             print(f"{config.assistant_name}: ", end="", flush=True)
             try:
-                reply = chat_once(config, turn_messages, registry)
+                trace = LatencyTrace(enabled=True)
+                trace.mark("request_received")
+                with use_latency_trace(trace):
+                    reply = chat_once(config, turn_messages, registry)
             except NimChatError as error:
                 print(str(error))
                 continue
             if should_print_reply(config):
                 print(reply)
+            if latency_debug_enabled():
+                print_latency_trace(trace)
             if speech_enabled:
                 speaker.say(reply)
             messages.append({"role": "user", "content": text})
@@ -275,6 +302,13 @@ def main() -> int:
             print_env_check(config, len(registry.visible_tools()))
             return 0
 
+        if args.latency_debug:
+            os.environ["JARVIS_LATENCY_DEBUG"] = "true"
+
+        if args.latency_benchmark:
+            run_latency_benchmark(config, registry, memory_config)
+            return 0
+
         text = args.message_option or " ".join(args.message).strip()
         if text:
             one_shot(config, text, registry, memory_config)
@@ -288,6 +322,68 @@ def main() -> int:
     except VoiceError as error:
         print(str(error), file=sys.stderr)
         return 1
+
+
+def direct_chat_should_skip_vector(text: str, registry) -> bool:
+    if not env_bool("JARVIS_DIRECT_CHAT_SKIP_VECTOR_MEMORY", True):
+        return False
+    return route_chat_turn(text, [], registry).mode == ROUTE_DIRECT_CHAT
+
+
+def print_latency_trace(trace: LatencyTrace) -> None:
+    summary = trace.finish()
+    print(
+        "Latency trace: "
+        f"route={summary['route_mode'] or 'unknown'} "
+        f"tools={summary['selected_tools']} "
+        f"models={summary['model_calls']} "
+        f"first_token_ms={summary['first_token_ms']} "
+        f"total_ms={summary['total_ms']}"
+    )
+    for event in summary["events"]:
+        print(f"  {event['elapsed_ms']}ms {event['stage']}")
+
+
+def run_latency_benchmark(config: JarvisConfig, registry, memory_config: MemoryConfig) -> None:
+    prompts = [
+        "hi bud",
+        "explain what recursion is",
+        "rewrite this sentence: this app is very fast now",
+        "what is today's date",
+        "list my current directory",
+    ]
+    if any(tool.name == "web_search" for tool in registry.visible_tools()):
+        prompts.append("search web for latest AI news")
+    extension_catalog = load_extension_catalog()
+    print("prompt | route | tools | model_calls | first_token_ms | total_ms | selector_ms | planner_ms | tool_ms | final_model_ms")
+    for prompt in prompts:
+        trace = LatencyTrace(enabled=True)
+        trace.mark("request_received")
+        with use_latency_trace(trace):
+            messages = [
+                *build_messages(config, registry, memory_config, extension_catalog, prompt),
+                {"role": "user", "content": prompt},
+            ]
+            import contextlib
+            import io
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                chat_once(config, messages, registry)
+        summary = trace.finish()
+        stages = summary["stage_ms"]
+        print(
+            f"{prompt} | {summary['route_mode'] or 'unknown'} | {','.join(summary['selected_tools']) or '-'} | "
+            f"{summary['model_calls']} | {summary['first_token_ms']} | {summary['total_ms']} | "
+            f"{stages.get('selector_ms', 0)} | {stages.get('planner_ms', 0)} | "
+            f"{stages.get('tool_ms', 0)} | {stages.get('final_model_ms', 0)}"
+        )
+
+
+def env_bool(name: str, fallback: bool) -> bool:
+    value = os.environ.get(name, "").strip().lower()
+    if not value:
+        return fallback
+    return value in {"1", "true", "yes", "on"}
 
 
 if __name__ == "__main__":

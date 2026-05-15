@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import parse_qs, quote_plus, unquote, urljoin, urlparse
 import urllib.error
@@ -69,6 +70,8 @@ def web_search(params: dict[str, Any]) -> dict[str, Any]:
     results = parse_duckduckgo_results(html, count)
     return {
         "query": query,
+        "fetched_at_utc": datetime.now(timezone.utc).isoformat(),
+        "evidence_ok": bool(results),
         "count": len(results),
         "results": results,
         "summary": search_summary(query, results),
