@@ -155,8 +155,6 @@ Optional:
 - `JARVIS_TERMINAL_MAX_OUTPUT_CHARS`
 - `JARVIS_PATH_ALIASES_CONFIG`
 - `JARVIS_LIST_DIRECTORY_LIMIT`
-- `JARVIS_BROWSER_CONFIG`
-- `JARVIS_BROWSER_HEADLESS`
 - `JARVIS_EXTENSIONS_DIR`
 - `JARVIS_ENABLED_EXTENSIONS`
 - `JARVIS_DISABLED_EXTENSIONS`
@@ -167,16 +165,6 @@ Optional:
 - `TELEGRAM_ALLOWED_CHATS`
 - `TELEGRAM_WEBHOOK_URL`
 - `JARVIS_WEB_SEARCH_URL`
-- `JARVIS_RESEARCH_CONFIG`
-- `TAVILY_API_KEY`
-- `JARVIS_ENTERTAINMENT_CONFIG`
-- `JARVIS_ENTERTAINMENT_LIBRARY_DIR`
-- `JARVIS_ENTERTAINMENT_DRY_RUN_PLAYER`
-- `JARVIS_PRODUCTIVITY_CONFIG`
-- `JARVIS_PRODUCTIVITY_DRY_RUN`
-- `GOOGLE_OAUTH_CLIENT_SECRETS`
-- `GMAIL_TOKEN_FILE`
-- `GOOGLE_CALENDAR_TOKEN_FILE`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
 - `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
@@ -259,7 +247,7 @@ TTS uses NVIDIA Riva/NVCF streaming synthesis with the configured voice profile.
 
 TTS runs in a background speaker thread during interactive chat, so text streaming remains the fast path. If Space is pressed while Jarvis is still talking, the mic waits until speech output is idle plus a short cooldown before recording, which prevents Jarvis from listening to its own voice.
 
-Long spoken replies are split before they reach NVIDIA TTS, and speech output removes raw paths/URLs so music downloads do not get read as `C colon slash...`.
+Long spoken replies are split before they reach NVIDIA TTS, and speech output removes raw paths/URLs so local paths do not get read as `C colon slash...`.
 
 ## Tools
 
@@ -272,17 +260,9 @@ Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvi
 Current tools:
 
 - `calculate`
-- `browser_status`
-- `calendar_api`
 - `compare_text`
 - `fetch_url_text`
 - `document_extract_text`
-- `entertainment_config`
-- `entertainment_download`
-- `entertainment_play`
-- `entertainment_playlist`
-- `entertainment_search`
-- `entertainment_status`
 - `extract_url_content`
 - `generate_uuid`
 - `get_current_datetime`
@@ -294,23 +274,6 @@ Current tools:
 - `hash_text`
 - `jarvis_latency_probe`
 - `list_directory`
-- `productivity_status`
-- `productivity_config`
-- `github_manage`
-- `gmail_api`
-- `calendar_api`
-- `research_status`
-- `research_config`
-- `research_plan`
-- `research_search`
-- `research_fetch_sources`
-- `research_rank_sources`
-- `research_extract_claims`
-- `research_verify_claims`
-- `research_synthesize`
-- `research_save`
-- `research_watchlist`
-- `research_run`
 - `run_terminal`
 - `run_jarvis_qa`
 - `read_text_file`
@@ -359,48 +322,6 @@ When Jarvis creates or locates a report, dossier, chart, document, archive, or a
 
 Voice notes are downloaded and converted through the configured `ffmpeg_command`, then transcribed with the existing NVIDIA STT path when `voice_transcription` is true. If STT is not configured, Telegram replies with that grounded reason instead of pretending it heard the message.
 
-## Research Agent
-
-`research-agent` is an extension-backed specialist named Jarvis Research Agent. Its tools are registered from `extensions/research-agent/extension.json`; behavior lives in `extensions/research-agent/prompts/research-agent.txt`, `extensions/research-agent/skills/research/SKILL.txt`, and `config/research_agent.json`.
-
-The agent runs an evidence pipeline: plan, multi-query search, source fetch, source ranking, claim extraction, claim verification, evidence synthesis, dossier saving, and watchlist updates. `research_run` performs the whole local pipeline for quick briefings, while the stage tools are available for deep or audited research.
-
-The config owns source policy, query families, provider order, quality limits, scoring weights, and research storage paths. `TAVILY_API_KEY` enables Tavily search when present; DuckDuckGo HTML search remains the fallback. Dossiers and cache files are stored under ignored `memory/research/` runtime folders.
-
-Try:
-
-```powershell
-python main.py --message "Research AI agents from the last week. Give me top developments, confidence labels, and sources."
-python main.py --message "Give me verified headlines on Israel and US diplomacy in the Middle East from the last 24 hours."
-python main.py --message "Track NVIDIA AI chip news weekly and save it to my research watchlist."
-```
-
-## Browser Agent
-
-`browser-agent` is an extension-backed specialist named Codex Browser Agent. Its tools are registered from `extensions/browser-agent/extension.json`, with settings in `config/browser_agent.json`.
-
-The agent can open URLs, run browser searches, inspect page text, click visible text, type into page fields, press keys, save screenshots, and close its browser session. It uses Playwright with a configured Chrome or Edge executable, and its browser profile/screenshots live under `media/` by default so local browsing state is not committed.
-
-## Entertainment Agent
-
-`entertainment-agent` is an extension-backed specialist named Codex Entertainment Agent. Its tools are registered from `extensions/entertainment-agent/extension.json`; the chat loop does not change when the agent gains or loses tools.
-
-The agent can search music with yt-dlp, download songs into the configured local library, play cached songs without downloading again, manage favorites/playlists in `config/entertainment_agent.json`, and control queue operations such as next, previous, stop, and clear.
-
-Default music files and playback state live under `media/music/`, which is ignored by git. Change `library_dir` in `config/entertainment_agent.json` or set `JARVIS_ENTERTAINMENT_LIBRARY_DIR` to use another folder.
-
-The entertainment prompt and skill explicitly treat Hindi, Haryanvi, Punjabi, Hinglish, and English requests as normal music requests. Jarvis should preserve the user's wording, search with the requested language context, and prefer the already downloaded local file when the same song is requested again.
-
-## Productivity Agent
-
-`productivity-agent` is an extension-backed specialist named Codex Productivity Agent. It registers GitHub, Gmail, and Google Calendar tools from `extensions/productivity-agent/extension.json`.
-
-GitHub operations use the local authenticated `gh` CLI. `gmail_api` and `calendar_api` use OAuth-backed Google APIs for Gmail auth/list/read/send/draft and Calendar auth/list/read/create.
-
-Google OAuth client secrets and tokens are config/env driven. Defaults point at `config/google/client_secret.json`, `media/google/gmail_token.json`, and `media/google/calendar_token.json`; token files live under ignored `media/` by default.
-
-The agent is grounded: it should not claim private Gmail content was read or a Calendar event was created unless a tool result proves that action.
-
 ## Memory
 
 Jarvis reads durable memory on every turn. You can write stable details directly in `memory/user.txt`; Jarvis stores extracted chat memory in `memory/extracted.txt`.
@@ -441,7 +362,3 @@ Current bundled extensions:
 - `content-tools`
 - `workspace`
 - `diagnostics`
-- `browser-agent`
-- `entertainment-agent`
-- `productivity-agent`
-- `research-agent`

@@ -19,21 +19,6 @@ export type DashboardState = {
     streaming: boolean;
     tools: number;
   };
-  music: {
-    status: string;
-    title: string;
-    artist: string;
-    source: string;
-    backend: string;
-    volume: number;
-    queue_length: number;
-    library_tracks: number;
-    duration_seconds: number | null;
-    elapsed_seconds: number;
-    progress_percent: number;
-    running: boolean;
-    detail: string;
-  };
 };
 
 export async function streamAssistantReply(

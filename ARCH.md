@@ -2,7 +2,7 @@
 
 This document is the architecture map for the Jarvis NIM Python assistant in this workspace. It explains what Jarvis is, how it boots, how it thinks, how tools get registered, how extensions/skills/memory/voice work, and where to add future capabilities without changing the core chat loop.
 
-No secrets are documented here. API keys, OAuth tokens, Instagram credentials, browser profiles, generated audio, downloaded music, and memory indexes stay in ignored local files.
+No secrets are documented here. API keys, OAuth tokens, generated audio, Telegram files, and memory indexes stay in ignored local files.
 
 ## What Jarvis Is
 
@@ -280,12 +280,9 @@ Current live extensions:
 
 | Extension | Tools | Skill Roots | Purpose |
 |---|---:|---:|---|
-| `browser-agent` | 2 | 1 | Playwright browser control. |
 | `content-tools` | 2 | 1 | Text transformations and comparison. |
 | `diagnostics` | 1 | 1 | Jarvis latency checks. |
-| `entertainment-agent` | 7 | 1 | Music search/download/playlists/queue. |
 | `memory-wiki` | 8 | 1 | TXT-backed knowledge vault. |
-| `productivity-agent` | 5 | 1 | GitHub, Gmail API, Google Calendar API. |
 | `qa` | 1 | 1 | Jarvis QA/test runner. |
 | `skill-workshop` | 1 | 1 | Create/read/update reusable skills. |
 | `web` | 3 | 1 | Web search/fetch/readability tools. |
@@ -444,12 +441,11 @@ Speech text is sanitized before TTS:
 - `compare_text`
 - `document_extract_text`
 
-### Web And Browser
+### Web
 
 - `web_search`
 - `fetch_url_text`
 - `extract_url_content`
-- `browser_status`
 
 ### Memory And Wiki
 
@@ -462,38 +458,6 @@ Speech text is sanitized before TTS:
 - `memory_vector_reindex`
 - `memory_vector_search`
 
-### Entertainment Agent
-
-- `entertainment_status`
-- `entertainment_search`
-- `entertainment_download`
-- `entertainment_play`
-- `entertainment_playlist`
-- `entertainment_config`
-
-### Productivity Agent
-
-- `productivity_status`
-- `productivity_config`
-- `github_manage`
-- `gmail_api`
-- `calendar_api`
-
-### Research Agent
-
-- `research_status`
-- `research_config`
-- `research_plan`
-- `research_search`
-- `research_fetch_sources`
-- `research_rank_sources`
-- `research_extract_claims`
-- `research_verify_claims`
-- `research_synthesize`
-- `research_save`
-- `research_watchlist`
-- `research_run`
-
 ### QA And Diagnostics
 
 - `run_jarvis_qa`
@@ -501,27 +465,6 @@ Speech text is sanitized before TTS:
 - `skill_workshop`
 
 ## Agent Extensions
-
-### Browser Agent
-
-Files:
-
-- `extensions/browser-agent/extension.json`
-- `tools/browser_agent.py`
-- `config/browser_agent.json`
-
-Capabilities:
-
-- Open URLs.
-- Search the web through a browser.
-- Read page snapshots.
-- Click visible text.
-- Type into fields.
-- Press keys.
-- Save screenshots.
-- Close browser session.
-
-It uses Playwright and a configured Chrome/Edge executable. Browser profile and screenshots live under ignored `media/`.
 
 ### Telegram Bot
 
@@ -539,93 +482,6 @@ Capabilities:
 - Accept text, document, photo, audio, and voice-note inputs.
 - Queue and send local files to the current Telegram chat through runtime-only Telegram helper tools.
 - Keep chat work non-blocking by running the synchronous `chat_once(...)` call in a thread executor.
-
-### Entertainment Agent
-
-Files:
-
-- `extensions/entertainment-agent/extension.json`
-- `tools/entertainment_agent.py`
-- `config/entertainment_agent.json`
-
-Capabilities:
-
-- Search songs/music videos with `yt-dlp`.
-- Download to local music library.
-- Reuse cached tracks instead of downloading again.
-- Play tracks.
-- Manage playlists/favorites.
-- Control queue: play, add, next, previous, stop, clear.
-- Handle Hindi, Haryanvi, Punjabi, Hinglish, and English requests as normal music requests.
-
-Generated music and local state live under ignored `media/music/` and config/runtime state.
-
-### Productivity Agent
-
-Files:
-
-- `extensions/productivity-agent/extension.json`
-- `tools/productivity_agent.py`
-- `tools/google_auth.py`
-- `config/productivity_agent.json`
-
-Capabilities:
-
-- GitHub through authenticated `gh` CLI:
-  - auth status
-  - repo view
-  - issue list
-  - PR list
-  - workflow runs
-  - notifications
-  - issue creation
-- Gmail through OAuth-backed Gmail API:
-  - auth status
-  - auth login
-  - list messages
-  - read message
-  - send
-  - draft
-- Google Calendar through OAuth-backed Calendar API:
-  - auth status
-  - auth login
-  - list events
-  - get event
-  - create event
-
-Gmail and Calendar browser URL fallback tools are not registered in the assistant surface. Jarvis uses API-backed tools for private Gmail/Calendar data.
-
-Tokens live under ignored `media/google/`. Google client secrets live under ignored `config/google/`.
-
-### Research Agent
-
-Files:
-
-- `extensions/research-agent/extension.json`
-- `extensions/research-agent/prompts/research-agent.txt`
-- `extensions/research-agent/skills/research/SKILL.txt`
-- `tools/research_agent.py`
-- `config/research_agent.json`
-- `memory/research/`
-
-Capabilities:
-
-- `research_status` inspects readiness, providers, source policies, and watchlists.
-- `research_config` reads or updates source policy, query families, limits, scoring, and storage paths.
-- `research_plan` builds the structured brief: topic, normalized topic, mode, quality, time window, source policy, source types, success criteria, and query families.
-- `research_search` runs multiple configured searches and deduplicates URLs.
-- `research_fetch_sources` reads real pages and extracts title, publisher, author, dates, text, and links.
-- `research_rank_sources` scores authority, recency, primary-source value, content depth, and risk flags from config.
-- `research_extract_claims` turns source text into bounded claim candidates attached to sources and evidence quotes.
-- `research_verify_claims` counts independent supporting publishers and assigns confidence.
-- `research_synthesize` returns a structured evidence pack so the final model response is natural, not a canned template.
-- `research_save` writes local research dossiers and evidence caches.
-- `research_watchlist` stores recurring research topics.
-- `research_run` runs the full local pipeline in one tool call for lower-latency briefings.
-
-Design rule:
-
-The research agent is not a prompt hack in the core loop. It is extension-owned: manifest registration decides the tool surface, prompt TXT defines behavior, SKILL TXT defines workflow, config JSON owns source policy and query families, and runtime dossiers stay under ignored `memory/research/` folders.
 
 ### Memory Wiki
 
@@ -669,8 +525,7 @@ Jarvis is designed to avoid false claims:
 - Current date/time must come from `get_current_datetime`.
 - Weather must come from `get_weather`.
 - Local files/folders/system/version/app launches must come from tools.
-- Gmail/Calendar/Instagram state must come from their tools.
-- Current research and "latest" claims must come from current-turn research or web tools.
+- Current web and "latest" claims must come from current-turn web tools.
 - Memory is background context only, not evidence for current state.
 - Tool work is invisible to the user unless they ask for internals.
 - Final answers are generated from current-turn tool results.
@@ -697,7 +552,6 @@ Ignored local files include:
 - `memory/research/cache/`
 - `memory/research/watchlists.json`
 - `memory/research/runs.jsonl`
-- `config/google/`
 - `client_secret_*.json`
 - benchmark/result JSON files
 
@@ -706,14 +560,7 @@ Important private locations:
 | Path | Content |
 |---|---|
 | `.env` | Local API keys and account env vars. |
-| `config/google/client_secret.json` | Google OAuth client secret. |
-| `media/google/gmail_token.json` | Gmail OAuth token. |
-| `media/google/calendar_token.json` | Calendar OAuth token. |
-| `media/instagram/session.json` | Instagram session, when login succeeds. |
 | `media/telegram/` | Telegram sessions, uploads, downloads, outbox files, and optional per-user memory. |
-| `media/browser-profile/` | Browser agent profile state. |
-| `media/music/` | Downloaded music files. |
-| `memory/research/` | Local research dossiers, evidence caches, watchlists, and run logs. |
 
 Docs and reports should never include raw secrets.
 
@@ -745,16 +592,6 @@ Docs and reports should never include raw secrets.
 - `JARVIS_PATH_ALIASES_CONFIG`
 - `JARVIS_LIST_DIRECTORY_LIMIT`
 - `JARVIS_WEB_SEARCH_URL`
-- `JARVIS_RESEARCH_CONFIG`
-- `TAVILY_API_KEY`
-
-### Google/Productivity
-
-- `JARVIS_PRODUCTIVITY_CONFIG`
-- `JARVIS_PRODUCTIVITY_DRY_RUN`
-- `GOOGLE_OAUTH_CLIENT_SECRETS`
-- `GMAIL_TOKEN_FILE`
-- `GOOGLE_CALENDAR_TOKEN_FILE`
 
 ### Telegram
 
@@ -793,12 +630,9 @@ The current suite covers:
 - Parser behavior.
 - Terminal/background behavior.
 - Filesystem aliases.
-- Browser agent smoke behavior when dependencies exist.
 - Memory and vector memory helpers.
-- Google auth readiness and API mocks.
 - Voice config, TTS sanitization, speech chunks, STT parsing.
 - `/speakoff` and `/speakon`.
-- Gmail display text sanitization.
 - Streaming and native tool parser paths.
 - Telegram config, session pruning, response chunking, context-local helper functions, and file outbox delivery.
 
@@ -816,9 +650,6 @@ For user-facing behavior, live Jarvis CLI checks matter because unit tests alone
 ## Current Known Limits
 
 - Vector memory is off by default for normal chat to protect latency.
-- Gmail/Calendar require OAuth tokens and valid Google Cloud API setup.
-- Browser control depends on Playwright and a local Chrome/Edge executable.
-- Music download/playback depends on `yt-dlp` and a playable local media environment.
 - Voice depends on NVIDIA Riva/NVCF function IDs and local audio packages.
 - Telegram voice-note transcription also depends on a working audio converter such as ffmpeg.
 

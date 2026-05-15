@@ -350,7 +350,7 @@ class TelegramBotToolTests(unittest.TestCase):
             payload = json.dumps(
                 {
                     "ok": True,
-                    "tool": "research_run",
+                    "tool": "run_jarvis_qa",
                     "result": {"rendered_report": {"output_path": str(source)}},
                 }
             )
