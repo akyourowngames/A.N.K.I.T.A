@@ -364,9 +364,9 @@ def rms(samples: object) -> float:
 def speech_threshold(noise_levels: list[float], base_threshold: float, min_speech_rms: float, multiplier: float) -> float:
     threshold = max(0.0, base_threshold, min_speech_rms)
     if noise_levels:
-        import numpy as np
+        from statistics import median
 
-        noise_floor = float(np.median(noise_levels))
+        noise_floor = float(median(noise_levels))
         threshold = max(threshold, noise_floor * max(1.0, multiplier))
     return threshold
 

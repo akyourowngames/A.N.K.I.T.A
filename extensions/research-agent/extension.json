@@ -462,7 +462,7 @@
     },
     {
       "name": "research_run",
-      "description": "Run the full local research pipeline for a topic: plan, multi-query search, fetch, rank, extract claims, verify, synthesize evidence, optionally save a dossier, and optionally render a report through the shared compiler.",
+      "description": "Run the full local research pipeline for a topic: plan, multi-query search, fetch, rank, extract claims, verify, synthesize evidence, and optionally save a dossier.",
       "parameters": {
         "type": "object",
         "properties": {
@@ -521,24 +521,6 @@
           "save": {
             "type": "boolean",
             "description": "Save the evidence pack as a local dossier."
-          },
-          "render_format": {
-            "type": "string",
-            "enum": [
-              "md",
-              "txt",
-              "docx",
-              "pdf"
-            ],
-            "description": "Optional report file format to render through the shared report compiler."
-          },
-          "render_template": {
-            "type": "string",
-            "description": "Optional report compiler template."
-          },
-          "output_path": {
-            "type": "string",
-            "description": "Optional output path for the rendered report."
           }
         },
         "required": [

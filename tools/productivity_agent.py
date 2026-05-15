@@ -456,7 +456,7 @@ def google_auth_status_text(label: str, status: dict[str, Any]) -> str:
     deps = status.get("dependencies") if isinstance(status.get("dependencies"), dict) else {}
     missing_deps = [name for name, available in deps.items() if not available]
     if missing_deps:
-        return f"{label} is not ready. Missing Google API libraries: {', '.join(missing_deps)}."
+        return f"{label} is not connected yet. Missing Google API libraries: {', '.join(missing_deps)}."
     if status.get("ready"):
         return f"{label} is connected and ready for API calls."
     missing = []

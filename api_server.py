@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from jarvis_nim import load_dotenv
 from web_assistant import WebAssistantRuntime
-from tools.entertainment_agent import entertainment_context, entertainment_status
+from tools.entertainment_agent import entertainment_status
 
 load_dotenv(Path.cwd() / ".env")
 
@@ -62,14 +62,6 @@ def health() -> dict[str, Any]:
         return get_runtime().health()
     except Exception as error:
         return {"ok": False, "error": str(error)}
-
-
-@app.get("/api/entertainment/context")
-def entertainment_context_state() -> dict[str, Any]:
-    try:
-        return entertainment_context({"operation": "get"})
-    except Exception as error:
-        return {"action_completed": False, "error": str(error), "lastSearchResults": []}
 
 
 @app.get("/api/dashboard")

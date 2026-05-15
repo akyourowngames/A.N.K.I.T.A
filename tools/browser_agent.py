@@ -787,35 +787,6 @@ def browser_anti_detect(params: dict[str, Any] | None = None) -> dict[str, Any]:
     return {"summary": "Configured anti-detection script applied for future page loads.", "session_id": session.session_id, "applied": True}
 
 
-def browser_manage(params: dict[str, Any]) -> dict[str, Any]:
-    operation = require_text(params, "operation")
-    if operation == "open_url":
-        return browser_navigate({"url": require_text(params, "url"), "timeout_ms": params.get("timeout_ms")})
-    if operation == "search":
-        query = require_text(params, "query")
-        config = load_config()
-        url = build_url(str(config.get("search_url_template") or ""), {"query": query})
-        result = browser_navigate({"url": url, "timeout_ms": params.get("timeout_ms")})
-        result["query"] = query
-        result["summary"] = "Opened browser search."
-        return result
-    if operation == "snapshot":
-        text_result = browser_get_text({"max_chars": bounded_int(params.get("max_chars"), 4000, 1, 50000)})
-        text_result["summary"] = "Browser snapshot."
-        return text_result
-    if operation == "click_text":
-        return browser_click({"text": require_text(params, "text"), "timeout_ms": params.get("timeout_ms")})
-    if operation == "type_text":
-        return browser_type({"text": require_text(params, "text"), "selector": optional_text(params, "selector"), "clear": bool(params.get("clear", False)), "timeout_ms": params.get("timeout_ms")})
-    if operation == "press_key":
-        return browser_press_key({"key": require_text(params, "key")})
-    if operation == "screenshot":
-        return browser_screenshot({"path": optional_text(params, "path"), "full_page": bool(params.get("full_page", True))})
-    if operation == "close":
-        return browser_close({})
-    raise ToolInputError(f"Unsupported browser operation: {operation}")
-
-
 def browser_tabs(params: dict[str, Any] | None = None) -> dict[str, Any]:
     params = params or {}
     session = session_from_browser_target(params, allow_missing=True)

@@ -1,16 +1,4 @@
 {
-  "id": "telegram-bot",
-  "name": "Telegram Bot",
-  "description": "Telegram channel tools and runtime guidance for Jarvis.",
-  "prompt_files": [
-    "prompts/telegram-bot.txt"
-  ],
-  "skill_dirs": [
-    "skills"
-  ],
-  "env": [
-    "TELEGRAM_BOT_TOKEN"
-  ],
   "tools": [
     {
       "name": "telegram_status",

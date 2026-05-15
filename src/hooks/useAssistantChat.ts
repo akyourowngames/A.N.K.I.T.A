@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { fetchEntertainmentContext, streamAssistantReply, type EntertainmentContext } from "../lib/assistantClient";
+import { streamAssistantReply } from "../lib/assistantClient";
 
 export type AssistantPhase = "idle" | "thinking" | "responding" | "error";
 
@@ -14,7 +14,6 @@ export function useAssistantChat() {
   const [lastUserText, setLastUserText] = useState("");
   const [phase, setPhase] = useState<AssistantPhase>("idle");
   const [error, setError] = useState("");
-  const [entertainmentContext, setEntertainmentContext] = useState<EntertainmentContext | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem(SESSION_STORAGE_KEY);
@@ -29,11 +28,9 @@ export function useAssistantChat() {
       if (!text || phase === "thinking" || phase === "responding") {
         return;
       }
-      const submittedAt = Date.now();
       setInput("");
       setReply("");
       setError("");
-      setEntertainmentContext(null);
       setLastUserText(text);
       setPhase("thinking");
       let streamedReply = "";
@@ -53,12 +50,6 @@ export function useAssistantChat() {
             window.localStorage.setItem(SESSION_STORAGE_KEY, nextSessionId);
           }
           setReply(streamedReply || finalReply);
-          try {
-            const context = await fetchEntertainmentContext();
-            setEntertainmentContext(shouldShowEntertainmentContext(context, submittedAt) ? context : null);
-          } catch {
-            setEntertainmentContext(null);
-          }
           setPhase("idle");
         },
         onError(message) {
@@ -85,26 +76,10 @@ export function useAssistantChat() {
       lastUserText,
       phase,
       error,
-      entertainmentContext,
       isStreaming: phase === "thinking" || phase === "responding",
       submit,
       resetError
     }),
-    [entertainmentContext, error, input, lastUserText, phase, reply, resetError, submit]
+    [error, input, lastUserText, phase, reply, resetError, submit]
   );
-}
-
-function shouldShowEntertainmentContext(context: EntertainmentContext | null, submittedAt: number) {
-  if (!context?.lastSearchAt) {
-    return false;
-  }
-  const results = context.lastSearchResults ?? [];
-  if (results.length === 0) {
-    return false;
-  }
-  const updatedAt = Date.parse(context.lastSearchAt);
-  if (!Number.isFinite(updatedAt)) {
-    return false;
-  }
-  return updatedAt >= submittedAt - 1000;
 }

@@ -284,12 +284,10 @@ Current live extensions:
 | `content-tools` | 2 | 1 | Text transformations and comparison. |
 | `diagnostics` | 1 | 1 | Jarvis latency checks. |
 | `entertainment-agent` | 7 | 1 | Music search/download/playlists/queue. |
-| `instagram-agent` | 3 | 1 | Instagram readiness, config, session-based operations. |
 | `memory-wiki` | 8 | 1 | TXT-backed knowledge vault. |
 | `productivity-agent` | 5 | 1 | GitHub, Gmail API, Google Calendar API. |
 | `qa` | 1 | 1 | Jarvis QA/test runner. |
 | `skill-workshop` | 1 | 1 | Create/read/update reusable skills. |
-| `telegram-bot` | 3 | 1 | Telegram runtime status, session info, and current-chat file delivery. |
 | `web` | 3 | 1 | Web search/fetch/readability tools. |
 | `workspace` | 1 | 1 | Git/file/project inspection. |
 
@@ -452,13 +450,6 @@ Speech text is sanitized before TTS:
 - `fetch_url_text`
 - `extract_url_content`
 - `browser_status`
-- `browser_manage`
-
-### Telegram Channel
-
-- `telegram_status`
-- `telegram_session_info`
-- `telegram_send_file`
 
 ### Memory And Wiki
 
@@ -477,7 +468,6 @@ Speech text is sanitized before TTS:
 - `entertainment_search`
 - `entertainment_download`
 - `entertainment_play`
-- `entertainment_queue`
 - `entertainment_playlist`
 - `entertainment_config`
 
@@ -488,12 +478,6 @@ Speech text is sanitized before TTS:
 - `github_manage`
 - `gmail_api`
 - `calendar_api`
-
-### Instagram Agent
-
-- `instagram_status`
-- `instagram_config`
-- `instagram_manage`
 
 ### Research Agent
 
@@ -553,7 +537,7 @@ Capabilities:
 - Run Jarvis as a Telegram polling or webhook bot without wrapping the CLI loop.
 - Persist one chat-compatible session JSON per Telegram chat.
 - Accept text, document, photo, audio, and voice-note inputs.
-- Queue and send local files to the current Telegram chat through `telegram_send_file`.
+- Queue and send local files to the current Telegram chat through runtime-only Telegram helper tools.
 - Keep chat work non-blocking by running the synchronous `chat_once(...)` call in a thread executor.
 
 ### Entertainment Agent
@@ -612,27 +596,6 @@ Capabilities:
 Gmail and Calendar browser URL fallback tools are not registered in the assistant surface. Jarvis uses API-backed tools for private Gmail/Calendar data.
 
 Tokens live under ignored `media/google/`. Google client secrets live under ignored `config/google/`.
-
-### Instagram Agent
-
-Files:
-
-- `extensions/instagram-agent/extension.json`
-- `tools/instagram_agent.py`
-- `config/instagram_agent.json`
-
-Capabilities:
-
-- Read readiness/status.
-- Read/update config.
-- Save login session through `instagrapi`.
-- Read own account summary.
-- Read public/profile details.
-- Fetch recent posts.
-- Monitor configured profiles.
-- Prepare or run photo post, like, comment, and DM actions.
-
-`INSTAGRAM_DRY_RUN=true` keeps account actions prepared-only. Session files live under ignored `media/instagram/`.
 
 ### Research Agent
 
@@ -793,14 +756,6 @@ Docs and reports should never include raw secrets.
 - `GMAIL_TOKEN_FILE`
 - `GOOGLE_CALENDAR_TOKEN_FILE`
 
-### Instagram
-
-- `JARVIS_INSTAGRAM_CONFIG`
-- `INSTAGRAM_USERNAME`
-- `INSTAGRAM_PASSWORD`
-- `INSTAGRAM_SESSION_FILE`
-- `INSTAGRAM_DRY_RUN`
-
 ### Telegram
 
 - `JARVIS_TELEGRAM_CONFIG`
@@ -841,12 +796,11 @@ The current suite covers:
 - Browser agent smoke behavior when dependencies exist.
 - Memory and vector memory helpers.
 - Google auth readiness and API mocks.
-- Instagram readiness and dry-run behavior.
 - Voice config, TTS sanitization, speech chunks, STT parsing.
 - `/speakoff` and `/speakon`.
 - Gmail display text sanitization.
 - Streaming and native tool parser paths.
-- Telegram config, session pruning, response chunking, context-aware tools, and file outbox delivery.
+- Telegram config, session pruning, response chunking, context-local helper functions, and file outbox delivery.
 
 Live behavior checks use:
 
@@ -861,7 +815,6 @@ For user-facing behavior, live Jarvis CLI checks matter because unit tests alone
 
 ## Current Known Limits
 
-- Instagram uses `instagrapi`, which is unofficial and can trigger platform security checks. It should remain dry-run until a session is stable.
 - Vector memory is off by default for normal chat to protect latency.
 - Gmail/Calendar require OAuth tokens and valid Google Cloud API setup.
 - Browser control depends on Playwright and a local Chrome/Edge executable.

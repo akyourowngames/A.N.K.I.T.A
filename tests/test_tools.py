@@ -31,7 +31,6 @@ from tools.browser_agent import (
     browser_get_text,
     browser_intercept_start,
     browser_launch,
-    browser_manage,
     browser_media_extract,
     browser_media_state,
     browser_navigate,
@@ -79,7 +78,6 @@ from tools.entertainment_agent import (
 )
 from tools.filesystem_tools import display_name, get_file_info, list_directory, read_text_file, search_text_files
 from tools.google_auth import dependency_status
-from tools.instagram_agent import instagram_config, instagram_manage, instagram_status
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
 from tools.path_resolver import resolve_local_path
 from tools.productivity_agent import calendar_api, calendar_manage, display_text, github_manage, gmail_api, gmail_manage, productivity_config, productivity_status
@@ -142,7 +140,6 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("calculate", names)
         self.assertIn("browser_status", names)
         self.assertIn("browser", names)
-        self.assertIn("browser_manage", names)
         self.assertIn("browser_launch", names)
         self.assertIn("browser_snapshot", names)
         self.assertIn("browser_state", names)
@@ -183,33 +180,17 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertIn("workspace_inspect", names)
         self.assertIn("jarvis_latency_probe", names)
         self.assertIn("entertainment_status", names)
-        self.assertIn("entertainment_session", names)
-        self.assertIn("entertainment_library", names)
         self.assertIn("entertainment_search", names)
         self.assertIn("entertainment_download", names)
         self.assertIn("entertainment_play", names)
         self.assertIn("entertainment_stream_direct", names)
-        self.assertIn("entertainment_playback", names)
-        self.assertIn("entertainment_queue", names)
         self.assertIn("entertainment_playlist", names)
-        self.assertIn("entertainment_mood", names)
-        self.assertIn("entertainment_recommend", names)
-        self.assertIn("entertainment_lyrics", names)
-        self.assertIn("entertainment_radio", names)
-        self.assertIn("entertainment_podcast", names)
-        self.assertIn("entertainment_history", names)
-        self.assertIn("entertainment_equalizer", names)
-        self.assertIn("entertainment_metadata", names)
-        self.assertIn("entertainment_share", names)
         self.assertIn("entertainment_config", names)
         self.assertIn("productivity_status", names)
         self.assertIn("github_manage", names)
         self.assertIn("gmail_api", names)
         self.assertIn("calendar_api", names)
         self.assertIn("productivity_config", names)
-        self.assertIn("instagram_status", names)
-        self.assertIn("instagram_config", names)
-        self.assertIn("instagram_manage", names)
         self.assertIn("research_status", names)
         self.assertIn("research_plan", names)
         self.assertIn("research_run", names)
@@ -531,14 +512,13 @@ class ToolRegistryTests(unittest.TestCase):
             ):
                 try:
                     status = browser_status({})
-                    opened = browser_manage(
+                    opened = browser_navigate(
                         {
-                            "operation": "open_url",
                             "url": "data:text/html,<title>Jarvis Browser Test</title><main>Hello Browser Agent</main>",
                         }
                     )
-                    snapshot = browser_manage({"operation": "snapshot", "max_chars": 500})
-                    screenshot = browser_manage({"operation": "screenshot"})
+                    snapshot = browser_get_text({"max_chars": 500})
+                    screenshot = browser_screenshot({})
                     screenshot_exists = Path(screenshot["path"]).exists()
                 finally:
                     close_browser()
@@ -849,20 +829,16 @@ function chooseFrom(item) {
         extension_ids = [extension.id for extension in catalog.extensions]
         self.assertIn("web", extension_ids)
         self.assertIn("browser-agent", extension_ids)
-        self.assertIn("instagram-agent", extension_ids)
         self.assertIn("research-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser" for tool in catalog.tool_descriptors()))
-        self.assertTrue(any(tool.get("name") == "browser_manage" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser_workflow_start" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "browser_snapshot" for tool in catalog.tool_descriptors()))
-        self.assertTrue(any(tool.get("name") == "instagram_manage" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "gmail_api" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "calendar_api" for tool in catalog.tool_descriptors()))
         self.assertTrue(any(tool.get("name") == "research_run" for tool in catalog.tool_descriptors()))
         self.assertIn("Web And Document Tools", catalog.prompt_context())
         self.assertIn("Browser Agent Protocol", catalog.prompt_context())
-        self.assertIn("Instagram Agent Protocol", catalog.prompt_context())
         self.assertIn("Research Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
 
@@ -887,7 +863,6 @@ function chooseFrom(item) {
             context = load_skill_context(catalog, Path.cwd())
         self.assertIn("Skill: web-research", context)
         self.assertIn("Skill: browser-operator", context)
-        self.assertIn("Skill: instagram-operator", context)
         self.assertIn("Skill: jarvis-qa", context)
         self.assertIn("Skill: research", context)
 
@@ -1966,38 +1941,6 @@ function chooseFrom(item) {
         called_args = run_call.call_args.args[0]
         self.assertEqual(called_args[:3], ["gh", "repo", "view"])
         self.assertIn("--repo", called_args)
-
-    def test_instagram_agent_config_and_missing_dependency_are_grounded(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "instagram.json"
-            with patch.dict(os.environ, {"JARVIS_INSTAGRAM_CONFIG": str(config_path), "INSTAGRAM_DRY_RUN": "true"}, clear=False):
-                status = instagram_status({})
-                updated = instagram_config(
-                    {
-                        "operation": "update",
-                        "values": {
-                            "monitored_profiles": ["nvidia"],
-                            "rate_limit_seconds": 0,
-                        },
-                    }
-                )
-                dry_run = instagram_manage({"operation": "post_photo", "path": "README.md", "caption": "Jarvis QA"})
-
-        self.assertIn("instagrapi_available", status)
-        self.assertFalse(status["ready"])
-        self.assertIn("not connected", status["status_text"])
-        self.assertIn("nvidia", updated["config"]["monitored_profiles"])
-        self.assertTrue(dry_run["dry_run"])
-        self.assertFalse(dry_run["action_completed"])
-        self.assertFalse(dry_run["external_state_changed"])
-        self.assertIn("No external action happened", dry_run["safe_user_output"])
-
-    def test_instagram_live_operation_requires_dependency_instead_of_faking(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            config_path = Path(tmp) / "instagram.json"
-            with patch.dict(os.environ, {"JARVIS_INSTAGRAM_CONFIG": str(config_path), "INSTAGRAM_DRY_RUN": "false"}, clear=False):
-                with self.assertRaises(ToolInputError):
-                    instagram_manage({"operation": "profile", "username": "nvidia"})
 
     def test_vector_memory_indexes_and_searches_with_cached_embeddings(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

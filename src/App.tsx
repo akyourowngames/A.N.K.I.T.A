@@ -106,8 +106,6 @@ export default function App() {
               reply={assistant.reply}
               isStreaming={assistant.isStreaming}
               error={assistant.error}
-              entertainmentContext={assistant.entertainmentContext}
-              onEntertainmentAction={assistant.submit}
             />
           ) : (
             <RightPanels key="cards" />

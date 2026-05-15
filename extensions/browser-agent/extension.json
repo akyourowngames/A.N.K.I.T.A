@@ -396,32 +396,6 @@
       "description": "Apply configured browser anti-detection settings to the active session when a workflow explicitly needs them.",
       "parameters": {"type": "object", "properties": {"session_id": {"type": "string"}}, "additionalProperties": false},
       "executor": {"module": "tools.browser_agent", "function": "browser_anti_detect"}
-    },
-    {
-      "name": "browser_manage",
-      "description": "Compatibility wrapper for older browser operations. Prefer the dedicated browser_* tools for new browser work.",
-      "parameters": {
-        "type": "object",
-        "properties": {
-          "operation": {"type": "string", "enum": ["open_url", "search", "snapshot", "click_text", "type_text", "press_key", "screenshot", "close"]},
-          "url": {"type": "string"},
-          "query": {"type": "string"},
-          "text": {"type": "string"},
-          "selector": {"type": "string"},
-          "key": {"type": "string"},
-          "path": {"type": "string"},
-          "full_page": {"type": "boolean"},
-          "clear": {"type": "boolean"},
-          "max_chars": {"type": "integer"},
-          "timeout_ms": {"type": "integer"}
-        },
-        "required": ["operation"],
-        "additionalProperties": false
-      },
-      "executor": {
-        "module": "tools.browser_agent",
-        "function": "browser_manage"
-      }
     }
   ]
 }

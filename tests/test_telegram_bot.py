@@ -280,13 +280,13 @@ class TelegramBotToolTests(unittest.TestCase):
     def tearDown(self) -> None:
         clear_telegram_context()
 
-    def test_extension_registers_telegram_tools(self) -> None:
+    def test_normal_registry_does_not_expose_telegram_runtime_tools(self) -> None:
         registry = discover_tools(extension_catalog=load_extension_catalog())
         names = {tool.name for tool in registry.visible_tools()}
 
-        self.assertIn("telegram_status", names)
-        self.assertIn("telegram_send_file", names)
-        self.assertIn("telegram_session_info", names)
+        self.assertNotIn("telegram_status", names)
+        self.assertNotIn("telegram_send_file", names)
+        self.assertNotIn("telegram_session_info", names)
 
     def test_telegram_tools_report_inactive_outside_runtime(self) -> None:
         status = telegram_status({})

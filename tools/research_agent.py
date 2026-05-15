@@ -14,7 +14,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-from tools.registry import ToolInputError, active_or_discovered_registry, optional_text, require_text
+from tools.registry import ToolInputError, optional_text, require_text
 import tools.web_tools as web_tools
 
 
@@ -338,11 +338,11 @@ def research_synthesize(params: dict[str, Any]) -> dict[str, Any]:
         "source_policy": params.get("source_policy") or plan.get("source_policy") or config.get("default_source_policy"),
     }
     report_draft = report_from_evidence(evidence_pack)
-    compiler_content = compiler_content_from_evidence(evidence_pack)
+    structured_report = structured_report_from_evidence(evidence_pack)
     return {
         "summary": f"Evidence pack ready with {len(top_claims)} claim(s) and {len(evidence_pack['source_list'])} source(s).",
         "evidence_pack": evidence_pack,
-        "compiler_content": compiler_content,
+        "structured_report": structured_report,
         "report_draft": report_draft,
         "safe_user_output": report_draft,
     }
@@ -472,7 +472,7 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
     )
     evidence_pack = slim_evidence_pack(synth_result.get("evidence_pack", {}), bounded_int(params.get("max_claims"), 6, 1, 20))
     report_draft = report_from_evidence(evidence_pack)
-    compiler_content = compiler_content_from_evidence(evidence_pack)
+    structured_report = structured_report_from_evidence(evidence_pack)
     saved: dict[str, Any] = {}
     if bool(params.get("save", False)):
         saved = research_save(
@@ -482,19 +482,7 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
                 "run_id": short_hash(topic + utc_now()),
             }
         )
-    rendered_report: dict[str, Any] = {}
-    render_format = optional_text(params, "render_format")
-    if render_format:
-        rendered_report = render_research_report(
-            compiler_content,
-            render_format,
-            optional_text(params, "render_template", "research_briefing"),
-            optional_text(params, "output_path"),
-        )
     safe_user_output = report_draft
-    if rendered_report:
-        path = str(rendered_report.get("output_path") or "")
-        safe_user_output = f"Research report saved to {path}.\n\n{report_draft}".strip() + "\n"
     return {
         "summary": "Research pipeline completed.",
         "plan": compact_plan(plan),
@@ -507,9 +495,8 @@ def research_run(params: dict[str, Any]) -> dict[str, Any]:
             "provider_errors": search_result.get("provider_errors", []),
         },
         "evidence_pack": evidence_pack,
-        "compiler_content": compiler_content,
+        "structured_report": structured_report,
         "report_draft": report_draft,
-        "rendered_report": rendered_report,
         "safe_user_output": safe_user_output,
         "saved": saved,
     }
@@ -1132,7 +1119,7 @@ def report_from_evidence(evidence: dict[str, Any]) -> str:
     return "\n".join(line.rstrip() for line in lines).strip() + "\n"
 
 
-def compiler_content_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
+def structured_report_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
     topic = str(evidence.get("topic") or "Research")
     time_window = str(evidence.get("time_window") or "current search window")
     generated_at = str(evidence.get("generated_at") or utc_now())
@@ -1226,27 +1213,6 @@ def compiler_content_from_evidence(evidence: dict[str, Any]) -> dict[str, Any]:
         "bibliography": bibliography,
         "appendix": [],
     }
-
-
-def render_research_report(content: dict[str, Any], target_format: str, template: str, output_path: str) -> dict[str, Any]:
-    registry = active_or_discovered_registry()
-    payload = json.loads(
-        registry.execute(
-            "compiler_render",
-            {
-                "content": content,
-                "format": target_format,
-                "template": template,
-                "output_path": output_path,
-            },
-        )
-    )
-    if not payload.get("ok"):
-        raise ToolInputError(str(payload.get("error") or "compiler_render failed"))
-    result = payload.get("result")
-    if not isinstance(result, dict):
-        raise ToolInputError("compiler_render returned an invalid result")
-    return result
 
 
 def claim_source_text(claim: dict[str, Any], evidence: dict[str, Any]) -> str:

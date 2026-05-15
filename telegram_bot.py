@@ -21,7 +21,7 @@ from jarvis_nim import JarvisConfig, NimChatError, chat_once, load_dotenv
 from main import build_messages, configure_console_output, vector_memory_system_message
 from memory_system import MemoryConfig, load_memory_context, remember_chat
 from tools import discover_tools
-from tools.registry import set_active_registry
+from tools.registry import load_manifest, set_active_registry, tool_from_descriptor
 from tools.telegram_bot_tools import (
     TelegramToolContext,
     auto_queue_file_outputs,
@@ -35,6 +35,7 @@ from voice_system import VoiceConfig, VoiceError, transcribe_nvidia_audio_at_rat
 
 DEFAULT_CONFIG_PATH = Path("config/telegram_bot.json")
 DEFAULT_TOKEN_ENV = "TELEGRAM_BOT_TOKEN"
+TELEGRAM_TOOLS_MANIFEST = Path(__file__).with_name("tools") / "telegram_bot_tools.json"
 
 
 class TelegramBotError(Exception):
@@ -949,10 +950,16 @@ def build_runtime() -> TelegramRuntime:
     jarvis_config = JarvisConfig.from_env()
     extension_catalog = load_extension_catalog()
     registry = discover_tools(extension_catalog=extension_catalog)
+    register_telegram_runtime_tools(registry)
     set_active_registry(registry)
     memory_config = MemoryConfig.from_env(workspace)
     load_memory_context(memory_config)
     return TelegramRuntime(telegram_config, jarvis_config, registry, memory_config, extension_catalog)
+
+
+def register_telegram_runtime_tools(registry: Any) -> None:
+    for descriptor in load_manifest(TELEGRAM_TOOLS_MANIFEST):
+        registry.register(tool_from_descriptor(descriptor))
 
 
 def main() -> int:

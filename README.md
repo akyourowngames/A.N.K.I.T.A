@@ -177,11 +177,6 @@ Optional:
 - `GOOGLE_OAUTH_CLIENT_SECRETS`
 - `GMAIL_TOKEN_FILE`
 - `GOOGLE_CALENDAR_TOKEN_FILE`
-- `JARVIS_INSTAGRAM_CONFIG`
-- `INSTAGRAM_USERNAME`
-- `INSTAGRAM_PASSWORD`
-- `INSTAGRAM_SESSION_FILE`
-- `INSTAGRAM_DRY_RUN`
 - `VOICE_ENABLED`
 - `VOICE_SPACE_TRIGGER`
 - `VOICE_LISTEN_WAIT_TIMEOUT_SECONDS`
@@ -277,7 +272,6 @@ Extension packs can also provide prompt fragments and `SKILL.txt` folders. Jarvi
 Current tools:
 
 - `calculate`
-- `browser_manage`
 - `browser_status`
 - `calendar_api`
 - `compare_text`
@@ -287,7 +281,6 @@ Current tools:
 - `entertainment_download`
 - `entertainment_play`
 - `entertainment_playlist`
-- `entertainment_queue`
 - `entertainment_search`
 - `entertainment_status`
 - `extract_url_content`
@@ -299,9 +292,6 @@ Current tools:
 - `get_system_info`
 - `get_weather`
 - `hash_text`
-- `instagram_config`
-- `instagram_manage`
-- `instagram_status`
 - `jarvis_latency_probe`
 - `list_directory`
 - `productivity_status`
@@ -327,9 +317,6 @@ Current tools:
 - `search_text_files`
 - `skill_workshop`
 - `text_stats`
-- `telegram_send_file`
-- `telegram_session_info`
-- `telegram_status`
 - `transform_text`
 - `list_registered_tools`
 - `web_search`
@@ -368,7 +355,7 @@ Settings live in `config/telegram_bot.json`. `TELEGRAM_BOT_TOKEN` supplies the b
 
 Each chat gets a persisted session JSON under `media/telegram/sessions/`. Uploads are saved under `media/telegram/uploads/<chat_id>/`, and file deliveries are queued under `media/telegram/downloads/outbox/` before the handler sends them through Telegram.
 
-When Jarvis creates or locates a report, dossier, chart, document, archive, or any other requested file, the Telegram prompt tells it to call `telegram_send_file` with the real local path. The handler can send any readable local file path, including files outside the project folder, while the user-facing reply avoids exposing private paths unless you explicitly ask for them.
+When Jarvis creates or locates a report, dossier, chart, document, archive, or any other requested file inside `telegram_bot.py`, the Telegram runtime exposes `telegram_send_file` from `tools/telegram_bot_tools.json` and queues the real local path. These Telegram helpers are not registered in the normal `main.py` CLI.
 
 Voice notes are downloaded and converted through the configured `ffmpeg_command`, then transcribed with the existing NVIDIA STT path when `voice_transcription` is true. If STT is not configured, Telegram replies with that grounded reason instead of pretending it heard the message.
 
@@ -414,14 +401,6 @@ Google OAuth client secrets and tokens are config/env driven. Defaults point at 
 
 The agent is grounded: it should not claim private Gmail content was read or a Calendar event was created unless a tool result proves that action.
 
-## Instagram Agent
-
-`instagram-agent` is an extension-backed specialist named Codex Instagram Agent. Its tools are registered from `extensions/instagram-agent/extension.json`, with settings in `config/instagram_agent.json`.
-
-The agent can check Instagram readiness, store monitored profiles, log in through a session file, inspect profiles, fetch recent posts, monitor multiple profiles, and prepare or run account actions such as photo post, like, comment, and DM. It uses `instagrapi` when installed; if that package or credentials are missing, the tool reports the missing piece instead of pretending.
-
-Instagram sessions live under `media/instagram/session.json` by default. `INSTAGRAM_DRY_RUN=true` keeps account actions as prepared operations until you intentionally enable live behavior.
-
 ## Memory
 
 Jarvis reads durable memory on every turn. You can write stable details directly in `memory/user.txt`; Jarvis stores extracted chat memory in `memory/extracted.txt`.
@@ -465,6 +444,4 @@ Current bundled extensions:
 - `browser-agent`
 - `entertainment-agent`
 - `productivity-agent`
-- `instagram-agent`
 - `research-agent`
-- `telegram-bot`
