@@ -18,7 +18,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 from extension_system import load_extension_catalog
-from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, collect_tool_decision, contains_unresolved_placeholder, direct_single_tool_reply, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_selector_model, tool_selection_from_selector_content, tool_results_prompt
+from jarvis_nim import JarvisConfig, chat_with_native_streaming_tools, collect_tool_decision, contains_unresolved_placeholder, final_chat_response, open_url_with_retries, parse_tool_requests, planner_turn_context, public_result_payload, public_tool_results, read_native_tool_stream, read_streaming_response, stream_token, tool_planner_model, tool_selector_model, tool_selection_from_selector_content, tool_results_prompt
 from main import configure_stream_encoding, interactive_speech_command
 from memory_system import MemoryConfig, load_memory_context, parse_memory_json, prose_memory_fallback
 from skill_system import load_skill_context
@@ -27,6 +27,7 @@ from tools.calculator import evaluate_expression
 from tools.diagnostics_tools import jarvis_latency_probe
 from tools.filesystem_tools import display_name, get_file_info, list_directory, read_text_file, search_text_files
 from tools.memory_wiki import wiki_apply, wiki_lint, wiki_search, wiki_status
+from tools.music_agent import music_download, music_library, music_play, music_playlist, music_search, music_status
 from tools.path_resolver import resolve_local_path
 from tools.registry import ToolInputError
 from tools.runtime_info import get_runtime_info
@@ -63,6 +64,7 @@ class ToolRegistryTests(unittest.TestCase):
         names = [tool.name for tool in registry.visible_tools()]
         self.assertIn("calculate", names)
         self.assertIn("get_current_datetime", names)
+        self.assertIn("music_play", names)
         self.assertIn("get_weather", names)
         self.assertIn("run_terminal", names)
         self.assertIn("get_runtime_info", names)
@@ -275,7 +277,7 @@ class ToolRegistryTests(unittest.TestCase):
         )
         self.assertEqual(result["exit_code"], 0)
         self.assertIn("jarvis-terminal-ok", result["stdout"])
-        self.assertIn("jarvis-terminal-ok", result["user_output"])
+        self.assertNotIn("user_output", result)
 
     def test_terminal_background_action_returns_done(self) -> None:
         result = run_terminal(
@@ -287,7 +289,7 @@ class ToolRegistryTests(unittest.TestCase):
         )
         self.assertEqual(result["exit_code"], 0)
         self.assertTrue(result["background"])
-        self.assertEqual(result["user_output"], "Started.")
+        self.assertNotIn("user_output", result)
 
     def test_terminal_system_shell_uses_configured_shell(self) -> None:
         with patch.dict(os.environ, {"JARVIS_TERMINAL_SHELL": "powershell"}, clear=False):
@@ -368,9 +370,119 @@ class ToolRegistryTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "media").mkdir()
-            target = resolve_local_path("media/browser-profile", root)
+            target = resolve_local_path("media/new-profile", root)
 
-        self.assertEqual(target, (root / "media" / "browser-profile").resolve())
+        self.assertEqual(target, (root / "media" / "new-profile").resolve())
+
+    def test_music_agent_searches_local_files_with_close_match(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Imagine Dragons - Believer.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                result = music_search({"query": "beliver"})
+
+        self.assertTrue(result["searched_local_first"])
+        self.assertEqual(result["local_matches"][0]["title"], "Believer")
+        self.assertEqual(result["local_matches"][0]["artist"], "Imagine Dragons")
+
+    def test_music_download_reuses_existing_local_track(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Ed Sheeran - Shape of You.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": True,
+                        "download_command": "missing-downloader",
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                result = music_download({"query": "shape of you"})
+
+        self.assertFalse(result["downloaded"])
+        self.assertTrue(result["already_existed"])
+        self.assertEqual(result["track"]["title"], "Shape of You")
+
+    def test_music_play_updates_recent_history_without_real_player(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Daft Punk - One More Time.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                play_result = music_play({"query": "one more time"})
+                recent = music_library({"operation": "recent"})
+                status = music_status({})
+
+        self.assertTrue(play_result["played"])
+        self.assertEqual(play_result["playback"]["backend"], "dry_run")
+        self.assertEqual(recent["tracks"][0]["title"], "One More Time")
+        self.assertEqual(status["current_track"]["title"], "One More Time")
+
+    def test_music_playlist_adds_and_plays_local_track(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config_path = root / "music.json"
+            library = root / "library"
+            library.mkdir()
+            (library / "Survivor - Eye of the Tiger.mp3").write_text("fake audio", encoding="utf-8")
+            config_path.write_text(
+                json.dumps(
+                    {
+                        "library_dir": str(library),
+                        "database_path": str(root / "music_db.json"),
+                        "state_path": str(root / "player_state.json"),
+                        "dry_run_player": True,
+                        "download_enabled": False,
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.dict(os.environ, {"JARVIS_MUSIC_CONFIG": str(config_path)}, clear=False):
+                music_library({"operation": "scan"})
+                added = music_playlist({"operation": "add", "name": "workout", "query": "eye tiger"})
+                played = music_playlist({"operation": "play", "name": "workout"})
+
+        self.assertTrue(added["changed"])
+        self.assertEqual(added["playlist"]["track_count"], 1)
+        self.assertTrue(played["played"])
 
 
 
@@ -457,8 +569,11 @@ class ToolRegistryTests(unittest.TestCase):
         catalog = load_extension_catalog()
         extension_ids = [extension.id for extension in catalog.extensions]
         self.assertIn("web", extension_ids)
+        self.assertIn("music-agent", extension_ids)
         self.assertTrue(any(tool.get("name") == "web_search" for tool in catalog.tool_descriptors()))
+        self.assertTrue(any(tool.get("name") == "music_play" for tool in catalog.tool_descriptors()))
         self.assertIn("Web And Document Tools", catalog.prompt_context())
+        self.assertIn("Music Agent Protocol", catalog.prompt_context())
         self.assertTrue(catalog.skill_roots())
 
     def test_jarvis_cli_lists_current_tool_surface(self) -> None:
@@ -735,7 +850,7 @@ class ToolRegistryTests(unittest.TestCase):
         self.assertNotIn("\\u0939", prompt)
         self.assertIn("truncated=true", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
         self.assertIn("action_completed=false", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
-        self.assertIn("No external action happened", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
+        self.assertIn("supporting data only", Path("prompts/tool_results.txt").read_text(encoding="utf-8"))
 
     def test_public_tool_results_strip_internal_tool_field(self) -> None:
         payload = {"ok": True, "tool": "get_current_datetime", "result": {"date": "2026-05-09"}}
@@ -1064,29 +1179,6 @@ class ToolRegistryTests(unittest.TestCase):
         )
         self.assertEqual(names, ["calculate"])
         self.assertEqual(direct, "")
-
-    def test_direct_single_tool_reply_uses_structured_tool_output(self) -> None:
-        result = [
-            {
-                "name": "get_current_datetime",
-                "parameters": {},
-                "result": {
-                    "ok": True,
-                    "tool": "get_current_datetime",
-                    "result": {"summary": "Current date and time: 2026-05-12 10:00:00 IST"},
-                },
-            }
-        ]
-        with patch.dict(os.environ, {"NIM_DIRECT_SINGLE_TOOL_RESULT": "true"}, clear=False):
-            self.assertEqual(direct_single_tool_reply(result), "Current date and time: 2026-05-12 10:00:00 IST")
-
-    def test_direct_single_tool_reply_does_not_hide_multi_tool_results(self) -> None:
-        results = [
-            {"result": {"ok": True, "result": {"summary": "one"}}},
-            {"result": {"ok": True, "result": {"summary": "two"}}},
-        ]
-        with patch.dict(os.environ, {"NIM_DIRECT_SINGLE_TOOL_RESULT": "true"}, clear=False):
-            self.assertEqual(direct_single_tool_reply(results), "")
 
     def test_planner_context_includes_recent_assistant_message(self) -> None:
         context = planner_turn_context(

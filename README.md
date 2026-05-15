@@ -221,7 +221,9 @@ The normal chat prompt lives in `prompts/chat_system.txt`. Jarvis's voice/person
 
 `NIM_TOOL_MODE=json` is the current low-latency default for auto tools. Jarvis asks the descriptor-first selector in `prompts/tool_selector.txt` for one of three outcomes: direct no-tool answer, complete tool calls, or a narrowed tool subset for the planner. This keeps casual chat fast without dropping multi-tool planning.
 
-`NIM_DIRECT_SINGLE_TOOL_RESULT=true` lets Jarvis return one grounded tool result directly when that tool already provides `safe_user_output`, `user_output`, `summary`, or `status_text`. This avoids a final model call for simple date/time, terminal-output, and status-style requests.
+Tool results are always passed back through the model for final wording. Tool output fields are evidence, not canned final responses.
+
+Single-tool answers still go through `prompts/tool_results.txt` so Jarvis can write the final response naturally from structured data.
 
 `TOOL_PLANNER_DESCRIPTION_CHARS` and `TOOL_PLANNER_FIELD_DESCRIPTIONS` control how much manifest schema text is sent to the compact planner. The default keeps schemas small enough for the fast tool model while preserving tool names, required fields, types, and enums.
 
@@ -292,6 +294,13 @@ Current tools:
 - `memory_vector_status`
 - `memory_vector_reindex`
 - `memory_vector_search`
+- `music_status`
+- `music_search`
+- `music_download`
+- `music_play`
+- `music_control`
+- `music_playlist`
+- `music_library`
 
 `run_terminal` is a manifest-registered local command tool. Its schema lives in `tools/tools.json`; the chat loop does not need to change when the tool is added or removed.
 
@@ -302,6 +311,22 @@ For local system facts such as installed Python, Node, npm, file, environment, a
 Natural local folder names are resolved through `config/path_aliases.json`, so requests such as `desktop`, `download folder`, `screenshots`, and `documents` can map to real user folders before a file tool gives up.
 
 Directory listing output is compact by default through `JARVIS_LIST_DIRECTORY_LIMIT`, and each result includes total count plus whether the listing was truncated. Display names are normalized for the assistant response so unusual emoji/stylized filenames do not break Windows console streaming or spoken output.
+
+## Music Agent
+
+`music-agent` is a lightweight local-first specialist named Jarvis Music Agent. It registers music-only tools from `extensions/music-agent/extension.json`; behavior guidance lives in `extensions/music-agent/prompts/music-agent.txt`, and settings live in `config/music_agent.json`.
+
+The agent searches the local music library before any download, stores downloaded/local tracks in `media/music/music_db.json`, avoids duplicate downloads, and maintains queue, favorites, playlists, and recent history. Playback uses the configured player command when present, otherwise the OS default media opener.
+
+Key tools:
+
+- `music_status`
+- `music_search`
+- `music_download`
+- `music_play`
+- `music_control`
+- `music_playlist`
+- `music_library`
 
 ## Telegram Bot
 

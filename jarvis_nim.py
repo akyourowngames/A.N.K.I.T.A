@@ -195,12 +195,6 @@ def answer_with_tool_requests(
     requests: list[dict[str, Any]],
 ) -> str:
     results = execute_tool_requests(registry, requests)
-    direct_reply = direct_single_tool_reply(results)
-    if direct_reply:
-        if config.stream:
-            print(direct_reply)
-        return direct_reply
-
     working_messages.append(
         {
             "role": "user",
@@ -221,24 +215,6 @@ def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list
         result_payload = json.loads(result)
         results.append({"name": request["name"], "parameters": request["parameters"], "result": result_payload})
     return results
-
-
-def direct_single_tool_reply(results: list[dict[str, Any]]) -> str:
-    if not env_bool("NIM_DIRECT_SINGLE_TOOL_RESULT", False):
-        return ""
-    if len(results) != 1:
-        return ""
-    wrapper = results[0].get("result", {})
-    if not isinstance(wrapper, dict) or wrapper.get("ok") is not True:
-        return ""
-    payload = wrapper.get("result", {})
-    if not isinstance(payload, dict):
-        return ""
-    for key in ["safe_user_output", "user_output", "summary", "status_text"]:
-        value = payload.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
 
 
 def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:

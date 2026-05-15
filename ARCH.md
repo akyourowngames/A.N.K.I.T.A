@@ -116,7 +116,7 @@ Current low-latency defaults are designed around:
 - `NIM_STREAM_MODE=native`
 - `NIM_TOOL_MODE=json`
 
-The JSON path is intentionally compact. The selector sees manifest tool descriptors and can return a direct no-tool answer, complete tool calls, or a narrowed tool-name set for the planner. If a single tool returns `safe_user_output`, `user_output`, `summary`, or `status_text`, `NIM_DIRECT_SINGLE_TOOL_RESULT=true` lets Jarvis return that grounded result without a final model rewrite.
+The JSON path is intentionally compact. The selector sees manifest tool descriptors and can return a direct no-tool answer, complete tool calls, or a narrowed tool-name set for the planner. Tool results are always passed back through the final model so Jarvis writes the user-facing response from structured evidence instead of returning canned tool text.
 
 ## Prompt Stack
 
@@ -283,6 +283,7 @@ Current live extensions:
 | `content-tools` | 2 | 1 | Text transformations and comparison. |
 | `diagnostics` | 1 | 1 | Jarvis latency checks. |
 | `memory-wiki` | 8 | 1 | TXT-backed knowledge vault. |
+| `music-agent` | 7 | 1 | Local-first music library, playback, downloads, queue, and playlists. |
 | `qa` | 1 | 1 | Jarvis QA/test runner. |
 | `skill-workshop` | 1 | 1 | Create/read/update reusable skills. |
 | `web` | 3 | 1 | Web search/fetch/readability tools. |
@@ -458,6 +459,16 @@ Speech text is sanitized before TTS:
 - `memory_vector_reindex`
 - `memory_vector_search`
 
+### Music Agent
+
+- `music_status`
+- `music_search`
+- `music_download`
+- `music_play`
+- `music_control`
+- `music_playlist`
+- `music_library`
+
 ### QA And Diagnostics
 
 - `run_jarvis_qa`
@@ -465,6 +476,24 @@ Speech text is sanitized before TTS:
 - `skill_workshop`
 
 ## Agent Extensions
+
+### Music Agent
+
+Files:
+
+- `extensions/music-agent/extension.json`
+- `extensions/music-agent/prompts/music-agent.txt`
+- `extensions/music-agent/skills/music-operator/SKILL.txt`
+- `tools/music_agent.py`
+- `config/music_agent.json`
+
+Capabilities:
+
+- Search local files first by title, artist, album, filename, and close spelling match.
+- Download missing songs through the configured downloader only when no local match exists.
+- Store local track metadata and paths in a JSON music database.
+- Play songs and playlists through the configured player or OS media opener.
+- Maintain queue, repeat, shuffle, favorites, and recent history.
 
 ### Telegram Bot
 
@@ -535,7 +564,7 @@ The tool result prompt explicitly tells the model:
 - The original user request is intent, not proof.
 - Tool fields decide what actually happened.
 - `action_completed=false` means no external state change.
-- `safe_user_output` should be used exactly when present.
+- Tool result text fields are supporting evidence, not final canned responses.
 - Status/readiness/list/read/date/weather/search results should not get generic "No external action happened" text unless the tool result says so.
 
 ## Security And Local State

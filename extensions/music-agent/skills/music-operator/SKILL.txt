@@ -1,0 +1,13 @@
+---
+name: music-operator
+description: Operate the lightweight local-first music agent.
+---
+
+# Music Operator
+
+- For a song request, call `music_play` with the user's query. It searches local storage first.
+- For an explicit download request, call `music_download` with query or URL.
+- For playlist work, call `music_playlist`.
+- For pause, resume, stop, next, previous, repeat, shuffle, or replay, call `music_control`.
+- For library maintenance, call `music_library`.
+- Use tool result fields as evidence; let the final assistant response be natural and short.

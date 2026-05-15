@@ -354,8 +354,6 @@ def command_result_payload(
         except json.JSONDecodeError as error:
             if output_mode == "json":
                 raise ToolInputError(f"{tool_name} produced invalid JSON output: {error}") from error
-    if not payload.get("json"):
-        payload["user_output"] = clipped_stdout.strip() or clipped_stderr.strip() or "Done."
     return payload
 
 

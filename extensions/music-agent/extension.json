@@ -1,0 +1,248 @@
+{
+  "id": "music-agent",
+  "name": "Jarvis Music Agent",
+  "description": "Lightweight local-first music library, download, playback, queue, and playlist agent.",
+  "prompt_files": [
+    "prompts/music-agent.txt"
+  ],
+  "skill_dirs": [
+    "skills"
+  ],
+  "env": [
+    "JARVIS_MUSIC_CONFIG"
+  ],
+  "tools": [
+    {
+      "name": "music_status",
+      "description": "Inspect the local music library, queue, current track, playback state, favorites, and recent history.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "scan": {
+            "type": "boolean",
+            "description": "Scan the configured local library before returning status."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_status"
+      }
+    },
+    {
+      "name": "music_search",
+      "description": "Search the local music library first by title, artist, album, filename, or close spelling match; optionally include remote candidates.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song, artist, album, or playlist search text."
+          },
+          "include_remote": {
+            "type": "boolean",
+            "description": "Whether to ask the configured downloader for remote candidates after local search."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum local and remote matches to return."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_search"
+      }
+    },
+    {
+      "name": "music_download",
+      "description": "Download one song only when it is not already present locally; record metadata and avoid duplicate downloads.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song search text to download when no local match exists."
+          },
+          "url": {
+            "type": "string",
+            "description": "Direct media URL from an allowed source."
+          },
+          "title": {
+            "type": "string",
+            "description": "Optional title metadata override."
+          },
+          "artist": {
+            "type": "string",
+            "description": "Optional artist metadata override."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_download"
+      }
+    },
+    {
+      "name": "music_play",
+      "description": "Play a local song or playlist. Search local files first, download only if allowed and not already present, then update queue and history.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Song, artist, album, or close spelling match to play."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Known local track id."
+          },
+          "path": {
+            "type": "string",
+            "description": "Known local audio file path."
+          },
+          "playlist": {
+            "type": "string",
+            "description": "Playlist name to play."
+          },
+          "allow_download": {
+            "type": "boolean",
+            "description": "Whether the tool may download when no local match exists."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_play"
+      }
+    },
+    {
+      "name": "music_control",
+      "description": "Control music playback and queue state: pause, resume, stop, next, previous, play again, shuffle, repeat, or inspect state.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "state",
+              "pause",
+              "resume",
+              "play_pause",
+              "stop",
+              "next",
+              "previous",
+              "again",
+              "shuffle",
+              "repeat"
+            ],
+            "description": "Playback operation."
+          },
+          "enabled": {
+            "type": "boolean",
+            "description": "Repeat or shuffle setting when the operation supports it."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_control"
+      }
+    },
+    {
+      "name": "music_playlist",
+      "description": "Create, list, delete, edit, or play local music playlists with track ids resolved from the library.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "list",
+              "create",
+              "delete",
+              "show",
+              "add",
+              "remove",
+              "play"
+            ],
+            "description": "Playlist operation."
+          },
+          "name": {
+            "type": "string",
+            "description": "Playlist name."
+          },
+          "query": {
+            "type": "string",
+            "description": "Song search text for add/remove operations."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Known local track id for add/remove operations."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_playlist"
+      }
+    },
+    {
+      "name": "music_library",
+      "description": "Scan, list, inspect, favorite, unfavorite, or show recent local music library tracks.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "operation": {
+            "type": "string",
+            "enum": [
+              "scan",
+              "list",
+              "get",
+              "favorite",
+              "unfavorite",
+              "favorites",
+              "recent"
+            ],
+            "description": "Library operation."
+          },
+          "query": {
+            "type": "string",
+            "description": "Song text for get/favorite/unfavorite operations."
+          },
+          "track_id": {
+            "type": "string",
+            "description": "Known local track id."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum tracks to return."
+          }
+        },
+        "required": [
+          "operation"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.music_agent",
+        "function": "music_library"
+      }
+    }
+  ]
+}

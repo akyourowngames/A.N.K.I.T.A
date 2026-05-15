@@ -1,0 +1,22 @@
+{
+  "library_dir": "media/music/library",
+  "database_path": "media/music/music_db.json",
+  "state_path": "media/music/player_state.json",
+  "download_command": "yt-dlp",
+  "download_format": "bestaudio/best",
+  "download_enabled": true,
+  "dry_run_player": false,
+  "player_command": [],
+  "media_extensions": [
+    ".mp3",
+    ".m4a",
+    ".aac",
+    ".wav",
+    ".flac",
+    ".ogg",
+    ".opus",
+    ".webm",
+    ".mp4"
+  ],
+  "match_cutoff": 0.52
+}

@@ -43,22 +43,20 @@ def run_terminal(params: dict[str, Any]) -> dict[str, Any]:
             shell=shell_name == "system",
         )
         remember_background_process(process)
-        return with_user_output(
-            {
-                "command": command,
-                "cwd": str(cwd),
-                "shell": shell_name,
-                "requested_shell": requested_shell,
-                "background": True,
-                "pid": process.pid,
-                "exit_code": 0,
-                "elapsed_seconds": 0,
-                "stdout": "",
-                "stderr": "",
-                "stdout_truncated": False,
-                "stderr_truncated": False,
-            }
-        )
+        return {
+            "command": command,
+            "cwd": str(cwd),
+            "shell": shell_name,
+            "requested_shell": requested_shell,
+            "background": True,
+            "pid": process.pid,
+            "exit_code": 0,
+            "elapsed_seconds": 0,
+            "stdout": "",
+            "stderr": "",
+            "stdout_truncated": False,
+            "stderr_truncated": False,
+        }
     started = time.perf_counter()
     try:
         completed = subprocess.run(
@@ -71,8 +69,7 @@ def run_terminal(params: dict[str, Any]) -> dict[str, Any]:
             shell=shell_name == "system",
         )
         elapsed = time.perf_counter() - started
-        return with_user_output(
-            {
+        return {
             "command": command,
             "cwd": str(cwd),
             "shell": shell_name,
@@ -83,12 +80,10 @@ def run_terminal(params: dict[str, Any]) -> dict[str, Any]:
             "stderr": clip_output(completed.stderr, max_output_chars),
             "stdout_truncated": len(completed.stdout) > max_output_chars,
             "stderr_truncated": len(completed.stderr) > max_output_chars,
-            }
-        )
+        }
     except subprocess.TimeoutExpired as error:
         elapsed = time.perf_counter() - started
-        return with_user_output(
-            {
+        return {
             "command": command,
             "cwd": str(cwd),
             "shell": shell_name,
@@ -98,8 +93,7 @@ def run_terminal(params: dict[str, Any]) -> dict[str, Any]:
             "timed_out": True,
             "stdout": clip_output(text_value(error.stdout), max_output_chars),
             "stderr": clip_output(text_value(error.stderr), max_output_chars),
-            }
-        )
+        }
 
 
 def resolve_cwd(value: str) -> Path:
@@ -184,21 +178,3 @@ def reap_background_processes() -> None:
     _BACKGROUND_PROCESSES[:] = alive
 
 
-def with_user_output(result: dict[str, Any]) -> dict[str, Any]:
-    stdout = str(result.get("stdout", "")).strip()
-    stderr = str(result.get("stderr", "")).strip()
-    if stdout and stderr:
-        result["user_output"] = stdout + "\n" + stderr
-    elif stdout:
-        result["user_output"] = stdout
-    elif stderr:
-        result["user_output"] = stderr
-    elif result.get("background") and result.get("exit_code") == 0:
-        result["user_output"] = "Started."
-    elif result.get("timed_out"):
-        result["user_output"] = "Command timed out."
-    elif result.get("exit_code") == 0:
-        result["user_output"] = "Done."
-    else:
-        result["user_output"] = f"Command exited with code {result.get('exit_code')}."
-    return result

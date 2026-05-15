@@ -1,0 +1,811 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+import random
+import shutil
+import subprocess
+import time
+import unicodedata
+from difflib import SequenceMatcher
+from pathlib import Path
+from typing import Any
+
+from .registry import ToolInputError, optional_text, require_text
+
+
+DEFAULT_CONFIG: dict[str, Any] = {
+    "library_dir": "media/music/library",
+    "database_path": "media/music/music_db.json",
+    "state_path": "media/music/player_state.json",
+    "download_command": "yt-dlp",
+    "download_format": "bestaudio/best",
+    "download_enabled": True,
+    "dry_run_player": False,
+    "player_command": [],
+    "media_extensions": [".mp3", ".m4a", ".aac", ".wav", ".flac", ".ogg", ".opus", ".webm", ".mp4"],
+    "match_cutoff": 0.52,
+}
+
+
+def music_status(params: dict[str, Any]) -> dict[str, Any]:
+    context = music_context()
+    database = load_database(context)
+    if bool(params.get("scan")):
+        database = scan_library(context, database)
+        save_database(context, database)
+    state = load_state(context)
+    return {
+        "library_dir": str(context["library_dir"]),
+        "database_path": str(context["database_path"]),
+        "track_count": len(database["tracks"]),
+        "playlist_count": len(database["playlists"]),
+        "favorite_count": len(database["favorites"]),
+        "recent_count": len(database["recent"]),
+        "queue_length": len(state["queue"]),
+        "current_track": track_public(database["tracks"].get(state.get("current_track_id", ""))),
+        "playback": state_public(state),
+        "download_enabled": bool(context["config"].get("download_enabled")),
+        "downloader_available": downloader_available(context),
+    }
+
+
+def music_search(params: dict[str, Any]) -> dict[str, Any]:
+    query = require_text(params, "query")
+    context = music_context()
+    database = scan_library(context, load_database(context))
+    save_database(context, database)
+    limit = bounded_int(params.get("limit"), 5, 1, 20)
+    local_matches = local_search(database, query, limit, context["match_cutoff"])
+    remote_results: list[dict[str, Any]] = []
+    if bool(params.get("include_remote")):
+        remote_results = remote_search(context, query, limit)
+    return {
+        "query": query,
+        "local_matches": local_matches,
+        "remote_results": remote_results,
+        "searched_local_first": True,
+    }
+
+
+def music_download(params: dict[str, Any]) -> dict[str, Any]:
+    query = optional_text(params, "query")
+    url = optional_text(params, "url")
+    if not query and not url:
+        raise ToolInputError("query or url is required")
+
+    context = music_context()
+    database = scan_library(context, load_database(context))
+    existing = best_existing_track(database, query or url, context["match_cutoff"]) if query else existing_by_source(database, url)
+    if existing:
+        save_database(context, database)
+        return {
+            "downloaded": False,
+            "already_existed": True,
+            "track": track_public(existing),
+            "searched_local_first": True,
+        }
+
+    if not bool(context["config"].get("download_enabled")):
+        save_database(context, database)
+        return {
+            "downloaded": False,
+            "already_existed": False,
+            "blocked_reason": "download_disabled",
+            "searched_local_first": True,
+        }
+    if not downloader_available(context):
+        save_database(context, database)
+        return {
+            "downloaded": False,
+            "already_existed": False,
+            "blocked_reason": "downloader_not_available",
+            "download_command": str(context["config"].get("download_command") or ""),
+            "searched_local_first": True,
+        }
+
+    source = url or f"ytsearch1:{query}"
+    downloaded_path = run_download(context, source)
+    database = scan_library(context, database)
+    track = track_for_path(database, downloaded_path)
+    if track is None:
+        track = register_track(
+            database,
+            downloaded_path,
+            {
+                "title": optional_text(params, "title") or query or downloaded_path.stem,
+                "artist": optional_text(params, "artist"),
+                "source": source,
+            },
+        )
+        save_database(context, database)
+    return {
+        "downloaded": True,
+        "already_existed": False,
+        "track": track_public(track),
+        "searched_local_first": True,
+    }
+
+
+def music_play(params: dict[str, Any]) -> dict[str, Any]:
+    context = music_context()
+    database = scan_library(context, load_database(context))
+    state = load_state(context)
+    playlist_name = optional_text(params, "playlist")
+    if playlist_name:
+        track_ids = playlist_tracks(database, playlist_name)
+        if not track_ids:
+            save_database(context, database)
+            return {"played": False, "blocked_reason": "playlist_not_found_or_empty", "playlist": playlist_name}
+        state["queue"] = track_ids
+        state["queue_index"] = 0
+        track = database["tracks"].get(track_ids[0])
+    else:
+        track = resolve_track_from_params(database, params, context["match_cutoff"])
+        if track is None and bool(params.get("allow_download", True)):
+            query = optional_text(params, "query")
+            if query:
+                download_result = music_download({"query": query})
+                if download_result.get("downloaded") or download_result.get("already_existed"):
+                    database = load_database(context)
+                    raw_track = download_result.get("track")
+                    if isinstance(raw_track, dict):
+                        track = database["tracks"].get(str(raw_track.get("id", "")))
+                else:
+                    return {
+                        "played": False,
+                        "blocked_reason": download_result.get("blocked_reason", "download_failed"),
+                        "download": download_result,
+                    }
+        if track is None:
+            save_database(context, database)
+            return {"played": False, "blocked_reason": "track_not_found", "searched_local_first": True}
+        if track["id"] not in state["queue"]:
+            state["queue"].append(track["id"])
+            state["queue_index"] = state["queue"].index(track["id"])
+
+    if track is None:
+        raise ToolInputError("track could not be resolved")
+    playback = start_playback(context, track)
+    state["current_track_id"] = track["id"]
+    state["playback_status"] = playback["status"]
+    state["backend"] = playback["backend"]
+    state["player_pid"] = playback.get("pid")
+    state["started_at"] = time.time()
+    state["last_position_seconds"] = 0
+    add_recent(database, track["id"])
+    save_state(context, state)
+    save_database(context, database)
+    return {
+        "played": playback["started"],
+        "track": track_public(track),
+        "playback": playback,
+        "queue": queue_public(database, state),
+        "searched_local_first": True,
+    }
+
+
+def music_control(params: dict[str, Any]) -> dict[str, Any]:
+    operation = require_text(params, "operation").lower()
+    context = music_context()
+    database = load_database(context)
+    state = load_state(context)
+    if operation == "state":
+        return {"playback": state_public(state), "queue": queue_public(database, state)}
+    if operation == "again":
+        track_id = str(state.get("current_track_id") or "")
+        if not track_id:
+            return {"changed": False, "blocked_reason": "no_current_track"}
+        track = database["tracks"].get(track_id)
+        if not track:
+            return {"changed": False, "blocked_reason": "current_track_missing"}
+        playback = start_playback(context, track)
+        state["playback_status"] = playback["status"]
+        state["player_pid"] = playback.get("pid")
+        state["started_at"] = time.time()
+        save_state(context, state)
+        return {"changed": playback["started"], "operation": operation, "track": track_public(track), "playback": playback}
+    if operation in {"next", "previous"}:
+        return play_relative(context, database, state, 1 if operation == "next" else -1)
+    if operation in {"shuffle", "repeat"}:
+        enabled = bool(params.get("enabled", True))
+        state[operation] = enabled
+        save_state(context, state)
+        return {"changed": True, "operation": operation, "enabled": enabled, "playback": state_public(state)}
+    if operation == "stop":
+        stopped = stop_playback(state)
+        state["playback_status"] = "stopped"
+        state["player_pid"] = None
+        save_state(context, state)
+        return {"changed": stopped, "operation": operation, "playback": state_public(state)}
+    if operation in {"pause", "resume", "play_pause"}:
+        sent = send_media_key(operation)
+        if sent:
+            state["playback_status"] = "paused" if operation == "pause" else "playing"
+            save_state(context, state)
+        return {"changed": sent, "operation": operation, "playback": state_public(state), "control_method": "system_media_key"}
+    raise ToolInputError(f"unsupported music operation: {operation}")
+
+
+def music_playlist(params: dict[str, Any]) -> dict[str, Any]:
+    operation = require_text(params, "operation").lower()
+    name = optional_text(params, "name")
+    context = music_context()
+    database = scan_library(context, load_database(context))
+    if operation == "list":
+        return {"playlists": playlists_public(database)}
+    if not name:
+        raise ToolInputError("name is required")
+    key = playlist_key(name)
+    if operation == "create":
+        database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
+        save_database(context, database)
+        return {"changed": True, "playlist": playlist_public(database, key)}
+    if operation == "delete":
+        existed = key in database["playlists"]
+        database["playlists"].pop(key, None)
+        save_database(context, database)
+        return {"changed": existed, "playlist": name}
+    if operation == "show":
+        return {"playlist": playlist_public(database, key)}
+    if operation in {"add", "remove"}:
+        playlist = database["playlists"].setdefault(key, {"name": name, "track_ids": [], "created_at": time.time(), "updated_at": time.time()})
+        track = resolve_track_from_params(database, params, context["match_cutoff"])
+        if track is None:
+            save_database(context, database)
+            return {"changed": False, "blocked_reason": "track_not_found", "playlist": playlist_public(database, key)}
+        if operation == "add" and track["id"] not in playlist["track_ids"]:
+            playlist["track_ids"].append(track["id"])
+        if operation == "remove" and track["id"] in playlist["track_ids"]:
+            playlist["track_ids"].remove(track["id"])
+        playlist["updated_at"] = time.time()
+        save_database(context, database)
+        return {"changed": True, "operation": operation, "track": track_public(track), "playlist": playlist_public(database, key)}
+    if operation == "play":
+        save_database(context, database)
+        return music_play({"playlist": name})
+    raise ToolInputError(f"unsupported playlist operation: {operation}")
+
+
+def music_library(params: dict[str, Any]) -> dict[str, Any]:
+    operation = require_text(params, "operation").lower()
+    context = music_context()
+    database = scan_library(context, load_database(context)) if operation in {"scan", "list", "get", "favorite", "unfavorite"} else load_database(context)
+    limit = bounded_int(params.get("limit"), 20, 1, 200)
+    if operation == "scan":
+        save_database(context, database)
+        return {"changed": True, "track_count": len(database["tracks"]), "tracks": tracks_public(list(database["tracks"].values())[:limit])}
+    if operation == "list":
+        tracks = sorted(database["tracks"].values(), key=lambda item: sort_text(item.get("title") or item.get("filename") or ""))
+        return {"tracks": tracks_public(tracks[:limit]), "track_count": len(database["tracks"])}
+    if operation == "get":
+        track = resolve_track_from_params(database, params, context["match_cutoff"])
+        return {"track": track_public(track)}
+    if operation in {"favorite", "unfavorite"}:
+        track = resolve_track_from_params(database, params, context["match_cutoff"])
+        if track is None:
+            save_database(context, database)
+            return {"changed": False, "blocked_reason": "track_not_found"}
+        favorites = database["favorites"]
+        if operation == "favorite" and track["id"] not in favorites:
+            favorites.append(track["id"])
+        if operation == "unfavorite" and track["id"] in favorites:
+            favorites.remove(track["id"])
+        save_database(context, database)
+        return {"changed": True, "operation": operation, "track": track_public(track), "favorite_count": len(favorites)}
+    if operation == "favorites":
+        return {"tracks": tracks_public([database["tracks"][track_id] for track_id in database["favorites"] if track_id in database["tracks"]][:limit])}
+    if operation == "recent":
+        return {"tracks": tracks_public([database["tracks"][track_id] for track_id in database["recent"] if track_id in database["tracks"]][:limit])}
+    raise ToolInputError(f"unsupported library operation: {operation}")
+
+
+def music_context() -> dict[str, Any]:
+    config_path = Path(os.environ.get("JARVIS_MUSIC_CONFIG", "config/music_agent.json")).expanduser()
+    if not config_path.is_absolute():
+        config_path = Path.cwd() / config_path
+    config = dict(DEFAULT_CONFIG)
+    if config_path.exists():
+        loaded = json.loads(config_path.read_text(encoding="utf-8-sig"))
+        if isinstance(loaded, dict):
+            config.update(loaded)
+    library_dir = resolve_workspace_path(str(config["library_dir"]))
+    database_path = resolve_workspace_path(str(config["database_path"]))
+    state_path = resolve_workspace_path(str(config["state_path"]))
+    library_dir.mkdir(parents=True, exist_ok=True)
+    database_path.parent.mkdir(parents=True, exist_ok=True)
+    state_path.parent.mkdir(parents=True, exist_ok=True)
+    return {
+        "config": config,
+        "config_path": config_path,
+        "library_dir": library_dir,
+        "database_path": database_path,
+        "state_path": state_path,
+        "match_cutoff": float(config.get("match_cutoff") or DEFAULT_CONFIG["match_cutoff"]),
+    }
+
+
+def resolve_workspace_path(value: str) -> Path:
+    path = Path(value).expanduser()
+    if not path.is_absolute():
+        path = Path.cwd() / path
+    return path.resolve()
+
+
+def default_database() -> dict[str, Any]:
+    return {"version": 1, "tracks": {}, "playlists": {}, "favorites": [], "recent": []}
+
+
+def default_state() -> dict[str, Any]:
+    return {
+        "current_track_id": "",
+        "queue": [],
+        "queue_index": 0,
+        "playback_status": "stopped",
+        "backend": "",
+        "started_at": None,
+        "last_position_seconds": 0,
+        "shuffle": False,
+        "repeat": False,
+        "player_pid": None,
+    }
+
+
+def load_database(context: dict[str, Any]) -> dict[str, Any]:
+    path = context["database_path"]
+    if not path.exists():
+        return default_database()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return default_database()
+    if not isinstance(data, dict):
+        return default_database()
+    database = default_database()
+    for key in database:
+        if key in data:
+            database[key] = data[key]
+    if not isinstance(database["tracks"], dict):
+        database["tracks"] = {}
+    if not isinstance(database["playlists"], dict):
+        database["playlists"] = {}
+    if not isinstance(database["favorites"], list):
+        database["favorites"] = []
+    if not isinstance(database["recent"], list):
+        database["recent"] = []
+    return database
+
+
+def save_database(context: dict[str, Any], database: dict[str, Any]) -> None:
+    context["database_path"].write_text(json.dumps(database, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def load_state(context: dict[str, Any]) -> dict[str, Any]:
+    path = context["state_path"]
+    if not path.exists():
+        return default_state()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+    except json.JSONDecodeError:
+        return default_state()
+    state = default_state()
+    if isinstance(data, dict):
+        for key in state:
+            if key in data:
+                state[key] = data[key]
+    if not isinstance(state["queue"], list):
+        state["queue"] = []
+    return state
+
+
+def save_state(context: dict[str, Any], state: dict[str, Any]) -> None:
+    context["state_path"].write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+def scan_library(context: dict[str, Any], database: dict[str, Any]) -> dict[str, Any]:
+    extensions = {str(item).lower() for item in context["config"].get("media_extensions", DEFAULT_CONFIG["media_extensions"])}
+    seen_paths: set[str] = set()
+    for path in sorted(context["library_dir"].rglob("*"), key=lambda item: str(item).lower()):
+        if not path.is_file() or path.suffix.lower() not in extensions:
+            continue
+        track = register_track(database, path, {})
+        seen_paths.add(track["path"])
+    stale = [track_id for track_id, track in database["tracks"].items() if track.get("path") and track.get("path") not in seen_paths and is_under_library(track.get("path"), context["library_dir"])]
+    for track_id in stale:
+        database["tracks"].pop(track_id, None)
+    database["favorites"] = [track_id for track_id in database["favorites"] if track_id in database["tracks"]]
+    database["recent"] = [track_id for track_id in database["recent"] if track_id in database["tracks"]]
+    for playlist in database["playlists"].values():
+        if isinstance(playlist, dict) and isinstance(playlist.get("track_ids"), list):
+            playlist["track_ids"] = [track_id for track_id in playlist["track_ids"] if track_id in database["tracks"]]
+    return database
+
+
+def is_under_library(path_value: Any, library_dir: Path) -> bool:
+    if not isinstance(path_value, str):
+        return False
+    try:
+        Path(path_value).resolve().relative_to(library_dir)
+        return True
+    except ValueError:
+        return False
+
+
+def register_track(database: dict[str, Any], path: Path, metadata: dict[str, Any]) -> dict[str, Any]:
+    resolved = str(path.resolve())
+    existing = track_for_path(database, path)
+    if existing:
+        update_track_metadata(existing, path, metadata)
+        return existing
+    filename_metadata = metadata_from_filename(path)
+    title = clean_text(metadata.get("title")) or filename_metadata["title"]
+    artist = clean_text(metadata.get("artist")) or filename_metadata["artist"]
+    album = clean_text(metadata.get("album"))
+    track_id = track_id_for(path, title, artist)
+    track = {
+        "id": track_id,
+        "title": title,
+        "artist": artist,
+        "album": album,
+        "path": resolved,
+        "filename": path.name,
+        "source": clean_text(metadata.get("source")),
+        "added_at": time.time(),
+        "updated_at": time.time(),
+        "play_count": 0,
+    }
+    database["tracks"][track_id] = track
+    return track
+
+
+def update_track_metadata(track: dict[str, Any], path: Path, metadata: dict[str, Any]) -> None:
+    for key in ["title", "artist", "album", "source"]:
+        value = clean_text(metadata.get(key))
+        if value and not track.get(key):
+            track[key] = value
+    track["path"] = str(path.resolve())
+    track["filename"] = path.name
+    track["updated_at"] = time.time()
+
+
+def track_for_path(database: dict[str, Any], path: Path) -> dict[str, Any] | None:
+    resolved = str(path.resolve())
+    for track in database["tracks"].values():
+        if isinstance(track, dict) and track.get("path") == resolved:
+            return track
+    return None
+
+
+def metadata_from_filename(path: Path) -> dict[str, str]:
+    text = path.stem
+    for marker in [" - ", "_-_"]:
+        if marker in text:
+            parts = [part.strip() for part in text.split(marker) if part.strip()]
+            if len(parts) >= 2:
+                return {"artist": parts[0], "title": parts[-1]}
+    return {"artist": "", "title": text.strip() or path.name}
+
+
+def track_id_for(path: Path, title: str, artist: str) -> str:
+    digest_input = "|".join([normalize_text(title), normalize_text(artist), str(path.resolve()).casefold()])
+    return hashlib.sha1(digest_input.encode("utf-8")).hexdigest()[:16]
+
+
+def local_search(database: dict[str, Any], query: str, limit: int, cutoff: float) -> list[dict[str, Any]]:
+    normalized_query = normalize_text(query)
+    scored: list[tuple[float, dict[str, Any]]] = []
+    for track in database["tracks"].values():
+        if not isinstance(track, dict):
+            continue
+        score = track_score(track, normalized_query)
+        if score >= cutoff:
+            scored.append((score, track))
+    scored.sort(key=lambda item: (-item[0], sort_text(item[1].get("title") or item[1].get("filename") or "")))
+    return [track_public(track, score) for score, track in scored[:limit]]
+
+
+def track_score(track: dict[str, Any], normalized_query: str) -> float:
+    fields = [
+        track.get("title", ""),
+        track.get("artist", ""),
+        track.get("album", ""),
+        track.get("filename", ""),
+        " ".join([str(track.get("artist", "")), str(track.get("title", ""))]),
+    ]
+    best = 0.0
+    for field in fields:
+        normalized = normalize_text(str(field))
+        if not normalized:
+            continue
+        if normalized_query and normalized_query in normalized:
+            best = max(best, 1.0)
+        if normalized and normalized in normalized_query:
+            best = max(best, 0.95)
+        best = max(best, SequenceMatcher(None, normalized_query, normalized).ratio())
+    return best
+
+
+def best_existing_track(database: dict[str, Any], query: str, cutoff: float) -> dict[str, Any] | None:
+    matches = local_search(database, query, 1, cutoff)
+    if not matches:
+        return None
+    return database["tracks"].get(matches[0]["id"])
+
+
+def existing_by_source(database: dict[str, Any], source: str) -> dict[str, Any] | None:
+    for track in database["tracks"].values():
+        if isinstance(track, dict) and source and track.get("source") == source:
+            return track
+    return None
+
+
+def resolve_track_from_params(database: dict[str, Any], params: dict[str, Any], cutoff: float) -> dict[str, Any] | None:
+    track_id = optional_text(params, "track_id")
+    if track_id and track_id in database["tracks"]:
+        return database["tracks"][track_id]
+    path_value = optional_text(params, "path")
+    if path_value:
+        path = resolve_workspace_path(path_value)
+        track = track_for_path(database, path)
+        if track:
+            return track
+    query = optional_text(params, "query")
+    if query:
+        return best_existing_track(database, query, cutoff)
+    return None
+
+
+def remote_search(context: dict[str, Any], query: str, limit: int) -> list[dict[str, Any]]:
+    if not downloader_available(context):
+        return []
+    command = str(context["config"].get("download_command") or "yt-dlp")
+    source = f"ytsearch{limit}:{query}"
+    completed = subprocess.run(
+        [command, "--dump-json", "--no-playlist", source],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if completed.returncode != 0:
+        return []
+    results = []
+    for line in completed.stdout.splitlines():
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(item, dict):
+            results.append(
+                {
+                    "title": item.get("title") or "",
+                    "artist": item.get("artist") or item.get("uploader") or "",
+                    "duration": item.get("duration"),
+                    "url": item.get("webpage_url") or item.get("original_url") or "",
+                }
+            )
+        if len(results) >= limit:
+            break
+    return results
+
+
+def run_download(context: dict[str, Any], source: str) -> Path:
+    library_dir = context["library_dir"]
+    command = str(context["config"].get("download_command") or "yt-dlp")
+    output_template = "%(title).200B [%(id)s].%(ext)s"
+    argv = [
+        command,
+        "--no-playlist",
+        "--paths",
+        str(library_dir),
+        "--output",
+        output_template,
+        "--format",
+        str(context["config"].get("download_format") or "bestaudio/best"),
+        "--print",
+        "after_move:filepath",
+        source,
+    ]
+    completed = subprocess.run(argv, capture_output=True, text=True, timeout=600)
+    if completed.returncode != 0:
+        raise ToolInputError(f"music download failed: {completed.stderr.strip() or completed.stdout.strip()}")
+    candidates = [Path(line.strip()).expanduser() for line in completed.stdout.splitlines() if line.strip()]
+    for candidate in reversed(candidates):
+        resolved = candidate if candidate.is_absolute() else library_dir / candidate
+        if resolved.exists():
+            return resolved.resolve()
+    media_files = [path for path in library_dir.rglob("*") if path.is_file()]
+    if not media_files:
+        raise ToolInputError("music download completed but no media file was found")
+    return max(media_files, key=lambda item: item.stat().st_mtime).resolve()
+
+
+def start_playback(context: dict[str, Any], track: dict[str, Any]) -> dict[str, Any]:
+    path = Path(str(track.get("path", "")))
+    if not path.is_file():
+        return {"started": False, "status": "missing_file", "backend": "", "path": str(path)}
+    if bool(context["config"].get("dry_run_player")):
+        return {"started": True, "status": "dry_run", "backend": "dry_run", "path": str(path)}
+    player_command = context["config"].get("player_command")
+    if isinstance(player_command, list) and player_command:
+        argv = [str(item).replace("{path}", str(path)) for item in player_command]
+        process = subprocess.Popen(argv, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"started": True, "status": "playing", "backend": "configured_player", "path": str(path), "pid": process.pid}
+    if os.name == "nt":
+        os.startfile(str(path))  # type: ignore[attr-defined]
+        return {"started": True, "status": "playing", "backend": "windows_default", "path": str(path)}
+    opener = shutil.which("xdg-open") or shutil.which("open")
+    if opener:
+        process = subprocess.Popen([opener, str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        return {"started": True, "status": "playing", "backend": Path(opener).name, "path": str(path), "pid": process.pid}
+    return {"started": False, "status": "no_player_available", "backend": "", "path": str(path)}
+
+
+def play_relative(context: dict[str, Any], database: dict[str, Any], state: dict[str, Any], offset: int) -> dict[str, Any]:
+    queue = [track_id for track_id in state.get("queue", []) if track_id in database["tracks"]]
+    if not queue:
+        return {"changed": False, "blocked_reason": "queue_empty"}
+    if bool(state.get("shuffle")) and offset > 0:
+        index = random.randrange(len(queue))
+    else:
+        index = int(state.get("queue_index") or 0) + offset
+    if index >= len(queue):
+        index = 0 if bool(state.get("repeat")) else len(queue) - 1
+    if index < 0:
+        index = len(queue) - 1 if bool(state.get("repeat")) else 0
+    state["queue"] = queue
+    state["queue_index"] = index
+    track = database["tracks"][queue[index]]
+    playback = start_playback(context, track)
+    state["current_track_id"] = track["id"]
+    state["playback_status"] = playback["status"]
+    state["backend"] = playback["backend"]
+    state["player_pid"] = playback.get("pid")
+    state["started_at"] = time.time()
+    add_recent(database, track["id"])
+    save_state(context, state)
+    save_database(context, database)
+    return {"changed": playback["started"], "track": track_public(track), "playback": playback, "queue": queue_public(database, state)}
+
+
+def stop_playback(state: dict[str, Any]) -> bool:
+    pid = state.get("player_pid")
+    if isinstance(pid, int):
+        try:
+            if os.name == "nt":
+                subprocess.run(["taskkill", "/PID", str(pid), "/T", "/F"], capture_output=True, text=True, timeout=10)
+            else:
+                os.kill(pid, 15)
+            return True
+        except OSError:
+            return False
+    return send_media_key("stop")
+
+
+def send_media_key(operation: str) -> bool:
+    if os.name != "nt":
+        return False
+    char_by_operation = {"pause": "179", "resume": "179", "play_pause": "179", "stop": "178"}
+    code = char_by_operation.get(operation)
+    if not code:
+        return False
+    command = "$shell = New-Object -ComObject WScript.Shell; $shell.SendKeys([char]" + code + ")"
+    completed = subprocess.run(["powershell", "-NoProfile", "-Command", command], capture_output=True, text=True, timeout=10)
+    return completed.returncode == 0
+
+
+def playlist_tracks(database: dict[str, Any], name: str) -> list[str]:
+    playlist = database["playlists"].get(playlist_key(name))
+    if not isinstance(playlist, dict):
+        return []
+    track_ids = playlist.get("track_ids")
+    if not isinstance(track_ids, list):
+        return []
+    return [track_id for track_id in track_ids if isinstance(track_id, str) and track_id in database["tracks"]]
+
+
+def playlist_key(name: str) -> str:
+    return normalize_text(name).replace(" ", "-") or "playlist"
+
+
+def playlists_public(database: dict[str, Any]) -> list[dict[str, Any]]:
+    return [playlist_public(database, key) for key in sorted(database["playlists"], key=sort_text)]
+
+
+def playlist_public(database: dict[str, Any], key: str) -> dict[str, Any] | None:
+    playlist = database["playlists"].get(key)
+    if not isinstance(playlist, dict):
+        return None
+    tracks = [database["tracks"][track_id] for track_id in playlist.get("track_ids", []) if track_id in database["tracks"]]
+    return {"name": playlist.get("name") or key, "track_count": len(tracks), "tracks": tracks_public(tracks)}
+
+
+def add_recent(database: dict[str, Any], track_id: str) -> None:
+    track = database["tracks"].get(track_id)
+    if not track:
+        return
+    track["play_count"] = int(track.get("play_count") or 0) + 1
+    track["last_played_at"] = time.time()
+    recent = [item for item in database["recent"] if item != track_id]
+    recent.insert(0, track_id)
+    database["recent"] = recent[:100]
+
+
+def queue_public(database: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
+    queue = [track_public(database["tracks"].get(track_id)) for track_id in state.get("queue", []) if track_id in database["tracks"]]
+    return {"index": state.get("queue_index", 0), "length": len(queue), "tracks": [track for track in queue if track]}
+
+
+def tracks_public(tracks: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [public for public in (track_public(track) for track in tracks) if public]
+
+
+def track_public(track: dict[str, Any] | None, score: float | None = None) -> dict[str, Any] | None:
+    if not isinstance(track, dict):
+        return None
+    result = {
+        "id": track.get("id"),
+        "title": track.get("title"),
+        "artist": track.get("artist"),
+        "album": track.get("album"),
+        "path": track.get("path"),
+        "filename": track.get("filename"),
+        "play_count": track.get("play_count", 0),
+        "last_played_at": track.get("last_played_at"),
+    }
+    if score is not None:
+        result["match_score"] = round(score, 3)
+    return result
+
+
+def state_public(state: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "current_track_id": state.get("current_track_id") or "",
+        "playback_status": state.get("playback_status") or "stopped",
+        "backend": state.get("backend") or "",
+        "started_at": state.get("started_at"),
+        "last_position_seconds": state.get("last_position_seconds") or 0,
+        "shuffle": bool(state.get("shuffle")),
+        "repeat": bool(state.get("repeat")),
+    }
+
+
+def downloader_available(context: dict[str, Any]) -> bool:
+    command = str(context["config"].get("download_command") or "")
+    return bool(command and shutil.which(command))
+
+
+def clean_text(value: Any) -> str:
+    return value.strip() if isinstance(value, str) else ""
+
+
+def normalize_text(value: str) -> str:
+    normalized = unicodedata.normalize("NFKD", value).casefold()
+    parts: list[str] = []
+    last_space = False
+    for char in normalized:
+        if char.isalnum():
+            parts.append(char)
+            last_space = False
+        elif char.isspace() or char in {"-", "_", ".", ",", ":", ";", "|", "/", "\\"}:
+            if not last_space:
+                parts.append(" ")
+                last_space = True
+    return " ".join("".join(parts).split())
+
+
+def sort_text(value: Any) -> str:
+    return normalize_text(str(value))
+
+
+def bounded_int(value: Any, fallback: int, minimum: int, maximum: int) -> int:
+    if isinstance(value, int):
+        number = value
+    elif isinstance(value, str) and value.strip():
+        try:
+            number = int(value.strip())
+        except ValueError:
+            number = fallback
+    else:
+        number = fallback
+    return max(minimum, min(maximum, number))
