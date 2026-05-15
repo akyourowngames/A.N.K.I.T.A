@@ -189,6 +189,12 @@ def chat_once(config: JarvisConfig, messages: list[dict[str, Any]], registry: An
                 return chat_with_json_tools(config, messages, subset)
             if decision.mode == ROUTE_UNCERTAIN and not decision.allow_remote_selector:
                 return final_chat_response(config, messages)
+            if decision.mode == ROUTE_UNCERTAIN and decision.selected_tool_names:
+                subset = ToolSubsetRegistry(registry, decision.selected_tool_names, include_always=False)
+                direct_requests = direct_tool_requests_for_decision(decision, subset, latest_user_text(messages))
+                if direct_requests:
+                    return answer_with_tool_requests(config, [dict(message) for message in messages], subset, direct_requests)
+                return chat_with_configured_tool_mode(config, messages, subset)
             return chat_with_configured_tool_mode(config, messages, registry)
 
         return final_chat_response(config, messages)
@@ -268,9 +274,18 @@ def answer_with_tool_requests(
 
 
 def grounded_direct_tool_answer(results: list[dict[str, Any]]) -> str:
-    if not env_bool("JARVIS_DETERMINISTIC_WEB_SEARCH_RESULTS", True):
+    if not results:
         return ""
-    if not results or any(result.get("name") != "web_search" for result in results):
+    names = [str(result.get("name", "")) for result in results]
+    if all(name == "web_search" for name in names):
+        return grounded_web_search_answer(results)
+    if all(name.startswith("browser_") for name in names):
+        return grounded_browser_answer(results)
+    return ""
+
+
+def grounded_web_search_answer(results: list[dict[str, Any]]) -> str:
+    if not env_bool("JARVIS_DETERMINISTIC_WEB_SEARCH_RESULTS", True):
         return ""
     parts: list[str] = []
     for result in results:
@@ -303,6 +318,126 @@ def grounded_direct_tool_answer(results: list[dict[str, Any]]) -> str:
     if parts:
         parts.append("For a real summary, ask me to open/extract the top sources with the browser controller.")
     return "\n".join(parts).strip()
+
+
+def grounded_browser_answer(results: list[dict[str, Any]]) -> str:
+    if not env_bool("JARVIS_DETERMINISTIC_BROWSER_RESULTS", True):
+        return ""
+    parts: list[str] = []
+    for result in results:
+        name = str(result.get("name", "browser")).strip() or "browser"
+        payload = result.get("result")
+        if not isinstance(payload, dict) or not payload.get("ok"):
+            error = payload.get("error") if isinstance(payload, dict) else ""
+            return f"Browser controller did not produce usable evidence. {error}".strip()
+        data = payload.get("result")
+        if not isinstance(data, dict):
+            return "Browser controller did not produce usable evidence."
+        if name == "browser_open":
+            parts.append(render_browser_open_result(data))
+        elif name == "browser_observe":
+            parts.append(render_browser_observe_result(data))
+        elif name == "browser_extract":
+            parts.append(render_browser_extract_result(data))
+        elif name == "browser_status":
+            parts.append(render_browser_status_result(data))
+        else:
+            parts.append(render_generic_browser_result(name, data))
+    return "\n\n".join(part for part in parts if part).strip()
+
+
+def render_browser_open_result(data: dict[str, Any]) -> str:
+    tab = data.get("tab") if isinstance(data.get("tab"), dict) else {}
+    observe = data.get("observe") if isinstance(data.get("observe"), dict) else {}
+    backend = str(data.get("backend", observe.get("backend", "browser-controller")))
+    warning = str(data.get("warning", "")).strip()
+    title = str(tab.get("title") or observe.get("title") or "Untitled page").strip()
+    url = str(tab.get("url") or observe.get("url") or "").strip()
+    revision = tab.get("dom_revision", observe.get("dom_revision", ""))
+    quality = observe.get("content_quality") if isinstance(observe.get("content_quality"), dict) else {}
+    usable = bool(quality.get("usable"))
+    interactive_count = quality.get("interactive_count", 0)
+    link_count = quality.get("link_count", 0)
+    form_count = quality.get("form_count", 0)
+    prefix = "The browser controller loaded evidence for the page"
+    if backend == "playwright":
+        prefix = "A Playwright browser session loaded the page"
+    lines = [f"{prefix}: {title}" + (f" - {url}" if url else "")]
+    if revision != "":
+        lines.append(f"DOM revision: {revision}.")
+    if warning:
+        lines.append(f"Warning: {warning}")
+    if usable:
+        lines.append(
+            f"Extracted page evidence: {interactive_count} interactive elements, {link_count} links, {form_count} forms."
+        )
+        text = str(observe.get("visible_text", "")).strip()
+        if text:
+            lines.append(f"Visible text excerpt: {text[:500]}")
+    else:
+        reasons = quality.get("reasons", [])
+        reason_text = "; ".join(str(item) for item in reasons) if isinstance(reasons, list) else ""
+        lines.append(
+            "Only shell/title-level evidence was extracted"
+            + (f" ({reason_text})." if reason_text else ".")
+        )
+        lines.append("I cannot claim the full site is usable or ready for interaction from this result alone.")
+    return "\n".join(lines)
+
+
+def render_browser_observe_result(data: dict[str, Any]) -> str:
+    title = str(data.get("title") or "Untitled page").strip()
+    url = str(data.get("url") or "").strip()
+    quality = data.get("content_quality") if isinstance(data.get("content_quality"), dict) else {}
+    lines = [f"Observed browser page: {title}" + (f" - {url}" if url else "")]
+    lines.append(
+        "Evidence counts: "
+        f"{quality.get('interactive_count', 0)} interactive, "
+        f"{quality.get('link_count', 0)} links, "
+        f"{quality.get('form_count', 0)} forms, "
+        f"{quality.get('table_count', 0)} tables."
+    )
+    text = str(data.get("visible_text", "")).strip()
+    if text:
+        lines.append(f"Visible text excerpt: {text[:500]}")
+    if not quality.get("usable"):
+        lines.append("This observe result is not enough to claim the real page is usable.")
+    return "\n".join(lines)
+
+
+def render_browser_extract_result(data: dict[str, Any]) -> str:
+    title = str(data.get("title") or "Untitled page").strip()
+    url = str(data.get("url") or "").strip()
+    kind = str(data.get("kind") or "extract").strip()
+    lines = [f"Browser extracted {kind} from {title}" + (f" - {url}" if url else "")]
+    for field in ["article", "text"]:
+        value = data.get(field)
+        if isinstance(value, str) and value.strip():
+            lines.append(value.strip()[:1200])
+            return "\n".join(lines)
+    for field in ["links", "tables", "forms", "items", "metadata"]:
+        value = data.get(field)
+        if value:
+            lines.append(json.dumps(value, ensure_ascii=False)[:1200])
+            return "\n".join(lines)
+    lines.append("No usable extracted content was returned.")
+    return "\n".join(lines)
+
+
+def render_browser_status_result(data: dict[str, Any]) -> str:
+    backend = data.get("backend", "unknown")
+    visible = not bool(data.get("headless", True))
+    tabs = data.get("tabs", [])
+    return (
+        f"Browser controller status: backend={backend}, visible_window={visible}, "
+        f"playwright_available={bool(data.get('playwright_available'))}, tabs={len(tabs) if isinstance(tabs, list) else 0}."
+    )
+
+
+def render_generic_browser_result(name: str, data: dict[str, Any]) -> str:
+    if data.get("passed") is not None:
+        return f"{name} result: passed={bool(data.get('passed'))}. " + json.dumps(data.get("checks", []), ensure_ascii=False)
+    return f"{name} returned: " + json.dumps(data, ensure_ascii=False)[:1200]
 
 
 def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:

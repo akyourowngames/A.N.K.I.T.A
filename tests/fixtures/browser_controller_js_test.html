@@ -1,0 +1,19 @@
+<!doctype html>
+<html>
+  <head>
+    <title>Browser Controller JS Fixture</title>
+    <script>
+      window.addEventListener('DOMContentLoaded', () => {
+        document.getElementById('rendered-state').textContent = 'Rendered JS fixture content ready';
+      });
+    </script>
+  </head>
+  <body>
+    <main>
+      <h1>Browser Controller JS Fixture</h1>
+      <p id="rendered-state">Waiting for rendered content</p>
+      <label>Search <input name="search" placeholder="Search query"></label>
+      <button type="button">Inspect</button>
+    </main>
+  </body>
+</html>

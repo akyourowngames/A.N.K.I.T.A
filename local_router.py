@@ -22,6 +22,7 @@ class RouteDecision:
     reason: str
     allow_remote_selector: bool
     no_tool_confidence: float = 0.0
+    direct_execution_allowed: bool = True
 
 
 @dataclass(frozen=True)
@@ -39,10 +40,8 @@ class ToolDescriptor:
 
 def route_chat_turn(user_text: str, session_context: list[dict[str, Any]] | None, registry: Any) -> RouteDecision:
     trace_mark("local_router_started")
-    previous_context = os.environ.get("JARVIS_ROUTER_RECENT_CONTEXT")
-    os.environ["JARVIS_ROUTER_RECENT_CONTEXT"] = recent_context_text(session_context)
     try:
-        decision = route_chat_turn_inner(user_text, registry)
+        decision = route_chat_turn_inner(user_text, registry, recent_context_text(session_context))
         trace_mark(
             "local_router_done",
             mode=decision.mode,
@@ -60,11 +59,6 @@ def route_chat_turn(user_text: str, session_context: list[dict[str, Any]] | None
             allow_remote_selector=True,
             no_tool_confidence=0.0,
         )
-    finally:
-        if previous_context is None:
-            os.environ.pop("JARVIS_ROUTER_RECENT_CONTEXT", None)
-        else:
-            os.environ["JARVIS_ROUTER_RECENT_CONTEXT"] = previous_context
 
 
 def recent_context_text(session_context: list[dict[str, Any]] | None) -> str:
@@ -80,13 +74,13 @@ def recent_context_text(session_context: list[dict[str, Any]] | None) -> str:
     return "\n".join(parts)
 
 
-def route_chat_turn_inner(user_text: str, registry: Any) -> RouteDecision:
+def route_chat_turn_inner(user_text: str, registry: Any, context_text: str = "") -> RouteDecision:
     if not env_bool("JARVIS_FAST_LANE_ENABLED", True) or not env_bool("JARVIS_LOCAL_TOOL_ROUTER", True):
         return RouteDecision(ROUTE_UNCERTAIN, [], 0.0, "fast lane disabled", True, 0.0)
 
     query_tokens = token_weights(tokenize(user_text))
     descriptors = build_tool_descriptors(registry)
-    context_decision = route_contextual_followup(user_text, descriptors)
+    context_decision = route_contextual_followup(user_text, descriptors, context_text)
     if context_decision is not None:
         return context_decision
     if not query_tokens or not descriptors:
@@ -101,11 +95,12 @@ def route_chat_turn_inner(user_text: str, registry: Any) -> RouteDecision:
         for token, weight in query_tokens.items()
         if token in token_counts
     }
-    if not focus_weights:
+    argument_scores = argument_evidence_scores(user_text, descriptors)
+    if not focus_weights and not argument_scores:
         return RouteDecision(ROUTE_DIRECT_CHAT, [], 1.0, "no descriptor overlap", False, 1.0)
 
     scored = sorted(
-        ((score_descriptor(focus_weights, descriptor), descriptor) for descriptor in descriptors),
+        ((score_descriptor(focus_weights, descriptor) + argument_scores.get(descriptor.name, 0.0), descriptor) for descriptor in descriptors),
         key=lambda item: (-item[0], item[1].name),
     )
     best_score, best_descriptor = scored[0]
@@ -222,40 +217,97 @@ def build_tool_descriptors(registry: Any) -> list[ToolDescriptor]:
     return descriptors
 
 
-def route_contextual_followup(user_text: str, descriptors: list[ToolDescriptor]) -> RouteDecision | None:
-    context = os.environ.get("JARVIS_ROUTER_RECENT_CONTEXT", "")
-    if not context.strip():
+def route_contextual_followup(
+    user_text: str,
+    descriptors: list[ToolDescriptor],
+    context_text: str,
+) -> RouteDecision | None:
+    if not context_text.strip():
         return None
     tokens = tokenize(user_text)
     if len(tokens) > env_int("JARVIS_CONTEXTUAL_FOLLOWUP_MAX_TOKENS", 4):
         return None
-    if token_weights(tokens):
-        overlap = False
-        for descriptor in descriptors:
-            if set(tokens) & set(descriptor.core_tokens):
-                overlap = True
-                break
-        if overlap:
-            return None
-    context_tokens = set(tokenize(context))
-    browser_candidates = [
-        descriptor
-        for descriptor in descriptors
-        if descriptor.category == "browser"
-        and descriptor.name in {"browser_open", "browser_observe", "browser_extract"}
-        and context_tokens & set(descriptor.tokens)
-    ]
-    if not browser_candidates:
+
+    current_tokens = set(tokens)
+    if any(current_tokens & set(descriptor.core_tokens) for descriptor in descriptors):
         return None
-    browser_candidates.sort(key=lambda item: (0 if item.name == "browser_open" else 1, item.name))
-    return RouteDecision(
-        ROUTE_UNCERTAIN,
-        [browser_candidates[0].name],
-        0.36,
-        "short follow-up after browser-related context",
-        True,
-        0.0,
+
+    context_weights = descriptor_focus_weights(f"{context_text}\n{user_text}", descriptors)
+    if not context_weights:
+        return None
+    scored = sorted(
+        ((score_descriptor(context_weights, descriptor), descriptor) for descriptor in descriptors),
+        key=lambda item: (-item[0], item[1].name),
     )
+    best_score, best_descriptor = scored[0]
+    if best_score < env_float("JARVIS_CONTEXTUAL_FOLLOWUP_MIN_CONFIDENCE", 0.3):
+        return None
+    selected = selected_candidate_names(scored, best_score)
+    risky = [descriptor for score, descriptor in scored if descriptor.name in selected and tool_needs_confirmation(descriptor)]
+    query_categories = {
+        item.strip()
+        for item in os.environ.get("JARVIS_CONTEXTUAL_FOLLOWUP_QUERY_CATEGORIES", "web").split(",")
+        if item.strip()
+    }
+    query_candidates = [
+        descriptor
+        for score, descriptor in scored
+        if score >= env_float("JARVIS_CONTEXTUAL_FOLLOWUP_QUERY_MIN_CONFIDENCE", 0.18)
+        and descriptor.category in query_categories
+        and descriptor.required_parameters == frozenset({"query"})
+        and not tool_needs_confirmation(descriptor)
+    ]
+    if query_candidates:
+        return RouteDecision(
+            ROUTE_UNCERTAIN,
+            [query_candidates[0].name],
+            round(min(1.0, best_score), 3),
+            "short follow-up maps to recent source-backed context",
+            True,
+            0.0,
+            False,
+        )
+    safe_selected = [
+        descriptor.name
+        for score, descriptor in scored
+        if descriptor.name in selected and not tool_needs_confirmation(descriptor)
+    ]
+    if safe_selected:
+        return RouteDecision(
+            ROUTE_UNCERTAIN,
+            safe_selected,
+            round(min(1.0, best_score), 3),
+            "short follow-up maps to recent safe tool context",
+            True,
+            0.0,
+            False,
+        )
+    if risky:
+        return RouteDecision(
+            ROUTE_CONFIRMATION_REQUIRED,
+            [risky[0].name],
+            round(min(1.0, best_score), 3),
+            "short follow-up maps to confirmation-gated tool context",
+            False,
+            0.0,
+            False,
+        )
+    return None
+
+
+def descriptor_focus_weights(text: str, descriptors: list[ToolDescriptor]) -> dict[str, float]:
+    weights = token_weights(tokenize(text))
+    if not weights:
+        return {}
+    token_counts: dict[str, int] = {}
+    for descriptor in descriptors:
+        for token in descriptor.core_tokens:
+            token_counts[token] = token_counts.get(token, 0) + 1
+    return {
+        token: weight / math.sqrt(token_counts[token])
+        for token, weight in weights.items()
+        if token in token_counts
+    }
 
 
 def selected_candidate_names(scored: list[tuple[float, ToolDescriptor]], best_score: float) -> list[str]:
@@ -310,7 +362,9 @@ def identity_match_weight(query_weights: dict[str, float], descriptor: ToolDescr
 
 
 def direct_tool_requests_for_decision(decision: RouteDecision, registry: Any, user_text: str = "") -> list[dict[str, Any]]:
-    if decision.mode != ROUTE_TOOL_REQUIRED:
+    if decision.mode not in {ROUTE_TOOL_REQUIRED, ROUTE_UNCERTAIN}:
+        return []
+    if not decision.direct_execution_allowed:
         return []
     requests = []
     for name in decision.selected_tool_names:
@@ -319,6 +373,15 @@ def direct_tool_requests_for_decision(decision: RouteDecision, registry: Any, us
             continue
         if descriptor.required_parameters:
             query_threshold = env_float("JARVIS_LOCAL_ROUTER_DIRECT_QUERY_CONFIDENCE", 0.35)
+            url_or_path = extract_url_or_existing_path(user_text)
+            if (
+                descriptor.required_parameters == frozenset({"url"})
+                and url_or_path
+                and decision.confidence >= query_threshold
+                and not tool_needs_confirmation(descriptor)
+            ):
+                requests.append({"name": name, "parameters": {"url": url_or_path}})
+                continue
             if (
                 descriptor.required_parameters == frozenset({"query"})
                 and user_text.strip()
@@ -334,6 +397,54 @@ def direct_tool_requests_for_decision(decision: RouteDecision, registry: Any, us
             continue
         requests.append({"name": name, "parameters": {}})
     return requests[:1]
+
+
+def argument_evidence_scores(user_text: str, descriptors: list[ToolDescriptor]) -> dict[str, float]:
+    url_or_path = extract_url_or_existing_path(user_text)
+    if not url_or_path:
+        return {}
+    scores: dict[str, float] = {}
+    is_url = looks_like_url(url_or_path)
+    for descriptor in descriptors:
+        if "url" in descriptor.required_parameters:
+            scores[descriptor.name] = 0.65 if is_url else 0.55
+        elif any(parameter in descriptor.required_parameters for parameter in ["path", "file_path", "directory", "directory_path"]):
+            scores[descriptor.name] = 0.45
+    return scores
+
+
+def extract_url_or_existing_path(text: str) -> str:
+    fragments = text.replace('"', " ").replace("'", " ").split()
+    for fragment in fragments:
+        candidate = clean_argument_fragment(fragment)
+        if looks_like_url(candidate) or existing_path(candidate):
+            return candidate
+    if len(fragments) > 60:
+        fragments = fragments[:60]
+    for start in range(len(fragments)):
+        for end in range(min(len(fragments), start + 12), start, -1):
+            candidate = clean_argument_fragment(" ".join(fragments[start:end]))
+            if existing_path(candidate):
+                return candidate
+    return ""
+
+
+def clean_argument_fragment(fragment: str) -> str:
+    return fragment.strip(" \t\r\n`.,;:()[]{}<>")
+
+
+def looks_like_url(candidate: str) -> bool:
+    clean = candidate.casefold()
+    return clean.startswith("http://") or clean.startswith("https://") or clean.startswith("file://") or clean.startswith("data:")
+
+
+def existing_path(candidate: str) -> bool:
+    if not candidate:
+        return False
+    try:
+        return os.path.exists(os.path.expanduser(candidate))
+    except OSError:
+        return False
 
 
 def tool_needs_confirmation(descriptor: ToolDescriptor) -> bool:
