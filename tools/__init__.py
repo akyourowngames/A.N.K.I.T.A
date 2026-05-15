@@ -1,4 +1,4 @@
-from .registry import ToolRegistry, discover_tools
+from .registry import ToolRegistry, ToolSpec, define_tool, discover_tools
 
 
-__all__ = ["ToolRegistry", "discover_tools"]
+__all__ = ["ToolRegistry", "ToolSpec", "define_tool", "discover_tools"]

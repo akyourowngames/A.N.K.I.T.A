@@ -34,15 +34,39 @@ def load_skill_context(catalog: ExtensionCatalog, workspace: Path | None = None)
     return "\n\n".join(parts).strip()
 
 
+def load_global_skill_context(catalog: ExtensionCatalog, workspace: Path | None = None) -> str:
+    root = workspace or Path.cwd()
+    skills = load_skills([root_skill_root(root)])
+    if not skills:
+        return ""
+    max_chars = env_int("JARVIS_GLOBAL_SKILL_CONTEXT_CHARS", 1600)
+    parts: list[str] = ["Global Jarvis skills:"]
+    used = len(parts[0])
+    for skill in skills:
+        block = render_skill(skill)
+        if used + len(block) > max_chars:
+            remaining = max_chars - used
+            if remaining > 200:
+                parts.append(block[:remaining])
+            break
+        parts.append(block)
+        used += len(block)
+    return "\n\n".join(parts).strip()
+
+
 def default_skill_roots(catalog: ExtensionCatalog, workspace: Path | None = None) -> list[Path]:
     root = workspace or Path.cwd()
+    roots = [root_skill_root(root)]
+    roots.extend(catalog.skill_roots())
+    return roots
+
+
+def root_skill_root(root: Path) -> Path:
     configured = os.environ.get("JARVIS_SKILLS_DIR", "").strip()
     root_skill_dir = Path(configured).expanduser() if configured else root / "skills"
     if not root_skill_dir.is_absolute():
         root_skill_dir = root / root_skill_dir
-    roots = [root_skill_dir]
-    roots.extend(catalog.skill_roots())
-    return roots
+    return root_skill_dir
 
 
 def load_skills(roots: list[Path]) -> list[Skill]:

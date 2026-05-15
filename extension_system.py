@@ -34,9 +34,13 @@ class ExtensionCatalog:
     def tool_descriptors(self) -> list[dict[str, Any]]:
         descriptors: list[dict[str, Any]] = []
         for extension in self.extensions:
+            skill_text = extension_tool_skill_text(extension)
             for tool in extension.tools:
                 descriptor = dict(tool)
                 descriptor.setdefault("_extension_root", str(extension.root))
+                descriptor.setdefault("category", extension.id)
+                if "skill" not in descriptor and skill_text:
+                    descriptor["skill"] = skill_text
                 descriptors.append(descriptor)
         return descriptors
 
@@ -172,6 +176,48 @@ def read_text_list(value: Any, path: Path, field: str) -> list[str]:
         if isinstance(item, str) and item.strip():
             result.append(item.strip())
     return result
+
+
+def extension_tool_skill_text(extension: Extension) -> str:
+    max_chars = env_int("JARVIS_EXTENSION_TOOL_SKILL_CHARS", 2400)
+    parts: list[str] = []
+    used = 0
+    for root in extension.skill_dirs:
+        if not root.exists():
+            continue
+        for path in sorted(root.rglob("SKILL.txt"), key=lambda item: str(item).lower()):
+            text = path.read_text(encoding="utf-8-sig").strip()
+            if not text:
+                continue
+            block = f"## {path.parent.name}\n{strip_frontmatter(text)}".strip()
+            if used + len(block) > max_chars:
+                remaining = max_chars - used
+                if remaining > 200:
+                    parts.append(block[:remaining].rstrip())
+                return "\n\n".join(parts).strip()
+            parts.append(block)
+            used += len(block)
+    return "\n\n".join(parts).strip()
+
+
+def strip_frontmatter(text: str) -> str:
+    lines = text.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return text
+    for index in range(1, len(lines)):
+        if lines[index].strip() == "---":
+            return "\n".join(lines[index + 1 :]).strip()
+    return text
+
+
+def env_int(name: str, fallback: int) -> int:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return fallback
+    try:
+        return int(value)
+    except ValueError:
+        return fallback
 
 
 def required_text(data: dict[str, Any], key: str, path: Path) -> str:

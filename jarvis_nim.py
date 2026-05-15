@@ -5,13 +5,17 @@ import os
 import time
 import urllib.error
 import urllib.request
-from dataclasses import dataclass
+from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
 
 class NimChatError(Exception):
     pass
+
+
+_TOOL_SELECTION_CACHE: dict[tuple[str, str], list[str]] = {}
 
 
 def load_dotenv(path: Path) -> None:
@@ -209,12 +213,63 @@ def answer_with_tool_requests(
 
 
 def execute_tool_requests(registry: Any, requests: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    results = []
-    for request in requests:
-        result = registry.execute(request["name"], request["parameters"])
-        result_payload = json.loads(result)
-        results.append({"name": request["name"], "parameters": request["parameters"], "result": result_payload})
-    return results
+    results: list[dict[str, Any] | None] = [None for _request in requests]
+    batch: list[tuple[int, dict[str, Any]]] = []
+
+    def flush_batch() -> None:
+        if not batch:
+            return
+        max_workers = max(1, min(len(batch), env_int("JARVIS_TOOL_PARALLEL_MAX_WORKERS", 4)))
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = [
+                (index, executor.submit(execute_one_tool_request, registry, request))
+                for index, request in batch
+            ]
+            for index, future in futures:
+                results[index] = future.result()
+        batch.clear()
+
+    for index, request in enumerate(requests):
+        if tool_request_parallel_safe(registry, request):
+            batch.append((index, request))
+            continue
+        flush_batch()
+        results[index] = execute_one_tool_request(registry, request)
+    flush_batch()
+    return [result for result in results if result is not None]
+
+
+def execute_one_tool_request(registry: Any, request: dict[str, Any]) -> dict[str, Any]:
+    result = registry.execute(request["name"], request["parameters"])
+    result_payload = json.loads(result)
+    return {"name": request["name"], "parameters": request["parameters"], "result": result_payload}
+
+
+def tool_request_parallel_safe(registry: Any, request: dict[str, Any]) -> bool:
+    name = request.get("name")
+    if not isinstance(name, str):
+        return False
+    tool = registry_tool(registry, name)
+    if tool is None:
+        return False
+    return (
+        getattr(tool, "risk", "read") == "read"
+        and bool(getattr(tool, "parallel_safe", False))
+        and not bool(getattr(tool, "requires_confirmation", False))
+    )
+
+
+def registry_tool(registry: Any, name: str) -> Any | None:
+    lookup = getattr(registry, "tool", None)
+    if callable(lookup):
+        return lookup(name)
+    base = getattr(registry, "registry", None)
+    if base is not None:
+        return registry_tool(base, name)
+    for tool in registry.visible_tools():
+        if getattr(tool, "name", "") == name:
+            return tool
+    return None
 
 
 def collect_tool_requests(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
@@ -284,10 +339,10 @@ def can_accept_selector_direct_response(messages: list[dict[str, Any]]) -> bool:
 
 
 def selected_planner_registry(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> Any:
-    if not env_bool("TOOL_PLANNER_DYNAMIC_SCHEMAS", False):
+    if not env_bool("TOOL_PLANNER_DYNAMIC_SCHEMAS", True):
         return registry
     tools = registry.visible_tools()
-    minimum = env_int("TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS", 40)
+    minimum = env_int("TOOL_PLANNER_DYNAMIC_SCHEMA_MIN_TOOLS", 8)
     if len(tools) < minimum:
         return registry
     names, direct_response, direct_requests = select_planner_tool_decision(config, messages, registry)
@@ -318,15 +373,22 @@ class ToolSubsetRegistry:
             if tool.name in self.names or (self.include_always and getattr(tool, "planner_always_include", False))
         ]
 
+    def tool(self, name: str) -> Any | None:
+        if name not in {tool.name for tool in self.visible_tools()}:
+            return None
+        lookup = getattr(self.registry, "tool", None)
+        return lookup(name) if callable(lookup) else registry_tool(self.registry, name)
+
     def openai_tools(self) -> list[dict[str, Any]]:
         return [tool.openai_schema() for tool in self.visible_tools()]
 
     def planner_tools(self) -> list[dict[str, Any]]:
         if hasattr(self.registry, "planner_tools"):
+            visible_names = {tool.name for tool in self.visible_tools()}
             return [
                 schema
                 for schema in self.registry.planner_tools()
-                if isinstance(schema, dict) and schema.get("name") in self.names
+                if isinstance(schema, dict) and schema.get("name") in visible_names
             ]
         return self.openai_tools()
 
@@ -335,6 +397,11 @@ class ToolSubsetRegistry:
 
     def capability_text(self) -> str:
         return self.registry.capability_text()
+
+    def tool_skill_context(self) -> str:
+        from tools.registry import render_tool_skill_context
+
+        return render_tool_skill_context(self.visible_tools())
 
 
 def select_planner_tool_names(config: JarvisConfig, messages: list[dict[str, Any]], registry: Any) -> list[str]:
@@ -349,6 +416,9 @@ def select_planner_tool_decision(
 ) -> tuple[list[str], str, list[dict[str, Any]]]:
     tools = registry.visible_tools()
     available_names = {tool.name for tool in tools}
+    cached_names = cached_tool_selection(messages, registry)
+    if cached_names is not None:
+        return [name for name in cached_names if name in available_names], "", []
     candidates = selector_tool_candidates(registry, tools)
     prompt = tool_selector_prompt(candidates)
     selector_messages = [
@@ -363,7 +433,7 @@ def select_planner_tool_decision(
     ]
     try:
         data = post_json(
-            config,
+            selector_request_config(config),
             {
                 "model": tool_selector_model(config),
                 "messages": selector_messages,
@@ -373,7 +443,7 @@ def select_planner_tool_decision(
             },
         )
     except NimChatError:
-        return [tool.name for tool in tools], "", []
+        return fallback_selector_tool_names(registry), "", []
 
     content = message_content(extract_choice_message(data))
     direct_requests = parse_tool_requests(content, registry)
@@ -384,7 +454,70 @@ def select_planner_tool_decision(
             names.append(name)
     limit = env_int("TOOL_PLANNER_SELECTOR_MAX_TOOLS", 12)
     limited_names = names[: max(1, limit)] if names else []
+    if limited_names and not direct_requests:
+        remember_tool_selection(messages, registry, limited_names)
     return limited_names, (direct_response if not direct_requests else ""), direct_requests
+
+
+def selector_request_config(config: JarvisConfig) -> JarvisConfig:
+    timeout = env_int("TOOL_PLANNER_SELECTOR_TIMEOUT_SECONDS", min(config.timeout_seconds, 8))
+    clean_timeout = max(1, min(timeout, config.timeout_seconds))
+    return replace(config, timeout_seconds=clean_timeout, retry_attempts=0)
+
+
+def cached_tool_selection(messages: list[dict[str, Any]], registry: Any) -> list[str] | None:
+    if not env_bool("TOOL_PLANNER_SELECTION_CACHE", True):
+        return None
+    key = tool_selection_cache_key(messages, registry)
+    cached = _TOOL_SELECTION_CACHE.get(key)
+    return list(cached) if cached is not None else None
+
+
+def remember_tool_selection(messages: list[dict[str, Any]], registry: Any, names: list[str]) -> None:
+    if not env_bool("TOOL_PLANNER_SELECTION_CACHE", True):
+        return
+    limit = env_int("TOOL_PLANNER_SELECTION_CACHE_SIZE", 128)
+    if len(_TOOL_SELECTION_CACHE) >= max(1, limit):
+        first_key = next(iter(_TOOL_SELECTION_CACHE))
+        _TOOL_SELECTION_CACHE.pop(first_key, None)
+    _TOOL_SELECTION_CACHE[tool_selection_cache_key(messages, registry)] = list(names)
+
+
+def tool_selection_cache_key(messages: list[dict[str, Any]], registry: Any) -> tuple[str, str]:
+    return registry_fingerprint(registry), latest_user_text(messages).strip().casefold()
+
+
+def registry_fingerprint(registry: Any) -> str:
+    parts: list[str] = []
+    for tool in registry.visible_tools():
+        parts.append(
+            "|".join(
+                [
+                    getattr(tool, "name", ""),
+                    getattr(tool, "description", ""),
+                    getattr(tool, "category", ""),
+                    getattr(tool, "risk", ""),
+                ]
+            )
+        )
+    return "\n".join(parts)
+
+
+def fallback_selector_tool_names(registry: Any) -> list[str]:
+    limit = max(1, env_int("TOOL_PLANNER_FALLBACK_MAX_TOOLS", 6))
+    safe_tools = [
+        tool
+        for tool in registry.visible_tools()
+        if getattr(tool, "risk", "read") == "read" and not getattr(tool, "requires_confirmation", False)
+    ]
+    always = [tool.name for tool in safe_tools if getattr(tool, "planner_always_include", False)]
+    names = list(always)
+    for tool in safe_tools:
+        if tool.name not in names:
+            names.append(tool.name)
+        if len(names) >= limit:
+            break
+    return names[:limit]
 
 
 def selector_tool_candidates(registry: Any, tools: list[Any]) -> list[dict[str, Any]]:
@@ -590,13 +723,20 @@ def collect_native_stream_tool_decision(
     registry: Any,
     emit_output: bool = False,
 ) -> tuple[list[dict[str, Any]], str]:
+    selected_registry = selected_planner_registry(config, messages, registry)
+    direct_response = getattr(selected_registry, "direct_response", "")
+    if isinstance(direct_response, str) and direct_response.strip() and can_accept_selector_direct_response(messages):
+        return [], direct_response.strip()
+    direct_requests = getattr(selected_registry, "direct_requests", [])
+    if isinstance(direct_requests, list) and direct_requests:
+        return direct_requests, ""
     payload = {
         "model": config.model,
-        "messages": messages,
+        "messages": messages_with_tool_skill_context(messages, selected_registry),
         "temperature": config.temperature,
         "max_tokens": config.max_tokens,
         "stream": True,
-        "tools": registry.openai_tools(),
+        "tools": selected_registry.openai_tools(),
         "tool_choice": "auto",
         "parallel_tool_calls": env_bool("NIM_PARALLEL_TOOL_CALLS", True),
     }
@@ -611,7 +751,7 @@ def collect_native_stream_tool_decision(
         method="POST",
     )
     with open_url_with_retries(config, request) as response:
-        return read_native_tool_stream(response, registry, emit_output=emit_output)
+        return read_native_tool_stream(response, selected_registry, emit_output=emit_output)
 
 
 def read_native_tool_stream(response: Any, registry: Any, emit_output: bool = True) -> tuple[list[dict[str, Any]], str]:
@@ -718,13 +858,20 @@ def collect_native_tool_decision(
     messages: list[dict[str, Any]],
     registry: Any,
 ) -> tuple[list[dict[str, Any]], str]:
-    tool_schemas = registry.openai_tools()
+    selected_registry = selected_planner_registry(config, messages, registry)
+    direct_response = getattr(selected_registry, "direct_response", "")
+    if isinstance(direct_response, str) and direct_response.strip() and can_accept_selector_direct_response(messages):
+        return [], direct_response.strip()
+    direct_requests = getattr(selected_registry, "direct_requests", [])
+    if isinstance(direct_requests, list) and direct_requests:
+        return direct_requests, ""
+    tool_schemas = selected_registry.openai_tools()
 
     data = post_json(
         config,
         {
             "model": config.model,
-            "messages": messages,
+            "messages": messages_with_tool_skill_context(messages, selected_registry),
             "temperature": config.temperature,
             "max_tokens": config.max_tokens,
             "stream": False,
@@ -739,7 +886,7 @@ def collect_native_tool_decision(
         return [], message_content(message)
 
     requests: list[dict[str, Any]] = []
-    visible_names = {tool.name for tool in registry.visible_tools()}
+    visible_names = {tool.name for tool in selected_registry.visible_tools()}
     for tool_call in tool_calls:
         function = tool_call.get("function", {})
         if not isinstance(function, dict):
@@ -748,7 +895,7 @@ def collect_native_tool_decision(
         if name not in visible_names:
             continue
         arguments = function.get("arguments", "{}")
-        request = normalize_tool_request({"name": name, "parameters": parse_native_arguments(arguments)}, registry)
+        request = normalize_tool_request({"name": name, "parameters": parse_native_arguments(arguments)}, selected_registry)
         if request is not None and request not in requests:
             requests.append(request)
     return requests, message_content(message)
@@ -770,7 +917,31 @@ def parse_native_arguments(arguments: Any) -> dict[str, Any]:
 def json_tool_protocol(registry: Any) -> str:
     template = load_text_file(Path(env_value("JARVIS_TOOL_PROTOCOL_FILE", "prompts/tool_protocol.txt")))
     tools = registry.planner_tools() if hasattr(registry, "planner_tools") else registry.openai_tools()
-    return template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True, separators=(",", ":")))
+    protocol = template.replace("{tool_schemas}", json.dumps(tools, ensure_ascii=True, separators=(",", ":")))
+    skill_context = registry_tool_skill_context(registry)
+    if skill_context:
+        return protocol.rstrip() + "\n\n" + skill_context
+    return protocol
+
+
+def messages_with_tool_skill_context(messages: list[dict[str, Any]], registry: Any) -> list[dict[str, Any]]:
+    skill_context = registry_tool_skill_context(registry)
+    if not skill_context:
+        return messages
+    return [
+        *messages,
+        {
+            "role": "system",
+            "content": skill_context,
+        },
+    ]
+
+
+def registry_tool_skill_context(registry: Any) -> str:
+    tool_skill_context = getattr(registry, "tool_skill_context", None)
+    if callable(tool_skill_context):
+        return tool_skill_context()
+    return ""
 
 
 def tool_planner_model(config: JarvisConfig) -> str:

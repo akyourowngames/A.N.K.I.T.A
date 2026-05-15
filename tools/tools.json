@@ -293,6 +293,11 @@
       "description": "Run a local terminal command for command output, installed software versions, PATH checks, tests, scripts, filesystem inspection, opening apps, opening files, opening URLs, and other grounded local actions.",
       "sort_key": "zz_run_terminal",
       "planner_always_include": true,
+      "category": "terminal",
+      "skill": "Use only when the user explicitly needs grounded terminal or local machine action. Prefer read-only inspection commands when possible. This tool can change local state, open apps, run scripts, and interact with the operating system, so do not use it for normal conversation or unsupported guesses.",
+      "risk": "dangerous",
+      "parallel_safe": false,
+      "requires_confirmation": true,
       "parameters": {
         "type": "object",
         "properties": {

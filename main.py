@@ -7,7 +7,7 @@ from pathlib import Path
 from extension_system import ExtensionCatalog, load_extension_catalog
 from jarvis_nim import JarvisConfig, NimChatError, chat_once, load_dotenv
 from memory_system import MemoryConfig, load_memory_context, memory_system_message, remember_chat
-from skill_system import load_skill_context
+from skill_system import load_global_skill_context
 from tools import discover_tools
 from tools.registry import set_active_registry
 from vector_memory import VectorMemoryConfig, load_vector_memory_context
@@ -110,7 +110,7 @@ def build_capability_context(config: JarvisConfig, registry, extension_catalog: 
     extension_prompt = extension_catalog.prompt_context()
     if extension_prompt:
         parts.append("Extension prompt context:\n" + extension_prompt)
-    skill_context = load_skill_context(extension_catalog, Path.cwd())
+    skill_context = load_global_skill_context(extension_catalog, Path.cwd())
     if skill_context:
         parts.append(skill_context)
     if extension_catalog.extensions:
