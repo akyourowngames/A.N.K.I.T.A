@@ -1,8 +1,10 @@
 # J.A.R.V.I.S - Just A Rather Very Intelligent System
 
-An intelligent AI assistant built with FastAPI, LangChain, Groq AI, and a modern glass-morphism web UI. JARVIS provides three chat modes (Jarvis, General, Realtime), streaming responses, text-to-speech, voice input, and learns from your personal data files. Everything runs on one server with one command.
+An intelligent AI assistant built with FastAPI, LangChain, NVIDIA NIM, Tavily search, and a modern glass-morphism web UI. JARVIS provides three chat modes (Jarvis, General, Realtime), streaming responses, text-to-speech, voice input, and learns from your personal data files. Everything runs on one server with one command.
 
-**Quick start:** `pip install -r requirements.txt` → create `.env` with `GROQ_API_KEY` → `python run.py` → open http://localhost:8000
+**Quick start:** `pip install -r requirements.txt` -> create `.env` with `NVIDIA_API_KEY` -> `python run.py` -> open http://localhost:8000
+
+**Terminal chat:** `python cli.py` starts a separate streaming CLI without running the web server, TTS, or STT.
 
 ---
 
@@ -29,8 +31,7 @@ An intelligent AI assistant built with FastAPI, LangChain, Groq AI, and a modern
 - **Python 3.10+** with pip
 - **OS**: Windows, macOS, or Linux
 - **API Keys** (set in `.env` file):
-  - `GROQ_API_KEY` (required) - Get from https://console.groq.com  
-    You can use **multiple Groq API keys** (`GROQ_API_KEY_2`, `GROQ_API_KEY_3`, ...) for automatic fallback when one hits rate limits or fails.
+  - `NVIDIA_API_KEY` (required) - Get from https://build.nvidia.com
   - `TAVILY_API_KEY` (optional, for Realtime mode) - Get from https://tavily.com
 
 ### Installation
@@ -46,14 +47,13 @@ pip install -r requirements.txt
 3. **Create a `.env` file** in the project root:
 
 ```env
-GROQ_API_KEY=your_groq_api_key_here
-# Optional: multiple keys for fallback when one hits rate limit
-# GROQ_API_KEY_2=second_key
-# GROQ_API_KEY_3=third_key
+NVIDIA_API_KEY=your_nvidia_api_key_here
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=google/gemma-3n-e2b-it
+NVIDIA_FAST_MODEL=meta/llama-3.1-8b-instruct
 TAVILY_API_KEY=your_tavily_api_key_here
 
 # Optional
-GROQ_MODEL=llama-3.3-70b-versatile
 ASSISTANT_NAME=Jarvis
 JARVIS_USER_TITLE=Sir
 TTS_VOICE=en-GB-RyanNeural
@@ -70,15 +70,36 @@ python run.py
 
 That's it. The server hosts both the API and the frontend on port 8000.
 
+### Terminal CLI
+
+Use the terminal client when you only want text chat and do not need the browser, TTS, or STT:
+
+```bash
+python cli.py
+```
+
+For a single streamed response:
+
+```bash
+python cli.py --once "hello jarvis"
+```
+
+Useful options:
+
+- `--session cli` loads a persistent terminal session.
+- `--activity` shows route and tool activity while the response streams.
+- `--no-open-actions` prints action links instead of opening browser tabs.
+- `--rebuild-index` rebuilds the vector index before starting.
+
 ---
 
 ## Features
 
 ### Chat Modes
 
-- **General Mode**: Pure LLM responses using Groq AI. Uses your learning data and conversation history as context. No internet access.
+- **General Mode**: Pure LLM responses using NVIDIA NIM. Uses your learning data and conversation history as context. No internet access.
 - **Realtime Mode**: Searches the web via Tavily before answering. Smart query extraction converts messy conversational text into focused search queries. Uses fast search depth with AI-synthesized answers.
-- **Jarvis Mode**: Unified route that auto-classifies each query. A Groq-powered brain decides "general" or "realtime" in ~150–400 ms, then routes accordingly. Brain and chat use different API keys (rotation).
+- **Jarvis Mode**: Unified route that auto-classifies each query. An NVIDIA-backed brain decides "general" or "realtime", then routes accordingly.
 
 ### Text-to-Speech (TTS)
 
@@ -99,7 +120,7 @@ That's it. The server hosts both the API and the frontend on port 8000.
 
 - Put `.txt` files in `database/learning_data/` with any personal information, preferences, or context.
 - Past conversations are saved as JSON in `database/chats_data/`.
-- At startup, all learning data and past chats are chunked, embedded with HuggingFace sentence-transformers, and stored in a FAISS vector index.
+- At startup, all learning data and past chats are chunked, embedded with NVIDIA NIM embeddings, and stored in a FAISS vector index.
 - For each question, only the most relevant chunks are retrieved (semantic search) and sent to the LLM. This keeps token usage bounded no matter how much data you add.
 
 ### Session Persistence
@@ -107,12 +128,12 @@ That's it. The server hosts both the API and the frontend on port 8000.
 - Conversations are saved to disk after each message and survive server restarts.
 - General and Realtime modes share the same session, so context carries over between modes.
 
-### Multi-Key API Rotation
+### NVIDIA Runtime
 
-- Configure multiple Groq API keys (`GROQ_API_KEY`, `GROQ_API_KEY_2`, `GROQ_API_KEY_3`, ...).
-- **Brain and chat never use the same key** for a single request: brain uses key 1, chat uses key 2; next request: brain uses key 3, chat uses key 4; and so on.
-- Keys rotate in order (1→2→3→4→5...) across requests for even load distribution.
-- If a key fails (rate limit, timeout), the next key in the rotation is tried automatically.
+- Configure `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL`, and `NVIDIA_EMBEDDING_MODEL` in `.env`.
+- The existing compatibility wrapper still uses Groq-shaped class names internally, but requests are sent to NVIDIA NIM when `NVIDIA_API_KEY` is present.
+- `NVIDIA_FAST_MODEL` powers faster routing and realtime query extraction paths.
+- `NVIDIA_EMBEDDING_MODEL` powers FAISS indexing and query retrieval through NVIDIA's OpenAI-compatible embeddings API.
 
 ### Frontend
 
@@ -165,12 +186,12 @@ FastAPI validates the request body using the `ChatRequest` Pydantic model (check
 
 Before generating a response, the system retrieves relevant context:
 
-1. The user's question is embedded into a vector using the HuggingFace sentence-transformers model (runs locally, no API key needed).
+1. The user's question is embedded into a vector using the configured NVIDIA embedding model.
 2. FAISS performs a nearest-neighbor search against the vector store (which contains chunks from learning data `.txt` files and past conversations).
 3. The top 10 most similar chunks are returned.
 4. These chunks are escaped (curly braces doubled for LangChain) and added to the system message.
 
-### Step 5a: General Mode (app/services/groq_service.py)
+# General chat compatibility wrapper backed by NVIDIA
 
 For general chat:
 
@@ -179,13 +200,13 @@ For general chat:
    - Current date and time
    - Retrieved context chunks from the vector store
    - General mode addendum ("answer from your knowledge, no web search")
-2. The prompt is sent to Groq AI via LangChain's `ChatGroq` with streaming enabled.
+2. The prompt is sent to NVIDIA NIM through the compatibility service with streaming enabled.
 3. Tokens arrive one by one and are yielded as an iterator.
-4. If the first API key fails (rate limit, timeout), the system automatically tries the next key.
+4. If NVIDIA returns an error, the system reports the failure honestly instead of claiming the model answered.
 
-### Step 5b: Realtime Mode (app/services/realtime_service.py)
+# Realtime chat: query extraction + Tavily search + NVIDIA
 
-For realtime chat, three additional steps happen before calling Groq:
+For realtime chat, three additional steps happen before calling NVIDIA:
 
 1. **Query Extraction**: A fast LLM call (with `max_tokens=50`, `temperature=0`) converts the user's raw conversational text into a clean search query. Example: "tell me about that website I mentioned" becomes "Jarvis for Everyone website". It uses the last 3 conversation turns to resolve references like "that", "him", "it".
 
@@ -289,15 +310,15 @@ User (Browser)
 +--------------------------------------------------+
 |  VectorStoreService  (vector_store.py)           |
 |  - FAISS index (learning data + past chats)      |
-|  - HuggingFace embeddings (local, no API key)    |
+|  - NVIDIA embeddings                             |
 |  - Semantic search: returns top-k chunks         |
 +--------------------------------------------------+
     |
     v
 +--------------------------------------------------+
-|  Groq Cloud API  (LLM inference)                 |
-|  - llama-3.3-70b-versatile (or configured model) |
-|  - Primary-first multi-key fallback              |
+|  NVIDIA NIM API  (LLM + embeddings)              |
+|  - Configured chat and embedding models          |
+|  - Primary-first fallback through compatibility  |
 +--------------------------------------------------+
 ```
 
@@ -321,9 +342,9 @@ JARVIS/
 │   ├── services/
 │   │   ├── __init__.py
 │   │   ├── chat_service.py      # Session management, message storage, disk persistence
-│   │   ├── groq_service.py      # General chat: LangChain + Groq LLM + key rotation
-│   │   ├── realtime_service.py  # Realtime chat: query extraction + Tavily search + Groq
-│   │   ├── brain_service.py     # Jarvis: Groq classifier (general vs realtime)
+│   │   ├── groq_service.py      # General chat compatibility wrapper backed by NVIDIA
+│   │   ├── realtime_service.py  # Realtime chat: query extraction + Tavily search + NVIDIA
+│   │   ├── brain_service.py     # Jarvis: NVIDIA classifier (general vs realtime)
 │   │   └── vector_store.py      # FAISS vector index, embeddings, semantic retrieval
 │   └── utils/
 │       ├── key_rotation.py      # API key rotation (brain ≠ chat per request)
@@ -337,7 +358,8 @@ JARVIS/
 │   └── vector_store/            # FAISS index files
 │
 ├── config.py                    # All settings: API keys, paths, system prompt, TTS config
-├── run.py                       # Entry point: python run.py
+├── run.py                       # Web server entry point: python run.py
+├── cli.py                       # Terminal chat entry point: python cli.py
 ├── requirements.txt             # Python dependencies
 ├── .env                         # Your API keys (not committed to git)
 └── README.md                    # This file
@@ -414,11 +436,13 @@ Returns list of available endpoints.
 
 | Variable | Required | Default | Description |
 |----------|----------|---------|-------------|
-| `GROQ_API_KEY` | Yes | - | Primary Groq API key |
-| `GROQ_API_KEY_2`, `_3`, ... | No | - | Additional keys for fallback |
+| `NVIDIA_API_KEY` | Yes | - | NVIDIA NIM API key |
+| `NVIDIA_BASE_URL` | Yes | `https://integrate.api.nvidia.com/v1` | NVIDIA OpenAI-compatible API base URL |
+| `NVIDIA_MODEL` | Yes | `nvidia/nemotron-3-nano-30b-a3b` | Main NVIDIA chat model |
+| `NVIDIA_FAST_MODEL` | No | `nvidia/nemotron-mini-4b-instruct` | Routing and realtime query extraction model |
+| `NVIDIA_EMBEDDING_MODEL` | Yes | `nvidia/nv-embedqa-e5-v5` | NVIDIA vector embedding model for FAISS retrieval |
+| `NVIDIA_EMBEDDING_BATCH_SIZE` | No | `64` | Number of chunks to embed per NVIDIA request |
 | `TAVILY_API_KEY` | No | - | Tavily search API key (for Realtime mode) |
-| `GROQ_MODEL` | No | `llama-3.3-70b-versatile` | Main LLM model |
-| `GROQ_BRAIN_MODEL` | No | `llama-3.1-8b-instant` | Brain classifier (Jarvis mode) |
 | `ASSISTANT_NAME` | No | `Jarvis` | Assistant's name |
 | `JARVIS_USER_TITLE` | No | - | How to address the user (e.g. "Sir") |
 | `JARVIS_OWNER_NAME` | No | - | Owner's name (e.g. Shreshth); helps AI know who it serves |
@@ -440,26 +464,20 @@ Add `.txt` files to `database/learning_data/`:
 - Only relevant chunks are sent to the LLM per question (not the full text).
 - Restart the server after adding new files.
 
-### Multiple Groq API Keys & Rotation
+### NVIDIA Model Setup
 
-You can use **multiple Groq API keys** for load distribution and fallback. Set `GROQ_API_KEY` (required) and optionally `GROQ_API_KEY_2`, `GROQ_API_KEY_3`, etc. in your `.env`:
+Use NVIDIA NIM models for chat, routing, and vector retrieval:
 
 ```env
-GROQ_API_KEY=first_key
-GROQ_API_KEY_2=second_key
-GROQ_API_KEY_3=third_key
-GROQ_API_KEY_4=fourth_key
-GROQ_API_KEY_5=fifth_key
+NVIDIA_API_KEY=your_nvidia_api_key_here
+NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+NVIDIA_MODEL=meta/llama-3.3-70b-instruct
+NVIDIA_FAST_MODEL=meta/llama-3.3-70b-instruct
+NVIDIA_EMBEDDING_MODEL=nvidia/nv-embedqa-e5-v5
+NVIDIA_EMBEDDING_BATCH_SIZE=64
 ```
 
-**How rotation works (Jarvis mode):**
-- Request 1: Brain uses key #1, Chat uses key #2
-- Request 2: Brain uses key #3, Chat uses key #4
-- Request 3: Brain uses key #5, Chat uses key #1 (wraps around)
-- Request 4: Brain uses key #2, Chat uses key #3
-- Request 5: Brain uses key #4, Chat uses key #5
-
-Brain and chat **never** use the same key for a single request (when 2+ keys exist). With only one key, both brain and chat use it. For General/Realtime (no brain), only the chat key rotates. If a key fails, the next key is tried automatically.
+For QA/E5 embedding models, the vector layer sends document chunks as `passage` and user searches as `query`.
 
 ---
 
@@ -470,10 +488,9 @@ Brain and chat **never** use the same key for a single request (when 2+ keys exi
 |-----------|---------|
 | FastAPI | Web framework, async endpoints, SSE streaming |
 | LangChain | LLM orchestration, prompt templates, message formatting |
-| Groq AI | LLM inference (Llama 3.3 70B, extremely fast) |
+| NVIDIA NIM | LLM inference and vector embeddings |
 | Tavily | AI-optimized web search with answer synthesis |
-| FAISS | Vector similarity search for context retrieval |
-| HuggingFace | Local embeddings (sentence-transformers/all-MiniLM-L6-v2) |
+| FAISS | Vector similarity search over NVIDIA embeddings |
 | edge-tts | Server-side text-to-speech (Microsoft Edge, free, no API key) |
 | Pydantic | Request/response validation |
 | Uvicorn | ASGI server |
@@ -525,7 +542,7 @@ On the welcome screen, click any chip ("What can you do?", "Open YouTube", etc.)
 ## Troubleshooting
 
 ### Server won't start
-- Ensure `GROQ_API_KEY` is set in `.env`.
+- Ensure `NVIDIA_API_KEY` is set in `.env`.
 - Run `pip install -r requirements.txt` to install all dependencies.
 - Check that port 8000 is not in use.
 
@@ -561,9 +578,9 @@ The server logs `[TIMING]` entries for every operation:
 | `session_get_or_create` | Session lookup (memory/disk/new) |
 | `vector_db` | Vector store retrieval |
 | `tavily_search` | Web search (Realtime only) |
-| `groq_api` | Full Groq API call |
+| `nvidia_api` | Full NVIDIA API call |
 | `first_chunk` | Time to first streaming token |
-| `groq_stream_total` | Total stream duration + chunk count |
+| `nvidia_stream_total` | Total stream duration + chunk count |
 | `save_session_json` | Session save to disk |
 
 Typical latencies:
@@ -575,7 +592,7 @@ Typical latencies:
 
 ## Error Handling & Stability
 
-- **Rate limits**: Groq 429 errors trigger automatic retry with the next API key.
+- **Rate limits**: NVIDIA rate limit errors are logged and surfaced without pretending the request succeeded.
 - **TTS timeouts**: Each sentence has a 15s timeout; failures are logged and skipped without crashing the stream.
 - **Vector store**: Malformed chat JSON files are skipped with a warning; startup continues.
 - **Health check**: Returns `degraded` if any service fails; frontend shows "Offline" when unreachable.

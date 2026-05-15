@@ -1,0 +1,13 @@
+{
+  "session_id": "latency_test_46982008",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello there. It's a pleasure to connect. How can I assist you today?"
+    }
+  ]
+}

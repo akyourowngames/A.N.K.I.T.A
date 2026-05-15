@@ -1,0 +1,61 @@
+{
+  "session_id": "7a28cea3-63ba-4440-89f4-cc0554493674",
+  "messages": [
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello again, Krish. How may I assist you this evening?"
+    },
+    {
+      "role": "user",
+      "content": "whats the date bud"
+    },
+    {
+      "role": "assistant",
+      "content": "The current date is Friday, May 15, 2026, Krish."
+    },
+    {
+      "role": "user",
+      "content": "thats cool bud"
+    },
+    {
+      "role": "assistant",
+      "content": "Glad you think so, Krish. Is there something else I can help you with or would you like to chat?"
+    },
+    {
+      "role": "user",
+      "content": "what can you do"
+    },
+    {
+      "role": "assistant",
+      "content": "I can provide information, assist with tasks, generate text, and even control some system settings, Krish."
+    },
+    {
+      "role": "user",
+      "content": "can you vol up the pc"
+    },
+    {
+      "role": "assistant",
+      "content": "Turned the volume up."
+    },
+    {
+      "role": "user",
+      "content": "what do you see in camera bud TTCAMTOKENTT"
+    },
+    {
+      "role": "assistant",
+      "content": "A man in a blue and white shirt is looking at the camera."
+    },
+    {
+      "role": "user",
+      "content": "what do you know about"
+    },
+    {
+      "role": "assistant",
+      "content": "It seems like your question got cut off, Krish. Could you please complete it so I can better understand what you're asking?"
+    }
+  ]
+}

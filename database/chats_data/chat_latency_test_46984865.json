@@ -1,0 +1,13 @@
+{
+  "session_id": "latency_test_46984865",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what can you do"
+    },
+    {
+      "role": "assistant",
+      "content": "I can answer questions, help with tasks, and control some of your system settings. I can also generate text, create images, and play music or videos. \n\nJust let me know what you need!"
+    }
+  ]
+}

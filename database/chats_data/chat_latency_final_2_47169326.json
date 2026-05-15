@@ -1,0 +1,13 @@
+{
+  "session_id": "latency_final_2_47169326",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what can you do"
+    },
+    {
+      "role": "assistant",
+      "content": "I can answer questions, generate text, and control some aspects of your computer. I can also play music or videos, and analyze images. \n\nIs there anything specific you'd like me to do?"
+    }
+  ]
+}

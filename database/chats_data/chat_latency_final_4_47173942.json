@@ -1,0 +1,13 @@
+{
+  "session_id": "latency_final_4_47173942",
+  "messages": [
+    {
+      "role": "user",
+      "content": "what is 2+2"
+    },
+    {
+      "role": "assistant",
+      "content": "That's a simple one! 2 + 2 equals 4."
+    }
+  ]
+}

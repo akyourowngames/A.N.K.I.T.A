@@ -719,13 +719,17 @@ function captureFrameAsBase64() {
     const w = camVideo.videoWidth;
     const h = camVideo.videoHeight;
     if (!w || !h || w < 64 || h < 64) return null;
-    camCanvas.width = w;
-    camCanvas.height = h;
+    const maxSide = 640;
+    const scale = Math.min(1, maxSide / Math.max(w, h));
+    const outW = Math.max(64, Math.round(w * scale));
+    const outH = Math.max(64, Math.round(h * scale));
+    camCanvas.width = outW;
+    camCanvas.height = outH;
     const ctx = camCanvas.getContext('2d');
     if (!ctx) return null;
-    ctx.drawImage(camVideo, 0, 0, w, h);
+    ctx.drawImage(camVideo, 0, 0, outW, outH);
     try {
-        return camCanvas.toDataURL('image/jpeg', 0.85).split(',')[1];
+        return camCanvas.toDataURL('image/jpeg', 0.72).split(',')[1];
     } catch (_) {
         return null;
     }
@@ -741,13 +745,17 @@ async function captureFrameAsBase64Safe() {
                 resolve(null);
                 return;
             }
-            camCanvas.width = w;
-            camCanvas.height = h;
+            const maxSide = 640;
+            const scale = Math.min(1, maxSide / Math.max(w, h));
+            const outW = Math.max(64, Math.round(w * scale));
+            const outH = Math.max(64, Math.round(h * scale));
+            camCanvas.width = outW;
+            camCanvas.height = outH;
             const ctx = camCanvas.getContext('2d');
             if (!ctx) { resolve(null); return; }
-            ctx.drawImage(camVideo, 0, 0, w, h);
+            ctx.drawImage(camVideo, 0, 0, outW, outH);
             try {
-                const b64 = camCanvas.toDataURL('image/jpeg', 0.9).split(',')[1];
+                const b64 = camCanvas.toDataURL('image/jpeg', 0.72).split(',')[1];
                 resolve(b64);
             } catch (_) {
                 resolve(null);
@@ -1376,7 +1384,7 @@ function scrollToBottom() {
 async function sendMessage(textOverride) {
     let text = (textOverride || messageInput.value).trim();
     const visionModeOn = camVisionModeInput && camVisionModeInput.checked;
-    const wantsCamera = visionModeOn || isCameraQuery(text) || (camStream && text);
+    const wantsCamera = visionModeOn || isCameraQuery(text);
     if (wantsCamera && !text) text = 'What do you see?';
     if (!text || isStreaming) return;
     if (isListening) {

@@ -5,27 +5,27 @@
 ✅ Sarvam TTS integrated and configured  
 ✅ Frontend configured with backend  
 ✅ All services initialized successfully  
-⚠️ **ACTION REQUIRED**: Add Groq API keys
+⚠️ **ACTION REQUIRED**: Add NVIDIA API key
 
-## Required: Add Groq API Keys
+## Required: Add NVIDIA API Key
 
-The system needs valid Groq API keys to function. Currently, the keys in `.env` are empty.
+The system needs a valid NVIDIA API key to function. Currently, the keys in `.env` are empty.
 
 ### Steps to Add API Keys:
 
-1. **Get Groq API Keys:**
-   - Visit: https://console.groq.com/keys
+1. **Get NVIDIA API Key:**
+   - Visit: https://build.nvidia.com
    - Sign up or log in
-   - Create one or more API keys
+   - Create an API key
 
 2. **Add Keys to `.env` file:**
    - Open `Newai/.env`
    - Replace the empty values with your real keys:
    
    ```env
-   GROQ_API_KEY=gsk_your_actual_key_here
-   GROQ_API_KEY_2=gsk_your_second_key_here  # Optional
-   GROQ_API_KEY_3=gsk_your_third_key_here   # Optional
+   NVIDIA_API_KEY=your_nvidia_api_key_here
+   NVIDIA_BASE_URL=https://integrate.api.nvidia.com/v1
+   NVIDIA_MODEL=meta/llama-3.3-70b-instruct`r`n   NVIDIA_FAST_MODEL=meta/llama-3.3-70b-instruct`r`n   NVIDIA_EMBEDDING_MODEL=nvidia/nv-embedqa-e5-v5
    ```
 
 3. **Restart the server:**
@@ -82,7 +82,7 @@ The system needs valid Groq API keys to function. Currently, the keys in `.env` 
 ## Troubleshooting
 
 ### "Something went wrong" Error:
-- **Cause**: Invalid or missing Groq API keys
+- **Cause**: Invalid or missing NVIDIA API key
 - **Fix**: Add valid keys to `.env` and restart server
 
 ### Voice Not Capturing:
@@ -107,6 +107,16 @@ The system needs valid Groq API keys to function. Currently, the keys in `.env` 
 - **API Docs**: http://localhost:8000/docs
 - **Health Check**: http://localhost:8000/health
 
+## Terminal CLI
+
+For fast text-only chat without starting the server, run:
+
+```bash
+python cli.py
+```
+
+The CLI streams responses in the terminal and does not use TTS or STT. Use `python cli.py --once "hello jarvis"` for a single streamed message.
+
 ## Features
 
 ### Chat Modes:
@@ -128,7 +138,7 @@ The system needs valid Groq API keys to function. Currently, the keys in `.env` 
 
 ## Next Steps
 
-1. ✅ Add Groq API keys to `.env`
+1. ✅ Add NVIDIA API key to `.env`
 2. ✅ Restart the server
 3. ✅ Test voice input (click mic button)
 4. ✅ Test chat (type or speak a message)

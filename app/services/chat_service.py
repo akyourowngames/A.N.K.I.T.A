@@ -2,11 +2,12 @@ import base64
 import json
 import logging
 import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import List, Optional, Dict, Iterator, Any, Union
 import uuid
 import threading
-from config import CHATS_DATA_DIR, CAMERA_CAPTURES_DIR, MAX_CHAT_HISTORY_TURNS, GROQ_API_KEYS
+from config import CHATS_DATA_DIR, CAMERA_CAPTURES_DIR, MAX_CHAT_HISTORY_TURNS, GROQ_API_KEYS, SPECULATIVE_EXECUTION_ENABLED
 from app.model import ChatMessage
 from app.services.groq_service import GroqService
 from app.services.realtime_service import RealtimeGroqService
@@ -70,6 +71,37 @@ class ChatService:
         self.prompt_router = prompt_router
         self.sessions: Dict[str, List[ChatMessage]] = {}
         self._save_lock = threading.Lock()
+        self._speculative_executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix="jarvis-fastpath")
+
+    def _collect_general_stream(
+        self,
+        user_message: str,
+        chat_history: List[tuple],
+        key_start_index: Optional[int],
+    ) -> List[Union[str, Dict[str, Any]]]:
+        return list(
+            self.groq_service.stream_response(
+                question=user_message,
+                chat_history=chat_history,
+                key_start_index=key_start_index,
+            )
+        )
+
+    def _collect_realtime_stream(
+        self,
+        user_message: str,
+        chat_history: List[tuple],
+        key_start_index: Optional[int],
+    ) -> List[Union[str, Dict[str, Any]]]:
+        if not self.realtime_service:
+            return []
+        return list(
+            self.realtime_service.stream_response(
+                question=user_message,
+                chat_history=chat_history,
+                key_start_index=key_start_index,
+            )
+        )
 
     def load_session_from_disk(self, session_id: str) -> bool:
         try:
@@ -327,6 +359,26 @@ class ChatService:
             return
 
         brain_idx, chat_idx = get_next_key_pair(len(GROQ_API_KEYS), need_brain=bool(self.brain_service))
+        speculative_general_future = None
+        speculative_general_started = 0.0
+        speculative_realtime_future = None
+
+        if SPECULATIVE_EXECUTION_ENABLED and not imgbase64:
+            speculative_general_started = time.perf_counter()
+            speculative_general_future = self._speculative_executor.submit(
+                self._collect_general_stream,
+                user_message,
+                chat_history,
+                chat_idx,
+            )
+
+            if self.realtime_service:
+                speculative_realtime_future = self._speculative_executor.submit(
+                    self._collect_realtime_stream,
+                    user_message,
+                    chat_history,
+                    chat_idx,
+                )
         category = CATEGORY_GENERAL
         primary_elapsed_ms = 0
         primary_method = "default"
@@ -566,14 +618,34 @@ class ChatService:
         yield {"_activity": {"event": "streaming_started", "route": route_name}}
 
         stream_svc = self.realtime_service if use_realtime else self.groq_service
+        stream_chunks = None
         chunk_count = 0
         t0 = time.perf_counter()
 
+        if use_realtime and speculative_realtime_future:
+            try:
+                stream_chunks = speculative_realtime_future.result()
+                if stream_chunks:
+                    logger.info("[JARVIS-STREAM] Using speculative realtime response")
+            except Exception as e:
+                logger.warning("[JARVIS-STREAM] Speculative realtime response failed, retrying normally: %s", e)
+
+        elif not use_realtime and speculative_general_future:
+            try:
+                stream_chunks = speculative_general_future.result()
+                if speculative_general_started:
+                    t0 = speculative_general_started
+                logger.info("[JARVIS-STREAM] Using speculative general response")
+            except Exception as e:
+                logger.warning("[JARVIS-STREAM] Speculative general response failed, retrying normally: %s", e)
+
         try:
 
-            for chunk in stream_svc.stream_response(
+            stream_iter = stream_chunks if stream_chunks is not None else stream_svc.stream_response(
                 question=user_message, chat_history=chat_history, key_start_index=chat_idx
-            ):
+            )
+
+            for chunk in stream_iter:
 
                 if isinstance(chunk, dict):
                     yield chunk

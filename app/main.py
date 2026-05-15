@@ -32,7 +32,7 @@ from app.services.vision_service import VisionService
 from config import (
     VECTOR_STORE_DIR, GROQ_API_KEYS, GROQ_MODEL, TAVILY_API_KEY,
     EMBEDDING_MODEL, CHUNK_SIZE, CHUNK_OVERLAP, MAX_CHAT_HISTORY_TURNS,
-    ASSISTANT_NAME, TTS_VOICE, TTS_RATE,
+    ASSISTANT_NAME, TTS_VOICE, TTS_RATE, NVIDIA_FAST_MODEL,
 )
 
 RATE_LIMIT_MESSAGE = (
@@ -223,6 +223,11 @@ async def health():
             "task_manager": task_manager is not None,
             "vision_service": vision_service is not None,
             "chat_service": chat_service is not None,
+            "models": {
+                "chat": GROQ_MODEL,
+                "router": NVIDIA_FAST_MODEL,
+                "embedding": EMBEDDING_MODEL,
+            },
         }
     except Exception as e:
         logger.warning("[API /health] Error: %s", e)

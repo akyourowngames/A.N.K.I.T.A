@@ -117,7 +117,7 @@ class VisionService:
                 model=NVIDIA_VISION_MODEL,
                 messages=messages,
                 temperature=0.2,
-                max_tokens=600,
+                max_tokens=180,
             )
 
             if text:

@@ -4,6 +4,8 @@ from typing import Iterator, List, Optional
 
 from app.services.nvidia_client import NvidiaClient
 from app.services.vector_store import VectorStoreService
+from app.services.model_registry import model_selector
+from app.services.latency_optimizer import latency_optimizer
 from app.utils.retry import with_retry
 from app.utils.time_info import get_time_information
 from config import (
@@ -11,6 +13,7 @@ from config import (
     GROQ_API_KEYS,
     JARVIS_SYSTEM_PROMPT,
     NVIDIA_BASE_URL,
+    NVIDIA_CHAT_MAX_TOKENS,
     NVIDIA_MODEL,
 )
 
@@ -95,12 +98,13 @@ class GroqService:
         messages: List[dict],
         key_start_index: int = 0,
         model: str = NVIDIA_MODEL,
-        max_tokens: int = 1024,
+        max_tokens: int = NVIDIA_CHAT_MAX_TOKENS,
         temperature: float = 0.4,
     ) -> str:
         n = len(self.clients)
         last_exc = None
         keys_tried = []
+        t0 = time.perf_counter()
 
         for j in range(n):
             i = (key_start_index + j) % n
@@ -119,6 +123,9 @@ class GroqService:
                     max_retries=2,
                     initial_delay=0.5,
                 )
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                latency_optimizer.record(f"nvidia_chat_{model}", elapsed_ms)
+                model_selector.record_latency(model, elapsed_ms, success=True)
                 if _detect_repetition_loop(text):
                     logger.warning("[NVIDIA] Repetition loop detected - truncating response (%d chars)", len(text))
                     text = _truncate_at_repetition(text)
@@ -126,6 +133,8 @@ class GroqService:
 
             except Exception as e:
                 last_exc = e
+                elapsed_ms = (time.perf_counter() - t0) * 1000
+                model_selector.record_latency(model, elapsed_ms, success=False)
                 if _is_rate_limit_error(e):
                     logger.warning("[NVIDIA] API key #%d/%d rate limited: %s", i + 1, n, masked_key)
                 else:
@@ -140,11 +149,12 @@ class GroqService:
         messages: List[dict],
         key_start_index: int = 0,
         model: str = NVIDIA_MODEL,
-        max_tokens: int = 1024,
+        max_tokens: int = NVIDIA_CHAT_MAX_TOKENS,
         temperature: float = 0.4,
     ) -> Iterator[str]:
         n = len(self.clients)
         last_exc = None
+        stream_start = time.perf_counter()
 
         for j in range(n):
             i = (key_start_index + j) % n
@@ -154,7 +164,6 @@ class GroqService:
             try:
                 chunk_count = 0
                 first_chunk_time = None
-                stream_start = time.perf_counter()
                 accumulated = ""
                 last_check_len = 0
 
@@ -179,11 +188,16 @@ class GroqService:
 
                     yield content
 
-                _log_timing("nvidia_stream_total", time.perf_counter() - stream_start, f"chunks: {chunk_count}")
+                total_ms = (time.perf_counter() - stream_start) * 1000
+                latency_optimizer.record(f"nvidia_stream_{model}", total_ms)
+                model_selector.record_latency(model, total_ms, success=True)
+                _log_timing("nvidia_stream_total", total_ms / 1000, f"chunks: {chunk_count}")
                 return
 
             except Exception as e:
                 last_exc = e
+                total_ms = (time.perf_counter() - stream_start) * 1000
+                model_selector.record_latency(model, total_ms, success=False)
                 if _is_rate_limit_error(e):
                     logger.warning("[NVIDIA] API key #%d/%d rate limited: %s", i + 1, n, masked_key)
                 else:
@@ -204,14 +218,19 @@ class GroqService:
         t0 = time.perf_counter()
 
         try:
-            retriever = self.vector_store_service.get_retriever(k=5)
-            context_docs = retriever.invoke(question)
-            if context_docs:
-                context = "\n".join(doc.page_content for doc in context_docs)
-                context_sources = [doc.metadata.get("source", "unknown") for doc in context_docs]
-                logger.info("[CONTEXT] Retrieved %d chunks from sources: %s", len(context_docs), context_sources)
+            if not self.vector_store_service.has_context_documents():
+                logger.info("[CONTEXT] No learning context indexed; skipping vector retrieval")
             else:
-                logger.info("[CONTEXT] No relevant chunks found for query")
+                t0_retrieval = time.perf_counter()
+                context_docs = self.vector_store_service.search_cached(query=question, k=5)
+                retrieval_ms = (time.perf_counter() - t0_retrieval) * 1000
+                latency_optimizer.record("vector_retrieval", retrieval_ms)
+                if context_docs:
+                    context = "\n".join(doc.page_content for doc in context_docs)
+                    context_sources = [doc.metadata.get("source", "unknown") for doc in context_docs]
+                    logger.info("[CONTEXT] Retrieved %d chunks from sources: %s", len(context_docs), context_sources)
+                else:
+                    logger.info("[CONTEXT] No relevant chunks found for query")
         except Exception as retrieval_err:
             logger.warning("Vector store retrieval failed, using empty context: %s", retrieval_err)
         finally:
@@ -269,7 +288,11 @@ class GroqService:
         try:
             messages = self._build_messages(question, chat_history, mode_addendum=GENERAL_CHAT_ADDENDUM)
             yield {"_activity": {"event": "context_retrieved", "message": "Retrieved relevant context from knowledge base"}}
-            yield from self._stream_llm(messages, key_start_index=key_start_index)
+            t0 = time.perf_counter()
+            text = self._invoke_llm(messages, key_start_index=key_start_index)
+            _log_timing("nvidia_api", time.perf_counter() - t0)
+            if text:
+                yield text
         except AllGroqApisFailedError:
             raise
         except Exception as e:

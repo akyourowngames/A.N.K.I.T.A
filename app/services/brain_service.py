@@ -3,7 +3,8 @@ import re
 import time
 from typing import List, Optional, Tuple, Literal
 from app.services.nvidia_client import NvidiaClient
-from config import GROQ_API_KEYS, NVIDIA_BASE_URL, NVIDIA_FAST_MODEL
+from app.services.latency_optimizer import decision_cache, latency_optimizer
+from config import GROQ_API_KEYS, NVIDIA_BASE_URL, NVIDIA_FAST_MODEL, DECISION_CACHE_ENABLED
 
 logger = logging.getLogger("J.A.R.V.I.S")
 
@@ -246,6 +247,13 @@ class BrainService:
         if not msg:
             return ("general", "empty", 0)
 
+        if DECISION_CACHE_ENABLED:
+            cached = decision_cache.get(msg, chat_history)
+            if cached is not None:
+                category, method = cached
+                logger.debug("[BRAIN-PRIMARY] Cache hit: %s -> %s", msg[:50], category)
+                return (category, f"cached:{method}", 0)
+
         user_content = self._build_context(msg, chat_history)
         t0 = time.perf_counter()
 
@@ -254,7 +262,12 @@ class BrainService:
         )
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        latency_optimizer.record("brain_primary", elapsed_ms)
         logger.info("[BRAIN-PRIMARY] %s -> %s (%d ms, %s)", msg[:50], category, elapsed_ms, method)
+
+        if DECISION_CACHE_ENABLED:
+            decision_cache.put(msg, (category, method), chat_history)
+
         return (category, method, elapsed_ms)
 
     _TASK_FEW_SHOTS = [
@@ -301,6 +314,14 @@ class BrainService:
             self._last_task_decisions = [("close_webcam", "")]
             return (["close_webcam"], "rule-fast", 0)
 
+        if DECISION_CACHE_ENABLED:
+            cached = decision_cache.get(f"task:{msg}", chat_history)
+            if cached is not None:
+                task_types, method = cached
+                logger.debug("[BRAIN-TASK] Cache hit: %s -> %s", msg[:50], task_types)
+                self._last_task_decisions = [(t, "") for t in task_types]
+                return (task_types, f"cached:{method}", 0)
+
         context_lines = []
 
         if chat_history:
@@ -327,7 +348,12 @@ class BrainService:
         task_types = [d[0] for d in decisions]
 
         elapsed_ms = int((time.perf_counter() - t0) * 1000)
+        latency_optimizer.record("brain_task", elapsed_ms)
         logger.info("[BRAIN-TASK] %s -> %s (%d ms, %s)", msg[:50], decisions, elapsed_ms, method)
+
+        if DECISION_CACHE_ENABLED:
+            decision_cache.put(f"task:{msg}", (task_types, method), chat_history)
+
         return (task_types, method, elapsed_ms)
 
     def classify(

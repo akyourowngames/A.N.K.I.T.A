@@ -54,6 +54,38 @@ class NvidiaClient:
         message = choices[0].get("message") or {}
         return (message.get("content") or "").strip()
 
+    def embeddings(
+        self,
+        model: str,
+        inputs: List[str],
+        input_type: str,
+        embedding_type: str = "",
+        dimensions: str = "",
+    ) -> List[List[float]]:
+        payload = {
+            "model": model,
+            "input": inputs,
+            "input_type": input_type,
+            "modality": "text",
+        }
+        if embedding_type:
+            payload["embedding_type"] = embedding_type
+        if dimensions:
+            payload["dimensions"] = int(dimensions)
+
+        response = self.session.post(
+            f"{self.base_url}/embeddings",
+            headers=self._headers(),
+            json=payload,
+            timeout=self.timeout,
+        )
+        if not response.ok:
+            raise NvidiaApiError(f"NVIDIA embeddings API error {response.status_code}: {response.text[:500]}")
+
+        rows = response.json().get("data") or []
+        ordered = sorted(rows, key=lambda row: row.get("index", 0))
+        return [row.get("embedding") or [] for row in ordered]
+
     def stream_chat(
         self,
         model: str,

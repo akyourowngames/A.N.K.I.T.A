@@ -1,0 +1,13 @@
+{
+  "session_id": "latency_test_46987702",
+  "messages": [
+    {
+      "role": "user",
+      "content": "tell me one short joke"
+    },
+    {
+      "role": "assistant",
+      "content": "Why don't scientists trust atoms? \n\nBecause they make up everything! \n\nI hope that brightened your evening."
+    }
+  ]
+}
