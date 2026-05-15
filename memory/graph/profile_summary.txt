@@ -1,0 +1,12 @@
+Generated Profile Summary
+Updated: 2026-05-15T15:27:53+05:30
+Source: generated from TXT memory graph
+
+- [profile, source: user.txt] User Memory
+- [profile, source: user.txt] Fresh restart.
+- [decision, source: wiki/pages/projects/ankita.txt] TXT and MD memory files should stay the source of truth; the Memory Brain graph is a generated sidecar.
+- [decision, source: wiki/pages/projects/ankita.txt] Ankita memory should combine local SQLite graph recall, semantic vector recall, exact text recall, timeline context, confidence, and source provenance.
+- [preference, source: wiki/pages/projects/ankita.txt] Krish prefers not to use regex, hardcoded rescue paths, or keyword tables for assistant behavior.
+- [constraint, source: wiki/pages/projects/ankita.txt] Tool registration should go through manifests, prompts, TXT, or JSON first; the normal chat loop should not be edited for ordinary tool registration.
+- [constraint, source: wiki/pages/projects/ankita.txt] Ankita should avoid false negatives and should not claim local facts without tool evidence.
+- [preference, source: wiki/pages/projects/ankita.txt] Memory retrieval should stay compact, source-backed, and low latency.

@@ -21,6 +21,57 @@ export type DashboardState = {
   };
 };
 
+export type MemoryGraphNode = {
+  id: string;
+  kind: "entity" | "fact";
+  label: string;
+  type: string;
+  summary?: string;
+  confidence?: number;
+  source_paths?: string[];
+  source_line?: number;
+};
+
+export type MemoryGraphEdge = {
+  id: string;
+  source_id: string;
+  target_id: string;
+  relation_type: string;
+  confidence?: number;
+  evidence_fact_id?: string;
+  source_path?: string;
+};
+
+export type MemoryGraphData = {
+  version: number;
+  updated_at: string | null;
+  stats: {
+    entities: number;
+    facts: number;
+    edges: number;
+    episodes: number;
+  };
+  nodes: MemoryGraphNode[];
+  edges: MemoryGraphEdge[];
+};
+
+export type MemorySearchResult = {
+  query: string;
+  answer_relevant_facts: Array<{
+    score: number;
+    fact: {
+      id: string;
+      text: string;
+      type: string;
+      source_path: string;
+      source_line?: number;
+      confidence?: number;
+    };
+  }>;
+  connected_entities: MemoryGraphNode[];
+  warnings: string[];
+};
+
 export async function streamAssistantReply(
   message: string,
   sessionId: string,
@@ -75,6 +126,28 @@ export async function fetchDashboardState(): Promise<DashboardState | null> {
     return null;
   }
   return (await response.json()) as DashboardState;
+}
+
+export async function fetchMemoryGraph(): Promise<MemoryGraphData | null> {
+  const response = await fetch(`${apiBaseUrl()}/api/memory/graph`, { cache: "no-store" });
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as MemoryGraphData;
+}
+
+export async function fetchMemorySearch(query: string): Promise<MemorySearchResult | null> {
+  const params = new URLSearchParams({ query, max_facts: "6", max_hops: "2" });
+  const response = await fetch(`${apiBaseUrl()}/api/memory/search?${params.toString()}`, { cache: "no-store" });
+  if (!response.ok) {
+    return null;
+  }
+  return (await response.json()) as MemorySearchResult;
+}
+
+export async function refreshMemoryGraph(): Promise<boolean> {
+  const response = await fetch(`${apiBaseUrl()}/api/memory/reindex`, { method: "POST" });
+  return response.ok;
 }
 
 function dispatchBlock(block: string, handlers: AssistantStreamHandlers) {

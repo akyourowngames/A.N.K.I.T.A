@@ -39,6 +39,8 @@ class ToolDescriptor:
 
 def route_chat_turn(user_text: str, session_context: list[dict[str, Any]] | None, registry: Any) -> RouteDecision:
     trace_mark("local_router_started")
+    previous_context = os.environ.get("JARVIS_ROUTER_RECENT_CONTEXT")
+    os.environ["JARVIS_ROUTER_RECENT_CONTEXT"] = recent_context_text(session_context)
     try:
         decision = route_chat_turn_inner(user_text, registry)
         trace_mark(
@@ -58,6 +60,24 @@ def route_chat_turn(user_text: str, session_context: list[dict[str, Any]] | None
             allow_remote_selector=True,
             no_tool_confidence=0.0,
         )
+    finally:
+        if previous_context is None:
+            os.environ.pop("JARVIS_ROUTER_RECENT_CONTEXT", None)
+        else:
+            os.environ["JARVIS_ROUTER_RECENT_CONTEXT"] = previous_context
+
+
+def recent_context_text(session_context: list[dict[str, Any]] | None) -> str:
+    if not session_context:
+        return ""
+    parts: list[str] = []
+    for message in session_context[-6:]:
+        if not isinstance(message, dict):
+            continue
+        content = message.get("content", "")
+        if isinstance(content, str) and content.strip():
+            parts.append(content.strip())
+    return "\n".join(parts)
 
 
 def route_chat_turn_inner(user_text: str, registry: Any) -> RouteDecision:
@@ -66,6 +86,9 @@ def route_chat_turn_inner(user_text: str, registry: Any) -> RouteDecision:
 
     query_tokens = token_weights(tokenize(user_text))
     descriptors = build_tool_descriptors(registry)
+    context_decision = route_contextual_followup(user_text, descriptors)
+    if context_decision is not None:
+        return context_decision
     if not query_tokens or not descriptors:
         return RouteDecision(ROUTE_DIRECT_CHAT, [], 1.0, "no local tool evidence", False, 1.0)
 
@@ -197,6 +220,42 @@ def build_tool_descriptors(registry: Any) -> list[ToolDescriptor]:
             )
         )
     return descriptors
+
+
+def route_contextual_followup(user_text: str, descriptors: list[ToolDescriptor]) -> RouteDecision | None:
+    context = os.environ.get("JARVIS_ROUTER_RECENT_CONTEXT", "")
+    if not context.strip():
+        return None
+    tokens = tokenize(user_text)
+    if len(tokens) > env_int("JARVIS_CONTEXTUAL_FOLLOWUP_MAX_TOKENS", 4):
+        return None
+    if token_weights(tokens):
+        overlap = False
+        for descriptor in descriptors:
+            if set(tokens) & set(descriptor.core_tokens):
+                overlap = True
+                break
+        if overlap:
+            return None
+    context_tokens = set(tokenize(context))
+    browser_candidates = [
+        descriptor
+        for descriptor in descriptors
+        if descriptor.category == "browser"
+        and descriptor.name in {"browser_open", "browser_observe", "browser_extract"}
+        and context_tokens & set(descriptor.tokens)
+    ]
+    if not browser_candidates:
+        return None
+    browser_candidates.sort(key=lambda item: (0 if item.name == "browser_open" else 1, item.name))
+    return RouteDecision(
+        ROUTE_UNCERTAIN,
+        [browser_candidates[0].name],
+        0.36,
+        "short follow-up after browser-related context",
+        True,
+        0.0,
+    )
 
 
 def selected_candidate_names(scored: list[tuple[float, ToolDescriptor]], best_score: float) -> list[str]:

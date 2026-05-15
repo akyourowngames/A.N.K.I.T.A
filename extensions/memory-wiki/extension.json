@@ -174,6 +174,293 @@
         "module": "tools.vector_memory_tools",
         "function": "memory_vector_search"
       }
+    },
+    {
+      "name": "memory_brain_status",
+      "description": "Show TXT-backed Memory Brain graph/index status, counts, freshness, and generated file paths.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_brain_status"
+      }
+    },
+    {
+      "name": "memory_brain_reindex",
+      "description": "Rebuild the generated Memory Brain SQLite graph and JSON index from TXT and MD memory sources.",
+      "risk": "write",
+      "parallel_safe": false,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "include_transcripts": {
+            "type": "boolean",
+            "description": "Whether to include raw transcript TXT files in the generated graph."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_brain_reindex"
+      }
+    },
+    {
+      "name": "memory_brain_search",
+      "description": "Hybrid search over Memory Brain using exact text recall, graph entity matches, neighbor expansion, recency, and confidence.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Memory query."
+          },
+          "max_facts": {
+            "type": "integer",
+            "description": "Maximum facts to return."
+          },
+          "max_hops": {
+            "type": "integer",
+            "description": "Maximum graph neighbor hops."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_brain_search"
+      }
+    },
+    {
+      "name": "memory_entity_search",
+      "description": "Find Memory Brain entities by name or alias.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": {
+            "type": "string",
+            "description": "Entity name or alias."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum entities to return."
+          }
+        },
+        "required": [
+          "query"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_entity_search"
+      }
+    },
+    {
+      "name": "memory_entity_get",
+      "description": "Get a Memory Brain entity by id or name.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "description": "Generated entity id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Entity name fallback."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_entity_get"
+      }
+    },
+    {
+      "name": "memory_graph_neighbors",
+      "description": "Show graph neighbors and linked facts for a Memory Brain entity.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "entity_id": {
+            "type": "string",
+            "description": "Generated entity id."
+          },
+          "name": {
+            "type": "string",
+            "description": "Entity name fallback."
+          },
+          "max_hops": {
+            "type": "integer",
+            "description": "Maximum graph neighbor hops."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_graph_neighbors"
+      }
+    },
+    {
+      "name": "memory_project_summary",
+      "description": "Summarize project-related Memory Brain facts.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "project": {
+            "type": "string",
+            "description": "Optional project name filter."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum facts to return."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_project_summary"
+      }
+    },
+    {
+      "name": "memory_preference_summary",
+      "description": "Summarize remembered user preferences from the Memory Brain graph.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "limit": {
+            "type": "integer",
+            "description": "Maximum facts to return."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_preference_summary"
+      }
+    },
+    {
+      "name": "memory_timeline",
+      "description": "Return recent Memory Brain facts as a timeline.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "type": {
+            "type": "string",
+            "description": "Optional memory fact type filter."
+          },
+          "limit": {
+            "type": "integer",
+            "description": "Maximum timeline items."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_timeline"
+      }
+    },
+    {
+      "name": "memory_conflicts",
+      "description": "List unresolved Memory Brain entity or fact conflicts generated during reindex.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {},
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_conflicts"
+      }
+    },
+    {
+      "name": "memory_forget_request",
+      "description": "Record a request to forget memory for human review without deleting TXT memory automatically.",
+      "risk": "write",
+      "parallel_safe": false,
+      "requires_confirmation": true,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "request": {
+            "type": "string",
+            "description": "Memory item or topic for removal review."
+          }
+        },
+        "required": [
+          "request"
+        ],
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_forget_request"
+      }
+    },
+    {
+      "name": "memory_export",
+      "description": "Export the generated Memory Brain graph JSON for local inspection or UI rendering.",
+      "risk": "read",
+      "parallel_safe": true,
+      "requires_confirmation": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "max_nodes": {
+            "type": "integer",
+            "description": "Maximum nodes to include."
+          },
+          "max_edges": {
+            "type": "integer",
+            "description": "Maximum edges to include."
+          }
+        },
+        "additionalProperties": false
+      },
+      "executor": {
+        "module": "tools.memory_brain_tools",
+        "function": "memory_export"
+      }
     }
   ]
 }

@@ -46,6 +46,16 @@ def env_int(name: str, fallback: int) -> int:
         return fallback
 
 
+def env_float(name: str, fallback: float) -> float:
+    value = os.environ.get(name, "").strip()
+    if not value:
+        return fallback
+    try:
+        return float(value)
+    except ValueError:
+        return fallback
+
+
 def env_bool(name: str, fallback: bool) -> bool:
     value = os.environ.get(name, "").strip().lower()
     if not value:
@@ -78,7 +88,23 @@ def ensure_memory_workspace(config: MemoryConfig) -> None:
         extracted_file.write_text("Extracted Chat Memory\n\n", encoding="utf-8")
 
 
-def load_memory_context(config: MemoryConfig) -> str:
+def load_memory_context(config: MemoryConfig, user_text: str = "", include_dynamic: bool = True) -> str:
+    ensure_memory_workspace(config)
+    if env_bool("MEMORY_BRAIN_ENABLED", True):
+        try:
+            from memory_brain import load_memory_brain_context
+
+            brain_context = load_memory_brain_context(user_text, config, include_dynamic=include_dynamic)
+            if brain_context.strip():
+                template = config.context_prompt_file.read_text(encoding="utf-8-sig")
+                return template.replace("{memory_chunks}", brain_context)
+        except Exception:
+            pass
+
+    return load_txt_memory_context(config)
+
+
+def load_txt_memory_context(config: MemoryConfig) -> str:
     ensure_memory_workspace(config)
     chunks: list[str] = []
     used_chars = 0
@@ -166,13 +192,231 @@ def extract_and_append_memory(
     assistant_text: str,
 ) -> None:
     try:
-        items = extract_memory_items(nim_config, user_text, assistant_text, config.extract_max_tokens)
+        if env_bool("MEMORY_BRAIN_WRITE_STRUCTURED", True):
+            candidates = extract_memory_candidates(nim_config, user_text, assistant_text, config.extract_max_tokens)
+            items = memory_items_from_candidates(candidates)
+        else:
+            items = extract_memory_items(nim_config, user_text, assistant_text, config.extract_max_tokens)
     except NimChatError:
         return
 
     if items:
         append_extracted_memory(config, items)
-        schedule_vector_reindex(config, nim_config)
+        schedule_memory_indexes(config, nim_config)
+
+
+def extract_memory_candidates(
+    config: JarvisConfig,
+    user_text: str,
+    assistant_text: str,
+    max_tokens: int,
+) -> list[dict[str, Any]]:
+    model = memory_extraction_model(config)
+    payload = {
+        "model": model,
+        "messages": [
+            {
+                "role": "system",
+                "content": (
+                    "Extract durable user/project memory from the exchange. Return JSON only with a candidates array. "
+                    "Each candidate needs text, type, entities, relations, importance, confidence, should_save, and reason. "
+                    "Use an empty array when nothing durable should be remembered. Do not save secrets, passwords, tokens, "
+                    "API keys, private keys, or random temporary chat."
+                ),
+            },
+            {
+                "role": "user",
+                "content": json.dumps(
+                    {"user": user_text, "assistant": assistant_text},
+                    ensure_ascii=True,
+                ),
+            },
+        ],
+        "temperature": 0,
+        "max_tokens": max_tokens,
+        "stream": False,
+    }
+    data = post_json(config, payload)
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    if not isinstance(content, str):
+        return []
+    parsed = parse_memory_json(content)
+    if parsed is None:
+        legacy_items = prose_memory_fallback(content)
+        return [
+            {
+                "text": item,
+                "type": "fact",
+                "entities": [],
+                "relations": [],
+                "importance": 0.5,
+                "confidence": 0.55,
+                "should_save": True,
+                "reason": "Parsed from prose fallback.",
+            }
+            for item in legacy_items
+        ]
+    if isinstance(parsed, dict):
+        raw_candidates = parsed.get("candidates", [])
+        if not isinstance(raw_candidates, list) and isinstance(parsed.get("items"), list):
+            raw_candidates = [
+                {
+                    "text": str(item),
+                    "type": "fact",
+                    "entities": [],
+                    "relations": [],
+                    "importance": 0.5,
+                    "confidence": 0.55,
+                    "should_save": True,
+                    "reason": "Legacy item array.",
+                }
+                for item in parsed["items"]
+                if isinstance(item, str)
+            ]
+    elif isinstance(parsed, list):
+        raw_candidates = parsed
+    else:
+        raw_candidates = []
+    return clean_memory_candidates(raw_candidates)
+
+
+def clean_memory_candidates(raw_candidates: list[Any]) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for raw in raw_candidates:
+        if isinstance(raw, str):
+            raw = {"text": raw}
+        if not isinstance(raw, dict):
+            continue
+        text = raw.get("text")
+        if not isinstance(text, str) or not text.strip():
+            continue
+        candidate = {
+            "text": text.strip(),
+            "type": clean_memory_type(raw.get("type")),
+            "entities": clean_text_list(raw.get("entities")),
+            "relations": clean_relations(raw.get("relations")),
+            "importance": bounded_float(raw.get("importance"), 0.5),
+            "confidence": bounded_float(raw.get("confidence"), 0.6),
+            "should_save": bool(raw.get("should_save", True)),
+            "reason": str(raw.get("reason", "")).strip(),
+        }
+        if should_save_memory_candidate(candidate):
+            candidates.append(candidate)
+    return dedupe_candidates(candidates)
+
+
+def should_save_memory_candidate(candidate: dict[str, Any]) -> bool:
+    if not candidate.get("should_save", True):
+        return False
+    try:
+        from memory_conflicts import is_secret_like
+
+        if is_secret_like(str(candidate.get("text", ""))):
+            return False
+    except Exception:
+        return False
+    return float(candidate.get("importance", 0.0)) >= env_float("MEMORY_CANDIDATE_MIN_IMPORTANCE", 0.2)
+
+
+def memory_items_from_candidates(candidates: list[dict[str, Any]]) -> list[str]:
+    items: list[str] = []
+    for candidate in candidates:
+        text = str(candidate.get("text", "")).strip()
+        if not text:
+            continue
+        memory_type = clean_memory_type(candidate.get("type"))
+        entities = clean_text_list(candidate.get("entities"))
+        relations = candidate.get("relations", [])
+        parts = [f"[{memory_type}] {text}"]
+        if entities:
+            parts.append("Entities: " + ", ".join(entities[:8]))
+        if isinstance(relations, list) and relations:
+            rendered = []
+            for relation in relations[:5]:
+                if not isinstance(relation, dict):
+                    continue
+                source = str(relation.get("source", "")).strip()
+                kind = str(relation.get("relation", "")).strip()
+                target = str(relation.get("target", "")).strip()
+                if source and kind and target:
+                    rendered.append(f"{source} -> {kind} -> {target}")
+            if rendered:
+                parts.append("Relations: " + "; ".join(rendered))
+        items.append(" | ".join(parts))
+    return items
+
+
+def clean_memory_type(value: Any) -> str:
+    allowed = {
+        "profile",
+        "preference",
+        "project",
+        "task",
+        "fact",
+        "event",
+        "decision",
+        "constraint",
+        "relationship",
+        "skill",
+    }
+    if isinstance(value, str):
+        clean = value.strip().casefold()
+        if clean in allowed:
+            return clean
+    return "fact"
+
+
+def clean_text_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    result: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip():
+            clean = item.strip()
+            if clean not in result:
+                result.append(clean)
+    return result
+
+
+def clean_relations(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list):
+        return []
+    relations: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        source = item.get("source")
+        relation = item.get("relation")
+        target = item.get("target")
+        if not all(isinstance(part, str) and part.strip() for part in [source, relation, target]):
+            continue
+        relations.append({"source": source.strip(), "relation": relation.strip(), "target": target.strip()})
+    return relations
+
+
+def dedupe_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    seen: set[str] = set()
+    result: list[dict[str, Any]] = []
+    for candidate in candidates:
+        key = " ".join(str(candidate.get("text", "")).casefold().split())
+        if key in seen:
+            continue
+        seen.add(key)
+        result.append(candidate)
+    return result
+
+
+def bounded_float(value: Any, fallback: float) -> float:
+    if isinstance(value, (int, float)):
+        number = float(value)
+    elif isinstance(value, str) and value.strip():
+        try:
+            number = float(value.strip())
+        except ValueError:
+            number = fallback
+    else:
+        number = fallback
+    return max(0.0, min(1.0, number))
 
 
 def append_transcript(config: MemoryConfig, user_text: str, assistant_text: str) -> None:
@@ -353,6 +597,29 @@ def schedule_vector_reindex(config: MemoryConfig, nim_config: JarvisConfig) -> N
         return
     thread = threading.Thread(target=reindex_vector_memory_safely, args=(config, nim_config), daemon=True)
     thread.start()
+
+
+def schedule_memory_indexes(config: MemoryConfig, nim_config: JarvisConfig) -> None:
+    schedule_vector_reindex(config, nim_config)
+    schedule_brain_reindex(config)
+
+
+def schedule_brain_reindex(config: MemoryConfig) -> None:
+    if not env_bool("MEMORY_BRAIN_ENABLED", True):
+        return
+    if not env_bool("MEMORY_BRAIN_AUTO_REINDEX", True):
+        return
+    thread = threading.Thread(target=reindex_brain_memory_safely, args=(config,), daemon=True)
+    thread.start()
+
+
+def reindex_brain_memory_safely(config: MemoryConfig) -> None:
+    try:
+        from memory_brain import memory_brain_reindex
+
+        memory_brain_reindex(Path.cwd(), config)
+    except Exception:
+        return
 
 
 def reindex_vector_memory_safely(config: MemoryConfig, nim_config: JarvisConfig) -> None:

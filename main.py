@@ -91,7 +91,10 @@ def build_messages(
     capability_text = build_capability_context(config, registry, extension_catalog, include_tools=include_tools)
     messages = [config.system_message(capability_text)]
     trace_mark("memory_started")
-    memory_message = memory_system_message(load_memory_context(memory_config))
+    include_dynamic_memory = not (direct_chat and env_bool("JARVIS_DIRECT_CHAT_SKIP_MEMORY_BRAIN", False))
+    memory_message = memory_system_message(
+        load_memory_context(memory_config, user_text=user_text, include_dynamic=include_dynamic_memory)
+    )
     if memory_message is not None:
         messages.append(memory_message)
     if not (direct_chat and env_bool("JARVIS_DIRECT_CHAT_SKIP_VECTOR_MEMORY", True)):

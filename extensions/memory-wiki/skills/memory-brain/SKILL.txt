@@ -1,0 +1,14 @@
+---
+name: memory-brain
+description: Use the TXT-backed Memory Brain graph for connected memory recall.
+---
+
+# Memory Brain
+
+- TXT and MD files remain the source of truth; the graph is a generated index.
+- Use memory_brain_status before claiming the graph exists or is current.
+- Use memory_brain_search for connected recall across exact text, graph neighbors, timeline, confidence, and source provenance.
+- Use memory_entity_search, memory_entity_get, and memory_graph_neighbors when the user asks about nodes, projects, tools, agents, or relationships.
+- Use memory_conflicts when memory looks inconsistent or when a retrieved result warns that it may be stale.
+- Use memory_brain_reindex after manual memory edits or when the graph is stale.
+- Use memory_forget_request only when the user explicitly asks to forget or remove memory; do not delete TXT memory automatically.

@@ -135,6 +135,7 @@ class BrowserController:
             "readyState": "complete",
             "load_state": "static",
             "dom_revision": tab.revision,
+            "content_quality": content_quality(tab),
             "visible_text": clip(tab.visible_text, max_text),
             "article_text": clip(article_text(tab), max_text),
             "links": tab.links[:MAX_ITEMS],
@@ -660,6 +661,30 @@ def extraction_items(tab: BrowserTab) -> list[dict[str, Any]]:
         if text:
             items.append({"text": text})
     return items
+
+
+def content_quality(tab: BrowserTab) -> dict[str, Any]:
+    visible = normalize_space(tab.visible_text)
+    title = normalize_space(tab.title)
+    has_structured_content = bool(tab.links or tab.forms or tab.tables or tab.refs)
+    meaningful_text = bool(visible and visible.casefold() != title.casefold() and len(visible) >= 40)
+    usable = has_structured_content or meaningful_text
+    reasons: list[str] = []
+    if has_structured_content:
+        reasons.append("structured page elements were extracted")
+    if meaningful_text:
+        reasons.append("visible text contains more than the page title")
+    if not usable:
+        reasons.append("only a page shell or title-level text was extracted")
+    return {
+        "usable": usable,
+        "visible_text_chars": len(visible),
+        "interactive_count": len(tab.refs),
+        "link_count": len(tab.links),
+        "form_count": len(tab.forms),
+        "table_count": len(tab.tables),
+        "reasons": reasons,
+    }
 
 
 def article_text(tab: BrowserTab) -> str:

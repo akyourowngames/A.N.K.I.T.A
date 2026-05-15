@@ -1,9 +1,10 @@
 "use client";
 
 import { AnimatePresence, motion } from "framer-motion";
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ConversationPanel } from "./components/ConversationPanel";
 import { InputBar } from "./components/InputBar";
+import { MemoryGraphView } from "./components/MemoryGraphView";
 import { MobileLayout } from "./components/MobileLayout";
 import { Orb } from "./components/Orb";
 import { RightPanels } from "./components/RightPanels";
@@ -15,6 +16,7 @@ import { useBrowserSpeechRecognition } from "./hooks/useBrowserSpeechRecognition
 export default function App() {
   const assistant = useAssistantChat();
   const speech = useBrowserSpeechRecognition();
+  const [activeView, setActiveView] = useState<"chat" | "memory">("chat");
   const submittedSpeechTurn = useRef(0);
   const conversationActive = Boolean(assistant.lastUserText || assistant.reply || assistant.isStreaming);
 
@@ -85,32 +87,38 @@ export default function App() {
   return (
     <main className="app-frame min-h-screen overflow-hidden text-primaryText">
       <div className="hidden h-full md:block">
-        <Sidebar />
+        <Sidebar activeView={activeView} onViewChange={setActiveView} />
 
-        <motion.section
-          className="center-stage"
-          initial={{ opacity: 0, y: 10 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
-        >
-          <StatusHeader title={status.title} detail={status.detail} />
-          <Orb />
-          <InputBar {...inputProps} />
-        </motion.section>
+        {activeView === "memory" ? (
+          <MemoryGraphView />
+        ) : (
+          <>
+            <motion.section
+              className="center-stage"
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.75, ease: [0.22, 1, 0.36, 1] }}
+            >
+              <StatusHeader title={status.title} detail={status.detail} />
+              <Orb />
+              <InputBar {...inputProps} />
+            </motion.section>
 
-        <AnimatePresence mode="wait">
-          {conversationActive ? (
-            <ConversationPanel
-              key="conversation"
-              userText={assistant.lastUserText}
-              reply={assistant.reply}
-              isStreaming={assistant.isStreaming}
-              error={assistant.error}
-            />
-          ) : (
-            <RightPanels key="cards" />
-          )}
-        </AnimatePresence>
+            <AnimatePresence mode="wait">
+              {conversationActive ? (
+                <ConversationPanel
+                  key="conversation"
+                  userText={assistant.lastUserText}
+                  reply={assistant.reply}
+                  isStreaming={assistant.isStreaming}
+                  error={assistant.error}
+                />
+              ) : (
+                <RightPanels key="cards" />
+              )}
+            </AnimatePresence>
+          </>
+        )}
       </div>
 
       <div className="block h-full md:hidden">

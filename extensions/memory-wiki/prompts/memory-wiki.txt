@@ -3,3 +3,7 @@ Wiki pages are source-backed working notes, not the only source of truth.
 Use wiki search or wiki get before making claims about wiki contents.
 Use vector memory tools when the user asks for semantic recall, deep memory, related memories, or memory search that is not an exact text lookup.
 Refresh vector memory with memory_vector_reindex after important memory changes when the user asks to rebuild or strengthen memory.
+Use Memory Brain tools when the user asks what you remember, asks for connected project/profile/tool memory, asks to inspect the graph, or asks for timeline/conflict/entity views.
+Memory Brain is a generated sidecar over TXT/MD memory. Do not describe graph facts as certain unless the returned source path supports them.
+Use memory_brain_reindex after manual TXT/wiki edits when the user wants the graph refreshed.
+Use memory_forget_request only for explicit forget/remove requests; it records a review request and does not delete TXT memory by itself.

@@ -1,0 +1,243 @@
+[
+  {
+    "id": "entity_conflict_368e701495f294e541782340",
+    "type": "possible_same_as",
+    "left_entity_id": "entity_b719ee3518cc273a24ab4df0",
+    "right_entity_id": "entity_ed28f57c12b7429a38d7218f",
+    "left_name": "Safari Official Video",
+    "right_name": "Yaari Official Video",
+    "score": 0.9268,
+    "reason": "Names are similar but not merged without stronger source evidence.",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_40aabf90008023f0d6088bde",
+    "older_fact_id": "fact_82f083d5d22834cfefe4f938",
+    "newer_fact_id": "fact_7119718aa1ac6054a877ba49",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "\"- Serena - Safari\"]",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_3ec32b375e43c7ed0cf135fa",
+    "older_fact_id": "fact_7119718aa1ac6054a877ba49",
+    "newer_fact_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+    "score": 1.0,
+    "older_text": "\"- Serena - Safari\"]",
+    "newer_text": "Serena - Safari",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_396586af80288968036c0bab",
+    "older_fact_id": "fact_e2ce23b326201390a23dda07",
+    "newer_fact_id": "fact_13eaa5df3809f686667cdf18",
+    "score": 0.8,
+    "older_text": "Retry adding the Masoom Sharma tracks to the playlist",
+    "newer_text": "Retry adding the missing 2 tracks",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_4bd27708d2d6d02c6549e822",
+    "older_fact_id": "fact_7119718aa1ac6054a877ba49",
+    "newer_fact_id": "fact_23748825fa20973ab1478f75",
+    "score": 1.0,
+    "older_text": "\"- Serena - Safari\"]",
+    "newer_text": "Serena - Safari",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_42ccaf2854ae3b3acf1fe486",
+    "older_fact_id": "fact_951c5b5674b5b6343259abe9",
+    "newer_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_28e6e61b587bb72a61099b89",
+    "older_fact_id": "fact_ce9d1ce016aab0a23444e6ce",
+    "newer_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_e60093a8e61c31e40c2ad93a",
+    "older_fact_id": "fact_82f083d5d22834cfefe4f938",
+    "newer_fact_id": "fact_6cf312984b94c1c70152d27b",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_6cc60683c35ce4a198098be8",
+    "older_fact_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+    "newer_fact_id": "fact_6cf312984b94c1c70152d27b",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_4e805fc22037d74defe28c32",
+    "older_fact_id": "fact_23748825fa20973ab1478f75",
+    "newer_fact_id": "fact_6cf312984b94c1c70152d27b",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_1e82f4ff03c0c9e5f4e1f22c",
+    "older_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+    "newer_fact_id": "fact_84d06b182a3a909489bb7fcb",
+    "score": 1.0,
+    "older_text": "License Ka Asla - Masoom Sharma",
+    "newer_text": "License Ka Asla - Licence (Masoom Sharma)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_178c4f2fdf8a81308856416f",
+    "older_fact_id": "fact_82f083d5d22834cfefe4f938",
+    "newer_fact_id": "fact_7065ecf217ae02450ef52342",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_a58feef59da0ff21960790d6",
+    "older_fact_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+    "newer_fact_id": "fact_7065ecf217ae02450ef52342",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_748e1b2e9fc31b1668e6b906",
+    "older_fact_id": "fact_23748825fa20973ab1478f75",
+    "newer_fact_id": "fact_7065ecf217ae02450ef52342",
+    "score": 1.0,
+    "older_text": "Serena - Safari",
+    "newer_text": "Serena - Safari (Official Video)",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_532830eb740bdc04b6f389ad",
+    "older_fact_id": "fact_951c5b5674b5b6343259abe9",
+    "newer_fact_id": "fact_35f65f009f12c3d261de1cbc",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Licence",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_b07ddf2242743f85596e406d",
+    "older_fact_id": "fact_ce9d1ce016aab0a23444e6ce",
+    "newer_fact_id": "fact_35f65f009f12c3d261de1cbc",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Licence",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_e6da49e708fbbe306d22bd08",
+    "older_fact_id": "fact_84d06b182a3a909489bb7fcb",
+    "newer_fact_id": "fact_35f65f009f12c3d261de1cbc",
+    "score": 1.0,
+    "older_text": "License Ka Asla - Licence (Masoom Sharma)",
+    "newer_text": "License Ka Asla - Licence",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_0f97445bc59a9c14807c015c",
+    "older_fact_id": "fact_9eb3be9a38145b9f3d10e527",
+    "newer_fact_id": "fact_912dbd469b79d3926dcb2827",
+    "score": 1.0,
+    "older_text": "Masoom Sharma - Yaari (Official Video)",
+    "newer_text": "Masoom Sharma - Yaari",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_652f03951f409accbcd6b69f",
+    "older_fact_id": "fact_951c5b5674b5b6343259abe9",
+    "newer_fact_id": "fact_6556aa83609a63e95951a947",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_6137d2e7d015a99a8743930f",
+    "older_fact_id": "fact_ce9d1ce016aab0a23444e6ce",
+    "newer_fact_id": "fact_6556aa83609a63e95951a947",
+    "score": 1.0,
+    "older_text": "License Ka Asla",
+    "newer_text": "License Ka Asla - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_27101b3c956a2d89692df951",
+    "older_fact_id": "fact_84d06b182a3a909489bb7fcb",
+    "newer_fact_id": "fact_6556aa83609a63e95951a947",
+    "score": 1.0,
+    "older_text": "License Ka Asla - Licence (Masoom Sharma)",
+    "newer_text": "License Ka Asla - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_c1752592d27d121cc7bab47c",
+    "older_fact_id": "fact_912dbd469b79d3926dcb2827",
+    "newer_fact_id": "fact_1f73c39898bd6d947a7ef7cf",
+    "score": 1.0,
+    "older_text": "Masoom Sharma - Yaari",
+    "newer_text": "Yaari - Masoom Sharma",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_d4cf6249f8d65408b9c79ea1",
+    "older_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+    "newer_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+    "score": 0.75,
+    "older_text": "As of May 15, 2026, M.K. Stalin is still the Chief Minister of Tamil Nadu.",
+    "newer_text": "M.K. Stalin remains the Chief Minister of Tamil Nadu as of today.",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  },
+  {
+    "id": "conflict_1aeb6107cb2296691aa657f8",
+    "older_fact_id": "fact_30ef578a138fa4b59f193126",
+    "newer_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+    "score": 0.7273,
+    "older_text": "The current Chief Minister of Tamil Nadu is M.K. Stalin of the Dravida Munnetra Kazhagam (DMK).",
+    "newer_text": "The current Chief Minister of Tamil Nadu is **M.K. Stalin** (DMK). He has been in office since **May 7, 2021**.",
+    "source_path": "extracted.txt",
+    "created_at": "2026-05-15T15:27:53+05:30"
+  }
+]

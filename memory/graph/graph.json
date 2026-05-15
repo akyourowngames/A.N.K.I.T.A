@@ -1,0 +1,3414 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-15T15:27:53+05:30",
+  "stats": {
+    "entities": 45,
+    "facts": 64,
+    "edges": 178,
+    "episodes": 0
+  },
+  "nodes": [
+    {
+      "id": "entity_2aa4ca2dbe927b8b90032aad",
+      "kind": "entity",
+      "label": "- License Ka Asla - Masoom Sharma",
+      "type": "topic",
+      "summary": "- License Ka Asla - Masoom Sharma appears in extracted.txt:25.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_403fec7e532bc00343fd72b9",
+      "kind": "entity",
+      "label": "- Serena - Safari",
+      "type": "topic",
+      "summary": "- Serena - Safari appears in extracted.txt:27.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_b39cc18662c24651eced2dc7",
+      "kind": "entity",
+      "label": "- Yaari - Masoom Sharma",
+      "type": "topic",
+      "summary": "- Yaari - Masoom Sharma appears in extracted.txt:26.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_30c0954e1108ded32fbf7178",
+      "kind": "entity",
+      "label": "A.N.K.I.T.A",
+      "type": "project",
+      "summary": "A.N.K.I.T.A appears in wiki/pages/projects/ankita.txt:6.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_3c010f4dcf5215f4996fe28a",
+      "kind": "entity",
+      "label": "A.N.K.I.T.A Jarvis",
+      "type": "project",
+      "summary": "A.N.K.I.T.A Jarvis appears in wiki/pages/projects/ankita.txt:6.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_2538be6180c6ff0772c078d9",
+      "kind": "entity",
+      "label": "Add Safari",
+      "type": "topic",
+      "summary": "Add Safari appears in extracted.txt:7.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_9bf12add25134cab1caa270a",
+      "kind": "entity",
+      "label": "Andhra Pradesh",
+      "type": "topic",
+      "summary": "Andhra Pradesh appears in extracted.txt:79.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_27c62a77d1e3f9b071d642bb",
+      "kind": "entity",
+      "label": "ankita",
+      "type": "project",
+      "summary": "ankita appears in wiki/pages/projects/ankita.txt:6.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_c9c61db581934f1d5c0e4482",
+      "kind": "entity",
+      "label": "BJP",
+      "type": "topic",
+      "summary": "BJP appears in extracted.txt:80.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_6be20ba66cdd06e869314f40",
+      "kind": "entity",
+      "label": "Chief Minister",
+      "type": "topic",
+      "summary": "Chief Minister appears in extracted.txt:85.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_b788ab69d2c784e6355e1ffb",
+      "kind": "entity",
+      "label": "Coalition Shifts The INDIA",
+      "type": "topic",
+      "summary": "Coalition Shifts The INDIA appears in extracted.txt:80.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_7f1964665c5f758978d675bb",
+      "kind": "entity",
+      "label": "Desiya Murpokku Dravida Kazhagam",
+      "type": "topic",
+      "summary": "Desiya Murpokku Dravida Kazhagam appears in extracted.txt:90.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_3e0099966c188665473e8684",
+      "kind": "entity",
+      "label": "Dravida Munnetra Kazhagam DMK",
+      "type": "topic",
+      "summary": "Dravida Munnetra Kazhagam DMK appears in extracted.txt:85.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_2cc497857559ff85cfec0fd6",
+      "kind": "entity",
+      "label": "entities",
+      "type": "topic",
+      "summary": "entities appears in extracted.txt:106.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_d05fcac1351ca3c4fec3d3f1",
+      "kind": "entity",
+      "label": "Extracted Chat Memory",
+      "type": "topic",
+      "summary": "Extracted Chat Memory appears in extracted.txt:1.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_3e201631a7c74067688e8b28",
+      "kind": "entity",
+      "label": "fav",
+      "type": "topic",
+      "summary": "fav appears in extracted.txt:16.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_181958a9a5ecffe0f562e9d0",
+      "kind": "entity",
+      "label": "Here are some of his recent and popular movies",
+      "type": "topic",
+      "summary": "Here are some of his recent and popular movies appears in extracted.txt:104.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_02bd175f329720378ce83dd5",
+      "kind": "entity",
+      "label": "JSON",
+      "type": "project",
+      "summary": "JSON appears in wiki/pages/projects/ankita.txt:10.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_e0d2043e628fa61642e9222c",
+      "kind": "entity",
+      "label": "Key Issues Inflation",
+      "type": "topic",
+      "summary": "Key Issues Inflation appears in extracted.txt:81.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_c3a3f765526ccadf2a3c33aa",
+      "kind": "entity",
+      "label": "Krish",
+      "type": "person",
+      "summary": "Krish appears in user.txt:1.",
+      "confidence": 0.95,
+      "source_paths": [
+        "user.txt"
+      ]
+    },
+    {
+      "id": "entity_d7c6676848006019300a4a5b",
+      "kind": "entity",
+      "label": "Licence Masoom Sharma",
+      "type": "topic",
+      "summary": "Licence Masoom Sharma appears in extracted.txt:46.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_29753f8f815650155fdba89e",
+      "kind": "entity",
+      "label": "License Ka Asla",
+      "type": "topic",
+      "summary": "License Ka Asla appears in extracted.txt:20.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_18e8f8422d575c5ae5516cf4",
+      "kind": "entity",
+      "label": "Lok Sabha Elections",
+      "type": "topic",
+      "summary": "Lok Sabha Elections appears in extracted.txt:79.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_b35e8ca63f78c783ddd20da4",
+      "kind": "entity",
+      "label": "M.K. Stalin",
+      "type": "file",
+      "summary": "M.K. Stalin appears in extracted.txt:85.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_063625d053c207c3f2c46778",
+      "kind": "entity",
+      "label": "M.K. Stalin DMK",
+      "type": "file",
+      "summary": "M.K. Stalin DMK appears in extracted.txt:99.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "kind": "entity",
+      "label": "Masoom Sharma",
+      "type": "topic",
+      "summary": "Masoom Sharma appears in extracted.txt:25.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_a7166ed4433381f4ff83cd92",
+      "kind": "entity",
+      "label": "Memory Brain",
+      "type": "project",
+      "summary": "Memory Brain appears in wiki/pages/projects/ankita.txt:7.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_36812f922f7f5fe40dd6d897",
+      "kind": "entity",
+      "label": "New Favorites",
+      "type": "topic",
+      "summary": "New Favorites appears in extracted.txt:7.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_e6d258f10eed7f08be3d7702",
+      "kind": "entity",
+      "label": "Ram Mandir",
+      "type": "topic",
+      "summary": "Ram Mandir appears in extracted.txt:81.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_d8e60ebbbb2b1a9d5f0dd2cf",
+      "kind": "entity",
+      "label": "Safari",
+      "type": "topic",
+      "summary": "Safari appears in extracted.txt:4.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_1ee0bfc58805b730806a109f",
+      "kind": "entity",
+      "label": "Safari by Serena",
+      "type": "topic",
+      "summary": "Safari by Serena appears in extracted.txt:7.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_b719ee3518cc273a24ab4df0",
+      "kind": "entity",
+      "label": "Safari Official Video",
+      "type": "topic",
+      "summary": "Safari Official Video appears in extracted.txt:45.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_3083f04f2cff09994e3c825b",
+      "kind": "entity",
+      "label": "Serena Vibes",
+      "type": "topic",
+      "summary": "Serena Vibes appears in extracted.txt:10.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_5cebfadbb82fde60c93b1b70",
+      "kind": "entity",
+      "label": "State Politics West Bengal",
+      "type": "topic",
+      "summary": "State Politics West Bengal appears in extracted.txt:82.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_b11f144e03b1b81c5f2f8e18",
+      "kind": "entity",
+      "label": "Tamil Nadu",
+      "type": "topic",
+      "summary": "Tamil Nadu appears in extracted.txt:80.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_982d9e3eb996f559e633f4d1",
+      "kind": "entity",
+      "label": "text",
+      "type": "topic",
+      "summary": "text appears in extracted.txt:104.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_0cf6c2d4d5bab18406661425",
+      "kind": "entity",
+      "label": "TMC",
+      "type": "topic",
+      "summary": "TMC appears in extracted.txt:82.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_486b9a6fc855abf48847e963",
+      "kind": "entity",
+      "label": "TXT",
+      "type": "project",
+      "summary": "TXT appears in wiki/pages/projects/ankita.txt:7.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ]
+    },
+    {
+      "id": "entity_1303c06b0b014d0ce7b988ab",
+      "kind": "entity",
+      "label": "type",
+      "type": "topic",
+      "summary": "type appears in extracted.txt:105.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_6555a4f2db9ed4c3a7ba6254",
+      "kind": "entity",
+      "label": "User Memory",
+      "type": "topic",
+      "summary": "User Memory appears in user.txt:1.",
+      "confidence": 0.95,
+      "source_paths": [
+        "user.txt"
+      ]
+    },
+    {
+      "id": "entity_0955a707235c706987bb9421",
+      "kind": "entity",
+      "label": "Uttar Pradesh",
+      "type": "topic",
+      "summary": "Uttar Pradesh appears in extracted.txt:80.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_51c80ba0161295bb0ba04257",
+      "kind": "entity",
+      "label": "VLC",
+      "type": "topic",
+      "summary": "VLC appears in extracted.txt:16.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_e362dfaf16870afc35af2bf4",
+      "kind": "entity",
+      "label": "West Bengal Odisha",
+      "type": "topic",
+      "summary": "West Bengal Odisha appears in extracted.txt:79.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_ed28f57c12b7429a38d7218f",
+      "kind": "entity",
+      "label": "Yaari Official Video",
+      "type": "topic",
+      "summary": "Yaari Official Video appears in extracted.txt:47.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "entity_76a4c15c7f3a87416104a16b",
+      "kind": "entity",
+      "label": "Yaha Ke Bahubali",
+      "type": "topic",
+      "summary": "Yaha Ke Bahubali appears in extracted.txt:22.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ]
+    },
+    {
+      "id": "fact_18e81ebf105ed470a80898d3",
+      "kind": "fact",
+      "label": "Extracted Chat Memory",
+      "type": "fact",
+      "summary": "Extracted Chat Memory",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 1
+    },
+    {
+      "id": "fact_30c84ebb012934f46d693333",
+      "kind": "fact",
+      "label": "[ \"Safari\" by Serena is playing now ]",
+      "type": "fact",
+      "summary": "[ \"Safari\" by Serena is playing now ]",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 4
+    },
+    {
+      "id": "fact_c03c58099371217647fc7dc9",
+      "kind": "fact",
+      "label": "Add 'Safari by Serena' to my 'New Favorites' playlist",
+      "type": "fact",
+      "summary": "Add 'Safari by Serena' to my 'New Favorites' playlist",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 7
+    },
+    {
+      "id": "fact_990f570a1f3ff727fee7df27",
+      "kind": "fact",
+      "label": "Create a playlist named 'Serena Vibes' and add 'Safari' by Serena to it.",
+      "type": "fact",
+      "summary": "Create a playlist named 'Serena Vibes' and add 'Safari' by Serena to it.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 10
+    },
+    {
+      "id": "fact_82f083d5d22834cfefe4f938",
+      "kind": "fact",
+      "label": "Serena - Safari",
+      "type": "fact",
+      "summary": "Serena - Safari",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 13
+    },
+    {
+      "id": "fact_a01311138ad2009fa74305a3",
+      "kind": "fact",
+      "label": "Your \"fav\" playlist is playing now\u2014Serena\u2019s *Safari* is back in the VLC queue. Enjoy!",
+      "type": "fact",
+      "summary": "Your \"fav\" playlist is playing now\u2014Serena\u2019s *Safari* is back in the VLC queue. Enjoy!",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 16
+    },
+    {
+      "id": "fact_c57509d61cdeeecfa25e76b9",
+      "kind": "fact",
+      "label": "1 track in the playlist, playback started.",
+      "type": "fact",
+      "summary": "1 track in the playlist, playback started.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 17
+    },
+    {
+      "id": "fact_951c5b5674b5b6343259abe9",
+      "kind": "fact",
+      "label": "License Ka Asla",
+      "type": "fact",
+      "summary": "License Ka Asla",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 20
+    },
+    {
+      "id": "fact_529a08fdc4fa4418c74a7c34",
+      "kind": "fact",
+      "label": "Yaha Ke Bahubali",
+      "type": "fact",
+      "summary": "Yaha Ke Bahubali",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 22
+    },
+    {
+      "id": "fact_e48daf3b714c3b52fdbb5e17",
+      "kind": "fact",
+      "label": "[\"- License Ka Asla - Masoom Sharma\"",
+      "type": "fact",
+      "summary": "[\"- License Ka Asla - Masoom Sharma\"",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 25
+    },
+    {
+      "id": "fact_70afe8fb69ad54ffacc81e65",
+      "kind": "fact",
+      "label": "\"- Yaari - Masoom Sharma\"",
+      "type": "fact",
+      "summary": "\"- Yaari - Masoom Sharma\"",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 26
+    },
+    {
+      "id": "fact_7119718aa1ac6054a877ba49",
+      "kind": "fact",
+      "label": "\"- Serena - Safari\"]",
+      "type": "fact",
+      "summary": "\"- Serena - Safari\"]",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 27
+    },
+    {
+      "id": "fact_e2ce23b326201390a23dda07",
+      "kind": "fact",
+      "label": "Retry adding the Masoom Sharma tracks to the playlist",
+      "type": "fact",
+      "summary": "Retry adding the Masoom Sharma tracks to the playlist",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 30
+    },
+    {
+      "id": "fact_9d39ea8e222f9863a221d2e2",
+      "kind": "fact",
+      "label": "Play just Safari again while we fix it",
+      "type": "fact",
+      "summary": "Play just Safari again while we fix it",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 31
+    },
+    {
+      "id": "fact_80998d5450b5572bfc4973cb",
+      "kind": "fact",
+      "label": "Check which tracks are actually in the playlist right now",
+      "type": "fact",
+      "summary": "Check which tracks are actually in the playlist right now",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 32
+    },
+    {
+      "id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "kind": "fact",
+      "label": "Serena - Safari",
+      "type": "fact",
+      "summary": "Serena - Safari",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 35
+    },
+    {
+      "id": "fact_ce9d1ce016aab0a23444e6ce",
+      "kind": "fact",
+      "label": "License Ka Asla",
+      "type": "fact",
+      "summary": "License Ka Asla",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 36
+    },
+    {
+      "id": "fact_13eaa5df3809f686667cdf18",
+      "kind": "fact",
+      "label": "Retry adding the missing 2 tracks",
+      "type": "fact",
+      "summary": "Retry adding the missing 2 tracks",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 37
+    },
+    {
+      "id": "fact_a5672f5be838d2c9ff6aaf70",
+      "kind": "fact",
+      "label": "Play the current playlist (just these 2 tracks)",
+      "type": "fact",
+      "summary": "Play the current playlist (just these 2 tracks)",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 38
+    },
+    {
+      "id": "fact_23748825fa20973ab1478f75",
+      "kind": "fact",
+      "label": "Serena - Safari",
+      "type": "fact",
+      "summary": "Serena - Safari",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 41
+    },
+    {
+      "id": "fact_f74c0ed4e4d108d9914291c0",
+      "kind": "fact",
+      "label": "License Ka Asla - Masoom Sharma",
+      "type": "fact",
+      "summary": "License Ka Asla - Masoom Sharma",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 42
+    },
+    {
+      "id": "fact_6cf312984b94c1c70152d27b",
+      "kind": "fact",
+      "label": "Serena - Safari (Official Video)",
+      "type": "fact",
+      "summary": "Serena - Safari (Official Video)",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 45
+    },
+    {
+      "id": "fact_84d06b182a3a909489bb7fcb",
+      "kind": "fact",
+      "label": "License Ka Asla - Licence (Masoom Sharma)",
+      "type": "fact",
+      "summary": "License Ka Asla - Licence (Masoom Sharma)",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 46
+    },
+    {
+      "id": "fact_9eb3be9a38145b9f3d10e527",
+      "kind": "fact",
+      "label": "Masoom Sharma - Yaari (Official Video)",
+      "type": "fact",
+      "summary": "Masoom Sharma - Yaari (Official Video)",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 47
+    },
+    {
+      "id": "fact_7065ecf217ae02450ef52342",
+      "kind": "fact",
+      "label": "Serena - Safari (Official Video)",
+      "type": "fact",
+      "summary": "Serena - Safari (Official Video)",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 50
+    },
+    {
+      "id": "fact_35f65f009f12c3d261de1cbc",
+      "kind": "fact",
+      "label": "License Ka Asla - Licence",
+      "type": "fact",
+      "summary": "License Ka Asla - Licence",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 51
+    },
+    {
+      "id": "fact_912dbd469b79d3926dcb2827",
+      "kind": "fact",
+      "label": "Masoom Sharma - Yaari",
+      "type": "fact",
+      "summary": "Masoom Sharma - Yaari",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 52
+    },
+    {
+      "id": "fact_c97662e01574cad47779ceb0",
+      "kind": "fact",
+      "label": "Today is May 15, 2026.",
+      "type": "fact",
+      "summary": "Today is May 15, 2026.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 55
+    },
+    {
+      "id": "fact_f79d1338ec8af5b3b2607e40",
+      "kind": "fact",
+      "label": "hot and dry",
+      "type": "fact",
+      "summary": "hot and dry",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 58
+    },
+    {
+      "id": "fact_2ea2c8b32a76ffe94c14c592",
+      "kind": "fact",
+      "label": "14.3 km/h",
+      "type": "fact",
+      "summary": "14.3 km/h",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 60
+    },
+    {
+      "id": "fact_f8eba2eb14995d279c191ded",
+      "kind": "fact",
+      "label": "no rain",
+      "type": "fact",
+      "summary": "no rain",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 62
+    },
+    {
+      "id": "fact_375c7ee034e80cdff41f7db8",
+      "kind": "fact",
+      "label": "gradual rise in temperatures",
+      "type": "fact",
+      "summary": "gradual rise in temperatures",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 66
+    },
+    {
+      "id": "fact_c0c89cfd3462dede08a40e90",
+      "kind": "fact",
+      "label": "43.5\u00b0C by May 19",
+      "type": "fact",
+      "summary": "43.5\u00b0C by May 19",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 67
+    },
+    {
+      "id": "fact_a1cb88babde4a4ae1df4ae89",
+      "kind": "fact",
+      "label": "3 tracks",
+      "type": "fact",
+      "summary": "3 tracks",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 70
+    },
+    {
+      "id": "fact_a29ead6f854d0938198eb113",
+      "kind": "fact",
+      "label": "Safari - Serena",
+      "type": "fact",
+      "summary": "Safari - Serena",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 71
+    },
+    {
+      "id": "fact_6556aa83609a63e95951a947",
+      "kind": "fact",
+      "label": "License Ka Asla - Masoom Sharma",
+      "type": "fact",
+      "summary": "License Ka Asla - Masoom Sharma",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 72
+    },
+    {
+      "id": "fact_1f73c39898bd6d947a7ef7cf",
+      "kind": "fact",
+      "label": "Yaari - Masoom Sharma",
+      "type": "fact",
+      "summary": "Yaari - Masoom Sharma",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 73
+    },
+    {
+      "id": "fact_9c6266e9c09683c0796aeb63",
+      "kind": "fact",
+      "label": "The current track is playing at 70% volume.",
+      "type": "fact",
+      "summary": "The current track is playing at 70% volume.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 76
+    },
+    {
+      "id": "fact_e2043c27964f9952ee7f4588",
+      "kind": "fact",
+      "label": "**Lok Sabha Elections 2024**: Polling in Phase 7 covers key states like West Bengal...",
+      "type": "fact",
+      "summary": "**Lok Sabha Elections 2024**: Polling in Phase 7 covers key states like West Bengal, Odisha, and Andhra Pradesh, with exit polls suggesting a tight race in Bengal.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 79
+    },
+    {
+      "id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "kind": "fact",
+      "label": "**Coalition Shifts**: The INDIA alliance is consolidating support in Kerala and Tam...",
+      "type": "fact",
+      "summary": "**Coalition Shifts**: The INDIA alliance is consolidating support in Kerala and Tamil Nadu, while the BJP faces challenges in maintaining its stronghold in Uttar Pradesh ahead of Phase 8.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 80
+    },
+    {
+      "id": "fact_8e126daf75dc894fe9995d61",
+      "kind": "fact",
+      "label": "**Key Issues**: Inflation, job creation, and the Ram Mandir inauguration\u2019s politica...",
+      "type": "fact",
+      "summary": "**Key Issues**: Inflation, job creation, and the Ram Mandir inauguration\u2019s political impact remain dominant topics.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 81
+    },
+    {
+      "id": "fact_e056784ef851680a4081bd48",
+      "kind": "fact",
+      "label": "**State Politics**: West Bengal\u2019s opposition is rallying against the TMC\u2019s governan...",
+      "type": "fact",
+      "summary": "**State Politics**: West Bengal\u2019s opposition is rallying against the TMC\u2019s governance, and Punjab\u2019s upcoming assembly elections (due by November) are heating up.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 82
+    },
+    {
+      "id": "fact_30ef578a138fa4b59f193126",
+      "kind": "fact",
+      "label": "The current Chief Minister of Tamil Nadu is M.K. Stalin of the Dravida Munnetra Kaz...",
+      "type": "fact",
+      "summary": "The current Chief Minister of Tamil Nadu is M.K. Stalin of the Dravida Munnetra Kazhagam (DMK).",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 85
+    },
+    {
+      "id": "fact_a3bb12570f08688e8ec31dc1",
+      "kind": "fact",
+      "label": "He has been serving in this role since May 7, 2021.",
+      "type": "fact",
+      "summary": "He has been serving in this role since May 7, 2021.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 86
+    },
+    {
+      "id": "fact_65cba2af2401ecbf59aa3dc2",
+      "kind": "fact",
+      "label": "As of May 15, 2026, M.K. Stalin is still the Chief Minister of Tamil Nadu.",
+      "type": "fact",
+      "summary": "As of May 15, 2026, M.K. Stalin is still the Chief Minister of Tamil Nadu.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 89
+    },
+    {
+      "id": "fact_2eeecae1516adf3d4a042c3a",
+      "kind": "fact",
+      "label": "Vijayakanth, from the Desiya Murpokku Dravida Kazhagam, is a prominent opposition l...",
+      "type": "fact",
+      "summary": "Vijayakanth, from the Desiya Murpokku Dravida Kazhagam, is a prominent opposition leader but is not currently the Chief Minister.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 90
+    },
+    {
+      "id": "fact_dd00c2d3c0353da50259fc3e",
+      "kind": "fact",
+      "label": "M.K. Stalin remains the Chief Minister of Tamil Nadu as of today.",
+      "type": "fact",
+      "summary": "M.K. Stalin remains the Chief Minister of Tamil Nadu as of today.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 93
+    },
+    {
+      "id": "fact_c19ca7f1e8218268200d414b",
+      "kind": "fact",
+      "label": "Your 'fav' playlist has 3 tracks in it, Krish.",
+      "type": "fact",
+      "summary": "Your 'fav' playlist has 3 tracks in it, Krish.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 96
+    },
+    {
+      "id": "fact_6c6284e9d3a1f22c75e22a96",
+      "kind": "fact",
+      "label": "The current Chief Minister of Tamil Nadu is **M.K. Stalin** (DMK). He has been in o...",
+      "type": "fact",
+      "summary": "The current Chief Minister of Tamil Nadu is **M.K. Stalin** (DMK). He has been in office since **May 7, 2021**.",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 99
+    },
+    {
+      "id": "fact_0819b58f9d44c4402768be06",
+      "kind": "fact",
+      "label": "[",
+      "type": "fact",
+      "summary": "[",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 102
+    },
+    {
+      "id": "fact_7c8cf3d21abb8f89156076d6",
+      "kind": "fact",
+      "label": "{",
+      "type": "fact",
+      "summary": "{",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 103
+    },
+    {
+      "id": "fact_ec49380c3497c07ca1ae1307",
+      "kind": "fact",
+      "label": "\"text\": \"Here are some of his recent and popular movies:\",",
+      "type": "fact",
+      "summary": "\"text\": \"Here are some of his recent and popular movies:\",",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 104
+    },
+    {
+      "id": "fact_129c46a7d04f2e640362fb74",
+      "kind": "fact",
+      "label": "\"type\": \"text\",",
+      "type": "fact",
+      "summary": "\"type\": \"text\",",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 105
+    },
+    {
+      "id": "fact_f999e1475daa76b699e74ed4",
+      "kind": "fact",
+      "label": "\"entities\": [],",
+      "type": "fact",
+      "summary": "\"entities\": [],",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 106
+    },
+    {
+      "id": "fact_47d3fc8baf9ab4cc651db928",
+      "kind": "fact",
+      "label": "Vijay's recent movies",
+      "type": "fact",
+      "summary": "Vijay's recent movies",
+      "confidence": 0.72,
+      "source_paths": [
+        "extracted.txt"
+      ],
+      "source_line": 109
+    },
+    {
+      "id": "fact_ddbffa69a46f7c361ab22245",
+      "kind": "fact",
+      "label": "User Memory",
+      "type": "profile",
+      "summary": "User Memory",
+      "confidence": 0.95,
+      "source_paths": [
+        "user.txt"
+      ],
+      "source_line": 1
+    },
+    {
+      "id": "fact_b377a9813042e73643fbca8c",
+      "kind": "fact",
+      "label": "Fresh restart.",
+      "type": "profile",
+      "summary": "Fresh restart.",
+      "confidence": 0.95,
+      "source_paths": [
+        "user.txt"
+      ],
+      "source_line": 3
+    },
+    {
+      "id": "fact_3224990f1c4b0f592aaa3fee",
+      "kind": "fact",
+      "label": "Krish is building A.N.K.I.T.A / Jarvis as a serious assistant project, not a chatbot.",
+      "type": "project",
+      "summary": "Krish is building A.N.K.I.T.A / Jarvis as a serious assistant project, not a chatbot.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 6
+    },
+    {
+      "id": "fact_80ca95cf9f343806633d7a79",
+      "kind": "fact",
+      "label": "TXT and MD memory files should stay the source of truth; the Memory Brain graph is...",
+      "type": "decision",
+      "summary": "TXT and MD memory files should stay the source of truth; the Memory Brain graph is a generated sidecar.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 7
+    },
+    {
+      "id": "fact_f3e46025797219e231566ecb",
+      "kind": "fact",
+      "label": "Ankita memory should combine local SQLite graph recall, semantic vector recall, exa...",
+      "type": "decision",
+      "summary": "Ankita memory should combine local SQLite graph recall, semantic vector recall, exact text recall, timeline context, confidence, and source provenance.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 8
+    },
+    {
+      "id": "fact_e24f8ef05e66e21172b5f002",
+      "kind": "fact",
+      "label": "Krish prefers not to use regex, hardcoded rescue paths, or keyword tables for assis...",
+      "type": "preference",
+      "summary": "Krish prefers not to use regex, hardcoded rescue paths, or keyword tables for assistant behavior.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 9
+    },
+    {
+      "id": "fact_35e7624f63a3cd2c807a3c0f",
+      "kind": "fact",
+      "label": "Tool registration should go through manifests, prompts, TXT, or JSON first; the nor...",
+      "type": "constraint",
+      "summary": "Tool registration should go through manifests, prompts, TXT, or JSON first; the normal chat loop should not be edited for ordinary tool registration.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 10
+    },
+    {
+      "id": "fact_8d6950ec0a433cfee88a57f9",
+      "kind": "fact",
+      "label": "Ankita should avoid false negatives and should not claim local facts without tool e...",
+      "type": "constraint",
+      "summary": "Ankita should avoid false negatives and should not claim local facts without tool evidence.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 11
+    },
+    {
+      "id": "fact_2dad43a9585463fd9c47bfca",
+      "kind": "fact",
+      "label": "Memory retrieval should stay compact, source-backed, and low latency.",
+      "type": "preference",
+      "summary": "Memory retrieval should stay compact, source-backed, and low latency.",
+      "confidence": 0.82,
+      "source_paths": [
+        "wiki/pages/projects/ankita.txt"
+      ],
+      "source_line": 12
+    }
+  ],
+  "edges": [
+    {
+      "id": "edge_ff8cbcd191cc9eb350344659",
+      "source_id": "entity_d05fcac1351ca3c4fec3d3f1",
+      "target_id": "fact_18e81ebf105ed470a80898d3",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_18e81ebf105ed470a80898d3",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:50:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ede37b9525783e33dca774f3",
+      "source_id": "entity_d8e60ebbbb2b1a9d5f0dd2cf",
+      "target_id": "fact_30c84ebb012934f46d693333",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30c84ebb012934f46d693333",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_85251c1bc4be2c3721575051",
+      "source_id": "entity_1ee0bfc58805b730806a109f",
+      "target_id": "fact_c03c58099371217647fc7dc9",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a347a484ed96a79f1f6b177b",
+      "source_id": "entity_36812f922f7f5fe40dd6d897",
+      "target_id": "fact_c03c58099371217647fc7dc9",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1e5f9e4399f2a19f37148964",
+      "source_id": "entity_2538be6180c6ff0772c078d9",
+      "target_id": "fact_c03c58099371217647fc7dc9",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1dbacf4b6bc88dd76e382950",
+      "source_id": "entity_1ee0bfc58805b730806a109f",
+      "target_id": "entity_36812f922f7f5fe40dd6d897",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e1591b1bde57ac7b3a36e4a6",
+      "source_id": "entity_1ee0bfc58805b730806a109f",
+      "target_id": "entity_2538be6180c6ff0772c078d9",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1f92083e6a6b3355836ea58d",
+      "source_id": "entity_36812f922f7f5fe40dd6d897",
+      "target_id": "entity_2538be6180c6ff0772c078d9",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c03c58099371217647fc7dc9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:15:54+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_0a9253bbb65eee0b5c8d2542",
+      "source_id": "entity_3083f04f2cff09994e3c825b",
+      "target_id": "fact_990f570a1f3ff727fee7df27",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_990f570a1f3ff727fee7df27",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:16:34+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_f3e864064cee992033e0bb14",
+      "source_id": "entity_d8e60ebbbb2b1a9d5f0dd2cf",
+      "target_id": "fact_990f570a1f3ff727fee7df27",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_990f570a1f3ff727fee7df27",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:16:34+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7b086e0f44c6f56ade3c3042",
+      "source_id": "entity_3083f04f2cff09994e3c825b",
+      "target_id": "entity_d8e60ebbbb2b1a9d5f0dd2cf",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_990f570a1f3ff727fee7df27",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:16:34+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b573c58e725dc3d73b99c2d9",
+      "source_id": "entity_3e201631a7c74067688e8b28",
+      "target_id": "fact_a01311138ad2009fa74305a3",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_a01311138ad2009fa74305a3",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:22:32+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2dbb52e3ea6f63455724b34d",
+      "source_id": "entity_51c80ba0161295bb0ba04257",
+      "target_id": "fact_a01311138ad2009fa74305a3",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_a01311138ad2009fa74305a3",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:22:32+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_15c670e42adb37152fa32d3f",
+      "source_id": "entity_3e201631a7c74067688e8b28",
+      "target_id": "entity_51c80ba0161295bb0ba04257",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_a01311138ad2009fa74305a3",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:22:32+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e9cdcf61a9b271b8c19f3049",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_951c5b5674b5b6343259abe9",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_951c5b5674b5b6343259abe9",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:23:25+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_eae003eedefef90e5db59893",
+      "source_id": "entity_76a4c15c7f3a87416104a16b",
+      "target_id": "fact_529a08fdc4fa4418c74a7c34",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_529a08fdc4fa4418c74a7c34",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:23:25+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_3d60a71b9988c8a5e0017e3c",
+      "source_id": "entity_2aa4ca2dbe927b8b90032aad",
+      "target_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_fcaa673938c124c65e1d10f3",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_77e2c5826147fa772761a856",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2bb6f72e7975bd995e6669ce",
+      "source_id": "entity_2aa4ca2dbe927b8b90032aad",
+      "target_id": "entity_29753f8f815650155fdba89e",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b6170cb0f968f04bbf4c41b2",
+      "source_id": "entity_2aa4ca2dbe927b8b90032aad",
+      "target_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_17e3f0ab0d529b4a8cb582a6",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e48daf3b714c3b52fdbb5e17",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1c806705b716dafa6df84113",
+      "source_id": "entity_b39cc18662c24651eced2dc7",
+      "target_id": "fact_70afe8fb69ad54ffacc81e65",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_70afe8fb69ad54ffacc81e65",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_9100021f8dbe53466a886081",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_70afe8fb69ad54ffacc81e65",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_70afe8fb69ad54ffacc81e65",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7e480bd2deedfa9234bd4ef5",
+      "source_id": "entity_b39cc18662c24651eced2dc7",
+      "target_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_70afe8fb69ad54ffacc81e65",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_15b33632cd4c9e052df17cbd",
+      "source_id": "entity_403fec7e532bc00343fd72b9",
+      "target_id": "fact_7119718aa1ac6054a877ba49",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_7119718aa1ac6054a877ba49",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ce8950231b759a1b9bece06e",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_e2ce23b326201390a23dda07",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2ce23b326201390a23dda07",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:25:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_92c44bb1b9f9a8afad7a4d8f",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:26:22+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e10ebe0ddf0356d5de1e8d82",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_f74c0ed4e4d108d9914291c0",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5f9b61afe6384172ee024b44",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_f74c0ed4e4d108d9914291c0",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_59c12d44d14d3bcb51bd46d6",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ad8bad596f7820f39144a9c6",
+      "source_id": "entity_b719ee3518cc273a24ab4df0",
+      "target_id": "fact_6cf312984b94c1c70152d27b",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_42f0b054313e91c116ccc4af",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_84d06b182a3a909489bb7fcb",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_84d06b182a3a909489bb7fcb",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_79a417d5dc13428d89fec03b",
+      "source_id": "entity_d7c6676848006019300a4a5b",
+      "target_id": "fact_84d06b182a3a909489bb7fcb",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_84d06b182a3a909489bb7fcb",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_dcefd7bf6bf223d1f820e53e",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "entity_d7c6676848006019300a4a5b",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_84d06b182a3a909489bb7fcb",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a473dcd18a91741a232eb8ce",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_9eb3be9a38145b9f3d10e527",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_9eb3be9a38145b9f3d10e527",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_9cb212b5cb4283b2ecb7674d",
+      "source_id": "entity_ed28f57c12b7429a38d7218f",
+      "target_id": "fact_9eb3be9a38145b9f3d10e527",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_9eb3be9a38145b9f3d10e527",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_18e3f04af768c4f429bf81b6",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "entity_ed28f57c12b7429a38d7218f",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_9eb3be9a38145b9f3d10e527",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_61caeb3aedd759dac255639b",
+      "source_id": "entity_b719ee3518cc273a24ab4df0",
+      "target_id": "fact_7065ecf217ae02450ef52342",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_51b84a5befcbc113b53681a4",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_35f65f009f12c3d261de1cbc",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_74099d6c30c480296b38eedd",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_912dbd469b79d3926dcb2827",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_912dbd469b79d3926dcb2827",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_231ff218629a31a1b259c2ca",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "fact_6556aa83609a63e95951a947",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c1d7704f5a3d0fba6cd91d07",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_6556aa83609a63e95951a947",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e462ac7f541732abf370dff7",
+      "source_id": "entity_29753f8f815650155fdba89e",
+      "target_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c999babab4e99387a2a50628",
+      "source_id": "entity_6e86bdee5fe88fbabe49f5e7",
+      "target_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_abb862a0b12e22c5ce475093",
+      "source_id": "entity_18e8f8422d575c5ae5516cf4",
+      "target_id": "fact_e2043c27964f9952ee7f4588",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_558e2fe56b7380596e057e19",
+      "source_id": "entity_e362dfaf16870afc35af2bf4",
+      "target_id": "fact_e2043c27964f9952ee7f4588",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6dcb70ae59e19f0ebcab016e",
+      "source_id": "entity_9bf12add25134cab1caa270a",
+      "target_id": "fact_e2043c27964f9952ee7f4588",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6c6c5648234b56a11630bf76",
+      "source_id": "entity_18e8f8422d575c5ae5516cf4",
+      "target_id": "entity_e362dfaf16870afc35af2bf4",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c7633298d028a4b5b98b112a",
+      "source_id": "entity_18e8f8422d575c5ae5516cf4",
+      "target_id": "entity_9bf12add25134cab1caa270a",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_66b8a5e06b3d9e7f7da9b002",
+      "source_id": "entity_e362dfaf16870afc35af2bf4",
+      "target_id": "entity_9bf12add25134cab1caa270a",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e2043c27964f9952ee7f4588",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_73ec7a94e183dc96f5c8c261",
+      "source_id": "entity_b788ab69d2c784e6355e1ffb",
+      "target_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7c55e945d2d575653cc71242",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_45170ce01c9fed75ccc3c3cd",
+      "source_id": "entity_c9c61db581934f1d5c0e4482",
+      "target_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7075f64ddfba83b24275bcd3",
+      "source_id": "entity_0955a707235c706987bb9421",
+      "target_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2cd7bf6fa4173f2352a5c410",
+      "source_id": "entity_b788ab69d2c784e6355e1ffb",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_f43b4009b5aa0dcedbe698a2",
+      "source_id": "entity_b788ab69d2c784e6355e1ffb",
+      "target_id": "entity_c9c61db581934f1d5c0e4482",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b9eaaa72091006f8db47567f",
+      "source_id": "entity_b788ab69d2c784e6355e1ffb",
+      "target_id": "entity_0955a707235c706987bb9421",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7baeefe2e19813970083f98f",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "entity_c9c61db581934f1d5c0e4482",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_9e793b085355521128d2002f",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "entity_0955a707235c706987bb9421",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e632fb8f904fba0f7ea6ebd7",
+      "source_id": "entity_c9c61db581934f1d5c0e4482",
+      "target_id": "entity_0955a707235c706987bb9421",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_d0b6019fbd0e6f1f2a8fa2a5",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c45d707b4d7c521a934fdd3d",
+      "source_id": "entity_e0d2043e628fa61642e9222c",
+      "target_id": "fact_8e126daf75dc894fe9995d61",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_8e126daf75dc894fe9995d61",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_58d05cea0fa8a246e68f6169",
+      "source_id": "entity_e6d258f10eed7f08be3d7702",
+      "target_id": "fact_8e126daf75dc894fe9995d61",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_8e126daf75dc894fe9995d61",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6169681898a15329c0641945",
+      "source_id": "entity_e0d2043e628fa61642e9222c",
+      "target_id": "entity_e6d258f10eed7f08be3d7702",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_8e126daf75dc894fe9995d61",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_aceb67880c69d1072a8e0c2e",
+      "source_id": "entity_5cebfadbb82fde60c93b1b70",
+      "target_id": "fact_e056784ef851680a4081bd48",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e056784ef851680a4081bd48",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_642551ab18dbd8daeda12b2f",
+      "source_id": "entity_0cf6c2d4d5bab18406661425",
+      "target_id": "fact_e056784ef851680a4081bd48",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e056784ef851680a4081bd48",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ce1caf0f117e721a3a5c4333",
+      "source_id": "entity_5cebfadbb82fde60c93b1b70",
+      "target_id": "entity_0cf6c2d4d5bab18406661425",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_e056784ef851680a4081bd48",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:08+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d40c7f3dbc2c0fe99bfd0543",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "fact_30ef578a138fa4b59f193126",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_93c09579c518091a45eda907",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "fact_30ef578a138fa4b59f193126",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_eb81f9086f15f46c64aa96d4",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "fact_30ef578a138fa4b59f193126",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c04653087fee6e15859d8332",
+      "source_id": "entity_3e0099966c188665473e8684",
+      "target_id": "fact_30ef578a138fa4b59f193126",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_0c88f8c1d4573e65525a0080",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1a9b9bc2710b39ed570c2e23",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_b35e8ca63f78c783ddd20da4",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a74f006ab1bb8648bfa0db13",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_3e0099966c188665473e8684",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_8adc804b601c084e9760cd8a",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "entity_b35e8ca63f78c783ddd20da4",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_91a2957c8d8aed942ff8438a",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "entity_3e0099966c188665473e8684",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b17084cdb3749f239d8a0784",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "entity_3e0099966c188665473e8684",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_30ef578a138fa4b59f193126",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:29+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_65f9ce17fa3f474d8c6d632b",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e8c0331209a2881a60fdbc64",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_99b65b5f65c640e8c39eb380",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_83362fdba871b38cfb9b0eb0",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "entity_6be20ba66cdd06e869314f40",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2fa1d9e553e0ef8a7e0af799",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_033e7ee281ae739a09ebf2ea",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_3e74ad983f9e97af2f6d8dcc",
+      "source_id": "entity_7f1964665c5f758978d675bb",
+      "target_id": "fact_2eeecae1516adf3d4a042c3a",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_2eeecae1516adf3d4a042c3a",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_fc731a731efc488fffd94dce",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "fact_2eeecae1516adf3d4a042c3a",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_2eeecae1516adf3d4a042c3a",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_70daea1b9aa91e4462e53e88",
+      "source_id": "entity_7f1964665c5f758978d675bb",
+      "target_id": "entity_6be20ba66cdd06e869314f40",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_2eeecae1516adf3d4a042c3a",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:56:43+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_62359cf2b9c662c4fc336c02",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "fact_dd00c2d3c0353da50259fc3e",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a481583aa47ddfebb24d7a71",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "fact_dd00c2d3c0353da50259fc3e",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_124c73fc4efaa632a78e2813",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "fact_dd00c2d3c0353da50259fc3e",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6ba1208db942f3b675cac296",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "entity_6be20ba66cdd06e869314f40",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1e495d243e00da42d3de2b97",
+      "source_id": "entity_b35e8ca63f78c783ddd20da4",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_67c3a9f191c2974fd2a1dbb4",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c6fd6582882decbfc2a70d12",
+      "source_id": "entity_3e201631a7c74067688e8b28",
+      "target_id": "fact_c19ca7f1e8218268200d414b",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_c19ca7f1e8218268200d414b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:31:52+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_0a8bbd1fcd0dc00a0b9b487b",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_aa183145c721a53981147c44",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_95bbc3aa29b76f443f4f48f6",
+      "source_id": "entity_063625d053c207c3f2c46778",
+      "target_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a6c7b113623c9156b2401399",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_490910567fa9fe2a8994834c",
+      "source_id": "entity_6be20ba66cdd06e869314f40",
+      "target_id": "entity_063625d053c207c3f2c46778",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6b590d112044ca1215cd970e",
+      "source_id": "entity_b11f144e03b1b81c5f2f8e18",
+      "target_id": "entity_063625d053c207c3f2c46778",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d23cf08c4634ccbf975e342d",
+      "source_id": "entity_982d9e3eb996f559e633f4d1",
+      "target_id": "fact_ec49380c3497c07ca1ae1307",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_ec49380c3497c07ca1ae1307",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7fa7159127ce31cefff69319",
+      "source_id": "entity_181958a9a5ecffe0f562e9d0",
+      "target_id": "fact_ec49380c3497c07ca1ae1307",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_ec49380c3497c07ca1ae1307",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_f81fd4df9c501aba7ef2924d",
+      "source_id": "entity_982d9e3eb996f559e633f4d1",
+      "target_id": "entity_181958a9a5ecffe0f562e9d0",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_ec49380c3497c07ca1ae1307",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6177ae52f57aaa9de815448d",
+      "source_id": "entity_1303c06b0b014d0ce7b988ab",
+      "target_id": "fact_129c46a7d04f2e640362fb74",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_129c46a7d04f2e640362fb74",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_9b3c48e1248070b8bb495ce9",
+      "source_id": "entity_982d9e3eb996f559e633f4d1",
+      "target_id": "fact_129c46a7d04f2e640362fb74",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_129c46a7d04f2e640362fb74",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7d7bcf17120323eab794c739",
+      "source_id": "entity_1303c06b0b014d0ce7b988ab",
+      "target_id": "entity_982d9e3eb996f559e633f4d1",
+      "relation_type": "mentioned_with",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_129c46a7d04f2e640362fb74",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_158f6e17d339e68ca4cb1fa6",
+      "source_id": "entity_2cc497857559ff85cfec0fd6",
+      "target_id": "fact_f999e1475daa76b699e74ed4",
+      "relation_type": "mentioned_in",
+      "confidence": 0.72,
+      "evidence_fact_id": "fact_f999e1475daa76b699e74ed4",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:49:19+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_20780cae57ea572eb4f8fd39",
+      "source_id": "entity_c3a3f765526ccadf2a3c33aa",
+      "target_id": "fact_ddbffa69a46f7c361ab22245",
+      "relation_type": "mentioned_in",
+      "confidence": 0.95,
+      "evidence_fact_id": "fact_ddbffa69a46f7c361ab22245",
+      "source_path": "user.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:11:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d8839aea8b10772770ba2014",
+      "source_id": "entity_6555a4f2db9ed4c3a7ba6254",
+      "target_id": "fact_ddbffa69a46f7c361ab22245",
+      "relation_type": "mentioned_in",
+      "confidence": 0.95,
+      "evidence_fact_id": "fact_ddbffa69a46f7c361ab22245",
+      "source_path": "user.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:11:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_be90ca78f2a04fda40c29d2e",
+      "source_id": "entity_c3a3f765526ccadf2a3c33aa",
+      "target_id": "entity_6555a4f2db9ed4c3a7ba6254",
+      "relation_type": "mentioned_with",
+      "confidence": 0.95,
+      "evidence_fact_id": "fact_ddbffa69a46f7c361ab22245",
+      "source_path": "user.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:11:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5e7b1db7c157b19df7cc962e",
+      "source_id": "entity_c3a3f765526ccadf2a3c33aa",
+      "target_id": "fact_b377a9813042e73643fbca8c",
+      "relation_type": "mentioned_in",
+      "confidence": 0.95,
+      "evidence_fact_id": "fact_b377a9813042e73643fbca8c",
+      "source_path": "user.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:11:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_8506fd7bf542e53ea357a6c0",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_3224990f1c4b0f592aaa3fee",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7a70b150343609a3b40639cf",
+      "source_id": "entity_30c0954e1108ded32fbf7178",
+      "target_id": "fact_3224990f1c4b0f592aaa3fee",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_82613d3c3d9dd3a8ebabeb5a",
+      "source_id": "entity_3c010f4dcf5215f4996fe28a",
+      "target_id": "fact_3224990f1c4b0f592aaa3fee",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d48c71634ae005480743b382",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_30c0954e1108ded32fbf7178",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5c2e89fb123c99cc0fb16c85",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_3c010f4dcf5215f4996fe28a",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b8b4957b68eb13788448b036",
+      "source_id": "entity_30c0954e1108ded32fbf7178",
+      "target_id": "entity_3c010f4dcf5215f4996fe28a",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_3224990f1c4b0f592aaa3fee",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d69768b1e8760e1265c0457d",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_80ca95cf9f343806633d7a79",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7c1c97b3ff2188e1fdab4ee6",
+      "source_id": "entity_486b9a6fc855abf48847e963",
+      "target_id": "fact_80ca95cf9f343806633d7a79",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_954e2cbece3aa42959687f68",
+      "source_id": "entity_a7166ed4433381f4ff83cd92",
+      "target_id": "fact_80ca95cf9f343806633d7a79",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e046f55676076d50a5ea8fa0",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_486b9a6fc855abf48847e963",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2103cfbca0ceea4dd5d9ac00",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_a7166ed4433381f4ff83cd92",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2bc2862f201c5e53d103394b",
+      "source_id": "entity_486b9a6fc855abf48847e963",
+      "target_id": "entity_a7166ed4433381f4ff83cd92",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_80ca95cf9f343806633d7a79",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_bdfa5ccc11681756ce71ea2a",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_f3e46025797219e231566ecb",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_f3e46025797219e231566ecb",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a6122a05e4e22fd2356d426b",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_e24f8ef05e66e21172b5f002",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_e24f8ef05e66e21172b5f002",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_bfed38f936efd2d97f8f56f1",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_020d9e763255b447167075e4",
+      "source_id": "entity_486b9a6fc855abf48847e963",
+      "target_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d5d2d27b6d5b0ac70cea2198",
+      "source_id": "entity_02bd175f329720378ce83dd5",
+      "target_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_e0991a4c0d76edcccd93a67e",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_486b9a6fc855abf48847e963",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5bac7ccb5452eb97eb94ce1b",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "entity_02bd175f329720378ce83dd5",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_367bb60cf109899fef8a0bb5",
+      "source_id": "entity_486b9a6fc855abf48847e963",
+      "target_id": "entity_02bd175f329720378ce83dd5",
+      "relation_type": "mentioned_with",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_35e7624f63a3cd2c807a3c0f",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2534de11d1767fc43a8f3116",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_8d6950ec0a433cfee88a57f9",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_8d6950ec0a433cfee88a57f9",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_da01c6390cf55d0ed97eef56",
+      "source_id": "entity_27c62a77d1e3f9b071d642bb",
+      "target_id": "fact_2dad43a9585463fd9c47bfca",
+      "relation_type": "mentioned_in",
+      "confidence": 0.82,
+      "evidence_fact_id": "fact_2dad43a9585463fd9c47bfca",
+      "source_path": "wiki/pages/projects/ankita.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T15:09:16+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_b7637f9227b985bb8a51450f",
+      "source_id": "fact_7119718aa1ac6054a877ba49",
+      "target_id": "fact_82f083d5d22834cfefe4f938",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7119718aa1ac6054a877ba49",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_dbf70bf4f4173045ec0ec445",
+      "source_id": "fact_82f083d5d22834cfefe4f938",
+      "target_id": "fact_7119718aa1ac6054a877ba49",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7119718aa1ac6054a877ba49",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:24:35+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ef564182dd55ead0a1460430",
+      "source_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "target_id": "fact_7119718aa1ac6054a877ba49",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:26:22+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_38d8b53ed71b2577fd41b512",
+      "source_id": "fact_7119718aa1ac6054a877ba49",
+      "target_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:26:22+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_bf416872b7430691a23871fb",
+      "source_id": "fact_13eaa5df3809f686667cdf18",
+      "target_id": "fact_e2ce23b326201390a23dda07",
+      "relation_type": "supersedes",
+      "confidence": 0.8,
+      "evidence_fact_id": "fact_13eaa5df3809f686667cdf18",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:26:22+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d679f7c763894a7c2f18457b",
+      "source_id": "fact_e2ce23b326201390a23dda07",
+      "target_id": "fact_13eaa5df3809f686667cdf18",
+      "relation_type": "contradicts",
+      "confidence": 0.8,
+      "evidence_fact_id": "fact_13eaa5df3809f686667cdf18",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:26:22+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_3914b4046140c24771f924ed",
+      "source_id": "fact_23748825fa20973ab1478f75",
+      "target_id": "fact_7119718aa1ac6054a877ba49",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_23748825fa20973ab1478f75",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1a5546de78e2a7b68e597994",
+      "source_id": "fact_7119718aa1ac6054a877ba49",
+      "target_id": "fact_23748825fa20973ab1478f75",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_23748825fa20973ab1478f75",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_16cd83d3218aa8816f887752",
+      "source_id": "fact_f74c0ed4e4d108d9914291c0",
+      "target_id": "fact_951c5b5674b5b6343259abe9",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_fbc5018f9a9e9a329c92c40a",
+      "source_id": "fact_951c5b5674b5b6343259abe9",
+      "target_id": "fact_f74c0ed4e4d108d9914291c0",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5ce2f21b390c104a26afa2fe",
+      "source_id": "fact_f74c0ed4e4d108d9914291c0",
+      "target_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ac8cbb8d211e554a260010d1",
+      "source_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "target_id": "fact_f74c0ed4e4d108d9914291c0",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_f74c0ed4e4d108d9914291c0",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:28:44+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c4d31a60d5e4f064b196ac4d",
+      "source_id": "fact_6cf312984b94c1c70152d27b",
+      "target_id": "fact_82f083d5d22834cfefe4f938",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2a3c5b9c41a1bb77158e4909",
+      "source_id": "fact_82f083d5d22834cfefe4f938",
+      "target_id": "fact_6cf312984b94c1c70152d27b",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ad75d906678c99fbef32e694",
+      "source_id": "fact_6cf312984b94c1c70152d27b",
+      "target_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_652276ee9d6f790f1267b3bf",
+      "source_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "target_id": "fact_6cf312984b94c1c70152d27b",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_83b2906ea849a61079583af4",
+      "source_id": "fact_6cf312984b94c1c70152d27b",
+      "target_id": "fact_23748825fa20973ab1478f75",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_3b907ae909ba2543eaec1b51",
+      "source_id": "fact_23748825fa20973ab1478f75",
+      "target_id": "fact_6cf312984b94c1c70152d27b",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6cf312984b94c1c70152d27b",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_d430c7b42345615c4def6352",
+      "source_id": "fact_84d06b182a3a909489bb7fcb",
+      "target_id": "fact_f74c0ed4e4d108d9914291c0",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_84d06b182a3a909489bb7fcb",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_dc680a46d501ed660c03abd8",
+      "source_id": "fact_f74c0ed4e4d108d9914291c0",
+      "target_id": "fact_84d06b182a3a909489bb7fcb",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_84d06b182a3a909489bb7fcb",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_eebd6b2837b50a3d7bea86ba",
+      "source_id": "fact_7065ecf217ae02450ef52342",
+      "target_id": "fact_82f083d5d22834cfefe4f938",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6a4fe76c2491b34f8607d8cc",
+      "source_id": "fact_82f083d5d22834cfefe4f938",
+      "target_id": "fact_7065ecf217ae02450ef52342",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_04ed5153ca0ea77452f478e9",
+      "source_id": "fact_7065ecf217ae02450ef52342",
+      "target_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_611cd29752ba0e38d09815e6",
+      "source_id": "fact_2dd0dd2c9b8d7e92c3f21df4",
+      "target_id": "fact_7065ecf217ae02450ef52342",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_fa665a7391b4f9aad8ed0b7b",
+      "source_id": "fact_7065ecf217ae02450ef52342",
+      "target_id": "fact_23748825fa20973ab1478f75",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a54fd4263b4c3b809477d10f",
+      "source_id": "fact_23748825fa20973ab1478f75",
+      "target_id": "fact_7065ecf217ae02450ef52342",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_7065ecf217ae02450ef52342",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a944193b3c0db59ad9aed0fa",
+      "source_id": "fact_35f65f009f12c3d261de1cbc",
+      "target_id": "fact_951c5b5674b5b6343259abe9",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_46a522fbd293433310c87d0e",
+      "source_id": "fact_951c5b5674b5b6343259abe9",
+      "target_id": "fact_35f65f009f12c3d261de1cbc",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_6f99279ecf6dc5d8516ab57d",
+      "source_id": "fact_35f65f009f12c3d261de1cbc",
+      "target_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_5d1c70c38991f327c40deb9b",
+      "source_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "target_id": "fact_35f65f009f12c3d261de1cbc",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_08646c10d440be55fd8acbe3",
+      "source_id": "fact_35f65f009f12c3d261de1cbc",
+      "target_id": "fact_84d06b182a3a909489bb7fcb",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_70b03ca647a8be380435a017",
+      "source_id": "fact_84d06b182a3a909489bb7fcb",
+      "target_id": "fact_35f65f009f12c3d261de1cbc",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_35f65f009f12c3d261de1cbc",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_61fa0aa013927a9987dcb542",
+      "source_id": "fact_912dbd469b79d3926dcb2827",
+      "target_id": "fact_9eb3be9a38145b9f3d10e527",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_912dbd469b79d3926dcb2827",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_1761324d2eccc5bc90c49cb6",
+      "source_id": "fact_9eb3be9a38145b9f3d10e527",
+      "target_id": "fact_912dbd469b79d3926dcb2827",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_912dbd469b79d3926dcb2827",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T12:40:39+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ad02b47909bd1b2accfed3c3",
+      "source_id": "fact_6556aa83609a63e95951a947",
+      "target_id": "fact_951c5b5674b5b6343259abe9",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_7a917e208fcb3262db0e3f17",
+      "source_id": "fact_951c5b5674b5b6343259abe9",
+      "target_id": "fact_6556aa83609a63e95951a947",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_a8a08c16d8ff91991ed17055",
+      "source_id": "fact_6556aa83609a63e95951a947",
+      "target_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_2be594ea6797d349c06f453d",
+      "source_id": "fact_ce9d1ce016aab0a23444e6ce",
+      "target_id": "fact_6556aa83609a63e95951a947",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_f148a113344a5ac86f48753c",
+      "source_id": "fact_6556aa83609a63e95951a947",
+      "target_id": "fact_84d06b182a3a909489bb7fcb",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_ee7d06843e57f5caea31e069",
+      "source_id": "fact_84d06b182a3a909489bb7fcb",
+      "target_id": "fact_6556aa83609a63e95951a947",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_6556aa83609a63e95951a947",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_16963602507046f12e4c3e44",
+      "source_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "target_id": "fact_912dbd469b79d3926dcb2827",
+      "relation_type": "supersedes",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_243b7e647a6658b31bccf9f5",
+      "source_id": "fact_912dbd469b79d3926dcb2827",
+      "target_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "relation_type": "contradicts",
+      "confidence": 1.0,
+      "evidence_fact_id": "fact_1f73c39898bd6d947a7ef7cf",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:55:13+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_043c6fc16819996829cb9154",
+      "source_id": "fact_dd00c2d3c0353da50259fc3e",
+      "target_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "relation_type": "supersedes",
+      "confidence": 0.75,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_cdb14b6f978f3e27290faef1",
+      "source_id": "fact_65cba2af2401ecbf59aa3dc2",
+      "target_id": "fact_dd00c2d3c0353da50259fc3e",
+      "relation_type": "contradicts",
+      "confidence": 0.75,
+      "evidence_fact_id": "fact_dd00c2d3c0353da50259fc3e",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T13:57:05+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_f53c23a5cc9b003c07340cbc",
+      "source_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "target_id": "fact_30ef578a138fa4b59f193126",
+      "relation_type": "supersedes",
+      "confidence": 0.7272727272727273,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    },
+    {
+      "id": "edge_c2133894f4c8f84e859d1616",
+      "source_id": "fact_30ef578a138fa4b59f193126",
+      "target_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "relation_type": "contradicts",
+      "confidence": 0.7272727272727273,
+      "evidence_fact_id": "fact_6c6284e9d3a1f22c75e22a96",
+      "source_path": "extracted.txt",
+      "created_at": "2026-05-15T15:27:53+05:30",
+      "valid_from": "2026-05-15T14:32:48+05:30",
+      "valid_to": null
+    }
+  ],
+  "episodes": []
+}

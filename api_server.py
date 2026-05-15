@@ -11,6 +11,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from jarvis_nim import load_dotenv
+from memory_brain import graph_export, memory_brain_reindex, memory_brain_status, search_memory_brain
 from web_assistant import WebAssistantRuntime
 
 load_dotenv(Path.cwd() / ".env")
@@ -65,6 +66,38 @@ def health() -> dict[str, Any]:
 @app.get("/api/dashboard")
 def dashboard_state() -> dict[str, Any]:
     return compact_dashboard_state(health())
+
+
+@app.get("/api/memory/status")
+def memory_status() -> dict[str, Any]:
+    try:
+        return memory_brain_status(Path.cwd())
+    except Exception as error:
+        return {"enabled": False, "error": str(error)}
+
+
+@app.get("/api/memory/graph")
+def memory_graph() -> dict[str, Any]:
+    try:
+        return graph_export(Path.cwd())
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.get("/api/memory/search")
+def memory_search(query: str, max_facts: int = 6, max_hops: int = 2) -> dict[str, Any]:
+    try:
+        return search_memory_brain(query, Path.cwd(), max_facts=max_facts, max_hops=max_hops)
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
+
+
+@app.post("/api/memory/reindex")
+def memory_reindex() -> dict[str, Any]:
+    try:
+        return memory_brain_reindex(Path.cwd())
+    except Exception as error:
+        raise HTTPException(status_code=500, detail=str(error)) from error
 
 
 @app.post("/api/chat", response_model=ChatResponse)
