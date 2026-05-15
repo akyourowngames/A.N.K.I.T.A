@@ -77,7 +77,7 @@ class PromptRouterService:
                 {"role": "user", "content": self._user_prompt(user_message, chat_history)},
             ],
             temperature=0.0,
-            max_tokens=160,
+            max_tokens=320,
         )
         elapsed_ms = int((time.perf_counter() - started) * 1000)
         data = self._parse_json(raw)
@@ -130,6 +130,11 @@ Golden examples to copy exactly in spirit:
 - "play nanna re na re" -> {"primary":"task","tool":"play","query":"nanna re na re","tasks":[{"tool":"play","query":"nanna re na re"}],"confidence":0.95,"reason":"play media command"}
 - "increase brightness" -> {"primary":"task","tool":"brightness_up","query":"brightness","tasks":[{"tool":"brightness_up","query":"brightness"}],"confidence":0.95,"reason":"directional brightness increase"}
 - "latest cricket score today" -> {"primary":"realtime","tool":null,"query":"","tasks":[],"confidence":0.95,"reason":"current score question"}
+- "open facebook and play despacito" -> {"primary":"task","tool":"open","query":"facebook","tasks":[{"tool":"open","query":"facebook"},{"tool":"play","query":"despacito"}],"confidence":0.95,"reason":"multi-tool: open website + play media"}
+- "open google and search youtube for cats" -> {"primary":"task","tool":"open","query":"google","tasks":[{"tool":"open","query":"google"},{"tool":"youtube_search","query":"cats"}],"confidence":0.95,"reason":"multi-tool: open website + youtube search"}
+- "generate image of a cat and write a poem about stars" -> {"primary":"task","tool":"generate_image","query":"a cat","tasks":[{"tool":"generate_image","query":"a cat"},{"tool":"content","query":"poem about stars"}],"confidence":0.95,"reason":"multi-tool: image gen + content writing"}
+- "open youtube, set volume to 60, and play relaxing jazz" -> {"primary":"task","tool":"open","query":"youtube","tasks":[{"tool":"open","query":"youtube"},{"tool":"set_volume","query":"60"},{"tool":"play","query":"relaxing jazz"}],"confidence":0.9,"reason":"multi-tool: open + set volume + play"}
+- "search google for python tutorials and open stackoverflow" -> {"primary":"task","tool":"google_search","query":"python tutorials","tasks":[{"tool":"google_search","query":"python tutorials"},{"tool":"open","query":"stackoverflow"}],"confidence":0.95,"reason":"multi-tool: search + open"}
 
 Primary labels:
 - general: casual chat, static knowledge, advice, coding help, math, definitions, or anything answerable without live web data and without taking an action.
@@ -176,7 +181,8 @@ Decision constraints:
 - If an action tool does not exist, use unsupported_needs_tool. Never map unknown actions to open.
 - Understand typo-heavy short messages by meaning. Short forms like "ss" can mean screenshot when the user asks to take/capture it.
 - The query should be the clean target: website name, song title, prompt, app name, search query, command, or PC-inspection topic. For unsupported actions, set query to the requested action.
-- If the user asks for multiple actions, include every action in tasks in order. The top-level tool/query should match the first task.
+- If the user asks for multiple actions, include EVERY action in tasks in order with the correct tool and query per task. NEVER drop or merge tasks. The top-level tool/query should match the first task.
+- Example: "open youtube and play despacito" needs tasks: [{"tool":"open","query":"youtube"},{"tool":"play","query":"despacito"}]. Do NOT collapse into a single task.
 - The JSON labels must agree with the reason. If the reason says inspect_pc, the tool must be inspect_pc.
 
 Mapping examples:

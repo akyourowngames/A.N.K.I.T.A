@@ -750,13 +750,35 @@ Classify. Output EXACTLY ONE category name."""
 
         for task_type in rule_tasks:
             if task_type not in existing:
-                merged.append((task_type, ""))
+                clean_query = self._extract_clean_query(task_type, user_message)
+                merged.append((task_type, clean_query))
                 existing.add(task_type)
 
         if len(merged) != len(decisions):
             logger.info("[BRAIN-TASK] Merged rule-detected task(s): %s", merged)
 
         return merged
+
+    def _extract_clean_query(self, task_type: str, user_message: str) -> str:
+        if task_type == "open":
+            return self._extract_open_target(user_message)
+        if task_type == "play":
+            return self._extract_play_query(user_message)
+        if task_type in ("google_search", "youtube_search"):
+            return self._extract_search_query(user_message)
+        if task_type == "generate_image":
+            return self._extract_image_prompt(user_message)
+        if task_type == "content":
+            return self._extract_content_prompt(user_message)
+        if task_type in ("open_app", "close_app"):
+            return self._extract_app_name(user_message)
+        if task_type in ("inspect_pc", "run_terminal", "set_volume", "set_brightness",
+                         "volume_up", "volume_down", "mute_volume",
+                         "brightness_up", "brightness_down", "lock_screen"):
+            return user_message
+        if task_type in ("open_webcam", "close_webcam"):
+            return ""
+        return user_message
 
     def _guard_task_decisions(self, user_message: str, decisions: List[Tuple[str, str]]) -> List[Tuple[str, str]]:
         if not decisions:

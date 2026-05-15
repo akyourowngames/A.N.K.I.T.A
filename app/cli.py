@@ -206,16 +206,12 @@ def render_stream_with_typing(
 ) -> None:
     wrote_text = False
     response_text = ""
-    activity_events = []
     first_chunk_received = False
     start_time = time.perf_counter()
 
-    with Live(
-        Spinner("dots", text=" Thinking...", style="cyan"),
-        console=console,
-        transient=True,
-        refresh_per_second=10,
-    ) as live:
+    console.print("[cyan]Thinking...[/cyan]", end="")
+
+    try:
         for chunk in chunks:
             if isinstance(chunk, dict):
                 activity = chunk.get("_activity")
@@ -224,10 +220,7 @@ def render_stream_with_typing(
                     if event == "first_chunk" and not first_chunk_received:
                         first_chunk_received = True
                         elapsed = activity.get("elapsed_ms", 0)
-                        live.update(Text(f" First token: {elapsed}ms", style="green"))
-                    elif show_activity:
-                        detail = activity.get("message") or activity.get("route") or activity.get("query_type") or ""
-                        activity_events.append(f"{event}: {detail}")
+                        console.print(f"\r[green]First token: {elapsed}ms[/green]    ")
                     continue
 
                 actions = chunk.get("_actions")
@@ -252,14 +245,15 @@ def render_stream_with_typing(
                 if not first_chunk_received:
                     first_chunk_received = True
                     elapsed_ms = int((time.perf_counter() - start_time) * 1000)
-                    live.update(Text(f" First token: {elapsed_ms}ms", style="green"))
+                    console.print(f"\r[green]First token: {elapsed_ms}ms[/green]    ")
 
                 response_text += text
-                live.update(Text(response_text, style="white"))
+                console.print(text, end="", markup=False, highlight=False, soft_wrap=True)
                 wrote_text = True
 
-    if wrote_text:
-        console.print()
+    finally:
+        if wrote_text:
+            console.print()
 
     total_time = time.perf_counter() - start_time
     console.print(f"[dim]Response generated in {total_time*1000:.0f}ms[/dim]")

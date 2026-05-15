@@ -87,22 +87,6 @@ class ChatService:
             )
         )
 
-    def _collect_realtime_stream(
-        self,
-        user_message: str,
-        chat_history: List[tuple],
-        key_start_index: Optional[int],
-    ) -> List[Union[str, Dict[str, Any]]]:
-        if not self.realtime_service:
-            return []
-        return list(
-            self.realtime_service.stream_response(
-                question=user_message,
-                chat_history=chat_history,
-                key_start_index=key_start_index,
-            )
-        )
-
     def load_session_from_disk(self, session_id: str) -> bool:
         try:
             safe_session_id = session_id.replace("/", "_").replace(" ", "_")
@@ -361,9 +345,8 @@ class ChatService:
         brain_idx, chat_idx = get_next_key_pair(len(GROQ_API_KEYS), need_brain=bool(self.brain_service))
         speculative_general_future = None
         speculative_general_started = 0.0
-        speculative_realtime_future = None
 
-        if SPECULATIVE_EXECUTION_ENABLED and not imgbase64:
+        if SPECULATIVE_EXECUTION_ENABLED and not imgbase64 and len(GROQ_API_KEYS) >= 2:
             speculative_general_started = time.perf_counter()
             speculative_general_future = self._speculative_executor.submit(
                 self._collect_general_stream,
@@ -371,14 +354,6 @@ class ChatService:
                 chat_history,
                 chat_idx,
             )
-
-            if self.realtime_service:
-                speculative_realtime_future = self._speculative_executor.submit(
-                    self._collect_realtime_stream,
-                    user_message,
-                    chat_history,
-                    chat_idx,
-                )
         category = CATEGORY_GENERAL
         primary_elapsed_ms = 0
         primary_method = "default"
@@ -442,20 +417,21 @@ class ChatService:
                     user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
                 )
 
+            task_prompt_decision = None
             if self.prompt_router and self._should_validate_with_prompt_router(category, task_types):
                 try:
-                    prompt_decision = self.prompt_router.classify_route(
+                    task_prompt_decision = self.prompt_router.classify_route(
                         user_message, chat_history, key_index=brain_idx if brain_idx is not None else 0
                     )
                     yield {"_activity": {
                         "event": "route_validated",
-                        "route": f"{prompt_decision.primary}/{prompt_decision.tool or '-'}",
-                        "elapsed_ms": prompt_decision.elapsed_ms,
+                        "route": f"{task_prompt_decision.primary}/{task_prompt_decision.tool or '-'}",
+                        "elapsed_ms": task_prompt_decision.elapsed_ms,
                     }}
                 except Exception as e:
                     logger.warning("[PROMPT-ROUTER] Validation failed, keeping brain route: %s", e)
 
-            if prompt_decision and prompt_decision.tool == "unsupported_needs_tool":
+            if task_prompt_decision and task_prompt_decision.tool == "unsupported_needs_tool":
                 text = (
                     "I don't have a tool for that yet, so I won't fake it by opening a random website."
                 )
@@ -465,15 +441,15 @@ class ChatService:
                 self.save_chat_session(session_id)
                 elapsed_jarvis = time.perf_counter() - t0_jarvis
                 logger.info("[JARVIS-STREAM] Unsupported tool stopped in %.2fs | reason: %s",
-                            elapsed_jarvis, prompt_decision.reason)
+                            elapsed_jarvis, task_prompt_decision.reason)
                 return
 
-            if prompt_decision and self._should_use_prompt_override(category, task_types, prompt_decision):
-                task_types = [tool for tool, _ in prompt_decision.tasks]
-                task_method = prompt_decision.method
-                task_elapsed_ms = prompt_decision.elapsed_ms
+            if task_prompt_decision and self._should_use_prompt_override(category, task_types, task_prompt_decision):
+                task_types = [tool for tool, _ in task_prompt_decision.tasks]
+                task_method = task_prompt_decision.method
+                task_elapsed_ms = task_prompt_decision.elapsed_ms
                 if self.brain_service:
-                    self.brain_service._last_task_decisions = prompt_decision.tasks
+                    self.brain_service._last_task_decisions = task_prompt_decision.tasks
 
             task_name = ", ".join(task_types[:3]) if task_types else "task"
             yield {"_activity": {"event": "intent_classified", "intent": task_name}}
@@ -622,15 +598,7 @@ class ChatService:
         chunk_count = 0
         t0 = time.perf_counter()
 
-        if use_realtime and speculative_realtime_future:
-            try:
-                stream_chunks = speculative_realtime_future.result()
-                if stream_chunks:
-                    logger.info("[JARVIS-STREAM] Using speculative realtime response")
-            except Exception as e:
-                logger.warning("[JARVIS-STREAM] Speculative realtime response failed, retrying normally: %s", e)
-
-        elif not use_realtime and speculative_general_future:
+        if not use_realtime and speculative_general_future:
             try:
                 stream_chunks = speculative_general_future.result()
                 if speculative_general_started:

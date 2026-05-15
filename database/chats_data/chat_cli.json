@@ -80,6 +80,78 @@
     {
       "role": "assistant",
       "content": "Decreased brightness."
+    },
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "??"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "hi"
+    },
+    {
+      "role": "assistant",
+      "content": ""
+    },
+    {
+      "role": "user",
+      "content": "hello"
+    },
+    {
+      "role": "assistant",
+      "content": "Hello again"
+    },
+    {
+      "role": "user",
+      "content": "hello"
+    },
+    {
+      "role": "assistant",
+      "content": "You're saying hello a lot tonight."
+    },
+    {
+      "role": "user",
+      "content": "yo"
+    },
+    {
+      "role": "assistant",
+      "content": "Yo back at you"
+    },
+    {
+      "role": "user",
+      "content": "hello"
+    },
+    {
+      "role": "assistant",
+      "content": "Still saying hello, huh"
+    },
+    {
+      "role": "user",
+      "content": "hello"
+    },
+    {
+      "role": "assistant",
+      "content": "You're on a roll with the hellos"
+    },
+    {
+      "role": "user",
+      "content": "what is python"
+    },
+    {
+      "role": "assistant",
+      "content": "Python is a high-level programming language used for developing a wide range of applications, from simple scripts to complex machine learning models."
     }
   ]
 }
