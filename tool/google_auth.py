@@ -42,8 +42,7 @@ def google_service(api_name: str, api_version: str, scopes: list[str]) -> tuple[
             return None, (
                 "FAILED: Google OAuth client secret file is missing.\n"
                 f"Expected: {client_secret_path}\n"
-                "Create a Desktop OAuth client in Google Cloud, enable Gmail API / Google Calendar API, "
-                "download the JSON, and place it at that path or set GOOGLE_CLIENT_SECRET_FILE."
+                "Next step: place the Desktop OAuth JSON there or set GOOGLE_CLIENT_SECRET_FILE."
             )
         flow = InstalledAppFlow.from_client_secrets_file(str(client_secret_path), scopes)
         credentials = flow.run_local_server(port=0)

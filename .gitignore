@@ -15,4 +15,7 @@ memory/store/*.sqlite-*
 memory/store/*.jsonl
 memory/store/*token*.json
 memory/store/google-token.json
+memory/store/faster-whisper/
+memory/store/telegram_downloads/
+memory/store/telegram_exports/
 daemon/state/

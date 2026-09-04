@@ -6,6 +6,8 @@ import math
 import os
 import re
 import sqlite3
+import string
+import threading
 import urllib.error
 import urllib.request
 from contextlib import contextmanager
@@ -36,6 +38,93 @@ def chunk_text(text: str, max_chars: int = 900) -> list[str]:
     return chunks
 
 
+TERM_TRANSLATION = str.maketrans({character: " " for character in string.punctuation})
+CHAT_INDEX_VERSION = "chat-turns-v3"
+
+
+def text_terms(text: str) -> set[str]:
+    return {
+        term
+        for term in text.lower().translate(TERM_TRANSLATION).split()
+        if len(term) > 1 and not term.isdigit()
+    }
+
+
+def term_weight_map(documents: Iterable[set[str]]) -> dict[str, float]:
+    document_terms = list(documents)
+    if not document_terms:
+        return {}
+    frequencies: dict[str, int] = {}
+    for terms in document_terms:
+        for term in terms:
+            frequencies[term] = frequencies.get(term, 0) + 1
+    total = len(document_terms)
+    return {
+        term: math.log((total + 1) / (frequency + 1)) + 1.0
+        for term, frequency in frequencies.items()
+    }
+
+
+def text_rank_score(query_terms: set[str], memory_terms: set[str], weights: dict[str, float] | None = None) -> float:
+    if not query_terms or not memory_terms:
+        return 0.0
+    overlap = query_terms.intersection(memory_terms)
+    if not overlap:
+        return 0.0
+    novel_terms = memory_terms.difference(query_terms)
+    score = sum((weights or {}).get(term, 1.0) for term in overlap) + min(len(novel_terms), 8) * 0.05
+    if not novel_terms:
+        score -= 1.0
+    return max(score, 0.0)
+
+
+def merge_ranked_hits(rankings: list[list[MemoryHit]], top_k: int, weights: list[float] | None = None) -> list[MemoryHit]:
+    combined: dict[tuple[str, str, str], MemoryHit] = {}
+    scores: dict[tuple[str, str, str], float] = {}
+    rank_weights = weights or [1.0] * len(rankings)
+    for ranking_index, ranking in enumerate(rankings):
+        weight = rank_weights[ranking_index] if ranking_index < len(rank_weights) else 1.0
+        for rank, hit in enumerate(ranking):
+            key = (hit.kind, hit.source, hit.text)
+            combined[key] = hit
+            scores[key] = scores.get(key, 0.0) + weight / (rank + 1)
+
+    hits = [
+        MemoryHit(text=hit.text, source=hit.source, kind=hit.kind, score=scores[key])
+        for key, hit in combined.items()
+    ]
+    hits.sort(key=lambda hit: hit.score, reverse=True)
+    return select_diverse_hits(hits, top_k)
+
+
+def term_similarity(left: set[str], right: set[str]) -> float:
+    if not left or not right:
+        return 0.0
+    return len(left.intersection(right)) / len(left.union(right))
+
+
+def select_diverse_hits(hits: list[MemoryHit], top_k: int) -> list[MemoryHit]:
+    if top_k <= 0:
+        return []
+    selected: list[MemoryHit] = []
+    deferred: list[MemoryHit] = []
+    selected_terms: list[set[str]] = []
+    threshold = float(os.getenv("MEMORY_DIVERSITY_SIMILARITY", "0.82"))
+
+    for hit in hits:
+        terms = text_terms(hit.text)
+        if not selected_terms or all(term_similarity(terms, existing) < threshold for existing in selected_terms):
+            selected.append(hit)
+            selected_terms.append(terms)
+        else:
+            deferred.append(hit)
+        if len(selected) >= top_k:
+            return selected[:top_k]
+
+    selected.extend(deferred)
+    return selected[:top_k]
+
+
 class EmbeddingModel:
     def __init__(
         self,
@@ -44,7 +133,7 @@ class EmbeddingModel:
         use_sentence_transformers: bool | None = None,
     ) -> None:
         self.model_name = model_name or os.getenv("MEMORY_EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
-        self.dimensions = dimensions
+        self.dimensions = int(os.getenv("MEMORY_EMBEDDING_DIMENSIONS", str(dimensions)))
         self.backend = "hash"
         self._model = None
         backend = os.getenv("MEMORY_BACKEND", "fast").strip().lower()
@@ -92,6 +181,8 @@ class EmbeddingModel:
                 self._cache[key] = vector
                 return vector
             except Exception:
+                if os.getenv("MEMORY_ALLOW_HASH_FALLBACK", "false").strip().lower() not in {"1", "true", "yes", "on"}:
+                    raise
                 self.backend = "hash"
 
         self._load_model()
@@ -115,6 +206,7 @@ class EmbeddingModel:
             "model": self.model_name,
             "input": [text],
             "input_type": input_type,
+            "dimensions": self.dimensions,
         }
         request = urllib.request.Request(
             f"{base_url}/embeddings",
@@ -127,7 +219,8 @@ class EmbeddingModel:
             method="POST",
         )
         try:
-            with urllib.request.urlopen(request, timeout=20) as response:
+            timeout = int(os.getenv("MEMORY_EMBEDDING_TIMEOUT_SECONDS", "5"))
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             details = error.read().decode("utf-8", errors="replace")
@@ -155,46 +248,6 @@ def cosine_similarity(left: list[float], right: list[float]) -> float:
     return sum(a * b for a, b in zip(left, right))
 
 
-STOPWORDS = {
-    "a",
-    "an",
-    "and",
-    "about",
-    "am",
-    "are",
-    "do",
-    "does",
-    "i",
-    "is",
-    "me",
-    "my",
-    "of",
-    "the",
-    "to",
-    "what",
-    "who",
-}
-
-
-def normalized_tokens(text: str) -> set[str]:
-    tokens = set()
-    for token in re.findall(r"[a-zA-Z0-9_]+", text.lower()):
-        if token in STOPWORDS:
-            continue
-        if len(token) > 3 and token.endswith("s"):
-            token = token[:-1]
-        tokens.add(token)
-    return tokens
-
-
-def token_score(query: str, text: str) -> float:
-    query_tokens = normalized_tokens(query)
-    text_tokens = normalized_tokens(text)
-    if not query_tokens or not text_tokens:
-        return 0.0
-    return len(query_tokens & text_tokens) / len(query_tokens)
-
-
 @dataclass(frozen=True)
 class MemoryHit:
     text: str
@@ -211,6 +264,10 @@ class PermanentMemory:
         self.store_dir = memory_root / "store"
         self.db_path = self.store_dir / "memory.sqlite"
         self.embedding_model = embedding_model or EmbeddingModel()
+        self._embedding_lock = threading.RLock()
+        self._background_lock = threading.Lock()
+        self._index_thread: threading.Thread | None = None
+        self._warming_queries: set[str] = set()
 
         for folder in (self.root, self.chats_dir, self.data_dir, self.store_dir):
             folder.mkdir(parents=True, exist_ok=True)
@@ -280,7 +337,8 @@ class PermanentMemory:
             return
 
         source_hash = hashlib.sha256(f"{kind}:{source}:{clean}".encode("utf-8")).hexdigest()
-        embedding = json.dumps(self.embedding_model.embed_document(clean))
+        with self._embedding_lock:
+            embedding = json.dumps(self.embedding_model.embed_document(clean))
         embedding_key = self.embedding_model.cache_key
         now = utc_now()
 
@@ -300,7 +358,7 @@ class PermanentMemory:
 
     def ingest_data_files(self) -> int:
         count = 0
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             text = file_path.read_text(encoding="utf-8").strip()
             content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
             if self._source_is_current(file_path.name, content_hash):
@@ -312,6 +370,42 @@ class PermanentMemory:
                 count += 1
             self._mark_source_current(file_path.name, content_hash)
         return count
+
+    def ingest_chat_files(self) -> int:
+        count = 0
+        for file_path in self._chat_files():
+            chunks = chat_file_transcript_chunks(file_path)
+            transcript = "\n\n".join(chunks)
+            content_hash = hashlib.sha256(f"{CHAT_INDEX_VERSION}\n{transcript}".encode("utf-8")).hexdigest()
+            source = f"chat:{file_path.name}"
+            if self._source_is_current(source, content_hash):
+                continue
+
+            self._delete_source_memories("chat_session", source)
+            for index, chunk in enumerate(chunks):
+                self.add(chunk, source=f"{source}#{index}", kind="chat_session")
+                count += 1
+            self._mark_source_current(source, content_hash)
+        return count
+
+    def refresh_index(self) -> int:
+        return self.ingest_data_files() + self.ingest_chat_files()
+
+    def refresh_index_async(self) -> int:
+        if not self._async_enabled():
+            return self.refresh_index()
+        with self._background_lock:
+            if self._index_thread is not None and self._index_thread.is_alive():
+                return 0
+            self._index_thread = threading.Thread(target=self._refresh_index_quietly, daemon=True)
+            self._index_thread.start()
+        return 0
+
+    def _refresh_index_quietly(self) -> None:
+        try:
+            self.refresh_index()
+        except Exception:
+            return
 
     def _source_is_current(self, source: str, content_hash: str) -> bool:
         with self._connect() as connection:
@@ -340,10 +434,13 @@ class PermanentMemory:
             )
 
     def _delete_file_memories(self, source: str) -> None:
+        self._delete_source_memories("user_data", source)
+
+    def _delete_source_memories(self, kind: str, source: str) -> None:
         with self._connect() as connection:
             connection.execute(
-                "DELETE FROM memories WHERE kind = 'user_data' AND source LIKE ?",
-                (f"{source}#%",),
+                "DELETE FROM memories WHERE kind = ? AND source LIKE ?",
+                (kind, f"{source}#%"),
             )
 
     def remember_from_user_text(self, user_text: str) -> int:
@@ -352,74 +449,52 @@ class PermanentMemory:
             self.add(memory, source="chat_extracted", kind="chat_fact")
         return len(memories)
 
+    def remember_from_user_text_async(self, user_text: str) -> int:
+        return self.remember_from_user_text(user_text)
+
     def cleanup(self) -> int:
-        removed = 0
-        updated = 0
         with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT id, text FROM memories WHERE kind = 'chat_fact'"
-            ).fetchall()
-            for row in rows:
-                normalized = normalize_memory_text(row["text"])
-                if not normalized:
-                    connection.execute("DELETE FROM memories WHERE id = ?", (row["id"],))
-                    removed += 1
-                elif normalized != row["text"]:
-                    connection.execute(
-                        "UPDATE memories SET text = ?, updated_at = ? WHERE id = ?",
-                        (normalized, utc_now(), row["id"]),
-                    )
-                    updated += 1
-        return removed + updated
+            cursor = connection.execute("DELETE FROM memories WHERE kind = 'chat_fact'")
+            return cursor.rowcount if cursor.rowcount is not None else 0
 
     def search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
         mode = os.getenv("MEMORY_SEARCH_MODE", "hybrid").strip().lower()
-        lexical_hits = self.keyword_search(query, top_k=top_k)
-        if mode in {"fast", "keyword", "lexical"}:
+        if mode in {"off", "none"}:
+            return []
+        if mode in {"fast", "lexical"}:
+            return self.lexical_search(query, top_k=top_k)
+        if self._low_latency_enabled():
+            lexical_hits = self.lexical_search(query, top_k=top_k)
+            if len(lexical_hits) >= min(top_k, self._low_latency_min_text_hits()):
+                return lexical_hits
+            query_vector = self._cached_query_embedding(query, compute=False)
+            if query_vector is not None:
+                semantic_hits = self._semantic_search_with_vector(query_vector, top_k=top_k, query=query)
+                return merge_ranked_hits([semantic_hits, lexical_hits], top_k=top_k, weights=[1.0, 1.25])
+            self._warm_query_embedding_async(query)
             return lexical_hits
-
-        if mode == "hybrid" and lexical_hits and lexical_hits[0].score >= 0.25:
-            return lexical_hits
-
         return self.semantic_search(query, top_k=top_k)
-
-    def keyword_search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
-        hits: list[MemoryHit] = []
-
-        with self._connect() as connection:
-            rows = connection.execute(
-                "SELECT text, source, kind FROM memories"
-            ).fetchall()
-
-        for row in rows:
-            score = token_score(query, row["text"])
-            if score > 0:
-                hits.append(
-                    MemoryHit(
-                        text=row["text"],
-                        source=row["source"],
-                        kind=row["kind"],
-                        score=score,
-                    )
-                )
-
-        hits.sort(key=lambda hit: hit.score, reverse=True)
-        return hits[:top_k]
 
     def semantic_search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
         query_vector = self._cached_query_embedding(query)
+        return self._semantic_search_with_vector(query_vector, top_k=top_k, query=query)
+
+    def _semantic_search_with_vector(self, query_vector: list[float], top_k: int = 6, query: str = "") -> list[MemoryHit]:
+        query_terms = text_terms(query)
         hits: list[MemoryHit] = []
 
         with self._connect() as connection:
             rows = connection.execute(
                 "SELECT text, source, kind, embedding, embedding_key FROM memories"
             ).fetchall()
+        row_terms = [text_terms(row["text"]) for row in rows]
+        weights = term_weight_map([query_terms, *row_terms])
 
-        for row in rows:
+        for row, memory_terms in zip(rows, row_terms):
             if row["embedding_key"] != self.embedding_model.cache_key:
                 continue
             embedding = json.loads(row["embedding"])
-            score = cosine_similarity(query_vector, embedding)
+            score = cosine_similarity(query_vector, embedding) + text_rank_score(query_terms, memory_terms, weights) * 0.08
             hits.append(
                 MemoryHit(
                     text=row["text"],
@@ -430,9 +505,36 @@ class PermanentMemory:
             )
 
         hits.sort(key=lambda hit: hit.score, reverse=True)
-        return [hit for hit in hits[:top_k] if hit.score > -1]
+        return select_diverse_hits([hit for hit in hits if hit.score > -1], top_k)
 
-    def _cached_query_embedding(self, query: str) -> list[float]:
+    def lexical_search(self, query: str, top_k: int = 6) -> list[MemoryHit]:
+        query_terms = text_terms(query)
+        if not query_terms:
+            return []
+        hits: list[MemoryHit] = []
+
+        with self._connect() as connection:
+            rows = connection.execute("SELECT text, source, kind FROM memories").fetchall()
+        row_terms = [text_terms(row["text"]) for row in rows]
+        weights = term_weight_map([query_terms, *row_terms])
+
+        for row, memory_terms in zip(rows, row_terms):
+            score = text_rank_score(query_terms, memory_terms, weights)
+            if score <= 0:
+                continue
+            hits.append(
+                MemoryHit(
+                    text=row["text"],
+                    source=row["source"],
+                    kind=row["kind"],
+                    score=score,
+                )
+            )
+
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return select_diverse_hits(hits, top_k)
+
+    def _cached_query_embedding(self, query: str, *, compute: bool = True) -> list[float] | None:
         clean = " ".join(query.split())
         digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()
         cache_key = f"{self.embedding_model.cache_key}:query:{digest}"
@@ -445,7 +547,11 @@ class PermanentMemory:
             if row:
                 return json.loads(row["embedding"])
 
-        embedding = self.embedding_model.embed_query(clean)
+        if not compute:
+            return None
+
+        with self._embedding_lock:
+            embedding = self.embedding_model.embed_query(clean)
         with self._connect() as connection:
             connection.execute(
                 """
@@ -456,11 +562,34 @@ class PermanentMemory:
             )
         return embedding
 
+    def _warm_query_embedding_async(self, query: str) -> None:
+        clean = " ".join(query.split())
+        if not clean:
+            return
+        digest = hashlib.sha256(clean.encode("utf-8")).hexdigest()
+        with self._background_lock:
+            if digest in self._warming_queries:
+                return
+            self._warming_queries.add(digest)
+        threading.Thread(target=self._warm_query_embedding_quietly, args=(query, digest), daemon=True).start()
+
+    def _warm_query_embedding_quietly(self, query: str, digest: str) -> None:
+        try:
+            self._cached_query_embedding(query)
+        except Exception:
+            pass
+        finally:
+            with self._background_lock:
+                self._warming_queries.discard(digest)
+
     def context_for(self, query: str, top_k: int | None = None) -> str:
-        self.ingest_data_files()
         limit = top_k or int(os.getenv("MEMORY_TOP_K", "6"))
         profile = self.profile_context()
+        fresh_hits = self._fresh_data_file_hits(query, top_k=limit)
+        self.refresh_index_async()
         hits = self.search(query, top_k=limit)
+        if fresh_hits:
+            hits = merge_ranked_hits([fresh_hits, hits], top_k=limit, weights=[1.35, 1.0])
         if not hits and not profile:
             return "No relevant permanent memories found."
 
@@ -474,9 +603,51 @@ class PermanentMemory:
                 lines.append(hit.text)
         return "\n".join(lines)
 
+    def _fresh_data_file_hits(self, query: str, top_k: int = 6) -> list[MemoryHit]:
+        query_terms = text_terms(query)
+        if not query_terms or top_k <= 0:
+            return []
+
+        max_bytes = int(os.getenv("MEMORY_FRESH_FILE_MAX_BYTES", "262144"))
+        max_files = int(os.getenv("MEMORY_FRESH_FILE_MAX_FILES", "24"))
+        max_chunks_per_file = int(os.getenv("MEMORY_FRESH_FILE_MAX_CHUNKS", "16"))
+        candidates: list[tuple[str, str, str, set[str]]] = []
+
+        for file_path in self._memory_data_files()[:max_files]:
+            try:
+                if max_bytes > 0 and file_path.stat().st_size > max_bytes:
+                    continue
+                text = file_path.read_text(encoding="utf-8").strip()
+            except (OSError, UnicodeDecodeError):
+                continue
+            if not text:
+                continue
+
+            content_hash = hashlib.sha256(text.encode("utf-8")).hexdigest()
+            if self._source_is_current(file_path.name, content_hash):
+                continue
+
+            for index, chunk in enumerate(chunk_text(text)[:max_chunks_per_file]):
+                ranking_terms = text_terms(f"{file_path.name} {chunk}")
+                candidates.append((chunk, f"{file_path.name}#fresh:{index}", "user_data", ranking_terms))
+
+        if not candidates:
+            return []
+
+        weights = term_weight_map([query_terms, *[candidate[3] for candidate in candidates]])
+        hits: list[MemoryHit] = []
+        for text, source, kind, memory_terms in candidates:
+            score = text_rank_score(query_terms, memory_terms, weights)
+            if score <= 0:
+                continue
+            hits.append(MemoryHit(text=text, source=source, kind=kind, score=score))
+
+        hits.sort(key=lambda hit: hit.score, reverse=True)
+        return select_diverse_hits(hits, top_k)
+
     def profile_context(self) -> list[str]:
         pinned: list[str] = []
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             text = file_path.read_text(encoding="utf-8").strip()
             for line in text.splitlines():
                 key, value = parse_key_value_line(line)
@@ -486,12 +657,63 @@ class PermanentMemory:
 
     def profile_value(self, key_name: str) -> str | None:
         wanted = key_name.strip().lower()
-        for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")]):
+        for file_path in self._memory_data_files():
             for line in file_path.read_text(encoding="utf-8").splitlines():
                 key, value = parse_key_value_line(line)
                 if key.lower() == wanted and value:
                     return value
         return None
+
+    def _memory_data_files(self) -> list[Path]:
+        return [
+            file_path
+            for file_path in sorted([*self.data_dir.glob("*.txt"), *self.data_dir.glob("*.md")])
+            if file_path.stem.lower() != "readme"
+        ]
+
+    def _chat_files(self) -> list[Path]:
+        return sorted(self.chats_dir.glob("*.jsonl"))
+
+    @staticmethod
+    def _async_enabled() -> bool:
+        return os.getenv("MEMORY_WRITE_ASYNC", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _low_latency_enabled() -> bool:
+        value = os.getenv("MEMORY_LOW_LATENCY", os.getenv("MEMORY_WRITE_ASYNC", "false"))
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+
+    @staticmethod
+    def _low_latency_min_text_hits() -> int:
+        return max(1, int(os.getenv("MEMORY_LOW_LATENCY_MIN_TEXT_HITS", "3")))
+
+
+def chat_file_transcript(file_path: Path) -> str:
+    return "\n\n".join(chat_file_transcript_chunks(file_path))
+
+
+def chat_file_transcript_chunks(file_path: Path) -> list[str]:
+    lines: list[str] = []
+    if not file_path.exists():
+        return []
+
+    for raw_line in file_path.read_text(encoding="utf-8").splitlines():
+        raw_line = raw_line.strip()
+        if not raw_line:
+            continue
+        try:
+            record = json.loads(raw_line)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(record, dict):
+            continue
+        speaker = str(record.get("speaker") or "").strip()
+        text = " ".join(str(record.get("text") or "").split())
+        if not speaker or not text:
+            continue
+        lines.extend(chunk_text(f"{speaker}: {text}"))
+
+    return lines
 
 
 def parse_key_value_line(line: str) -> tuple[str, str]:
@@ -504,100 +726,8 @@ def parse_key_value_line(line: str) -> tuple[str, str]:
 
 def normalize_memory_text(text: str) -> str:
     clean = " ".join(text.strip().split()).strip(" .")
-    if not clean:
-        return ""
-
-    lowered = clean.lower()
-    transient_states = {
-        "i am good",
-        "i'm good",
-        "i am fine",
-        "i'm fine",
-        "i am ok",
-        "i'm ok",
-        "i am okay",
-        "i'm okay",
-        "i am tired",
-        "i'm tired",
-        "i am sad",
-        "i'm sad",
-        "i am happy",
-        "i'm happy",
-        "i am bored",
-        "i'm bored",
-        "i am busy",
-        "i'm busy",
-        "i am hungry",
-        "i'm hungry",
-    }
-    if lowered in transient_states:
-        return ""
-
-    patterns = [
-        (r"^my name is\s+(.+)$", "Name: {value}"),
-        (r"^call me\s+(.+)$", "Preferred name: {value}"),
-        (r"^i live in\s+(.+)$", "Location: {value}"),
-        (r"^i work as\s+(.+)$", "Work: {value}"),
-        (r"^i prefer\s+(.+)$", "Preference: {value}"),
-        (r"^i like\s+(.+?)\s+in\s+food$", "Favorite food: {value}"),
-        (r"^i love\s+(.+?)\s+in\s+food$", "Favorite food: {value}"),
-        (r"^i like\s+(.+)$", "Likes: {value}"),
-        (r"^i love\s+(.+)$", "Likes: {value}"),
-    ]
-    for pattern, template in patterns:
-        match = re.match(pattern, clean, flags=re.IGNORECASE)
-        if match:
-            value = match.group(1).strip(" .")
-            if value:
-                return template.format(value=value)
-
     return clean
 
 
 def extract_durable_memories(user_text: str) -> Iterable[str]:
-    text = user_text.strip()
-    lowered = text.lower()
-
-    remember_match = re.search(r"\bremember(?: that)?\s+(.+)", text, flags=re.IGNORECASE)
-    if remember_match:
-        normalized = normalize_memory_text(remember_match.group(1).strip(" ."))
-        if normalized:
-            yield normalized
-        return
-
-    durable_starts = (
-        "my name is ",
-        "i live in ",
-        "i work as ",
-        "i like ",
-        "i love ",
-        "i prefer ",
-        "call me ",
-    )
-    if lowered.startswith(durable_starts):
-        normalized = normalize_memory_text(text)
-        if normalized:
-            yield normalized
-        return
-
-    identity_starts = ("i am ", "i'm ")
-    transient_states = {
-        "good",
-        "fine",
-        "ok",
-        "okay",
-        "tired",
-        "sad",
-        "happy",
-        "bored",
-        "busy",
-        "hungry",
-    }
-    for prefix in identity_starts:
-        if lowered.startswith(prefix):
-            remainder = lowered.removeprefix(prefix).strip(" .!")
-            if remainder and remainder not in transient_states and len(remainder.split()) > 1:
-                normalized = normalize_memory_text(text)
-                if normalized:
-                    yield normalized
-            return
+    return ()

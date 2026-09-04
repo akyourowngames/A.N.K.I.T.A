@@ -19,7 +19,7 @@ def load_dotenv(path: Path) -> None:
             continue
 
         key, value = line.split("=", 1)
-        key = key.strip()
+        key = key.strip().lstrip("\ufeff")
         value = value.strip().strip('"').strip("'")
         os.environ.setdefault(key, value)
 
@@ -31,6 +31,8 @@ class LLMConfig:
     model: str
     temperature: float
     max_tokens: int
+    timeout_seconds: int
+    stream: bool
 
     @classmethod
     def from_env(cls, project_root: Path) -> "LLMConfig":
@@ -46,6 +48,8 @@ class LLMConfig:
             model=os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct"),
             temperature=float(os.getenv("TEMPERATURE", "0.4")),
             max_tokens=int(os.getenv("MAX_TOKENS", "1024")),
+            timeout_seconds=int(os.getenv("NVIDIA_TIMEOUT_SECONDS", "20")),
+            stream=os.getenv("NVIDIA_STREAM", "true").strip().lower() in {"1", "true", "yes", "on"},
         )
 
 
@@ -53,12 +57,19 @@ class NvidiaLLMService:
     def __init__(self, config: LLMConfig):
         self.config = config
 
-    def chat(self, messages: list[dict[str, str]]) -> str:
+    def chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        timeout: int | float | None = None,
+    ) -> str:
         payload = {
             "model": self.config.model,
             "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature if temperature is None else temperature,
+            "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
         }
 
         request = urllib.request.Request(
@@ -73,7 +84,7 @@ class NvidiaLLMService:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=timeout or self.config.timeout_seconds) as response:
                 body = json.loads(response.read().decode("utf-8"))
         except urllib.error.HTTPError as error:
             details = error.read().decode("utf-8", errors="replace")
@@ -88,12 +99,19 @@ class NvidiaLLMService:
 
         return self._extract_text(body)
 
-    def stream_chat(self, messages: list[dict[str, str]]) -> Iterator[str]:
+    def stream_chat(
+        self,
+        messages: list[dict[str, str]],
+        *,
+        max_tokens: int | None = None,
+        temperature: float | None = None,
+        timeout: int | float | None = None,
+    ) -> Iterator[str]:
         payload = {
             "model": self.config.model,
             "messages": messages,
-            "temperature": self.config.temperature,
-            "max_tokens": self.config.max_tokens,
+            "temperature": self.config.temperature if temperature is None else temperature,
+            "max_tokens": self.config.max_tokens if max_tokens is None else max_tokens,
             "stream": True,
         }
 
@@ -109,7 +127,7 @@ class NvidiaLLMService:
         )
 
         try:
-            with urllib.request.urlopen(request, timeout=60) as response:
+            with urllib.request.urlopen(request, timeout=timeout or self.config.timeout_seconds) as response:
                 for raw_line in response:
                     line = raw_line.decode("utf-8", errors="replace").strip()
                     if not line or not line.startswith("data:"):
