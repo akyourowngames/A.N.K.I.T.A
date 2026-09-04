@@ -74,6 +74,34 @@ def remove_emoji_only(text: str) -> str:
     return _EMOJI_PATTERN.sub("", text)
 
 
+_SMART_PUNCT = {
+    "\u2018": "'", "\u2019": "'", "\u201a": "'", "\u201b": "'",
+    "\u201c": '"', "\u201d": '"', "\u201e": '"',
+    "\u2013": "-", "\u2014": "-", "\u2212": "-",
+    "\u2026": "...", "\u2022": "-", "\u25cf": "-",
+    "\u00a0": " ", "\u200b": "",
+}
+
+
+
+
+def normalize_text(text: str, allow_emoji: bool = True) -> str:
+    if not text:
+        return text
+    if not allow_emoji:
+        text = remove_emoji_only(text)
+        try:
+            text = text.encode("latin-1").decode("utf-8")
+        except Exception:
+            pass
+        for old, new in _SMART_PUNCT.items():
+            text = text.replace(old, new)
+        cleaned = re.sub(r"[ \t]{2,}", " ", text)
+        cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+        return cleaned
+    return text
+
+
 def strip_emoji(text: str) -> str:
     if not text:
         return text

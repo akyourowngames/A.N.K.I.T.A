@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from output import APP_VERSION, app_header, assistant_panel, emoji_supported, error_panel, info_panel, make_console, meta_line, remove_emoji_only, safe_text, section_rule, setup_windows_console, strip_emoji, styled_table, table_box, terminal_report
+from output import APP_VERSION, app_header, assistant_panel, emoji_supported, error_panel, info_panel, make_console, meta_line, normalize_text, remove_emoji_only, safe_text, section_rule, setup_windows_console, strip_emoji, styled_table, table_box, terminal_report
 
 setup_windows_console()
 
@@ -130,7 +130,7 @@ def _models_table(models: list[ModelInfo], allow_emoji: bool = True) -> Table:
 
 
 def _print_assistant(text: str, model: str = "", allow_emoji: bool = True, tokens: str = "") -> None:
-    shown = text if allow_emoji else strip_emoji(text)
+    shown = normalize_text(text, allow_emoji)
     if not shown.strip():
         console.print(info_panel("(empty response)", title="ASSISTANT", allow_emoji=allow_emoji))
         return
@@ -138,26 +138,43 @@ def _print_assistant(text: str, model: str = "", allow_emoji: bool = True, token
 
 
 def _stream_into_console(messages: list[Message], model: str, max_tokens: Optional[int], temperature: Optional[float], allow_emoji: bool = True) -> str:
-    from rich.live import Live
-    from rich.markdown import Markdown as RichMarkdown
-    from rich.text import Text
+    from output import is_modern_terminal
     full = ""
     title = f"[bold white]ASSISTANT[/][dim]{'  ·  ' + model if model else ''}[/]"
     box_style = table_box(allow_emoji)
-    live_panel = Panel(Text("", no_wrap=False), title=title, title_align="left", border_style="cyan", box=box_style, padding=(1, 2), expand=True)
     try:
         gen = stream_chat_completion(messages, model, max_tokens=max_tokens, temperature=temperature)
-        with Live(live_panel, console=console, refresh_per_second=12, transient=False) as live:
-            for chunk in gen:
-                full += chunk
-                shown = full if allow_emoji else remove_emoji_only(full)
-                live.update(Panel(Text(shown, no_wrap=False), title=title, title_align="left", border_style="cyan", box=box_style, padding=(1, 2), expand=True))
-            final = full if allow_emoji else strip_emoji(full)
+        if allow_emoji and is_modern_terminal():
+            from rich.live import Live
+            from rich.text import Text
+            live_panel = Panel(Text("", no_wrap=False), title=title, title_align="left", border_style="cyan", box=box_style, padding=(1, 2), expand=True)
+            with Live(live_panel, console=console, refresh_per_second=12, transient=False) as live:
+                for chunk in gen:
+                    full += chunk
+                    live.update(Panel(Text(full, no_wrap=False), title=title, title_align="left", border_style="cyan", box=box_style, padding=(1, 2), expand=True))
+                try:
+                    live.update(assistant_panel(full, model, allow_emoji))
+                except Exception:
+                    pass
+            return full
+        for chunk in gen:
+            full += chunk
             try:
-                live.update(assistant_panel(final, model, allow_emoji))
+                sys.stdout.write(normalize_text(chunk, allow_emoji))
+                sys.stdout.flush()
             except Exception:
                 pass
-        return full if allow_emoji else strip_emoji(full)
+        try:
+            sys.stdout.write("\n")
+            sys.stdout.flush()
+        except Exception:
+            pass
+        final = normalize_text(full, allow_emoji)
+        try:
+            console.print(assistant_panel(final, model, allow_emoji))
+        except Exception:
+            pass
+        return final
     except KiloError:
         raise
 
@@ -311,34 +328,92 @@ def sessions_cmd(
         console.print(info_panel("No saved sessions yet. Run: zumba chat", title="SESSIONS", allow_emoji=allow_emoji))
         return
     table = styled_table("SAVED SESSIONS", allow_emoji)
-    table.add_column("ID", style="cyan", no_wrap=True)
+    table.add_column("#", style="dim", width=4, justify="right")
     table.add_column("TITLE", style="white")
     table.add_column("MODEL", style="dim")
     table.add_column("MSGS", justify="right", style="dim")
     table.add_column("UPDATED", style="dim")
     import datetime
-    for r in rows:
+    for i, r in enumerate(rows, 1):
         try:
             mtime = datetime.datetime.fromtimestamp(float(r.get("updated_at", 0))).strftime("%m-%d %H:%M")
         except Exception:
             mtime = "-"
-        table.add_row(str(r.get("id", ""))[:12], str(r.get("title", ""))[:42], str(r.get("model", ""))[:28], str(r.get("message_count", 0)), mtime)
+        table.add_row(str(i), str(r.get("title", ""))[:42], str(r.get("model", ""))[:28], str(r.get("message_count", 0)), mtime)
     console.print(table)
-    console.print(section_rule("RESUME WITH: zumba chat --resume <id>  ·  SEARCH WITH: zumba sessions --search <text>"))
+    console.print(section_rule("RESUME WITH: zumba chat --resume <#>  ·  SEARCH WITH: zumba sessions --search <text>"))
+
+
+def _recent_sessions(limit: int = 50) -> list[dict]:
+    try:
+        return db_list_sessions(limit=limit)
+    except Exception:
+        return []
 
 
 def _resolve_session_id(prefix: str) -> str:
     prefix = (prefix or "").strip()
     if not prefix:
         return ""
+    if prefix.isdigit():
+        rows = _recent_sessions()
+        idx = int(prefix) - 1
+        if 0 <= idx < len(rows):
+            return str(rows[idx].get("id", ""))
+        return ""
     direct = db_get_session(prefix)
     if direct:
         return str(direct.get("id", ""))
-    rows = db_list_sessions(limit=50)
+    rows = _recent_sessions()
     for r in rows:
         if str(r.get("id", "")).startswith(prefix):
             return str(r.get("id", ""))
+    lowered = prefix.lower()
+    for r in rows:
+        if lowered in str(r.get("title", "")).lower():
+            return str(r.get("id", ""))
     return ""
+
+
+def _render_history(conv: Conversation, chosen: str, allow_emoji: bool, header: str = "PREVIOUS MESSAGES") -> None:
+    past = [m for m in conv.messages if m.role in ("user", "assistant")]
+    if not past:
+        return
+    console.print(section_rule(f"{header}  ·  {len(past)}"))
+    for m in past[-30:]:
+        body = normalize_text(m.content, allow_emoji)
+        if m.role == "user":
+            console.print(f"[bold cyan]YOU ›[/] {body[:1500]}")
+        else:
+            _print_assistant(body, chosen, allow_emoji)
+    console.print(section_rule("CONTINUING"))
+
+
+def _pick_session_interactive(allow_emoji: bool) -> str:
+    rows = _recent_sessions(limit=15)
+    if not rows:
+        console.print(info_panel("No saved sessions yet.", title="SESSIONS", allow_emoji=allow_emoji))
+        return ""
+    table = styled_table("SAVED SESSIONS", allow_emoji)
+    table.add_column("#", style="dim", width=4, justify="right")
+    table.add_column("TITLE", style="white")
+    table.add_column("MODEL", style="dim")
+    table.add_column("MSGS", justify="right", style="dim")
+    for i, r in enumerate(rows, 1):
+        table.add_row(str(i), str(r.get("title", ""))[:44], str(r.get("model", ""))[:28], str(r.get("message_count", 0)))
+    console.print(table)
+    try:
+        choice = console.input("[bold cyan]Load # (number, Enter to stay) › [/]").strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return ""
+    if not choice:
+        return ""
+    found = _resolve_session_id(choice)
+    if not found:
+        console.print(error_panel(f"No session #{choice}.", allow_emoji=allow_emoji))
+        return ""
+    return found
 
 
 @app.command("config")
@@ -411,9 +486,15 @@ def chat_cmd(
         if not resume:
             _fail("No previous session found.", "Start one with: zumba chat")
             return
+    resumed_history = False
     if resume:
-        data = db_get_session(resume) or (db_get_session(_resolve_session_id(resume)) if _resolve_session_id(resume) else None)
+        if resume.strip().isdigit() or db_get_session(resume) is None:
+            resolved = _resolve_session_id(resume)
+            if resolved:
+                resume = resolved
+        data = db_get_session(resume)
         if data:
+            resumed_history = True
             session_id = str(data.get("id", ""))
             chosen = (str(data.get("model", "")) or chosen)
             system = str(data.get("system", "") or system)
@@ -470,10 +551,13 @@ def chat_cmd(
         f"{meta_line('Model', chosen)}   {meta_line('Streaming', 'ON' if streaming else 'OFF')}   "
         f"{meta_line('Emoji', 'ON' if allow_emoji else 'OFF')}   {meta_line('Session', session_id[:12])}"
     )
-    console.print("[dim]Commands: /help  ·  /models  ·  /model <id> (saved)  ·  /sessions  ·  /load <id>  ·  /new  ·  /exit[/]")
+    console.print("[dim]Commands: /help  ·  /models  ·  /model <id> (saved)  ·  /sessions  ·  /load <#>  ·  /new  ·  /exit[/]")
     if not allow_emoji:
         console.print("[dim]Legacy console: emoji stripped. For full rendering use VS Code terminal or Windows Terminal. See: zumba doctor[/]")
-    console.print(section_rule("CHAT"))
+    if resumed_history:
+        _render_history(conv, chosen, allow_emoji)
+    else:
+        console.print(section_rule("CHAT"))
 
     def show_help() -> None:
         table = styled_table("COMMANDS", allow_emoji)
@@ -484,8 +568,8 @@ def chat_cmd(
         table.add_row("/model <id>", "Switch model (saved as default)")
         table.add_row("/system <text>", "Set system prompt")
         table.add_row("/clear", "Clear history")
-        table.add_row("/sessions", "List saved sessions")
-        table.add_row("/load <id>", "Load a saved session")
+        table.add_row("/sessions", "Pick a saved session by number")
+        table.add_row("/load <#>", "Load a saved session by number")
         table.add_row("/new", "Start a fresh session")
         table.add_row("/stream", "Toggle streaming")
         table.add_row("/emoji", "Toggle emoji stripping")
@@ -520,24 +604,21 @@ def chat_cmd(
                 console.print(error_panel(f"Save failed: {exc}", allow_emoji=allow_emoji))
             continue
         if user_text == "/sessions":
-            rows = db_list_sessions(limit=10)
-            if not rows:
-                console.print(info_panel("No saved sessions yet.", title="SESSIONS", allow_emoji=allow_emoji))
-            else:
-                table = styled_table("SAVED SESSIONS", allow_emoji)
-                table.add_column("ID", style="cyan", no_wrap=True)
-                table.add_column("TITLE", style="white")
-                table.add_column("MODEL", style="dim")
-                for r in rows:
-                    table.add_row(str(r.get("id", ""))[:12], str(r.get("title", ""))[:40], str(r.get("model", ""))[:26])
-                console.print(table)
-            continue
+            found = _pick_session_interactive(allow_emoji)
+            if not found:
+                continue
+            user_text = f"/load {found}"
+        if user_text == "/load":
+            found = _pick_session_interactive(allow_emoji)
+            if not found:
+                continue
+            user_text = f"/load {found}"
         if user_text.startswith("/load "):
             target = user_text[6:].strip()
             found = _resolve_session_id(target)
             data = db_get_session(found) if found else None
             if not data:
-                console.print(error_panel(f"Session not found: {target}", allow_emoji=allow_emoji))
+                console.print(error_panel(f"Session not found: {target or '?'}", allow_emoji=allow_emoji))
                 continue
             session_id = str(data.get("id", ""))
             chosen = str(data.get("model", "")) or chosen
@@ -554,7 +635,8 @@ def chat_cmd(
             conv.model = chosen
             conv.system = system
             db_set_last(session_id)
-            console.print(section_rule(f"LOADED  ·  {session_id[:12]}  ·  {chosen}"))
+            console.print(section_rule(f"LOADED  ·  {str(data.get('title', ''))[:40]}  ·  {chosen}"))
+            _render_history(conv, chosen, allow_emoji)
             continue
         if user_text == "/new":
             session_id = db_new_session_id()
@@ -612,7 +694,7 @@ def chat_cmd(
             else:
                 with console.status("[cyan]Generating response...[/]", spinner="dots"):
                     result = chat_completion(conv.history(), chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
-                text = result.content if allow_emoji else strip_emoji(result.content)
+                text = normalize_text(result.content, allow_emoji)
                 conv.add_assistant(text)
                 tokens_n = int(result.usage.total_tokens or 0)
                 db_add_message(session_id, "assistant", text, tokens_n)
