@@ -1,9 +1,49 @@
 # ZUMBA — Personal AI Assistant
 
-Zumba is a Python CLI personal assistant powered by the [Kilo AI Gateway](https://kilo.ai/docs/gateway) — one OpenAI-compatible endpoint for hundreds of models, including free ones. It features an interactive chat REPL, persistent SQLite-backed sessions, streaming responses, and a terminal-aware renderer that stays clean on both modern terminals and legacy Windows `cmd`.
+Zumba is a Python CLI personal assistant powered by the [Kilo AI Gateway](https://kilo.ai/docs/gateway) — one OpenAI-compatible endpoint for hundreds of models, including free ones. It features an interactive chat REPL, persistent SQLite-backed sessions, streaming responses, a terminal-aware renderer, and a **long-term memory system** built on a temporal knowledge graph (GraphRAG-style).
 
-## Features
+## Memory (the hippocampus)
 
+Zumba has a built-in long-term memory system — a temporal knowledge graph stored in a single embedded SQLite database (`~/.zumba/memory.db`, zero servers, works offline). Design synthesized from the GraphRAG / LightRAG / Zep-Graphiti / Mem0 / HippoRAG / MemGPT lines of research:
+
+### Write path (after every chat turn)
+1. **Capture** — the exchange is stored as an episode (content-hashed, dedup-safe).
+2. **Salience gate** — the LLM decides whether the exchange is worth remembering (chit-chat is kept as searchable history but not distilled).
+3. **Extraction** — the LLM extracts entities, typed relations and facts with confidence scores.
+4. **Entity resolution** — alias table + vector similarity + LLM merge decisions map mentions onto canonical entities.
+5. **Write decision** — Mem0-style ADD / UPDATE / NOOP / INVALIDATE against existing facts; contradictions *invalidate* (bi-temporal `valid_at`/`invalid_at`) instead of deleting, so history is never lost.
+6. **Auto-linking** — A-Mem-style notes are embedded and linked to related notes.
+
+### Read path (before every chat turn)
+Hybrid recall with **no LLM in the loop**: vector KNN (local ONNX embeddings, bge-small, 384-dim) + BM25 full-text + graph expansion via **Personalized PageRank** seeded by matched entities, fused with reciprocal-rank fusion and packed into a token budget with provenance. The block is injected as a system message just before your turn (never saved into session history).
+
+### Sleep-time consolidation
+Runs opportunistically in the background (or via `zumba memory consolidate`): exponential decay + reinforcement of entity salience, note-link recharging, **Leiden community detection** with LLM-written cluster summaries (GraphRAG global memory), and a **core-block rewrite** (MemGPT/Letta-style L1 profile blocks).
+
+### CLI
+
+```powershell
+python main.py memory stats            # graph counts + db location
+python main.py memory search "..."     # hybrid recall (vector + BM25 + PPR)
+python main.py memory add "..."        # store a fact through the full pipeline
+python main.py memory forget <name>    # invalidate facts about an entity
+python main.py memory consolidate      # run sleep-time compute now
+python main.py memory clear --yes      # wipe all memory
+```
+
+### In-chat commands
+
+| Command         | Action                                   |
+| --------------- | ---------------------------------------- |
+| `/remember <t>` | Store a fact in long-term memory         |
+| `/memory <q>`   | Search long-term memory                  |
+| `/forget <n>`   | Invalidate facts about an entity         |
+
+Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrades gracefully — chat never breaks because of it.
+
+## Features (chat + sessions)
+
+- **Long-term memory (the hippocampus)** — every exchange is salience-gated and, when memorable, distilled by the LLM into entities, temporal relations and linked notes stored in an embedded knowledge graph. Recall fuses vector search, full-text (BM25) and Personalized PageRank over the graph, and is injected into your prompts automatically.
 - **Free-first** — defaults to `kilo-auto/free`; `zumba models` lists all 18+ free models with no API key needed
 - **Interactive chat** — REPL with streaming answers inside bordered panels, slash commands, per-turn autosave
 - **Resume that feels continuous** — `--resume` / `--last` / `/load <#>` reprints previous messages before continuing
@@ -11,7 +51,7 @@ Zumba is a Python CLI personal assistant powered by the [Kilo AI Gateway](https:
 - **Persistent preferences** — `/model <id>` saves the global default; system prompt, streaming, and emoji prefs survive restarts
 - **Full-text session search** — FTS5 over all messages (`zumba sessions --search <text>`)
 - **Legacy-cmd safe rendering** — auto-detects conhost vs Windows Terminal/VS Code; strips emojis, folds smart punctuation, repairs old mojibake
-- **18+ passing tests** — mocked API, storage, and renderer tests
+- **34 passing tests** — mocked API, storage, renderer, and memory-graph tests
 
 ## Requirements
 
@@ -159,15 +199,25 @@ erDiagram
 
 ```text
 zumba/
-├── main.py          # Typer CLI: models / ask / chat / sessions / config / doctor
+├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / doctor
 ├── api_client.py    # Gateway client: list_models, chat_completion, SSE streaming
 ├── chat.py          # Conversation state, save/load, token estimates
 ├── store.py         # SQLite sessions + FTS search + config prefs
 ├── config.py        # Env + saved + default resolution
 ├── output.py        # Theme, tables/panels, emoji + mojibake sanitizer
 ├── models.py        # Message / ModelInfo / ChatResult dataclasses
+├── memory/          # Long-term memory (temporal knowledge graph)
+│   ├── db.py            # Schema: episodes, entities, relations, notes, vec, FTS
+│   ├── embedder.py      # Local ONNX embeddings (fastembed bge-small)
+│   ├── llm.py           # Structured LLM reasoning (Kilo gateway)
+│   ├── extraction.py    # Salience gate, extraction, write decisions
+│   ├── resolve.py       # Entity resolution (alias + vector + LLM merge)
+│   ├── graph.py         # PageRank, decay/reinforce, Leiden communities
+│   ├── retrieval.py     # Hybrid recall + context packing
+│   ├── consolidation.py # Sleep-time compute
+│   └── service.py       # Memory orchestrator
 ├── sessions/        # Legacy JSON sessions (auto-migrated, git-ignored)
-├── tests/           # pytest suite (API mocks, storage, renderer)
+├── tests/           # pytest suite (API mocks, storage, renderer, memory)
 ├── requirements.txt
 └── .env.example
 ```

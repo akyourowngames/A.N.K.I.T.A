@@ -85,15 +85,38 @@ _SMART_PUNCT = {
 
 
 
+def _repair_mojibake(text: str) -> str:
+    try:
+        rev = {}
+        for b in range(256):
+            try:
+                ch = bytes([b]).decode("cp1252")
+            except Exception:
+                continue
+            if ch not in rev:
+                rev[ch] = b
+        raw = bytearray()
+        for ch in text:
+            if ch in rev:
+                raw.append(rev[ch])
+            elif ord(ch) < 256:
+                raw.append(ord(ch))
+            else:
+                return text
+        fixed = bytes(raw).decode("utf-8")
+    except Exception:
+        return text
+    if fixed != text and "�" not in fixed:
+        return fixed
+    return text
+
+
 def normalize_text(text: str, allow_emoji: bool = True) -> str:
     if not text:
         return text
+    text = _repair_mojibake(text)
     if not allow_emoji:
         text = remove_emoji_only(text)
-        try:
-            text = text.encode("latin-1").decode("utf-8")
-        except Exception:
-            pass
         for old, new in _SMART_PUNCT.items():
             text = text.replace(old, new)
         cleaned = re.sub(r"[ \t]{2,}", " ", text)

@@ -177,10 +177,14 @@ def stream_chat_completion(
     resp_model = model
     usage = ChatUsage()
     try:
-        for raw_line in resp.iter_lines(decode_unicode=True):
+        # Decode explicitly as UTF-8. requests' decode_unicode would otherwise
+        # guess the encoding of the SSE stream (often ISO-8859-1), mangling
+        # multibyte characters (smart quotes, dashes) into mojibake like "â".
+        resp.encoding = "utf-8"
+        for raw_line in resp.iter_lines(decode_unicode=False):
             if not raw_line:
                 continue
-            line = raw_line.strip()
+            line = raw_line.decode("utf-8", errors="replace").strip() if isinstance(raw_line, bytes) else str(raw_line).strip()
             if not line.startswith("data:"):
                 continue
             chunk = line[5:].strip()

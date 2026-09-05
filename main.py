@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Optional
@@ -57,6 +58,37 @@ def _allow_emoji(explicit_no_emoji: bool = False) -> bool:
 console: Console = make_console(_allow_emoji())
 
 BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  Kilo Gateway[/]"
+
+_MEM = None
+
+
+def _memory():
+    """Lazily-initialized memory service; None if disabled or unavailable.
+
+    Memory must never crash chat: every failure mode degrades to no memory.
+    Set ZUMBA_NO_MEMORY=1 to disable entirely.
+    """
+    global _MEM
+    if os.getenv("ZUMBA_NO_MEMORY", "") == "1":
+        return None
+    if _MEM is None:
+        try:
+            from memory import get_memory
+
+            _MEM = get_memory()
+        except Exception:
+            _MEM = False
+    return _MEM or None
+
+
+def _mem_capture(mem, session_id: str, user_text: str, reply: str) -> None:
+    """Queue the exchange for background ingestion (serialized worker thread),
+    then opportunistically consolidate (decay, note links, contradictions,
+    communities, core blocks). Never blocks or crashes the chat loop."""
+    try:
+        mem.capture_async(user_text, reply, session_id=session_id)
+    except Exception:
+        pass
 
 
 def _header() -> Panel:
@@ -267,18 +299,24 @@ def ask_cmd(
     base = get_base_url()
     eff_system = _plain_system(system, allow_emoji)
     msgs = [Message(role="system", content=eff_system), Message(role="user", content=prompt)] if eff_system else [Message(role="user", content=prompt)]
+    mem = _memory()
     console.print(_header())
     console.print(section_rule("REQUEST"))
     console.print(f"{meta_line('Model', chosen)}   {meta_line('Endpoint', base)}")
     console.print(section_rule("RESPONSE"))
+    full_text = ""
     try:
         if no_stream:
             with console.status("[cyan]Generating response...[/]", spinner="dots"):
                 result = chat_completion(msgs, chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
             tokens = f"{result.usage.prompt_tokens} IN / {result.usage.completion_tokens} OUT" if result.usage.total_tokens else ""
+            full_text = result.content
             _print_assistant(result.content, result.model or chosen, allow_emoji, tokens)
         else:
-            _stream_into_console(msgs, chosen, max_tokens, temperature, allow_emoji)
+            full_text = _stream_into_console(msgs, chosen, max_tokens, temperature, allow_emoji)
+        if mem is not None and full_text:
+            _mem_capture(mem, "", prompt, full_text)
+            mem.flush(timeout=60.0)
     except KiloError as exc:
         _fail(str(exc))
     except KeyboardInterrupt:
@@ -534,6 +572,7 @@ def chat_cmd(
         session_id = db_new_session_id()
         db_create_session(session_id, chosen, system)
     conv.model = chosen
+    mem = _memory()
     db_set_last(session_id)
 
     if no_stream:
@@ -573,6 +612,9 @@ def chat_cmd(
         table.add_row("/new", "Start a fresh session")
         table.add_row("/stream", "Toggle streaming")
         table.add_row("/emoji", "Toggle emoji stripping")
+        table.add_row("/remember <text>", "Store a fact in long-term memory")
+        table.add_row("/memory <query>", "Search long-term memory")
+        table.add_row("/forget <name>", "Invalidate facts about an entity")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -679,27 +721,75 @@ def chat_cmd(
             conv.set_system(new_sys)
             console.print(section_rule("SYSTEM PROMPT UPDATED"))
             continue
+        if user_text.startswith("/remember ") and len(user_text) > 10:
+            fact = user_text[10:].strip()
+            if mem is None:
+                mem = _memory()
+            if mem is not None and fact:
+                threading.Thread(target=_mem_capture, args=(mem, session_id, fact, ""), daemon=True).start()
+                console.print(section_rule("WILL REMEMBER"))
+            continue
+        if user_text == "/memory" or user_text.startswith("/memory "):
+            q = user_text[8:].strip() if len(user_text) > 8 else ""
+            if q and mem is not None:
+                try:
+                    hits = mem.recall(q, top_k=8, max_bytes=4500)
+                    console.print(Panel(hits or "(nothing recalled)", title="MEMORY", border_style="cyan", box=_box(allow_emoji)))
+                except Exception as exc:
+                    console.print(error_panel(f"memory: {exc}", allow_emoji=allow_emoji))
+            continue
+        if user_text.startswith("/forget ") and len(user_text) > 8:
+            target = user_text[8:].strip()
+            if mem is not None and target:
+                try:
+                    r = mem.forget(target)
+                    console.print(section_rule("FORGOT" if r.get("forgot") else "NOT FOUND"))
+                except Exception as exc:
+                    console.print(error_panel(f"memory: {exc}", allow_emoji=allow_emoji))
+            continue
         if user_text.startswith("/"):
             console.print(info_panel("Unknown command. Type /help", title="COMMANDS", allow_emoji=allow_emoji))
             continue
 
+        recall_text = ""
+        mem = _memory()
+        if mem is not None:
+            try:
+                recall_text = mem.recall(user_text, top_k=5, max_bytes=3500)
+            except Exception:
+                recall_text = ""
+
         conv.add_user(user_text)
         db_add_message(session_id, "user", user_text)
+        # Inject recalled memory as a system message just before the user turn
+        # (kept out of conv so it never pollutes saved history).
+        msgs = conv.history()
+        if recall_text:
+            msgs = msgs[:-1] + [Message(role="system", content=(
+                "Relevant long-term memory about the user:\n" + recall_text +
+                "\n(These facts were distilled from past sessions. They may be outdated — the user's most recent statements in this conversation always override them.)"
+            )), msgs[-1]]
+            console.print(f"[dim]memory: {recall_text.count(chr(10)) + 1} recall line(s) injected[/]")
         try:
+            reply_text = ""
             if streaming:
                 console.print(section_rule(f"{zumba_label}  ·  {chosen}"))
-                full = _stream_into_console(conv.history(), chosen, max_tokens, temperature, allow_emoji)
+                full = _stream_into_console(msgs, chosen, max_tokens, temperature, allow_emoji)
                 conv.add_assistant(full)
                 db_add_message(session_id, "assistant", full)
+                reply_text = full
             else:
                 with console.status("[cyan]Generating response...[/]", spinner="dots"):
-                    result = chat_completion(conv.history(), chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
+                    result = chat_completion(msgs, chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
                 text = normalize_text(result.content, allow_emoji)
                 conv.add_assistant(text)
                 tokens_n = int(result.usage.total_tokens or 0)
                 db_add_message(session_id, "assistant", text, tokens_n)
                 tokens = f"{result.usage.prompt_tokens} IN / {result.usage.completion_tokens} OUT" if result.usage.total_tokens else ""
                 _print_assistant(result.content, result.model or chosen, allow_emoji, tokens)
+                reply_text = text
+            if mem is not None and reply_text:
+                threading.Thread(target=_mem_capture, args=(mem, session_id, user_text, reply_text), daemon=True).start()
         except KiloError as exc:
             try:
                 conv.messages.pop()
@@ -712,10 +802,103 @@ def chat_cmd(
             continue
 
     try:
+        if mem is not None:
+            with console.status("[cyan]Saving memories...[/]", spinner="dots"):
+                mem.flush(timeout=60.0)
         db_set_last(session_id)
         console.print(section_rule(f"SAVED  ·  SESSION {session_id[:12]}  ·  RESUME WITH: zumba chat --resume {session_id[:12]}"))
     except Exception as exc:
         console.print(error_panel(f"Could not save session: {exc}", allow_emoji=allow_emoji))
+
+
+memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")
+app.add_typer(memory_app, name="memory")
+
+
+@memory_app.command("stats")
+def memory_stats_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled (ZUMBA_NO_MEMORY=1 or import failed).")
+        return
+    s = mem.stats()
+    table = styled_table("MEMORY STATS", allow_emoji)
+    table.add_column("KEY", style="cyan", no_wrap=True)
+    table.add_column("VALUE", style="white")
+    for k in ("episodes", "entities", "relations", "active_relations", "notes", "communities", "core_blocks", "database"):
+        table.add_row(k, str(s.get(k, "-")))
+    console.print(table)
+
+
+@memory_app.command("search")
+def memory_search_cmd(
+    query: str = typer.Argument(..., help="What to recall."),
+    top_k: int = typer.Option(8, "--top", "-k"),
+) -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    with console.status("[cyan]Recalling...[/]", spinner="dots"):
+        out = mem.recall(query, top_k=top_k, max_bytes=6000)
+    console.print(Panel(out or "(nothing recalled)", title="MEMORY", border_style="cyan", box=_box(allow_emoji)))
+
+
+@memory_app.command("add")
+def memory_add_cmd(
+    text: str = typer.Argument(..., help="Fact to store, e.g. 'I prefer Python for tooling'."),
+) -> None:
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    with console.status("[cyan]Curating into memory (LLM extraction)...[/]", spinner="dots"):
+        r = mem.ingest_episode(text, "", session_id="", kind="manual")
+    console.print(section_rule(f"STORED  ·  {json.dumps(r)}"))
+
+
+@memory_app.command("forget")
+def memory_forget_cmd(
+    name: str = typer.Argument(..., help="Entity name to invalidate."),
+) -> None:
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    r = mem.forget(name)
+    console.print(section_rule("FORGOT" if r.get("forgot") else f"NOT FOUND  ·  {r.get('reason', '')}"))
+
+
+@memory_app.command("clear")
+def memory_clear_cmd(
+    yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
+) -> None:
+    if not yes:
+        console.print("This wipes ALL long-term memory. Re-run with --yes to confirm.")
+        return
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    mem.clear()
+    console.print(section_rule("MEMORY CLEARED"))
+
+
+@memory_app.command("consolidate")
+def memory_consolidate_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    with console.status("[cyan]Sleep-time compute: decay, note links, communities, core blocks...[/]", spinner="dots"):
+        r = mem.consolidate(min_interval_s=0.0)
+    console.print(Panel(json.dumps(r), title="CONSOLIDATION", border_style="cyan", box=_box(allow_emoji)))
 
 
 @app.command("doctor")
@@ -765,6 +948,7 @@ def root(ctx: typer.Context) -> None:
         table.add_row("zumba chat", "Interactive session (auto-saved, --last to resume)")
         table.add_row("zumba sessions", "List / search / show saved chats")
         table.add_row("zumba config", "Show or set default model + preferences")
+        table.add_row("zumba memory", "Long-term memory: stats / search / add / forget / consolidate")
         table.add_row("zumba doctor", "Terminal + rendering diagnostics")
         table.add_row("zumba version", "Show version")
         console.print(table)
