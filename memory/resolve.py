@@ -48,7 +48,7 @@ def resolve_entity(con: sqlite3.Connection, name: str, known: dict | None = None
 
     # Vector candidates — ask the LLM whether any of the top candidates is the
     # same real-world entity (catches aliases, abbreviations, case/punct drift
-    # like "ankita" vs "A.N.K.I.T.A.").
+    # like "atlas-app" vs "Atlas App").
     cand = [c for c in _top_candidates(con, name, k=3) if c["score"] >= 0.5]
     for top in cand:
         if top["score"] >= 0.92:

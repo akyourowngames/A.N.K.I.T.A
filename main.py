@@ -67,6 +67,48 @@ console: Console = make_console(_allow_emoji())
 
 BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  Kilo Gateway[/]"
 
+_WINDOW_CACHE: dict[str, dict] = {}
+_WHY_LAST: dict[str, dict] = {}
+_WHY_ON: dict[str, bool] = {}
+
+
+def _why_store(session_id: str, query: str, text: str, hits: list) -> None:
+    _WHY_LAST[session_id] = {"query": query, "text": text or "", "hits": hits or []}
+
+
+def _why_render(session_id: str) -> str:
+    data = _WHY_LAST.get(session_id) or {}
+    if not data.get("text") and not data.get("hits"):
+        return "No memory was injected on the last turn (nothing recalled)."
+    lines = [f"query: {data.get('query', '')}"]
+    hits = data.get("hits") or []
+    if not hits:
+        lines.append("(recall block came from core profile blocks, not scored hits)")
+    for i, h in enumerate(hits, 1):
+        meta = h.get("meta") or {}
+        ref = f" id={meta.get('id')}" if meta.get("id") is not None else ""
+        lines.append(f"{i}. [{h.get('kind')}] score={h.get('score')}{ref} :: {h.get('snippet', '')[:160]}")
+    return "\n".join(lines)
+
+
+def _window_cache_for(msgs: list[Message]) -> dict:
+    """Per-session rolling-summary cache, keyed by the session anchor (first
+    user message). Lets build_window reuse summaries across turns."""
+    import hashlib
+
+    anchor = next((m.content for m in msgs if m.role == "user"), "")
+    key = hashlib.sha256(anchor.encode("utf-8", errors="replace")).hexdigest()[:16]
+    return _WINDOW_CACHE.setdefault(key, {})
+
+
+def _fit_window(msgs: list[Message]) -> list[Message]:
+    try:
+        from context_budget import build_window, get_context_limit
+
+        return build_window(msgs, model_limit=get_context_limit(), cache=_window_cache_for(msgs))
+    except Exception:
+        return msgs
+
 _MEM = None
 _MCP_DISABLE = os.getenv("ZUMBA_NO_MCP", "") == "1"
 
@@ -94,7 +136,9 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
     sys_msg = Message(role="system", content=(
         "Connected MCP tools (call them via the function/tool-call mechanism; "
         "names are prefixed by their server):\n" + preamble +
-        "\n" + note.replace("{meta}", mcp_defaults.META_SERVER)
+        "\n" + note.replace("{meta}", mcp_defaults.META_SERVER) +
+        "\nShell: zumba__shell_run executes UNRESTRICTED PowerShell in one persistent "
+        "session (cwd/env persist) — chain state instead of re-stating it."
     ))
     return msgs[:-1] + [sys_msg, msgs[-1]]
 
@@ -105,6 +149,7 @@ def _mcp_agent_turn(msgs: list[Message], model: str, key: str, max_tokens, tempe
     mgr = mcp_manager()
     tools = mgr.all_tools()
     convo = _mcp_preamble(list(msgs), tools) if tools else list(msgs)
+    convo = _fit_window(convo)
     used = {"n": 0}
     transcript: list = []
 
@@ -146,6 +191,48 @@ def _remember_tool_transcript(conv, transcript: list, keep: int = 10) -> None:
             conv.messages.remove(related.pop(0))
     except Exception:
         pass
+
+
+def _save_tool_transcript(session_id: str, transcript: list) -> None:
+    """Persist tool exchanges to the session DB so `continue` and `--resume`
+    keep tool context. Orphan-safe: resume folds these into a system digest
+    (see _fold_saved_tool_context) instead of sending bare tool messages."""
+    try:
+        for m in transcript or []:
+            content = (m.content or "").strip()
+            if m.role == "assistant" and not content:
+                content = "(tool call — see following tool result)"
+            db_add_message(session_id, m.role, content)
+    except Exception:
+        pass
+
+
+def _fold_saved_tool_context(messages: list[Message]) -> list[Message]:
+    """Fold saved tool exchanges into one system digest.
+
+    Bare `role=tool` messages (and their content-less assistant parents,
+    whose tool_calls don't survive the DB) would fail API validation if
+    replayed, so replace them with a system note carrying the results."""
+    try:
+        tools = [m for m in messages if m.role == "tool"]
+        if not tools:
+            return messages
+        lines = []
+        for m in tools[-8:]:
+            name = getattr(m, "name", "") or "tool"
+            lines.append(f"{name}: {(m.content or '').strip()[:300]}")
+        digest = Message(role="system", content=(
+            "Prior tool context from saved session (these tools already ran — "
+            "use these results instead of re-running blindly):\n" + "\n".join(lines)))
+        kept = [m for m in messages
+                if m.role != "tool" and not (m.role == "assistant" and not (m.content or "").strip())]
+        idx = 0
+        while idx < len(kept) and kept[idx].role == "system":
+            idx += 1
+        kept.insert(idx, digest)
+        return kept
+    except Exception:
+        return messages
 
 
 def _memory():
@@ -544,6 +631,7 @@ def _pick_session_interactive(allow_emoji: bool) -> str:
 def config_cmd(
     set_model: str = typer.Option("", "--set-model", help="Persist default model for new sessions."),
     set_system: str = typer.Option("", "--set-system", help="Persist default system prompt."),
+    set_style: str = typer.Option("", "--set-style", help="Persist persona style prefs (tone)."),
     set_streaming: str = typer.Option("", "--set-streaming", help="on/off default for chat streaming."),
     clear: bool = typer.Option(False, "--clear", help="Clear saved preferences."),
 ) -> None:
@@ -561,9 +649,11 @@ def config_cmd(
         set_default_model(set_model.strip())
     if set_system:
         db_config_set("default_system", set_system.strip())
+    if set_style:
+        db_config_set("style", set_style.strip())
     if set_streaming:
         db_config_set("streaming", "off" if set_streaming.strip().lower() in ("off", "0", "false", "no") else "on")
-    if set_model or set_system or set_streaming:
+    if set_model or set_system or set_style or set_streaming:
         console.print(section_rule("PREFERENCES SAVED"))
     table = styled_table("PREFERENCES", allow_emoji)
     table.add_column("KEY", style="cyan", no_wrap=True)
@@ -571,6 +661,7 @@ def config_cmd(
     prefs = db_config_all()
     table.add_row("default_model", prefs.get("default_model", "") or get_default_model())
     table.add_row("default_system", (prefs.get("default_system", "") or "-")[:60])
+    table.add_row("style", (prefs.get("style", "") or "-")[:60])
     table.add_row("streaming", prefs.get("streaming", "") or "on")
     table.add_row("last_session", prefs.get("last_session", "") or "-")
     table.add_row("ZUMBA_MODEL env", __import__("os").getenv("ZUMBA_MODEL", "") or "-")
@@ -592,8 +683,9 @@ def chat_cmd(
     allow_emoji = _allow_emoji(no_emoji)
     db_migrate_legacy(get_sessions_dir())
     saved_system = db_config_get("default_system", "")
-    if not system or system == "You are Zumba, a concise helpful personal assistant.":
-        system = saved_system or system
+    from persona import resolve_chat_system
+
+    system = resolve_chat_system(system, saved_system)
     chosen = (model or get_default_model()).strip()
     system = _plain_system(system, allow_emoji)
     try:
@@ -630,6 +722,7 @@ def chat_cmd(
                 if role == "system":
                     continue
                 conv.messages.append(Message(role=role, content=content))
+            conv.messages = _fold_saved_tool_context(conv.messages)
             if system:
                 conv.messages.insert(0, Message(role="system", content=system))
             conv.model = chosen
@@ -702,9 +795,11 @@ def chat_cmd(
         table.add_row("/emoji", "Toggle emoji stripping")
         table.add_row("/remember <text>", "Store a fact in long-term memory")
         table.add_row("/memory <query>", "Search long-term memory")
+        table.add_row("/why", "Explain the last turn's memory recall")
         table.add_row("/forget <name>", "Invalidate facts about an entity")
         table.add_row("/mcp", "Show connected MCP servers + status")
         table.add_row("/tools", "List all tools from connected MCP servers")
+        table.add_row("/shell <cmd>", "Run a shell command directly (god-mode, persistent)")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -762,6 +857,7 @@ def chat_cmd(
                 if role == "system":
                     continue
                 conv.messages.append(Message(role=role, content=str(m.get("content", ""))))
+            conv.messages = _fold_saved_tool_context(conv.messages)
             if system:
                 conv.messages.insert(0, Message(role="system", content=system))
             conv.model = chosen
@@ -805,6 +901,9 @@ def chat_cmd(
         if user_text == "/tools" or user_text.startswith("/tools "):
             _mcp_tools_table(allow_emoji)
             continue
+        if user_text == "/shell" or user_text.startswith("/shell "):
+            _shell_chat_run(user_text[6:].strip(), allow_emoji)
+            continue
         if user_text == "/models":
             try:
                 free = [m for m in _fetch_models() if m.is_free][:15]
@@ -843,6 +942,19 @@ def chat_cmd(
                 except Exception as exc:
                     console.print(error_panel(f"memory: {exc}", allow_emoji=allow_emoji))
             continue
+        if user_text == "/why" or user_text.startswith("/why "):
+            arg = user_text[4:].strip().lower()
+            if arg == "off":
+                _WHY_ON[session_id] = False
+                console.print(section_rule("WHY CAPTURE OFF"))
+                continue
+            if arg == "on":
+                _WHY_ON[session_id] = True
+                console.print(section_rule("WHY CAPTURE ON"))
+                continue
+            console.print(Panel(safe_text(_why_render(session_id), allow_emoji), title="WHY  ·  last recall",
+                                title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+            continue
         if user_text.startswith("/forget ") and len(user_text) > 8:
             target = user_text[8:].strip()
             if mem is not None and target:
@@ -857,12 +969,17 @@ def chat_cmd(
             continue
 
         recall_text = ""
+        recall_hits: list = []
         mem = _memory()
         if mem is not None:
             try:
-                recall_text = mem.recall(user_text, top_k=5, max_bytes=3500)
+                if _WHY_ON.get(session_id, True):
+                    recall_text, recall_hits = mem.recall_with_hits(user_text, top_k=5, max_bytes=3500)
+                else:
+                    recall_text = mem.recall(user_text, top_k=5, max_bytes=3500)
             except Exception:
-                recall_text = ""
+                recall_text, recall_hits = "", []
+        _why_store(session_id, user_text, recall_text, recall_hits)
 
         conv.add_user(user_text)
         db_add_message(session_id, "user", user_text)
@@ -888,19 +1005,20 @@ def chat_cmd(
                 console.print(section_rule(f"{zumba_label}  ·  {chosen}  ·  MCP ({mcp_mgr.online_count()} server(s) online)"))
                 full, tools_used, tool_transcript = _mcp_agent_turn(msgs, chosen, key, max_tokens, temperature, allow_emoji)
                 _remember_tool_transcript(conv, tool_transcript)
+                _save_tool_transcript(session_id, tool_transcript)
                 conv.add_assistant(full)
                 db_add_message(session_id, "assistant", full)
                 reply_text = full
                 reply_kind = "tool" if tools_used else "chat"
             elif streaming:
                 console.print(section_rule(f"{zumba_label}  ·  {chosen}"))
-                full = _stream_into_console(msgs, chosen, max_tokens, temperature, allow_emoji)
+                full = _stream_into_console(_fit_window(msgs), chosen, max_tokens, temperature, allow_emoji)
                 conv.add_assistant(full)
                 db_add_message(session_id, "assistant", full)
                 reply_text = full
             else:
                 with console.status("[cyan]Generating response...[/]", spinner="dots"):
-                    result = chat_completion(msgs, chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
+                    result = chat_completion(_fit_window(msgs), chosen, api_key=key, max_tokens=max_tokens, temperature=temperature)
                 text = normalize_text(result.content, allow_emoji)
                 conv.add_assistant(text)
                 tokens_n = int(result.usage.total_tokens or 0)
@@ -985,6 +1103,24 @@ def _mcp_status_table(allow_emoji: bool) -> None:
         status = f"{dot.get(r['status'], '[red]●')} {r['status']}[/]" + (f"  [dim]{safe_text(r['error'], allow_emoji)[:60]}[/]" if r["error"] else "")
         table.add_row("", r["name"], r["transport"], str(r["tool_count"]), status)
     console.print(table)
+
+
+def _shell_chat_run(cmd: str, allow_emoji: bool) -> None:
+    """Handle '/shell <cmd>' live, in-session (bypasses the model)."""
+    import shelltool
+
+    if not cmd:
+        console.print(info_panel("Usage: /shell <powershell command>", title="SHELL", allow_emoji=allow_emoji))
+        return
+    if not shelltool.enabled():
+        console.print(error_panel("shell tool is disabled (ZUMBA_NO_SHELL=1).", allow_emoji=allow_emoji))
+        return
+    with console.status("[cyan]Running shell...[/]", spinner="dots"):
+        res = shelltool.run(cmd)
+    text = shelltool.format_result(res, cwd=shelltool.get_session().cwd)
+    border = "red" if text.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(text, allow_emoji), title="SHELL",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
 
 
 def _mcp_tools_table(allow_emoji: bool) -> None:
@@ -1088,6 +1224,27 @@ def mcp_call_cmd(
     border = "red" if result.startswith("ERROR") else "green"
     console.print(Panel(safe_text(result, allow_emoji), title=f"RESULT  ·  {tool}",
                         title_align="left", border_style=border, box=table_box(allow_emoji), padding=(1, 2)))
+
+
+@app.command("shell")
+def shell_cmd(
+    cmd: str = typer.Argument(..., help="PowerShell command to run (persistent god-mode session)."),
+    timeout: Optional[float] = typer.Option(None, "--timeout", help="Seconds (default from ZUMBA_SHELL_TIMEOUT or 60)."),
+    no_emoji: bool = typer.Option(False, "--no-emoji", help="Strip emojis for legacy cmd."),
+) -> None:
+    import shelltool
+
+    allow_emoji = _allow_emoji(no_emoji)
+    if not shelltool.enabled():
+        _fail("shell tool is disabled (ZUMBA_NO_SHELL=1).")
+        return
+    res = shelltool.run(cmd, timeout_s=timeout or 0)
+    text = shelltool.format_result(res, cwd=shelltool.get_session().cwd)
+    border = "red" if text.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(text, allow_emoji), title="SHELL",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+    if (res.get("exit_code") or 0) != 0:
+        raise typer.Exit(code=int(res.get("exit_code") or 1))
 
 
 memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")

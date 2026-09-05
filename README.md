@@ -44,8 +44,8 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 ## Features (chat + sessions)
 
 - **Long-term memory (the hippocampus)** — every exchange is salience-gated and, when memorable, distilled by the LLM into entities, temporal relations and linked notes stored in an embedded knowledge graph. Recall fuses vector search, full-text (BM25) and Personalized PageRank over the graph, and is injected into your prompts automatically.
-- **MCP tool servers** — Model Context Protocol layer (`mcpclient/`): stdio/HTTP/SSE servers from `~/.zumba/mcp.json`, OpenAI-style tool loop (25 max turns, final summarize so long runs never end in `(empty response)`), tool transcript persisted across turns (last 10), live reload + self-install meta-tools
-- **429 resilience** — gateway client retries once after `Retry-After`; memory consolidation throttled (no full run on start, 30-min interval) so background LLM calls don't self-inflict rate limits
+- **MCP tool servers** — Model Context Protocol layer (`mcpclient/`): stdio/HTTP/SSE servers from `~/.zumba/mcp.json`, OpenAI-style tool loop (25 max turns, final summarize so long runs never end in `(empty response)`), tool transcript persisted across turns in memory (last 10) and in the session DB so `continue`/`--resume` keep tool context (folded into a digest, never replayed bare), live reload + self-install meta-tools
+- **429 resilience** — gateway client retries once after `Retry-After` (also one retry on transient 502/503); agent loop retries flaky model calls and ends the turn with a progress summary instead of an error when the provider stays down; memory consolidation throttled (no full run on start, 30-min interval) so background LLM calls don't self-inflict rate limits
 - **Free-first** — defaults to `kilo-auto/free`; `zumba models` lists all 18+ free models with no API key needed
 - **Interactive chat** — REPL with streaming answers inside bordered panels, slash commands, per-turn autosave
 - **Resume that feels continuous** — `--resume` / `--last` / `/load <#>` reprints previous messages before continuing
@@ -54,7 +54,10 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Full-text session search** — FTS5 over all messages (`zumba sessions --search <text>`)
 - **Legacy-cmd safe rendering** — auto-detects conhost vs Windows Terminal/VS Code; strips emojis, folds smart punctuation, repairs old mojibake
 - **Graceful shutdown** — Ctrl+C during save/flush or MCP teardown exits cleanly with session saved
-- **69 passing tests** — mocked API, storage, renderer, memory-graph, and MCP agent/manager tests
+- **God-mode shell** — unrestricted persistent PowerShell for the model (`zumba__shell_run/jobs/kill`) and you (`/shell`, `python main.py shell`); background jobs, audit log, `ZUMBA_NO_SHELL=1` kill-switch
+- **Context window manager** — every model call fits `ZUMBA_CONTEXT_LIMIT` (default 8192): system + anchor + recent turns kept, middle overflow becomes one cached rolling summary, stale tool transcripts truncated
+- **Persona + provenance** — identity voice with editable `style` prefs (`zumba config --set-style`); `/why` explains the last turn's memory recall with kinds and scores
+- **101 passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, and tool-memory tests
 
 ## Requirements
 
@@ -78,6 +81,10 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_FORCE_EMOJI` | Force full unicode (`1`)             | auto-detect                          |
 | `ZUMBA_NO_MCP`      | Disable MCP layer entirely (`1`)     | enabled                              |
 | `ZUMBA_MCP_MAX_ITERATIONS` | Max tool turns per chat turn  | `25`                                 |
+| `ZUMBA_NO_SHELL`    | Disable god-mode shell (`1`)         | enabled                              |
+| `ZUMBA_SHELL_TIMEOUT` | Default shell timeout (seconds)    | `60`                                 |
+| `ZUMBA_SHELL_MAX_OUTPUT` | Shell output cap (chars, head+tail) | `8000`                            |
+| `ZUMBA_CONTEXT_LIMIT` | Context budget per model call      | `8192`                               |
 | `ZUMBA_NO_MEMORY`   | Disable long-term memory (`1`)       | enabled                              |
 
 Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `kilo-auto/free`.
@@ -115,6 +122,8 @@ python main.py version
 | `/stream`      | Toggle streaming                              |
 | `/emoji`       | Toggle emoji stripping                        |
 | `/tokens`      | Token estimate                                |
+| `/shell <cmd>` | Run a shell command directly (god-mode, persistent) |
+| `/why`         | Explain the last turn's memory recall         |
 | `/clear`       | Clear history                                 |
 | `/exit`        | Save and exit (Ctrl+C also saves)             |
 
@@ -223,18 +232,37 @@ Changes apply **in the current session — no restart**:
 - Editing `~/.zumba/mcp.json` while chatting is picked up automatically on the next message.
 - ZUMBA can **manage itself**: the model gets built-in meta-tools (`zumba__mcp_search`, `zumba__mcp_add`, `zumba__mcp_remove`, `zumba__mcp_list`) backed by the official MCP registry. Just ask *"find and install an MCP server for GitHub"* and ZUMBA searches the registry, installs, connects, and uses it — all mid-session.
 
+## Shell — god-mode command tool
+
+Unrestricted, persistent PowerShell for the model and you. One long-lived session: cwd, env vars, and files carry over between calls, so the model chains state instead of re-stating it. No allowlists, no approval prompts — every command, exit code, and timestamp is appended to `~/.zumba/shell_audit.log`.
+
+```powershell
+python main.py shell "python --version"   # one-shot (exit code propagates)
+```
+
+In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumba__shell_run` (+ `shell_jobs` / `shell_kill` for background jobs with `run_in_background: true`). Timeouts return partial output and restart the session; output caps at `ZUMBA_SHELL_MAX_OUTPUT` (head+tail); `ZUMBA_NO_SHELL=1` removes the tools.
+
+## Context, persona, provenance
+
+- Every model call is fit to `ZUMBA_CONTEXT_LIMIT` (default 8192) by `context_budget.py`: system prompts, the first user message (session anchor), and recent turns are always kept; dropped middle turns become one cached rolling summary (rebuilt after ≥6 newly dropped turns); stale tool transcripts truncate to 200 chars.
+- `persona.py` gives Zumba its voice (direct, warm, zero fluff) with editable style prefs (`zumba config --set-style "..."`); `--system` still overrides everything.
+- `/why` shows the last turn's exact memory injection: recall query, hit kinds, scores, and source ids. `/why off|on` toggles capture (default on, zero extra cost).
+
 
 ## Project structure
 
 ```text
 zumba/
-├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / mcp / doctor
+├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / mcp / shell / doctor
 ├── api_client.py    # Gateway client: list_models, chat_completion (+tools), SSE streaming
 ├── chat.py          # Conversation state, save/load, token estimates
 ├── store.py         # SQLite sessions + FTS search + config prefs
 ├── config.py        # Env + saved + default resolution
 ├── output.py        # Theme, tables/panels, emoji + mojibake sanitizer
 ├── models.py        # Message (incl. tool_calls) / ModelInfo / ChatResult dataclasses
+├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
+├── context_budget.py # Token estimator + fit-to-budget window + rolling summary
+├── persona.py       # Identity voice + editable style prefs (profile deferred: TODO tier2)
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)
 │   ├── manager.py       # Async connection manager: stdio / HTTP / SSE, health, reconnect
@@ -252,7 +280,7 @@ zumba/
 │   ├── consolidation.py # Sleep-time compute
 │   └── service.py       # Memory orchestrator
 ├── sessions/        # Legacy JSON sessions (auto-migrated, git-ignored)
-├── tests/           # pytest suite (API mocks, storage, renderer, memory)
+├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona)
 ├── requirements.txt
 └── .env.example
 ```

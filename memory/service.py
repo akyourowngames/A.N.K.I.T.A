@@ -19,7 +19,7 @@ _cache = {}
 _cache_lock = threading.Lock()
 
 
-_CORRECTION_CUES = (" not ", " isnt", " isn't", "actually", "wrong", "correction", " no ", "agent not game", "krish not", "not game", "not a game")
+_CORRECTION_CUES = (" not ", " isnt", " isn't", "actually", "wrong", "correction", " no ", "instead", "rather ", "i meant", "correction:")
 
 
 def _looks_like_correction(user_text: str, assistant_text: str = "") -> bool:
@@ -27,12 +27,33 @@ def _looks_like_correction(user_text: str, assistant_text: str = "") -> bool:
     return any(c in t for c in _CORRECTION_CUES)
 
 
-_FACT_CUES = ("my name is", "i am ", "i'm ", "im building", "i am building", "my project", "i build", "i prefer", "i use ", "i like ", "krish", "ankit", "a.n.k.i.t.a")
+_FACT_CUES = ("my name is", "i am ", "i'm ", "i've ", "i'll ", "my project", "my favorite", "my favourite",
+              "i build", "i prefer", "i use ", "i like ", "i live", "i work", "remember that", "remember this",
+              "don't forget", "do not forget", "dont forget")
 
 
 def _looks_like_fact(user_text: str, assistant_text: str = "") -> bool:
     t = f" {(user_text or '').lower()} {(assistant_text or '').lower()} "
     return any(c in t for c in _FACT_CUES)
+
+
+_FIRST_PERSON = (" i ", " my ", " me ", " i'm ", " i've ", " i'll ", " mine ")
+
+
+def prefilter_may_be_memorable(user_text: str, assistant_text: str = "") -> bool:
+    """0-cost generic prefilter before the LLM salience gate.
+
+    Returns True when the exchange *might* carry a durable fact (correction
+    cue, first-person fact cue, or first-person pronoun present). Returns
+    False only when nothing fires — callers skip extraction entirely then.
+    Generic by design: no personal names, no per-user strings.
+    """
+    t = f" {(user_text or '').lower()} {(assistant_text or '').lower()} "
+    if any(c in t for c in _CORRECTION_CUES):
+        return True
+    if any(c in t for c in _FACT_CUES):
+        return True
+    return any(p in t for p in _FIRST_PERSON)
 
 
 class Memory:
@@ -133,8 +154,10 @@ class Memory:
 
             if kind == "tool":
                 return {"stored": True, "extracted": False, "episode": episode_id, "reason": "tool-turn"}
+            if not prefilter_may_be_memorable(user_text, assistant_text):
+                return {"stored": True, "extracted": False, "episode": episode_id, "reason": "prefilter"}
             memorable = extraction.should_remember(user_text, assistant_text)
-            if not memorable and not _looks_like_correction(user_text, assistant_text) and not _looks_like_fact(user_text, assistant_text):
+            if not memorable:
                 return {"stored": True, "extracted": False, "episode": episode_id}
 
             try:
@@ -315,19 +338,33 @@ class Memory:
         except Exception:
             return None
 # ---- recall ----
-    def recall(self, query, top_k=6, max_bytes=5000):
+    def recall_with_hits(self, query, top_k=6, max_bytes=5000):
+        """Recall + per-hit provenance (kind, score, meta, snippet).
+
+        Zero extra cost over recall(): same search, hits passed through
+        instead of being flattened into text. Powers `/why`."""
         con = self._open()
         try:
             hits = retrieval.search(con, query, top_k=top_k, max_bytes=max_bytes)
             if not hits:
-                return self._core_text(con)
+                return self._core_text(con), []
             lines = []
+            prove = []
             for h in hits:
                 lines.append(f"[{h.kind}] {h.text}")
-            return "\n".join(lines)
+                try:
+                    prove.append({"kind": h.kind, "score": round(float(h.score), 4),
+                                  "meta": dict(h.meta or {}), "snippet": h.text[:200]})
+                except Exception:
+                    prove.append({"kind": h.kind, "score": 0.0, "meta": {}, "snippet": h.text[:200]})
+            return "\n".join(lines), prove
         finally:
             if self._own:
                 con.close()
+
+    def recall(self, query, top_k=6, max_bytes=5000):
+        text, _ = self.recall_with_hits(query, top_k=top_k, max_bytes=max_bytes)
+        return text
 
     def _core_text(self, con=None):
         con = con or self._open()

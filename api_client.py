@@ -49,15 +49,16 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
         resp = requests.request(method, url, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
-    if resp.status_code == 429:
+    if resp.status_code in (429, 502, 503):
         try:
-            retry_after = int(resp.headers.get("Retry-After", "8") or "8")
+            retry_after = int(resp.headers.get("Retry-After", "") or 0)
         except Exception:
-            retry_after = 8
+            retry_after = 0
+        wait = retry_after or (8 if resp.status_code == 429 else 5)
         try:
             import time as _time
 
-            _time.sleep(max(1, min(20, retry_after)))
+            _time.sleep(max(1, min(20, wait)))
         except Exception:
             pass
         try:

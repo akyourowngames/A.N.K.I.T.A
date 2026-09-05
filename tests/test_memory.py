@@ -296,6 +296,50 @@ def test_sweep_contradictions_invalidates_older(mem_db, monkeypatch):
     assert mem_db.execute("SELECT invalid_at IS NULL FROM relations WHERE fact='user uses Godot'").fetchone()[0] == 1
 
 
+def test_salience_prompts_are_generic():
+    from memory import extraction
+
+    blob = extraction.SALIENCE_PROMPT + extraction.EXTRACT_PROMPT + extraction.WRITE_DECISION_PROMPT + extraction.SWEEP_PROMPT
+    lowered = blob.lower()
+    for banned in ("krish", "ankit", "godot", "not game", "agent not game"):
+        assert banned not in lowered
+
+
+def test_prefilter_catches_unseen_correction_and_skips_chitchat():
+    from memory.service import prefilter_may_be_memorable
+
+    assert prefilter_may_be_memorable("no wait, Atlas is a mobile app, not a website", "Got it")
+    assert prefilter_may_be_memorable("my name is Sam", "Hi!")
+    assert not prefilter_may_be_memorable("thanks!", "anytime")
+    assert not prefilter_may_be_memorable("haha nice", "glad you liked it")
+
+
+def test_ingest_extracts_unseen_correction_and_skips_chitchat(mem_db, monkeypatch):
+    from memory.service import Memory
+
+    m = Memory(con=mem_db)
+    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: True)
+    monkeypatch.setattr(
+        "memory.service.extraction.extract_graph",
+        lambda u, a, known=None: (
+            [{"name": "Atlas", "type": "project", "description": "A mobile app"}],
+            [{"source": "Atlas", "target": "Atlas", "type": "is", "fact": "Atlas is a mobile app", "confidence": 0.95}],
+        ),
+    )
+    monkeypatch.setattr(
+        "memory.service.extraction.decide_writes",
+        lambda facts, existing: [{"index": 0, "op": "ADD", "target_id": None, "reason": "new"}],
+    )
+    monkeypatch.setattr("memory.service.consolidation.link_notes", lambda con, nid=None: 0)
+
+    r = m.ingest_episode("no wait, Atlas is a mobile app, not a website", "Got it", session_id="s")
+    assert r["extracted"]
+
+    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: (_ for _ in ()).throw(AssertionError("LLM gate must not run after prefilter miss")))
+    r2 = m.ingest_episode("thanks!", "anytime", session_id="s")
+    assert r2["stored"] and not r2.get("extracted") and r2.get("reason") == "prefilter"
+
+
 def test_recency_breaks_ties_toward_newer_fact(mem_db):
     now = db.now()
     e1 = mem_db.execute(

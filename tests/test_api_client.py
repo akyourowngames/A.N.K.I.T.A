@@ -38,6 +38,15 @@ def test_chat_completion_401_raises():
     raise AssertionError("should have raised")
 
 
+def test_chat_completion_503_retries_once():
+    ok = _resp({"model": "m", "choices": [{"message": {"content": "recovered"}}]})
+    bad = _resp({"error": {"message": "try again"}}, status=503)
+    with patch("api_client.requests.request", side_effect=[bad, ok]) as req, patch("time.sleep", return_value=None):
+        r = chat_completion([Message("user", "hi")], "m", api_key="k", base_url="https://x")
+    assert r.content == "recovered"
+    assert req.call_count == 2
+
+
 def test_stream_parses_sse():
     chunks = [
         'data: {"model":"m","choices":[{"delta":{"content":"hel"}}]}',

@@ -148,6 +148,39 @@ def test_agent_loop_max_iterations():
     assert result is not None  # stops without hanging
 
 
+def test_agent_loop_retries_flaky_503_then_finishes(monkeypatch):
+    from api_client import KiloError
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    calls = {"n": 0}
+
+    def flaky(convo, model, tools=None, **kw):
+        calls["n"] += 1
+        if calls["n"] <= 2:
+            raise KiloError("[503] Service temporarily unavailable.", status_code=503)
+        return _final()
+
+    result = run_agent_loop([], "m", flaky, execute_tool=lambda n, a: "never", tools=[])
+    assert result.content == "final answer"
+    assert calls["n"] == 3
+
+
+def test_agent_loop_keeps_progress_when_model_stays_down(monkeypatch):
+    from api_client import KiloError
+
+    monkeypatch.setattr("time.sleep", lambda s: None)
+    raw = {"choices": [{"message": {"content": "", "tool_calls": [_tool_call("s__t", {"a": 1})]}}]}
+
+    def doomed(convo, m, tools=None, **kw):
+        if not convo:
+            return ChatResult(content="", model=m, usage=ChatUsage(), raw=raw)
+        raise KiloError("[503] Service temporarily unavailable.", status_code=503)
+
+    result = run_agent_loop([], "m", doomed, execute_tool=lambda n, a: "res", tools=[])
+    assert result.content and not result.content.startswith("ERROR:")
+    assert "1 tool step" in result.content and "continue" in result.content
+
+
 def test_agent_loop_malformed_args():
     raw = {"choices": [{"message": {"content": "", "tool_calls": [
         {"id": "c1", "type": "function", "function": {"name": "s__t", "arguments": "{not json"}}]}}]}

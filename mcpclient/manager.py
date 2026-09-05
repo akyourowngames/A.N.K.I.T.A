@@ -262,7 +262,7 @@ class MCPManager:
             if st.status == "online":
                 out.extend(mt.mcp_tools_to_openai(st.name, st.tools))
         from mcpclient import builtin
-        out.extend(builtin.BUILTIN_TOOLS)
+        out.extend(builtin.visible_tools())
         return out
 
     def online_count(self) -> int:

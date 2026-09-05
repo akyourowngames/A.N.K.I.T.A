@@ -19,10 +19,20 @@ Rule of thumb — remember things that are:
 - events that could be referenced later
 - things the user asked to remember
 
-ALWAYS remember (even if short, slang, or typo-ridden, even if the assistant reply is trivial like "Noted!"):
-- corrections, contradictions, identity changes ("not X", "actually Y", "wrong", "no", "its agent not game", "I am Krish not Ankit")
-- first-person facts ("my name is", "I am building", "I prefer", "my project") — judge the USER text primarily
-- any statement that could invalidate or update a previously stored fact
+Calibration — memorable (store these):
+- "no wait, Atlas is a mobile app, not a website" / assistant: "Got it" -> true (correction of a stored fact)
+- "actually I moved to Porto last month" -> true (identity/location change)
+- "my name is Sam" / assistant: "Hi!" -> true (first-person identity fact, judge USER text primarily)
+- "I prefer dark mode for everything" -> true (stable preference)
+- "remember that the deploy key expires in June" -> true (explicit remember request)
+
+Calibration — NOT memorable (skip these):
+- "thanks!" / assistant: "anytime" -> false (pure pleasantry, no fact)
+- "haha nice" / assistant: "glad you liked it" -> false (chit-chat)
+- "what time is it" / assistant: "3pm" -> false (one-off lookup, no future reuse)
+
+Bias: when in doubt about a first-person statement ("I ...", "my ..."), lean MEMORABLE.
+A false negative loses the user's identity forever; a false positive only costs tokens.
 
 Do NOT store: transient pleasantries, pure chit-chat without facts, content that is only about the current one-off task and has no future reuse.
 
@@ -40,7 +50,7 @@ Guidelines:
 - Relationships are facts connecting two entities. Include the relationship type (present-tense verb, lowercase), a plain-language fact sentence, and a confidence 0..1.
 - Only include things that remain true later (stable), not one-off ephemeral chat.
 - Prefer specificity over generality. Use the exact names the user used.
-- CORRECTIONS: when the user corrects something ("not a game, its an agent", "I am Krish not Ankit"), emit the POSITIVE authoritative fact ("A.N.K.I.T.A. is an AI agent", "user is Krish"), NOT just a negative ("X is not Y"). Give corrections confidence 0.95+.
+- CORRECTIONS: when the user corrects something ("not a website, it is a mobile app", "I am Sam not Alex"), emit the POSITIVE authoritative fact ("Atlas is a mobile app", "user is Sam"), NOT just a negative ("X is not Y"). Give corrections confidence 0.95+.
 
 EXCHANGE:
 USER: {user}
@@ -64,7 +74,7 @@ For each new relation decide an operation:
 - ADD: genuinely new, no overlap with existing facts.
 - UPDATE: refines, corrects, or supersedes an existing fact (give target_id of that fact).
 - NOOP: already fully covered by an existing fact — skip.
-- INVALIDATE: the new fact CONTRADICTS an existing one and the new fact is authoritative because it comes from the user's latest statement (give target_id). Corrections like "I am actually Krish, not Ankit", "that is not a game, it's an AI agent", "I moved cities" MUST invalidate the outdated fact.
+- INVALIDATE: the new fact CONTRADICTS an existing one and the new fact is authoritative because it comes from the user's latest statement (give target_id). Corrections like "I am actually Sam, not Alex", "that is not a website, it is a mobile app", "I moved cities" MUST invalidate the outdated fact.
 - CONFLICT: cannot tell which is correct; keep both, flag for later.
 
 Be aggressive about invalidation: stale facts that contradict the user's latest statement poison future answers. When a new fact and an old fact cannot both be true, choose UPDATE or INVALIDATE — never ADD both.
@@ -154,7 +164,7 @@ def decide_writes(new_facts: list, existing: list):
     return [res.get(i, {"index": i, "op": "ADD", "target_id": None, "reason": "default add"}) for i in range(len(new_facts))]
 
 
-SWEEP_PROMPT = """Review these ACTIVE facts from a memory graph and find contradictions. Two facts contradict when they cannot both be true at the same time (e.g. "user's name is Ankit" vs "user's name is Krish", "X is a game" vs "X is an AI agent", "lives in Delhi" vs "lives in Mumbai").
+SWEEP_PROMPT = """Review these ACTIVE facts from a memory graph and find contradictions. Two facts contradict when they cannot both be true at the same time (e.g. "user's name is Alex" vs "user's name is Sam", "X is a website" vs "X is a mobile app", "lives in Delhi" vs "lives in Mumbai").
 
 When two facts contradict, the one with the LATER fact id is the more recent statement and is authoritative — invalidate the older one.
 

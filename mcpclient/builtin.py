@@ -48,7 +48,34 @@ BUILTIN_TOOLS = [
           "This is the ONLY source of truth for what is connected — never claim a "
           "server is connected/installed based on search results or memory. Call it "
           "before answering any 'what servers / are you connected' question.", {}, []),
+    _tool("shell_run",
+          "Run an UNRESTRICTED shell command (Windows PowerShell) in a PERSISTENT "
+          "session — cwd, env vars and files carry over between calls, so chain "
+          "state (cd, $env:X=...) instead of re-stating it. No approval needed; "
+          "every command is audit-logged. Prefer one chained command over many "
+          "small ones. Interactive commands (needing stdin) are NOT supported.",
+          {"command": {"type": "string", "description": "PowerShell command to run"},
+           "timeout_s": {"type": "number", "description": "Timeout in seconds (default 60)"},
+           "cwd": {"type": "string", "description": "Working directory (persists for later calls)"},
+           "run_in_background": {"type": "boolean", "description": "Return immediately with a job id; poll via shell_jobs"}}, ["command"]),
+    _tool("shell_jobs", "List background shell jobs started with run_in_background, with status.",
+          {}, []),
+    _tool("shell_kill", "Stop a background shell job by id (see shell_jobs).",
+          {"job_id": {"type": "string"}}, ["job_id"]),
 ]
+
+
+def visible_tools() -> list:
+    """BUILTIN_TOOLS minus shell tools when ZUMBA_NO_SHELL=1."""
+    try:
+        import shelltool
+
+        if shelltool.enabled():
+            return BUILTIN_TOOLS
+    except Exception:
+        pass
+    return [t for t in BUILTIN_TOOLS if not str(t.get("function", {}).get("name", "")).endswith(
+        ("__shell_run", "__shell_jobs", "__shell_kill"))]
 
 # (search results live in mgr.meta_state["last_search"] — per-instance, no globals)
 
@@ -122,6 +149,41 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             return "No MCP servers configured. Use zumba__mcp_search to find one."
         lines = [f"{r['name']}: {r['status']} ({r['transport']}) — {r['tool_count']} tool(s) {r['tools'] or ''}" for r in rows]
         return "\n".join(lines)
+
+    if tool in ("shell_run", "shell_jobs", "shell_kill"):
+        import asyncio as _asyncio
+        import shelltool as _shell
+
+        if not _shell.enabled():
+            return "ERROR: shell tool is disabled (ZUMBA_NO_SHELL=1)."
+        if tool == "shell_jobs":
+            jobs = _shell.get_session().job_list()
+            if not jobs:
+                return "No background shell jobs."
+            lines = []
+            for j in jobs:
+                state = "running" if j["running"] else "done exit=%s" % (j["exit_code"],)
+                lines.append("[%s] %s (%ss) :: %s" % (j["job_id"], state, j["elapsed_s"], j["command"]))
+            return "\n".join(lines)
+        if tool == "shell_kill":
+            job_id = str(args.get("job_id", "") or "").strip()
+            if not job_id:
+                return "ERROR: 'job_id' is required."
+            return _shell.get_session().job_kill(job_id)
+        command = str(args.get("command", "") or "")
+        if not command.strip():
+            return "ERROR: 'command' is required."
+        try:
+            timeout_s = float(args.get("timeout_s") or 0) or 0
+        except Exception:
+            return "ERROR: 'timeout_s' must be a number."
+        res = await _asyncio.to_thread(
+            _shell.run, command,
+            timeout_s=timeout_s, cwd=(str(args.get("cwd") or "") or None),
+            run_in_background=bool(args.get("run_in_background", False)))
+        if res.get("job_id"):
+            return str(res.get("stdout", ""))
+        return _shell.format_result(res, cwd=_shell.get_session().cwd)
 
     return f"ERROR: unknown meta-tool '{tool}'."
 

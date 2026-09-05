@@ -12,6 +12,51 @@ def _tool_calls_from(response: Any) -> list:
     return calls if isinstance(calls, list) else []
 
 
+def _transient(status: Any) -> bool:
+    try:
+        return int(status) in (429, 502, 503)
+    except Exception:
+        return False
+
+
+def _call_with_retry(call_model, convo, model, tools, call_kwargs, retries: int = 2):
+    """Call the model, retrying transient gateway failures (502/503). 429s
+    already honor Retry-After inside api_client — only one agent-level retry
+    there to avoid long stalls."""
+    import time as _time
+
+    last_exc = None
+    attempts = retries + 1
+    for attempt in range(attempts):
+        try:
+            return call_model(convo, model, tools=tools, **call_kwargs)
+        except Exception as exc:
+            status = getattr(exc, "status_code", 0)
+            last_exc = exc
+            if _transient(status) and attempt < retries:
+                _time.sleep(3 * (attempt + 1) if int(status or 0) != 429 else 1)
+                continue
+            raise
+    raise last_exc
+
+
+def _progress_fallback(convo, model, last, exc) -> Any:
+    """Synthesize a reply from completed tool work when the model stays
+    unreachable — the turn ends with progress, not an ERROR panel."""
+    from models import ChatResult as _CR
+
+    names = [getattr(m, "name", "") for m in convo if getattr(m, "role", "") == "tool" and getattr(m, "name", "")]
+    seen = list(dict.fromkeys(names))
+    detail = (": " + ", ".join(seen[-6:])) if seen else ""
+    return _CR(
+        content="Model is temporarily unreachable (%s) after %d tool step(s)%s. "
+        "Tool results are saved in history — say 'continue' and I will pick up from there." % (
+            str(exc)[:160], len(names), detail),
+        model=getattr(last, "model", model) if last is not None else model,
+        raw=getattr(last, "raw", None) if last is not None else None,
+    )
+
+
 def run_agent_loop(
     messages: list,
     model: str,
@@ -37,7 +82,12 @@ def run_agent_loop(
     last = None
     exhausted = False
     for _ in range(max_iterations):
-        last = call_model(convo, model, tools=tools, **call_kwargs)
+        try:
+            last = _call_with_retry(call_model, convo, model, tools, call_kwargs)
+        except Exception as exc:
+            if any(getattr(m, "role", "") == "tool" for m in convo):
+                return _progress_fallback(convo, model, last, exc)
+            raise
         raw_calls = _tool_calls_from(getattr(last, "raw", None) or {})
         if not raw_calls:
             return last
@@ -77,7 +127,7 @@ def run_agent_loop(
         exhausted = True
     if exhausted:
         try:
-            final = call_model(convo, model, tools=None, **call_kwargs)
+            final = _call_with_retry(call_model, convo, model, None, call_kwargs, retries=1)
             if getattr(final, "content", ""):
                 return final
             last = final
