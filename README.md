@@ -44,6 +44,8 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 ## Features (chat + sessions)
 
 - **Long-term memory (the hippocampus)** — every exchange is salience-gated and, when memorable, distilled by the LLM into entities, temporal relations and linked notes stored in an embedded knowledge graph. Recall fuses vector search, full-text (BM25) and Personalized PageRank over the graph, and is injected into your prompts automatically.
+- **MCP tool servers** — Model Context Protocol layer (`mcpclient/`): stdio/HTTP/SSE servers from `~/.zumba/mcp.json`, OpenAI-style tool loop (25 max turns, final summarize so long runs never end in `(empty response)`), tool transcript persisted across turns (last 10), live reload + self-install meta-tools
+- **429 resilience** — gateway client retries once after `Retry-After`; memory consolidation throttled (no full run on start, 30-min interval) so background LLM calls don't self-inflict rate limits
 - **Free-first** — defaults to `kilo-auto/free`; `zumba models` lists all 18+ free models with no API key needed
 - **Interactive chat** — REPL with streaming answers inside bordered panels, slash commands, per-turn autosave
 - **Resume that feels continuous** — `--resume` / `--last` / `/load <#>` reprints previous messages before continuing
@@ -51,7 +53,8 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Persistent preferences** — `/model <id>` saves the global default; system prompt, streaming, and emoji prefs survive restarts
 - **Full-text session search** — FTS5 over all messages (`zumba sessions --search <text>`)
 - **Legacy-cmd safe rendering** — auto-detects conhost vs Windows Terminal/VS Code; strips emojis, folds smart punctuation, repairs old mojibake
-- **34 passing tests** — mocked API, storage, renderer, and memory-graph tests
+- **Graceful shutdown** — Ctrl+C during save/flush or MCP teardown exits cleanly with session saved
+- **69 passing tests** — mocked API, storage, renderer, memory-graph, and MCP agent/manager tests
 
 ## Requirements
 
@@ -73,6 +76,9 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_MODEL`       | Env-level default model (top priority)| `kilo-auto/free`                    |
 | `ZUMBA_NO_EMOJI`    | Force emoji stripping (`1`)          | auto-detect                          |
 | `ZUMBA_FORCE_EMOJI` | Force full unicode (`1`)             | auto-detect                          |
+| `ZUMBA_NO_MCP`      | Disable MCP layer entirely (`1`)     | enabled                              |
+| `ZUMBA_MCP_MAX_ITERATIONS` | Max tool turns per chat turn  | `25`                                 |
+| `ZUMBA_NO_MEMORY`   | Disable long-term memory (`1`)       | enabled                              |
 
 Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `kilo-auto/free`.
 
@@ -195,17 +201,46 @@ erDiagram
 - Legacy `sessions/*.json` files auto-import once on first run
 - Preferences live in the `config` table: `default_model`, `default_system`, `streaming`, `last_session`
 
+## MCP — plug in any tool server
+
+ZUMBA speaks the [Model Context Protocol](https://modelcontextprotocol.io). Register any MCP server (stdio subprocess, streamable HTTP or SSE) and ZUMBA connects to it, exposes its tools to the model, and runs a full agent loop: the model asks for a tool → ZUMBA executes it over MCP → the result goes back to the model → repeat until the final answer.
+
+```powershell
+python main.py mcp list                              # connected servers + live status
+python main.py mcp add fs -- npx -y @modelcontextprotocol/server-filesystem C:/Users/anime
+python main.py mcp add remote --url https://mcp.example.com/mcp
+python main.py mcp remove fs
+python main.py mcp tools                             # every tool, namespaced server__tool
+python main.py mcp call demo__add -a '{"a": 2, "b": 3}'   # call any tool directly, no LLM
+```
+
+Servers live in `~/.zumba/mcp.json` (Claude-Desktop compatible format — copy configs straight over) with project-level overrides in `.mcp.json` (see `mcp.json.example`). In chat: `/mcp` shows server status, `/tools` lists all tools, and when a server is online every turn automatically runs the agent loop. `ZUMBA_NO_MCP=1` disables the layer; a crashing/offline server degrades gracefully exactly like memory. A working example server is bundled: `zumba mcp add demo -- python tests/mcp_echo_server.py`.
+
+### Live reload & self-installation
+
+Changes apply **in the current session — no restart**:
+- `python main.py mcp reload` (or `/mcp reload` in chat) hot-reloads the registry: new servers connect, removed ones shut down, changed ones reconnect.
+- Editing `~/.zumba/mcp.json` while chatting is picked up automatically on the next message.
+- ZUMBA can **manage itself**: the model gets built-in meta-tools (`zumba__mcp_search`, `zumba__mcp_add`, `zumba__mcp_remove`, `zumba__mcp_list`) backed by the official MCP registry. Just ask *"find and install an MCP server for GitHub"* and ZUMBA searches the registry, installs, connects, and uses it — all mid-session.
+
+
 ## Project structure
 
 ```text
 zumba/
-├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / doctor
-├── api_client.py    # Gateway client: list_models, chat_completion, SSE streaming
+├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / mcp / doctor
+├── api_client.py    # Gateway client: list_models, chat_completion (+tools), SSE streaming
 ├── chat.py          # Conversation state, save/load, token estimates
 ├── store.py         # SQLite sessions + FTS search + config prefs
 ├── config.py        # Env + saved + default resolution
 ├── output.py        # Theme, tables/panels, emoji + mojibake sanitizer
-├── models.py        # Message / ModelInfo / ChatResult dataclasses
+├── models.py        # Message (incl. tool_calls) / ModelInfo / ChatResult dataclasses
+├── mcpclient/       # MCP layer (pluggable tool servers)
+│   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)
+│   ├── manager.py       # Async connection manager: stdio / HTTP / SSE, health, reconnect
+│   ├── tools.py         # MCP <-> OpenAI tool schema adapters, server__tool namespacing
+│   ├── agent.py         # Agentic tool-use loop (model -> MCP -> model)
+│   └── ...
 ├── memory/          # Long-term memory (temporal knowledge graph)
 │   ├── db.py            # Schema: episodes, entities, relations, notes, vec, FTS
 │   ├── embedder.py      # Local ONNX embeddings (fastembed bge-small)
@@ -245,4 +280,4 @@ python -m pytest tests -q
 | `401` | Invalid key — regenerate at kilo.ai |
 | `402` | Out of credits — free models (`:free`) don't bill |
 | Boxes/garbled text in cmd | Expected — safe mode is on; use Windows Terminal or `zumba doctor` |
-| Empty assistant reply | Transient provider hiccup — retry or `/model kilo-auto/free` |
+| Empty assistant reply after tools | Fixed — agent summarizes after 25 tool turns; if it still happens, say `continue` or set `ZUMBA_MCP_MAX_ITERATIONS=40` |

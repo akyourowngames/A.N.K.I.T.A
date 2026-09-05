@@ -16,6 +16,14 @@ from rich.panel import Panel
 from rich.table import Table
 
 from api_client import KiloError, chat_completion, list_models, list_providers, stream_chat_completion
+from mcpclient.config import add_server as mcp_add_server
+from mcpclient.config import remove_server as mcp_remove_server
+from mcpclient.config import get_server as mcp_get_server
+from mcpclient.config import list_servers as mcp_list_servers
+from mcpclient.manager import manager as mcp_manager, run_tool as mcp_run_tool
+from mcpclient.manager import reload_sync as mcp_reload_sync, reload_if_stale_sync as mcp_reload_if_stale
+import mcpclient.tools as mcp_tools_mod
+from mcpclient import defaults as mcp_defaults
 from chat import Conversation
 from config import (
     CACHE_DIR,
@@ -60,6 +68,84 @@ console: Console = make_console(_allow_emoji())
 BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  Kilo Gateway[/]"
 
 _MEM = None
+_MCP_DISABLE = os.getenv("ZUMBA_NO_MCP", "") == "1"
+
+
+def _mcp():
+    """Lazily-initialized MCP manager; None if disabled. Never crashes chat.
+    Set ZUMBA_NO_MCP=1 to disable entirely."""
+    if _MCP_DISABLE:
+        return None
+    try:
+        return mcp_manager()
+    except Exception:
+        return None
+
+
+def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
+    """Inject a tool description preamble as a system message before the last
+    user turn (like memory recall) for models without native function calling.
+    The behavioral note is generated from defaults and can be overridden via
+    the ZUMBA_MCP_SYSTEM_NOTE env var or the `mcp_system_note` config pref."""
+    preamble = mcp_tools_mod.system_preamble(tools)
+    if not preamble or not msgs:
+        return msgs
+    note = db_config_get("mcp_system_note", "") or mcp_defaults.SYSTEM_NOTE
+    sys_msg = Message(role="system", content=(
+        "Connected MCP tools (call them via the function/tool-call mechanism; "
+        "names are prefixed by their server):\n" + preamble +
+        "\n" + note.replace("{meta}", mcp_defaults.META_SERVER)
+    ))
+    return msgs[:-1] + [sys_msg, msgs[-1]]
+
+
+def _mcp_agent_turn(msgs: list[Message], model: str, key: str, max_tokens, temperature, allow_emoji: bool) -> tuple:
+    """Run the MCP agent loop for one chat turn. Returns (reply, tools used, transcript)."""
+    from mcpclient.agent import run_agent_loop
+    mgr = mcp_manager()
+    tools = mgr.all_tools()
+    convo = _mcp_preamble(list(msgs), tools) if tools else list(msgs)
+    used = {"n": 0}
+    transcript: list = []
+
+    def on_tool(name, args, result):
+        used["n"] += 1
+        shown = result[:400] + ("..." if len(result) > 400 else "")
+        args_s = json.dumps(args, ensure_ascii=False)[:200]
+        console.print(f"[dim]  tool › [cyan]{safe_text(name, allow_emoji)}[/]({safe_text(args_s, allow_emoji)})[/]")
+        console.print(Panel(safe_text(shown, allow_emoji), title=f"TOOL  ·  {safe_text(name, allow_emoji)}",
+                            title_align="left", border_style="magenta", box=table_box(allow_emoji), padding=(0, 2)))
+
+    result = run_agent_loop(
+        convo, model,
+        call_model=lambda ms, m, tools, **kw: chat_completion(
+            ms, m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
+        execute_tool=lambda name, args: mcp_run_tool(name, args),
+        tools=tools,
+        on_tool=on_tool,
+        transcript_out=transcript,
+        max_iterations=mcp_defaults.MAX_ITERATIONS,
+    )
+    reply = result.content or ""
+    if not reply.strip() and used["n"]:
+        reply = result.content = "Did %d tool step(s) but the model gave no summary. Say 'continue' and I will carry on from the last tool result." % used["n"]
+    usage = getattr(result, "usage", None)
+    tokens = f"{usage.prompt_tokens} IN / {usage.completion_tokens} OUT" if usage and usage.total_tokens else ""
+    _print_assistant(reply, getattr(result, "model", "") or model, allow_emoji, tokens)
+    return normalize_text(reply, allow_emoji), used["n"], transcript
+
+
+def _remember_tool_transcript(conv, transcript: list, keep: int = 10) -> None:
+    """Persist tool exchanges into conversation history so follow-up turns see
+    prior tool results. Caps retained tool context to the latest `keep` entries."""
+    try:
+        for m in transcript or []:
+            conv.messages.append(m)
+        related = [m for m in conv.messages if m.role == "tool" or (m.role == "assistant" and m.tool_calls)]
+        while len(related) > keep:
+            conv.messages.remove(related.pop(0))
+    except Exception:
+        pass
 
 
 def _memory():
@@ -81,12 +167,12 @@ def _memory():
     return _MEM or None
 
 
-def _mem_capture(mem, session_id: str, user_text: str, reply: str) -> None:
+def _mem_capture(mem, session_id: str, user_text: str, reply: str, kind: str = "chat") -> None:
     """Queue the exchange for background ingestion (serialized worker thread),
     then opportunistically consolidate (decay, note links, contradictions,
     communities, core blocks). Never blocks or crashes the chat loop."""
     try:
-        mem.capture_async(user_text, reply, session_id=session_id)
+        mem.capture_async(user_text, reply, session_id=session_id, kind=kind)
     except Exception:
         pass
 
@@ -586,9 +672,11 @@ def chat_cmd(
     zumba_label = "ZUMBA"
     console.print(_header())
     console.print(section_rule("SESSION"))
+    mcp_header = _mcp()
+    mcp_note = f"   {meta_line('MCP', f'{mcp_header.online_count()} online')}" if mcp_header is not None and mcp_header.servers else ""
     console.print(
         f"{meta_line('Model', chosen)}   {meta_line('Streaming', 'ON' if streaming else 'OFF')}   "
-        f"{meta_line('Emoji', 'ON' if allow_emoji else 'OFF')}   {meta_line('Session', session_id[:12])}"
+        f"{meta_line('Emoji', 'ON' if allow_emoji else 'OFF')}   {meta_line('Session', session_id[:12])}{mcp_note}"
     )
     console.print("[dim]Commands: /help  ·  /models  ·  /model <id> (saved)  ·  /sessions  ·  /load <#>  ·  /new  ·  /exit[/]")
     if not allow_emoji:
@@ -615,6 +703,8 @@ def chat_cmd(
         table.add_row("/remember <text>", "Store a fact in long-term memory")
         table.add_row("/memory <query>", "Search long-term memory")
         table.add_row("/forget <name>", "Invalidate facts about an entity")
+        table.add_row("/mcp", "Show connected MCP servers + status")
+        table.add_row("/tools", "List all tools from connected MCP servers")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -700,6 +790,21 @@ def chat_cmd(
         if user_text == "/tokens":
             console.print(f"[dim]Tokens ~{conv.estimate_tokens()}  ·  {len(conv.messages)} messages[/]")
             continue
+        if user_text == "/mcp":
+            _mcp_status_table(allow_emoji)
+            continue
+        if user_text == "/mcp reload":
+            summary = mcp_reload_sync()
+            console.print(section_rule(f"MCP RELOADED LIVE  ·  {json.dumps(summary)}"))
+            _mcp_status_table(allow_emoji)
+            continue
+        if user_text.startswith("/mcp add ") or user_text.startswith("/mcp remove "):
+            _mcp_chat_manage(user_text[6:], allow_emoji)
+            _mcp_status_table(allow_emoji)
+            continue
+        if user_text == "/tools" or user_text.startswith("/tools "):
+            _mcp_tools_table(allow_emoji)
+            continue
         if user_text == "/models":
             try:
                 free = [m for m in _fetch_models() if m.is_free][:15]
@@ -772,7 +877,22 @@ def chat_cmd(
             console.print(f"[dim]memory: {recall_text.count(chr(10)) + 1} recall line(s) injected[/]")
         try:
             reply_text = ""
-            if streaming:
+            reply_kind = "chat"
+            mcp_mgr = _mcp()
+            if mcp_mgr is not None:
+                reloaded = mcp_reload_if_stale(mcp_mgr)  # pick up mcp.json edits live
+                if reloaded is not None:
+                    console.print("[dim]mcp: config changed on disk — reloaded live[/]")
+            mcp_active = mcp_mgr is not None  # built-in meta-tools always available
+            if mcp_active:
+                console.print(section_rule(f"{zumba_label}  ·  {chosen}  ·  MCP ({mcp_mgr.online_count()} server(s) online)"))
+                full, tools_used, tool_transcript = _mcp_agent_turn(msgs, chosen, key, max_tokens, temperature, allow_emoji)
+                _remember_tool_transcript(conv, tool_transcript)
+                conv.add_assistant(full)
+                db_add_message(session_id, "assistant", full)
+                reply_text = full
+                reply_kind = "tool" if tools_used else "chat"
+            elif streaming:
                 console.print(section_rule(f"{zumba_label}  ·  {chosen}"))
                 full = _stream_into_console(msgs, chosen, max_tokens, temperature, allow_emoji)
                 conv.add_assistant(full)
@@ -789,7 +909,7 @@ def chat_cmd(
                 _print_assistant(result.content, result.model or chosen, allow_emoji, tokens)
                 reply_text = text
             if mem is not None and reply_text:
-                threading.Thread(target=_mem_capture, args=(mem, session_id, user_text, reply_text), daemon=True).start()
+                threading.Thread(target=_mem_capture, args=(mem, session_id, user_text, reply_text, reply_kind), daemon=True).start()
         except KiloError as exc:
             try:
                 conv.messages.pop()
@@ -806,9 +926,168 @@ def chat_cmd(
             with console.status("[cyan]Saving memories...[/]", spinner="dots"):
                 mem.flush(timeout=60.0)
         db_set_last(session_id)
+        from mcpclient.manager import shutdown as mcp_shutdown
+        try:
+            mcp_shutdown()
+        except BaseException:
+            pass
         console.print(section_rule(f"SAVED  ·  SESSION {session_id[:12]}  ·  RESUME WITH: zumba chat --resume {session_id[:12]}"))
-    except Exception as exc:
+    except (Exception, KeyboardInterrupt) as exc:
         console.print(error_panel(f"Could not save session: {exc}", allow_emoji=allow_emoji))
+
+
+def _mcp_chat_manage(args: str, allow_emoji: bool) -> None:
+    """Handle '/mcp add ...' and '/mcp remove ...' live, in-session."""
+    args = args.strip()
+    try:
+        if args.startswith("add "):
+            rest = args[4:].strip()
+            if "--url " in rest:
+                name, url = rest.split("--url", 1)
+                mcp_add_server(name.strip(), {"transport": "http", "url": url.strip()})
+            elif "--" in rest:
+                name, cmd = rest.split("--", 1)
+                parts = cmd.strip().split()
+                if not parts:
+                    raise ValueError("empty command")
+                mcp_add_server(name.strip(), {"command": parts[0], "args": parts[1:]})
+            else:
+                raise ValueError("use: /mcp add <name> -- <command...>  or  /mcp add <name> --url <url>")
+        elif args.startswith("remove "):
+            if not mcp_remove_server(args[7:].strip()):
+                raise ValueError("server not found in home registry")
+        else:
+            raise ValueError("unsupported")
+        summary = mcp_reload_sync()
+        console.print(section_rule(f"MCP UPDATED LIVE  ·  {json.dumps(summary)}  ·  no restart needed"))
+    except (ValueError, KeyError) as exc:
+        console.print(error_panel(f"mcp: {exc}", allow_emoji=allow_emoji))
+
+
+def _mcp_status_table(allow_emoji: bool) -> None:
+    mgr = _mcp()
+    rows = mgr.status_rows() if mgr is not None else []
+    if not rows:
+        console.print(info_panel(
+            "No MCP servers configured.\nAdd servers to ~/.zumba/mcp.json (Claude-Desktop format) or:\n"
+            "  zumba mcp add <name> -- <command> [args...]\n"
+            "  zumba mcp add <name> --url https://mcp.example.com/mcp",
+            title="MCP", allow_emoji=allow_emoji))
+        return
+    dot = {"online": "[green]●", "offline": "[red]●", "disabled": "[dim]○", "pending": "[yellow]●"}
+    table = styled_table("MCP SERVERS", allow_emoji)
+    table.add_column("", width=2)
+    table.add_column("SERVER", style="cyan", no_wrap=True)
+    table.add_column("TRANSPORT", style="dim")
+    table.add_column("TOOLS", justify="right")
+    table.add_column("STATUS")
+    for r in rows:
+        status = f"{dot.get(r['status'], '[red]●')} {r['status']}[/]" + (f"  [dim]{safe_text(r['error'], allow_emoji)[:60]}[/]" if r["error"] else "")
+        table.add_row("", r["name"], r["transport"], str(r["tool_count"]), status)
+    console.print(table)
+
+
+def _mcp_tools_table(allow_emoji: bool) -> None:
+    mgr = _mcp()
+    if mgr is None:
+        console.print(info_panel("MCP disabled (ZUMBA_NO_MCP=1).", title="MCP TOOLS", allow_emoji=allow_emoji))
+        return
+    tools = mgr.all_tools()
+    if not tools:
+        console.print(info_panel("No tools available (no online servers or no tools).", title="MCP TOOLS", allow_emoji=allow_emoji))
+        return
+    table = styled_table(f"MCP TOOLS  ·  {len(tools)}", allow_emoji)
+    table.add_column("QUALIFIED NAME", style="cyan", no_wrap=False)
+    table.add_column("DESCRIPTION", style="dim")
+    for t in tools:
+        fn = t.get("function", {})
+        desc = " ".join(str(fn.get("description", "")).split())[:90]
+        table.add_row(fn.get("name", "?"), safe_text(desc, allow_emoji))
+    console.print(table)
+
+
+mcp_app = typer.Typer(help="MCP servers: list / add / remove / tools / call.")
+app.add_typer(mcp_app, name="mcp")
+
+
+@mcp_app.command("list")
+def mcp_list_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _mcp_status_table(allow_emoji)
+    home = mcp_list_servers()
+    proj_file = Path(__file__).resolve().parent / ".mcp.json"
+    console.print(f"[dim]Home registry: {Path.home() / '.zumba' / 'mcp.json'}  ·  Project overrides: {proj_file}[/]") if not home else None
+
+
+@mcp_app.command("add")
+def mcp_add_cmd(
+    name: str = typer.Argument(..., help="Server name (used as tool prefix, e.g. fs)."),
+    command: list[str] = typer.Argument(None, help="Stdio command + args after --"),
+    url: str = typer.Option("", "--url", help="Remote server URL (transport http)."),
+    transport: str = typer.Option("", "--transport", help="http, sse or stdio (default auto)."),
+    enabled: bool = typer.Option(True, "--disabled/--enabled"),
+) -> None:
+    try:
+        if url:
+            mcp_add_server(name, {"transport": transport or "http", "url": url, "enabled": enabled})
+        elif command:
+            mcp_add_server(name, {"command": command[0], "args": list(command[1:]), "enabled": enabled})
+        else:
+            _fail("Provide a command after -- or --url for a remote server.")
+            return
+    except ValueError as exc:
+        _fail(str(exc))
+        return
+    console.print(section_rule(f"MCP SERVER ADDED  ·  {name}"))
+    console.print(f"[dim]Restart zumba (or use /mcp in chat) to connect. Registry: {Path.home() / '.zumba' / 'mcp.json'}[/]")
+
+
+@mcp_app.command("remove")
+def mcp_remove_cmd(name: str = typer.Argument(...)) -> None:
+    if mcp_remove_server(name):
+        console.print(section_rule(f"MCP SERVER REMOVED  ·  {name}"))
+    else:
+        _fail(f"Server '{name}' not found in home registry.")
+
+
+@mcp_app.command("tools")
+def mcp_tools_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _mcp_tools_table(allow_emoji)
+
+
+@mcp_app.command("reload")
+def mcp_reload_cmd() -> None:
+    """Hot-reload servers from mcp.json without restarting."""
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    summary = mcp_reload_sync()
+    console.print(Panel(json.dumps(summary, indent=2), title="MCP RELOADED LIVE",
+                        title_align="left", border_style="green", box=table_box(allow_emoji), padding=(0, 2)))
+    _mcp_status_table(allow_emoji)
+
+
+@mcp_app.command("call")
+def mcp_call_cmd(
+    tool: str = typer.Argument(..., help="Qualified tool name: server__tool."),
+    args: str = typer.Option("{}", "--args", "-a", help="JSON object of arguments."),
+    timeout: Optional[float] = typer.Option(None, "--timeout", help="Seconds (default from ZUMBA_MCP_TOOL_TIMEOUT or 60)."),
+) -> None:
+    try:
+        arguments = json.loads(args) if args.strip() else {}
+        if not isinstance(arguments, dict):
+            raise ValueError("--args must be a JSON object")
+    except ValueError as exc:
+        _fail(f"Invalid --args: {exc}")
+        return
+    with console.status(f"[cyan]Calling {tool}...[/]", spinner="dots"):
+        result = mcp_run_tool(tool, arguments, timeout=timeout)
+    allow_emoji = _allow_emoji()
+    border = "red" if result.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(result, allow_emoji), title=f"RESULT  ·  {tool}",
+                        title_align="left", border_style=border, box=table_box(allow_emoji), padding=(1, 2)))
 
 
 memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")
@@ -949,6 +1228,7 @@ def root(ctx: typer.Context) -> None:
         table.add_row("zumba sessions", "List / search / show saved chats")
         table.add_row("zumba config", "Show or set default model + preferences")
         table.add_row("zumba memory", "Long-term memory: stats / search / add / forget / consolidate")
+        table.add_row("zumba mcp", "MCP servers: list / add / remove / tools / call")
         table.add_row("zumba doctor", "Terminal + rendering diagnostics")
         table.add_row("zumba version", "Show version")
         console.print(table)

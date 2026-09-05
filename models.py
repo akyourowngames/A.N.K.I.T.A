@@ -6,13 +6,29 @@ from typing import Any, Optional
 class Message:
     role: str
     content: str
+    tool_calls: Optional[list] = None
+    tool_call_id: str = ""
+    name: str = ""
 
     def to_dict(self) -> dict:
-        return {"role": self.role, "content": self.content}
+        d: dict = {"role": self.role, "content": self.content}
+        if self.tool_calls:
+            d["tool_calls"] = self.tool_calls
+        if self.tool_call_id:
+            d["tool_call_id"] = self.tool_call_id
+        if self.name and self.role == "tool":
+            d["name"] = self.name
+        return d
 
     @staticmethod
     def from_dict(data: dict) -> "Message":
-        return Message(role=str(data.get("role", "user")), content=str(data.get("content", "")))
+        return Message(
+            role=str(data.get("role", "user")),
+            content=str(data.get("content", "")),
+            tool_calls=data.get("tool_calls"),
+            tool_call_id=str(data.get("tool_call_id", "") or ""),
+            name=str(data.get("name", "") or ""),
+        )
 
 
 @dataclass

@@ -39,7 +39,7 @@ class Memory:
     def __init__(self, con=None):
         self._own = con is None
         self._con = con
-        self.consolidated_at = 0.0
+        self.consolidated_at = time.time()
         self._q: queue.Queue = queue.Queue()
         self._worker: threading.Thread | None = None
         self._worker_lock = threading.Lock()
@@ -131,6 +131,8 @@ class Memory:
             episode_id = cur.lastrowid
             self._index_episode(con, episode_id, user_text, assistant_text)
 
+            if kind == "tool":
+                return {"stored": True, "extracted": False, "episode": episode_id, "reason": "tool-turn"}
             memorable = extraction.should_remember(user_text, assistant_text)
             if not memorable and not _looks_like_correction(user_text, assistant_text) and not _looks_like_fact(user_text, assistant_text):
                 return {"stored": True, "extracted": False, "episode": episode_id}

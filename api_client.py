@@ -49,6 +49,21 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
         resp = requests.request(method, url, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
         raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
+    if resp.status_code == 429:
+        try:
+            retry_after = int(resp.headers.get("Retry-After", "8") or "8")
+        except Exception:
+            retry_after = 8
+        try:
+            import time as _time
+
+            _time.sleep(max(1, min(20, retry_after)))
+        except Exception:
+            pass
+        try:
+            resp = requests.request(method, url, headers=headers, json=payload, timeout=timeout)
+        except requests.RequestException as exc:
+            raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
     if resp.status_code >= 400:
         try:
             data = resp.json()
@@ -89,12 +104,15 @@ def _chat_payload(
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     stream: bool = False,
+    tools: Optional[list] = None,
 ) -> dict:
     payload: dict = {
         "model": model,
         "messages": [m.to_dict() for m in messages],
         "stream": stream,
     }
+    if tools:
+        payload["tools"] = tools
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
     if temperature is not None:
@@ -110,10 +128,11 @@ def chat_completion(
     max_tokens: Optional[int] = None,
     temperature: Optional[float] = None,
     timeout: int = 120,
+    tools: Optional[list] = None,
 ) -> ChatResult:
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
-    payload = _chat_payload(messages, model, max_tokens, temperature, stream=False)
+    payload = _chat_payload(messages, model, max_tokens, temperature, stream=False, tools=tools)
     data = _request_json(
         "POST",
         f"{base}/chat/completions",
