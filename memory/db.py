@@ -232,6 +232,57 @@ CREATE TABLE IF NOT EXISTS eval_runs (
     per_category TEXT NOT NULL DEFAULT '{}',
     details TEXT NOT NULL DEFAULT '[]'
 );
+
+-- TIER 3: proactive goal system (goals + steps + reminders + research).
+CREATE TABLE IF NOT EXISTS goals (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    status TEXT NOT NULL DEFAULT 'active',
+    priority INTEGER NOT NULL DEFAULT 3,
+    deadline REAL,
+    progress REAL NOT NULL DEFAULT 0.0,
+    source TEXT NOT NULL DEFAULT 'user',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL,
+    completed_at REAL,
+    details TEXT NOT NULL DEFAULT '{}'
+);
+CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status);
+CREATE TABLE IF NOT EXISTS goal_steps (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+    step_order INTEGER NOT NULL,
+    title TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'todo',
+    due_at REAL,
+    done_at REAL,
+    notes TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    updated_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_steps_goal ON goal_steps(goal_id, step_order);
+CREATE TABLE IF NOT EXISTS reminders (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER REFERENCES goals(id) ON DELETE CASCADE,
+    step_id INTEGER REFERENCES goal_steps(id) ON DELETE CASCADE,
+    fire_at REAL NOT NULL,
+    message TEXT NOT NULL,
+    channel TEXT NOT NULL DEFAULT 'chat',
+    status TEXT NOT NULL DEFAULT 'pending',
+    fired_at REAL,
+    snooze_until REAL,
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_reminders_fire ON reminders(status, fire_at);
+CREATE TABLE IF NOT EXISTS goal_research (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    goal_id INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+    query TEXT NOT NULL,
+    findings TEXT NOT NULL DEFAULT '',
+    sources TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL
+);
 """
 
 
@@ -251,6 +302,7 @@ def connect() -> sqlite3.Connection:
     with _lock:
         con.executescript(_SCHEMA.replace("{EMBED_DIM}", str(EMBED_DIM)))
         _migrate_tier2(con)
+        _migrate_tier3(con)
     return con
 
 
@@ -279,6 +331,61 @@ def ensure_tier2(con: sqlite3.Connection) -> None:
     with _lock:
         con.executescript(_SCHEMA.replace("{EMBED_DIM}", str(EMBED_DIM)))
         _migrate_tier2(con)
+        _migrate_tier3(con)
+
+
+def _migrate_tier3(con: sqlite3.Connection) -> None:
+    try:
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS goals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL,
+                description TEXT NOT NULL DEFAULT '', status TEXT NOT NULL DEFAULT 'active',
+                priority INTEGER NOT NULL DEFAULT 3, deadline REAL,
+                progress REAL NOT NULL DEFAULT 0.0, source TEXT NOT NULL DEFAULT 'user',
+                created_at REAL NOT NULL, updated_at REAL NOT NULL, completed_at REAL,
+                details TEXT NOT NULL DEFAULT '{}')"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS goal_steps (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+                step_order INTEGER NOT NULL, title TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'todo', due_at REAL, done_at REAL,
+                notes TEXT NOT NULL DEFAULT '', created_at REAL NOT NULL, updated_at REAL NOT NULL)"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS reminders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER REFERENCES goals(id) ON DELETE CASCADE,
+                step_id INTEGER REFERENCES goal_steps(id) ON DELETE CASCADE,
+                fire_at REAL NOT NULL, message TEXT NOT NULL,
+                channel TEXT NOT NULL DEFAULT 'chat', status TEXT NOT NULL DEFAULT 'pending',
+                fired_at REAL, snooze_until REAL, created_at REAL NOT NULL)"""
+        )
+        con.execute(
+            """CREATE TABLE IF NOT EXISTS goal_research (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                goal_id INTEGER NOT NULL REFERENCES goals(id) ON DELETE CASCADE,
+                query TEXT NOT NULL, findings TEXT NOT NULL DEFAULT '',
+                sources TEXT NOT NULL DEFAULT '[]', created_at REAL NOT NULL)"""
+        )
+        con.execute("CREATE INDEX IF NOT EXISTS idx_goals_status ON goals(status)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_steps_goal ON goal_steps(goal_id, step_order)")
+        con.execute("CREATE INDEX IF NOT EXISTS idx_reminders_fire ON reminders(status, fire_at)")
+        cols = _columns(con, "goals")
+        if "completed_at" not in cols:
+            con.execute("ALTER TABLE goals ADD COLUMN completed_at REAL")
+        if "details" not in cols:
+            con.execute("ALTER TABLE goals ADD COLUMN details TEXT NOT NULL DEFAULT '{}'")
+    except Exception:
+        pass
+
+
+def ensure_tier3(con: sqlite3.Connection) -> None:
+    with _lock:
+        con.executescript(_SCHEMA.replace("{EMBED_DIM}", str(EMBED_DIM)))
+        _migrate_tier2(con)
+        _migrate_tier3(con)
 
 
 def set_meta(con: sqlite3.Connection, key: str, value: str) -> None:

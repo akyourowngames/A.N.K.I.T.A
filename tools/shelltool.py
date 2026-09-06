@@ -142,7 +142,7 @@ def max_output() -> int:
 
 def _audit_log_path() -> str:
     try:
-        from store import zumba_home
+        from core.store import zumba_home
 
         return str(zumba_home() / "shell_audit.log")
     except Exception:
@@ -313,7 +313,8 @@ class ShellSession:
             assert self._proc is not None
             if cwd:
                 try:
-                    self._send(f"Set-Location -LiteralPath '{cwd}'")
+                    safe = str(cwd).replace("'", "''")
+                    self._send(f"Set-Location -LiteralPath '{safe}'")
                     self.cwd = cwd
                 except Exception:
                     pass

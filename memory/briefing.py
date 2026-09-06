@@ -56,6 +56,38 @@ def date_lines(con, limit: int = 8) -> list[str]:
         return []
 
 
+def goals_digest(con, limit: int = 3) -> str:
+    try:
+        from . import goals as _g
+        act = _g.active_goals(con, limit=10)
+        if not act:
+            return ""
+        import datetime as _dt
+        lines = []
+        for g in act[:limit]:
+            try:
+                ns = _g.next_step(con, g["id"])
+                nxt = f" → next: {ns['title'][:100]}" if ns else ""
+                flag = ""
+                if g.get("deadline") and float(g["deadline"]) < time.time():
+                    flag = " OVERDUE"
+                elif g.get("deadline"):
+                    try:
+                        dd = _dt.datetime.fromtimestamp(float(g["deadline"])).strftime("%m-%d")
+                        flag = f" (due {dd})"
+                    except Exception:
+                        pass
+                lines.append(f"- #{g['id']} {g['title'][:120]} [{int(float(g.get('progress') or 0)*100)}%]{flag}{nxt}")
+            except Exception:
+                continue
+        od = _g.overdue(con)
+        if od:
+            lines.append(f"! {len(od)} overdue goal(s) — lead with these.")
+        return "GOALS:\n" + "\n".join(lines)
+    except Exception:
+        return ""
+
+
 def compose_daily(con, use_llm: bool = True) -> str:
     from . import reflection as _ref, mood as _mood
     followups = _ref.open_follow_ups(con, limit=10)
@@ -64,6 +96,9 @@ def compose_daily(con, use_llm: bool = True) -> str:
     mood_ctx = _mood.mood_context(con)
     dates = date_lines(con)
     parts = []
+    gd = goals_digest(con)
+    if gd:
+        parts.append(gd)
     if followups:
         parts.append("OPEN FOLLOW-UPS:\n" + "\n".join(f"- {f['text'][:200]}" for f in followups))
     else:
@@ -103,7 +138,7 @@ def compose_daily(con, use_llm: bool = True) -> str:
 
 def install_reminder(task_name: str = "ZumbaDaily", time_hhmm: str = "08:00") -> dict:
     try:
-        import shelltool
+        from tools import shelltool
         if not shelltool.enabled():
             return {"ok": False, "reason": "shell disabled"}
         hh, mm = (time_hhmm.split(":") + ["00"])[:2]

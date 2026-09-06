@@ -1,6 +1,6 @@
 import pathlib
 import pytest
-import store
+from core import store
 
 
 @pytest.fixture

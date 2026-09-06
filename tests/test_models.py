@@ -1,4 +1,4 @@
-from models import Message, ModelInfo
+from core.models import Message, ModelInfo
 
 
 def test_message_roundtrip():

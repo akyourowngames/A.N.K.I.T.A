@@ -5,7 +5,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from shelltool import translate_to_powershell
+from tools.shelltool import translate_to_powershell
 
 
 def test_ls_la_becomes_force_not_broken_flag():
@@ -34,7 +34,7 @@ def test_powershell_passthrough():
 
 
 def test_run_ls_la_actually_works():
-    import shelltool
+    from tools import shelltool
     res = shelltool.run("ls -la", timeout_s=20)
     assert res.get("exit_code") == 0, res
     assert "ERROR" not in (res.get("stdout") or "")[:6] or "exit=0" in shelltool.format_result(res)

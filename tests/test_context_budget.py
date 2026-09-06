@@ -5,8 +5,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from models import Message
-import context_budget as cb
+from core.models import Message
+import core.context_budget as cb
 
 
 def _user(i: int) -> Message:

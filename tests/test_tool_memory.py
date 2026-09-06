@@ -9,8 +9,8 @@ import pytest
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import main
-import store
-from models import Message
+from core import store
+from core.models import Message
 
 
 @pytest.fixture

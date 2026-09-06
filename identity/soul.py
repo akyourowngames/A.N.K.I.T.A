@@ -31,7 +31,7 @@ BOOTSTRAP_QUESTIONS = [
 
 def _home() -> Path:
     try:
-        from store import zumba_home
+        from core.store import zumba_home
         return zumba_home()
     except Exception:
         h = Path.home() / ".zumba"
@@ -86,7 +86,7 @@ def parse_frontmatter(text: str) -> tuple[dict, str]:
 
 def _shell_write(path: Path, content: str) -> None:
     try:
-        import shelltool
+        from tools import shelltool
         if shelltool.enabled():
             shelltool.run(f"New-Item -ItemType Directory -Force -Path {str(path.parent)!r} | Out-Null")
     except Exception:

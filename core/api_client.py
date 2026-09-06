@@ -3,8 +3,8 @@ from typing import Any, Generator, Iterable, Optional
 
 import requests
 
-from config import get_api_key, get_base_url
-from models import ChatResult, ChatUsage, Message, ModelInfo
+from core.config import get_api_key, get_base_url
+from core.models import ChatResult, ChatUsage, Message, ModelInfo
 
 
 class KiloError(RuntimeError):

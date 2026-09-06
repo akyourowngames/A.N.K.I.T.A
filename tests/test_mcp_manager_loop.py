@@ -6,7 +6,7 @@ import pytest
 
 from mcpclient.manager import MCPManager
 from mcpclient.agent import run_agent_loop
-from models import ChatResult, ChatUsage
+from core.models import ChatResult, ChatUsage
 
 
 class FakeTool:
@@ -149,7 +149,7 @@ def test_agent_loop_max_iterations():
 
 
 def test_agent_loop_retries_flaky_503_then_finishes(monkeypatch):
-    from api_client import KiloError
+    from core.api_client import KiloError
 
     monkeypatch.setattr("time.sleep", lambda s: None)
     calls = {"n": 0}
@@ -166,7 +166,7 @@ def test_agent_loop_retries_flaky_503_then_finishes(monkeypatch):
 
 
 def test_agent_loop_keeps_progress_when_model_stays_down(monkeypatch):
-    from api_client import KiloError
+    from core.api_client import KiloError
 
     monkeypatch.setattr("time.sleep", lambda s: None)
     raw = {"choices": [{"message": {"content": "", "tool_calls": [_tool_call("s__t", {"a": 1})]}}]}

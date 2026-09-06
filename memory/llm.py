@@ -16,8 +16,8 @@ import os
 import threading
 from typing import Optional
 
-from api_client import KiloError, chat_completion
-from models import Message
+from core.api_client import KiloError, chat_completion
+from core.models import Message
 
 _lock = threading.Lock()
 _client_negotiator = None
@@ -25,7 +25,7 @@ _client_negotiator = None
 
 def _api_available() -> bool:
     try:
-        from config import get_api_key
+        from core.config import get_api_key
 
         get_api_key(require=True)
         return True
@@ -37,7 +37,7 @@ def _memory_model() -> str:
     if os.getenv("ZUMBA_MEMORY_MODEL", "").strip():
         return os.getenv("ZUMBA_MEMORY_MODEL", "").strip()
     try:
-        from config import get_default_model
+        from core.config import get_default_model
 
         m = (get_default_model() or "").strip()
         if m:

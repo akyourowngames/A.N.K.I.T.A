@@ -59,7 +59,7 @@ def propose_voice_update(con=None, prefs: list | None = None) -> str:
     if not lines:
         return ""
     try:
-        import soul as _soul
+        from identity import soul as _soul
         cur = _soul.load()
         voice_add = "Style preferences learned from corrections:\n" + "\n".join(lines)
         if cur and voice_add.splitlines()[1] in cur:

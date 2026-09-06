@@ -5,16 +5,16 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import soul
+from core import store
+from identity import soul
 
 
 def _isolate(tmp_path, monkeypatch):
     home = tmp_path / "zhome"
     home.mkdir()
     monkeypatch.setenv("ZUMBA_HOME", str(home))
-    import store
     monkeypatch.setattr(store, "zumba_home", lambda: home)
-    monkeypatch.setattr("soul._home", lambda: home)
+    monkeypatch.setattr(soul, "_home", lambda: home)
     return home
 
 
@@ -32,8 +32,8 @@ def test_injection_ordering_with_memory_block(tmp_path, monkeypatch):
     _isolate(tmp_path, monkeypatch)
     monkeypatch.setattr("memory.llm.chat_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")))
     soul.bootstrap_flow({"sound": "warm", "keep": "x", "off_limits": "y"})
-    import persona
-    monkeypatch.setattr("store.config_get", lambda k, d="": d)
+    from identity import persona
+    monkeypatch.setattr(store, "config_get", lambda k, d="": d)
     out = persona.build_system("base")
     soul_idx = out.find("soul.md")
     assert soul_idx != -1 and soul_idx < out.find("You are Zumba")

@@ -65,20 +65,87 @@ BUILTIN_TOOLS = [
           {}, []),
     _tool("shell_kill", "Stop a background shell job by id (see shell_jobs).",
           {"job_id": {"type": "string"}}, ["job_id"]),
+    _tool("web_search",
+          "Realtime web search (zero-API-key: DuckDuckGo + Wikipedia + HN). Use for ANY time-sensitive, "
+          "current-events, or 'latest' question instead of guessing. Returns [i] title — source / snippet / URL. "
+          "Call web_fetch on the top URL for depth.",
+          {"query": {"type": "string", "description": "Search query"},
+           "backend": {"type": "string", "description": "auto (default), web, wikipedia, hn, reddit"},
+           "when": {"type": "string", "description": "Freshness: 1h, 1d, 7d, 30d, 1y (empty = any time)"},
+           "limit": {"type": "integer", "description": "Max results (default 8)"}}, ["query"]),
+    _tool("web_news",
+          "Realtime news via Google News RSS (zero-API-key). Use for 'what happened today / latest news' questions. "
+          "Supports query operators (when:1d, site:, after:, before:).",
+          {"query": {"type": "string", "description": "News query"},
+           "when": {"type": "string", "description": "Recency window, default 1d"},
+           "limit": {"type": "integer", "description": "Max items (default 8)"}}, ["query"]),
+    _tool("web_fetch",
+          "Download a URL and extract readable text (zero-API-key page reader, Jina fallback). "
+          "Use after web_search/web_news to read the best result in full.",
+          {"url": {"type": "string", "description": "http(s) URL to read"},
+           "max_chars": {"type": "integer", "description": "Max chars (default 8000)"}}, ["url"]),
+    _tool("vault_search",
+          "Search the local document vault (user files: contracts, leases, emails, PDFs). "
+          "Use for 'what does my doc say / find the email / summarize the contract' questions. "
+          "Returns ranked hits with exact quotes and [Title p.N] citations.",
+          {"query": {"type": "string", "description": "Question about the documents"},
+           "doc_filter": {"type": "string", "description": "Optional title substring to restrict to one doc"},
+           "k": {"type": "integer", "description": "Max hits (default 6)"}}, ["query"]),
+    _tool("vault_doc",
+          "Show a vault document's outline + summary (drill-in before reading).",
+          {"doc": {"type": "string", "description": "Doc id or title substring"}}, ["doc"]),
+    _tool("vault_read",
+          "Read one full vault section ('turn the page').",
+          {"doc": {"type": "string", "description": "Doc id or title substring"},
+           "section": {"type": "string", "description": "Section heading substring"}}, ["doc", "section"]),
+    _tool("goal_add",
+          "Create a proactive goal (auto-decomposed into steps with micro-deadlines). "
+          "Use when the user states an intent like 'I want to pass IELTS by December'.",
+          {"title": {"type": "string", "description": "Goal title"},
+           "deadline": {"type": "string", "description": "Deadline YYYY-MM-DD (optional)"},
+           "priority": {"type": "integer", "description": "1 (critical) to 5 (whenever), default 3"}}, ["title"]),
+    _tool("goal_complete_step",
+          "Mark a goal step done by step id (see goal_show for ids). Progress recomputes.",
+          {"step_id": {"type": "integer", "description": "goal_steps id"}}, ["step_id"]),
+    _tool("goal_show",
+          "Show a goal: steps, research, reminders, timeline.",
+          {"goal_id": {"type": "integer", "description": "Goal id"}}, ["goal_id"]),
+    _tool("remind_add",
+          "Schedule a reminder in natural time ('tomorrow 9am', 'in 3 days', 'friday 5pm').",
+          {"message": {"type": "string", "description": "Reminder text"},
+           "when": {"type": "string", "description": "Natural time expression"},
+           "goal_id": {"type": "integer", "description": "Optional goal id to attach"}}, ["message", "when"]),
 ]
 
 
 def visible_tools() -> list:
-    """BUILTIN_TOOLS minus shell tools when ZUMBA_NO_SHELL=1."""
+    """BUILTIN_TOOLS minus shell tools when ZUMBA_NO_SHELL=1, minus web tools when ZUMBA_NO_WEB=1."""
+    tools = list(BUILTIN_TOOLS)
     try:
-        import shelltool
+        from tools import shelltool
 
-        if shelltool.enabled():
-            return BUILTIN_TOOLS
+        if not shelltool.enabled():
+            raise RuntimeError("shell disabled")
     except Exception:
-        pass
-    return [t for t in BUILTIN_TOOLS if not str(t.get("function", {}).get("name", "")).endswith(
-        ("__shell_run", "__shell_jobs", "__shell_kill"))]
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__shell_run", "__shell_jobs", "__shell_kill"))]
+    try:
+        from tools import websearch as _web
+
+        if not _web.enabled():
+            raise RuntimeError("web disabled")
+    except Exception:
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__web_search", "__web_news", "__web_fetch"))]
+    try:
+        from vault import service as _vault
+
+        if not _vault.enabled():
+            raise RuntimeError("vault disabled")
+    except Exception:
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__vault_search", "__vault_doc", "__vault_read"))]
+    return tools
 
 # (search results live in mgr.meta_state["last_search"] — per-instance, no globals)
 
@@ -155,7 +222,7 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
 
     if tool in ("shell_run", "shell_jobs", "shell_kill"):
         import asyncio as _asyncio
-        import shelltool as _shell
+        from tools import shelltool as _shell
 
         if not _shell.enabled():
             return "ERROR: shell tool is disabled (ZUMBA_NO_SHELL=1)."
@@ -187,6 +254,167 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
         if res.get("job_id"):
             return str(res.get("stdout", ""))
         return _shell.format_result(res, cwd=_shell.get_session().cwd)
+
+    if tool in ("web_search", "web_news", "web_fetch"):
+        import asyncio as _asyncio2
+        from tools import websearch as _web
+
+        if not _web.enabled():
+            return "ERROR: web tools are disabled (ZUMBA_NO_WEB=1)."
+        if tool == "web_search":
+            query = str(args.get("query", "") or "").strip()
+            if not query:
+                return "ERROR: 'query' is required."
+            try:
+                limit = int(args.get("limit", 8) or 8)
+            except Exception:
+                return "ERROR: 'limit' must be a number."
+            res, note = await _asyncio2.to_thread(
+                _web.search, query, str(args.get("backend", "auto") or "auto"),
+                str(args.get("when", "") or ""), limit)
+            return _web.format_search(res, note)
+        if tool == "web_news":
+            query = str(args.get("query", "") or "").strip()
+            if not query:
+                return "ERROR: 'query' is required."
+            try:
+                limit = int(args.get("limit", 8) or 8)
+            except Exception:
+                return "ERROR: 'limit' must be a number."
+            res, note = await _asyncio2.to_thread(
+                _web.news, query, str(args.get("when", "1d") or "1d"), limit)
+            return _web.format_news(res, note)
+        url = str(args.get("url", "") or "").strip()
+        if not url:
+            return "ERROR: 'url' is required."
+        try:
+            mc = int(args.get("max_chars", 0) or 0)
+        except Exception:
+            return "ERROR: 'max_chars' must be a number."
+        text, err = await _asyncio2.to_thread(_web.fetch, url, mc)
+        return text if text else (err or "ERROR: fetch failed.")
+
+    if tool in ("vault_search", "vault_doc", "vault_read"):
+        import asyncio as _asyncio3
+        from vault import service as _vault
+
+        if not _vault.enabled():
+            return "ERROR: vault is disabled (ZUMBA_NO_VAULT=1)."
+        v = _vault.get_vault()
+        if tool == "vault_search":
+            query = str(args.get("query", "") or "").strip()
+            if not query:
+                return "ERROR: 'query' is required."
+            try:
+                k = int(args.get("k", 6) or 6)
+            except Exception:
+                return "ERROR: 'k' must be a number."
+            hits = await _asyncio3.to_thread(v.find, query, k, str(args.get("doc_filter", "") or ""))
+            if not hits:
+                return "ERROR: nothing in the vault answers that yet."
+            lines = []
+            for i, h in enumerate(hits, 1):
+                m = h.get("meta", {})
+                lines.append(f"[{i}] {m.get('citation', m.get('doc', ''))} :: {(h.get('text', '') or '')[:600]}")
+            return "\n".join(lines)
+        if tool == "vault_doc":
+            doc = str(args.get("doc", "") or "").strip()
+            if not doc:
+                return "ERROR: 'doc' is required."
+            return await _asyncio3.to_thread(v.doc, doc)
+        doc = str(args.get("doc", "") or "").strip()
+        section = str(args.get("section", "") or "").strip()
+        if not doc or not section:
+            return "ERROR: 'doc' and 'section' are required."
+        return await _asyncio3.to_thread(v.read_section, doc, section)
+
+    if tool in ("goal_add", "goal_complete_step", "goal_show", "remind_add"):
+        import asyncio as _asyncio4
+        from memory import db as _mdb
+        from memory import goals as _goals
+        from memory import reminders as _rem
+
+        def _open():
+            con = _mdb.connect()
+            _mdb.ensure_tier3(con)
+            return con
+
+        if tool == "goal_add":
+            title = str(args.get("title", "") or "").strip()
+            if not title:
+                return "ERROR: 'title' is required."
+            dl = 0.0
+            if str(args.get("deadline", "") or "").strip():
+                try:
+                    import datetime as _dt
+                    dl = _dt.datetime.strptime(str(args["deadline"]).strip()[:10], "%Y-%m-%d").timestamp()
+                except Exception:
+                    return "ERROR: 'deadline' must be YYYY-MM-DD."
+            try:
+                pri = int(args.get("priority", 3) or 3)
+            except Exception:
+                return "ERROR: 'priority' must be a number 1-5."
+            con = _open()
+            try:
+                r = await _asyncio4.to_thread(_goals.create_goal, con, title, "", dl or None, pri)
+                if not r.get("created"):
+                    return f"ERROR: {r.get('reason', 'not created')}."
+                return await _asyncio4.to_thread(_goals.render_show, con, r["id"])
+            finally:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+        if tool == "goal_complete_step":
+            try:
+                sid = int(args.get("step_id", 0) or 0)
+            except Exception:
+                return "ERROR: 'step_id' must be a number."
+            con = _open()
+            try:
+                r = await _asyncio4.to_thread(_goals.complete_step, con, sid)
+                if not r.get("done"):
+                    return f"ERROR: {r.get('reason', 'not done')}."
+                return f"Step done. Goal #{r.get('goal_id')} now {int(r.get('progress', 0)*100)}%."
+            finally:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+        if tool == "goal_show":
+            try:
+                gid = int(args.get("goal_id", 0) or 0)
+            except Exception:
+                return "ERROR: 'goal_id' must be a number."
+            con = _open()
+            try:
+                return await _asyncio4.to_thread(_goals.render_show, con, gid)
+            finally:
+                try:
+                    con.close()
+                except Exception:
+                    pass
+        message = str(args.get("message", "") or "").strip()
+        when = str(args.get("when", "") or "").strip()
+        if not message or not when:
+            return "ERROR: 'message' and 'when' are required."
+        try:
+            gid = int(args.get("goal_id", 0) or 0) or None
+        except Exception:
+            gid = None
+        con = _open()
+        try:
+            r = await _asyncio4.to_thread(_rem.schedule, con, message, when, gid)
+            if not r.get("scheduled"):
+                return f"ERROR: {r.get('reason', 'not scheduled')}."
+            import datetime as _dt
+            ft = _dt.datetime.fromtimestamp(float(r["fire_at"])).strftime("%m-%d %H:%M")
+            return f"Reminder #{r['id']} set for {ft}: {message[:150]}"
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
 
     return f"ERROR: unknown meta-tool '{tool}'."
 

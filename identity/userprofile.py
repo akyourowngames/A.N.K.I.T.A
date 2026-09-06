@@ -18,7 +18,7 @@ SECTIONS = ("Identity", "Projects", "People", "Preferences", "Goals", "Current f
 
 def load_profile_text(max_chars: int = PROFILE_CAP) -> str:
     try:
-        import soul as _soul
+        from identity import soul as _soul
         text = _soul.load_user()
     except Exception:
         text = ""
@@ -78,7 +78,7 @@ def rewrite_user_md(con, use_llm: bool = True) -> str:
     from memory import db as _db
     _db.ensure_tier2(con)
     try:
-        import soul as _soul
+        from identity import soul as _soul
         current = _soul.load_user() or "(empty)"
     except Exception:
         current = "(empty)"
@@ -106,7 +106,7 @@ def rewrite_user_md(con, use_llm: bool = True) -> str:
             if out and "## " in out:
                 capped = out.strip()[:PROFILE_CAP]
                 try:
-                    import soul as _soul
+                    from identity import soul as _soul
                     _soul.user_path().write_text(capped, encoding="utf-8")
                 except Exception:
                     pass

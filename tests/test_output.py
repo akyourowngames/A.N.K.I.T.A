@@ -1,4 +1,4 @@
-from output import emoji_supported, is_modern_terminal, normalize_text, remove_emoji_only, strip_emoji
+from core.output import emoji_supported, is_modern_terminal, normalize_text, remove_emoji_only, strip_emoji
 import os
 
 

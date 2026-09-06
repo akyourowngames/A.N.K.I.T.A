@@ -3,7 +3,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from models import Message
+from core.models import Message
 
 
 class Conversation:

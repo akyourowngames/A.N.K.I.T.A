@@ -57,7 +57,7 @@ def test_mood_scoring_and_chart(tmp_path, monkeypatch):
 
 def test_user_facts_and_profile_prepend(tmp_path, monkeypatch):
     con = _con(tmp_path, monkeypatch)
-    import userprofile as _up
+    from identity import userprofile as _up
     _up.upsert_fact(con, "likes", "Sam likes Rust", 0.8)
     con.commit()
     assert any(f["key"] == "likes" for f in _up.get_facts(con))
@@ -66,8 +66,8 @@ def test_user_facts_and_profile_prepend(tmp_path, monkeypatch):
     home = tmp_path / "zup"
     home.mkdir()
     monkeypatch.setenv("ZUMBA_HOME", str(home))
-    monkeypatch.setattr("soul._home", lambda: home)
-    import soul
+    from identity import soul
+    monkeypatch.setattr(soul, "_home", lambda: home)
     monkeypatch.setattr("memory.llm.chat_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")))
     soul.bootstrap_flow({"sound": "terse", "keep": "Sam likes Rust"})
     assert "Sam likes Rust" in _up.profile_block()
@@ -87,8 +87,8 @@ def test_preferences_detect_and_propose(tmp_path, monkeypatch):
     home = tmp_path / "zpref"
     home.mkdir()
     monkeypatch.setenv("ZUMBA_HOME", str(home))
-    monkeypatch.setattr("soul._home", lambda: home)
-    import soul
+    from identity import soul
+    monkeypatch.setattr(soul, "_home", lambda: home)
     monkeypatch.setattr("memory.llm.chat_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")))
     soul.bootstrap_flow({"sound": "terse"})
     now = db.now()

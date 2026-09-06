@@ -23,6 +23,18 @@ Runs opportunistically in the background (or via `zumba memory consolidate`): ex
 ### CLI
 
 ```powershell
+python main.py web search "..."        # realtime web (DDG + Wiki + HN, zero-key)
+python main.py web news "..." --when 1d  # realtime Google News RSS
+python main.py web fetch <url>         # readable page text (Jina fallback)
+python main.py vault add ./docs        # ingest files/folders into the Vault
+python main.py vault ask "what does my lease say about pets?"  # cited answer
+python main.py vault find "client approval"  # raw hits, no LLM
+python main.py vault status            # docs/chunks/index health
+python main.py goal add "Pass IELTS 7.5" --deadline 2026-12-01 --priority 1  # auto-decomposed + researched
+python main.py goal list               # progress bars + next step
+python main.py goal step 1.0 done      # check off → progress recomputes
+python main.py goal remind "stretch" --at "friday 5pm" --every daily
+python main.py goal tick               # one proactive pass (deadline/stall/research/win)
 python main.py memory stats            # graph counts + db location
 python main.py memory search "..."     # hybrid recall (vector + BM25 + PPR v2)
 python main.py memory add "..."        # store a fact through the full pipeline
@@ -48,6 +60,10 @@ python main.py mood                    # 30-day valence chart
 | `/soul show\|diff\|accept\|reject\|edit\|init\|wingit` | Identity file lifecycle |
 | `/me`           | Show your user profile                   |
 | `/brief`        | Daily briefing from memory               |
+| `/search <q>`   | Realtime web search (zero-key)           |
+| `/news <q>`     | Realtime news (Google News RSS)          |
+| `/fetch <url>`  | Read a web page as text                  |
+| `/vault ask\|find\|add\|status\|doc` | Local document vault      |
 
 Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrades gracefully — chat never breaks because of it.
 
@@ -68,7 +84,10 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Context window manager** — every model call fits `ZUMBA_CONTEXT_LIMIT` (default 8192): system + anchor + recent turns kept, middle overflow becomes one cached rolling summary, stale tool transcripts truncated
 - **Persona + provenance** — identity voice with editable `style` prefs (`zumba config --set-style`); `/why` explains the last turn's memory recall with kinds and scores
 - **Soul + living memory (Tier 2)** — `~/.zumba/soul.md` is self-authored on first run (3 questions, skippable via `/soul wingit`; `user.md` companion holds your profile and is always injected); session-end reflection writes decisions/follow-ups/importance/mood in one LLM pass; retrieval is HippoRAG-2 passages-in-graph with importance + temporal filters (`as_of`, time ranges) and A-Mem note evolution; `zumba daily` briefs from follow-ups + on-this-day resurfaces; style corrections (`shorter`, `no tables`) fold into soul Voice via propose/accept; `zumba memory eval` keeps the regression net green
-- **140+ passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, and retrieval-v2 suites
+- **Web search (zero-key)** — `zumba__web_search/web_news/web_fetch` model tools (DDG + Google News RSS + Wikipedia + HN + Reddit + readable fetch with Jina fallback); CLI `zumba web search|news|fetch`, in-chat `/search|/news|/fetch`; TTL cache, CAPTCHA fallback, `ZUMBA_NO_WEB=1` kill-switch
+- **The Vault (local document RAG)** — drop files into `~/.zumba/vault/` (`zumba vault add <path>`, `watch`, `status`, `ask`, `find`, `doc`, `forget`, `reindex`); structure-aware chunking, hybrid vector+BM25+RRF, small-to-big parent sections, RAPTOR-lite summaries, local rerank, citations `[Title p.N]`; always-on `[VAULT CONTEXT]` recall hook + `zumba__vault_search/doc/read` tools + `/vault` chat commands; `ZUMBA_NO_VAULT=1` kill-switch
+- **Proactive goals (Tier 3)** — `goal add` auto-decomposes via LLM into steps with staggered micro-deadlines; natural-time reminders (`friday 5pm`, `in 3 days`, daily/weekly recur, snooze, desktop toast); background worker fires reminders + deadline/stall nudges + pre-deadline web research + win/fail detection (rate-limited, `config --set-proactive off`); goals lead the daily brief, sit in recall context, and are creatable by the agent (`goal_add`, `remind_add` tools) and chat (`/goal`, `/remind`)
+- **160+ passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, vault, and goals/reminders suites
 
 ## Requirements
 
@@ -255,8 +274,8 @@ In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumb
 
 ## Context, persona, provenance
 
-- Every model call is fit to `ZUMBA_CONTEXT_LIMIT` (default 8192) by `context_budget.py`: system prompts, the first user message (session anchor), and recent turns are always kept; dropped middle turns become one cached rolling summary (rebuilt after ≥6 newly dropped turns); stale tool transcripts truncate to 200 chars.
-- `persona.py` composes soul.md (self-authored identity, 4k cap) + user.md profile + editable style prefs (`zumba config --set-style "..."`); `--system` still overrides everything. Ordering: soul → user → identity → style → base.
+- Every model call is fit to `ZUMBA_CONTEXT_LIMIT` (default 8192) by `core/context_budget.py`: system prompts, the first user message (session anchor), and recent turns are always kept; dropped middle turns become one cached rolling summary (rebuilt after ≥6 newly dropped turns); stale tool transcripts truncate to 200 chars.
+- `identity/persona.py` composes soul.md (self-authored identity, 4k cap) + user.md profile + editable style prefs (`zumba config --set-style "..."`); `--system` still overrides everything. Ordering: soul → user → identity → style → base.
 - `/why` shows the last turn's exact memory injection: recall query, hit kinds, scores, and source ids. `/why off|on` toggles capture (default on, zero extra cost).
 
 ## Soul, user model, eval, daily
@@ -272,18 +291,26 @@ In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumb
 
 ```text
 zumba/
-├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / mcp / shell / doctor
-├── api_client.py    # Gateway client: list_models, chat_completion (+tools), SSE streaming
-├── chat.py          # Conversation state, save/load, token estimates
-├── store.py         # SQLite sessions + FTS search + config prefs
-├── config.py        # Env + saved + default resolution
-├── output.py        # Theme, tables/panels, emoji + mojibake sanitizer
-├── models.py        # Message (incl. tool_calls) / ModelInfo / ChatResult dataclasses
-├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
-├── context_budget.py # Token estimator + fit-to-budget window + rolling summary
-├── persona.py       # Soul + user profile + identity voice + style prefs
-├── soul.py          # soul.md / user.md bootstrap, loader, propose/accept, 4k cap
-├── userprofile.py   # user_facts table + user.md rewrite + always-inject profile block
+├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / web / vault / mcp / shell / doctor
+├── core/            # App foundation: config, models, store, output, chat, api_client, context_budget
+├── identity/        # Who Zumba is + who you are: persona, soul, userprofile
+├── tools/           # God-mode local tools: shelltool, websearch
+├── vault/           # Local document RAG (parsers, chunker, ingest, retrieve, rerank, summaries)
+├── core/            #   (files)
+│   ├── api_client.py    # Gateway client: list_models, chat_completion (+tools), SSE streaming
+│   ├── chat.py          # Conversation state, save/load, token estimates
+│   ├── store.py         # SQLite sessions + FTS search + config prefs
+│   ├── config.py        # Env + saved + default resolution
+│   ├── output.py        # Theme, tables/panels, emoji + mojibake sanitizer
+│   ├── models.py        # Message (incl. tool_calls) / ModelInfo / ChatResult dataclasses
+│   └── context_budget.py # Token estimator + fit-to-budget window + rolling summary
+├── identity/        #   (files)
+│   ├── persona.py       # Soul + user profile + identity voice + style prefs
+│   ├── soul.py          # soul.md / user.md bootstrap, loader, propose/accept, 4k cap
+│   └── userprofile.py   # user_facts table + user.md rewrite + always-inject profile block
+├── tools/           #   (files)
+│   ├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
+│   └── websearch.py     # Zero-key web engine: DDG + GNews RSS + Wiki + HN + Reddit + fetch + cache
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)
 │   ├── manager.py       # Async connection manager: stdio / HTTP / SSE, health, reconnect
@@ -307,7 +334,7 @@ zumba/
 │   ├── people.py        # Relationship view
 │   └── service.py       # Memory orchestrator
 ├── sessions/        # Legacy JSON sessions (auto-migrated, git-ignored)
-├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona, soul, eval, reflection, retrieval-v2)
+├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona, soul, eval, reflection, retrieval-v2, goals)
 ├── requirements.txt
 └── .env.example
 ```

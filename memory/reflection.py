@@ -110,6 +110,35 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
             n_dec += 1
         except Exception:
             continue
+    import re as _re
+    _GOAL_RX = (
+        _re.compile(r"\bi want to\b", _re.I),
+        _re.compile(r"\bmy goal is\b", _re.I),
+        _re.compile(r"\bi (need|have|must) to\b.{0,60}\bby\b", _re.I),
+        _re.compile(r"\bby\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|monday|next|\d)", _re.I),
+    )
+    _GOAL_DIRECT_RX = (
+        _re.compile(r"\bi want to\b.{0,80}\bby\b", _re.I),
+        _re.compile(r"\bmy goal is\b", _re.I),
+        _re.compile(r"\bi (need|have|must) to\b.{0,60}\bby\b", _re.I),
+    )
+    n_goal = 0
+
+    def _promote(title: str) -> None:
+        nonlocal n_goal
+        title = (title or "").strip()[:200]
+        if not title:
+            return
+        try:
+            from . import goals as _goals
+            dup = [g for g in _goals.list_goals(con, "active")
+                   if g.get("title", "").strip().lower() == title.lower()]
+            if dup:
+                return
+            _goals.create_goal(con, title, source="extracted", auto_plan=True, use_llm=False)
+            n_goal += 1
+        except Exception:
+            pass
     for f in reflection.get("follow_ups") or []:
         try:
             t = f if isinstance(f, str) else str(f.get("text") or f)
@@ -120,6 +149,18 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
                 (t[:800], now, session_id),
             )
             n_fup += 1
+            try:
+                if any(rx.search(t) for rx in _GOAL_RX):
+                    _promote(t)
+            except Exception:
+                pass
+        except Exception:
+            continue
+    for e in exchanges or []:
+        try:
+            u = str(e.get("user") or e.get("user_text") or "")
+            if u.strip() and any(rx.search(u) for rx in _GOAL_DIRECT_RX):
+                _promote(u)
         except Exception:
             continue
     imp_list = reflection.get("importance") or []
@@ -145,7 +186,7 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
         con.commit()
     except Exception:
         pass
-    return {"decisions": n_dec, "follow_ups": n_fup, "importance_set": n_imp}
+    return {"decisions": n_dec, "follow_ups": n_fup, "importance_set": n_imp, "goals_proposed": n_goal}
 
 
 def reflect_session(con, exchanges: list[dict], session_id: str = "", use_llm: bool = True) -> dict:

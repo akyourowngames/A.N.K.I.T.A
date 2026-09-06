@@ -1,5 +1,5 @@
 import os
-from config import get_api_key, get_base_url, get_default_model
+from core.config import get_api_key, get_base_url, get_default_model
 
 
 def test_base_url_default():

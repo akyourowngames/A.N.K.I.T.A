@@ -7,8 +7,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-import shelltool
-from shelltool import ShellSession
+from tools import shelltool
+from tools.shelltool import ShellSession
 
 
 def _fresh() -> ShellSession:

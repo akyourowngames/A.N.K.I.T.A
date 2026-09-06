@@ -6,7 +6,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from output import APP_VERSION, app_header, assistant_panel, emoji_supported, error_panel, info_panel, make_console, meta_line, normalize_text, remove_emoji_only, safe_text, section_rule, setup_windows_console, strip_emoji, styled_table, table_box, terminal_report
+from core.output import APP_VERSION, app_header, assistant_panel, emoji_supported, error_panel, info_panel, make_console, meta_line, normalize_text, remove_emoji_only, safe_text, section_rule, setup_windows_console, strip_emoji, styled_table, table_box, terminal_report
 
 setup_windows_console()
 
@@ -15,7 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from api_client import KiloError, chat_completion, list_models, list_providers, stream_chat_completion
+from core.api_client import KiloError, chat_completion, list_models, list_providers, stream_chat_completion
 from mcpclient.config import add_server as mcp_add_server
 from mcpclient.config import remove_server as mcp_remove_server
 from mcpclient.config import get_server as mcp_get_server
@@ -24,8 +24,8 @@ from mcpclient.manager import manager as mcp_manager, run_tool as mcp_run_tool
 from mcpclient.manager import reload_sync as mcp_reload_sync, reload_if_stale_sync as mcp_reload_if_stale
 import mcpclient.tools as mcp_tools_mod
 from mcpclient import defaults as mcp_defaults
-from chat import Conversation
-from config import (
+from core.chat import Conversation
+from core.config import (
     CACHE_DIR,
     MODELS_CACHE_FILE,
     MODELS_CACHE_TTL,
@@ -35,20 +35,20 @@ from config import (
     get_sessions_dir,
     set_default_model,
 )
-from store import add_message as db_add_message
-from store import config_all as db_config_all
-from store import config_get as db_config_get
-from store import config_set as db_config_set
-from store import create_session as db_create_session
-from store import delete_session as db_delete_session
-from store import get_session as db_get_session
-from store import last_session_id as db_last_session
-from store import list_sessions as db_list_sessions
-from store import migrate_legacy_dir as db_migrate_legacy
-from store import new_session_id as db_new_session_id
-from store import set_last_session as db_set_last
-from store import set_session_model as db_set_session_model
-from models import Message, ModelInfo
+from core.store import add_message as db_add_message
+from core.store import config_all as db_config_all
+from core.store import config_get as db_config_get
+from core.store import config_set as db_config_set
+from core.store import create_session as db_create_session
+from core.store import delete_session as db_delete_session
+from core.store import get_session as db_get_session
+from core.store import last_session_id as db_last_session
+from core.store import list_sessions as db_list_sessions
+from core.store import migrate_legacy_dir as db_migrate_legacy
+from core.store import new_session_id as db_new_session_id
+from core.store import set_last_session as db_set_last
+from core.store import set_session_model as db_set_session_model
+from core.models import Message, ModelInfo
 
 app = typer.Typer(add_completion=False, rich_markup_mode="rich")
 
@@ -103,7 +103,7 @@ def _window_cache_for(msgs: list[Message]) -> dict:
 
 def _fit_window(msgs: list[Message]) -> list[Message]:
     try:
-        from context_budget import build_window, get_context_limit
+        from core.context_budget import build_window, get_context_limit
 
         return build_window(msgs, model_limit=get_context_limit(), cache=_window_cache_for(msgs))
     except Exception:
@@ -142,7 +142,15 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "ALWAYS use PowerShell syntax: Get-ChildItem (never `ls -la`), Get-Content (never `cat`), "
         "Get-Location (never `pwd`), Select-String (never `grep`). Bash flags like -la/-rf do not exist. "
         "Soul files live at ~/.zumba/soul.md and ~/.zumba/user.md — read them with "
-        "Get-Content when the user asks what was drafted, never guess; never run `ls -la`."
+        "Get-Content when the user asks what was drafted, never guess; never run `ls -la`. "
+        "Web: zumba__web_search / zumba__web_news / zumba__web_fetch are your realtime internet — "
+        "use them for anything time-sensitive instead of guessing; web_fetch the top result for depth. "
+        "Vault: zumba__vault_search / zumba__vault_doc / zumba__vault_read answer from the user's local "
+        "documents — use them for 'what does my doc say / find the email' questions. Every document claim "
+        "MUST cite [Doc Title p.N]. "
+        "Goals: zumba__goal_add / zumba__goal_show / zumba__goal_complete_step / zumba__remind_add track "
+        "the user's stated intentions — create a goal when they say 'I want to ... by <date>' instead of "
+        "letting it fade; complete steps as they report progress."
     ))
     return msgs[:-1] + [sys_msg, msgs[-1]]
 
@@ -270,7 +278,7 @@ def _mem_capture(mem, session_id: str, user_text: str, reply: str, kind: str = "
 
 def _soul_onboarding(allow_emoji: bool) -> None:
     try:
-        import soul as _soul
+        from identity import soul as _soul
         if not _soul.needs_bootstrap():
             return
         console.print(info_panel(
@@ -286,7 +294,7 @@ def _soul_onboarding(allow_emoji: bool) -> None:
 
 
 def _soul_chat_cmd(arg: str, allow_emoji: bool) -> bool:
-    import soul as _soul
+    from identity import soul as _soul
     cmd = (arg or "").strip()
     if cmd in ("", "show"):
         text = _soul.load() or "(no soul.md yet — /soul wingit to draft one)"
@@ -457,7 +465,7 @@ def _print_assistant(text: str, model: str = "", allow_emoji: bool = True, token
 
 
 def _stream_into_console(messages: list[Message], model: str, max_tokens: Optional[int], temperature: Optional[float], allow_emoji: bool = True) -> str:
-    from output import is_modern_terminal
+    from core.output import is_modern_terminal
     full = ""
     title = f"[bold white]ASSISTANT[/][dim]{'  ·  ' + model if model else ''}[/]"
     box_style = table_box(allow_emoji)
@@ -747,6 +755,7 @@ def config_cmd(
     set_system: str = typer.Option("", "--set-system", help="Persist default system prompt."),
     set_style: str = typer.Option("", "--set-style", help="Persist persona style prefs (tone)."),
     set_streaming: str = typer.Option("", "--set-streaming", help="on/off default for chat streaming."),
+    set_proactive: str = typer.Option("", "--set-proactive", help="Proactive nudges: off, or minutes between nudges (default 30)."),
     clear: bool = typer.Option(False, "--clear", help="Clear saved preferences."),
 ) -> None:
     allow_emoji = _allow_emoji()
@@ -767,7 +776,18 @@ def config_cmd(
         db_config_set("style", set_style.strip())
     if set_streaming:
         db_config_set("streaming", "off" if set_streaming.strip().lower() in ("off", "0", "false", "no") else "on")
-    if set_model or set_system or set_style or set_streaming:
+    if set_proactive:
+        pv = set_proactive.strip().lower()
+        if pv in ("off", "0", "false", "no", "disable", "disabled"):
+            db_config_set("proactive", "off")
+        else:
+            try:
+                db_config_set("proactive", "on")
+                db_config_set("proactive_minutes", str(max(1, min(120, int(pv)))))
+            except Exception:
+                _fail("--set-proactive must be 'off' or minutes (1-120).")
+                return
+    if set_model or set_system or set_style or set_streaming or set_proactive:
         console.print(section_rule("PREFERENCES SAVED"))
     table = styled_table("PREFERENCES", allow_emoji)
     table.add_column("KEY", style="cyan", no_wrap=True)
@@ -777,6 +797,8 @@ def config_cmd(
     table.add_row("default_system", (prefs.get("default_system", "") or "-")[:60])
     table.add_row("style", (prefs.get("style", "") or "-")[:60])
     table.add_row("streaming", prefs.get("streaming", "") or "on")
+    table.add_row("proactive", prefs.get("proactive", "") or "on")
+    table.add_row("proactive_minutes", prefs.get("proactive_minutes", "") or "30")
     table.add_row("last_session", prefs.get("last_session", "") or "-")
     table.add_row("ZUMBA_MODEL env", __import__("os").getenv("ZUMBA_MODEL", "") or "-")
     console.print(table)
@@ -797,7 +819,7 @@ def chat_cmd(
     allow_emoji = _allow_emoji(no_emoji)
     db_migrate_legacy(get_sessions_dir())
     saved_system = db_config_get("default_system", "")
-    from persona import resolve_chat_system
+    from identity.persona import resolve_chat_system
 
     system = resolve_chat_system(system, saved_system)
     chosen = (model or get_default_model()).strip()
@@ -893,6 +915,11 @@ def chat_cmd(
     else:
         console.print(section_rule("CHAT"))
     _soul_onboarding(allow_emoji)
+    try:
+        from memory import proactive as _pro
+        _pro.start()
+    except Exception:
+        pass
 
     def show_help() -> None:
         table = styled_table("COMMANDS", allow_emoji)
@@ -918,6 +945,12 @@ def chat_cmd(
         table.add_row("/mcp", "Show connected MCP servers + status")
         table.add_row("/tools", "List all tools from connected MCP servers")
         table.add_row("/shell <cmd>", "Run a shell command directly (god-mode, persistent)")
+        table.add_row("/search <q>", "Realtime web search (zero-key)")
+        table.add_row("/news <q>", "Realtime news via Google News RSS")
+        table.add_row("/fetch <url>", "Read a web page as text")
+        table.add_row("/vault ask|find|add|status|doc", "Local document vault")
+        table.add_row("/goal add|list|show|step ...", "Proactive goals")
+        table.add_row("/remind <text> --at <time>", "Schedule a reminder")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -930,6 +963,7 @@ def chat_cmd(
             break
         if not user_text:
             continue
+        _check_due_reminders(allow_emoji)
         if user_text.startswith("/ "):
             user_text = "/" + user_text[2:].lstrip()
         if user_text in ("/exit", "/quit"):
@@ -1091,7 +1125,7 @@ def chat_cmd(
             continue
         if user_text == "/me":
             try:
-                import userprofile as _up
+                from identity import userprofile as _up
                 prof = _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
                 console.print(Panel(safe_text(prof[:6000], allow_emoji), title="ME  ·  user.md",
                                     title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
@@ -1117,10 +1151,29 @@ def chat_cmd(
             except Exception as exc:
                 console.print(error_panel(f"brief: {exc}", allow_emoji=allow_emoji))
             continue
+        if user_text == "/search" or user_text.startswith("/search "):
+            _web_chat_run("search", user_text[7:].strip(), allow_emoji)
+            continue
+        if user_text == "/news" or user_text.startswith("/news "):
+            _web_chat_run("news", user_text[5:].strip(), allow_emoji)
+            continue
+        if user_text == "/fetch" or user_text.startswith("/fetch "):
+            _web_chat_run("fetch", user_text[6:].strip(), allow_emoji)
+            continue
+        if user_text == "/vault" or user_text.startswith("/vault "):
+            _vault_chat_run(user_text[6:].strip(), allow_emoji)
+            continue
+        if user_text == "/goal" or user_text.startswith("/goal "):
+            _goal_chat_run(user_text[5:].strip(), allow_emoji)
+            continue
+        if user_text == "/remind" or user_text.startswith("/remind "):
+            _remind_chat_run(user_text[7:].strip(), allow_emoji)
+            continue
         if user_text.startswith("/"):
             import difflib as _dl
             _known = ["/help", "/models", "/model", "/system", "/clear", "/sessions", "/load", "/new",
-                      "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/remember", "/memory",
+                      "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/search", "/news",
+                      "/fetch", "/vault", "/goal", "/remind", "/remember", "/memory",
                       "/why", "/forget", "/soul", "/me", "/brief", "/save", "/exit", "/quit"]
             _word = user_text.split()[0].lower()
             _hit = _dl.get_close_matches(_word, _known, n=1, cutoff=0.6)
@@ -1158,6 +1211,19 @@ def chat_cmd(
                 "\n(These facts were distilled from past sessions. They may be outdated — the user's most recent statements in this conversation always override them.)"
             )), msgs[-1]]
             console.print(f"[dim]memory: {recall_text.count(chr(10)) + 1} recall line(s) injected[/]")
+        try:
+            from vault import service as _vault
+
+            if _vault.enabled():
+                _v = _vault.get_vault()
+                _st = _v.status()
+                if (_st.get("docs", 0) or 0) > 0 and _vault.docish(user_text):
+                    _block = _v.context_block(user_text)
+                    if _block:
+                        msgs = msgs[:-1] + [Message(role="system", content=_block), msgs[-1]]
+                        console.print(f"[dim]vault: {len(_block.splitlines())} context line(s) injected[/]")
+        except Exception:
+            pass
         try:
             reply_text = ""
             reply_kind = "chat"
@@ -1275,7 +1341,7 @@ def _mcp_status_table(allow_emoji: bool) -> None:
 
 def _shell_chat_run(cmd: str, allow_emoji: bool) -> None:
     """Handle '/shell <cmd>' live, in-session (bypasses the model)."""
-    import shelltool
+    from tools import shelltool
 
     if not cmd:
         console.print(info_panel("Usage: /shell <powershell command>", title="SHELL", allow_emoji=allow_emoji))
@@ -1289,6 +1355,202 @@ def _shell_chat_run(cmd: str, allow_emoji: bool) -> None:
     border = "red" if text.startswith("ERROR") else "green"
     console.print(Panel(safe_text(text, allow_emoji), title="SHELL",
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+def _web_chat_run(kind: str, arg: str, allow_emoji: bool) -> None:
+    """Handle '/search|/news|/fetch ...' live, in-session (bypasses the model)."""
+    from tools import websearch as _web
+
+    if not _web.enabled():
+        console.print(error_panel("web tools are disabled (ZUMBA_NO_WEB=1).", allow_emoji=allow_emoji))
+        return
+    if kind in ("search", "news") and not arg:
+        console.print(info_panel(f"Usage: /{kind} <query>", title="WEB", allow_emoji=allow_emoji))
+        return
+    if kind == "fetch" and not arg:
+        console.print(info_panel("Usage: /fetch <http(s) URL>", title="WEB", allow_emoji=allow_emoji))
+        return
+    title = {"search": "WEB SEARCH", "news": "WEB NEWS", "fetch": "WEB FETCH"}.get(kind, "WEB")
+    with console.status(f"[cyan]Fetching {kind}...[/]", spinner="dots"):
+        if kind == "search":
+            results, note = _web.search(arg)
+            body = _web.format_search(results, note)
+        elif kind == "news":
+            results, note = _web.news(arg)
+            body = _web.format_news(results, note)
+        else:
+            text, err = _web.fetch(arg.split()[0])
+            body = text if text else (err or "ERROR: fetch failed.")
+    border = "red" if body.startswith("ERROR") else "cyan"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title=title,
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+def _vault_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/vault ask|find|add|status|doc ...' live, in-session."""
+    from vault import service as _v
+
+    if not _v.enabled():
+        console.print(error_panel("vault is disabled (ZUMBA_NO_VAULT=1).", allow_emoji=allow_emoji))
+        return
+    parts = (arg or "").split(None, 1)
+    sub = (parts[0] if parts else "").lower() or "status"
+    rest = parts[1] if len(parts) > 1 else ""
+    vault = _v.get_vault()
+    if sub == "ask" and rest:
+        with console.status("[cyan]Answering from vault...[/]", spinner="dots"):
+            out = vault.ask(rest)
+        border = "red" if out.startswith("ERROR") else "cyan"
+        console.print(Panel(safe_text(out[:12000], allow_emoji), title="VAULT ASK",
+                            title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+    elif sub == "find" and rest:
+        with console.status("[cyan]Searching vault...[/]", spinner="dots"):
+            hits = vault.find(rest)
+        if not hits:
+            console.print(info_panel("(nothing in the vault answers that yet)", title="VAULT", allow_emoji=allow_emoji))
+            return
+        lines = [f"[{i}] {h.get('meta', {}).get('citation', '')} :: {(h.get('text', '') or '')[:400]}"
+                 for i, h in enumerate(hits, 1)]
+        console.print(Panel(safe_text("\n".join(lines)[:12000], allow_emoji), title="VAULT FIND",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+    elif sub == "add" and rest:
+        with console.status("[cyan]Ingesting...[/]", spinner="dots"):
+            r = vault.add([rest])
+        console.print(section_rule(f"VAULT  ·  {r.get('ingested', 0)}/{r.get('files', 0)} ingested"))
+    elif sub == "status":
+        s = vault.status()
+        console.print(section_rule(f"VAULT  ·  {s.get('docs', 0)} docs  ·  {s.get('chunks', 0)} chunks"))
+    elif sub == "doc" and rest:
+        console.print(Panel(safe_text(vault.doc(rest)[:8000], allow_emoji), title="VAULT DOC",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+    else:
+        console.print(info_panel("Usage: /vault ask|find|add|status|doc ...", title="VAULT", allow_emoji=allow_emoji))
+
+
+def _goal_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/goal add|list|show|step|research ...' live, in-session."""
+    from memory import goals as _g
+    mem = _memory()
+    con, owned = _goal_con(mem)
+    try:
+        parts = (arg or "").split(None, 1)
+        sub = (parts[0] if parts else "").lower() or "list"
+        rest = parts[1] if len(parts) > 1 else ""
+        if sub == "add" and rest:
+            import re as _re
+            m = _re.search(r"\bby\s+(\d{4}-\d{2}-\d{2})\b", rest)
+            dl = 0.0
+            title = rest
+            if m:
+                import datetime as _dt
+                try:
+                    dl = _dt.datetime.strptime(m.group(1), "%Y-%m-%d").timestamp()
+                    title = (rest[:m.start()] + rest[m.end():]).strip()
+                except Exception:
+                    pass
+            r = _g.create_goal(con, title or rest, deadline=dl or None)
+            if not r.get("created"):
+                console.print(error_panel(f"goal: {r.get('reason')}", allow_emoji=allow_emoji))
+                return
+            console.print(Panel(safe_text(_g.render_show(con, r["id"]), allow_emoji), title=f"GOAL #{r['id']}",
+                                title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        elif sub == "list":
+            console.print(Panel(safe_text(_g.render_list(_g.list_goals(con, "all" if rest.strip() == "all" else "active"), con), allow_emoji),
+                                title="GOALS", title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        elif sub == "show" and rest:
+            try:
+                console.print(Panel(safe_text(_g.render_show(con, int(rest.split()[0])), allow_emoji), title="GOAL",
+                                    title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+            except Exception:
+                console.print(error_panel("goal show: need a goal id", allow_emoji=allow_emoji))
+        elif sub == "step" and rest:
+            bits = rest.split(None, 1)
+            ref, act = (bits[0], bits[1] if len(bits) > 1 else "done")
+            sid = 0
+            try:
+                if "." in ref:
+                    gs, order = ref.split(".", 1)
+                    rows = con.execute("SELECT id FROM goal_steps WHERE goal_id=? ORDER BY step_order",
+                                       (int(gs),)).fetchall()
+                    sid = rows[int(order)]["id"] if 0 <= int(order) < len(rows) else 0
+                else:
+                    sid = int(ref)
+            except Exception:
+                sid = 0
+            if not sid:
+                console.print(error_panel("goal step: use <goal-id>.<order> or step id", allow_emoji=allow_emoji))
+                return
+            r = _g.complete_step(con, sid) if act.strip().lower() != "skip" else _g.skip_step(con, sid)
+            console.print(section_rule(f"STEP DONE  ·  {int(r.get('progress', 0)*100)}%" if r.get("done") else f"ERROR  ·  {r.get('reason')}"))
+        elif sub == "research" and rest:
+            try:
+                with console.status("[cyan]Researching...[/]", spinner="dots"):
+                    r = _g.research_goal(con, int(rest.split()[0]), use_llm=True)
+                console.print(Panel(safe_text(str(r.get("findings", r.get("reason", "")))[:8000], allow_emoji),
+                                    title="GOAL RESEARCH", title_align="left", border_style="cyan",
+                                    box=_box(allow_emoji), padding=(0, 2)))
+            except Exception as exc:
+                console.print(error_panel(f"research: {exc}", allow_emoji=allow_emoji))
+        else:
+            console.print(info_panel("Usage: /goal add|list|show|step|research ...", title="GOALS", allow_emoji=allow_emoji))
+    except Exception as exc:
+        console.print(error_panel(f"goal: {exc}", allow_emoji=allow_emoji))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+def _remind_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/remind <text> --at <time>' live, in-session."""
+    from memory import reminders as _rem
+    import re as _re
+    mem = _memory()
+    m = _re.search(r"\s--at\s+", arg or "")
+    if m:
+        message, when = arg[:m.start()].strip(), arg[m.end():].strip()
+    else:
+        bits = (arg or "").rsplit(" ", 2)
+        message, when = (arg or "").strip(), ""
+        if len(bits) >= 3:
+            message, when = " ".join(bits[:-2]), " ".join(bits[-2:])
+    if not message or not when:
+        console.print(info_panel("Usage: /remind <text> --at <time>  (e.g. /remind stretch --at friday 5pm)",
+                                 title="REMIND", allow_emoji=allow_emoji))
+        return
+    con, owned = _goal_con(mem)
+    try:
+        r = _rem.schedule(con, message, when)
+        if not r.get("scheduled"):
+            console.print(error_panel(f"remind: {r.get('reason')}", allow_emoji=allow_emoji))
+            return
+        import datetime as _dt
+        ft = _dt.datetime.fromtimestamp(float(r["fire_at"])).strftime("%Y-%m-%d %H:%M")
+        console.print(section_rule(f"REMINDER #{r['id']}  ·  {ft}"))
+    except Exception as exc:
+        console.print(error_panel(f"remind: {exc}", allow_emoji=allow_emoji))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+def _check_due_reminders(allow_emoji: bool) -> None:
+    try:
+        from memory import proactive as _pro, reminders as _rem
+        mem = _memory()
+        if mem is None:
+            return
+        con, owned = _goal_con(mem)
+        try:
+            out = _pro.tick(con, use_llm=False)
+            for f in out.get("fired") or []:
+                console.print(Panel(safe_text(f"⏰ {f.get('message','')[:300]}", allow_emoji),
+                                    title="REMINDER", title_align="left", border_style="green",
+                                    box=_box(allow_emoji), padding=(0, 2)))
+            for n in out.get("nudges") or []:
+                console.print(Panel(safe_text(n[:500], allow_emoji), title="GOALS",
+                                    title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        finally:
+            _goal_close(mem, con, owned)
+    except Exception:
+        pass
 
 
 def _mcp_tools_table(allow_emoji: bool) -> None:
@@ -1400,7 +1662,7 @@ def shell_cmd(
     timeout: Optional[float] = typer.Option(None, "--timeout", help="Seconds (default from ZUMBA_SHELL_TIMEOUT or 60)."),
     no_emoji: bool = typer.Option(False, "--no-emoji", help="Strip emojis for legacy cmd."),
 ) -> None:
-    import shelltool
+    from tools import shelltool
 
     allow_emoji = _allow_emoji(no_emoji)
     if not shelltool.enabled():
@@ -1413,6 +1675,465 @@ def shell_cmd(
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
     if (res.get("exit_code") or 0) != 0:
         raise typer.Exit(code=int(res.get("exit_code") or 1))
+
+
+web_app = typer.Typer(help="Realtime web: search / news / fetch (zero-API-key).")
+app.add_typer(web_app, name="web")
+
+
+def _web_guard() -> None:
+    from tools import websearch as _web
+
+    if not _web.enabled():
+        _fail("web tools are disabled (ZUMBA_NO_WEB=1).")
+
+
+@web_app.command("search")
+def web_search_cmd(
+    query: str = typer.Argument(..., help="Web query."),
+    backend: str = typer.Option("auto", "--backend", "-b", help="auto|web|wikipedia|hn|reddit."),
+    when: str = typer.Option("", "--when", "-w", help="Freshness: 1h|1d|7d|30d|1y."),
+    limit: int = typer.Option(8, "--limit", "-n"),
+) -> None:
+    from tools import websearch as _web
+
+    allow_emoji = _allow_emoji()
+    _web_guard()
+    console.print(_header())
+    with console.status("[cyan]Searching the web...[/]", spinner="dots"):
+        results, note = _web.search(query, backend=backend, when=when, limit=limit)
+    console.print(Panel(safe_text(_web.format_search(results, note), allow_emoji), title="WEB SEARCH",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@web_app.command("news")
+def web_news_cmd(
+    query: str = typer.Argument(..., help="News query."),
+    when: str = typer.Option("1d", "--when", "-w", help="Recency window: 1h|1d|7d|30d|1y."),
+    limit: int = typer.Option(8, "--limit", "-n"),
+) -> None:
+    from tools import websearch as _web
+
+    allow_emoji = _allow_emoji()
+    _web_guard()
+    console.print(_header())
+    with console.status("[cyan]Fetching realtime news...[/]", spinner="dots"):
+        results, note = _web.news(query, when=when, limit=limit)
+    console.print(Panel(safe_text(_web.format_news(results, note), allow_emoji), title="WEB NEWS",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@web_app.command("fetch")
+def web_fetch_cmd(
+    url: str = typer.Argument(..., help="http(s) URL to read."),
+    raw: bool = typer.Option(False, "--raw", help="Skip readability extraction."),
+    max_chars: int = typer.Option(0, "--max-chars", help="Max chars (default ZUMBA_WEB_MAX_OUTPUT)."),
+) -> None:
+    from tools import websearch as _web
+
+    allow_emoji = _allow_emoji()
+    _web_guard()
+    console.print(_header())
+    with console.status("[cyan]Fetching page...[/]", spinner="dots"):
+        text, err = _web.fetch(url, max_chars=max_chars, raw=raw)
+    body = text if text else (err or "ERROR: fetch failed.")
+    border = "red" if body.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title="WEB FETCH",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+vault_app = typer.Typer(help="Local document vault: add / find / ask / status / doc / forget.")
+app.add_typer(vault_app, name="vault")
+
+
+def _vault_guard() -> None:
+    from vault import service as _v
+
+    if not _v.enabled():
+        _fail("vault is disabled (ZUMBA_NO_VAULT=1).")
+
+
+@vault_app.command("add")
+def vault_add_cmd(
+    target: list[str] = typer.Argument(..., help="File(s) or folder(s) to ingest."),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM enrichment (summaries/context lines)."),
+) -> None:
+    from vault import service as _v
+
+    _vault_guard()
+    console.print(_header())
+    with console.status("[cyan]Ingesting documents...[/]", spinner="dots"):
+        r = _v.get_vault().add(list(target), use_llm=not no_llm)
+    console.print(section_rule(f"VAULT  ·  {r.get('ingested', 0)}/{r.get('files', 0)} ingested  ·  {r.get('duplicates', 0)} dup"))
+    for f in (r.get("failed") or [])[:10]:
+        console.print(f"[dim]{safe_text(str(f)[:200], _allow_emoji())}[/]")
+
+
+@vault_app.command("find")
+def vault_find_cmd(
+    query: str = typer.Argument(..., help="What to find in the vault."),
+    k: int = typer.Option(6, "--top", "-k"),
+    doc: str = typer.Option("", "--doc", help="Restrict to a doc title substring."),
+) -> None:
+    from vault import service as _v
+
+    allow_emoji = _allow_emoji()
+    _vault_guard()
+    console.print(_header())
+    with console.status("[cyan]Searching vault...[/]", spinner="dots"):
+        hits = _v.get_vault().find(query, k=k, doc_filter=doc)
+    if not hits:
+        console.print(info_panel("(nothing in the vault answers that yet)", title="VAULT", allow_emoji=allow_emoji))
+        return
+    lines = []
+    for i, h in enumerate(hits, 1):
+        m = h.get("meta", {})
+        lines.append(f"[{i}] {m.get('citation', m.get('doc', ''))} (score {h.get('score', 0)})\n    {(h.get('text', '') or '')[:500]}")
+    console.print(Panel(safe_text("\n".join(lines)[:12000], allow_emoji), title="VAULT FIND",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@vault_app.command("ask")
+def vault_ask_cmd(
+    query: str = typer.Argument(..., help="Question to answer from the vault."),
+    k: int = typer.Option(6, "--top", "-k"),
+    no_llm: bool = typer.Option(False, "--no-llm", help="Show evidence only, no composed answer."),
+) -> None:
+    from vault import service as _v
+
+    allow_emoji = _allow_emoji()
+    _vault_guard()
+    console.print(_header())
+    with console.status("[cyan]Answering from vault...[/]", spinner="dots"):
+        out = _v.get_vault().ask(query, k=k, use_llm=not no_llm)
+    border = "red" if out.startswith("ERROR") else "cyan"
+    console.print(Panel(safe_text(out[:12000], allow_emoji), title="VAULT ASK",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+@vault_app.command("status")
+def vault_status_cmd() -> None:
+    from vault import service as _v
+
+    allow_emoji = _allow_emoji()
+    _vault_guard()
+    console.print(_header())
+    s = _v.get_vault().status()
+    table = styled_table("VAULT STATUS", allow_emoji)
+    table.add_column("KEY", style="cyan", no_wrap=True)
+    table.add_column("VALUE", style="white")
+    for key in ("docs", "failed", "sections", "chunks", "watch", "database"):
+        table.add_row(key, str(s.get(key, "-")))
+    console.print(table)
+
+
+@vault_app.command("doc")
+def vault_doc_cmd(ref: str = typer.Argument(..., help="Doc id or title substring.")) -> None:
+    from vault import service as _v
+
+    allow_emoji = _allow_emoji()
+    _vault_guard()
+    console.print(_header())
+    console.print(Panel(safe_text(_v.get_vault().doc(ref)[:8000], allow_emoji), title="VAULT DOC",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@vault_app.command("forget")
+def vault_forget_cmd(ref: str = typer.Argument(..., help="Doc id or title to remove.")) -> None:
+    from vault import service as _v
+
+    _vault_guard()
+    r = _v.get_vault().forget(ref)
+    console.print(section_rule("FORGOT" if r.get("forgot") else f"NOT FOUND  ·  {r.get('reason', '')}"))
+
+
+@vault_app.command("reindex")
+def vault_reindex_cmd(
+    no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM enrichment."),
+) -> None:
+    from vault import service as _v
+
+    _vault_guard()
+    console.print(_header())
+    with console.status("[cyan]Rebuilding vault index...[/]", spinner="dots"):
+        r = _v.get_vault().reindex(use_llm=not no_llm)
+    console.print(section_rule(f"VAULT REINDEXED  ·  {r.get('ingested', 0)} docs"))
+
+
+@vault_app.command("watch")
+def vault_watch_cmd(
+    paths: list[str] = typer.Argument(None, help="Folders to watch (default: vault dir)."),
+) -> None:
+    import json as _json
+
+    from vault import db as _vdb
+
+    _vault_guard()
+    targets = list(paths) if paths else _vdb.watch_paths()
+    try:
+        db_config_set("vault_watch", _json.dumps(targets))
+    except Exception:
+        pass
+    console.print(_header())
+    console.print(section_rule("VAULT WATCH  ·  " + ", ".join(targets)))
+    console.print("[dim]Drop files into a watched folder, then run: zumba vault add <folder>[/]")
+    try:
+        from vault import ingest as _ing
+        n = _ing.ingest_async(targets)
+        _ing.flush(timeout=120.0)
+        console.print(section_rule(f"VAULT SCANNED  ·  {n} queued"))
+    except Exception as exc:
+        console.print(error_panel(f"watch scan: {exc}", allow_emoji=_allow_emoji()))
+
+
+goal_app = typer.Typer(help="Proactive goals: add / list / show / step / research / remind / tick.")
+app.add_typer(goal_app, name="goal")
+
+
+def _goal_con(mem=None):
+    from memory import db as _mdb
+    if mem is not None:
+        try:
+            con = mem._open()
+            _mdb.ensure_tier3(con)
+            return con, getattr(mem, "_own", True)
+        except Exception:
+            pass
+    con = _mdb.connect()
+    _mdb.ensure_tier3(con)
+    return con, True
+
+
+def _goal_close(mem, con, owned: bool) -> None:
+    if mem is not None and not owned:
+        return
+    try:
+        con.close()
+    except Exception:
+        pass
+
+
+@goal_app.command("add")
+def goal_add_cmd(
+    title: str = typer.Argument(..., help="Goal title."),
+    deadline: str = typer.Option("", "--deadline", "-d", help="Deadline YYYY-MM-DD."),
+    priority: int = typer.Option(3, "--priority", "-p", help="1 (critical) to 5 (whenever)."),
+    description: str = typer.Option("", "--desc", help="Extra context."),
+    no_plan: bool = typer.Option(False, "--no-plan", help="Skip LLM decomposition (heuristic steps)."),
+) -> None:
+    from memory import goals as _g
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    console.print(_header())
+    dl = 0.0
+    if deadline.strip():
+        try:
+            import datetime as _dt
+            dl = _dt.datetime.strptime(deadline.strip()[:10], "%Y-%m-%d").timestamp()
+        except Exception:
+            _fail("Bad --deadline. Use YYYY-MM-DD.")
+            return
+    con, owned = _goal_con(mem)
+    try:
+        with console.status("[cyan]Creating goal + decomposing...[/]", spinner="dots"):
+            r = _g.create_goal(con, title, description=description, deadline=dl or None,
+                               priority=priority, use_llm=not no_plan)
+        if not r.get("created"):
+            _fail(str(r.get("reason", "not created")))
+            return
+        console.print(Panel(safe_text(_g.render_show(con, r["id"]), allow_emoji), title=f"GOAL #{r['id']}",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("list")
+def goal_list_cmd(
+    all_: bool = typer.Option(False, "--all", help="Include done/paused/failed/archived."),
+) -> None:
+    from memory import goals as _g
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        goals = _g.list_goals(con, "all" if all_ else "active")
+        console.print(Panel(safe_text(_g.render_list(goals, con), allow_emoji), title="GOALS",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("show")
+def goal_show_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        console.print(Panel(safe_text(_g.render_show(con, gid), allow_emoji), title=f"GOAL #{gid}",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("step")
+def goal_step_cmd(
+    ref: str = typer.Argument(..., help="<goal-id>.<order 0-based> or <step-id> (e.g. 3.0 or 12)."),
+    action: str = typer.Argument(..., help="done|skip|add."),
+    title: str = typer.Option("", "--title", help="New step title (for add)."),
+) -> None:
+    from memory import goals as _g
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        action = action.strip().lower()
+        if action == "add":
+            try:
+                gid = int(ref)
+            except Exception:
+                _fail("For add, ref must be a goal id.")
+                return
+            r = _g.add_step(con, gid, title)
+            console.print(section_rule(f"STEP ADDED  ·  {r.get('id', '?')}" if r.get("added") else f"ERROR  ·  {r.get('reason')}"))
+            return
+        sid = 0
+        if "." in ref:
+            try:
+                gs, order = ref.split(".", 1)
+                row = con.execute("SELECT id FROM goal_steps WHERE goal_id=? ORDER BY step_order",
+                                  (int(gs),)).fetchall()
+                sid = row[int(order)]["id"] if 0 <= int(order) < len(row) else 0
+            except Exception:
+                sid = 0
+        else:
+            try:
+                sid = int(ref)
+            except Exception:
+                sid = 0
+        if not sid:
+            _fail("Bad step ref. Use <goal-id>.<order> (e.g. 3.0) or a step id.")
+            return
+        r = _g.complete_step(con, sid) if action == "done" else _g.skip_step(con, sid) if action == "skip" else {"done": False, "reason": "action must be done|skip|add"}
+        if r.get("done"):
+            console.print(section_rule(f"STEP {action.upper()}  ·  goal #{r.get('goal_id')} {int(r.get('progress', 0)*100)}%"))
+        else:
+            _fail(str(r.get("reason", "failed")))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("research")
+def goal_research_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        with console.status("[cyan]Researching the web for this goal...[/]", spinner="dots"):
+            r = _g.research_goal(con, gid, use_llm=True)
+        body = r.get("findings", "") if r.get("researched") else f"ERROR: {r.get('reason', 'failed')}"
+        console.print(Panel(safe_text(str(body)[:8000], allow_emoji), title=f"GOAL #{gid} RESEARCH",
+                            title_align="left", border_style="cyan" if r.get("researched") else "red",
+                            box=_box(allow_emoji), padding=(0, 2)))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("remind")
+def goal_remind_cmd(
+    message: str = typer.Argument(..., help="Reminder text."),
+    at: str = typer.Option(..., "--at", help="Natural time ('friday 5pm', 'in 3 days')."),
+    goal: int = typer.Option(0, "--goal", help="Attach to goal id."),
+    every: str = typer.Option("", "--every", help="Recur: daily|weekly."),
+    channel: str = typer.Option("chat", "--channel", help="chat|desktop|scheduled-brief."),
+) -> None:
+    from memory import reminders as _rem
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        r = _rem.schedule(con, message, at, goal_id=goal or None, channel=channel, every=every)
+        if not r.get("scheduled"):
+            _fail(str(r.get("reason", "not scheduled")))
+            return
+        import datetime as _dt
+        ft = _dt.datetime.fromtimestamp(float(r["fire_at"])).strftime("%Y-%m-%d %H:%M")
+        console.print(section_rule(f"REMINDER #{r['id']}  ·  {ft}" + ("  ·  " + r["recur"] if r.get("recur") else "")))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("tick")
+def goal_tick_cmd(
+    no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM passes (cheap checks only)."),
+) -> None:
+    from memory import proactive as _pro
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    console.print(_header())
+    con, owned = _goal_con(mem)
+    try:
+        with console.status("[cyan]Running proactive pass...[/]", spinner="dots"):
+            out = _pro.tick(con, use_llm=not no_llm, force=True)
+        if out.get("fired"):
+            from memory import reminders as _rem
+            console.print(Panel(safe_text(_rem.render_pending(out["fired"]), allow_emoji), title="FIRED",
+                                title_align="left", border_style="green", box=_box(allow_emoji), padding=(0, 2)))
+        if out.get("nudges"):
+            console.print(Panel(safe_text("\n".join(out["nudges"]), allow_emoji), title="NUDGES",
+                                title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        if not out.get("fired") and not out.get("nudges"):
+            console.print(section_rule("TICK  ·  all quiet"))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("pause")
+def goal_pause_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    mem = _memory()
+    con, owned = _goal_con(mem)
+    try:
+        console.print(section_rule("PAUSED" if _g.set_status(con, gid, "paused").get("updated") else "NOT FOUND"))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("resume")
+def goal_resume_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    mem = _memory()
+    con, owned = _goal_con(mem)
+    try:
+        console.print(section_rule("ACTIVE" if _g.set_status(con, gid, "active").get("updated") else "NOT FOUND"))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("complete")
+def goal_complete_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    mem = _memory()
+    con, owned = _goal_con(mem)
+    try:
+        console.print(section_rule("DONE" if _g.set_status(con, gid, "done").get("updated") else "NOT FOUND"))
+    finally:
+        _goal_close(mem, con, owned)
+
+
+@goal_app.command("fail")
+def goal_fail_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
+    from memory import goals as _g
+    mem = _memory()
+    con, owned = _goal_con(mem)
+    try:
+        console.print(section_rule("FAILED" if _g.set_status(con, gid, "failed").get("updated") else "NOT FOUND"))
+    finally:
+        _goal_close(mem, con, owned)
 
 
 memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")
@@ -1431,7 +2152,8 @@ def memory_stats_cmd() -> None:
     table.add_column("KEY", style="cyan", no_wrap=True)
     table.add_column("VALUE", style="white")
     for k in ("episodes", "entities", "relations", "active_relations", "notes", "communities", "core_blocks",
-              "user_facts", "follow_ups_open", "moods", "eval_pairs", "eval_runs", "database"):
+              "user_facts", "follow_ups_open", "moods", "eval_pairs", "eval_runs",
+              "goals_active", "goals_total", "reminders_pending", "database"):
         table.add_row(k, str(s.get(k, "-")))
     console.print(table)
 
@@ -1573,7 +2295,7 @@ app.add_typer(soul_app, name="soul")
 @soul_app.command("show")
 def soul_show_cmd() -> None:
     allow_emoji = _allow_emoji()
-    import soul as _soul
+    from identity import soul as _soul
     console.print(_header())
     console.print(Panel(safe_text(_soul.load() or "(no soul.md yet)", allow_emoji), title="SOUL",
                         title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
@@ -1586,7 +2308,7 @@ def soul_init_cmd(
     off_limits: str = typer.Option("", "--off-limits", help="Off-limits topics/tone."),
     wingit: bool = typer.Option(False, "--wingit", help="Draft from early exchanges."),
 ) -> None:
-    import soul as _soul
+    from identity import soul as _soul
     console.print(_header())
     if wingit or not any([sound, keep, off_limits]):
         r = _soul.bootstrap_flow({"sound": sound or "just wing it", "keep": keep, "off_limits": off_limits})
@@ -1598,20 +2320,20 @@ def soul_init_cmd(
 @soul_app.command("diff")
 def soul_diff_cmd() -> None:
     allow_emoji = _allow_emoji()
-    import soul as _soul
+    from identity import soul as _soul
     console.print(Panel(safe_text(_soul.diff_proposed(), allow_emoji), title="SOUL DIFF",
                         title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
 
 
 @soul_app.command("accept")
 def soul_accept_cmd() -> None:
-    import soul as _soul
+    from identity import soul as _soul
     console.print(section_rule("SOUL UPDATED" if _soul.apply_proposal() else "NO PROPOSAL"))
 
 
 @soul_app.command("reject")
 def soul_reject_cmd() -> None:
-    import soul as _soul
+    from identity import soul as _soul
     _soul.reject_proposal()
     console.print(section_rule("SOUL PROPOSAL REJECTED"))
 
@@ -1637,6 +2359,11 @@ def daily_cmd(
     from memory import briefing as _br2
     con = mem._open()
     try:
+        try:
+            from memory import proactive as _pro
+            _pro.tick(con, use_llm=False)
+        except Exception:
+            pass
         text = _br2.compose_daily(con, use_llm=use_llm)
     finally:
         if getattr(mem, "_own", True):
@@ -1673,7 +2400,7 @@ def mood_cmd(days: int = typer.Option(30, "--days", "-d")) -> None:
 @app.command("me")
 def me_cmd() -> None:
     allow_emoji = _allow_emoji()
-    import userprofile as _up
+    from identity import userprofile as _up
     console.print(_header())
     console.print(Panel(safe_text(_up.profile_block() or "(no user.md yet)", allow_emoji), title="ME  ·  user.md",
                         title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
@@ -1727,6 +2454,8 @@ def root(ctx: typer.Context) -> None:
         table.add_row("zumba sessions", "List / search / show saved chats")
         table.add_row("zumba config", "Show or set default model + preferences")
         table.add_row("zumba memory", "Long-term memory: stats / search / add / forget / consolidate")
+        table.add_row("zumba goal", "Proactive goals: add / list / show / step / research / remind / tick")
+        table.add_row("zumba web", "Realtime web: search / news / fetch (zero-key)")
         table.add_row("zumba mcp", "MCP servers: list / add / remove / tools / call")
         table.add_row("zumba doctor", "Terminal + rendering diagnostics")
         table.add_row("zumba version", "Show version")

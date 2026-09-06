@@ -6,7 +6,7 @@ from mcpclient.manager import MCPManager
 from mcpclient import builtin
 from mcpclient import defaults
 from mcpclient import registry
-from models import ChatResult, ChatUsage
+from core.models import ChatResult, ChatUsage
 
 META = defaults.META_SERVER
 S = defaults.SEP

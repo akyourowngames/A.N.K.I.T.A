@@ -136,6 +136,9 @@ class Memory:
                 "notes": c("SELECT COUNT(*) FROM notes"),
                 "communities": c("SELECT COUNT(*) FROM communities"),
                 "core_blocks": c("SELECT COUNT(*) FROM core_blocks"),
+                "goals_active": _safe("SELECT COUNT(*) FROM goals WHERE status='active'"),
+                "goals_total": _safe("SELECT COUNT(*) FROM goals"),
+                "reminders_pending": _safe("SELECT COUNT(*) FROM reminders WHERE status IN ('pending','snoozed')"),
                 "user_facts": _safe("SELECT COUNT(*) FROM user_facts"),
                 "follow_ups_open": _safe("SELECT COUNT(*) FROM follow_ups WHERE done_at IS NULL"),
                 "moods": _safe("SELECT COUNT(*) FROM session_moods"),
@@ -210,7 +213,7 @@ class Memory:
             ent_id_of = self._reconcile_entities(con, ents, episode_id)
             n_relations = self._reconcile_relations(con, rels, ent_id_of, episode_id)
             try:
-                import userprofile as _up
+                from identity import userprofile as _up
                 _up.extract_user_facts_from_relations(con, rels, episode_id)
             except Exception:
                 pass
@@ -402,7 +405,7 @@ class Memory:
 # ---- recall ----
     def profile_text(self, con=None) -> str:
         try:
-            import userprofile as _up
+            from identity import userprofile as _up
             prof = _up.profile_block()
             if prof:
                 return prof
@@ -433,7 +436,7 @@ class Memory:
                 hits = retrieval.search(con, query, top_k=top_k, max_bytes=max_bytes)
             prefix_parts = []
             try:
-                import userprofile as _up
+                from identity import userprofile as _up
                 prof = _up.profile_block()
                 if prof:
                     prefix_parts.append(prof[:1800])
@@ -444,6 +447,13 @@ class Memory:
                 mc = _mood.mood_context(con)
                 if mc:
                     prefix_parts.append(mc[:600])
+            except Exception:
+                pass
+            try:
+                from . import goals as _goals
+                gc = _goals.goal_context(con)
+                if gc:
+                    prefix_parts.append(gc[:1500])
             except Exception:
                 pass
             prefix = ("\n".join(prefix_parts) + "\n" if prefix_parts else "") + self._core_text(con)
@@ -501,7 +511,7 @@ class Memory:
             core = consolidation.rewrite_core(con)
             user_facts_n = 0
             try:
-                import userprofile as _up
+                from identity import userprofile as _up
                 rows = con.execute(
                     """SELECT r.type, r.fact, r.confidence, r.source_episode FROM relations r
                        WHERE r.invalid_at IS NULL ORDER BY r.created_at DESC LIMIT 60""").fetchall()
@@ -562,7 +572,8 @@ class Memory:
         try:
             for t in ["episode_entities", "relations", "entities", "aliases", "episodes", "notes",
                       "note_links", "communities", "community_members", "core_blocks",
-                      "user_facts", "follow_ups", "session_moods", "eval_pairs", "eval_runs"]:
+                      "user_facts", "follow_ups", "session_moods", "eval_pairs", "eval_runs",
+                      "goals", "goal_steps", "reminders", "goal_research"]:
                 try:
                     con.execute(f"DELETE FROM {t}")
                 except Exception:

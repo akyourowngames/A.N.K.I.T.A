@@ -2,7 +2,7 @@
 import json
 from typing import Any, Callable
 
-from models import Message, ChatResult
+from core.models import Message, ChatResult
 import mcpclient.tools as mt
 
 
@@ -43,7 +43,7 @@ def _call_with_retry(call_model, convo, model, tools, call_kwargs, retries: int 
 def _progress_fallback(convo, model, last, exc) -> Any:
     """Synthesize a reply from completed tool work when the model stays
     unreachable — the turn ends with progress, not an ERROR panel."""
-    from models import ChatResult as _CR
+    from core.models import ChatResult as _CR
 
     names = [getattr(m, "name", "") for m in convo if getattr(m, "role", "") == "tool" and getattr(m, "name", "")]
     seen = list(dict.fromkeys(names))
@@ -140,7 +140,7 @@ def run_agent_loop(
         seen = list(dict.fromkeys(names[-8:]))
         summary = "Completed %d tool step(s)%s but hit the tool-turn limit (%d). Last results are in history — ask me to 'continue' and I will carry on from where it stopped." % (
             len(names), (": " + ", ".join(seen) if seen else ""), max_iterations)
-        from models import ChatResult as _CR
+        from core.models import ChatResult as _CR
         raw = getattr(last, "raw", None) if last is not None else None
         return _CR(content=summary, model=getattr(last, "model", model) or model, raw=raw)
     return last

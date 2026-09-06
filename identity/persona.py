@@ -20,7 +20,7 @@ IDENTITY = (
 
 def soul_block() -> str:
     try:
-        import soul as _soul
+        from identity import soul as _soul
         return _soul.inject_block()
     except Exception:
         return ""
@@ -28,7 +28,7 @@ def soul_block() -> str:
 
 def user_block() -> str:
     try:
-        import userprofile as _up
+        from identity import userprofile as _up
         return _up.profile_block()
     except Exception:
         return ""
@@ -42,7 +42,7 @@ def build_system(base: str = "") -> str:
     capped upstream so the window manager stays safe.
     """
     try:
-        from store import config_get
+        from core.store import config_get
 
         style = config_get("style", "").strip()
     except Exception:

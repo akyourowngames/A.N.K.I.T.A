@@ -1,6 +1,6 @@
 from pathlib import Path
 import tempfile
-from chat import Conversation
+from core.chat import Conversation
 
 
 def test_conversation_system_first():

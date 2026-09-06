@@ -73,7 +73,7 @@ def _is_tool_msg(msg) -> bool:
 def truncate_stale_tools(messages: list, keep_exchanges: int = TOOL_KEEP_EXCHANGES, to_chars: int = TOOL_TRUNCATE_TO) -> list:
     """Truncate tool transcripts older than the last `keep_exchanges` tool
     exchanges to `to_chars` chars. Returns the same list (mutates copies)."""
-    from models import Message
+    from core.models import Message
 
     out = [Message(role=m.role, content=m.content, tool_calls=m.tool_calls,
                    tool_call_id=m.tool_call_id, name=m.name) for m in messages]
@@ -115,7 +115,7 @@ def build_window(messages: list, model_limit: int = 0, reserve_out: int = 1500,
     SUMMARY_REBUILD_GAP new messages were dropped since the last build).
     `cache` is a caller-owned dict persisted across turns of a session.
     """
-    from models import Message
+    from core.models import Message
 
     limit = model_limit or get_context_limit()
     budget = max(1000, limit - reserve_out)

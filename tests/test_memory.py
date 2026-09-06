@@ -231,7 +231,7 @@ def test_stats_and_clear(mem_db):
 
 
 def test_normalize_repairs_mojibake():
-    from output import normalize_text
+    from core.output import normalize_text
 
     apostrophe = "â€™"
     emdash = "â€" + chr(0x94)

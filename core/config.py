@@ -38,7 +38,7 @@ def get_default_model() -> str:
     if env_model:
         return env_model
     try:
-        from store import config_get
+        from core.store import config_get
         saved = config_get("default_model", "").strip()
         if saved:
             return saved
@@ -49,7 +49,7 @@ def get_default_model() -> str:
 
 def set_default_model(model: str) -> None:
     try:
-        from store import config_set
+        from core.store import config_set
         config_set("default_model", model.strip())
     except Exception:
         pass
