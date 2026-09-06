@@ -137,8 +137,12 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "Connected MCP tools (call them via the function/tool-call mechanism; "
         "names are prefixed by their server):\n" + preamble +
         "\n" + note.replace("{meta}", mcp_defaults.META_SERVER) +
-        "\nShell: zumba__shell_run executes UNRESTRICTED PowerShell in one persistent "
-        "session (cwd/env persist) — chain state instead of re-stating it."
+        "\nShell: zumba__shell_run executes UNRESTRICTED Windows PowerShell in one persistent "
+        "session (cwd/env persist) — chain state instead of re-stating it. "
+        "ALWAYS use PowerShell syntax: Get-ChildItem (never `ls -la`), Get-Content (never `cat`), "
+        "Get-Location (never `pwd`), Select-String (never `grep`). Bash flags like -la/-rf do not exist. "
+        "Soul files live at ~/.zumba/soul.md and ~/.zumba/user.md — read them with "
+        "Get-Content when the user asks what was drafted, never guess; never run `ls -la`."
     ))
     return msgs[:-1] + [sys_msg, msgs[-1]]
 
@@ -260,6 +264,116 @@ def _mem_capture(mem, session_id: str, user_text: str, reply: str, kind: str = "
     communities, core blocks). Never blocks or crashes the chat loop."""
     try:
         mem.capture_async(user_text, reply, session_id=session_id, kind=kind)
+    except Exception:
+        pass
+
+
+def _soul_onboarding(allow_emoji: bool) -> None:
+    try:
+        import soul as _soul
+        if not _soul.needs_bootstrap():
+            return
+        console.print(info_panel(
+            "First run — let's give Zumba a soul (30s, skippable).\n"
+            f"1. {_soul.BOOTSTRAP_QUESTIONS[0]}\n"
+            f"2. {_soul.BOOTSTRAP_QUESTIONS[1]}\n"
+            f"3. {_soul.BOOTSTRAP_QUESTIONS[2]}\n"
+            "Answer with: /soul init <how I should sound> | <keep in mind> | <off-limits>\n"
+            "Or: /soul wingit (I'll draft it from our first exchanges)",
+            title="SOUL", allow_emoji=allow_emoji))
+    except Exception:
+        pass
+
+
+def _soul_chat_cmd(arg: str, allow_emoji: bool) -> bool:
+    import soul as _soul
+    cmd = (arg or "").strip()
+    if cmd in ("", "show"):
+        text = _soul.load() or "(no soul.md yet — /soul wingit to draft one)"
+        console.print(Panel(safe_text(text[:6000], allow_emoji), title="SOUL",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        return True
+    if cmd == "wingit":
+        r = _soul.bootstrap_flow({"sound": "just wing it"})
+        console.print(section_rule(f"SOUL DRAFTED  ·  {r.get('soul', '')}"))
+        return True
+    if cmd.startswith("init"):
+        rest = cmd[4:].strip()
+        parts = [p.strip() for p in rest.split("|")]
+        answers = {"sound": parts[0] if len(parts) > 0 else "", "keep": parts[1] if len(parts) > 1 else "",
+                   "off_limits": parts[2] if len(parts) > 2 else ""}
+        if not any(answers.values()):
+            console.print(info_panel("Usage: /soul init <sound> | <keep in mind> | <off-limits>\nOr: /soul wingit",
+                                     title="SOUL", allow_emoji=allow_emoji))
+            return True
+        r = _soul.bootstrap_flow(answers)
+        console.print(section_rule(f"SOUL WRITTEN  ·  {r.get('soul', '')}"))
+        return True
+    if cmd == "diff":
+        console.print(Panel(safe_text(_soul.diff_proposed(), allow_emoji), title="SOUL DIFF",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+        return True
+    if cmd == "accept":
+        ok = _soul.apply_proposal()
+        console.print(section_rule("SOUL UPDATED" if ok else "NO PROPOSAL"))
+        return True
+    if cmd == "reject":
+        _soul.reject_proposal()
+        console.print(section_rule("SOUL PROPOSAL REJECTED"))
+        return True
+    if cmd.startswith("edit"):
+        import subprocess
+        editor = os.getenv("EDITOR", "notepad" if os.name == "nt" else "vi")
+        try:
+            subprocess.run([editor, str(_soul.soul_path())])
+        except Exception as exc:
+            console.print(error_panel(f"soul edit: {exc}", allow_emoji=allow_emoji))
+        return True
+    return False
+
+
+def _soul_show_intent(text: str) -> bool:
+    low = f" {(text or '').lower()} "
+    if "/" in (text or "")[:1]:
+        return False
+    if "soul" not in low and "drafted" not in low:
+        return False
+    return any(k in low for k in ("show", "list", "what", "display", "read", "draft", "soul"))
+
+
+def _session_reflect(mem, session_id: str) -> None:
+    try:
+        if mem is None:
+            return
+        mem.flush(timeout=60.0)
+        try:
+            from memory import db as _mdb
+            _mdb.ensure_tier2(mem._con if getattr(mem, "_con", None) is not None else _mdb.connect())
+        except Exception:
+            pass
+        exchanges: list = []
+        try:
+            con = mem._open()
+            try:
+                rows = con.execute(
+                    "SELECT id, user_text, assistant_text FROM episodes WHERE session_id=? ORDER BY id", (session_id,)).fetchall()
+                exchanges = [{"user": r["user_text"], "assistant": r["assistant_text"], "episode_id": r["id"]} for r in rows]
+            finally:
+                if getattr(mem, "_own", True):
+                    try:
+                        con.close()
+                    except Exception:
+                        pass
+        except Exception:
+            exchanges = []
+        if not exchanges:
+            return
+        def _bg():
+            try:
+                mem.reflect_on_session(exchanges, session_id=session_id, use_llm=True)
+            except Exception:
+                pass
+        threading.Thread(target=_bg, daemon=True).start()
     except Exception:
         pass
 
@@ -778,6 +892,7 @@ def chat_cmd(
         _render_history(conv, chosen, allow_emoji)
     else:
         console.print(section_rule("CHAT"))
+    _soul_onboarding(allow_emoji)
 
     def show_help() -> None:
         table = styled_table("COMMANDS", allow_emoji)
@@ -797,6 +912,9 @@ def chat_cmd(
         table.add_row("/memory <query>", "Search long-term memory")
         table.add_row("/why", "Explain the last turn's memory recall")
         table.add_row("/forget <name>", "Invalidate facts about an entity")
+        table.add_row("/soul show|diff|accept|reject|edit|init|wingit", "Identity file (self-authored)")
+        table.add_row("/me", "Show your user profile (user.md)")
+        table.add_row("/brief", "Daily briefing from memory")
         table.add_row("/mcp", "Show connected MCP servers + status")
         table.add_row("/tools", "List all tools from connected MCP servers")
         table.add_row("/shell <cmd>", "Run a shell command directly (god-mode, persistent)")
@@ -964,9 +1082,57 @@ def chat_cmd(
                 except Exception as exc:
                     console.print(error_panel(f"memory: {exc}", allow_emoji=allow_emoji))
             continue
-        if user_text.startswith("/"):
-            console.print(info_panel("Unknown command. Type /help", title="COMMANDS", allow_emoji=allow_emoji))
+        if user_text == "/soul" or user_text.startswith("/soul "):
+            try:
+                if not _soul_chat_cmd(user_text[5:].strip(), allow_emoji):
+                    console.print(info_panel("Usage: /soul show|diff|accept|reject|edit|init|wingit", title="SOUL", allow_emoji=allow_emoji))
+            except Exception as exc:
+                console.print(error_panel(f"soul: {exc}", allow_emoji=allow_emoji))
             continue
+        if user_text == "/me":
+            try:
+                import userprofile as _up
+                prof = _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
+                console.print(Panel(safe_text(prof[:6000], allow_emoji), title="ME  ·  user.md",
+                                    title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+            except Exception as exc:
+                console.print(error_panel(f"me: {exc}", allow_emoji=allow_emoji))
+            continue
+        if user_text == "/brief":
+            try:
+                mem2 = mem if mem is not None else _memory()
+                if mem2 is None:
+                    console.print(info_panel("(memory disabled)", title="BRIEF", allow_emoji=allow_emoji))
+                else:
+                    from memory import briefing as _br
+                    from memory import db as _mdb
+                    con = mem2._open()
+                    try:
+                        text = _br.compose_daily(con, use_llm=True)
+                    finally:
+                        if getattr(mem2, "_own", True):
+                            con.close()
+                    console.print(Panel(safe_text(text[:6000], allow_emoji), title="BRIEF  ·  daily",
+                                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+            except Exception as exc:
+                console.print(error_panel(f"brief: {exc}", allow_emoji=allow_emoji))
+            continue
+        if user_text.startswith("/"):
+            import difflib as _dl
+            _known = ["/help", "/models", "/model", "/system", "/clear", "/sessions", "/load", "/new",
+                      "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/remember", "/memory",
+                      "/why", "/forget", "/soul", "/me", "/brief", "/save", "/exit", "/quit"]
+            _word = user_text.split()[0].lower()
+            _hit = _dl.get_close_matches(_word, _known, n=1, cutoff=0.6)
+            _hint = f" Did you mean {_hit[0]}?" if _hit else ""
+            console.print(info_panel(f"Unknown command.{_hint} Type /help", title="COMMANDS", allow_emoji=allow_emoji))
+            continue
+        try:
+            if _soul_show_intent(user_text):
+                _soul_chat_cmd("show", allow_emoji)
+                continue
+        except Exception:
+            pass
 
         recall_text = ""
         recall_hits: list = []
@@ -1043,6 +1209,8 @@ def chat_cmd(
         if mem is not None:
             with console.status("[cyan]Saving memories...[/]", spinner="dots"):
                 mem.flush(timeout=60.0)
+            with console.status("[cyan]Reflecting on session (one LLM pass)...[/]", spinner="dots"):
+                _session_reflect(mem, session_id)
         db_set_last(session_id)
         from mcpclient.manager import shutdown as mcp_shutdown
         try:
@@ -1262,7 +1430,8 @@ def memory_stats_cmd() -> None:
     table = styled_table("MEMORY STATS", allow_emoji)
     table.add_column("KEY", style="cyan", no_wrap=True)
     table.add_column("VALUE", style="white")
-    for k in ("episodes", "entities", "relations", "active_relations", "notes", "communities", "core_blocks", "database"):
+    for k in ("episodes", "entities", "relations", "active_relations", "notes", "communities", "core_blocks",
+              "user_facts", "follow_ups_open", "moods", "eval_pairs", "eval_runs", "database"):
         table.add_row(k, str(s.get(k, "-")))
     console.print(table)
 
@@ -1335,6 +1504,179 @@ def memory_consolidate_cmd() -> None:
     with console.status("[cyan]Sleep-time compute: decay, note links, communities, core blocks...[/]", spinner="dots"):
         r = mem.consolidate(min_interval_s=0.0)
     console.print(Panel(json.dumps(r), title="CONSOLIDATION", border_style="cyan", box=_box(allow_emoji)))
+
+
+@memory_app.command("eval")
+def memory_eval_cmd(
+    generate: bool = typer.Option(False, "--generate", help="Regenerate golden Q/A from current facts first."),
+    use_llm: bool = typer.Option(False, "--llm", help="Use LLM generation + LLM judge (default: deterministic offline)."),
+    top_k: int = typer.Option(6, "--top", "-k"),
+) -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    from memory import db as _mdb, eval as _eval
+    con = mem._open()
+    try:
+        if generate:
+            with console.status("[cyan]Generating golden Q/A...[/]", spinner="dots"):
+                pairs = _eval.generate_pairs(con, use_llm=use_llm)
+            console.print(section_rule(f"EVAL PAIRS  ·  {len(pairs)} generated"))
+        with console.status("[cyan]Running eval (full read path per question)...[/]", spinner="dots"):
+            report = _eval.run_eval(mem, use_llm=use_llm, top_k=top_k)
+        table = styled_table("MEMORY EVAL", allow_emoji)
+        table.add_column("CATEGORY", style="cyan")
+        table.add_column("HITS", justify="right")
+        table.add_column("TOTAL", justify="right")
+        table.add_column("HIT RATE", justify="right")
+        for cat, d in (report.get("per_category") or {}).items():
+            table.add_row(cat, str(d.get("hits", 0)), str(d.get("total", 0)), f"{float(d.get('hit_rate', 0)):.0%}")
+        table.add_row("[bold]OVERALL[/]", str(report.get("hits", 0)), str(report.get("total", 0)), f"{float(report.get('hit_rate', 0)):.0%}")
+        console.print(table)
+    finally:
+        if getattr(mem, "_own", True):
+            try:
+                con.close()
+            except Exception:
+                pass
+
+
+@memory_app.command("people")
+def memory_people_cmd(limit: int = typer.Option(15, "--limit", "-n")) -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    from memory import people as _people
+    con = mem._open()
+    try:
+        rows = _people.people_overview(con, limit=limit)
+        text = _people.render_people(rows)
+    finally:
+        if getattr(mem, "_own", True):
+            try:
+                con.close()
+            except Exception:
+                pass
+    console.print(Panel(safe_text(text, allow_emoji), title="PEOPLE", border_style="cyan", box=_box(allow_emoji)))
+
+
+soul_app = typer.Typer(help="Soul identity file: show / init / diff / accept / reject.")
+app.add_typer(soul_app, name="soul")
+
+
+@soul_app.command("show")
+def soul_show_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    import soul as _soul
+    console.print(_header())
+    console.print(Panel(safe_text(_soul.load() or "(no soul.md yet)", allow_emoji), title="SOUL",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@soul_app.command("init")
+def soul_init_cmd(
+    sound: str = typer.Option("", "--sound", help="How Zumba should sound."),
+    keep: str = typer.Option("", "--keep", help="What to keep in mind about you."),
+    off_limits: str = typer.Option("", "--off-limits", help="Off-limits topics/tone."),
+    wingit: bool = typer.Option(False, "--wingit", help="Draft from early exchanges."),
+) -> None:
+    import soul as _soul
+    console.print(_header())
+    if wingit or not any([sound, keep, off_limits]):
+        r = _soul.bootstrap_flow({"sound": sound or "just wing it", "keep": keep, "off_limits": off_limits})
+    else:
+        r = _soul.bootstrap_flow({"sound": sound, "keep": keep, "off_limits": off_limits})
+    console.print(section_rule(f"SOUL WRITTEN  ·  {r.get('soul', '')}"))
+
+
+@soul_app.command("diff")
+def soul_diff_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    import soul as _soul
+    console.print(Panel(safe_text(_soul.diff_proposed(), allow_emoji), title="SOUL DIFF",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@soul_app.command("accept")
+def soul_accept_cmd() -> None:
+    import soul as _soul
+    console.print(section_rule("SOUL UPDATED" if _soul.apply_proposal() else "NO PROPOSAL"))
+
+
+@soul_app.command("reject")
+def soul_reject_cmd() -> None:
+    import soul as _soul
+    _soul.reject_proposal()
+    console.print(section_rule("SOUL PROPOSAL REJECTED"))
+
+
+@app.command("daily")
+def daily_cmd(
+    install_reminder: bool = typer.Option(False, "--install-reminder", help="Register a Windows Task Scheduler daily job."),
+    at: str = typer.Option("08:00", "--at", help="Reminder time HH:MM."),
+    use_llm: bool = typer.Option(True, "--llm/--no-llm", help="Compose with LLM or raw digest."),
+) -> None:
+    allow_emoji = _allow_emoji()
+    if install_reminder:
+        from memory import briefing as _br
+        console.print(_header())
+        console.print(Panel(json.dumps(_br.install_reminder(time_hhmm=at), indent=2), title="DAILY REMINDER",
+                            title_align="left", border_style="cyan", box=_box(allow_emoji)))
+        return
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    from memory import briefing as _br2
+    con = mem._open()
+    try:
+        text = _br2.compose_daily(con, use_llm=use_llm)
+    finally:
+        if getattr(mem, "_own", True):
+            try:
+                con.close()
+            except Exception:
+                pass
+    console.print(Panel(safe_text(text[:8000], allow_emoji), title="DAILY BRIEF",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(1, 2)))
+
+
+@app.command("mood")
+def mood_cmd(days: int = typer.Option(30, "--days", "-d")) -> None:
+    allow_emoji = _allow_emoji()
+    mem = _memory()
+    if mem is None:
+        _fail("Memory is disabled.")
+        return
+    console.print(_header())
+    from memory import mood as _mood
+    con = mem._open()
+    try:
+        text = _mood.render_chart(con, days=days)
+    finally:
+        if getattr(mem, "_own", True):
+            try:
+                con.close()
+            except Exception:
+                pass
+    console.print(Panel(safe_text(text, allow_emoji), title="MOOD",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
+
+
+@app.command("me")
+def me_cmd() -> None:
+    allow_emoji = _allow_emoji()
+    import userprofile as _up
+    console.print(_header())
+    console.print(Panel(safe_text(_up.profile_block() or "(no user.md yet)", allow_emoji), title="ME  ·  user.md",
+                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
 
 
 @app.command("doctor")

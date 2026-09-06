@@ -16,13 +16,110 @@ from __future__ import annotations
 
 import os
 import queue
+import re
 import subprocess
+import sys
 import threading
 import time
 import uuid
 
 _DONE_PREFIX = "__ZUMBA_DONE__:"
 _PWD_PREFIX = "__ZUMBA_PWD__:"
+
+
+# ---- Unix -> PowerShell translation (Friday-pattern, hardened for flags) ----
+# Lets the model speak bash; Windows still works. `ls -la` is the classic
+# breaker: bare `ls -> Get-ChildItem` leaves `-la` behind, which Get-ChildItem
+# rejects. So ls flags are mapped explicitly instead of passed through.
+_UNIX_TO_PS: list[tuple[re.Pattern, str, str]] = [
+    (re.compile(r"^\s*cat(\s)"), "Get-Content", "\\1"),
+    (re.compile(r"^\s*pwd\s*$"), "Get-Location", ""),
+    (re.compile(r"^\s*grep(\s)"), "Select-String", "\\1"),
+    (re.compile(r"^\s*head(\s)"), "Select-Object -First", "\\1"),
+    (re.compile(r"^\s*tail(\s)"), "Select-Object -Last", "\\1"),
+    (re.compile(r"^\s*wc(\s)"), "Measure-Object", "\\1"),
+    (re.compile(r"^\s*mkdir\s+-p\s+"), "New-Item -ItemType Directory -Force ", ""),
+    (re.compile(r"^\s*touch\s+"), "New-Item -ItemType File -Force ", ""),
+    (re.compile(r"^\s*rm\s+-rf\s+"), "Remove-Item -Recurse -Force ", ""),
+    (re.compile(r"^\s*rm(\s)"), "Remove-Item", "\\1"),
+    (re.compile(r"^\s*cp(\s)"), "Copy-Item", "\\1"),
+    (re.compile(r"^\s*mv(\s)"), "Move-Item", "\\1"),
+    (re.compile(r"^\s*which(\s)"), "Get-Command", "\\1"),
+    (re.compile(r"^\s*env\s*\|\s*grep\s+"), "Get-ChildItem env: | Select-String ", ""),
+    (re.compile(r"^\s*df(\s)"), "Get-PSDrive", "\\1"),
+    (re.compile(r"^\s*du(\s)"), "Get-ChildItem -Recurse | Measure-Object", "\\1"),
+    (re.compile(r"^\s*diff(\s)"), "Compare-Object", "\\1"),
+    (re.compile(r"^\s*ps\s*$"), "Get-Process", ""),
+    (re.compile(r"^\s*clear\s*$"), "Clear-Host", ""),
+]
+
+_LS_FLAGS = {
+    "-la": "-Force", "-al": "-Force", "-lla": "-Force",
+    "-l": "", "-a": "-Force", "-lh": "", "-lah": "-Force",
+}
+
+
+def _translate_ls(cmd: str) -> str | None:
+    m = re.match(r"^\s*ls\s*(.*)$", cmd)
+    if not m:
+        return None
+    rest = (m.group(1) or "").strip()
+    if not rest:
+        return "Get-ChildItem"
+    parts = rest.split()
+    flags = [p for p in parts if p.startswith("-")]
+    paths = [p for p in parts if not p.startswith("-")]
+    ps_flags = " ".join(_LS_FLAGS.get(f, "") for f in flags).strip()
+    ps_flags = re.sub(r"\s+", " ", ps_flags).strip()
+    path = " ".join(paths).strip()
+    out = "Get-ChildItem"
+    if ps_flags:
+        out += f" {ps_flags}"
+    if path:
+        out += f" {path}"
+    return out
+
+
+_PS_PREFIXES = ("powershell", "pwsh", "Get-", "Set-", "New-", "Remove-",
+                "Invoke-", "Select-", "Where-", "ForEach-", "Test-",
+                "Write-", "Import-", "Export-", "Start-", "Stop-",
+                "Clear-", "Get-PS", "Compare-", "Measure-", "Copy-",
+                "Move-", "Out-")
+
+_WIN_CMDS = ("dir", "type", "copy", "del", "ren", "move", "mkdir", "rmdir",
+             "cls", "echo", "cd", "chdir", "path", "set", "date", "time",
+             "find", "findstr", "sort", "tasklist", "taskkill", "ipconfig",
+             "ping", "tracert", "netstat", "systeminfo", "whoami", "hostname")
+
+
+def translate_to_powershell(command: str) -> str:
+    """Translate common Unix commands to PowerShell equivalents on Windows."""
+    if sys.platform != "win32":
+        return command
+    stripped = (command or "").strip()
+    if not stripped:
+        return command
+    if any(stripped.startswith(p) for p in _PS_PREFIXES):
+        return command
+    ls = _translate_ls(stripped)
+    if ls is not None:
+        return ls
+    first = stripped.split()[0].lower().split("/")[-1].split("\\")[-1]
+    args = stripped.split()[1:] if len(stripped.split()) > 1 else []
+    has_unix_flags = any(a.startswith("-") and len(a) > 1 and a[1] in "prf" for a in args)
+    if first in _WIN_CMDS and not has_unix_flags:
+        return command
+    # sleep 5 -> Start-Sleep -Seconds 5 ; export FOO=bar -> $env:FOO="bar"
+    m = re.match(r"^\s*sleep\s+(\d+)\s*$", stripped)
+    if m:
+        return f"Start-Sleep -Seconds {m.group(1)}"
+    m = re.match(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$", stripped)
+    if m and "|" not in stripped and ";" not in stripped:
+        return f'$env:{m.group(1)}="{m.group(2).strip().strip(chr(34)).strip(chr(39))}"'
+    for pattern, replacement, suffix in _UNIX_TO_PS:
+        if pattern.match(stripped):
+            return pattern.sub(replacement + suffix, stripped, count=1)
+    return command
 
 
 def enabled() -> bool:
@@ -76,6 +173,10 @@ def truncate_output(text: str, cap: int = 0) -> tuple[str, bool]:
 class _Job:
     def __init__(self, cmd: str, cwd: str | None):
         self.id = uuid.uuid4().hex[:8]
+        try:
+            cmd = translate_to_powershell(cmd)
+        except Exception:
+            pass
         self.command = cmd
         self.started_at = time.time()
         self._buf: list[str] = []
@@ -199,6 +300,10 @@ class ShellSession:
     def run(self, cmd: str, timeout_s: float = 0, cwd: str | None = None, run_in_background: bool = False) -> dict:
         """Run a command. Returns {exit_code, stdout, stderr, truncated,
         duration_ms, timed_out}."""
+        try:
+            cmd = translate_to_powershell(cmd)
+        except Exception:
+            pass
         if run_in_background:
             return self.run_background(cmd, cwd=cwd)
         timeout = timeout_s or default_timeout()

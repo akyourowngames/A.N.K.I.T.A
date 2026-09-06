@@ -38,6 +38,15 @@ def test_default_gets_persona(monkeypatch):
     assert "Zumba" in out and DEFAULT_SYSTEM in out
 
 
-def test_tier2_marker_present():
-    src = Path(__file__).resolve().parent.parent / "persona.py"
-    assert "TODO(tier2-profile)" in src.read_text(encoding="utf-8")
+def test_tier2_profile_wired(monkeypatch, tmp_path):
+    import soul
+    home = tmp_path / "phome"
+    home.mkdir()
+    monkeypatch.setenv("ZUMBA_HOME", str(home))
+    monkeypatch.setattr("soul._home", lambda: home)
+    monkeypatch.setattr("memory.llm.chat_text", lambda *a, **k: (_ for _ in ()).throw(RuntimeError("no llm")))
+    soul.bootstrap_flow({"sound": "terse", "keep": "likes Rust"})
+    monkeypatch.setattr("store.config_get", lambda k, d="": d)
+    out = build_system(DEFAULT_SYSTEM)
+    assert "soul.md" in out
+    assert "user.md" in out or "likes Rust" in out

@@ -24,11 +24,18 @@ Runs opportunistically in the background (or via `zumba memory consolidate`): ex
 
 ```powershell
 python main.py memory stats            # graph counts + db location
-python main.py memory search "..."     # hybrid recall (vector + BM25 + PPR)
+python main.py memory search "..."     # hybrid recall (vector + BM25 + PPR v2)
 python main.py memory add "..."        # store a fact through the full pipeline
 python main.py memory forget <name>    # invalidate facts about an entity
 python main.py memory consolidate      # run sleep-time compute now
+python main.py memory eval --generate  # regression net: golden Q/A + hit-rate per category
+python main.py memory people           # who matters: recency/frequency ranked
 python main.py memory clear --yes      # wipe all memory
+python main.py soul show               # self-authored identity (soul.md spec)
+python main.py me                      # your profile (user.md, always in context)
+python main.py daily                   # morning briefing: follow-ups, dates, resurfaces
+python main.py daily --install-reminder --at 08:00  # Windows Task Scheduler job
+python main.py mood                    # 30-day valence chart
 ```
 
 ### In-chat commands
@@ -38,6 +45,9 @@ python main.py memory clear --yes      # wipe all memory
 | `/remember <t>` | Store a fact in long-term memory         |
 | `/memory <q>`   | Search long-term memory                  |
 | `/forget <n>`   | Invalidate facts about an entity         |
+| `/soul show\|diff\|accept\|reject\|edit\|init\|wingit` | Identity file lifecycle |
+| `/me`           | Show your user profile                   |
+| `/brief`        | Daily briefing from memory               |
 
 Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrades gracefully — chat never breaks because of it.
 
@@ -57,7 +67,8 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **God-mode shell** — unrestricted persistent PowerShell for the model (`zumba__shell_run/jobs/kill`) and you (`/shell`, `python main.py shell`); background jobs, audit log, `ZUMBA_NO_SHELL=1` kill-switch
 - **Context window manager** — every model call fits `ZUMBA_CONTEXT_LIMIT` (default 8192): system + anchor + recent turns kept, middle overflow becomes one cached rolling summary, stale tool transcripts truncated
 - **Persona + provenance** — identity voice with editable `style` prefs (`zumba config --set-style`); `/why` explains the last turn's memory recall with kinds and scores
-- **101 passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, and tool-memory tests
+- **Soul + living memory (Tier 2)** — `~/.zumba/soul.md` is self-authored on first run (3 questions, skippable via `/soul wingit`; `user.md` companion holds your profile and is always injected); session-end reflection writes decisions/follow-ups/importance/mood in one LLM pass; retrieval is HippoRAG-2 passages-in-graph with importance + temporal filters (`as_of`, time ranges) and A-Mem note evolution; `zumba daily` briefs from follow-ups + on-this-day resurfaces; style corrections (`shorter`, `no tables`) fold into soul Voice via propose/accept; `zumba memory eval` keeps the regression net green
+- **140+ passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, and retrieval-v2 suites
 
 ## Requirements
 
@@ -240,13 +251,21 @@ Unrestricted, persistent PowerShell for the model and you. One long-lived sessio
 python main.py shell "python --version"   # one-shot (exit code propagates)
 ```
 
-In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumba__shell_run` (+ `shell_jobs` / `shell_kill` for background jobs with `run_in_background: true`). Timeouts return partial output and restart the session; output caps at `ZUMBA_SHELL_MAX_OUTPUT` (head+tail); `ZUMBA_NO_SHELL=1` removes the tools.
+In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumba__shell_run` (+ `shell_jobs` / `shell_kill` for background jobs with `run_in_background: true`). Windows PowerShell syntax required (`Get-ChildItem`, not `ls -la`); common bash spells are auto-translated (`ls -la` → `Get-ChildItem -Force`, `cat` → `Get-Content`, `grep` → `Select-String`). Timeouts return partial output and restart the session; output caps at `ZUMBA_SHELL_MAX_OUTPUT` (head+tail); `ZUMBA_NO_SHELL=1` removes the tools.
 
 ## Context, persona, provenance
 
 - Every model call is fit to `ZUMBA_CONTEXT_LIMIT` (default 8192) by `context_budget.py`: system prompts, the first user message (session anchor), and recent turns are always kept; dropped middle turns become one cached rolling summary (rebuilt after ≥6 newly dropped turns); stale tool transcripts truncate to 200 chars.
-- `persona.py` gives Zumba its voice (direct, warm, zero fluff) with editable style prefs (`zumba config --set-style "..."`); `--system` still overrides everything.
+- `persona.py` composes soul.md (self-authored identity, 4k cap) + user.md profile + editable style prefs (`zumba config --set-style "..."`); `--system` still overrides everything. Ordering: soul → user → identity → style → base.
 - `/why` shows the last turn's exact memory injection: recall query, hit kinds, scores, and source ids. `/why off|on` toggles capture (default on, zero extra cost).
+
+## Soul, user model, eval, daily
+
+- First message with no `~/.zumba/soul.md` triggers onboarding: 3 questions, skippable (`/soul wingit` drafts from early exchanges). Zumba writes soul.md itself (frontmatter + Identity/Voice/Values/Boundaries, 4k cap) plus companion `user.md`. Updates go through consent: propose → `soul.proposed.md` → `/soul diff` → `/soul accept|reject`; `/soul edit` opens `$EDITOR`, `/soul show` displays.
+- `user_facts` table + LLM-maintained `user.md` (Identity/Projects/People/Preferences/Goals/Current focus); recall always prepends the profile bounded, plus recent mood context.
+- Session-end reflection (one LLM pass after flush, background thread): decisions → `notes(kind=decision)`, open items → `follow_ups`, poignancy 1-10 → `episodes.importance` (feeds retrieval), mood → `session_moods` (fastembed anchors, no LLM needed).
+- Retrieval v2: passages-in-graph PPR (episode/note nodes seed PPR too, reset weighted by importance + recency), A-Mem evolution (new note refreshes top-3 similar, max 3/ingest), temporal read path (`time_range`, `as_of` on `valid_at`), and latency discipline (episode FTS+vector indexed synchronously — ingest → immediate recall is a regression test).
+- `zumba memory eval` is the regression net: LLM or heuristic golden Q/A (`single-hop`, `temporal`, `update`) → `eval_pairs`, full read path per question with LLM-judge (containment fallback offline) → `eval_runs` with per-category hit-rate. Every retrieval/extraction change must keep it green.
 
 
 ## Project structure
@@ -262,7 +281,9 @@ zumba/
 ├── models.py        # Message (incl. tool_calls) / ModelInfo / ChatResult dataclasses
 ├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
 ├── context_budget.py # Token estimator + fit-to-budget window + rolling summary
-├── persona.py       # Identity voice + editable style prefs (profile deferred: TODO tier2)
+├── persona.py       # Soul + user profile + identity voice + style prefs
+├── soul.py          # soul.md / user.md bootstrap, loader, propose/accept, 4k cap
+├── userprofile.py   # user_facts table + user.md rewrite + always-inject profile block
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)
 │   ├── manager.py       # Async connection manager: stdio / HTTP / SSE, health, reconnect
@@ -276,11 +297,17 @@ zumba/
 │   ├── extraction.py    # Salience gate, extraction, write decisions
 │   ├── resolve.py       # Entity resolution (alias + vector + LLM merge)
 │   ├── graph.py         # PageRank, decay/reinforce, Leiden communities
-│   ├── retrieval.py     # Hybrid recall + context packing
-│   ├── consolidation.py # Sleep-time compute
+│   ├── retrieval.py     # Hybrid recall v2 (passages-in-graph PPR + temporal + importance)
+│   ├── consolidation.py # Sleep-time compute + A-Mem note evolution
+│   ├── reflection.py    # Session-end reflection (decisions/follow-ups/importance/mood)
+│   ├── mood.py          # Valence anchors + timeline + chart
+│   ├── briefing.py      # Daily briefing composer + scheduler install
+│   ├── eval.py          # Eval harness (golden Q/A, judge, runs)
+│   ├── preferences.py   # prefers_* detection + soul Voice proposals
+│   ├── people.py        # Relationship view
 │   └── service.py       # Memory orchestrator
 ├── sessions/        # Legacy JSON sessions (auto-migrated, git-ignored)
-├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona)
+├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona, soul, eval, reflection, retrieval-v2)
 ├── requirements.txt
 └── .env.example
 ```

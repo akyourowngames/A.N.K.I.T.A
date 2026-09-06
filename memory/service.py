@@ -123,6 +123,11 @@ class Memory:
             def c(sql):
                 return con.execute(sql).fetchone()[0]
 
+            def _safe(sql):
+                try:
+                    return c(sql)
+                except Exception:
+                    return 0
             return {
                 "episodes": c("SELECT COUNT(*) FROM episodes"),
                 "entities": c("SELECT COUNT(*) FROM entities"),
@@ -131,6 +136,11 @@ class Memory:
                 "notes": c("SELECT COUNT(*) FROM notes"),
                 "communities": c("SELECT COUNT(*) FROM communities"),
                 "core_blocks": c("SELECT COUNT(*) FROM core_blocks"),
+                "user_facts": _safe("SELECT COUNT(*) FROM user_facts"),
+                "follow_ups_open": _safe("SELECT COUNT(*) FROM follow_ups WHERE done_at IS NULL"),
+                "moods": _safe("SELECT COUNT(*) FROM session_moods"),
+                "eval_pairs": _safe("SELECT COUNT(*) FROM eval_pairs"),
+                "eval_runs": _safe("SELECT COUNT(*) FROM eval_runs"),
                 "database": str(db.memory_db_path()),
             }
         finally:
@@ -154,11 +164,17 @@ class Memory:
 
             if kind == "tool":
                 return {"stored": True, "extracted": False, "episode": episode_id, "reason": "tool-turn"}
-            if not prefilter_may_be_memorable(user_text, assistant_text):
+            try:
+                from . import preferences as _pref0
+                _style_hits = _pref0.detect_corrections(user_text + " " + assistant_text)
+            except Exception:
+                _style_hits = []
+            if not _style_hits and not prefilter_may_be_memorable(user_text, assistant_text):
                 return {"stored": True, "extracted": False, "episode": episode_id, "reason": "prefilter"}
-            memorable = extraction.should_remember(user_text, assistant_text)
-            if not memorable:
-                return {"stored": True, "extracted": False, "episode": episode_id}
+            if not _style_hits:
+                memorable = extraction.should_remember(user_text, assistant_text)
+                if not memorable:
+                    return {"stored": True, "extracted": False, "episode": episode_id}
 
             try:
                 known = [r["canonical_name"] for r in con.execute("SELECT canonical_name FROM entities LIMIT 40").fetchall()]
@@ -167,14 +183,44 @@ class Memory:
             ents, rels = extraction.extract_graph(user_text, assistant_text, known=known)
             if not ents and not rels:
                 ents, rels = extraction.extract_graph(user_text, assistant_text, known=known)
-            if not ents and not rels:
+            if not ents and not rels and not _style_hits:
                 return {"stored": True, "extracted": False, "episode": episode_id}
+            if not ents and not rels:
+                ents, rels = [], []
 
+            try:
+                from . import preferences as _prefs
+                _found = _prefs.detect_corrections(user_text + " " + assistant_text)
+                _names = {str(e.get("name") or "") for e in ents}
+                for p in _found:
+                    if p["target"] not in _names:
+                        ents.append({"name": p["target"], "type": "style", "description": "assistant style target"})
+                        _names.add(p["target"])
+                    if "user" not in _names and p.get("source") == "user":
+                        ents.append({"name": "user", "type": "person", "description": "the user"})
+                        _names.add("user")
+                    if not any(r.get("type") == p["type"] for r in rels):
+                        s_name = p.get("source") or "user"
+                        if s_name not in _names:
+                            ents.append({"name": s_name, "type": "person", "description": "the user"})
+                            _names.add(s_name)
+                        rels.append({"source": s_name, "target": p["target"], "type": p["type"], "fact": p["fact"], "confidence": 0.85})
+            except Exception:
+                pass
             ent_id_of = self._reconcile_entities(con, ents, episode_id)
             n_relations = self._reconcile_relations(con, rels, ent_id_of, episode_id)
+            try:
+                import userprofile as _up
+                _up.extract_user_facts_from_relations(con, rels, episode_id)
+            except Exception:
+                pass
             note_id = self._make_note(con, user_text, assistant_text, ents)
             if note_id:
                 consolidation.link_notes(con, note_id)
+                try:
+                    consolidation.evolve_notes(con, note_id, use_llm=True, max_updates=3)
+                except Exception:
+                    pass
             return {"stored": True, "extracted": True, "entities": len(ent_id_of), "relations": n_relations, "note": note_id, "episode": episode_id}
         finally:
             if self._own:
@@ -324,11 +370,27 @@ class Memory:
             vec = embedder.embed_text((user_text + " " + assistant_text))
             now = db.now()
             kw = json.dumps([e.get("name") for e in ents[:8]])
-            cur = con.execute(
-                "INSERT INTO notes(title, content, keywords, tags, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
-                (title, content, kw, "[]", db.pack_vec(vec) if vec else None, now, now),
-            )
-            return cur.lastrowid
+            try:
+                cur = con.execute(
+                    "INSERT INTO notes(title, content, keywords, tags, kind, description, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?,?,?)",
+                    (title, content, kw, "[]", "note", "", db.pack_vec(vec) if vec else None, now, now),
+                )
+            except Exception:
+                cur = con.execute(
+                    "INSERT INTO notes(title, content, keywords, tags, embedding, created_at, updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (title, content, kw, "[]", db.pack_vec(vec) if vec else None, now, now),
+                )
+            nid = cur.lastrowid
+            if vec:
+                try:
+                    con.execute("INSERT OR REPLACE INTO vec_notes(note_id, embedding) VALUES(?,?)", (nid, db.pack_vec(vec)))
+                except Exception:
+                    pass
+            try:
+                con.execute("INSERT OR REPLACE INTO fts_notes(rowid, title, content, keywords) VALUES(?,?,?,?)", (nid, title, content, kw))
+            except Exception:
+                pass
+            return nid
         except Exception:
             return None
 
@@ -338,16 +400,56 @@ class Memory:
         except Exception:
             return None
 # ---- recall ----
-    def recall_with_hits(self, query, top_k=6, max_bytes=5000):
+    def profile_text(self, con=None) -> str:
+        try:
+            import userprofile as _up
+            prof = _up.profile_block()
+            if prof:
+                return prof
+        except Exception:
+            pass
+        return ""
+
+    def mood_text(self, con=None) -> str:
+        try:
+            con = con or self._open()
+            from . import mood as _mood
+            return _mood.mood_context(con)
+        except Exception:
+            return ""
+
+    def recall_with_hits(self, query, top_k=6, max_bytes=5000, time_range=None, as_of=None):
         """Recall + per-hit provenance (kind, score, meta, snippet).
 
         Zero extra cost over recall(): same search, hits passed through
-        instead of being flattened into text. Powers `/why`."""
+        instead of being flattened into text. Powers `/why`.
+        T2.1: user.md profile is ALWAYS prepended (bounded), not query-gated.
+        T2.4: recent mood context is appended so tone adapts."""
         con = self._open()
         try:
-            hits = retrieval.search(con, query, top_k=top_k, max_bytes=max_bytes)
+            try:
+                hits = retrieval.search(con, query, top_k=top_k, max_bytes=max_bytes, time_range=time_range, as_of=as_of)
+            except TypeError:
+                hits = retrieval.search(con, query, top_k=top_k, max_bytes=max_bytes)
+            prefix_parts = []
+            try:
+                import userprofile as _up
+                prof = _up.profile_block()
+                if prof:
+                    prefix_parts.append(prof[:1800])
+            except Exception:
+                pass
+            try:
+                from . import mood as _mood
+                mc = _mood.mood_context(con)
+                if mc:
+                    prefix_parts.append(mc[:600])
+            except Exception:
+                pass
+            prefix = ("\n".join(prefix_parts) + "\n" if prefix_parts else "") + self._core_text(con)
+            prefix = prefix.strip()
             if not hits:
-                return self._core_text(con), []
+                return prefix, []
             lines = []
             prove = []
             for h in hits:
@@ -357,13 +459,20 @@ class Memory:
                                   "meta": dict(h.meta or {}), "snippet": h.text[:200]})
                 except Exception:
                     prove.append({"kind": h.kind, "score": 0.0, "meta": {}, "snippet": h.text[:200]})
-            return "\n".join(lines), prove
+            body = "\n".join(lines)
+            full = (prefix + "\n" + body).strip() if prefix else body
+            if len(full) > max_bytes + 2500:
+                full = full[: max_bytes + 2500]
+            return full, prove
         finally:
             if self._own:
                 con.close()
 
-    def recall(self, query, top_k=6, max_bytes=5000):
-        text, _ = self.recall_with_hits(query, top_k=top_k, max_bytes=max_bytes)
+    def recall(self, query, top_k=6, max_bytes=5000, time_range=None, as_of=None):
+        try:
+            text, _ = self.recall_with_hits(query, top_k=top_k, max_bytes=max_bytes, time_range=time_range, as_of=as_of)
+        except TypeError:
+            text, _ = self.recall_with_hits(query, top_k=top_k, max_bytes=max_bytes)
         return text
 
     def _core_text(self, con=None):
@@ -384,16 +493,51 @@ class Memory:
             return {"ran": False}
         con = self._open()
         try:
+            db.ensure_tier2(con)
             graph.apply_time_decay(con)
             links = consolidation.link_notes(con)
             invalidations = consolidation.sweep_contradictions(con)
             communities = consolidation.rebuild_communities(con)
             core = consolidation.rewrite_core(con)
+            user_facts_n = 0
+            try:
+                import userprofile as _up
+                rows = con.execute(
+                    """SELECT r.type, r.fact, r.confidence, r.source_episode FROM relations r
+                       WHERE r.invalid_at IS NULL ORDER BY r.created_at DESC LIMIT 60""").fetchall()
+                rels = [{"type": r["type"], "fact": r["fact"], "confidence": r["confidence"], "source": ""} for r in rows]
+                user_facts_n = _up.extract_user_facts_from_relations(con, rels)
+                try:
+                    _up.rewrite_user_md(con, use_llm=True)
+                except Exception:
+                    pass
+            except Exception:
+                pass
+            try:
+                from . import preferences as _prefs
+                prefs = _prefs.active_preferences(con)
+                if prefs:
+                    _prefs.propose_voice_update(con, prefs)
+            except Exception:
+                pass
             self.consolidated_at = time.time()
-            return {"ran": True, "links": links, "invalidations": invalidations, "communities": communities, "core_blocks": core}
+            return {"ran": True, "links": links, "invalidations": invalidations, "communities": communities, "core_blocks": core, "user_facts": user_facts_n}
         finally:
             if self._own:
                 con.commit()
+                con.close()
+
+    def reflect_on_session(self, exchanges: list, session_id: str = "", use_llm: bool = True) -> dict:
+        con = self._open()
+        try:
+            from . import reflection as _ref
+            return _ref.reflect_session(con, exchanges, session_id=session_id, use_llm=use_llm)
+        finally:
+            if self._own:
+                try:
+                    con.commit()
+                except Exception:
+                    pass
                 con.close()
 
     def forget(self, target):
@@ -417,8 +561,12 @@ class Memory:
         con = self._open()
         try:
             for t in ["episode_entities", "relations", "entities", "aliases", "episodes", "notes",
-                      "note_links", "communities", "community_members", "core_blocks"]:
-                con.execute(f"DELETE FROM {t}")
+                      "note_links", "communities", "community_members", "core_blocks",
+                      "user_facts", "follow_ups", "session_moods", "eval_pairs", "eval_runs"]:
+                try:
+                    con.execute(f"DELETE FROM {t}")
+                except Exception:
+                    pass
             for vt in ["vec_episodes", "vec_entities", "vec_relations", "vec_notes",
                        "fts_episodes", "fts_relations", "fts_notes"]:
                 try:

@@ -183,6 +183,55 @@ CREATE VIRTUAL TABLE IF NOT EXISTS fts_relations USING fts5(
 CREATE VIRTUAL TABLE IF NOT EXISTS fts_notes USING fts5(
     title, content, keywords, content='notes', content_rowid='id'
 );
+
+-- TIER 2: structured user model (Letta human-block pattern).
+CREATE TABLE IF NOT EXISTS user_facts (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL DEFAULT '',
+    confidence REAL NOT NULL DEFAULT 0.6,
+    source_episode INTEGER REFERENCES episodes(id) ON DELETE SET NULL,
+    updated_at REAL NOT NULL
+);
+
+-- TIER 2: session-end reflection follow-ups (powers daily briefing).
+CREATE TABLE IF NOT EXISTS follow_ups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    text TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    done_at REAL,
+    source_session TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_followups_open ON follow_ups(done_at);
+
+-- TIER 2: mood / state timeline.
+CREATE TABLE IF NOT EXISTS session_moods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    session_id TEXT NOT NULL DEFAULT '',
+    valence REAL NOT NULL DEFAULT 0.0,
+    energy REAL NOT NULL DEFAULT 0.5,
+    note TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_moods_time ON session_moods(created_at);
+
+-- TIER 2: memory eval harness (regression net).
+CREATE TABLE IF NOT EXISTS eval_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question TEXT NOT NULL,
+    expected TEXT NOT NULL DEFAULT '',
+    category TEXT NOT NULL DEFAULT 'single-hop',
+    evidence_ids TEXT NOT NULL DEFAULT '[]',
+    created_at REAL NOT NULL
+);
+CREATE TABLE IF NOT EXISTS eval_runs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp REAL NOT NULL,
+    total INTEGER NOT NULL DEFAULT 0,
+    hits INTEGER NOT NULL DEFAULT 0,
+    hit_rate REAL NOT NULL DEFAULT 0.0,
+    per_category TEXT NOT NULL DEFAULT '{}',
+    details TEXT NOT NULL DEFAULT '[]'
+);
 """
 
 
@@ -201,7 +250,35 @@ def connect() -> sqlite3.Connection:
             pass
     with _lock:
         con.executescript(_SCHEMA.replace("{EMBED_DIM}", str(EMBED_DIM)))
+        _migrate_tier2(con)
     return con
+
+
+def _columns(con: sqlite3.Connection, table: str) -> set:
+    try:
+        return {r["name"] for r in con.execute(f"PRAGMA table_info({table})").fetchall()}
+    except Exception:
+        return set()
+
+
+def _migrate_tier2(con: sqlite3.Connection) -> None:
+    try:
+        cols = _columns(con, "episodes")
+        if "importance" not in cols:
+            con.execute("ALTER TABLE episodes ADD COLUMN importance REAL NOT NULL DEFAULT 5.0")
+        cols = _columns(con, "notes")
+        if "kind" not in cols:
+            con.execute("ALTER TABLE notes ADD COLUMN kind TEXT NOT NULL DEFAULT 'note'")
+        if "description" not in cols:
+            con.execute("ALTER TABLE notes ADD COLUMN description TEXT NOT NULL DEFAULT ''")
+    except Exception:
+        pass
+
+
+def ensure_tier2(con: sqlite3.Connection) -> None:
+    with _lock:
+        con.executescript(_SCHEMA.replace("{EMBED_DIM}", str(EMBED_DIM)))
+        _migrate_tier2(con)
 
 
 def set_meta(con: sqlite3.Connection, key: str, value: str) -> None:

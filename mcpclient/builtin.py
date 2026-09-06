@@ -49,12 +49,15 @@ BUILTIN_TOOLS = [
           "server is connected/installed based on search results or memory. Call it "
           "before answering any 'what servers / are you connected' question.", {}, []),
     _tool("shell_run",
-          "Run an UNRESTRICTED shell command (Windows PowerShell) in a PERSISTENT "
+          "Run an UNRESTRICTED shell command (Windows PowerShell ONLY) in a PERSISTENT "
           "session — cwd, env vars and files carry over between calls, so chain "
           "state (cd, $env:X=...) instead of re-stating it. No approval needed; "
           "every command is audit-logged. Prefer one chained command over many "
-          "small ones. Interactive commands (needing stdin) are NOT supported.",
-          {"command": {"type": "string", "description": "PowerShell command to run"},
+          "small ones. Interactive commands (needing stdin) are NOT supported. "
+          "PowerShell syntax REQUIRED: Get-ChildItem (not ls), Get-Content (not cat), "
+          "Get-Location (not pwd), Select-String (not grep). Never use bash flags "
+          "like -la/-rf. Examples: Get-ChildItem; Get-Content .\\soul.py.",
+          {"command": {"type": "string", "description": "PowerShell command to run (e.g. Get-ChildItem, NOT ls -la)"},
            "timeout_s": {"type": "number", "description": "Timeout in seconds (default 60)"},
            "cwd": {"type": "string", "description": "Working directory (persists for later calls)"},
            "run_in_background": {"type": "boolean", "description": "Return immediately with a job id; poll via shell_jobs"}}, ["command"]),
