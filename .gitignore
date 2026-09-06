@@ -6,3 +6,6 @@ __pycache__/
 *.db-shm
 sessions/*.json
 !sessions/.gitkeep
+node_modules/
+frontend/.next/
+frontend/node_modules/

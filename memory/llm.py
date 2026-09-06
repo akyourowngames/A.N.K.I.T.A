@@ -44,7 +44,7 @@ def _memory_model() -> str:
             return m
     except Exception:
         pass
-    return "kilo-auto/free"
+    return "muse-spark-1.3-contributor-free"
 
 
 def chat_text(prompt: str, system: str = "You are a precise memory curation engine.", model: str = "", max_tokens: int = 1000, temperature: float = 0.0) -> str:

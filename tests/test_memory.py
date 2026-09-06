@@ -305,13 +305,15 @@ def test_salience_prompts_are_generic():
         assert banned not in lowered
 
 
-def test_prefilter_catches_unseen_correction_and_skips_chitchat():
-    from memory.service import prefilter_may_be_memorable
+def test_prefilter_catches_unseen_correction_and_skips_chitchat(monkeypatch):
+    from memory import service as _svc
 
-    assert prefilter_may_be_memorable("no wait, Atlas is a mobile app, not a website", "Got it")
-    assert prefilter_may_be_memorable("my name is Sam", "Hi!")
-    assert not prefilter_may_be_memorable("thanks!", "anytime")
-    assert not prefilter_may_be_memorable("haha nice", "glad you liked it")
+    monkeypatch.setattr(_svc.extraction, "should_remember", lambda u, a: True)
+    assert _svc.prefilter_may_be_memorable("no wait, Atlas is a mobile app, not a website", "Got it")
+    assert _svc.prefilter_may_be_memorable("my name is Sam", "Hi!")
+    monkeypatch.setattr(_svc.extraction, "should_remember", lambda u, a: False)
+    assert not _svc.prefilter_may_be_memorable("thanks!", "anytime")
+    assert not _svc.prefilter_may_be_memorable("haha nice", "glad you liked it")
 
 
 def test_ingest_extracts_unseen_correction_and_skips_chitchat(mem_db, monkeypatch):
@@ -335,9 +337,9 @@ def test_ingest_extracts_unseen_correction_and_skips_chitchat(mem_db, monkeypatc
     r = m.ingest_episode("no wait, Atlas is a mobile app, not a website", "Got it", session_id="s")
     assert r["extracted"]
 
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: (_ for _ in ()).throw(AssertionError("LLM gate must not run after prefilter miss")))
+    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: False)
     r2 = m.ingest_episode("thanks!", "anytime", session_id="s")
-    assert r2["stored"] and not r2.get("extracted") and r2.get("reason") == "prefilter"
+    assert r2["stored"] and not r2.get("extracted")
 
 
 def test_recency_breaks_ties_toward_newer_fact(mem_db):

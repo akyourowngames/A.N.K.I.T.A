@@ -29,7 +29,8 @@ def test_reflection_heuristic_writes_followups_decisions_importance(tmp_path, mo
     from memory import reflection as _ref
     exchanges = [{"user": "We decided to ship Atlas", "assistant": "Ok", "episode_id": e1},
                  {"user": "I must finish the demo tomorrow", "assistant": "Ok", "episode_id": e2}]
-    out = _ref.reflect_session(con, exchanges, session_id="s1", use_llm=False)
+    monkeypatch.setattr("memory.llm.chat_json", lambda *a, **k: {"decisions": [{"text": "Ship Atlas", "reason": "team decision"}], "follow_ups": ["Finish the demo tomorrow"], "importance": [{"index": 0, "score": 8}, {"index": 1, "score": 7}], "mood": {"valence": 0.2, "energy": 0.6, "note": "focused"}})
+    out = _ref.reflect_session(con, exchanges, session_id="s1", use_llm=True)
     assert out["applied"]["follow_ups"] >= 1
     assert out["applied"]["importance_set"] == 2
     assert con.execute("SELECT COUNT(*) FROM follow_ups WHERE done_at IS NULL").fetchone()[0] >= 1
@@ -82,6 +83,7 @@ def test_user_facts_and_profile_prepend(tmp_path, monkeypatch):
 def test_preferences_detect_and_propose(tmp_path, monkeypatch):
     con = _con(tmp_path, monkeypatch)
     from memory import preferences as _prefs
+    monkeypatch.setattr("memory.llm.chat_json", lambda *a, **k: {"prefs": [{"type": "prefers_brevity", "fact": "Give shorter, terser answers."}, {"type": "prefers_no_tables", "fact": "Avoid tables; use prose or bullets."}]})
     found = _prefs.detect_corrections("please be shorter, no tables ever")
     assert {f["type"] for f in found} >= {"prefers_brevity", "prefers_no_tables"}
     home = tmp_path / "zpref"

@@ -7,28 +7,25 @@ Voice section via the propose/accept flow. Tone converges, user in control.
 
 from __future__ import annotations
 
-import re
-
-PREF_PATTERNS = [
-    (re.compile(r"\b(shorter|be concise|less verbose|keep it brief)\b", re.I), "prefers_brevity", "Give shorter, terser answers."),
-    (re.compile(r"\bno tables\b", re.I), "prefers_no_tables", "Avoid tables; use prose or bullets."),
-    (re.compile(r"\bmore detail|longer|elaborate|in depth\b", re.I), "prefers_detail", "Give fuller explanations with detail."),
-    (re.compile(r"\bno emoji|without emoji|stop.*emoji\b", re.I), "prefers_no_emoji", "Avoid emojis."),
-    (re.compile(r"\bbullet|bullets|list it\b", re.I), "prefers_bullets", "Prefer bullet lists."),
-    (re.compile(r"\bcode first|show.*code|just.*code\b", re.I), "prefers_code_first", "Lead with code, minimal prose."),
-    (re.compile(r"\bformal\b", re.I), "prefers_formal", "Use a formal tone."),
-    (re.compile(r"\bcasual|chill|relaxed\b", re.I), "prefers_casual", "Use a casual tone."),
-]
-
-_STYLE_ENTITY_NAMES = ("user", "User", "USER")
+_STYLE_PROMPT = """Does this exchange state a preference about how the assistant should behave (brevity, detail, tone, format, emojis, code style)? Return JSON only: {"prefs": [{"type": "prefers_<name>", "fact": "<plain instruction>"}]}. Empty prefs list if none."""
 
 
 def detect_corrections(user_text: str) -> list[dict]:
-    out = []
-    for rx, typ, desc in PREF_PATTERNS:
-        if rx.search(user_text or ""):
-            out.append({"source": "user", "target": "assistant_style", "type": typ, "fact": desc, "confidence": 0.85})
-    return out
+    try:
+        from . import llm as _llm
+        out = _llm.chat_json(
+            _STYLE_PROMPT + "\n\nEXCHANGE:\n" + (user_text or "")[:2000],
+            system="You detect assistant style preferences. Valid JSON only.",
+            max_tokens=400,
+        )
+        prefs = (out or {}).get("prefs") if isinstance(out, dict) else None
+        result = []
+        for p in prefs or []:
+            if isinstance(p, dict) and p.get("type") and p.get("fact"):
+                result.append({"source": "user", "target": "assistant_style", "type": str(p["type"])[:60], "fact": str(p["fact"])[:300], "confidence": 0.85})
+        return result
+    except Exception:
+        return []
 
 
 def active_preferences(con, limit: int = 20) -> list[dict]:

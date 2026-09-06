@@ -19,41 +19,15 @@ _cache = {}
 _cache_lock = threading.Lock()
 
 
-_CORRECTION_CUES = (" not ", " isnt", " isn't", "actually", "wrong", "correction", " no ", "instead", "rather ", "i meant", "correction:")
-
-
-def _looks_like_correction(user_text: str, assistant_text: str = "") -> bool:
-    t = f" {(user_text or '').lower()} {(assistant_text or '').lower()} "
-    return any(c in t for c in _CORRECTION_CUES)
-
-
-_FACT_CUES = ("my name is", "i am ", "i'm ", "i've ", "i'll ", "my project", "my favorite", "my favourite",
-              "i build", "i prefer", "i use ", "i like ", "i live", "i work", "remember that", "remember this",
-              "don't forget", "do not forget", "dont forget")
-
-
-def _looks_like_fact(user_text: str, assistant_text: str = "") -> bool:
-    t = f" {(user_text or '').lower()} {(assistant_text or '').lower()} "
-    return any(c in t for c in _FACT_CUES)
-
-
-_FIRST_PERSON = (" i ", " my ", " me ", " i'm ", " i've ", " i'll ", " mine ")
+_EXPLICIT_KINDS = ("remember", "manual", "note")
 
 
 def prefilter_may_be_memorable(user_text: str, assistant_text: str = "") -> bool:
-    """0-cost generic prefilter before the LLM salience gate.
-
-    Returns True when the exchange *might* carry a durable fact (correction
-    cue, first-person fact cue, or first-person pronoun present). Returns
-    False only when nothing fires — callers skip extraction entirely then.
-    Generic by design: no personal names, no per-user strings.
-    """
-    t = f" {(user_text or '').lower()} {(assistant_text or '').lower()} "
-    if any(c in t for c in _CORRECTION_CUES):
+    from . import extraction as _extraction
+    try:
+        return bool(_extraction.should_remember(user_text, assistant_text))
+    except Exception:
         return True
-    if any(c in t for c in _FACT_CUES):
-        return True
-    return any(p in t for p in _FIRST_PERSON)
 
 
 class Memory:
@@ -165,16 +139,13 @@ class Memory:
             episode_id = cur.lastrowid
             self._index_episode(con, episode_id, user_text, assistant_text)
 
-            if kind == "tool":
-                return {"stored": True, "extracted": False, "episode": episode_id, "reason": "tool-turn"}
+            explicit = str(kind or "") in _EXPLICIT_KINDS
             try:
                 from . import preferences as _pref0
                 _style_hits = _pref0.detect_corrections(user_text + " " + assistant_text)
             except Exception:
                 _style_hits = []
-            if not _style_hits and not prefilter_may_be_memorable(user_text, assistant_text):
-                return {"stored": True, "extracted": False, "episode": episode_id, "reason": "prefilter"}
-            if not _style_hits:
+            if not explicit and not _style_hits:
                 memorable = extraction.should_remember(user_text, assistant_text)
                 if not memorable:
                     return {"stored": True, "extracted": False, "episode": episode_id}

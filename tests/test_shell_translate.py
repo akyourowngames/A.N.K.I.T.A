@@ -40,10 +40,14 @@ def test_run_ls_la_actually_works():
     assert "ERROR" not in (res.get("stdout") or "")[:6] or "exit=0" in shelltool.format_result(res)
 
 
-def test_soul_intent_and_typo_hint():
+def test_soul_goes_to_model_not_hardcoded_panel():
     import main
-    assert main._soul_show_intent("list me what you have drafted") is True
-    assert main._soul_show_intent("show my soul") is True
-    assert main._soul_show_intent("hello there") is False
+    assert not hasattr(main, "_soul_show_intent")
+    from mcpclient.manager import manager
+    names = [t["function"]["name"] for t in manager().all_tools()]
+    assert "zumba__soul_show" in names
+    assert "zumba__soul_propose" in names
+    assert "zumba__soul_diff" in names
+    assert "zumba__soul_accept" in names
     import difflib
     assert difflib.get_close_matches("/sould", ["/soul", "/models"], n=1, cutoff=0.6)

@@ -32,11 +32,11 @@ def _gateway_error_message(status: int, payload: Any) -> str:
 
 def _friendly_hint(status: int) -> str:
     if status == 401:
-        return "Invalid or missing API key. Check KILO_API_KEY."
+        return "Invalid or missing API key. Check KILO_API_KEY / OPENCODE_API_KEY."
     if status == 402:
-        return "Insufficient balance. Add credits at https://kilo.ai."
+        return "Insufficient balance. Add credits at https://opencode.ai/auth."
     if status == 403:
-        return "Model blocked by organization policy. Try a free model like kilo-auto/free."
+        return "Model blocked by organization policy. Try a free model like muse-spark-1.3-contributor-free."
     if status == 429:
         return "Rate limited. Wait a moment and retry."
     if status in (502, 503):
@@ -121,7 +121,78 @@ def _chat_payload(
     return payload
 
 
-def chat_completion(
+def _needs_responses_api(model: str) -> bool:
+    m = (model or "").lower()
+    if "muse-spark" in m or m.startswith("gpt-") or "codex" in m:
+        return True
+    if m.startswith("claude-") or m.startswith("gemini-") or m.startswith("grok"):
+        return True
+    if m.startswith("qwen"):
+        return True
+    return False
+
+
+def _chat_tools_to_responses(tools: Optional[list]) -> Optional[list]:
+    out = []
+    for t in tools or []:
+        if not isinstance(t, dict):
+            continue
+        fn = t.get("function", t) if isinstance(t.get("function", None), dict) else t
+        name = str(fn.get("name", "") or t.get("name", ""))
+        if not name:
+            continue
+        desc = str(fn.get("description", "") or "")[:1000]
+        params = fn.get("parameters", {}) or {}
+        if not isinstance(params, dict):
+            params = {"type": "object", "properties": {}}
+        params = dict(params)
+        params.setdefault("type", "object")
+        out.append({"type": "function", "name": name, "description": desc, "parameters": params})
+    return out or None
+
+
+def _messages_to_responses_input(messages: Iterable[Message]) -> list:
+    items: list = []
+    for m in messages:
+        role = (m.role or "user").strip().lower()
+        content = (m.content or "")
+        if role == "tool":
+            items.append({
+                "type": "function_call_output",
+                "call_id": getattr(m, "tool_call_id", "") or "",
+                "output": content[:6000] if content else "(empty tool result)",
+            })
+            continue
+        if role == "assistant" and getattr(m, "tool_calls", None):
+            if content and content.strip():
+                items.append({"role": "assistant", "content": content.strip()[:6000]})
+            for call in m.tool_calls or []:
+                try:
+                    fn = (call.get("function", {}) or {}) if isinstance(call, dict) else {}
+                    args = fn.get("arguments", "{}")
+                    if isinstance(args, dict):
+                        args = json.dumps(args, ensure_ascii=False)
+                    items.append({
+                        "type": "function_call",
+                        "call_id": str(call.get("id", "") or ""),
+                        "name": str(fn.get("name", "") or ""),
+                        "arguments": str(args or "{}"),
+                    })
+                except Exception:
+                    continue
+            continue
+        if not content.strip():
+            continue
+        if role == "system":
+            items.append({"role": "system", "content": content.strip()[:6000]})
+        elif role == "assistant":
+            items.append({"role": "assistant", "content": content.strip()[:6000]})
+        else:
+            items.append({"role": "user", "content": content.strip()[:6000]})
+    return items or [{"role": "user", "content": "hi"}]
+
+
+def _responses_completion(
     messages: list[Message],
     model: str,
     api_key: str = "",
@@ -133,10 +204,15 @@ def chat_completion(
 ) -> ChatResult:
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
-    payload = _chat_payload(messages, model, max_tokens, temperature, stream=False, tools=tools)
+    payload: dict = {"model": model, "input": _messages_to_responses_input(messages)}
+    if max_tokens is not None:
+        payload["max_output_tokens"] = max_tokens
+    rtools = _chat_tools_to_responses(tools) if tools else None
+    if rtools:
+        payload["tools"] = rtools
     data = _request_json(
         "POST",
-        f"{base}/chat/completions",
+        f"{base}/responses",
         headers={
             "Authorization": f"Bearer {key}",
             "Content-Type": "application/json",
@@ -145,10 +221,84 @@ def chat_completion(
         payload=payload,
         timeout=timeout,
     )
+    text = ""
+    calls: list = []
+    try:
+        for item in data.get("output", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if item.get("type") == "message":
+                for block in item.get("content", []) or []:
+                    if isinstance(block, dict) and block.get("type") == "output_text":
+                        text += str(block.get("text", ""))
+            elif item.get("type") == "function_call":
+                args = item.get("arguments", "{}")
+                if not isinstance(args, str):
+                    try:
+                        args = json.dumps(args, ensure_ascii=False)
+                    except Exception:
+                        args = "{}"
+                calls.append({
+                    "id": str(item.get("call_id", "") or item.get("id", "") or ""),
+                    "type": "function",
+                    "function": {"name": str(item.get("name", "") or ""), "arguments": args or "{}"},
+                })
+    except Exception:
+        pass
+    usage = ChatUsage()
+    try:
+        u = data.get("usage") or {}
+        usage = ChatUsage(
+            prompt_tokens=int(u.get("input_tokens", 0) or 0),
+            completion_tokens=int(u.get("output_tokens", 0) or 0),
+            total_tokens=int(u.get("total_tokens", 0) or 0),
+        )
+    except Exception:
+        pass
+    raw = {"choices": [{"message": {"content": text, "tool_calls": calls}}], "responses_raw": data} if calls else data
+    return ChatResult(content=text, model=str(data.get("model", model)), usage=usage, raw=raw)
+
+
+def chat_completion(
+    messages: list[Message],
+    model: str,
+    api_key: str = "",
+    base_url: str = "",
+    max_tokens: Optional[int] = None,
+    temperature: Optional[float] = None,
+    timeout: int = 120,
+    tools: Optional[list] = None,
+) -> ChatResult:
+    if _needs_responses_api(model):
+        return _responses_completion(messages, model, api_key=api_key, base_url=base_url, max_tokens=max_tokens, temperature=temperature, timeout=timeout, tools=tools)
+    key = api_key or get_api_key(require=True)
+    base = (base_url or get_base_url()).rstrip("/")
+    payload = _chat_payload(messages, model, max_tokens, temperature, stream=False, tools=tools)
+    try:
+        data = _request_json(
+            "POST",
+            f"{base}/chat/completions",
+            headers={
+                "Authorization": f"Bearer {key}",
+                "Content-Type": "application/json",
+                "User-Agent": "zumba/1.0",
+            },
+            payload=payload,
+            timeout=timeout,
+        )
+    except KiloError as exc:
+        if exc.status_code in (400, 404, 500) and not tools:
+            return _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+        raise
     try:
         choice = data["choices"][0]
         content = choice["message"].get("content") or ""
     except Exception as exc:
+        if not tools:
+            try:
+                return _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+            except Exception:
+                pass
         raise KiloError(f"Unexpected chat response shape: {str(data)[:500]}") from exc
     usage = ChatUsage.from_dict(data.get("usage"))
     return ChatResult(content=str(content), model=str(data.get("model", model)), usage=usage, raw=data)
@@ -165,6 +315,10 @@ def stream_chat_completion(
 ) -> Generator[str, None, ChatResult]:
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
+    if _needs_responses_api(model):
+        result = _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+        yield result.content
+        return result
     payload = _chat_payload(messages, model, max_tokens, temperature, stream=True)
     try:
         resp = requests.post(
@@ -189,6 +343,14 @@ def stream_chat_completion(
                 data = {"error": resp.text[:500]}
             except Exception:
                 data = {"error": f"HTTP {resp.status_code}"}
+        if resp.status_code in (400, 404, 500):
+            try:
+                resp.close()
+            except Exception:
+                pass
+            result = _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
+            yield result.content
+            return result
         msg = _gateway_error_message(resp.status_code, data)
         hint = _friendly_hint(resp.status_code)
         full = f"[{resp.status_code}] {msg}" + (f" ({hint})" if hint else "")

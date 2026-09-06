@@ -61,7 +61,7 @@ class ModelInfo:
                 is_free = True
         except Exception:
             pass
-        if model_id.endswith(":free") or model_id in ("kilo-auto/free", "openrouter/free"):
+        if model_id.endswith(":free") or model_id.endswith("-free") or model_id in ("kilo-auto/free", "openrouter/free", "muse-spark-1.3-contributor-free", "opencode/muse-spark-1.3-contributor-free"):
             is_free = True
         owned = str(data.get("owned_by", "") or "")
         if not owned and "/" in model_id:

@@ -43,13 +43,7 @@ def score_mood(text: str) -> tuple[float, float]:
         return float(valence), float(energy)
     except Exception:
         pass
-    low = f" {(text or '').lower()} "
-    pos_hit = sum(1 for w in ("great", "happy", "love", "excited", "awesome", "good", "glad") if w in low)
-    neg_hit = sum(1 for w in ("sad", "angry", "tired", "stressed", "frustrated", "awful", "worried", "down") if w in low)
-    if pos_hit == 0 and neg_hit == 0:
-        return 0.0, 0.5
-    valence = (pos_hit - neg_hit) / max(pos_hit + neg_hit, 1)
-    return float(max(-1.0, min(1.0, valence))), 0.6 if pos_hit + neg_hit > 1 else 0.5
+    return 0.0, 0.5
 
 
 def ensure_schema(con) -> None:

@@ -147,10 +147,15 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "use them for anything time-sensitive instead of guessing; web_fetch the top result for depth. "
         "Vault: zumba__vault_search / zumba__vault_doc / zumba__vault_read answer from the user's local "
         "documents — use them for 'what does my doc say / find the email' questions. Every document claim "
-        "MUST cite [Doc Title p.N]. "
-        "Goals: zumba__goal_add / zumba__goal_show / zumba__goal_complete_step / zumba__remind_add track "
+        "MUST cite [Doc Title p.N]. zumba__vault_ask answers with citations; zumba__vault_status reports health. "
+        "Goals: zumba__goal_add / zumba__goal_list / zumba__goal_show / zumba__goal_complete_step / zumba__remind_add track "
         "the user's stated intentions — create a goal when they say 'I want to ... by <date>' instead of "
-        "letting it fade; complete steps as they report progress."
+        "letting it fade; complete steps as they report progress. "
+        "Memory: zumba__memory_search before 'what do you remember' questions; zumba__memory_remember for durable facts; "
+        "zumba__memory_forget to invalidate. zumba__brief gives the daily briefing. "
+        "Identity: zumba__soul_show reads soul.md, zumba__me_show reads user.md — call them instead of guessing. "
+        "Soul rewrite: when the user asks to rewrite/change your soul, say yes and ask what to change; "
+        "then soul_show, draft the full file, soul_propose it, show soul_diff, and only soul_accept after explicit confirmation."
     ))
     return msgs[:-1] + [sys_msg, msgs[-1]]
 
@@ -173,16 +178,27 @@ def _mcp_agent_turn(msgs: list[Message], model: str, key: str, max_tokens, tempe
         console.print(Panel(safe_text(shown, allow_emoji), title=f"TOOL  ·  {safe_text(name, allow_emoji)}",
                             title_align="left", border_style="magenta", box=table_box(allow_emoji), padding=(0, 2)))
 
-    result = run_agent_loop(
-        convo, model,
-        call_model=lambda ms, m, tools, **kw: chat_completion(
-            ms, m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
-        execute_tool=lambda name, args: mcp_run_tool(name, args),
-        tools=tools,
-        on_tool=on_tool,
-        transcript_out=transcript,
-        max_iterations=mcp_defaults.MAX_ITERATIONS,
-    )
+    result = None
+    try:
+        result = run_agent_loop(
+            convo, model,
+            call_model=lambda ms, m, tools, **kw: chat_completion(
+                ms, m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
+            execute_tool=lambda name, args: mcp_run_tool(name, args),
+            tools=tools,
+            on_tool=on_tool,
+            transcript_out=transcript,
+            max_iterations=mcp_defaults.MAX_ITERATIONS,
+        )
+    except KiloError as exc:
+        if getattr(exc, "status_code", 0) in (400, 404, 500):
+            convo2 = _fit_window(list(msgs))
+            with console.status("[cyan]Retrying without tools...[/]", spinner="dots"):
+                plain = chat_completion(convo2, model, api_key=key, max_tokens=max_tokens, temperature=temperature)
+            console.print("[dim]Model rejected tool call; answered plain instead.[/]")
+            _print_assistant(plain.content, plain.model or model, allow_emoji, "")
+            return normalize_text(plain.content, allow_emoji), 0, []
+        raise
     reply = result.content or ""
     if not reply.strip() and used["n"]:
         reply = result.content = "Did %d tool step(s) but the model gave no summary. Say 'continue' and I will carry on from the last tool result." % used["n"]
@@ -338,15 +354,6 @@ def _soul_chat_cmd(arg: str, allow_emoji: bool) -> bool:
             console.print(error_panel(f"soul edit: {exc}", allow_emoji=allow_emoji))
         return True
     return False
-
-
-def _soul_show_intent(text: str) -> bool:
-    low = f" {(text or '').lower()} "
-    if "/" in (text or "")[:1]:
-        return False
-    if "soul" not in low and "drafted" not in low:
-        return False
-    return any(k in low for k in ("show", "list", "what", "display", "read", "draft", "soul"))
 
 
 def _session_reflect(mem, session_id: str) -> None:
@@ -1180,13 +1187,6 @@ def chat_cmd(
             _hint = f" Did you mean {_hit[0]}?" if _hit else ""
             console.print(info_panel(f"Unknown command.{_hint} Type /help", title="COMMANDS", allow_emoji=allow_emoji))
             continue
-        try:
-            if _soul_show_intent(user_text):
-                _soul_chat_cmd("show", allow_emoji)
-                continue
-        except Exception:
-            pass
-
         recall_text = ""
         recall_hits: list = []
         mem = _memory()

@@ -102,9 +102,10 @@ def test_research_mocked_websearch(tmp_path, monkeypatch):
 def test_reflection_promotes_goal(tmp_path, monkeypatch):
     con = _con(tmp_path, monkeypatch)
     from memory import reflection as _ref
+    monkeypatch.setattr("memory.llm.chat_json", lambda *a, **k: {"goals": ["Pass IELTS 7.5 by December"]} if "CANDIDATES" in str(a[0] if a else "") else {"decisions": [], "follow_ups": ["Pass IELTS 7.5 by December"], "importance": [], "mood": {"valence": 0.0, "energy": 0.5, "note": "ok"}})
     out = _ref.reflect_session(con, [{"user": "I want to pass IELTS 7.5 by December",
                                       "assistant": "Noted", "episode_id": None}],
-                               session_id="s-g", use_llm=False)
+                               session_id="s-g", use_llm=True)
     assert out["applied"].get("goals_proposed", 0) >= 1
     from memory import goals as _g
     assert any("IELTS" in g["title"] for g in _g.list_goals(con, "active"))

@@ -5,6 +5,7 @@ servers mid-session — no restart, no manual config editing. All names and
 tunables come from mcpclient.defaults; state lives on the manager instance.
 """
 from typing import Any
+import os
 
 from mcpclient import config as mcp_config
 from mcpclient import defaults
@@ -115,6 +116,53 @@ BUILTIN_TOOLS = [
           {"message": {"type": "string", "description": "Reminder text"},
            "when": {"type": "string", "description": "Natural time expression"},
            "goal_id": {"type": "integer", "description": "Optional goal id to attach"}}, ["message", "when"]),
+    _tool("goal_list",
+          "List goals with progress bars and next steps. Filter by status: active (default), all, done.",
+          {"status": {"type": "string", "description": "active, all, or done"}}, []),
+    _tool("memory_remember",
+          "Store a fact in long-term memory (goes through the full salience/extraction pipeline). "
+          "Use when the user says 'remember ...' or shares a durable fact/preference.",
+          {"text": {"type": "string", "description": "Fact to remember"}}, ["text"]),
+    _tool("memory_search",
+          "Search long-term memory (hybrid vector + BM25 + graph recall). "
+          "Use before answering 'what do you remember about ...' questions.",
+          {"query": {"type": "string", "description": "Memory query"},
+           "top_k": {"type": "integer", "description": "Max hits (default 8)"}}, ["query"]),
+    _tool("memory_forget",
+          "Invalidate facts about an entity (bi-temporal invalidate, history kept).",
+          {"name": {"type": "string", "description": "Entity name to forget"}}, ["name"]),
+    _tool("brief",
+          "Daily briefing from memory: follow-ups, deadlines, on-this-day resurfaces.",
+          {}, []),
+    _tool("soul_show",
+          "Show Zumba's self-authored identity file (soul.md: voice/values/boundaries).",
+          {}, []),
+    _tool("soul_propose",
+          "Draft a FULL rewritten soul.md and save it as a proposal (soul.proposed.md). "
+          "Read the current file with soul_show first, keep frontmatter + Identity/Voice/Values/Boundaries structure, "
+          "stay under ~4000 chars. Then show soul_diff and ASK the user to confirm before calling soul_accept. "
+          "Never call soul_accept without explicit user confirmation.",
+          {"content": {"type": "string", "description": "Full new soul.md content"}}, ["content"]),
+    _tool("soul_diff",
+          "Show the unified diff between soul.md and the pending proposal.",
+          {}, []),
+    _tool("soul_accept",
+          "Apply the pending soul proposal (only after the user explicitly confirmed).",
+          {}, []),
+    _tool("soul_reject",
+          "Discard the pending soul proposal.",
+          {}, []),
+    _tool("me_show",
+          "Show the user's profile (user.md: identity/projects/people/preferences). Always in context.",
+          {}, []),
+    _tool("vault_ask",
+          "Answer from local documents with [Title p.N] citations. "
+          "Use for 'what does my doc/lease/contract say' questions.",
+          {"question": {"type": "string", "description": "Question about the documents"},
+           "k": {"type": "integer", "description": "Max hits (default 6)"}}, ["question"]),
+    _tool("vault_status",
+          "Vault health: docs, chunks, index state, watched paths.",
+          {}, []),
 ]
 
 
@@ -144,7 +192,11 @@ def visible_tools() -> list:
             raise RuntimeError("vault disabled")
     except Exception:
         tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
-            ("__vault_search", "__vault_doc", "__vault_read"))]
+            ("__vault_search", "__vault_doc", "__vault_read", "__vault_ask", "__vault_status"))]
+    if os.getenv("ZUMBA_NO_MEMORY", "") == "1":
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__memory_remember", "__memory_search", "__memory_forget", "__brief",
+             "__goal_add", "__goal_list", "__goal_show", "__goal_complete_step", "__remind_add"))]
     return tools
 
 # (search results live in mgr.meta_state["last_search"] — per-instance, no globals)
@@ -215,9 +267,15 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
 
     if tool == "mcp_list":
         rows = mgr.status_rows()
-        if not rows:
+        lines = [f"{r['name']}: {r['status']} ({r['transport']}) — {r['tool_count']} tool(s) {r['tools'] or ''}" for r in rows] if rows else []
+        try:
+            builtin_names = [t["function"]["name"] for t in visible_tools()]
+        except Exception:
+            builtin_names = []
+        if builtin_names:
+            lines.append(f"zumba: online (built-in) — {len(builtin_names)} tool(s) {builtin_names}")
+        if not lines:
             return "No MCP servers configured. Use zumba__mcp_search to find one."
-        lines = [f"{r['name']}: {r['status']} ({r['transport']}) — {r['tool_count']} tool(s) {r['tools'] or ''}" for r in rows]
         return "\n".join(lines)
 
     if tool in ("shell_run", "shell_jobs", "shell_kill"):
@@ -415,6 +473,140 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
                 con.close()
             except Exception:
                 pass
+
+    if tool == "goal_list":
+        import asyncio as _asyncio5
+        from memory import db as _mdb5
+        from memory import goals as _goals5
+
+        status = str(args.get("status", "") or "active").strip().lower() or "active"
+        if status not in ("active", "all", "done"):
+            return "ERROR: 'status' must be active, all, or done."
+        con = _mdb5.connect()
+        try:
+            _mdb5.ensure_tier3(con)
+            goals = await _asyncio5.to_thread(_goals5.list_goals, con, status)
+            if not goals:
+                return "No goals yet. Create one with goal_add."
+            return await _asyncio5.to_thread(_goals5.render_list, goals, con)
+        finally:
+            try:
+                con.close()
+            except Exception:
+                pass
+
+    if tool in ("memory_remember", "memory_search", "memory_forget"):
+        import asyncio as _asyncio6
+
+        try:
+            from memory import get_memory as _get_mem
+            mem = _get_mem()
+        except Exception as exc:
+            return f"ERROR: memory unavailable ({str(exc)[:150]})."
+        if tool == "memory_remember":
+            text = str(args.get("text", "") or "").strip()
+            if not text:
+                return "ERROR: 'text' is required."
+            await _asyncio6.to_thread(mem.capture_async, text, "", "tool", "remember")
+            try:
+                await _asyncio6.to_thread(mem.flush, 60.0)
+            except Exception:
+                pass
+            return "Remembered (ran through the memory pipeline)."
+        if tool == "memory_search":
+            query = str(args.get("query", "") or "").strip()
+            if not query:
+                return "ERROR: 'query' is required."
+            try:
+                k = int(args.get("top_k", 8) or 8)
+            except Exception:
+                return "ERROR: 'top_k' must be a number."
+            hits = await _asyncio6.to_thread(mem.recall, query, k, 4500)
+            return hits or "(nothing recalled)"
+        target = str(args.get("name", "") or "").strip()
+        if not target:
+            return "ERROR: 'name' is required."
+        r = await _asyncio6.to_thread(mem.forget, target)
+        return "Forgot." if r.get("forgot") else "No facts found for that name."
+
+    if tool == "brief":
+        import asyncio as _asyncio7
+        from memory import briefing as _br
+
+        try:
+            from memory import get_memory as _get_mem7
+            mem = _get_mem7()
+        except Exception as exc:
+            return f"ERROR: memory unavailable ({str(exc)[:150]})."
+        con = mem._open()
+        try:
+            return await _asyncio7.to_thread(_br.compose_daily, con, True)
+        finally:
+            try:
+                if getattr(mem, "_own", True):
+                    con.close()
+            except Exception:
+                pass
+
+    if tool in ("soul_show", "me_show", "soul_diff", "soul_accept", "soul_reject", "soul_propose"):
+        if tool == "soul_show":
+            try:
+                from identity import soul as _soul
+                return _soul.load() or "(no soul.md yet — chat /soul wingit to draft one)"
+            except Exception as exc:
+                return f"ERROR: soul unavailable ({str(exc)[:150]})."
+        try:
+            from identity import soul as _soul2
+        except Exception as exc:
+            return f"ERROR: soul unavailable ({str(exc)[:150]})."
+        if tool == "soul_propose":
+            content = str(args.get("content", "") or "")
+            if len(content.strip()) < 50:
+                return "ERROR: 'content' must be the full new soul.md (too short)."
+            path = _soul2.propose_update(content)
+            return f"Proposal saved to {path}. Show soul_diff and ask the user to confirm."
+        if tool == "soul_diff":
+            return _soul2.diff_proposed()
+        if tool == "soul_accept":
+            if not _soul2.has_proposal():
+                return "ERROR: no pending proposal — call soul_propose first."
+            return "Soul updated." if _soul2.apply_proposal() else "ERROR: apply failed."
+        if tool == "soul_reject":
+            _soul2.reject_proposal()
+            return "Proposal discarded."
+        if tool == "me_show":
+            try:
+                from identity import userprofile as _up
+                return _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
+            except Exception as exc:
+                return f"ERROR: profile unavailable ({str(exc)[:150]})."
+        try:
+            from identity import userprofile as _up
+            return _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
+        except Exception as exc:
+            return f"ERROR: profile unavailable ({str(exc)[:150]})."
+
+    if tool in ("vault_ask", "vault_status"):
+        import asyncio as _asyncio8
+        from vault import service as _vault8
+
+        if not _vault8.enabled():
+            return "ERROR: vault is disabled (ZUMBA_NO_VAULT=1)."
+        v = _vault8.get_vault()
+        if tool == "vault_status":
+            st = await _asyncio8.to_thread(v.status)
+            if not isinstance(st, dict):
+                return str(st)
+            lines = [f"{k}: {st[k]}" for k in sorted(st)]
+            return "\n".join(lines) or "(empty vault)"
+        question = str(args.get("question", "") or "").strip()
+        if not question:
+            return "ERROR: 'question' is required."
+        try:
+            k = int(args.get("k", 6) or 6)
+        except Exception:
+            return "ERROR: 'k' must be a number."
+        return await _asyncio8.to_thread(v.ask, question, k, True)
 
     return f"ERROR: unknown meta-tool '{tool}'."
 

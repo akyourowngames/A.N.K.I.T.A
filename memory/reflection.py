@@ -61,37 +61,48 @@ def reflect_transcript(exchanges: list[dict], use_llm: bool = True) -> dict:
 
 
 def heuristic_reflect(exchanges: list[dict]) -> dict:
-    import re as _re
-    decisions, followups, importance = [], [], []
-    for i, e in enumerate(exchanges):
-        u = str(e.get("user") or e.get("user_text") or "")
-        a = str(e.get("assistant") or e.get("assistant_text") or "")
-        low = f" {u.lower()} "
-        score = 3
-        if _re.search(r"\b(decided|decision|go with|let's|ship|use \w+ for)\b", low):
-            score = 8
-            decisions.append({"text": u[:300], "reason": "explicit decision phrasing"})
-        if _re.search(r"\b(i am|my name is|i live|i work|i prefer|remember that)\b", low):
-            score = max(score, 8)
-        if _re.search(r"\b(thanks|haha|nice|ok|cool)\b", low) and len(u.split()) < 5:
-            score = 2
-        if _re.search(r"\b(todo|follow up|tomorrow|next|remind|will do|need to|must)\b", low):
-            followups.append(u[:300])
-        if len(u.split()) > 30:
-            score = max(score, 6)
-        importance.append({"index": i, "score": score})
-    mood = {"valence": 0.0, "energy": 0.5, "note": "heuristic"}
+    importance = [{"index": i, "score": 5} for i, _ in enumerate(exchanges)]
+    return {"decisions": [], "follow_ups": [], "importance": importance, "mood": {"valence": 0.0, "energy": 0.5, "note": "llm-unavailable"}} 
+
+
+_GOAL_PROMPT = """Which of these follow-ups state a durable user goal (something to track with progress and a deadline)? Return JSON only: {{"goals": ["<goal title>", ...]}}. Empty list if none.
+
+CANDIDATES:
+{cands}"""
+
+
+def _promote_goals(con, candidates: list[str]) -> int:
+    cands = [c for c in candidates if (c or "").strip()]
+    if not cands:
+        return 0
     try:
-        from .mood import score_mood as _sm
-        texts = " ".join(str(e.get("user") or "") for e in exchanges[-10:])
-        v, _ = _sm(texts)
-        mood = {"valence": v, "energy": 0.5, "note": "heuristic-affect"}
+        from . import llm as _llm
+        out = _llm.chat_json(
+            _GOAL_PROMPT.format(cands="\n".join(f"- {(c or '')[:300]}" for c in cands[:20])),
+            system="You identify durable user goals. Valid JSON only.",
+            max_tokens=400,
+        )
+        goals = (out or {}).get("goals") if isinstance(out, dict) else None
     except Exception:
-        pass
-    return {"decisions": decisions, "follow_ups": followups, "importance": importance, "mood": mood}
+        return 0
+    n = 0
+    for title in goals or []:
+        title = str(title or "").strip()[:200]
+        if not title:
+            continue
+        try:
+            from . import goals as _goals
+            dup = [g for g in _goals.list_goals(con, "active") if g.get("title", "").strip().lower() == title.lower()]
+            if dup:
+                continue
+            _goals.create_goal(con, title, source="extracted", auto_plan=True, use_llm=False)
+            n += 1
+        except Exception:
+            continue
+    return n
 
 
-def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: str = "") -> dict:
+def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: str = "", use_llm: bool = True) -> dict:
     ensure_schema(con)
     now = time.time()
     n_dec = n_fup = n_imp = 0
@@ -110,35 +121,8 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
             n_dec += 1
         except Exception:
             continue
-    import re as _re
-    _GOAL_RX = (
-        _re.compile(r"\bi want to\b", _re.I),
-        _re.compile(r"\bmy goal is\b", _re.I),
-        _re.compile(r"\bi (need|have|must) to\b.{0,60}\bby\b", _re.I),
-        _re.compile(r"\bby\s+(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|monday|next|\d)", _re.I),
-    )
-    _GOAL_DIRECT_RX = (
-        _re.compile(r"\bi want to\b.{0,80}\bby\b", _re.I),
-        _re.compile(r"\bmy goal is\b", _re.I),
-        _re.compile(r"\bi (need|have|must) to\b.{0,60}\bby\b", _re.I),
-    )
     n_goal = 0
-
-    def _promote(title: str) -> None:
-        nonlocal n_goal
-        title = (title or "").strip()[:200]
-        if not title:
-            return
-        try:
-            from . import goals as _goals
-            dup = [g for g in _goals.list_goals(con, "active")
-                   if g.get("title", "").strip().lower() == title.lower()]
-            if dup:
-                return
-            _goals.create_goal(con, title, source="extracted", auto_plan=True, use_llm=False)
-            n_goal += 1
-        except Exception:
-            pass
+    inserted: list[str] = []
     for f in reflection.get("follow_ups") or []:
         try:
             t = f if isinstance(f, str) else str(f.get("text") or f)
@@ -149,20 +133,14 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
                 (t[:800], now, session_id),
             )
             n_fup += 1
-            try:
-                if any(rx.search(t) for rx in _GOAL_RX):
-                    _promote(t)
-            except Exception:
-                pass
+            inserted.append(t[:800])
         except Exception:
             continue
-    for e in exchanges or []:
+    if use_llm and inserted:
         try:
-            u = str(e.get("user") or e.get("user_text") or "")
-            if u.strip() and any(rx.search(u) for rx in _GOAL_DIRECT_RX):
-                _promote(u)
+            n_goal = _promote_goals(con, inserted)
         except Exception:
-            continue
+            n_goal = 0
     imp_list = reflection.get("importance") or []
     ep_ids = [e.get("episode_id") for e in exchanges]
     for item in imp_list:
@@ -192,7 +170,7 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
 def reflect_session(con, exchanges: list[dict], session_id: str = "", use_llm: bool = True) -> dict:
     ensure_schema(con)
     reflection = reflect_transcript(exchanges, use_llm=use_llm)
-    applied = apply_reflection(con, exchanges, reflection, session_id=session_id)
+    applied = apply_reflection(con, exchanges, reflection, session_id=session_id, use_llm=use_llm)
     return {"reflection": reflection, "applied": applied}
 
 
