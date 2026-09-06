@@ -1,11 +1,9 @@
-"""Persona layer (identity only): who Zumba is and how it talks.
+"""Persona layer: who Zumba is and how it talks (Tier 2: soul.md + user.md).
 
-Composes a system prompt from a constant identity block plus editable style
-prefs (``zumba config --set-style``). The ``--system`` flag always overrides
-everything — persona only applies to the default.
-
-Deferred on purpose: injecting the user profile / core memory blocks into
-the persona is Tier 2's user-model work. See TODO(tier2-profile).
+Composes a system prompt from soul.md (self-authored identity, capped),
+user.md profile (always in context), the constant identity fallback, plus
+editable style prefs (``zumba config --set-style``). The ``--system`` flag
+always overrides everything — persona only applies to the default.
 """
 
 from __future__ import annotations
@@ -20,18 +18,49 @@ IDENTITY = (
     "be decisive, chain commands instead of narrating, report outcomes briefly."
 )
 
-# TODO(tier2-profile): inject user profile / core memory blocks here.
+def soul_block() -> str:
+    try:
+        import soul as _soul
+        return _soul.inject_block()
+    except Exception:
+        return ""
+
+
+def user_block() -> str:
+    try:
+        import userprofile as _up
+        return _up.profile_block()
+    except Exception:
+        return ""
 
 
 def build_system(base: str = "") -> str:
-    """Compose the effective system prompt: identity + saved style + base."""
+    """Compose the effective system prompt.
+
+    Ordering (test-pinned): soul identity first, then user profile, then the
+    constant IDENTITY fallback, style prefs, and base. Soul + profile are
+    capped upstream so the window manager stays safe.
+    """
     try:
         from store import config_get
 
         style = config_get("style", "").strip()
     except Exception:
         style = ""
-    parts = [IDENTITY]
+    parts = []
+    try:
+        sb = soul_block()
+        if sb:
+            parts.append(sb)
+    except Exception:
+        pass
+    try:
+        ub = user_block()
+        if ub:
+            parts.append(ub)
+    except Exception:
+        pass
+    parts.append(IDENTITY)
     if style:
         parts.append("Style: " + style)
     if (base or "").strip():

@@ -105,6 +105,77 @@ def _cosine_all(vec_bytes, emb: dict):
     return results
 
 
+_EVOLVE_PROMPT = """You maintain evolving Zettelkasten notes. Given a NEW note and a similar OLD note,
+update the OLD note's one-line description and keywords so the network stays fresh.
+NEW: {new}
+OLD title: {title}
+OLD content: {content}
+OLD keywords: {kw}
+Return JSON: {{"description": "..", "keywords": [".."]}} (max 5 keywords)."""
+
+
+def evolve_notes(con, new_note_id: int, use_llm: bool = True, max_updates: int = 3) -> int:
+    """A-Mem memory evolution: new note -> top-3 similar notes get refreshed.
+
+    Guard: max 3 updates per ingest, batched in one pass. Never blocks recall.
+    """
+    try:
+        from . import db as _db
+        _db.ensure_tier2(con)
+        new = con.execute("SELECT id, title, content, keywords FROM notes WHERE id=?", (new_note_id,)).fetchone()
+        if not new:
+            return 0
+        rows = con.execute("SELECT id, embedding FROM notes WHERE embedding IS NOT NULL AND id!=?", (new_note_id,)).fetchall()
+        if not rows:
+            return 0
+        new_emb = con.execute("SELECT embedding FROM notes WHERE id=?", (new_note_id,)).fetchone()
+        if not new_emb or not new_emb["embedding"]:
+            return 0
+        emb = {r["id"]: r["embedding"] for r in rows}
+        ranked = [oid for oid, _s in _cosine_all(new_emb["embedding"], emb) if oid != new_note_id][:max_updates]
+        n = 0
+        for oid in ranked:
+            old = con.execute("SELECT title, content, keywords FROM notes WHERE id=?", (oid,)).fetchone()
+            if not old:
+                continue
+            desc, kw = "", ""
+            if use_llm:
+                try:
+                    out = llm.chat_json(
+                        _EVOLVE_PROMPT.format(new=f"{new['title']}: {new['content']}"[:800],
+                                              title=old["title"], content=(old["content"] or "")[:800],
+                                              kw=old["keywords"]),
+                        system="You evolve memory notes. Valid JSON only.",
+                        max_tokens=400,
+                    )
+                    if isinstance(out, dict):
+                        desc = str(out.get("description") or "")[:400]
+                        kws = out.get("keywords") or []
+                        import json as _j
+                        kw = _j.dumps([str(k)[:40] for k in kws if str(k).strip()][:5])
+                except Exception:
+                    desc, kw = "", ""
+            if desc:
+                try:
+                    con.execute("UPDATE notes SET description=?, updated_at=? WHERE id=?",
+                                (desc, __import__("time").time(), oid))
+                except Exception:
+                    pass
+            if kw:
+                try:
+                    con.execute("UPDATE notes SET keywords=? WHERE id=?", (kw, oid))
+                except Exception:
+                    pass
+            n += 1
+        try:
+            con.commit()
+        except Exception:
+            pass
+        return n
+    except Exception:
+        return 0
+
+
 _core_keys = ["user_profile", "preferences", "projects", "goals", "facts"]
 
 _CORE_PROMPT = """You are maintaining the long-term "core memory" blocks of a personal assistant. Given the global facts currently stored about the user, produce a tight, structured set of core memory blocks that capture the stable, high-value knowledge.
