@@ -163,6 +163,27 @@ BUILTIN_TOOLS = [
     _tool("vault_status",
           "Vault health: docs, chunks, index state, watched paths.",
           {}, []),
+    _tool("geo_geocode", "Fuzzy place name to lat/lon candidates (top 3). Use for 'how far is X', 'cafes near Y'.",
+          {"place": {"type": "string"}}, ["place"]),
+    _tool("geo_reverse", "Lat/lon to human-readable address.",
+          {"lat": {"type": "number"}, "lon": {"type": "number"}}, ["lat", "lon"]),
+    _tool("geo_route", "Origin to destination distance/duration/steps. Origin/dest accept 'lat,lon' or place names. mode=drive|walk|bike.",
+          {"origin": {"type": "string"}, "destination": {"type": "string"}, "mode": {"type": "string"}}, ["origin", "destination"]),
+    _tool("geo_traffic", "Live traffic delta vs free-flow (needs ZUMBA_TT_KEY, else honest no-data).",
+          {"origin": {"type": "string"}, "destination": {"type": "string"}}, ["origin", "destination"]),
+    _tool("geo_nearby", "POIs near lat/lon. Category is free text (e.g. 'cafes', 'parking').",
+          {"lat": {"type": "number"}, "lon": {"type": "number"}, "category": {"type": "string"}, "limit": {"type": "integer"}}, ["lat", "lon", "category"]),
+    _tool("geo_weather", "Weather now (+ at arrival via eta_hours) for lat/lon.",
+          {"lat": {"type": "number"}, "lon": {"type": "number"}, "eta_hours": {"type": "number"}}, ["lat", "lon"]),
+    _tool("geo_maps_link", "One-tap Google/OSM deep link for a place or 'lat,lon'.",
+          {"place_or_coords": {"type": "string"}}, ["place_or_coords"]),
+    _tool("geo_track_start", "Watch live location for N minutes.",
+          {"chat_id": {"type": "string"}, "minutes": {"type": "number"}}, ["chat_id"]),
+    _tool("geo_track_stop", "Stop live-location tracking.", {"chat_id": {"type": "string"}}, ["chat_id"]),
+    _tool("geo_whereami", "Last known location or error if never shared.", {"chat_id": {"type": "string"}}, []),
+    _tool("geo_visit_log", "Record/query place visits. action=list|add|forget.",
+          {"chat_id": {"type": "string"}, "action": {"type": "string"}, "place_name": {"type": "string"},
+           "lat": {"type": "number"}, "lon": {"type": "number"}, "note": {"type": "string"}, "since": {"type": "string"}, "forget": {"type": "boolean"}}, []),
 ]
 
 
@@ -197,6 +218,11 @@ def visible_tools() -> list:
         tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
             ("__memory_remember", "__memory_search", "__memory_forget", "__brief",
              "__goal_add", "__goal_list", "__goal_show", "__goal_complete_step", "__remind_add"))]
+    if os.getenv("ZUMBA_NO_GEO", "") == "1":
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__geo_geocode", "__geo_reverse", "__geo_route", "__geo_traffic", "__geo_nearby",
+             "__geo_weather", "__geo_maps_link", "__geo_track_start", "__geo_track_stop",
+             "__geo_whereami", "__geo_visit_log"))]
     return tools
 
 # (search results live in mgr.meta_state["last_search"] — per-instance, no globals)
@@ -607,6 +633,48 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
         except Exception:
             return "ERROR: 'k' must be a number."
         return await _asyncio8.to_thread(v.ask, question, k, True)
+
+    if tool in ("geo_geocode", "geo_reverse", "geo_route", "geo_traffic", "geo_nearby",
+                  "geo_weather", "geo_maps_link", "geo_track_start", "geo_track_stop",
+                  "geo_whereami", "geo_visit_log"):
+        import asyncio as _asyncio9
+        from tools import geo as _geo
+        if not _geo.enabled():
+            return "ERROR: geo tools are disabled (ZUMBA_NO_GEO=1)."
+        def _num(v, d=0.0):
+            try: return float(v)
+            except Exception: return d
+        if tool == "geo_geocode":
+            return await _asyncio9.to_thread(_geo.geocode, str(args.get("place", "") or ""))
+        if tool == "geo_reverse":
+            return await _asyncio9.to_thread(_geo.reverse, _num(args.get("lat")), _num(args.get("lon")))
+        if tool == "geo_route":
+            return await _asyncio9.to_thread(_geo.route, str(args.get("origin", "") or ""),
+                                             str(args.get("destination", "") or ""), str(args.get("mode", "drive") or "drive"))
+        if tool == "geo_traffic":
+            return await _asyncio9.to_thread(_geo.traffic, str(args.get("origin", "") or ""), str(args.get("destination", "") or ""))
+        if tool == "geo_nearby":
+            try: lim = int(args.get("limit", 8) or 8)
+            except Exception: return "ERROR: 'limit' must be a number."
+            return await _asyncio9.to_thread(_geo.nearby, _num(args.get("lat")), _num(args.get("lon")),
+                                             str(args.get("category", "") or ""), lim)
+        if tool == "geo_weather":
+            return await _asyncio9.to_thread(_geo.weather, _num(args.get("lat")), _num(args.get("lon")), _num(args.get("eta_hours", 0)))
+        if tool == "geo_maps_link":
+            return _geo.maps_link(str(args.get("place_or_coords", "") or ""))
+        if tool == "geo_track_start":
+            try: mins = float(args.get("minutes", 15) or 15)
+            except Exception: return "ERROR: 'minutes' must be a number."
+            return await _asyncio9.to_thread(_geo.track_start_fn, str(args.get("chat_id", "") or "default"), mins)
+        if tool == "geo_track_stop":
+            return await _asyncio9.to_thread(_geo.track_stop_fn, str(args.get("chat_id", "") or "default"))
+        if tool == "geo_whereami":
+            return await _asyncio9.to_thread(_geo.whereami, str(args.get("chat_id", "") or "default"))
+        return await _asyncio9.to_thread(_geo.visit_log, str(args.get("chat_id", "") or "default"),
+                                         str(args.get("action", "list") or "list"), str(args.get("place_name", "") or ""),
+                                         _num(args.get("lat", 0)), _num(args.get("lon", 0)),
+                                         str(args.get("note", "") or ""), str(args.get("since", "") or ""),
+                                         bool(args.get("forget", False)))
 
     return f"ERROR: unknown meta-tool '{tool}'."
 

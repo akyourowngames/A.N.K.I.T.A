@@ -18,6 +18,24 @@ IDENTITY = (
     "be decisive, chain commands instead of narrating, report outcomes briefly."
 )
 
+# PLAN-GO §3 — the "heading to" trip-brain behavior. The planner is NOT a
+# classifier; it is this composition pattern over small geo tools.
+GEO_BRIEF = (
+    "Geo/trip behavior: you have zumba__geo_geocode / geo_reverse / geo_route "
+    "(mode drive|walk|bike) / geo_traffic (live TomTom) / geo_nearby (free-text "
+    "category) / geo_weather (eta_hours for arrival) / geo_maps_link / "
+    "geo_track_start / geo_track_stop / geo_whereami / geo_visit_log. "
+    "Single questions need ONE call (how far → geo_route; raining → geo_weather; "
+    "cafes near X → geocode + nearby). When the user says they are heading "
+    "somewhere, chain: geocode destination → route from last known location "
+    "(geo_whereami; ask if unknown) → traffic delta → weather at arrival → 2-3 "
+    "nearby places → memory/vault context. Compose ONE message: leave-by time, "
+    "route summary, weather line, personal context, maps link. During an active "
+    "live share, only interrupt on material changes (+10 min or arrival). "
+    "Partial answers beat silence; on backend failure give a maps link + honest "
+    "'can't estimate'."
+)
+
 def soul_block() -> str:
     try:
         from identity import soul as _soul
@@ -61,6 +79,11 @@ def build_system(base: str = "") -> str:
     except Exception:
         pass
     parts.append(IDENTITY)
+    try:
+        if GEO_BRIEF:
+            parts.append(GEO_BRIEF)
+    except Exception:
+        pass
     if style:
         parts.append("Style: " + style)
     if (base or "").strip():

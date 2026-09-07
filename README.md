@@ -87,7 +87,8 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Web search (zero-key)** — `zumba__web_search/web_news/web_fetch` model tools (DDG + Google News RSS + Wikipedia + HN + Reddit + readable fetch with Jina fallback); CLI `zumba web search|news|fetch`, in-chat `/search|/news|/fetch`; TTL cache, CAPTCHA fallback, `ZUMBA_NO_WEB=1` kill-switch
 - **The Vault (local document RAG)** — drop files into `~/.zumba/vault/` (`zumba vault add <path>`, `watch`, `status`, `ask`, `find`, `doc`, `forget`, `reindex`); structure-aware chunking, hybrid vector+BM25+RRF, small-to-big parent sections, RAPTOR-lite summaries, local rerank, citations `[Title p.N]`; always-on `[VAULT CONTEXT]` recall hook + `zumba__vault_search/doc/read` tools + `/vault` chat commands; `ZUMBA_NO_VAULT=1` kill-switch
 - **Proactive goals (Tier 3)** — `goal add` auto-decomposes via LLM into steps with staggered micro-deadlines; natural-time reminders (`friday 5pm`, `in 3 days`, daily/weekly recur, snooze, desktop toast); background worker fires reminders + deadline/stall nudges + pre-deadline web research + win/fail detection (rate-limited, `config --set-proactive off`); goals lead the daily brief, sit in recall context, and are creatable by the agent (`goal_add`, `remind_add` tools) and chat (`/goal`, `/remind`)
-- **160+ passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, vault, and goals/reminders suites
+- **Geo / trip brain (PLAN-GO)** — 11 standalone model tools in `tools/geo.py` (`zumba__geo_geocode/reverse/route/traffic/nearby/weather/maps_link/track_start/track_stop/whereami/visit_log`): single questions take one call (how far → route, raining → weather, cafes near X → geocode + nearby); "I'm heading to X" chains geocode → route → live traffic → weather at arrival → nearby → ONE briefing with leave-by time, route, weather, personal context, maps link. TomTom-first when `ZUMBA_TT_KEY` is set (Search, Reverse Geocode, Category/Places Search, Routing + Traffic Incidents/Flow), OSM fallbacks (Nominatim/OSRM/Overpass) otherwise; `ZUMBA_NO_GEO=1` kill-switch. Telegram point/live locations store silently to SQLite (`server/geo_store.py`); the pipeline and Telegram both run the agent tool loop so geo tools fire everywhere, not just CLI
+- **170+ passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, vault, goals/reminders, and geo suites
 
 ## Requirements
 
@@ -116,6 +117,11 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_SHELL_MAX_OUTPUT` | Shell output cap (chars, head+tail) | `8000`                            |
 | `ZUMBA_CONTEXT_LIMIT` | Context budget per model call      | `8192`                               |
 | `ZUMBA_NO_MEMORY`   | Disable long-term memory (`1`)       | enabled                              |
+| `ZUMBA_TT_KEY`      | TomTom key: live traffic + Places-first geocode/nearby/route | OSM fallbacks |
+| `ZUMBA_NO_GEO`      | Disable all geo tools (`1`)          | enabled                              |
+| `ZUMBA_OSRM_URL`    | Self-hosted OSRM override            | public demo                          |
+| `ZUMBA_OVERPASS_URL` | Overpass mirror override            | `overpass-api.de`                    |
+| `ZUMBA_GEO_TRACK_MAX_MIN` | Max live-location track window (min) | `90`                             |
 
 Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `kilo-auto/free`.
 
@@ -292,9 +298,11 @@ In chat: `/shell <cmd>` runs directly (bypasses the model); the model gets `zumb
 ```text
 zumba/
 ├── main.py          # Typer CLI: models / ask / chat / sessions / config / memory / web / vault / mcp / shell / doctor
-├── core/            # App foundation: config, models, store, output, chat, api_client, context_budget
-├── identity/        # Who Zumba is + who you are: persona, soul, userprofile
-├── tools/           # God-mode local tools: shelltool, websearch
+├── core/            # App foundation: config, models, store, output, chat, chat_pipeline (agent tool loop), api_client, context_budget
+├── identity/        # Who Zumba is + who you are: persona (incl. GEO_BRIEF trip behavior), soul, userprofile
+├── tools/           # God-mode local tools: shelltool, websearch, geo (11 trip-brain tools)
+├── server/          # HTTP + Telegram: app, telegram_channel (location/live pings), geo_store, channel_store
+├── PLAN-GO.md       # Geo/trip-brain build plan (primitives → motion layer)
 ├── vault/           # Local document RAG (parsers, chunker, ingest, retrieve, rerank, summaries)
 ├── core/            #   (files)
 │   ├── api_client.py    # Gateway client: list_models, chat_completion (+tools), SSE streaming
@@ -310,7 +318,8 @@ zumba/
 │   └── userprofile.py   # user_facts table + user.md rewrite + always-inject profile block
 ├── tools/           #   (files)
 │   ├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
-│   └── websearch.py     # Zero-key web engine: DDG + GNews RSS + Wiki + HN + Reddit + fetch + cache
+│   ├── websearch.py     # Zero-key web engine: DDG + GNews RSS + Wiki + HN + Reddit + fetch + cache
+│   └── geo.py           # Trip-brain tools: TomTom-first geocode/reverse/nearby/route/traffic (+incidents/flow), Open-Meteo weather, maps links, track/whereami/visit
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)
 │   ├── manager.py       # Async connection manager: stdio / HTTP / SSE, health, reconnect
@@ -334,7 +343,7 @@ zumba/
 │   ├── people.py        # Relationship view
 │   └── service.py       # Memory orchestrator
 ├── sessions/        # Legacy JSON sessions (auto-migrated, git-ignored)
-├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona, soul, eval, reflection, retrieval-v2, goals)
+├── tests/           # pytest suite (API mocks, storage, renderer, memory, shell, budget, persona, soul, eval, reflection, retrieval-v2, goals, geo)
 ├── requirements.txt
 └── .env.example
 ```

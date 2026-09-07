@@ -102,7 +102,7 @@ class TelegramAPI:
             raise err
 
     async def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
-        data = await self._post("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message"]}, timeout=timeout + 15)
+        data = await self._post("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "edited_message"]}, timeout=timeout + 15)
         if not data.get("ok"):
             raise RuntimeError(f"getUpdates failed: {str(data)[:200]}")
         return data.get("result") or []
@@ -219,8 +219,30 @@ class TelegramChannel:
         except Exception:
             pass
 
+    async def handle_location(self, chat_id: int, msg: dict) -> bool:
+        loc = msg.get("location")
+        if not isinstance(loc, dict):
+            return False
+        try:
+            lat, lon = float(loc.get("latitude")), float(loc.get("longitude"))
+        except Exception:
+            return True
+        try:
+            from server import geo_store as _gs
+            live = msg.get("live_period") or (msg.get("location") or {}).get("live_period")
+            src = "live" if live else "point"
+            _gs.record_ping(str(chat_id), lat, lon, 0.0, src)
+            if live and _gs.track_active(str(chat_id)):
+                pass  # window already active; pings accumulate silently
+        except Exception as e:
+            log.warning("geo ping failed: %s", e)
+        if not (msg.get("live_period")):
+            try: await self.api.send_message(chat_id, "\U0001f4cd Got it.")
+            except Exception: pass
+        return True
+
     async def handle_update(self, update: dict) -> None:
-        msg = update.get("message") or {}
+        msg = update.get("message") or update.get("edited_message") or {}
         chat = msg.get("chat") or {}
         chat_id = int(chat.get("id", 0) or 0)
         if not chat_id:
@@ -253,6 +275,8 @@ class TelegramChannel:
                 await self.api.send_message(chat_id, str(hits)[:3500] or "(nothing recalled)")
             except Exception as e:
                 await self.api.send_message(chat_id, f"memory error: {e}"[:500])
+            return
+        if await self.handle_location(chat_id, msg):
             return
         is_voice = voice is not None
         if is_voice:

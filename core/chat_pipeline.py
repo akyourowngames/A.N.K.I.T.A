@@ -4,7 +4,37 @@ from core.models import Message
 import core.store as store
 
 
-DEFAULT_SYSTEM = "You are Zumba, a concise helpful personal assistant."
+try:
+    from identity.persona import GEO_BRIEF as _GEO_BRIEF
+except Exception:
+    _GEO_BRIEF = ""
+
+DEFAULT_SYSTEM = ("You are Zumba, a concise helpful personal assistant. " + _GEO_BRIEF).strip()
+
+
+def _agent_answer(msgs, model: str, key: str, max_tokens, temperature) -> "str | None":
+    """Run the MCP agent loop (tools available). Returns reply or None if no tools."""
+    try:
+        from mcpclient.manager import manager as _mgr, run_tool as _run_tool
+        from mcpclient.agent import run_agent_loop
+        mgr = _mgr()
+        tools = mgr.all_tools()
+    except Exception:
+        return None
+    if not tools:
+        return None
+    try:
+        from main import _mcp_preamble as _pre
+        convo = _pre(list(msgs), tools)
+    except Exception:
+        convo = list(msgs)
+    res = run_agent_loop(
+        convo, model,
+        call_model=lambda ms, m, tools, **kw: __import__("core.api_client", fromlist=["chat_completion"]).chat_completion(
+            ms, m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
+        execute_tool=lambda n, a: _run_tool(n, a),
+        tools=tools, max_iterations=10)
+    return (getattr(res, "content", "") or "")
 
 
 def build_messages(session_id: str, system: str, user_text: str) -> List[Message]:
@@ -54,6 +84,18 @@ def answer(session_id: str, text: str, system: str = DEFAULT_SYSTEM,
     if mem_block:
         msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
     store.add_message(session_id, "user", text)
+    try:
+        agent_reply = _agent_answer(msgs, chosen, key, max_tokens, temperature)
+    except Exception:
+        agent_reply = None
+    if agent_reply and agent_reply.strip():
+        store.add_message(session_id, "assistant", agent_reply)
+        try:
+            from memory import get_memory as _gm
+            _gm().capture_async(text, agent_reply, session_id=session_id, kind="chat")
+        except Exception:
+            pass
+        return agent_reply
     result = api_client.chat_completion(msgs, chosen, api_key=key,
                                         max_tokens=max_tokens, temperature=temperature)
     store.add_message(session_id, "assistant", result.content)
