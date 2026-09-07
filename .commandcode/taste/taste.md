@@ -1,0 +1,4 @@
+- Refers to the Zumba CLI as "kilo" rather than "zumba" / "zumba-cli". Confidence: 0.8
+- Prefers informal, casual communication: lowercase, unpunctuated, uses "hey" and "man". Confidence: 0.7
+- Wants the latest session continued and built on top of prior session work rather than starting fresh. Confidence: 0.7
+- Refers to sessions by descriptive names (e.g. "ig greeting") rather than by ID or title. Confidence: 0.6

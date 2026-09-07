@@ -81,7 +81,8 @@ def search(query: str, limit: int = defaults.SEARCH_LIMIT, timeout: float = defa
         )
         if resp.status_code >= 400:
             return []
-        servers = resp.json().get("servers", [])
+        data = resp.json()
+        servers = data.get("servers", []) if isinstance(data, dict) else []
     except Exception:
         return []
     out = []

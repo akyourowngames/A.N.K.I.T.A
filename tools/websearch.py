@@ -342,6 +342,8 @@ def search_wikipedia(query: str, limit: int = 5) -> tuple[list[dict], str]:
             data = r.json()
         except Exception:
             return [], "Wiki: bad JSON"
+        if not isinstance(data, dict):
+            return [], "Wiki: unexpected response"
         out = []
         for item in ((data.get("query") or {}).get("search") or [])[:limit]:
             title = str(item.get("title") or "")
@@ -371,8 +373,10 @@ def search_hn(query: str, when: str = "", limit: int = 5) -> tuple[list[dict], s
             data = r.json()
         except Exception:
             return [], "HN: bad JSON"
+        if not isinstance(data, dict):
+            return [], "HN: unexpected response"
         out = []
-        for h in (data.get("hits") or [])[:limit]:
+        for h in ((data.get("hits") or []) if isinstance(data, dict) else [])[:limit]:
             title = str(h.get("title") or "")
             url = str(h.get("url") or "") or f"https://news.ycombinator.com/item?id={h.get('objectID')}"
             pts = h.get("points", "")
@@ -397,8 +401,10 @@ def search_reddit(query: str, when: str = "", limit: int = 5) -> tuple[list[dict
             data = r.json()
         except Exception:
             return [], "Reddit: bad JSON"
+        if not isinstance(data, dict):
+            return [], "Reddit: unexpected response"
         out = []
-        for child in ((data.get("data") or {}).get("children") or [])[:limit]:
+        for child in (((data.get("data") or {}) if isinstance(data, dict) else {}).get("children") or [])[:limit]:
             d = child.get("data") or {}
             title = str(d.get("title") or "")
             url = "https://www.reddit.com" + str(d.get("permalink") or "")

@@ -282,6 +282,14 @@ export default function Page() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const recRef = useRef<any>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // ── Edge-TTS voice: heavy male GOAT default ──
+  const GOAT_VOICE = 'en-US-GuyNeural';
+  const HEAVY_MALE_FALLBACKS = [
+    'guy', 'christopher', 'davis', 'eric', 'steffan', 'ryan', 'thomas', 'william',
+    'microsoft guy', 'microsoft christopher', 'microsoft davis',
+  ];
 
   const refreshSessions = useCallback(async () => {
     try { const d = await getSessions(); setSessions(d.sessions || []); } catch {}
@@ -298,17 +306,105 @@ export default function Page() {
 
   useEffect(() => { bottomRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); }, [messages]);
 
+  // Preload browser voices (Edge exposes Guy/Christopher/Davis here)
+  useEffect(() => {
+    try {
+      speechSynthesis.getVoices();
+      speechSynthesis.onvoiceschanged = () => { try { speechSynthesis.getVoices(); } catch {} };
+    } catch {}
+  }, []);
+
   useEffect(() => {
     const ta = taRef.current;
     if (ta) { ta.style.height = 'auto'; ta.style.height = Math.min(140, ta.scrollHeight) + 'px'; }
   }, [input]);
 
-  function speak(text: string) {
-    if (!voiceOn || !text.trim()) return;
+  // Keep speech to 1-2 lines only — never full paragraphs.
+  function shortSpeakText(text: string, maxChars = 280): string {
+    let t = (text || '')
+      .replace(/```[\s\S]*?```/g, ' ')
+      .replace(/`([^`]*)`/g, '$1')
+      .replace(/!\[.*?\]\(.*?\)/g, ' ')
+      .replace(/\[([^\]]*)\]\(.*?\)/g, '$1')
+      .replace(/^#{1,6}\s*/gm, '')
+      .replace(/[*_~>|#-]+/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (!t) return '';
+    const parts = t.split(/(?<=[.!?])\s+/);
+    let short = parts.slice(0, 2).join(' ').trim() || t;
+    if (short.length > maxChars) {
+      const cut = short.slice(0, maxChars);
+      const bounds = ['. ', '! ', '? ', ', ', '; '].map((b) => cut.lastIndexOf(b));
+      const m = Math.max(...bounds);
+      short = (m > 80 ? cut.slice(0, m + 1) : cut.split(' ').slice(0, -1).join(' ')).trim() + '…';
+    }
+    return short;
+  }
+
+  function pickHeavyMaleVoice(): SpeechSynthesisVoice | null {
+    try {
+      const vs = speechSynthesis.getVoices();
+      if (!vs.length) return null;
+      // Prefer Edge natural male voices first
+      for (const hint of HEAVY_MALE_FALLBACKS) {
+        const hit = vs.find((v) => v.name.toLowerCase().includes(hint) && v.lang.startsWith('en'));
+        if (hit) return hit;
+      }
+      // Any other English male-ish voice
+      const en = vs.filter((v) => v.lang.startsWith('en'));
+      const male = en.find((v) => /male|guy|christopher|davis|eric|ryan|thomas|william|daniel|george/i.test(v.name));
+      return male || en[0] || vs[0] || null;
+    } catch { return null; }
+  }
+
+  function speakBrowserFallback(short: string) {
     try {
       speechSynthesis.cancel();
-      speechSynthesis.speak(new SpeechSynthesisUtterance(text.slice(0, 500)));
+      const u = new SpeechSynthesisUtterance(short);
+      const v = pickHeavyMaleVoice();
+      if (v) u.voice = v;
+      u.rate = 0.88;   // slower = heavier
+      u.pitch = 0.55;  // lower = goat
+      u.volume = 1;
+      speechSynthesis.speak(u);
     } catch {}
+  }
+
+  async function speak(text: string) {
+    if (!voiceOn || !text.trim()) return;
+    const short = shortSpeakText(text);
+    if (!short) return;
+    // Stop anything currently playing
+    try { audioRef.current?.pause(); } catch {}
+    try { speechSynthesis.cancel(); } catch {}
+    // 1) Server-side Edge-TTS (heavy male) — preferred
+    try {
+      const r = await fetch(`${API_URL}/api/voice/tts`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: short, voice: GOAT_VOICE, rate: '-10%', pitch: '-20Hz' }),
+      });
+      const ct = r.headers.get('content-type') || '';
+      if (r.ok && ct.includes('audio')) {
+        const blob = await r.blob();
+        const url = URL.createObjectURL(blob);
+        const el = new Audio(url);
+        audioRef.current = el;
+        el.onended = () => URL.revokeObjectURL(url);
+        await el.play().catch(() => {});
+        return;
+      }
+      // JSON fallback carries trimmed spoke_text
+      if (r.ok) {
+        try {
+          const j = await r.json();
+          if (j?.spoke_text) { speakBrowserFallback(j.spoke_text); return; }
+        } catch {}
+      }
+    } catch { /* fall through to browser voices */ }
+    // 2) Browser SpeechSynthesis with heavy male Edge voice
+    speakBrowserFallback(short);
   }
 
   async function send(text?: string) {
@@ -470,7 +566,11 @@ export default function Page() {
             </select>
           )}
 
-          <button onClick={() => setVoiceOn(!voiceOn)} title="voice replies"
+          <button onClick={() => {
+            const next = !voiceOn;
+            setVoiceOn(next);
+            if (!next) { try { audioRef.current?.pause(); } catch {} try { speechSynthesis.cancel(); } catch {} }
+          }} title={voiceOn ? `voice on · ${GOAT_VOICE} · 1-2 lines` : 'voice replies (Edge heavy male, 1-2 lines)'}
             className={`p-2 rounded-xl border transition ${voiceOn ? 'bg-white/[0.08] border-white/20 text-white' : 'border-white/[0.08] text-zinc-500 hover:bg-white/[0.04] hover:text-zinc-300'}`}>
             {voiceOn ? <Volume2 size={14} /> : <VolumeX size={14} />}
           </button>

@@ -45,6 +45,8 @@ class ModelInfo:
 
     @staticmethod
     def from_dict(data: dict) -> "ModelInfo":
+        if not isinstance(data, dict):
+            return ModelInfo(id=str(data or ""))
         model_id = str(data.get("id", ""))
         name = str(data.get("name", "") or model_id)
         ctx = data.get("context_length", 0) or 0
@@ -54,14 +56,16 @@ class ModelInfo:
             ctx = 0
         is_free = bool(data.get("isFree", False))
         pricing = data.get("pricing", {}) or {}
-        try:
-            prompt_price = float(str(pricing.get("prompt", "1")))
-            completion_price = float(str(pricing.get("completion", "1")))
-            if prompt_price == 0 and completion_price == 0:
-                is_free = True
-        except Exception:
-            pass
-        if model_id.endswith(":free") or model_id.endswith("-free") or model_id in ("kilo-auto/free", "openrouter/free", "muse-spark-1.3-contributor-free", "opencode/muse-spark-1.3-contributor-free"):
+        if isinstance(pricing, dict):
+            try:
+                prompt_price = float(str(pricing.get("prompt", "1")))
+                completion_price = float(str(pricing.get("completion", "1")))
+                if prompt_price == 0 and completion_price == 0:
+                    is_free = True
+            except Exception:
+                pass
+        low = model_id.lower()
+        if low.endswith(":free") or low.endswith("-free") or "/free" in low:
             is_free = True
         owned = str(data.get("owned_by", "") or "")
         if not owned and "/" in model_id:
@@ -84,12 +88,17 @@ class ChatUsage:
 
     @staticmethod
     def from_dict(data: Optional[dict]) -> "ChatUsage":
-        if not data:
+        if not isinstance(data, dict):
             return ChatUsage()
+        def _i(k: str) -> int:
+            try:
+                return int(data.get(k, 0) or 0)
+            except Exception:
+                return 0
         return ChatUsage(
-            prompt_tokens=int(data.get("prompt_tokens", 0) or 0),
-            completion_tokens=int(data.get("completion_tokens", 0) or 0),
-            total_tokens=int(data.get("total_tokens", 0) or 0),
+            prompt_tokens=_i("prompt_tokens"),
+            completion_tokens=_i("completion_tokens"),
+            total_tokens=_i("total_tokens"),
         )
 
 

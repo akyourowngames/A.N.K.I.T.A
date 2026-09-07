@@ -34,9 +34,9 @@ def _friendly_hint(status: int) -> str:
     if status == 401:
         return "Invalid or missing API key. Check KILO_API_KEY / OPENCODE_API_KEY."
     if status == 402:
-        return "Insufficient balance. Add credits at https://opencode.ai/auth."
+        return "Insufficient balance. Add credits at https://kilo.ai/auth."
     if status == 403:
-        return "Model blocked by organization policy. Try a free model like muse-spark-1.3-contributor-free."
+        return "Model blocked by organization policy. Try a free model like stepfun/step-3.7-flash:free."
     if status == 429:
         return "Rate limited. Wait a moment and retry."
     if status in (502, 503):
@@ -73,8 +73,7 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
         msg = _gateway_error_message(resp.status_code, data)
         hint = _friendly_hint(resp.status_code)
         full = f"[{resp.status_code}] {msg}" + (f" ({hint})" if hint else "")
-        code = data.get("error", {}).get("code") if isinstance(data, dict) else None
-        raise KiloError(full, status_code=resp.status_code, code=code)
+        raise KiloError(full, status_code=resp.status_code, code=_error_code(data))
     try:
         return resp.json()
     except Exception as exc:
@@ -121,15 +120,64 @@ def _chat_payload(
     return payload
 
 
-def _needs_responses_api(model: str) -> bool:
-    m = (model or "").lower()
-    if "muse-spark" in m or m.startswith("gpt-") or "codex" in m:
-        return True
-    if m.startswith("claude-") or m.startswith("gemini-") or m.startswith("grok"):
-        return True
-    if m.startswith("qwen"):
-        return True
-    return False
+def _error_code(payload: Any) -> Any:
+    try:
+        if not isinstance(payload, dict):
+            return None
+        err = payload.get("error", None)
+        if isinstance(err, dict):
+            return err.get("code")
+        return None
+    except Exception:
+        return None
+
+
+def _content_to_text(content: Any) -> str:
+    if content is None:
+        return ""
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for b in content:
+            if isinstance(b, str):
+                parts.append(b)
+            elif isinstance(b, dict):
+                t = b.get("text", "")
+                if isinstance(t, str) and t:
+                    parts.append(t)
+                elif isinstance(t, dict) and isinstance(t.get("text"), str):
+                    parts.append(str(t.get("text")))
+                elif isinstance(b.get("content"), str):
+                    parts.append(str(b.get("content")))
+        return "".join(parts)
+    return str(content)
+
+
+def _extract_chat_content(data: Any) -> tuple[str, list, str]:
+    model_name = ""
+    try:
+        if isinstance(data, dict) and data.get("model"):
+            model_name = str(data.get("model"))
+    except Exception:
+        pass
+    try:
+        choices = data.get("choices", []) if isinstance(data, dict) else []
+        if not isinstance(choices, list) or not choices:
+            return "", [], model_name
+        choice = choices[0] if isinstance(choices[0], dict) else {}
+        msg = choice.get("message", {}) if isinstance(choice, dict) else {}
+        if isinstance(msg, str):
+            return msg, [], model_name
+        if not isinstance(msg, dict):
+            return "", [], model_name
+        text = _content_to_text(msg.get("content"))
+        calls = msg.get("tool_calls") or []
+        if not isinstance(calls, list):
+            calls = []
+        return str(text or ""), calls, model_name
+    except Exception:
+        return "", [], model_name
 
 
 def _chat_tools_to_responses(tools: Optional[list]) -> Optional[list]:
@@ -224,6 +272,8 @@ def _responses_completion(
     text = ""
     calls: list = []
     try:
+        if not isinstance(data, dict):
+            raise ValueError("unexpected responses payload type")
         for item in data.get("output", []) or []:
             if not isinstance(item, dict):
                 continue
@@ -247,16 +297,26 @@ def _responses_completion(
         pass
     usage = ChatUsage()
     try:
-        u = data.get("usage") or {}
-        usage = ChatUsage(
-            prompt_tokens=int(u.get("input_tokens", 0) or 0),
-            completion_tokens=int(u.get("output_tokens", 0) or 0),
-            total_tokens=int(u.get("total_tokens", 0) or 0),
-        )
+        u = data.get("usage") if isinstance(data, dict) else None
+        if isinstance(u, dict):
+            def _n(*keys: str) -> int:
+                for k in keys:
+                    try:
+                        v = int(u.get(k, 0) or 0)
+                        if v:
+                            return v
+                    except Exception:
+                        continue
+                return 0
+            usage = ChatUsage(
+                prompt_tokens=_n("input_tokens", "prompt_tokens"),
+                completion_tokens=_n("output_tokens", "completion_tokens"),
+                total_tokens=_n("total_tokens"),
+            )
     except Exception:
         pass
     raw = {"choices": [{"message": {"content": text, "tool_calls": calls}}], "responses_raw": data} if calls else data
-    return ChatResult(content=text, model=str(data.get("model", model)), usage=usage, raw=raw)
+    return ChatResult(content=text, model=str(data.get("model", model) if isinstance(data, dict) else model), usage=usage, raw=raw)
 
 
 def chat_completion(
@@ -269,8 +329,6 @@ def chat_completion(
     timeout: int = 120,
     tools: Optional[list] = None,
 ) -> ChatResult:
-    if _needs_responses_api(model):
-        return _responses_completion(messages, model, api_key=api_key, base_url=base_url, max_tokens=max_tokens, temperature=temperature, timeout=timeout, tools=tools)
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
     payload = _chat_payload(messages, model, max_tokens, temperature, stream=False, tools=tools)
@@ -287,12 +345,13 @@ def chat_completion(
             timeout=timeout,
         )
     except KiloError as exc:
-        if exc.status_code in (400, 404, 500) and not tools:
+        if exc.status_code in (400, 404, 422, 500) and not tools:
             return _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
         raise
     try:
-        choice = data["choices"][0]
-        content = choice["message"].get("content") or ""
+        content, _calls, _rmodel = _extract_chat_content(data)
+        if not content and not _calls:
+            raise ValueError("empty chat content")
     except Exception as exc:
         if not tools:
             try:
@@ -300,8 +359,8 @@ def chat_completion(
             except Exception:
                 pass
         raise KiloError(f"Unexpected chat response shape: {str(data)[:500]}") from exc
-    usage = ChatUsage.from_dict(data.get("usage"))
-    return ChatResult(content=str(content), model=str(data.get("model", model)), usage=usage, raw=data)
+    usage = ChatUsage.from_dict(data.get("usage") if isinstance(data, dict) else None)
+    return ChatResult(content=str(content), model=str(_rmodel or (data.get("model", model) if isinstance(data, dict) else model)), usage=usage, raw=data)
 
 
 def stream_chat_completion(
@@ -315,10 +374,6 @@ def stream_chat_completion(
 ) -> Generator[str, None, ChatResult]:
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
-    if _needs_responses_api(model):
-        result = _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
-        yield result.content
-        return result
     payload = _chat_payload(messages, model, max_tokens, temperature, stream=True)
     try:
         resp = requests.post(
@@ -343,7 +398,7 @@ def stream_chat_completion(
                 data = {"error": resp.text[:500]}
             except Exception:
                 data = {"error": f"HTTP {resp.status_code}"}
-        if resp.status_code in (400, 404, 500):
+        if resp.status_code in (400, 404, 422, 500):
             try:
                 resp.close()
             except Exception:
@@ -381,11 +436,19 @@ def stream_chat_completion(
             if isinstance(obj, dict) and obj.get("usage"):
                 usage = ChatUsage.from_dict(obj.get("usage"))
             try:
-                choices = obj.get("choices", [])
-                if not choices:
+                if not isinstance(obj, dict):
                     continue
-                delta = choices[0].get("delta", {})
-                text = delta.get("content")
+                choices = obj.get("choices", [])
+                if not choices or not isinstance(choices, list):
+                    continue
+                first = choices[0] if isinstance(choices[0], dict) else {}
+                delta = first.get("delta", {}) if isinstance(first, dict) else {}
+                if isinstance(delta, str):
+                    text = delta
+                elif isinstance(delta, dict):
+                    text = _content_to_text(delta.get("content"))
+                else:
+                    text = ""
                 if text:
                     full_text += str(text)
                     yield str(text)

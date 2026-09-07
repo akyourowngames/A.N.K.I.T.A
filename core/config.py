@@ -7,8 +7,8 @@ try:
 except Exception:
     pass
 
-DEFAULT_BASE_URL = "https://opencode.ai/zen/v1"
-DEFAULT_MODEL = "muse-spark-1.3-contributor-free"
+DEFAULT_BASE_URL = "https://api.kilo.ai/api/gateway"
+DEFAULT_MODEL = "stepfun/step-3.7-flash:free"
 ENV_API_KEY = "KILO_API_KEY"
 ENV_BASE_URL = "KILO_BASE_URL"
 ENV_MODEL = "ZUMBA_MODEL"
@@ -26,7 +26,7 @@ def get_api_key(require: bool = True) -> str:
     key = (os.getenv("OPENCODE_API_KEY") or os.getenv(ENV_API_KEY) or "").strip().strip('"').strip("'")
     if not key and require:
         raise RuntimeError(
-            "KILO_API_KEY (or OPENCODE_API_KEY) is not set. Get one at https://opencode.ai/auth "
+            "KILO_API_KEY (or OPENCODE_API_KEY) is not set. Get one at https://kilo.ai/auth "
             "then set it with: setx KILO_API_KEY \"your_key_here\" "
             "or create a .env file with KILO_API_KEY=your_key_here"
         )

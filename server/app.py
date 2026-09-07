@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
+from contextlib import asynccontextmanager
 import json, time, asyncio
 
 from core import api_client
@@ -14,8 +15,24 @@ from core.config import get_api_key, get_base_url, get_default_model
 from core.models import Message
 import core.store as store
 from core.chat import Conversation
+from core.chat_pipeline import build_messages as _pipeline_build, recall_block as _pipeline_recall
+from server.tts import HEAVY_MALE_VOICES, tts_short_text as _tts_short_text
 
-app = FastAPI(title="ZUMBA API", version="1.0.0")
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    try:
+        from server.telegram_channel import start_if_configured
+        start_if_configured(app)
+    except Exception:
+        pass
+    yield
+    try:
+        from memory import get_memory as _gm
+        _gm().flush(timeout=5.0)
+    except Exception:
+        pass
+
+app = FastAPI(title="ZUMBA API", version="1.0.0", lifespan=_lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -82,35 +99,10 @@ def delete_session(sid: str):
     return {"deleted": sid}
 
 def _build_messages(session_id: str, system: str, user_text: str):
-    data = store.get_session(session_id) if session_id else None
-    msgs: List[Message] = []
-    if data:
-        for m in data.get("messages", []):
-            if m.get("role") in ("user", "assistant"):
-                msgs.append(Message(role=m["role"], content=m.get("content", "")))
-    else:
-        if system:
-            msgs = [Message(role="system", content=system)]
-    if system and not any(m.role == "system" for m in msgs):
-        msgs.insert(0, Message(role="system", content=system))
-    msgs.append(Message(role="user", content=user_text))
-    try:
-        from core.context_budget import build_window, get_context_limit
-        msgs = build_window(msgs, model_limit=get_context_limit(), cache={})
-    except Exception:
-        pass
-    return msgs
+    return _pipeline_build(session_id, system, user_text)
 
 def _recall_block(query: str) -> str:
-    try:
-        import os
-        if os.getenv("ZUMBA_NO_MEMORY") == "1":
-            return ""
-        from memory import get_memory
-        mem = get_memory()
-        return mem.recall(query, top_k=6, max_bytes=3500) or ""
-    except Exception:
-        return ""
+    return _pipeline_recall(query)
 
 @app.post("/api/chat")
 def chat(body: ChatRequest):
@@ -387,12 +379,73 @@ async def voice_stt(file: UploadFile = File(...)):
 
 class TTSRequest(BaseModel):
     text: str
-    voice: Optional[str] = "default"
+    voice: Optional[str] = "en-US-GuyNeural"
+    rate: Optional[str] = "-10%"
+    pitch: Optional[str] = "-20Hz"
+
+
+
+@app.get("/api/voice/voices")
+def voice_voices():
+    return {"default": HEAVY_MALE_VOICES[0], "heavy_male": HEAVY_MALE_VOICES}
 
 @app.post("/api/voice/tts")
 def voice_tts(body: TTSRequest):
-    return {"audio_url": None, "note": "TTS not configured yet — plug Piper/XTTS/Edge-TTS here.",
-            "ready_for": "frontend SpeechSynthesis fallback (implemented client-side)", "text": body.text[:500]}
+    short = _tts_short_text(body.text)
+    if not short:
+        raise HTTPException(400, "empty text")
+    voice = (body.voice or HEAVY_MALE_VOICES[0]).strip()
+    if voice.lower() == "default":
+        voice = HEAVY_MALE_VOICES[0]
+    try:
+        import asyncio as _asyncio
+        import edge_tts as _edge
+        import io as _io
+
+        async def _gen(v: str):
+            buf = _io.BytesIO()
+            comm = _edge.Communicate(short, voice=v, rate=body.rate or "-10%", pitch=body.pitch or "-20Hz")
+            async for chunk in comm.stream():
+                if chunk.get("type") == "audio" and chunk.get("data"):
+                    buf.write(chunk["data"])
+            buf.seek(0)
+            return buf.read()
+
+        candidates = [voice] + [v for v in HEAVY_MALE_VOICES if v != voice]
+        audio: bytes | None = None
+        used = candidates[0]
+        last_err = ""
+        for v in candidates:
+            try:
+                audio = _asyncio.run(_gen(v))
+                if audio:
+                    used = v
+                    break
+            except Exception as e:
+                last_err = str(e)[:200]
+                continue
+        if not audio:
+            raise RuntimeError(last_err or "edge-tts produced no audio")
+        return StreamingResponse(_io.BytesIO(audio), media_type="audio/mpeg",
+            headers={"X-Voice": used, "X-Spoke-Text": short[:200], "Cache-Control": "no-cache"})
+    except ImportError:
+        # edge-tts not installed — frontend falls back to browser SpeechSynthesis
+        return {"audio_url": None, "voice": voice, "spoke_text": short,
+                "note": "pip install edge-tts for server-side Edge audio"}
+    except Exception as e:
+        raise HTTPException(502, f"edge-tts failed: {str(e)[:300]}")
+
+@app.get("/api/telegram/status")
+def telegram_status():
+    import os
+    try:
+        from server import channel_store as _cs
+        offset = _cs.get_next_offset("telegram")
+    except Exception:
+        offset = -1
+    token_set = bool((os.getenv("ZUMBA_TG_BOT_TOKEN") or "").strip())
+    allowed = (os.getenv("ZUMBA_TG_ALLOWED_CHAT_IDS") or "").strip()
+    return {"configured": token_set, "allowed_chats": allowed, "next_offset": offset}
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket):
