@@ -8,4 +8,7 @@ sessions/*.json
 !sessions/.gitkeep
 node_modules/
 frontend/.next/
+frontend/.next-check/
 frontend/node_modules/
+.artifacts/
+.test-tmp-*/

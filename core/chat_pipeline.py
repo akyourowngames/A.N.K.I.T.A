@@ -51,8 +51,8 @@ def build_messages(session_id: str, system: str, user_text: str) -> List[Message
         msgs.insert(0, Message(role="system", content=system))
     msgs.append(Message(role="user", content=user_text))
     try:
-        from core.context_budget import build_window, get_context_limit
-        msgs = build_window(msgs, model_limit=get_context_limit(), cache={})
+        from core.session_context import fit
+        msgs = fit(msgs, session_id)
     except Exception:
         pass
     return msgs
@@ -63,9 +63,8 @@ def recall_block(query: str) -> str:
         import os
         if os.getenv("ZUMBA_NO_MEMORY") == "1":
             return ""
-        from memory import get_memory
-        mem = get_memory()
-        return mem.recall(query, top_k=6, max_bytes=3500) or ""
+        from memory.fast_recall import recall
+        return recall(query)
     except Exception:
         return ""
 

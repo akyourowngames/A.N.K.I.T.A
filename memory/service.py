@@ -13,7 +13,7 @@ import queue
 import threading
 import time
 
-from . import consolidation, db, embedder, extraction, graph, llm, resolve, retrieval
+from . import consolidation, db, embedder, extraction, graph, llm, resolve, retrieval, inbox
 
 _cache = {}
 _cache_lock = threading.Lock()
@@ -40,14 +40,31 @@ class Memory:
         self._worker_lock = threading.Lock()
         self._idle = threading.Event()
         self._idle.set()
+        self._queued_ids = set()
+        if self._own:
+            self._restore_captures()
 
     # ---- background capture (serialized single worker) ----
     def capture_async(self, user_text, assistant_text, session_id="", kind="chat") -> None:
         """Queue an exchange for background ingestion. Serialized on one worker
         thread so captures survive quick exits and never race each other."""
+        if self._own:
+            inbox.save(user_text, assistant_text, session_id, kind)
+            self._restore_captures()
+            return
         self._idle.clear()
-        self._q.put((user_text, assistant_text, session_id, kind))
+        self._q.put((None, user_text, assistant_text, session_id, kind))
         self._ensure_worker()
+
+    def _restore_captures(self):
+        with self._worker_lock:
+            for record in inbox.pending():
+                if record[0] not in self._queued_ids:
+                    self._queued_ids.add(record[0])
+                    self._idle.clear()
+                    self._q.put(record)
+        if not self._q.empty():
+            self._ensure_worker()
 
     def _ensure_worker(self):
         with self._worker_lock:
@@ -58,26 +75,27 @@ class Memory:
     def _worker_loop(self):
         while True:
             try:
-                user_text, assistant_text, session_id, kind = self._q.get(timeout=30)
+                capture_id, user_text, assistant_text, session_id, kind = self._q.get(timeout=30)
             except queue.Empty:
                 self._idle.set()
                 return
             try:
                 self.ingest_episode(user_text, assistant_text, session_id=session_id, kind=kind)
+                if capture_id:
+                    inbox.finish(capture_id)
                 self.consolidate(min_interval_s=1800.0)
-            except Exception:
-                pass
+            except Exception as exc:
+                if capture_id:
+                    inbox.finish(capture_id, str(exc))
             finally:
+                with self._worker_lock:
+                    self._queued_ids.discard(capture_id)
                 self._q.task_done()
                 if self._q.unfinished_tasks == 0:
                     self._idle.set()
 
     def flush(self, timeout: float = 30.0) -> bool:
         """Wait for queued captures to finish (called on chat exit)."""
-        try:
-            self._q.join()
-        except Exception:
-            pass
         return self._idle.wait(timeout)
 
     def _open(self):
@@ -457,12 +475,13 @@ class Memory:
         return text
 
     def _core_text(self, con=None):
-        con = con or self._open()
+        own_connection = con is None and self._con is None
+        con = con if con is not None else self._open()
         try:
             blocks = con.execute("SELECT key, content FROM core_blocks").fetchall()
             return "\n".join(f"{b['key']}: {b['content']}" for b in blocks)
         finally:
-            if con is not self._con:
+            if own_connection:
                 con.close()
 
     def core_context(self):

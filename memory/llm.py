@@ -69,6 +69,12 @@ def chat_json(prompt: str, system: str = "You are a precise memory curation engi
 def _extract_json(text: str):
     if not text:
         return None
+    # Reasoning models sometimes emit <think>...</think> before the payload.
+    if "<think>" in text:
+        start = text.find("<think>")
+        end = text.find("</think>")
+        if end != -1:
+            text = text[:start] + text[end + len("</think>"):]
     # Try the whole thing as JSON first.
     try:
         return json.loads(text)

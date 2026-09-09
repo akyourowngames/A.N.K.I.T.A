@@ -65,6 +65,7 @@ def run_agent_loop(
     tools: list,
     max_iterations: int = 10,
     on_tool: Any = None,
+    on_tool_start: Any = None,
     transcript_out: Any = None,
     **call_kwargs,
 ) -> Any:
@@ -97,6 +98,7 @@ def run_agent_loop(
         if kept is not None:
             kept.append(step)
         for call in raw_calls:
+            args = {}
             try:
                 fn = call.get("function", {})
                 name = str(fn.get("name", ""))
@@ -106,6 +108,8 @@ def run_agent_loop(
                 result = "ERROR: malformed tool call arguments."
                 name = "?"
             else:
+                if on_tool_start:
+                    on_tool_start(name, args)
                 result = execute_tool(name, args)
             if on_tool:
                 on_tool(name, args if isinstance(args, dict) else {}, result)

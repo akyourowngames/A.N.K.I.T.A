@@ -20,12 +20,15 @@ from server.tts import HEAVY_MALE_VOICES, tts_short_text as _tts_short_text
 
 @asynccontextmanager
 async def _lifespan(app: FastAPI):
+    from knowledge import service as knowledge_service
+    knowledge_service.start()
     try:
         from server.telegram_channel import start_if_configured
         start_if_configured(app)
     except Exception:
         pass
     yield
+    knowledge_service.stop()
     try:
         from memory import get_memory as _gm
         _gm().flush(timeout=5.0)
@@ -33,10 +36,12 @@ async def _lifespan(app: FastAPI):
         pass
 
 app = FastAPI(title="ZUMBA API", version="1.0.0", lifespan=_lifespan)
+from server.knowledge_api import router as knowledge_router
+app.include_router(knowledge_router)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "*"],
+    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -142,126 +147,74 @@ def chat_agent(body: ChatRequest):
     sid = body.session_id or store.new_session_id()
     if not store.get_session(sid):
         store.create_session(sid, model, body.system or "")
-    msgs = _build_messages(sid, body.system or "", body.message)
-    mem_block = _recall_block(body.message)
-    if mem_block:
-        msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
-    store.add_message(sid, "user", body.message)
 
     def gen():
-        import queue as _q, threading as _th
+        import queue
+        import threading
+        import time
+        started = time.monotonic()
         yield f"event: meta\ndata: {json.dumps({'session_id': sid, 'model': model})}\n\n"
-        try:
-            from mcpclient.manager import manager as _mgr, run_tool as _run_tool
-            from mcpclient.agent import run_agent_loop
+        events = queue.Queue()
+        holder = {"tools_used": 0, "transcript": []}
+        def emit(kind, data):
+            events.put((kind, data))
+        def on_token(token):
+            holder.setdefault("first_token_ms", round((time.monotonic() - started) * 1000))
+            emit("token", {"token": token})
+        def on_start(name, args):
+            holder["tools_used"] += 1
+            holder.setdefault("first_tool_ms", round((time.monotonic() - started) * 1000))
+            emit("tool_start", {"id": holder["tools_used"], "name": name, "args": args})
+        def on_end(name, args, result):
+            emit("tool_end", {"id": holder["tools_used"], "name": name, "result": str(result or "")[:4000]})
+        def run():
             try:
-                mgr = _mgr()
-                tools = mgr.all_tools()
-            except Exception:
-                tools, mgr = [], None
-            if not tools:
-                full = ""
+                msgs = _build_messages(sid, body.system or "", body.message)
+                mem_block = _recall_block(body.message)
+                if mem_block:
+                    msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+                holder["context_ms"] = round((time.monotonic() - started) * 1000)
+                store.add_message(sid, "user", body.message)
+                from mcpclient.manager import manager, run_tool
+                from mcpclient.agent import run_agent_loop
+                tools = manager().all_tools()
+                if tools:
+                    from main import _mcp_preamble
+                    msgs = _mcp_preamble(list(msgs), tools)
+                result = run_agent_loop(
+                    msgs, model,
+                    call_model=lambda ms, m, tools, **kw: api_client.stream_agent_completion(
+                        ms, m, api_key=key, tools=tools, max_tokens=body.max_tokens,
+                        temperature=body.temperature, on_token=on_token),
+                    execute_tool=run_tool, tools=tools, on_tool_start=on_start,
+                    on_tool=on_end, transcript_out=holder["transcript"],
+                )
+                for message in holder["transcript"]:
+                    store.add_message(sid, message.role, (message.content or "").strip() or "(tool call)")
+                store.add_message(sid, "assistant", result.content)
                 try:
-                    for chunk in api_client.stream_chat_completion(msgs, model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature):
-                        full += chunk
-                        yield f"event: token\ndata: {json.dumps({'token': chunk})}\n\n"
-                except Exception as e:
-                    yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
-                    return
-                try:
-                    store.add_message(sid, "assistant", full)
-                except Exception:
-                    pass
-                try:
-                    from memory import get_memory as _gm
-                    _gm().capture_async(body.message, full, session_id=sid, kind="chat")
-                except Exception:
-                    pass
-                yield f"event: done\ndata: {json.dumps({'session_id': sid, 'full': full, 'tools_used': 0})}\n\n"
+                    from memory import get_memory
+                    get_memory().capture_async(body.message, result.content, session_id=sid, kind="chat")
+                except Exception as exc:
+                    emit("memory_warning", {"error": "Memory capture failed: " + str(exc)})
+                emit("done", {"session_id": sid, "full": result.content, "tools_used": holder["tools_used"],
+                              "timing": {k: holder[k] for k in ("context_ms", "first_token_ms", "first_tool_ms") if k in holder},
+                              "elapsed_ms": round((time.monotonic() - started) * 1000)})
+            except Exception as exc:
+                emit("error", {"error": str(exc)})
+            finally:
+                events.put(None)
+        threading.Thread(target=run, daemon=True, name="zumba-agent").start()
+        while True:
+            try:
+                event = events.get(timeout=15)
+            except queue.Empty:
+                yield ": heartbeat\n\n"
+                continue
+            if event is None:
                 return
-            events: _q.Queue = _q.Queue()
-            def on_tool(name, args, result):
-                try:
-                    events.put({"name": name, "args": args or {}, "result": (result or "")[:8000]})
-                except Exception:
-                    pass
-            holder: dict = {}
-            def _run():
-                try:
-                    from core.chat import Conversation as _C
-                    from main import _mcp_preamble, _fit_window
-                    try:
-                        convo = _mcp_preamble(list(msgs), tools)
-                    except Exception:
-                        convo = list(msgs)
-                    try:
-                        convo = _fit_window(convo)
-                    except Exception:
-                        pass
-                    res = run_agent_loop(convo, model,
-                        call_model=lambda ms, m, tools, **kw: api_client.chat_completion(ms, m, api_key=key, tools=tools, max_tokens=body.max_tokens, temperature=body.temperature),
-                        execute_tool=lambda n, a: _run_tool(n, a),
-                        tools=tools, on_tool=on_tool, transcript_out=holder.setdefault("transcript", []))
-                    holder["result"] = res
-                except Exception as e:
-                    holder["error"] = str(e)
-            t = _th.Thread(target=_run, daemon=True)
-            t.start()
-            import time as _time
-            seen = 0
-            # stream tool events while agent runs
-            while t.is_alive():
-                drained = False
-                while True:
-                    try:
-                        ev = events.get_nowait()
-                    except Exception:
-                        break
-                    drained = True
-                    seen += 1
-                    yield f"event: tool_start\ndata: {json.dumps({'id': seen, 'name': ev['name'], 'args': ev['args']})}\n\n"
-                    yield f"event: tool_end\ndata: {json.dumps({'id': seen, 'name': ev['name'], 'result': ev['result'][:4000]})}\n\n"
-                # heartbeat to keep connection alive
-                if not drained:
-                    _time.sleep(0.15)
-            t.join(timeout=5)
-            while True:
-                try:
-                    ev = events.get_nowait()
-                except Exception:
-                    break
-                seen += 1
-                yield f"event: tool_start\ndata: {json.dumps({'id': seen, 'name': ev['name'], 'args': ev['args']})}\n\n"
-                yield f"event: tool_end\ndata: {json.dumps({'id': seen, 'name': ev['name'], 'result': ev['result'][:4000]})}\n\n"
-            if "error" in holder:
-                yield f"event: error\ndata: {json.dumps({'error': holder['error']})}\n\n"
-                return
-            res = holder.get("result")
-            full = (getattr(res, "content", "") or "") if res is not None else ""
-            # persist transcript + reply
-            try:
-                tr = holder.get("transcript") or []
-                for m in tr:
-                    c = (m.content or "").strip() or "(tool call)"
-                    store.add_message(sid, m.role, c)
-            except Exception:
-                pass
-            try:
-                store.add_message(sid, "assistant", full)
-            except Exception:
-                pass
-            try:
-                from memory import get_memory as _gm
-                _gm().capture_async(body.message, full, session_id=sid, kind="chat")
-            except Exception:
-                pass
-            # stream final text in chunks for typewriter effect
-            CH = 24
-            for i in range(0, len(full), CH):
-                yield f"event: token\ndata: {json.dumps({'token': full[i:i+CH]})}\n\n"
-            yield f"event: done\ndata: {json.dumps({'session_id': sid, 'full': full, 'tools_used': seen})}\n\n"
-        except Exception as e:
-            yield f"event: error\ndata: {json.dumps({'error': str(e)})}\n\n"
+            kind, payload = event
+            yield f"event: {kind}\ndata: {json.dumps(payload)}\n\n"
     return StreamingResponse(gen(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
@@ -294,6 +247,11 @@ def chat_stream(body: ChatRequest):
             return
         try:
             store.add_message(sid, "assistant", full)
+        except Exception:
+            pass
+        try:
+            from memory import get_memory
+            get_memory().capture_async(body.message, full, session_id=sid, kind="chat")
         except Exception:
             pass
         yield f"event: done\ndata: {json.dumps({'session_id': sid, 'full': full})}\n\n"
@@ -344,6 +302,11 @@ async def ws_chat(ws: WebSocket):
                 store.add_message(sid, "assistant", full)
             except Exception:
                 pass
+            try:
+                from memory import get_memory
+                get_memory().capture_async(body.message, full, session_id=sid, kind="chat")
+            except Exception:
+                pass
             await ws.send_json({"type": "done", "session_id": sid, "full": full})
     except WebSocketDisconnect:
         return
@@ -370,6 +333,21 @@ def memory_add(body: MemoryAdd):
         return {"ok": True}
     except Exception as e:
         raise HTTPException(500, str(e))
+
+
+@app.post("/api/memory/retry")
+def memory_retry():
+    from memory import get_memory, inbox
+    count = inbox.retry_failed()
+    mem = get_memory()
+    mem._restore_captures()
+    return {"queued": count}
+
+
+@app.get("/api/memory/captures")
+def memory_captures():
+    from memory import inbox
+    return inbox.status()
 
 @app.post("/api/voice/stt")
 async def voice_stt(file: UploadFile = File(...)):

@@ -1,4 +1,5 @@
 'use client';
+import MemoryPeek from '@/components/knowledge/MemoryPeek';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -529,6 +530,7 @@ export default function Page() {
           )}
         </div>
 
+        <MemoryPeek />
         <div className="px-4 py-3 border-t border-white/[0.06] text-[10px] font-mono text-zinc-600 leading-relaxed">
           {API_URL}
         </div>

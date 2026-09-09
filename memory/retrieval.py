@@ -137,7 +137,10 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
     q = query.strip()
     if not q:
         return []
-    qv = embedder.embed_text(q)
+    try:
+        qv = embedder.embed_text(q)
+    except Exception:
+        qv = []  # Keep keyword and graph recall available when embeddings fail.
 
     # Channel ids are namespaced so they never collide in the fusion dict.
     def _ns(prefix, pairs):
@@ -230,8 +233,9 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
                     score = float(r["weight"] or 1.0) * (0.5 * s_val + 0.5 * t_val)
                     if score > 0:
                         ppr_rel[r["id"]] = score
+                names_by_index = {index: name for name, index in id_of.items()}
                 for k, v in ppr.items():
-                    name = next((kk for kk, vv in id_of.items() if vv == k), None)
+                    name = names_by_index.get(k)
                     if not name:
                         continue
                     if name.startswith("ep:"):

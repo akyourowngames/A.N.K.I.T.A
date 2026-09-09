@@ -363,6 +363,85 @@ def chat_completion(
     return ChatResult(content=str(content), model=str(_rmodel or (data.get("model", model) if isinstance(data, dict) else model)), usage=usage, raw=data)
 
 
+def stream_agent_completion(
+    messages: list[Message], model: str, api_key: str = "", base_url: str = "",
+    max_tokens: Optional[int] = None, temperature: Optional[float] = None,
+    timeout: int = 120, tools: Optional[list] = None, on_token=None,
+) -> ChatResult:
+    """Stream text immediately and assemble fragmented tool calls before execution."""
+    key = api_key or get_api_key(require=True)
+    base = (base_url or get_base_url()).rstrip("/")
+    try:
+        resp = requests.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json",
+                     "Accept": "text/event-stream", "User-Agent": "zumba/1.0"},
+            json=_chat_payload(messages, model, max_tokens, temperature, stream=True, tools=tools),
+            stream=True, timeout=(10, timeout),
+        )
+    except requests.RequestException as exc:
+        raise KiloError(f"Network error reaching gateway: {exc}") from exc
+    content, calls, usage, response_model = [], {}, ChatUsage(), model
+    finished = False
+    try:
+        if resp.status_code >= 400:
+            try:
+                payload = resp.json()
+            except Exception:
+                payload = {"error": resp.text[:500]}
+            raise KiloError(_gateway_error_message(resp.status_code, payload), status_code=resp.status_code)
+        for raw in resp.iter_lines(chunk_size=1, decode_unicode=False):
+            line = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
+            if not line.startswith("data:"):
+                continue
+            data = line[5:].strip()
+            if data == "[DONE]":
+                finished = True
+                break
+            if not data:
+                continue
+            try:
+                event = json.loads(data)
+            except json.JSONDecodeError as exc:
+                raise KiloError("Gateway returned malformed streaming JSON") from exc
+            if event.get("error"):
+                raise KiloError(_gateway_error_message(0, event))
+            response_model = event.get("model") or response_model
+            if event.get("usage"):
+                usage = ChatUsage.from_dict(event["usage"])
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            choice = choices[0]
+            if choice.get("finish_reason"):
+                finished = True
+            delta = choice.get("delta") or choice.get("message") or {}
+            text = _content_to_text(delta.get("content"))
+            if text:
+                content.append(text)
+                if on_token:
+                    on_token(text)
+            for fragment in delta.get("tool_calls") or []:
+                index = fragment.get("index", 0)
+                call = calls.setdefault(index, {"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+                if fragment.get("id"):
+                    call["id"] += fragment["id"]
+                function = fragment.get("function") or {}
+                for field in ("name", "arguments"):
+                    call["function"][field] += function.get(field) or ""
+            if choice.get("finish_reason") in ("length", "content_filter") and calls:
+                raise KiloError("Incomplete tool call; no tool was executed")
+    finally:
+        resp.close()
+    text = "".join(content)
+    if not finished:
+        raise KiloError("Gateway stream ended before completion; no tool was executed")
+    if not text and not calls:
+        raise KiloError("Gateway stream ended without content or tool calls")
+    raw = {"choices": [{"message": {"content": text, "tool_calls": [calls[k] for k in sorted(calls)]}}]}
+    return ChatResult(content=text, model=response_model, usage=usage, raw=raw)
+
+
 def stream_chat_completion(
     messages: list[Message],
     model: str,

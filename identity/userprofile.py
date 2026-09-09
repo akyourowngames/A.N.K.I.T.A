@@ -121,19 +121,33 @@ def rewrite_user_md(con, use_llm: bool = True) -> str:
 
 
 def extract_user_facts_from_relations(con, rels: list, episode_id=None) -> int:
+    """The LLM selects durable personal facts; no keyword or relation-type gates."""
+    import json
+    from memory import llm
+    if not rels:
+        return 0
+    try:
+        result = llm.chat_json(
+            'Select durable facts about the user from the supplied relations. Do not treat facts '
+            'about third parties as user facts. Return {"facts":[{"index":zero-based relation index,'
+            '"key":"stable descriptive key distinguishing subject and attribute"}]}. '
+            'Use an empty list if no personal facts are supported. Data:\n' + json.dumps(rels),
+            max_tokens=700,
+        )
+    except Exception:
+        return 0
+    if not isinstance(result, dict) or not isinstance(result.get("facts"), list):
+        return 0
     n = 0
-    for r in rels or []:
-        typ = str(r.get("type") or "").lower()
-        fact = str(r.get("fact") or "")
-        src = str(r.get("source") or "")
-        if not fact:
+    for selected in result["facts"]:
+        if not isinstance(selected, dict):
             continue
-        key = None
-        if typ.startswith("prefers_") or typ in ("prefers", "likes", "dislikes", "uses", "works_on", "lives_in", "is"):
-            key = f"{src}_{typ}".lower().replace(" ", "_")[:80] if src else typ
-        elif "prefer" in fact.lower() or "my " in fact.lower() or " i " in f" {fact.lower()} ":
-            key = f"fact_{abs(hash(fact)) % 10_000_000}"
-        if key:
+        index, key = selected.get("index"), selected.get("key")
+        if type(index) is int and 0 <= index < len(rels) and isinstance(key, str) and key.strip():
+            r = rels[index]
+            fact = str(r.get("fact") or "")
+            if not fact:
+                continue
             try:
                 upsert_fact(con, key, fact, float(r.get("confidence") or 0.6), episode_id)
                 n += 1

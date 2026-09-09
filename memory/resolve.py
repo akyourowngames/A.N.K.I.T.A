@@ -51,8 +51,6 @@ def resolve_entity(con: sqlite3.Connection, name: str, known: dict | None = None
     # like "atlas-app" vs "Atlas App").
     cand = [c for c in _top_candidates(con, name, k=3) if c["score"] >= 0.5]
     for top in cand:
-        if top["score"] >= 0.92:
-            return top["id"]
         decision = _merge_decision(name, top)
         if decision:
             return decision
