@@ -145,6 +145,9 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "Get-Content when the user asks what was drafted, never guess; never run `ls -la`. "
         "Web: zumba__web_search / zumba__web_news / zumba__web_fetch are your realtime internet — "
         "use them for anything time-sensitive instead of guessing; web_fetch the top result for depth. "
+        "web_fetch is GENERAL reading, never scraping. "
+        "Scrape: zumba__scrape_low (one simple page) / zumba__scrape_mid (blocked/JS page or named fields, auto stealth) / "
+        "zumba__scrape_high (multi-page crawl, depth<=2, <=20 pages) — use ONLY when the user asks to scrape; pick the tier by need. "
         "Geo: zumba__geo_route for distance, zumba__geo_weather for rain, zumba__geo_geocode + "
         "zumba__geo_nearby for 'places near X'; on 'heading to X' chain geocode → route (from "
         "zumba__geo_whereami) → zumba__geo_traffic → weather at arrival → nearby → ONE briefing with "
@@ -984,6 +987,7 @@ def chat_cmd(
         table.add_row("/search <q>", "Realtime web search (zero-key)")
         table.add_row("/news <q>", "Realtime news via Google News RSS")
         table.add_row("/fetch <url>", "Read a web page as text")
+        table.add_row("/scrape <url> [--mid|--high]", "Scrape a page (low) / blocked+fields (mid) / crawl (high)")
         table.add_row("/vault ask|find|add|status|doc", "Local document vault")
         table.add_row("/goal add|list|show|step ...", "Proactive goals")
         table.add_row("/remind <text> --at <time>", "Schedule a reminder")
@@ -1195,6 +1199,9 @@ def chat_cmd(
         if user_text == "/fetch" or user_text.startswith("/fetch "):
             _web_chat_run("fetch", user_text[6:].strip(), allow_emoji)
             continue
+        if user_text == "/scrape" or user_text.startswith("/scrape "):
+            _scrape_chat_run(user_text[7:].strip(), allow_emoji)
+            continue
         if user_text == "/vault" or user_text.startswith("/vault "):
             _vault_chat_run(user_text[6:].strip(), allow_emoji)
             continue
@@ -1208,7 +1215,7 @@ def chat_cmd(
             import difflib as _dl
             _known = ["/help", "/models", "/model", "/system", "/clear", "/sessions", "/load", "/new",
                       "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/search", "/news",
-                      "/fetch", "/vault", "/goal", "/remind", "/remember", "/memory",
+                      "/fetch", "/scrape", "/vault", "/goal", "/remind", "/remember", "/memory",
                       "/why", "/forget", "/soul", "/me", "/brief", "/save", "/exit", "/quit"]
             _word = user_text.split()[0].lower()
             _hit = _dl.get_close_matches(_word, _known, n=1, cutoff=0.6)
@@ -1409,6 +1416,39 @@ def _web_chat_run(kind: str, arg: str, allow_emoji: bool) -> None:
         else:
             text, err = _web.fetch(arg.split()[0])
             body = text if text else (err or "ERROR: fetch failed.")
+    border = "red" if body.startswith("ERROR") else "cyan"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title=title,
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+def _scrape_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/scrape <url> [--mid|--high] [--selector k=css] ...' live, in-session."""
+    from tools import scrape as _scrape
+
+    if not _scrape.enabled():
+        console.print(error_panel("scrape tools are disabled (ZUMBA_NO_SCRAPE=1).", allow_emoji=allow_emoji))
+        return
+    parts = (arg or "").split()
+    urls = [p for p in parts if p.startswith("http")]
+    flags = {p.lower() for p in parts if p.startswith("--")}
+    sels = [p[len("--selector="):] if p.startswith("--selector=") else p for p in parts
+            if p.startswith("--selector=")]
+    if not urls:
+        console.print(info_panel("Usage: /scrape <http(s) URL> [--mid|--high] [--selector k=css]",
+                                 title="SCRAPE", allow_emoji=allow_emoji))
+        return
+    tier = "high" if "--high" in flags else ("mid" if "--mid" in flags else "low")
+    title = {"low": "SCRAPE LOW", "mid": "SCRAPE MID", "high": "SCRAPE HIGH"}.get(tier, "SCRAPE")
+    with console.status(f"[cyan]Scraping ({tier})...[/]", spinner="dots"):
+        if tier == "high":
+            text, note = _scrape.scrape_high(" ".join(urls))
+            body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: crawl failed.")
+        elif tier == "mid":
+            text, note = _scrape.scrape_mid(urls[0], selectors=",".join(sels))
+            body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
+        else:
+            text, note = _scrape.scrape_low(urls[0])
+            body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
     border = "red" if body.startswith("ERROR") else "cyan"
     console.print(Panel(safe_text(body[:12000], allow_emoji), title=title,
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
@@ -1767,6 +1807,83 @@ def web_fetch_cmd(
     body = text if text else (err or "ERROR: fetch failed.")
     border = "red" if body.startswith("ERROR") else "green"
     console.print(Panel(safe_text(body[:12000], allow_emoji), title="WEB FETCH",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+scrape_app = typer.Typer(help="Scrapling-powered scraping: low / mid / high (web fetch stays general reading).")
+app.add_typer(scrape_app, name="scrape")
+
+
+def _scrape_guard() -> None:
+    from tools import scrape as _scrape
+
+    if not _scrape.enabled():
+        _fail("scrape tools are disabled (ZUMBA_NO_SCRAPE=1).")
+
+
+@scrape_app.command("low")
+def scrape_low_cmd(
+    url: str = typer.Argument(..., help="http(s) URL to scrape."),
+    format: str = typer.Option("markdown", "--format", "-f", help="markdown|text|json."),
+    max_chars: int = typer.Option(0, "--max-chars", help="Max chars (default ZUMBA_SCRAPE_MAX_OUTPUT)."),
+) -> None:
+    from tools import scrape as _scrape
+
+    allow_emoji = _allow_emoji()
+    _scrape_guard()
+    console.print(_header())
+    with console.status("[cyan]Scraping (low/static)...[/]", spinner="dots"):
+        text, note = _scrape.scrape_low(url, format=format, max_chars=max_chars)
+    body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
+    border = "red" if body.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title="SCRAPE LOW",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+@scrape_app.command("mid")
+def scrape_mid_cmd(
+    url: str = typer.Argument(..., help="http(s) URL to scrape."),
+    selector: list[str] = typer.Option([], "--selector", "-s", help="Field map k=css (repeatable)."),
+    format: str = typer.Option("markdown", "--format", "-f", help="markdown|text|json."),
+    mode: str = typer.Option("auto", "--mode", "-m", help="auto|static|stealth."),
+    wait_selector: str = typer.Option("", "--wait-selector", help="CSS selector stealth waits for."),
+    max_chars: int = typer.Option(0, "--max-chars", help="Max chars (default ZUMBA_SCRAPE_MAX_OUTPUT)."),
+) -> None:
+    from tools import scrape as _scrape
+
+    allow_emoji = _allow_emoji()
+    _scrape_guard()
+    console.print(_header())
+    with console.status("[cyan]Scraping (mid)...[/]", spinner="dots"):
+        text, note = _scrape.scrape_mid(url, selectors=list(selector or []), format=format,
+                                        mode=mode, wait_selector=wait_selector, max_chars=max_chars)
+    body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
+    border = "red" if body.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title="SCRAPE MID",
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+@scrape_app.command("high")
+def scrape_high_cmd(
+    urls: list[str] = typer.Argument(..., help="Seed http(s) URL(s) to crawl."),
+    depth: int = typer.Option(1, "--depth", "-d", help="Link-follow depth 0-2."),
+    limit: int = typer.Option(8, "--limit", "-n", help="Max pages (cap ZUMBA_SCRAPE_MAX_PAGES)."),
+    same_domain: bool = typer.Option(True, "--same-domain/--all-domains", help="Stay on seed domain."),
+    selector: list[str] = typer.Option([], "--selector", "-s", help="Field map k=css (repeatable)."),
+    mode: str = typer.Option("auto", "--mode", "-m", help="auto|static|stealth."),
+) -> None:
+    from tools import scrape as _scrape
+
+    allow_emoji = _allow_emoji()
+    _scrape_guard()
+    console.print(_header())
+    with console.status("[cyan]Crawling...[/]", spinner="dots"):
+        text, note = _scrape.scrape_high(list(urls), depth=depth, limit=limit,
+                                         same_domain=same_domain, selectors=list(selector or []),
+                                         mode=mode)
+    body = (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: crawl failed.")
+    border = "red" if body.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title="SCRAPE HIGH",
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
 
 

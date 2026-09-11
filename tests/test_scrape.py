@@ -1,0 +1,192 @@
+"""Tests for the Scrapling scrape tiers (fetchers stubbed, no network)."""
+
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
+from tools import scrape
+
+
+class _Node:
+    def __init__(self, val):
+        self._val = val
+
+    def get(self):
+        return self._val
+
+
+class _Resp:
+    def __init__(self, status=200, text="Hello World body " * 60, title="Demo Page",
+                 links=None, url="https://example.com/a"):
+        self.status = status
+        self._text = text
+        self._title = title
+        self._links = links or []
+        self.url = url
+        self.encoding = "utf-8"
+        self.body = text.encode("utf-8")
+
+    def get_all_text(self, ignore_tags=None):
+        return self._text
+
+    def markdown(self):
+        return "# Demo\n\n" + self._text[:200]
+
+    def css(self, sel):
+        if sel == "title::text":
+            return [_Node(self._title)]
+        if sel == "h1::text":
+            return [_Node("Hello World")]
+        if sel == "a::attr(href)":
+            return [_Node(h) for h in self._links]
+        return []
+
+    def xpath(self, sel):
+        return []
+
+    def urljoin(self, href):
+        import urllib.parse as _u
+        return _u.urljoin(self.url, href)
+
+
+def _nocache(monkeypatch, tmp_path):
+    import tools.websearch as _web
+    monkeypatch.setattr(_web, "_CACHE", {}, raising=False)
+    monkeypatch.setattr(_web, "cache_get", lambda k: (None, False))
+    monkeypatch.setattr(_web, "cache_put", lambda k, v: None)
+
+
+def test_parse_selectors_dict_str_list():
+    assert scrape.parse_selectors({"a": "h1"}) == {"a": "h1"}
+    assert scrape.parse_selectors("title=h1, price=.price") == {"title": "h1", "price": ".price"}
+    assert scrape.parse_selectors(["title=h1"]) == {"title": "h1"}
+    assert scrape.parse_selectors('{"t": "h1"}') == {"t": "h1"}
+    assert scrape.parse_selectors("") == {}
+    assert scrape.parse_selectors(None) == {}
+
+
+def test_is_url_and_bad_url():
+    assert scrape.is_url("https://example.com/x")
+    assert not scrape.is_url("notaurl")
+    text, err = scrape.scrape_low("notaurl", use_cache=False)
+    assert text == "" and err.startswith("ERROR")
+    text, err = scrape.scrape_mid("notaurl", use_cache=False)
+    assert text == "" and err.startswith("ERROR")
+    text, err = scrape.scrape_high("notaurl", use_cache=False)
+    assert text == "" and err.startswith("ERROR")
+
+
+def test_low_static_ok(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp())
+    text, note = scrape.scrape_low("https://example.com/a", use_cache=False)
+    assert "Demo" in text and "low" in note
+
+
+def test_low_blocked_points_to_mid(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp(status=403, text="x"))
+    text, err = scrape.scrape_low("https://example.com/b", use_cache=False)
+    assert text == "" and "scrape-mid" in err
+
+
+def test_mid_auto_escalates_to_stealth(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    calls = []
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp(status=403, text="x"))
+    monkeypatch.setattr(scrape, "stealth_fetch",
+                        lambda url, ws="": calls.append(url) or _Resp())
+    text, note = scrape.scrape_mid("https://example.com/c", use_cache=False)
+    assert calls and "stealth" in note and "Demo" in text
+
+
+def test_mid_static_mode_no_stealth(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp())
+    called = []
+    monkeypatch.setattr(scrape, "stealth_fetch",
+                        lambda url, ws="": called.append(1) or _Resp())
+    text, note = scrape.scrape_mid("https://example.com/d", mode="static", use_cache=False)
+    assert not called and "static" in note
+
+
+def test_mid_selectors_json(monkeypatch, tmp_path):
+    import json
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp())
+    text, note = scrape.scrape_mid("https://example.com/e", selectors={"title": "h1::text"},
+                                   format="json", use_cache=False)
+    payload = json.loads(text)
+    assert payload[0]["fields"]["title"] == ["Hello World"]
+    assert "mid" in note
+
+
+def test_mid_bad_mode():
+    text, err = scrape.scrape_mid("https://example.com/e", mode="nope", use_cache=False)
+    assert text == "" and err.startswith("ERROR")
+
+
+def test_high_crawls_two_pages(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    pages = {
+        "https://example.com/a": _Resp(url="https://example.com/a",
+                                       links=["/b"], text="Alpha page body " * 60),
+        "https://example.com/b": _Resp(url="https://example.com/b",
+                                       links=[], text="Beta page body " * 60),
+    }
+    monkeypatch.setattr(scrape, "static_get", lambda url: pages[url])
+    monkeypatch.setattr(scrape, "extract_links",
+                        lambda resp, base="": [l if l.startswith("http") else "https://example.com" + l
+                                              for l in (resp._links or [])])
+    text, note = scrape.scrape_high("https://example.com/a", depth=1, limit=5, use_cache=False)
+    assert "[1]" in text and "[2]" in text and "high" in note
+
+
+def test_high_respects_limit_and_depth_validation(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp(url=url))
+    text, note = scrape.scrape_high("https://example.com/a", depth=9, limit=1, use_cache=False)
+    # depth clamps to 2, so no error; bad limit type errors
+    assert "[1]" in text
+    text2, err2 = scrape.scrape_high("https://example.com/a", limit="xx", use_cache=False)
+    assert text2 == "" and err2.startswith("ERROR")
+
+
+def test_needs_stealth_structural_only():
+    assert scrape.needs_stealth(None)
+    assert scrape.needs_stealth(_Resp(status=403, text="x"))
+    assert scrape.needs_stealth(_Resp(status=200, text="tiny"))
+    assert not scrape.needs_stealth(_Resp(status=200))
+
+
+def test_kill_switch_filters_tools(monkeypatch):
+    import mcpclient.builtin as _b
+    monkeypatch.delenv("ZUMBA_NO_SCRAPE", raising=False)
+    names = [t["function"]["name"] for t in _b.visible_tools()]
+    assert any(n.endswith("__scrape_low") for n in names)
+    assert any(n.endswith("__scrape_mid") for n in names)
+    assert any(n.endswith("__scrape_high") for n in names)
+    monkeypatch.setenv("ZUMBA_NO_SCRAPE", "1")
+    names2 = [t["function"]["name"] for t in _b.visible_tools()]
+    assert not any("__scrape_" in n for n in names2)
+
+
+def test_builtin_handle_dispatch(monkeypatch):
+    import asyncio
+    import mcpclient.builtin as _b
+
+    class _Mgr:
+        meta_state = {}
+
+    async def go():
+        out = await _b.handle(_Mgr(), "scrape_low", {"url": ""})
+        assert out.startswith("ERROR")
+        monkeypatch.setattr(scrape, "scrape_low", lambda *a, **k: ("BODY", "(low/static)"))
+        out2 = await _b.handle(_Mgr(), "scrape_low", {"url": "https://example.com"})
+        assert "BODY" in out2
+        out3 = await _b.handle(_Mgr(), "scrape_mid", {"url": ""})
+        assert out3.startswith("ERROR")
+        out4 = await _b.handle(_Mgr(), "scrape_high", {"urls": ""})
+        assert out4.startswith("ERROR")
+    asyncio.run(go())

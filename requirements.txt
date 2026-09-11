@@ -14,3 +14,4 @@ python-pptx>=0.6
 openpyxl>=3.1
 watchdog>=4.0
 edge-tts>=0.2
+scrapling>=0.4

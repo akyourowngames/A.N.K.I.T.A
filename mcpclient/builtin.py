@@ -16,6 +16,7 @@ from mcpclient import registry
 TOOL_ACCESS = {
     'mcp_search': 'read', 'mcp_list': 'read', 'shell_jobs': 'read',
     'web_search': 'read', 'web_news': 'read', 'web_fetch': 'read',
+    'scrape_low': 'read', 'scrape_mid': 'read', 'scrape_high': 'read',
     'vault_search': 'read', 'vault_doc': 'read', 'vault_read': 'read',
     'goal_show': 'read', 'goal_list': 'read', 'memory_search': 'read',
     'brief': 'read', 'soul_show': 'read', 'soul_diff': 'read', 'me_show': 'read',
@@ -126,9 +127,42 @@ BUILTIN_TOOLS = [
            "limit": {"type": "integer", "description": "Max items (default 8)"}}, ["query"]),
     _tool("web_fetch",
           "Download a URL and extract readable text (zero-API-key page reader, Jina fallback). "
-          "Use after web_search/web_news to read the best result in full.",
+          "Use after web_search/web_news to read the best result in full. "
+          "This is GENERAL reading — NOT scraping. When the user asks to 'scrape', "
+          "use scrape_low / scrape_mid / scrape_high instead.",
           {"url": {"type": "string", "description": "http(s) URL to read"},
            "max_chars": {"type": "integer", "description": "Max chars (default 8000)"}}, ["url"]),
+    _tool("scrape_low",
+          "SCRAPE tier LOW: fast single-page scrape (Scrapling static Fetcher with "
+          "browser impersonation, no headless browser). Use when the user asks to scrape "
+          "one simple page. Returns readable markdown/text. If blocked or JS-heavy, "
+          "escalate to scrape_mid.",
+          {"url": {"type": "string", "description": "http(s) URL to scrape"},
+           "format": {"type": "string", "description": "markdown (default), text, or json"},
+           "max_chars": {"type": "integer", "description": "Max chars (default 8000)"}}, ["url"]),
+    _tool("scrape_mid",
+          "SCRAPE tier MID: single-page scrape with auto stealth fallback "
+          "(static Fetcher first, StealthyFetcher with Cloudflare solver on 403/429/503 "
+          "or thin pages). Use when the user asks to scrape a blocked/JS page or needs "
+          "named fields. selectors: field->CSS map (or 'xpath:...'), e.g. "
+          "{'title': 'h1::text', 'price': '.price::text'}. mode: auto (default), static, stealth.",
+          {"url": {"type": "string", "description": "http(s) URL to scrape"},
+           "selectors": {"type": "string", "description": "JSON object or 'k=css, k2=css' field map (optional)"},
+           "format": {"type": "string", "description": "markdown (default), text, or json"},
+           "mode": {"type": "string", "description": "auto (default), static, stealth"},
+           "wait_selector": {"type": "string", "description": "CSS selector stealth should wait for (optional)"},
+           "max_chars": {"type": "integer", "description": "Max chars (default 8000)"}}, ["url"]),
+    _tool("scrape_high",
+          "SCRAPE tier HIGH: multi-page crawl (BFS, depth 0-2, up to 20 pages, "
+          "same-domain default, shared stealth session for blocked pages). Use ONLY when "
+          "the user asks to scrape/crawl multiple pages, a whole section, or a listing. "
+          "Prefer scrape_low/scrape_mid for single pages.",
+          {"urls": {"type": "string", "description": "Seed URL(s), comma/space separated"},
+           "depth": {"type": "integer", "description": "Link-follow depth 0-2 (default 1)"},
+           "limit": {"type": "integer", "description": "Max pages (default 8, cap 20)"},
+           "same_domain": {"type": "boolean", "description": "Stay on seed domain (default true)"},
+           "selectors": {"type": "string", "description": "JSON object or 'k=css' field map applied per page (optional)"},
+           "mode": {"type": "string", "description": "auto (default), static, stealth"}}, ["urls"]),
     _tool("vault_search",
           "Search the local document vault (user files: contracts, leases, emails, PDFs). "
           "Use for 'what does my doc say / find the email / summarize the contract' questions. "
@@ -256,6 +290,14 @@ def visible_tools() -> list:
     except Exception:
         tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
             ("__web_search", "__web_news", "__web_fetch"))]
+    try:
+        from tools import scrape as _scrape
+
+        if not _scrape.enabled():
+            raise RuntimeError("scrape disabled")
+    except Exception:
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__scrape_low", "__scrape_mid", "__scrape_high"))]
     try:
         from vault import service as _vault
 
@@ -433,6 +475,64 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             return "ERROR: 'max_chars' must be a number."
         text, err = await _asyncio2.to_thread(_web.fetch, url, mc)
         return text if text else (err or "ERROR: fetch failed.")
+
+    if tool in ("scrape_low", "scrape_mid", "scrape_high"):
+        import asyncio as _asyncio2b
+        import json as _json2
+        from tools import scrape as _scrape
+
+        if not _scrape.enabled():
+            return "ERROR: scrape tools are disabled (ZUMBA_NO_SCRAPE=1)."
+        if tool == "scrape_low":
+            url = str(args.get("url", "") or "").strip()
+            if not url:
+                return "ERROR: 'url' is required."
+            try:
+                mc = int(args.get("max_chars", 0) or 0)
+            except Exception:
+                return "ERROR: 'max_chars' must be a number."
+            text, note = await _asyncio2b.to_thread(
+                _scrape.scrape_low, url, str(args.get("format", "markdown") or "markdown"), mc)
+            return (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
+        if tool == "scrape_mid":
+            url = str(args.get("url", "") or "").strip()
+            if not url:
+                return "ERROR: 'url' is required."
+            try:
+                mc = int(args.get("max_chars", 0) or 0)
+            except Exception:
+                return "ERROR: 'max_chars' must be a number."
+            sels = args.get("selectors", "")
+            if isinstance(sels, dict):
+                sels = _json2.dumps(sels)
+            text, note = await _asyncio2b.to_thread(
+                _scrape.scrape_mid, url, sels or "",
+                str(args.get("format", "markdown") or "markdown"),
+                str(args.get("mode", "auto") or "auto"),
+                str(args.get("wait_selector", "") or ""), mc)
+            return (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: scrape failed.")
+        urls = args.get("urls", "") or args.get("url", "")
+        if isinstance(urls, list):
+            urls = " ".join(str(u) for u in urls)
+        urls = str(urls or "").strip()
+        if not urls:
+            return "ERROR: 'urls' is required."
+        try:
+            depth = int(args.get("depth", 1) if args.get("depth", 1) is not None else 1)
+        except Exception:
+            return "ERROR: 'depth' must be a number."
+        try:
+            limit = int(args.get("limit", 8) if args.get("limit", 8) is not None else 8)
+        except Exception:
+            return "ERROR: 'limit' must be a number."
+        sels = args.get("selectors", "")
+        if isinstance(sels, dict):
+            sels = _json2.dumps(sels)
+        text, note = await _asyncio2b.to_thread(
+            _scrape.scrape_high, urls, depth, limit,
+            bool(args.get("same_domain", True)), sels or "",
+            str(args.get("mode", "auto") or "auto"))
+        return (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: crawl failed.")
 
     if tool in ("vault_search", "vault_doc", "vault_read"):
         import asyncio as _asyncio3
