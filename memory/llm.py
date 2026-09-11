@@ -5,7 +5,7 @@ entity resolution, notes, community summaries and synthesis — is delegated to
 the LLM through structured prompts. There is intentionally little hand-written
 heuristic logic here: the model decides.
 
-Uses the same Kilo gateway client as the rest of zumba (strictly local
+Uses the same NIM client as the rest of zumba (strictly local
 embeddings, but reasoning goes through the configured LLM).
 """
 
@@ -16,7 +16,7 @@ import os
 import threading
 from typing import Optional
 
-from core.api_client import KiloError, chat_completion
+from core.api_client import chat_completion
 from core.models import Message
 
 _lock = threading.Lock()
@@ -34,17 +34,25 @@ def _api_available() -> bool:
 
 
 def _memory_model() -> str:
+    # Optional per-subsystem override; otherwise follow the single
+    # ZUMBA_MODEL / saved default from core.config (one .env change).
     if os.getenv("ZUMBA_MEMORY_MODEL", "").strip():
         return os.getenv("ZUMBA_MEMORY_MODEL", "").strip()
     try:
-        from core.config import get_default_model
+        from core.config import DEFAULT_MODEL, get_default_model
 
         m = (get_default_model() or "").strip()
         if m:
             return m
+        return DEFAULT_MODEL
     except Exception:
         pass
-    return "stepfun/step-3.7-flash:free"
+    try:
+        from core.config import DEFAULT_MODEL as _DM
+
+        return _DM
+    except Exception:
+        return "nvidia/nemotron-3-super-120b-a12b"
 
 
 def chat_text(prompt: str, system: str = "You are a precise memory curation engine.", model: str = "", max_tokens: int = 1000, temperature: float = 0.0) -> str:

@@ -73,11 +73,16 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
         out["fired"] = []
     if not enabled(con):
         return out
+    if not force and not _rate_ok(con, now):
+        return out
     nudges: list[str] = []
     try:
         from . import goals as _g
+        from . import task_lifecycle as lifecycle
         for g in _g.overdue(con, now=now):
             if float(g.get("progress") or 0) >= 1.0:
+                continue
+            if not lifecycle.eligible(con, 'goal', g, now=now) or not lifecycle.claim_nudge(con, 'goal', g['id'], now=now):
                 continue
             ns = _g.next_step(con, g["id"])
             nxt = f" Next step: {ns['title'][:120]}." if ns else ""
@@ -85,11 +90,15 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
             break
         if not nudges:
             for g in _g.active_goals(con, limit=20):
+                if not lifecycle.eligible(con, 'goal', g, now=now):
+                    continue
                 try:
                     dl = float(g.get("deadline") or 0)
                 except Exception:
                     dl = 0.0
                 if dl and 0 < dl - now <= 48 * 3600 and float(g.get("progress") or 0) < 0.5:
+                    if not lifecycle.claim_nudge(con, 'goal', g['id'], now=now):
+                        continue
                     ns = _g.next_step(con, g["id"])
                     nxt = f" Suggested next step: {ns['title'][:120]}." if ns else ""
                     nudges.append(f"DEADLINE: '{g['title'][:100]}' due within 48h at"
@@ -97,15 +106,21 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
                     break
         if not nudges:
             for g in _g.stalled(con, days=3, now=now):
+                if not lifecycle.eligible(con, 'goal', g, now=now) or not lifecycle.claim_nudge(con, 'goal', g['id'], now=now):
+                    continue
                 nudges.append(f"STALLED: '{g['title'][:100]}' quiet 3+ days. Offer to re-plan or shrink it.")
                 break
         try:
             for g in _g.active_goals(con, limit=20):
+                if not lifecycle.eligible(con, 'goal', g, now=now):
+                    continue
                 try:
                     dl = float(g.get("deadline") or 0)
                 except Exception:
                     dl = 0.0
                 if dl and 0 < dl - now <= 7 * 86400 and (now - _g.last_research_at(con, g["id"])) > 5 * 86400:
+                    if not lifecycle.claim_nudge(con, 'goal', g['id'], now=now, event_key='research'):
+                        continue
                     r = _g.research_goal(con, g["id"], use_llm=use_llm)
                     if r.get("researched"):
                         nudges.append(f"RESEARCHED: fresh findings for '{g['title'][:100]}'")
@@ -114,8 +129,12 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
             pass
         try:
             for g in _g.list_goals(con, "all"):
+                if not lifecycle.eligible(con, 'goal', g, now=now):
+                    continue
                 done_recent = str(g.get("status")) == "done" and (now - float(g.get("completed_at") or 0)) < 7 * 86400
                 if float(g.get("progress") or 0) >= 1.0 or done_recent:
+                    if not lifecycle.claim_nudge(con, 'goal', g['id'], now=now, event_key='completed'):
+                        continue
                     nudges.append(f"WIN: '{g['title'][:100]}' hit 100% — celebrate + archive?")
                     break
                 try:
@@ -123,6 +142,8 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
                 except Exception:
                     dl = 0.0
                 if dl and now - dl > 7 * 86400 and float(g.get("progress") or 0) <= 0:
+                    if not lifecycle.claim_nudge(con, 'goal', g['id'], now=now):
+                        continue
                     nudges.append(f"ABANDONED?: '{g['title'][:100]}' past deadline 7d at 0% — fail or reschedule?")
                     break
         except Exception:
@@ -130,10 +151,10 @@ def tick(con, use_llm: bool = True, force: bool = False, now: float = 0) -> dict
     except Exception:
         pass
     if nudges and (force or _rate_ok(con, now)):
-        if not force:
-            _mark_nudge(con, now)
+        _mark_nudge(con, now)
         out["nudges"] = nudges[:2]
-        out["system_note"] = ("[PROACTIVE — weave in naturally, do not dump verbatim]\n" + "\n".join(nudges[:2]))[:1200]
+        out["system_note"] = ("[OPTIONAL CONTEXT — use only if relevant to the current request; do not nag or resume actions]\n" + "\n".join(nudges[:2]))[:1200]
+    con.commit()
     return out
 
 

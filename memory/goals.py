@@ -21,11 +21,16 @@ _DECOMPOSE_PROMPT = """Break this goal into actionable steps. Return JSON only.
 GOAL: {title}
 DESCRIPTION: {desc}
 DEADLINE: {deadline}
+ORIGINAL CREATED_AT EPOCH: {created_at}
+CURRENT EPOCH: {now}
 
 Return: {{"steps": [{{"title": "..", "why": "..", "effort_days": <number>}}],
-"risks": [".."], "first_action": ".."}}
+"risks": [".."], "first_action": "..", "lifecycle": {{"expires_at": null, "dormant_at": <epoch>, "evidence": "exact goal quote"}}}}
 Rules: 3-7 concrete steps in dependency order; effort_days = rough working days each;
-first_action = the single smallest thing to do this week."""
+first_action = the single smallest thing to do this week. Distinguish lasting aspirations from one-time tasks.
+expires_at is when a time-bound action stops being useful, or null for a durable goal.
+dormant_at is a finite deadline for unsolicited follow-ups if the user does not engage.
+Interpret relative dates at original created_at, never today; review is not renewed intent."""
 
 
 def ensure_schema(con) -> None:
@@ -75,6 +80,9 @@ def create_goal(con, title: str, description: str = "", deadline=None, priority:
     gid = cur.lastrowid
     con.commit()
     steps: list[dict] = []
+    from . import task_lifecycle
+    task_lifecycle.seed(con, 'goal', {'id': gid, 'created_at': now, 'deadline': dl})
+    con.commit()
     first_action = ""
     risks: list[str] = []
     if auto_plan:
@@ -134,7 +142,7 @@ def heuristic_steps(title: str) -> list[dict]:
 
 def decompose(con, goal_id: int, use_llm: bool = True) -> dict:
     ensure_schema(con)
-    row = con.execute("SELECT id, title, description, deadline FROM goals WHERE id=?", (goal_id,)).fetchone()
+    row = con.execute("SELECT id, title, description, deadline, created_at FROM goals WHERE id=?", (goal_id,)).fetchone()
     if not row:
         return {"steps": [], "risks": [], "first_action": ""}
     steps: list[dict] = []
@@ -150,11 +158,21 @@ def decompose(con, goal_id: int, use_llm: bool = True) -> dict:
             except Exception:
                 dl = "none"
             out = _llm.chat_json(
-                _DECOMPOSE_PROMPT.format(title=row["title"][:300], desc=(row["description"] or "")[:1000], deadline=dl),
+                _DECOMPOSE_PROMPT.format(title=row["title"][:300], desc=(row["description"] or "")[:1000], deadline=dl,
+                                        created_at=row['created_at'], now=_now()),
                 system="You break goals into actionable steps. Valid JSON only.",
                 max_tokens=800,
             )
             if isinstance(out, dict):
+                policy = out.get('lifecycle')
+                if isinstance(policy, dict) and policy.get('dormant_at') is not None:
+                    quote = policy.get('evidence')
+                    if isinstance(quote, str) and quote.strip() and quote in (row['title'] + '\n' + (row['description'] or '')):
+                        from . import task_lifecycle
+                        try:
+                            task_lifecycle.set_policy(con, 'goal', goal_id, policy.get('expires_at'), policy['dormant_at'], 'Goal decomposition with source evidence')
+                        except ValueError:
+                            pass
                 for s in (out.get("steps") or [])[:8]:
                     if not isinstance(s, dict) or not str(s.get("title") or "").strip():
                         continue
@@ -495,7 +513,9 @@ def research_goal(con, goal_id: int, use_llm: bool = True) -> dict:
 
 
 def goal_context(con, max_chars: int = 1500) -> str:
-    goals = active_goals(con, limit=5)
+    from . import task_lifecycle
+    goals = [g for g in active_goals(con, limit=50) if task_lifecycle.eligible(con, 'goal', g)][:5]
+    con.commit()
     if not goals:
         return ""
     lines = []
@@ -510,7 +530,7 @@ def goal_context(con, max_chars: int = 1500) -> str:
         except Exception:
             pass
         lines.append(f"- #{g['id']} {g['title'][:120]} [{int(float(g.get('progress') or 0) * 100)}%]{dl}{nxt}")
-    block = "[GOALS — active; weave into conversation naturally]\n" + "\n".join(lines)
+    block = "[Current user projects — background context only. Use only when relevant to the latest request. Do not ask unsolicited follow-up questions or resume tasks.]\n" + "\n".join(lines)
     return block[:max_chars]
 
 

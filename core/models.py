@@ -49,11 +49,15 @@ class ModelInfo:
             return ModelInfo(id=str(data or ""))
         model_id = str(data.get("id", ""))
         name = str(data.get("name", "") or model_id)
-        ctx = data.get("context_length", 0) or 0
+        ctx = data.get("context_length", 0) or data.get("context_window", 0) or 0
         try:
             ctx = int(ctx)
         except Exception:
             ctx = 0
+        # OpenAI-compatible payload: id/created/object/owned_by, no
+        # pricing or isFree flags and no ":free" tier — such models are never
+        # free. Keep legacy Kilo-gateway detection so old cache entries and
+        # custom Kilo base URLs still classify correctly.
         is_free = bool(data.get("isFree", False))
         pricing = data.get("pricing", {}) or {}
         if isinstance(pricing, dict):

@@ -159,3 +159,32 @@ def test_recent_memory_budget_preserves_newest_statement(tmp_path, monkeypatch):
         inbox.save(f"Older note {i} " + "details " * 100, "", "session", "chat")
     inbox.save("Latest correction: the launch moved to Monday.", "", "session", "chat")
     assert "Latest correction: the launch moved to Monday." in inbox.recent_context(max_chars=900)
+
+
+def test_remember_tool_does_not_wait_for_enrichment(monkeypatch):
+    import asyncio
+    from mcpclient import builtin
+    saved = []
+    class Memory:
+        def capture_async(self, *args):
+            saved.append(args)
+        def flush(self, *args):
+            raise AssertionError('Enrichment must not block the tool acknowledgement')
+    monkeypatch.setattr('memory.get_memory', lambda: Memory())
+    result = asyncio.run(builtin.handle(None, 'memory_remember', {'text': 'Cedar is my project'}))
+    assert saved[0][0] == 'Cedar is my project'
+    assert 'background' in result
+
+
+def test_truncated_tool_stream_is_not_executable(monkeypatch):
+    from core import api_client
+    class Response:
+        status_code = 200
+        def iter_lines(self, **kwargs):
+            yield b'data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"a","function":{"name":"test__write","arguments":"{}"}}]},"finish_reason":"length"}]}'
+            yield b'data: [DONE]'
+        def close(self):
+            pass
+    monkeypatch.setattr(api_client.requests, 'post', lambda *a, **k: Response())
+    with pytest.raises(api_client.KiloError, match='Incomplete tool call'):
+        api_client.stream_agent_completion([], 'test', api_key='test')

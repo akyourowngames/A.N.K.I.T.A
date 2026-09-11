@@ -1,6 +1,6 @@
 # ZUMBA — Personal AI Assistant
 
-Zumba is a Python CLI personal assistant powered by the [Kilo AI Gateway](https://kilo.ai/docs/gateway) — one OpenAI-compatible endpoint for hundreds of models, including free ones. It features an interactive chat REPL, persistent SQLite-backed sessions, streaming responses, a terminal-aware renderer, and a **long-term memory system** built on a temporal knowledge graph (GraphRAG-style).
+Zumba is a Python CLI personal assistant powered by [NVIDIA NIM](https://build.nvidia.com) — an OpenAI-compatible endpoint with fast models and tool calling. It features an interactive chat REPL, persistent SQLite-backed sessions, streaming responses, a terminal-aware renderer, and a **long-term memory system** built on a temporal knowledge graph (GraphRAG-style).
 
 ## Memory (the hippocampus)
 
@@ -72,7 +72,7 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Long-term memory (the hippocampus)** — every exchange is salience-gated and, when memorable, distilled by the LLM into entities, temporal relations and linked notes stored in an embedded knowledge graph. Recall fuses vector search, full-text (BM25) and Personalized PageRank over the graph, and is injected into your prompts automatically.
 - **MCP tool servers** — Model Context Protocol layer (`mcpclient/`): stdio/HTTP/SSE servers from `~/.zumba/mcp.json`, OpenAI-style tool loop (25 max turns, final summarize so long runs never end in `(empty response)`), tool transcript persisted across turns in memory (last 10) and in the session DB so `continue`/`--resume` keep tool context (folded into a digest, never replayed bare), live reload + self-install meta-tools
 - **429 resilience** — gateway client retries once after `Retry-After` (also one retry on transient 502/503); agent loop retries flaky model calls and ends the turn with a progress summary instead of an error when the provider stays down; memory consolidation throttled (no full run on start, 30-min interval) so background LLM calls don't self-inflict rate limits
-- **Free-first** — defaults to `kilo-auto/free`; `zumba models` lists all 18+ free models with no API key needed
+- **NIM-first** — defaults to `nvidia/nemotron-3-super-120b-a12b`; `zumba models` lists the models on your NVIDIA key
 - **Interactive chat** — REPL with streaming answers inside bordered panels, slash commands, per-turn autosave
 - **Resume that feels continuous** — `--resume` / `--last` / `/load <#>` reprints previous messages before continuing
 - **Numbered session picker** — Codex-style `/sessions` list; type a number instead of a 12-char id
@@ -93,7 +93,7 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 ## Requirements
 
 - Python 3.11+
-- A Kilo API key for chatting (`KILO_API_KEY`) — free models still need a key; listing models does not
+- An NVIDIA API key for chatting (`ZUMBA_API_KEY`, at https://build.nvidia.com) — listing models also needs the key
 
 ## Setup
 
@@ -105,9 +105,9 @@ copy .env.example .env   # then put your key in .env
 
 | Variable            | Purpose                              | Default                              |
 | ------------------- | ------------------------------------ | ------------------------------------ |
-| `KILO_API_KEY`      | Auth for chat endpoints (required)   | —                                    |
-| `KILO_BASE_URL`     | Gateway override                     | `https://api.kilo.ai/api/gateway`    |
-| `ZUMBA_MODEL`       | Env-level default model (top priority)| `kilo-auto/free`                    |
+| `ZUMBA_API_KEY`      | Auth for chat endpoints (required)  | —                                    |
+| `ZUMBA_BASE_URL`    | API base override                    | `https://integrate.api.nvidia.com/v1` |
+| `ZUMBA_MODEL`       | Env-level default model (top priority)| `nvidia/nemotron-3-super-120b-a12b` |
 | `ZUMBA_NO_EMOJI`    | Force emoji stripping (`1`)          | auto-detect                          |
 | `ZUMBA_FORCE_EMOJI` | Force full unicode (`1`)             | auto-detect                          |
 | `ZUMBA_NO_MCP`      | Disable MCP layer entirely (`1`)     | enabled                              |
@@ -123,7 +123,7 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_OVERPASS_URL` | Overpass mirror override            | `overpass-api.de`                    |
 | `ZUMBA_GEO_TRACK_MAX_MIN` | Max live-location track window (min) | `90`                             |
 
-Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `kilo-auto/free`.
+Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `nvidia/nemotron-3-super-120b-a12b`.
 
 ## Usage
 
@@ -181,7 +181,7 @@ flowchart TB
         OUT["output.py\ntheme + sanitizer"]
         TYPES["models.py\ndataclasses"]
     end
-    KILO[("Kilo Gateway\napi.kilo.ai")]
+    NIM[("NIM\nintegrate.api.nvidia.com")]
     DB[("~/.zumba/zumba.db")]
 
     MODELS --> API
@@ -192,7 +192,7 @@ flowchart TB
     SESS <--> STORE
     CLI --> CONF
     CLI --> OUT
-    API --> KILO
+    API --> NIM
     STORE --> DB
 ```
 
@@ -203,7 +203,7 @@ sequenceDiagram
     participant U as User input
     participant C as Conversation
     participant S as SQLite store
-    participant K as Kilo /chat/completions
+    participant K as NIM /chat/completions
     participant R as Renderer
     U->>C: append user message
     U->>S: persist message
@@ -329,7 +329,7 @@ zumba/
 ├── memory/          # Long-term memory (temporal knowledge graph)
 │   ├── db.py            # Schema: episodes, entities, relations, notes, vec, FTS
 │   ├── embedder.py      # Local ONNX embeddings (fastembed bge-small)
-│   ├── llm.py           # Structured LLM reasoning (Kilo gateway)
+│   ├── llm.py           # Structured LLM reasoning (NIM)
 │   ├── extraction.py    # Salience gate, extraction, write decisions
 │   ├── resolve.py       # Entity resolution (alias + vector + LLM merge)
 │   ├── graph.py         # PageRank, decay/reinforce, Leiden communities
@@ -367,8 +367,8 @@ python -m pytest tests -q
 
 | Symptom | Fix |
 | ------- | --- |
-| `KILO_API_KEY is not set` | `setx KILO_API_KEY "key"` or add to `.env` |
-| `401` | Invalid key — regenerate at kilo.ai |
-| `402` | Out of credits — free models (`:free`) don't bill |
+| `ZUMBA_API_KEY is not set` | `setx ZUMBA_API_KEY "key"` or add to `.env` |
+| `401` | Invalid key — regenerate at build.nvidia.com |
+| `402` | Payment required — check billing/limits for your provider |
 | Boxes/garbled text in cmd | Expected — safe mode is on; use Windows Terminal or `zumba doctor` |
 | Empty assistant reply after tools | Fixed — agent summarizes after 25 tool turns; if it still happens, say `continue` or set `ZUMBA_MCP_MAX_ITERATIONS=40` |

@@ -10,7 +10,7 @@ from rich.table import Table
 
 APP_NAME = "ZUMBA"
 APP_VERSION = "1.1.0"
-APP_TAGLINE = "Personal AI Assistant  ·  Kilo Gateway"
+APP_TAGLINE = "Personal AI Assistant  ·  NIM"
 ACCENT = "cyan"
 BORDER_DIM = "dim"
 ERROR_BORDER = "red"

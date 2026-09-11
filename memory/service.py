@@ -495,6 +495,11 @@ class Memory:
         try:
             db.ensure_tier2(con)
             graph.apply_time_decay(con)
+            try:
+                from . import task_lifecycle
+                task_lifecycle.review_pending(con)
+            except Exception:
+                pass
             links = consolidation.link_notes(con)
             invalidations = consolidation.sweep_contradictions(con)
             communities = consolidation.rebuild_communities(con)

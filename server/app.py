@@ -28,6 +28,8 @@ async def _lifespan(app: FastAPI):
     except Exception:
         pass
     yield
+    from server.telegram_channel import stop_if_running
+    await stop_if_running()
     knowledge_service.stop()
     try:
         from memory import get_memory as _gm

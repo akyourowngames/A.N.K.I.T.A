@@ -1,4 +1,4 @@
-"""Adapters between MCP tools and the OpenAI/Kilo `tools` chat format."""
+"""Adapters between MCP tools and the OpenAI-compatible `tools` chat format."""
 import json
 from typing import Any, Optional
 

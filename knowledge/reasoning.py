@@ -20,8 +20,8 @@ def trace():
 
 def chat_json(prompt, **kwargs):
     chosen = kwargs.pop("model", "") or _memory_model()
-    fallback = os.getenv("ZUMBA_KNOWLEDGE_FALLBACK", "kilo-auto/free").strip()
-    models = list(dict.fromkeys([chosen, fallback])) if fallback else [chosen]
+    fallback = os.getenv("ZUMBA_KNOWLEDGE_FALLBACK", "").strip() or _memory_model()
+    models = [chosen] if fallback == chosen else [chosen, fallback]
     last_error = "Invalid structured output"
     for model in models:
         if not hasattr(_state, "models"):

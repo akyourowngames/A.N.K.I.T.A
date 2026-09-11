@@ -7,11 +7,17 @@ from core.config import get_api_key, get_base_url
 from core.models import ChatResult, ChatUsage, Message, ModelInfo
 
 
-class KiloError(RuntimeError):
+class GatewayError(RuntimeError):
+    """Provider gateway error (OpenAI-compatible endpoint, default NVIDIA NIM)."""
+
     def __init__(self, message: str, status_code: int = 0, code: Any = None):
         super().__init__(message)
         self.status_code = status_code
         self.code = code
+
+
+# Backward-compat alias: the Kilo gateway was the previous default provider.
+KiloError = GatewayError
 
 
 def _gateway_error_message(status: int, payload: Any) -> str:
@@ -31,14 +37,20 @@ def _gateway_error_message(status: int, payload: Any) -> str:
 
 
 def _friendly_hint(status: int) -> str:
+    if status == 400:
+        return "Bad request. Drop unsupported fields (logprobs, logit_bias, messages[].name) and keep N=1."
     if status == 401:
-        return "Invalid or missing API key. Check KILO_API_KEY / OPENCODE_API_KEY."
+        return "Invalid or missing API key. Check ZUMBA_API_KEY (get one at https://build.nvidia.com)."
     if status == 402:
-        return "Insufficient balance. Add credits at https://kilo.ai/auth."
+        return "Payment required. Check billing/limits for your provider."
     if status == 403:
-        return "Model blocked by organization policy. Try a free model like stepfun/step-3.7-flash:free."
+        return "Model decommissioned or blocked. Try the default model (`zumba models --refresh`)."
+    if status == 404:
+        return "Endpoint or model not found. Check ZUMBA_BASE_URL and the model id (`zumba models --refresh`)."
     if status == 429:
-        return "Rate limited. Wait a moment and retry."
+        return "Rate limited (TPM/RPM). Wait a moment and retry."
+    if status == 413:
+        return "Payload too large for the context window. Shorten history or raise ZUMBA_CONTEXT_LIMIT carefully."
     if status in (502, 503):
         return "Upstream provider error. Retry or pick another model."
     return ""
@@ -48,7 +60,7 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
     try:
         resp = requests.request(method, url, headers=headers, json=payload, timeout=timeout)
     except requests.RequestException as exc:
-        raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
+        raise KiloError(f"Network error reaching LLM API: {exc}") from exc
     if resp.status_code in (429, 502, 503):
         try:
             retry_after = int(resp.headers.get("Retry-After", "") or 0)
@@ -64,7 +76,7 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
         try:
             resp = requests.request(method, url, headers=headers, json=payload, timeout=timeout)
         except requests.RequestException as exc:
-            raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
+            raise KiloError(f"Network error reaching LLM API: {exc}") from exc
     if resp.status_code >= 400:
         try:
             data = resp.json()
@@ -77,25 +89,60 @@ def _request_json(method: str, url: str, headers: dict, payload: Optional[dict] 
     try:
         return resp.json()
     except Exception as exc:
-        raise KiloError(f"Invalid JSON response from gateway: {exc}") from exc
+        raise KiloError(f"Invalid JSON response from LLM API: {exc}") from exc
 
 
-def list_models(base_url: str = "", timeout: int = 30) -> list[ModelInfo]:
+def list_models(base_url: str = "", timeout: int = 30, api_key: str = "") -> list[ModelInfo]:
     base = (base_url or get_base_url()).rstrip("/")
-    data = _request_json("GET", f"{base}/models", headers={"User-Agent": "zumba/1.0"}, timeout=timeout)
+    headers = {"User-Agent": "zumba/1.0"}
+    key = (api_key or "").strip() or _optional_api_key()
+    if key:
+        headers["Authorization"] = f"Bearer {key}"
+    data = _request_json("GET", f"{base}/models", headers=headers, timeout=timeout)
     items = data.get("data", []) if isinstance(data, dict) else []
     models = [ModelInfo.from_dict(m) for m in items if isinstance(m, dict) and m.get("id")]
-    models.sort(key=lambda m: (not m.is_free, m.id))
+    models.sort(key=lambda m: m.id)
     return models
 
 
-def list_free_models(base_url: str = "", timeout: int = 30) -> list[ModelInfo]:
-    return [m for m in list_models(base_url=base_url, timeout=timeout) if m.is_free]
+def list_free_models(base_url: str = "", timeout: int = 30, api_key: str = "") -> list[ModelInfo]:
+    return [m for m in list_models(base_url=base_url, timeout=timeout, api_key=api_key) if m.is_free]
 
 
 def list_providers(base_url: str = "", timeout: int = 30) -> Any:
     base = (base_url or get_base_url()).rstrip("/")
-    return _request_json("GET", f"{base}/providers", headers={"User-Agent": "zumba/1.0"}, timeout=timeout)
+    # Most OpenAI-compatible gateways (Groq, NVIDIA NIM) expose no
+    # /providers endpoint; keep the command working by returning an
+    # empty provider list instead of surfacing a 404.
+    try:
+        return _request_json("GET", f"{base}/providers", headers={"User-Agent": "zumba/1.0"}, timeout=timeout)
+    except KiloError as exc:
+        if exc.status_code in (400, 401, 403, 404, 405):
+            return {"data": []}
+        raise
+
+
+def _optional_api_key() -> str:
+    try:
+        return get_api_key(require=False)
+    except Exception:
+        return ""
+
+
+def _sanitize_temperature(temperature: Optional[float]) -> Optional[float]:
+    # Some gateways reject temperature=0; send a tiny positive value
+    # directly so deterministic memory/JSON prompts stay valid.
+    if temperature is None:
+        return None
+    try:
+        value = float(temperature)
+    except Exception:
+        return temperature
+    if value <= 0:
+        return 1e-8
+    if value > 2:
+        return 2.0
+    return value
 
 
 def _chat_payload(
@@ -108,13 +155,16 @@ def _chat_payload(
 ) -> dict:
     payload: dict = {
         "model": model,
-        "messages": [m.to_dict() for m in messages],
+        # Some providers reject messages[].name — strip it while keeping
+        # tool ids/names in their dedicated fields (tool_call_id / tool_calls).
+        "messages": [{k: v for k, v in m.to_dict().items() if k != "name"} for m in messages],
         "stream": stream,
     }
     if tools:
         payload["tools"] = tools
     if max_tokens is not None:
         payload["max_tokens"] = max_tokens
+    temperature = _sanitize_temperature(temperature)
     if temperature is not None:
         payload["temperature"] = temperature
     return payload
@@ -345,7 +395,10 @@ def chat_completion(
             timeout=timeout,
         )
     except KiloError as exc:
-        if exc.status_code in (400, 404, 422, 500) and not tools:
+        # Surface the real 4xx (usually a bad model id or unsupported
+        # param) with its hint instead; only try the /responses API on
+        # gateways known to implement it.
+        if exc.status_code in (404, 422, 500) and not tools and "groq.com" not in base.lower():
             return _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
         raise
     try:
@@ -366,9 +419,11 @@ def chat_completion(
 def stream_agent_completion(
     messages: list[Message], model: str, api_key: str = "", base_url: str = "",
     max_tokens: Optional[int] = None, temperature: Optional[float] = None,
-    timeout: int = 120, tools: Optional[list] = None, on_token=None,
+    timeout: int = 120, tools: Optional[list] = None, on_token=None, control=None,
 ) -> ChatResult:
     """Stream text immediately and assemble fragmented tool calls before execution."""
+    if control:
+        control.check()
     key = api_key or get_api_key(require=True)
     base = (base_url or get_base_url()).rstrip("/")
     try:
@@ -380,7 +435,7 @@ def stream_agent_completion(
             stream=True, timeout=(10, timeout),
         )
     except requests.RequestException as exc:
-        raise KiloError(f"Network error reaching gateway: {exc}") from exc
+        raise KiloError(f"Network error reaching LLM API: {exc}") from exc
     content, calls, usage, response_model = [], {}, ChatUsage(), model
     finished = False
     try:
@@ -389,8 +444,13 @@ def stream_agent_completion(
                 payload = resp.json()
             except Exception:
                 payload = {"error": resp.text[:500]}
-            raise KiloError(_gateway_error_message(resp.status_code, payload), status_code=resp.status_code)
+            msg = _gateway_error_message(resp.status_code, payload)
+            hint = _friendly_hint(resp.status_code)
+            full = f"[{resp.status_code}] {msg}" + (f" ({hint})" if hint else "")
+            raise KiloError(full, status_code=resp.status_code)
         for raw in resp.iter_lines(chunk_size=1, decode_unicode=False):
+            if control:
+                control.check()
             line = raw.decode("utf-8") if isinstance(raw, bytes) else str(raw)
             if not line.startswith("data:"):
                 continue
@@ -403,7 +463,7 @@ def stream_agent_completion(
             try:
                 event = json.loads(data)
             except json.JSONDecodeError as exc:
-                raise KiloError("Gateway returned malformed streaming JSON") from exc
+                raise KiloError("LLM stream returned malformed streaming JSON") from exc
             if event.get("error"):
                 raise KiloError(_gateway_error_message(0, event))
             response_model = event.get("model") or response_model
@@ -434,10 +494,12 @@ def stream_agent_completion(
     finally:
         resp.close()
     text = "".join(content)
+    if control:
+        control.check()
     if not finished:
-        raise KiloError("Gateway stream ended before completion; no tool was executed")
+        raise KiloError("LLM stream ended before completion; no tool was executed")
     if not text and not calls:
-        raise KiloError("Gateway stream ended without content or tool calls")
+        raise KiloError("LLM stream ended without content or tool calls")
     raw = {"choices": [{"message": {"content": text, "tool_calls": [calls[k] for k in sorted(calls)]}}]}
     return ChatResult(content=text, model=response_model, usage=usage, raw=raw)
 
@@ -468,7 +530,7 @@ def stream_chat_completion(
             timeout=timeout,
         )
     except requests.RequestException as exc:
-        raise KiloError(f"Network error reaching Kilo gateway: {exc}") from exc
+        raise KiloError(f"Network error reaching LLM API: {exc}") from exc
     if resp.status_code >= 400:
         try:
             data = resp.json()
@@ -477,14 +539,6 @@ def stream_chat_completion(
                 data = {"error": resp.text[:500]}
             except Exception:
                 data = {"error": f"HTTP {resp.status_code}"}
-        if resp.status_code in (400, 404, 422, 500):
-            try:
-                resp.close()
-            except Exception:
-                pass
-            result = _responses_completion(messages, model, api_key=key, base_url=base, max_tokens=max_tokens, temperature=temperature, timeout=timeout)
-            yield result.content
-            return result
         msg = _gateway_error_message(resp.status_code, data)
         hint = _friendly_hint(resp.status_code)
         full = f"[{resp.status_code}] {msg}" + (f" ({hint})" if hint else "")

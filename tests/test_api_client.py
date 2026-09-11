@@ -1,6 +1,13 @@
 import json
 from unittest.mock import MagicMock, patch
-from core.api_client import KiloError, chat_completion, list_models, stream_chat_completion
+from core.api_client import (
+    GatewayError,
+    KiloError,
+    _chat_payload,
+    chat_completion,
+    list_models,
+    stream_chat_completion,
+)
 from core.models import Message
 
 
@@ -12,12 +19,47 @@ def _resp(payload, status=200):
     return m
 
 
-def test_list_models_parses_free():
+def test_nim_is_default_provider():
+    from core import config as config_mod
+
+    assert "nvidia.com" in config_mod.DEFAULT_BASE_URL
+    assert config_mod.DEFAULT_MODEL == "nvidia/nemotron-3-super-120b-a12b"
+    assert KiloError is GatewayError  # legacy alias kept
+
+
+def test_chat_payload_strips_unsupported_name_and_zero_temperature():
+    payload = _chat_payload(
+        [Message(role="tool", content="ok", tool_call_id="1", name="srv__tool"), Message("user", "hi")],
+        "openai/gpt-oss-120b",
+        temperature=0.0,
+    )
+    assert all("name" not in m for m in payload["messages"])
+    assert payload["temperature"] == 1e-8
+
+
+def test_list_models_parses_openai_shape():
+    payload = {"data": [{"id": "nvidia/nemotron-3-super-120b-a12b", "object": "model", "created": 1, "owned_by": "nvidia"}]}
+    with patch("core.api_client.requests.request", return_value=_resp(payload)):
+        models = list_models(base_url="https://x")
+    assert models[0].id == "nvidia/nemotron-3-super-120b-a12b"
+    assert models[0].owned_by == "nvidia"
+
+
+def test_list_models_sends_auth_header():
+    payload = {"data": []}
+    with patch("core.api_client.requests.request", return_value=_resp(payload)) as req:
+        list_models(base_url="https://x", api_key="gsk-test")
+    _, kwargs = req.call_args
+    assert kwargs["headers"]["Authorization"] == "Bearer gsk-test"
+
+
+def test_list_models_legacy_free_shape_still_parses():
     payload = {"data": [{"id": "kilo-auto/free", "name": "Auto Free", "isFree": True}, {"id": "a/b", "pricing": {"prompt": "1", "completion": "1"}}]}
     with patch("core.api_client.requests.request", return_value=_resp(payload)):
         models = list_models(base_url="https://x")
-    assert models[0].id == "kilo-auto/free"
-    assert models[0].is_free
+    assert models[0].id == "a/b"
+    assert models[1].id == "kilo-auto/free"
+    assert models[1].is_free
 
 
 def test_chat_completion_success():

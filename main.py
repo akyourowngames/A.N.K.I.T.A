@@ -65,7 +65,7 @@ def _allow_emoji(explicit_no_emoji: bool = False) -> bool:
 
 console: Console = make_console(_allow_emoji())
 
-BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  Kilo Gateway[/]"
+BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  NIM[/]"
 
 _WINDOW_CACHE: dict[str, dict] = {}
 _WHY_LAST: dict[str, dict] = {}
@@ -416,22 +416,42 @@ def _fail(message: str, hint: str = "") -> None:
     raise typer.Exit(code=1)
 
 
+def _cache_file():
+    try:
+        from core.config import get_models_cache_file
+
+        return get_models_cache_file()
+    except Exception:
+        return MODELS_CACHE_FILE
+
+
 def _read_cache() -> Optional[list]:
     try:
-        if not MODELS_CACHE_FILE.exists():
-            return None
-        age = time.time() - MODELS_CACHE_FILE.stat().st_mtime
+        cache = _cache_file()
+        if not cache.exists():
+            # One-time migration from the old groq-specific cache file.
+            try:
+                from core.config import LEGACY_MODELS_CACHE_FILE
+
+                if LEGACY_MODELS_CACHE_FILE.exists():
+                    cache = LEGACY_MODELS_CACHE_FILE
+                else:
+                    return None
+            except Exception:
+                return None
+        age = time.time() - cache.stat().st_mtime
         if age > MODELS_CACHE_TTL:
             return None
-        return json.loads(MODELS_CACHE_FILE.read_text(encoding="utf-8"))
+        return json.loads(cache.read_text(encoding="utf-8"))
     except Exception:
         return None
 
 
 def _write_cache(data: list) -> None:
     try:
-        CACHE_DIR.mkdir(parents=True, exist_ok=True)
-        MODELS_CACHE_FILE.write_text(json.dumps(data), encoding="utf-8")
+        cache = _cache_file()
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_text(json.dumps(data), encoding="utf-8")
     except Exception:
         pass
 
@@ -444,7 +464,7 @@ def _fetch_models(refresh: bool = False) -> list[ModelInfo]:
                 return [ModelInfo.from_dict(m) for m in cached if isinstance(m, dict)]
             except Exception:
                 pass
-    with console.status("Fetching models from Kilo gateway...", spinner="dots"):
+    with console.status("Fetching models...", spinner="dots"):
         try:
             models = list_models()
         except KiloError as exc:
@@ -519,7 +539,7 @@ def _stream_into_console(messages: list[Message], model: str, max_tokens: Option
 
 @app.command("models")
 def models_cmd(
-    free_only: bool = typer.Option(True, "--free/--all", help="Show only free models or all models."),
+    free_only: bool = typer.Option(False, "--free/--all", help="Show only free models or all models (NIM has no free tier; --free matches legacy ':free' ids)."),
     search: str = typer.Option("", "--search", "-s", help="Filter by id or name substring."),
     limit: int = typer.Option(30, "--limit", "-n", help="Max rows to display."),
     as_json: bool = typer.Option(False, "--json", help="Output raw JSON."),
@@ -536,6 +556,9 @@ def models_cmd(
     models = _fetch_models(refresh=refresh)
     if free_only:
         models = [m for m in models if m.is_free]
+        if not models:
+            console.print(info_panel("Provider has no ':free' tier — showing all models instead.", title="MODELS", allow_emoji=allow_emoji))
+            models = _fetch_models(refresh=refresh)
     if search:
         q = search.lower()
         models = [m for m in models if q in m.id.lower() or q in m.name.lower()]
@@ -545,10 +568,9 @@ def models_cmd(
     if not models:
         console.print(info_panel("No models matched. Try: zumba models --all", title="MODELS", allow_emoji=allow_emoji))
         return
-    free_n = sum(1 for m in models if m.is_free)
     console.print(_header())
     console.print(_models_table([m for m in models[:limit]], allow_emoji))
-    console.print(section_rule(f"{len(models[:limit])} SHOWN  ·  {free_n} FREE IN FILTER  ·  DEFAULT {get_default_model()}"))
+    console.print(section_rule(f"{len(models[:limit])} SHOWN  ·  DEFAULT {get_default_model()}"))
 
 
 @app.command("providers")
@@ -588,7 +610,7 @@ def providers_cmd(
 @app.command("ask")
 def ask_cmd(
     prompt: str = typer.Argument(..., help="Single question to ask."),
-    model: str = typer.Option("", "--model", "-m", help="Model id. Defaults to ZUMBA_MODEL or kilo-auto/free."),
+    model: str = typer.Option("", "--model", "-m", help="Model id. Defaults to ZUMBA_MODEL or nvidia/nemotron-3-super-120b-a12b."),
     system: str = typer.Option("You are Zumba, a concise helpful personal assistant.", "--system", "-s"),
     no_stream: bool = typer.Option(False, "--no-stream", help="Disable streaming."),
     max_tokens: Optional[int] = typer.Option(None, "--max-tokens"),
@@ -600,7 +622,7 @@ def ask_cmd(
     try:
         key = get_api_key(require=True)
     except RuntimeError as exc:
-        _fail(str(exc), "Free models still need a Kilo key. Sign up at https://kilo.ai — it is free.")
+        _fail(str(exc), "Set ZUMBA_API_KEY first: https://build.nvidia.com")
         return
     base = get_base_url()
     eff_system = _plain_system(system, allow_emoji)
@@ -818,7 +840,7 @@ def config_cmd(
 
 @app.command("chat")
 def chat_cmd(
-    model: str = typer.Option("", "--model", "-m", help="Model id. Defaults to ZUMBA_MODEL or kilo-auto/free."),
+    model: str = typer.Option("", "--model", "-m", help="Model id. Defaults to ZUMBA_MODEL or nvidia/nemotron-3-super-120b-a12b."),
     system: str = typer.Option("You are Zumba, a concise helpful personal assistant.", "--system", "-s"),
     resume: str = typer.Option("", "--resume", help="Resume a saved session by id, file path, or filename."),
     last: bool = typer.Option(False, "--last", help="Resume the most recent session."),
@@ -838,7 +860,7 @@ def chat_cmd(
     try:
         key = get_api_key(require=True)
     except RuntimeError as exc:
-        _fail(str(exc), "Free models still need a Kilo key. Sign up at https://kilo.ai — it is free.")
+        _fail(str(exc), "Set ZUMBA_API_KEY first: https://build.nvidia.com")
         return
     saved_streaming = db_config_get("streaming", "on")
 
@@ -1069,8 +1091,7 @@ def chat_cmd(
             continue
         if user_text == "/models":
             try:
-                free = [m for m in _fetch_models() if m.is_free][:15]
-                console.print(_models_table(free, allow_emoji))
+                console.print(_models_table(_fetch_models()[:15], allow_emoji))
             except Exception as exc:
                 console.print(error_panel(str(exc), allow_emoji=allow_emoji))
             continue
@@ -2452,7 +2473,7 @@ def root(ctx: typer.Context) -> None:
         table = styled_table("COMMANDS", allow_emoji)
         table.add_column("COMMAND", style="cyan", no_wrap=True)
         table.add_column("DESCRIPTION", style="white")
-        table.add_row("zumba models", "List free models (no key needed)")
+        table.add_row("zumba models", "List provider models (needs ZUMBA_API_KEY)")
         table.add_row('zumba ask "..."', "One-shot question")
         table.add_row("zumba chat", "Interactive session (auto-saved, --last to resume)")
         table.add_row("zumba sessions", "List / search / show saved chats")
@@ -2464,7 +2485,7 @@ def root(ctx: typer.Context) -> None:
         table.add_row("zumba doctor", "Terminal + rendering diagnostics")
         table.add_row("zumba version", "Show version")
         console.print(table)
-        console.print(section_rule("SET KILO_API_KEY TO CHAT  ·  DEFAULT kilo-auto/free"))
+        console.print(section_rule("SET ZUMBA_API_KEY TO CHAT  ·  DEFAULT nvidia/nemotron-3-super-120b-a12b"))
 
 
 if __name__ == "__main__":

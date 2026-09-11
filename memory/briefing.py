@@ -44,14 +44,12 @@ def community_digest(con, limit: int = 3) -> list[str]:
 
 def date_lines(con, limit: int = 8) -> list[str]:
     try:
-        rows = con.execute(
-            """SELECT fact FROM relations WHERE invalid_at IS NULL AND
-               (fact LIKE '%20__%' OR fact LIKE '%Jan%' OR fact LIKE '%Feb%' OR fact LIKE '%Mar%' OR
-                fact LIKE '%Apr%' OR fact LIKE '%May%' OR fact LIKE '%Jun%' OR fact LIKE '%Jul%' OR
-                fact LIKE '%Aug%' OR fact LIKE '%Sep%' OR fact LIKE '%Oct%' OR fact LIKE '%Nov%' OR
-                fact LIKE '%Dec%' OR fact LIKE '%deadline%' OR fact LIKE '%expires%' OR fact LIKE '%due%')
-               ORDER BY created_at DESC LIMIT ?""", (limit,)).fetchall()
-        return [r["fact"][:200] for r in rows]
+        from . import goals, task_lifecycle
+        current = [g for g in goals.active_goals(con, limit=100)
+                   if g.get('deadline') and task_lifecycle.eligible(con, 'goal', g)]
+        con.commit()
+        return [f"{_dt.datetime.fromtimestamp(float(g['deadline'])).astimezone().isoformat()}: {g['title'][:160]}"
+                for g in sorted(current, key=lambda g: float(g['deadline']))[:limit]]
     except Exception:
         return []
 
@@ -59,7 +57,8 @@ def date_lines(con, limit: int = 8) -> list[str]:
 def goals_digest(con, limit: int = 3) -> str:
     try:
         from . import goals as _g
-        act = _g.active_goals(con, limit=10)
+        from . import task_lifecycle
+        act = [g for g in _g.active_goals(con, limit=50) if task_lifecycle.eligible(con, 'goal', g)]
         if not act:
             return ""
         import datetime as _dt
@@ -80,7 +79,7 @@ def goals_digest(con, limit: int = 3) -> str:
                 lines.append(f"- #{g['id']} {g['title'][:120]} [{int(float(g.get('progress') or 0)*100)}%]{flag}{nxt}")
             except Exception:
                 continue
-        od = _g.overdue(con)
+        od = [g for g in _g.overdue(con) if task_lifecycle.eligible(con, 'goal', g)]
         if od:
             lines.append(f"! {len(od)} overdue goal(s) — lead with these.")
         return "GOALS:\n" + "\n".join(lines)

@@ -33,7 +33,7 @@ def profile_block(max_chars: int = PROFILE_CAP) -> str:
     text = load_profile_text(max_chars)
     if not text:
         return ""
-    return "[user.md — who the user is; authoritative profile, always in context]\n" + text.strip()
+    return "[user.md — saved personal background. Preferences and identity may be durable; old plans are not current instructions. Do not revive an old task without current user intent.]\n" + text.strip()
 
 
 def upsert_fact(con, key: str, value: str, confidence: float = 0.7, source_episode=None) -> None:
@@ -62,6 +62,8 @@ def get_facts(con) -> list[dict]:
 _USER_REWRITE_PROMPT = """Maintain the user's profile (user.md) from the memory graph + structured facts.
 Sections: Identity, Projects, People, Preferences, Goals, Current focus.
 Rules: concrete durable facts only, no chit-chat, keep each section to a few bullets, <1800 chars total.
+Exclude one-off requests, unanswered assistant questions, pending clarifications and expired plans.
+Do not turn an abandoned booking or temporary task into a permanent user trait or current focus.
 Current user.md:
 {current}
 
@@ -129,7 +131,8 @@ def extract_user_facts_from_relations(con, rels: list, episode_id=None) -> int:
     try:
         result = llm.chat_json(
             'Select durable facts about the user from the supplied relations. Do not treat facts '
-            'about third parties as user facts. Return {"facts":[{"index":zero-based relation index,'
+            'about third parties as user facts. Exclude one-off requests, temporary task state, pending '
+            'clarifications and expired plans; these are not durable personal facts. Return {"facts":[{"index":zero-based relation index,'
             '"key":"stable descriptive key distinguishing subject and attribute"}]}. '
             'Use an empty list if no personal facts are supported. Data:\n' + json.dumps(rels),
             max_tokens=700,

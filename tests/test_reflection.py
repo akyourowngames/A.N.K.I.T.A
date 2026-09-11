@@ -62,6 +62,7 @@ def test_user_facts_and_profile_prepend(tmp_path, monkeypatch):
     _up.upsert_fact(con, "likes", "Sam likes Rust", 0.8)
     con.commit()
     assert any(f["key"] == "likes" for f in _up.get_facts(con))
+    monkeypatch.setattr('memory.llm.chat_json', lambda *a, **k: {'facts': [{'index': 0, 'key': 'prefers_brevity'}]})
     n = _up.extract_user_facts_from_relations(con, [{"type": "prefers_brevity", "fact": "Give shorter answers", "confidence": 0.9, "source": "user"}])
     assert n >= 1
     home = tmp_path / "zup"

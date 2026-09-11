@@ -71,7 +71,7 @@ def jina_fallback() -> bool:
 
 BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
               "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36")
-HONEST_UA = "zumba/1.0 (+https://kilo.ai)"
+HONEST_UA = "zumba/1.0"
 
 
 # ---- cache (in-process + optional disk mirror) ----

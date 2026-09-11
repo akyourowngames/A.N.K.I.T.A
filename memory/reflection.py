@@ -20,10 +20,13 @@ REFLECTION_PROMPT = """Review this chat session and extract durable memory. Retu
 SESSION:
 {session}
 
-Return: {{"decisions": [{{"text": "..", "reason": ".."}}], "follow_ups": [".."],
+Return: {{"decisions": [{{"text": "..", "reason": ".."}}], "follow_ups": [{{"text":"..","index":0,"evidence":"exact user quote","expires_at":null,"dormant_at":null}}],
 "importance": [{{"index": <episode-index-0-based>, "score": 1-10}}],
 "mood": {{"valence": -1..1, "energy": 0..1, "note": ".."}}}}
-Rules: decisions = choices made + why (skip chit-chat); follow_ups = open tasks/promises/questions left hanging;
+Rules: decisions = choices made + why (skip chit-chat); follow_ups = user-endorsed unfinished tasks, not every assistant question.
+For time-sensitive follow-ups, give absolute epoch expires_at and dormant_at using the original message timestamps.
+For every follow-up provide the source exchange index and an exact quote from that user's message supporting the unfinished task.
+Do not interpret an old 'tomorrow' relative to the current date. Ignore requests already completed, abandoned, cancelled or past their useful time.
 importance = poignancy 1-10 per exchange (identity/preference/decision=8-10, chit-chat=1-3);
 mood = user's emotional tone this session."""
 
@@ -42,7 +45,7 @@ def reflect_transcript(exchanges: list[dict], use_llm: bool = True) -> dict:
             for i, e in enumerate(exchanges[-30:]):
                 u = str(e.get("user") or e.get("user_text") or "")[:400]
                 a = str(e.get("assistant") or e.get("assistant_text") or "")[:400]
-                blob_lines.append(f"[{i}] U: {u}\n    A: {a}")
+                blob_lines.append(f"[{i}] source_timestamp={e.get('created_at', 'unknown')} U: {u}\n    A: {a}")
             out = _llm.chat_json(
                 REFLECTION_PROMPT.format(session="\n".join(blob_lines)[:8000]),
                 system="You are a session reflection engine. Valid JSON only.",
@@ -128,12 +131,31 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
             t = f if isinstance(f, str) else str(f.get("text") or f)
             if not t.strip():
                 continue
-            con.execute(
+            source_time = min((float(e['created_at']) for e in exchanges if e.get('created_at')), default=now)
+            if isinstance(f, dict):
+                index = f.get('index')
+                if type(index) is not int or not 0 <= index < len(exchanges):
+                    continue
+                source = exchanges[index]
+                evidence = f.get('evidence')
+                user_text = str(source.get('user') or source.get('user_text') or '')
+                if not isinstance(evidence, str) or not evidence.strip() or evidence not in user_text:
+                    continue
+                source_time = float(source.get('created_at') or source_time)
+            # Re-reflection is not renewed consent. Keep the original clock.
+            if con.execute('SELECT 1 FROM follow_ups WHERE text=? AND source_session=?', (t[:800], session_id)).fetchone():
+                continue
+            cur = con.execute(
                 "INSERT INTO follow_ups(text, created_at, done_at, source_session) VALUES(?,?,NULL,?)",
-                (t[:800], now, session_id),
+                (t[:800], source_time, session_id),
             )
+            from . import task_lifecycle
+            task_lifecycle.seed(con, 'follow_up', {'id': cur.lastrowid, 'created_at': source_time})
+            if isinstance(f, dict) and f.get('dormant_at') is not None:
+                task_lifecycle.set_policy(con, 'follow_up', cur.lastrowid, f.get('expires_at'), f['dormant_at'], 'Session reflection')
             n_fup += 1
-            inserted.append(t[:800])
+            if task_lifecycle.state(con, 'follow_up', cur.lastrowid) == 'active' and source_time >= now - 2 * 86400:
+                inserted.append(t[:800])
         except Exception:
             continue
     if use_llm and inserted:
@@ -169,6 +191,12 @@ def apply_reflection(con, exchanges: list[dict], reflection: dict, session_id: s
 
 def reflect_session(con, exchanges: list[dict], session_id: str = "", use_llm: bool = True) -> dict:
     ensure_schema(con)
+    exchanges = [dict(e) for e in exchanges[-30:]]
+    for exchange in exchanges:
+        if not exchange.get('created_at') and exchange.get('episode_id'):
+            row = con.execute('SELECT created_at FROM episodes WHERE id=?', (exchange['episode_id'],)).fetchone()
+            if row:
+                exchange['created_at'] = row['created_at']
     reflection = reflect_transcript(exchanges, use_llm=use_llm)
     applied = apply_reflection(con, exchanges, reflection, session_id=session_id, use_llm=use_llm)
     return {"reflection": reflection, "applied": applied}
@@ -177,8 +205,12 @@ def reflect_session(con, exchanges: list[dict], session_id: str = "", use_llm: b
 def open_follow_ups(con, limit: int = 20) -> list[dict]:
     ensure_schema(con)
     try:
-        return [dict(r) for r in con.execute(
-            "SELECT id, text, created_at, source_session FROM follow_ups WHERE done_at IS NULL ORDER BY created_at DESC LIMIT ?", (limit,)).fetchall()]
+        from . import task_lifecycle
+        rows = [dict(r) for r in con.execute(
+            "SELECT id, text, created_at, source_session FROM follow_ups WHERE done_at IS NULL ORDER BY created_at DESC LIMIT ?", (max(limit * 5, 100),)).fetchall()]
+        active = [r for r in rows if task_lifecycle.eligible(con, 'follow_up', r)]
+        con.commit()
+        return active[:limit]
     except Exception:
         return []
 

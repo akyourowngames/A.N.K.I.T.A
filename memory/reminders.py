@@ -195,6 +195,13 @@ def fire_due(con, now: float = 0, deliver: bool = True) -> list[dict]:
     now = now or _now()
     fired = []
     for r in due_reminders(con, now):
+        if r.get('goal_id'):
+            from . import goals, task_lifecycle
+            goal = goals.get_goal(con, r['goal_id'])
+            if goal and (goal.get('status') != 'active' or not task_lifecycle.eligible(con, 'goal', goal, now=now)):
+                con.execute("UPDATE reminders SET status='cancelled' WHERE id=?", (r['id'],))
+                con.commit()
+                continue
         try:
             con.execute("UPDATE reminders SET status='fired', fired_at=? WHERE id=?", (now, r["id"]))
             recur = _recur_of(con, r["id"])

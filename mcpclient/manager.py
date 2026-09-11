@@ -8,6 +8,8 @@ import asyncio
 import json
 import os
 import time
+import threading
+from concurrent.futures import TimeoutError as FutureTimeout
 from typing import Any, Optional
 
 try:
@@ -63,12 +65,14 @@ class MCPManager:
         self.servers: dict[str, ServerState] = {}
         self.connect_timeout = connect_timeout if connect_timeout is not None else defaults.CONNECT_TIMEOUT
         self.meta_state: dict = {}   # per-instance state for built-in meta-tools
+        self._tool_locks = {}
         try:
             self._loaded_mtime = self._files_mtime()
         except Exception:
             self._loaded_mtime = (0.0, 0.0)
 
     async def start(self) -> None:
+        connections = []
         for name, entry in self.config.items():
             if not entry.get("enabled", True):
                 st = ServerState(name, entry)
@@ -76,7 +80,9 @@ class MCPManager:
                 self.servers[name] = st
                 continue
             self.servers[name] = ServerState(name, entry)
-            await self._connect(self.servers[name])
+            connections.append(self._connect(self.servers[name]))
+        if connections:
+            await asyncio.gather(*connections)
 
     async def stop(self) -> None:
         for st in list(self.servers.values()):
@@ -146,6 +152,7 @@ class MCPManager:
             st.session = None
 
     async def _connect(self, st: ServerState) -> None:
+        st._ready = asyncio.Event()
         if not MCP_SDK:
             st.status = "offline"
             st.error = "mcp package not installed"
@@ -271,8 +278,53 @@ class MCPManager:
     def status_rows(self) -> list:
         return [st.summary() for st in self.servers.values()]
 
+    def tool_access(self, qualified_name):
+        server, _, name = qualified_name.partition(mt.SEP)
+        if server == defaults.META_SERVER:
+            from mcpclient.builtin import TOOL_ACCESS
+            return TOOL_ACCESS.get(name, 'approval')
+        st = self.servers.get(server)
+        if st:
+            for tool in st.tools:
+                tool_name = tool.get('name') if isinstance(tool, dict) else getattr(tool, 'name', None)
+                if tool_name == name:
+                    annotations = tool.get('annotations') if isinstance(tool, dict) else getattr(tool, 'annotations', None)
+                    read_only = annotations.get('readOnlyHint') if isinstance(annotations, dict) else getattr(annotations, 'readOnlyHint', False)
+                    return 'read' if read_only is True else 'approval'
+        return 'approval'
+
     # ---- execution -------------------------------------------------------
-    async def call_tool(self, qualified_name: str, arguments: dict, timeout: Optional[float] = None) -> str:
+    async def call_tool(self, qualified_name: str, arguments: dict, timeout: Optional[float] = None, control=None) -> str:
+        async def observed():
+            if control:
+                control.check()
+            result = await self._call_tool(qualified_name, arguments, timeout)
+            if control:
+                control.emit('tool_observation', id=control.step, name=qualified_name,
+                             result=result[:8000], failed=result.startswith('ERROR:'))
+            return result
+        server, _, tool = qualified_name.partition(mt.SEP)
+        from mcpclient.builtin import TOOL_GROUP
+        group = TOOL_GROUP.get(tool) if server == defaults.META_SERVER else None
+        if group is None and self.tool_access(qualified_name) != 'read':
+            group = server
+        if group is None:
+            return await observed()
+        lock = self._tool_locks.setdefault(group, asyncio.Lock())
+        async with lock:
+            task = asyncio.create_task(observed())
+            try:
+                return await asyncio.shield(task)
+            except asyncio.CancelledError:
+                # Keep the resource locked until an in-flight stateful operation
+                # actually settles, even if its caller stopped waiting.
+                try:
+                    await task
+                except Exception:
+                    pass
+                raise
+
+    async def _call_tool(self, qualified_name: str, arguments: dict, timeout: Optional[float] = None) -> str:
         timeout = timeout if timeout is not None else defaults.TOOL_TIMEOUT
         server, _, tool = qualified_name.partition(mt.SEP)
         if server == defaults.META_SERVER:
@@ -302,64 +354,98 @@ class MCPManager:
             return f"ERROR: tool '{tool}' failed: {str(exc)[:300]}"
 
 
-# ---- sync bridge for the CLI ------------------------------------------------
+# ---- sync bridge: one owned loop, thread-safe submissions -------------------
 _loop: Optional[asyncio.AbstractEventLoop] = None
 _mgr: Optional[MCPManager] = None
+_loop_thread = None
+_bridge_lock = threading.RLock()
+
+
+def _submit(coro, timeout=120, control=None):
+    if _loop is None or not _loop.is_running():
+        coro.close()
+        raise RuntimeError('MCP event loop is unavailable')
+    if threading.current_thread() is _loop_thread:
+        coro.close()
+        raise RuntimeError('Use async manager methods from the MCP loop')
+    future = asyncio.run_coroutine_threadsafe(coro, _loop)
+    deadline = time.monotonic() + timeout
+    try:
+        while True:
+            if control:
+                control.check()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError('Tool timed out; its external outcome may be unknown')
+            try:
+                return future.result(timeout=min(.1, remaining))
+            except FutureTimeout:
+                if future.done():
+                    return future.result()
+    except BaseException:
+        future.cancel()
+        raise
 
 
 def manager() -> MCPManager:
-    """Get (or lazily create and start) the global MCP manager. Returns an
-    empty offline manager on failure — chat must never crash because of MCP."""
-    global _loop, _mgr
-    try:
-        if _loop is None or _loop.is_closed():
+    global _loop, _mgr, _loop_thread
+    with _bridge_lock:
+        if _loop is None or _loop.is_closed() or not _loop.is_running():
             _loop = asyncio.new_event_loop()
+            ready = threading.Event()
+            owned_loop = _loop
+            def serve():
+                asyncio.set_event_loop(owned_loop)
+                owned_loop.call_soon(ready.set)
+                owned_loop.run_forever()
+                pending = asyncio.all_tasks(owned_loop)
+                for task in pending:
+                    task.cancel()
+                if pending:
+                    owned_loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+                owned_loop.close()
+            _loop_thread = threading.Thread(target=serve, daemon=True, name='zumba-mcp')
+            _loop_thread.start()
+            ready.wait(5)
             _mgr = None
         if _mgr is None:
-            _mgr = MCPManager()
-            _loop.run_until_complete(_mgr.start())
+            candidate = MCPManager()
+            try:
+                _submit(candidate.start(), timeout=candidate.connect_timeout + 10)
+            except Exception as exc:
+                candidate._start_error = str(exc)
+            _mgr = candidate
         return _mgr
-    except Exception as exc:  # noqa: BLE001
-        fallback = MCPManager(config={})
-        fallback._start_error = str(exc)
-        return fallback
 
 
-def run_tool(qualified_name: str, arguments: dict, timeout: Optional[float] = None) -> str:
+def run_tool(qualified_name: str, arguments: dict, timeout: Optional[float] = None, control=None) -> str:
     mgr = manager()
-    return _loop.run_until_complete(mgr.call_tool(qualified_name, arguments, timeout=timeout))
+    seconds = timeout if timeout is not None else defaults.TOOL_TIMEOUT
+    call = mgr.call_tool(qualified_name, arguments, timeout=seconds, control=control) if control else mgr.call_tool(qualified_name, arguments, timeout=seconds)
+    return _submit(call, timeout=seconds + 2, control=control)
 
 
 def reload_sync(mgr: Optional[MCPManager] = None) -> dict:
-    """Live-reload servers from disk config (start new / stop removed)."""
     mgr = mgr or manager()
-    return _loop.run_until_complete(mgr.reload())
+    return _submit(mgr.reload(), timeout=mgr.connect_timeout * max(1, len(mgr.servers)) + 10)
 
 
 def reload_if_stale_sync(mgr: Optional[MCPManager] = None) -> Optional[dict]:
-    """Cheap check: reload only if an mcp.json changed on disk."""
     mgr = mgr or manager()
-    try:
-        if mgr.stale():
-            return reload_sync(mgr)
-    except Exception:
-        return None
-    return None
+    return reload_sync(mgr) if mgr.stale() else None
 
 
 def shutdown() -> None:
-    global _loop, _mgr
-    try:
-        if _loop is not None and not _loop.is_closed() and _mgr is not None:
+    global _loop, _mgr, _loop_thread
+    with _bridge_lock:
+        owned_loop, thread = _loop, _loop_thread
+        if owned_loop and owned_loop.is_running():
             try:
-                _loop.run_until_complete(_mgr.stop())
+                if _mgr:
+                    _submit(_mgr.stop(), timeout=5)
             except BaseException:
                 pass
-            try:
-                _loop.close()
-            except BaseException:
-                pass
-    except BaseException:
-        pass
-    _loop = None
-    _mgr = None
+            owned_loop.call_soon_threadsafe(owned_loop.stop)
+            if thread and thread is not threading.current_thread():
+                thread.join(timeout=6)
+        _loop = _mgr = _loop_thread = None

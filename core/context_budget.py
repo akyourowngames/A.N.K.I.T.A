@@ -97,7 +97,9 @@ def _default_summarizer(dropped: list) -> str:
             bits.append(f"{role}: {text}")
         return _llm.chat_text(
             "Condense these dropped middle turns of a chat session into 5-10 terse "
-            "bullets (decisions, facts, tool outcomes). Omit pleasantries.\n\n" + "\n".join(bits)[:6000],
+            "bullets (decisions, facts, tool outcomes). Preserve original sent dates and deadlines; "
+            "never turn old relative dates into current intent. Distinguish durable preferences from temporary tasks. "
+            "Record cancelled, completed or abandoned work as historical, not as instructions to resume. Omit pleasantries.\n\n" + "\n".join(bits)[:6000],
             system="You are a precise conversation summarizer.",
             max_tokens=500,
         ).strip() or "(no salient content in dropped turns)"

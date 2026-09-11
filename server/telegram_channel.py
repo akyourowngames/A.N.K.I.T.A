@@ -7,6 +7,8 @@ from pathlib import Path
 import aiohttp
 
 from server import channel_store
+from core import run_store
+from server.telegram_execution import TelegramExecution, actor_id
 
 log = logging.getLogger("zumba.telegram")
 CHANNEL = "telegram"
@@ -95,21 +97,40 @@ class TelegramAPI:
                     err = RuntimeError(f"tg_retry:{r.status}:{retry}")
                     err.retry_after = retry  # type: ignore
                     raise err
+                if not data.get('ok'):
+                    if method == 'editMessageText' and 'message is not modified' in str(data.get('description', '')):
+                        return data
+                    raise RuntimeError(f"Telegram {method} rejected: {data.get('error_code', r.status)} {str(data.get('description', ''))[:180]}")
                 return data
         except aiohttp.ClientError as e:
-            err = RuntimeError(f"tg_net:{e}")
+            err = RuntimeError(f"tg_net:{type(e).__name__}")
             err.retry_after = 0  # type: ignore
             raise err
 
     async def get_updates(self, offset: int, timeout: int = 30) -> list[dict]:
-        data = await self._post("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "edited_message"]}, timeout=timeout + 15)
+        data = await self._post("getUpdates", {"offset": offset, "timeout": timeout, "allowed_updates": ["message", "edited_message", "callback_query"]}, timeout=timeout + 15)
         if not data.get("ok"):
             raise RuntimeError(f"getUpdates failed: {str(data)[:200]}")
         return data.get("result") or []
 
-    async def send_message(self, chat_id: int, text: str) -> None:
+    async def send_message(self, chat_id: int, text: str, reply_markup=None) -> int | None:
+        first_id = None
         for chunk in split_message(text):
-            await self._post("sendMessage", {"chat_id": chat_id, "text": chunk or "(empty)"}, timeout=30)
+            payload = {"chat_id": chat_id, "text": chunk or "(empty)"}
+            if reply_markup is not None:
+                payload['reply_markup'] = reply_markup
+            data = await self._post("sendMessage", payload, timeout=30)
+            first_id = first_id or (data.get('result') or {}).get('message_id')
+        return first_id
+
+    async def edit_message(self, chat_id, message_id, text, reply_markup=None):
+        payload = {'chat_id': chat_id, 'message_id': message_id, 'text': text[:TG_LIMIT]}
+        if reply_markup is not None:
+            payload['reply_markup'] = reply_markup
+        return await self._post('editMessageText', payload, timeout=15)
+
+    async def answer_callback(self, query_id, text):
+        return await self._post('answerCallbackQuery', {'callback_query_id': query_id, 'text': text[:200]}, timeout=10)
 
     async def send_chat_action(self, chat_id: int, action: str = "typing") -> None:
         try:
@@ -143,7 +164,9 @@ class TelegramAPI:
             form.add_field("caption", caption[:1024])
         async with s.post(f"{self.base}/sendVoice", data=form,
                           timeout=aiohttp.ClientTimeout(total=60)) as r:
-            await r.read()
+            data = await r.json(content_type=None)
+            if not data.get('ok'):
+                raise RuntimeError(f"Telegram sendVoice rejected: {data.get('error_code', r.status)}")
 
 
 async def _transcribe_ogg(path: Path) -> str:
@@ -175,36 +198,134 @@ class _Bucket:
         return True
 
 
-_limiter = _Bucket()
-
-
 class TelegramChannel:
     def __init__(self, api: TelegramAPI | None = None):
         self.api = api or TelegramAPI(get_token())
         self._stop = asyncio.Event()
+        self._limiter = _Bucket()
+        self.execution = TelegramExecution(self.api)
+        self._tasks = {}
+        self._chat_locks = {}
 
     def stop(self):
         self._stop.set()
+        for control in self.execution.active.values():
+            control.cancel()
+
+    async def drain(self):
+        if self._tasks:
+            await asyncio.gather(*list(self._tasks.values()), return_exceptions=True)
+
+    async def close(self):
+        self.stop()
+        pending = list(self._tasks.values())
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.wait(pending, timeout=5)
+        await self.api.close()
+
+    @staticmethod
+    def command(text):
+        first = text.split(maxsplit=1)[0] if text else ''
+        return first.split('@', 1)[0].lower() if first.startswith('/') else ''
+
+    def _schedule(self, run):
+        if run['id'] in self._tasks or run['status'] != 'queued':
+            return
+        async def work():
+            lock = self._chat_locks.setdefault(run['chat_id'], asyncio.Lock())
+            async with lock:
+                if self._stop.is_set() or not run_store.claim(run['id']):
+                    return
+                if time.time() - run['created_at'] > 300:
+                    run_store.finish(run['id'], 'interrupted', 'This request waited more than five minutes. It was not executed; send a fresh request if it is still relevant.')
+                    return
+                try:
+                    await self.handle_update(run['payload'], run=run)
+                    # Non-agent commands, locations and rejected input also settle.
+                    if run_store.get(run['id'])['status'] == 'running':
+                        run_store.finish(run['id'], 'completed', 'Handled without tool execution.')
+                        run_store.delivered(run['id'])
+                except asyncio.CancelledError:
+                    run_store.finish(run['id'], 'interrupted', 'Execution interrupted; no action has been replayed.')
+                    raise
+                except Exception as exc:
+                    run_store.finish(run['id'], 'failed', 'Task failed. Use /status.', error=type(exc).__name__ + ': ' + str(exc))
+                    log.warning('Run %s failed (%s)', run['id'], type(exc).__name__)
+        task = asyncio.create_task(work())
+        self._tasks[run['id']] = task
+        task.add_done_callback(lambda done: self._tasks.pop(run['id'], None))
+
+    async def dispatch_update(self, update):
+        query = update.get('callback_query')
+        if query:
+            chat_id = int(((query.get('message') or {}).get('chat') or {}).get('id') or 0)
+            actor = int((query.get('from') or {}).get('id') or 0)
+            data = str(query.get('data') or '')
+            answer = 'This control is unavailable.'
+            if chat_id in get_allowed_chats() and data.startswith('cancel:'):
+                run = run_store.get(data.partition(':')[2])
+                if run and run['chat_id'] == str(chat_id):
+                    answer = self.execution.cancel(run, actor)
+            elif chat_id in get_allowed_chats() and data.partition(':')[0] in ('approve', 'deny'):
+                answer = self.execution.resolve_approval(data, chat_id, actor)
+            await self.api.answer_callback(query['id'], answer)
+            return
+        msg = update.get('message') or update.get('edited_message') or {}
+        chat_id = int((msg.get('chat') or {}).get('id') or 0)
+        if not chat_id:
+            return
+        if chat_id not in get_allowed_chats():
+            await self.handle_update(update)
+            return
+        text = str(msg.get('text') or '').strip()
+        cmd = self.command(text)
+        if cmd in ('/cancel', '/status'):
+            runs = [r for r in run_store.recent(CHANNEL, chat_id, limit=100)
+                    if actor_id(r['payload']) == actor_id(update)]
+            if cmd == '/cancel':
+                active = [r for r in runs if r['status'] in ('queued', 'running')]
+                replies = [self.execution.cancel(r, actor_id(update)) for r in active]
+                await self.api.send_message(chat_id, replies[0] if replies else 'No active task to cancel.')
+            else:
+                lines = []
+                for run in runs[:3]:
+                    steps = [e for e in run_store.events(run['id']) if e['kind'] in ('tool_start', 'tool_end', 'tool_observation')]
+                    lines.append(f"{run['id']} · {run['status']} · {run['stage']}")
+                    for e in steps[-4:]:
+                        d = e['data']
+                        lines.append(f"  {e['kind']}: {d.get('name', '?')} {str(d.get('result', ''))[:350]}")
+                    if run['reply']:
+                        lines.append(run['reply'][:1800])
+                await self.api.send_message(chat_id, '\n'.join(lines) if lines else 'No tasks yet.')
+            return
+        # Editing a message is not consent to repeat a tool action. Live locations
+        # are the only edited-message payload with an explicit update contract.
+        if 'edited_message' in update and not msg.get('location'):
+            return
+        run = run_store.create(CHANNEL, chat_id, int(update['update_id']), update)
+        self._schedule(run)
 
     async def run(self):
+        run_store.recover(CHANNEL)
+        for pending in run_store.queued(CHANNEL):
+            self._schedule(pending)
         offset = channel_store.get_next_offset(CHANNEL)
         backoff = 1.0
         log.info("telegram channel started (offset=%s)", offset)
         while not self._stop.is_set():
             try:
+                for pending in run_store.queued(CHANNEL):
+                    self._schedule(pending)
                 updates = await self.api.get_updates(offset, timeout=30)
                 backoff = 1.0
                 for u in updates:
                     uid = int(u.get("update_id", 0) or 0)
+                    await self.dispatch_update(u)
+                    # Durable intake succeeds before Telegram's cursor advances.
                     offset = max(offset, uid + 1)
                     channel_store.set_next_offset(CHANNEL, offset)
-                    if not channel_store.claim_update(CHANNEL, uid):
-                        log.info("skipping duplicate update %s", uid)
-                        continue
-                    try:
-                        await self.handle_update(u)
-                    except Exception as e:
-                        log.exception("handle_update failed: %s", e)
             except Exception as e:
                 retry = getattr(e, "retry_after", 0) or 0
                 wait = max(float(retry or 0), min(backoff, 30.0))
@@ -241,7 +362,7 @@ class TelegramChannel:
             except Exception: pass
         return True
 
-    async def handle_update(self, update: dict) -> None:
+    async def handle_update(self, update: dict, run=None) -> None:
         msg = update.get("message") or update.get("edited_message") or {}
         chat = msg.get("chat") or {}
         chat_id = int(chat.get("id", 0) or 0)
@@ -255,20 +376,22 @@ class TelegramChannel:
                 pass
             log.warning("rejected tg chat %s", chat_id)
             return
-        if not _limiter.allow(chat_id):
+        if not self._limiter.allow(chat_id):
             await self.api.send_message(chat_id, "Slow down — one message at a time please.")
             return
         text = (msg.get("text") or "").strip()
         voice = msg.get("voice") or msg.get("audio")
-        if text.startswith("/new"):
+        cmd = self.command(text)
+        if cmd == '/new':
             channel_store.set_session_for_chat(CHANNEL, str(chat_id), f"tg-{chat_id}-{int(time.time())}")
             await self.api.send_message(chat_id, "Fresh session started.")
             return
-        if text.startswith("/help"):
-            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /new (fresh session), /help, /memory <query>.")
+        if cmd == '/help':
+            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>.")
             return
-        if text.startswith("/memory"):
-            q = text[7:].strip() or "recent conversation"
+        if cmd == '/memory':
+            parts = text.split(maxsplit=1)
+            q = parts[1] if len(parts) > 1 else 'recent conversation'
             try:
                 from memory import get_memory
                 hits = await asyncio.to_thread(get_memory().recall, q, 8, 2000)
@@ -289,30 +412,14 @@ class TelegramChannel:
                 return
         if not text:
             return
-        await self.api.send_chat_action(chat_id, "typing")
         sid = channel_store.resolve_session(CHANNEL, str(chat_id))
-        nudge = asyncio.create_task(self._nudge(chat_id))
-        try:
-            from core.chat_pipeline import aanswer
-            reply = await aanswer(sid, text)
-        except Exception as e:
-            reply = f"Zumba error: {e}"[:1000]
-        finally:
-            nudge.cancel()
-        if not reply.strip():
-            reply = "(empty response)"
-        await self.api.send_message(chat_id, reply)
-        if is_voice and voice_reply_enabled():
-            await self._maybe_voice_reply(chat_id, reply)
-
-    async def _nudge(self, chat_id: int, delay: float = 10.0):
-        try:
-            await asyncio.sleep(delay)
-            await self.api.send_message(chat_id, "Still working…")
-        except asyncio.CancelledError:
-            pass
-        except Exception:
-            pass
+        if run is None:
+            run = run_store.create(CHANNEL, chat_id, int(update['update_id']), update)
+            if not run_store.claim(run['id']):
+                return
+        result = await self.execution.execute(run, sid, text)
+        if is_voice and voice_reply_enabled() and result['status'] == 'completed':
+            await self._maybe_voice_reply(chat_id, result['reply'])
 
     async def _handle_voice(self, chat_id: int, msg: dict, voice: dict) -> str:
         await self.api.send_chat_action(chat_id, "typing")
@@ -341,25 +448,39 @@ class TelegramChannel:
 
 
 _channel_task: asyncio.Task | None = None
+_channel: TelegramChannel | None = None
 
 
 def start_if_configured(app=None) -> asyncio.Task | None:
-    global _channel_task
+    global _channel_task, _channel
     if not get_token():
         return None
     if _channel_task is not None and not _channel_task.done():
         return _channel_task
     async def _runner():
+        global _channel
         ch = TelegramChannel()
+        _channel = ch
         try:
             await ch.run()
         except asyncio.CancelledError:
             pass
         except Exception as e:
             log.exception("telegram channel crashed: %s", e)
+        finally:
+            await ch.close()
+            _channel = None
     try:
         loop = asyncio.get_running_loop()
     except RuntimeError:
         return None
     _channel_task = loop.create_task(_runner())
     return _channel_task
+
+
+async def stop_if_running():
+    if _channel:
+        _channel.stop()
+    if _channel_task and not _channel_task.done():
+        _channel_task.cancel()
+        await asyncio.wait([_channel_task], timeout=6)

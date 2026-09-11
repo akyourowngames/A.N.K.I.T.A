@@ -11,6 +11,27 @@ from mcpclient import config as mcp_config
 from mcpclient import defaults
 from mcpclient import registry
 
+# Author-declared capabilities, keyed by exact tool identity, not language cues.
+# Unknown/new tools require approval until their capability is explicitly declared.
+TOOL_ACCESS = {
+    'mcp_search': 'read', 'mcp_list': 'read', 'shell_jobs': 'read',
+    'web_search': 'read', 'web_news': 'read', 'web_fetch': 'read',
+    'vault_search': 'read', 'vault_doc': 'read', 'vault_read': 'read',
+    'goal_show': 'read', 'goal_list': 'read', 'memory_search': 'read',
+    'brief': 'read', 'soul_show': 'read', 'soul_diff': 'read', 'me_show': 'read',
+    'vault_ask': 'read', 'vault_status': 'read', 'geo_geocode': 'read',
+    'geo_reverse': 'read', 'geo_route': 'read', 'geo_traffic': 'read',
+    'geo_nearby': 'read', 'geo_weather': 'read', 'geo_maps_link': 'read',
+    'geo_whereami': 'read', 'task_list': 'read',
+    'goal_add': 'local', 'goal_complete_step': 'local', 'remind_add': 'local',
+    'memory_remember': 'local', 'soul_propose': 'local', 'task_update': 'local',
+}
+
+# These capabilities share mutable session state even when a call is a read.
+TOOL_GROUP = {'mcp_search': 'registry', 'mcp_add': 'registry',
+              'mcp_remove': 'registry', 'mcp_list': 'registry',
+              'shell_run': 'shell', 'shell_jobs': 'shell', 'shell_kill': 'shell'}
+
 
 def _tool(name: str, description: str, props: dict, required: list) -> dict:
     return {
@@ -52,7 +73,7 @@ BUILTIN_TOOLS = [
     _tool("shell_run",
           "Run an UNRESTRICTED shell command (Windows PowerShell ONLY) in a PERSISTENT "
           "session — cwd, env vars and files carry over between calls, so chain "
-          "state (cd, $env:X=...) instead of re-stating it. No approval needed; "
+          "state (cd, $env:X=...) instead of re-stating it. Follow channel approval controls; "
           "every command is audit-logged. Prefer one chained command over many "
           "small ones. Interactive commands (needing stdin) are NOT supported. "
           "PowerShell syntax REQUIRED: Get-ChildItem (not ls), Get-Content (not cat), "
@@ -119,6 +140,12 @@ BUILTIN_TOOLS = [
     _tool("goal_list",
           "List goals with progress bars and next steps. Filter by status: active (default), all, done.",
           {"status": {"type": "string", "description": "active, all, or done"}}, []),
+    _tool('task_list', 'List retained tasks with IDs, expiry and attention state. Dormant or expired tasks are history, not instructions. Use to find a task the user wants to dismiss or explicitly resume.', {}, []),
+    _tool('task_update', 'Dismiss an unfinished task without deleting its history, or explicitly reactivate it ONLY when the current user asks to resume it. Reactivation requires a future until epoch; expired time-bound plans require a new expires_at. Never renew a task merely because it was recalled.',
+          {'kind': {'type': 'string', 'enum': ['goal', 'follow_up']},
+           'id': {'type': 'integer'}, 'action': {'type': 'string', 'enum': ['dismiss', 'reactivate']},
+           'until': {'type': 'number', 'description': 'Future epoch at which unsolicited attention stops'},
+           'expires_at': {'type': 'number', 'description': 'New future epoch when this action ceases to be useful'}}, ['kind', 'id', 'action']),
     _tool("memory_remember",
           "Store a fact in long-term memory (goes through the full salience/extraction pipeline). "
           "Use when the user says 'remember ...' or shares a durable fact/preference.",
@@ -217,7 +244,7 @@ def visible_tools() -> list:
     if os.getenv("ZUMBA_NO_MEMORY", "") == "1":
         tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
             ("__memory_remember", "__memory_search", "__memory_forget", "__brief",
-             "__goal_add", "__goal_list", "__goal_show", "__goal_complete_step", "__remind_add"))]
+             "__goal_add", "__goal_list", "__goal_show", "__goal_complete_step", "__remind_add", "__task_list", "__task_update"))]
     if os.getenv("ZUMBA_NO_GEO", "") == "1":
         tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
             ("__geo_geocode", "__geo_reverse", "__geo_route", "__geo_traffic", "__geo_nearby",
@@ -231,11 +258,17 @@ def visible_tools() -> list:
 async def handle(mgr: Any, tool: str, arguments: dict) -> str:
     """Execute a META_SERVER meta-tool (async). Returns plain text for the model."""
     args = arguments or {}
+    if tool in ('task_list', 'task_update'):
+        import asyncio
+        import json
+        from memory import task_lifecycle
+        return json.dumps(await asyncio.to_thread(task_lifecycle.tool_request, tool, args), ensure_ascii=False)
     if tool == "mcp_search":
         query = str(args.get("query", "")).strip()
         if not query:
             return "ERROR: 'query' is required."
-        results = registry.search(query, limit=int(args.get("limit", defaults.SEARCH_LIMIT) or defaults.SEARCH_LIMIT))
+        import asyncio
+        results = await asyncio.to_thread(registry.search, query, limit=int(args.get("limit", defaults.SEARCH_LIMIT) or defaults.SEARCH_LIMIT))
         mgr.meta_state["last_search"] = results
         if not results:
             return f"No MCP servers found in the registry for '{query}'."
@@ -534,11 +567,7 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             if not text:
                 return "ERROR: 'text' is required."
             await _asyncio6.to_thread(mem.capture_async, text, "", "tool", "remember")
-            try:
-                await _asyncio6.to_thread(mem.flush, 60.0)
-            except Exception:
-                pass
-            return "Remembered (ran through the memory pipeline)."
+            return "Saved to the durable memory inbox. Extraction/indexing continues in the background; the original text is already available to recall."
         if tool == "memory_search":
             query = str(args.get("query", "") or "").strip()
             if not query:
