@@ -22,6 +22,19 @@ _cache_lock = threading.Lock()
 _EXPLICIT_KINDS = ("remember", "manual", "note")
 
 
+def _checkpoint(con) -> None:
+    """Commit pending writes so no lock is held across network (LLM) calls.
+
+    SQLite (even in WAL mode) lets a single open write transaction block
+    every other writer with "database is locked". All LLM traffic must run
+    with a clean transaction — call this before each network phase.
+    """
+    try:
+        con.commit()
+    except Exception:
+        pass
+
+
 def prefilter_may_be_memorable(user_text: str, assistant_text: str = "") -> bool:
     from . import extraction as _extraction
     try:
@@ -155,7 +168,13 @@ class Memory:
                 (session_id, kind, user_text, assistant_text, "", h, db.now()),
             )
             episode_id = cur.lastrowid
+            # End phase 1 BEFORE indexing: the first embedding call loads the
+            # model and is slow — it must never run inside a write txn.
+            _checkpoint(con)
             self._index_episode(con, episode_id, user_text, assistant_text)
+            # Everything below that touches the network runs lock-free;
+            # writes re-open short transactions afterwards.
+            _checkpoint(con)
 
             explicit = str(kind or "") in _EXPLICIT_KINDS
             try:
@@ -172,9 +191,14 @@ class Memory:
                 known = [r["canonical_name"] for r in con.execute("SELECT canonical_name FROM entities LIMIT 40").fetchall()]
             except Exception:
                 known = []
-            ents, rels = extraction.extract_graph(user_text, assistant_text, known=known)
-            if not ents and not rels:
+            # The free extraction model flakes empty ~50% of the time on hard
+            # exchanges (measured live): retry up to 4 attempts total so one
+            # bad roll does not silently drop the whole exchange.
+            ents, rels = [], []
+            for _ in range(4):
                 ents, rels = extraction.extract_graph(user_text, assistant_text, known=known)
+                if ents or rels:
+                    break
             if not ents and not rels and not _style_hits:
                 return {"stored": True, "extracted": False, "episode": episode_id}
             if not ents and not rels:
@@ -200,15 +224,19 @@ class Memory:
             except Exception:
                 pass
             ent_id_of = self._reconcile_entities(con, ents, episode_id)
+            _checkpoint(con)
             n_relations = self._reconcile_relations(con, rels, ent_id_of, episode_id)
+            _checkpoint(con)
             try:
                 from identity import userprofile as _up
                 _up.extract_user_facts_from_relations(con, rels, episode_id)
             except Exception:
                 pass
+            _checkpoint(con)
             note_id = self._make_note(con, user_text, assistant_text, ents)
             if note_id:
                 consolidation.link_notes(con, note_id)
+                _checkpoint(con)
                 try:
                     consolidation.evolve_notes(con, note_id, use_llm=True, max_updates=3)
                 except Exception:
@@ -236,33 +264,61 @@ class Memory:
             )
         except Exception:
             pass
-    def _reconcile_entities(self, con, ents, episode_id) -> dict:
-        ent_id_of = {}
+    def _plan_entities(self, con, ents) -> list:
+        """Resolve each entity to an existing id (reads + LLM merge checks).
+
+        No writes: safe to run while other threads use the database.
+        """
+        planned = []
         for e in ents:
             name = (e.get("name") or "").strip()
             if not name:
                 continue
-            etype = (e.get("type") or "").strip() or "unknown"
             desc = (e.get("description") or "").strip()
-            eid = resolve.resolve_entity(con, name)
-            now = db.now()
+            planned.append({
+                "name": name,
+                "type": (e.get("type") or "").strip() or "unknown",
+                "desc": desc,
+                "eid": resolve.resolve_entity(con, name),
+                # Precompute while lock-free: embedding must never run
+                # inside the apply-phase write transaction.
+                "vec": embedder.embed_text(f"{name} {desc}" if desc else name),
+            })
+        return planned
+
+    def _apply_entities(self, con, planned, episode_id) -> dict:
+        """Insert planned entities. Short write-only phase (no network)."""
+        ent_id_of = {}
+        now = db.now()
+        for p in planned:
+            name = p["name"]
+            eid = p["eid"]
+            if eid is None:
+                # Re-check: an earlier entity in this same batch may have
+                # created it after planning (preserves sequential semantics).
+                row = con.execute("SELECT entity_id FROM aliases WHERE alias=?", (name,)).fetchone()
+                if row:
+                    eid = row["entity_id"]
+                else:
+                    row = con.execute("SELECT id FROM entities WHERE canonical_name=?", (name,)).fetchone()
+                    if row:
+                        eid = row["id"]
             if eid is None:
                 c = con.execute(
                     "INSERT INTO entities(name, canonical_name, type, description, confidence, importance, created_at, updated_at, access_count, last_access, decay) VALUES(?,?,?,?,?,?,?,?,0,0,1.0)",
-                    (name, name, etype, desc, 0.7, 0.6, now, now),
+                    (name, name, p["type"], p["desc"], 0.7, 0.6, now, now),
                 )
                 eid = c.lastrowid
                 con.execute("INSERT OR IGNORE INTO aliases(alias, entity_id) VALUES(?,?)", (name, eid))
-                vec = embedder.embed_text(f"{name} {desc}" if desc else name)
-                if vec:
+                if p.get("vec"):
                     try:
-                        con.execute("INSERT OR IGNORE INTO vec_entities(entity_id, embedding) VALUES(?,?)", (eid, db.pack_vec(vec)))
+                        con.execute("INSERT OR IGNORE INTO vec_entities(entity_id, embedding) VALUES(?,?)", (eid, db.pack_vec(p["vec"])))
                     except Exception:
                         pass
             else:
                 con.execute(
                     "UPDATE entities SET updated_at=?, description=? WHERE id=? AND length(?) > length(description)",
-                    (now, desc, eid, desc),
+                    (now, p["desc"], eid, p["desc"]),
                 )
             ent_id_of[name] = eid
             con.execute(
@@ -270,6 +326,14 @@ class Memory:
                 (episode_id, eid, 0.7),
             )
         return ent_id_of
+
+    def _reconcile_entities(self, con, ents, episode_id) -> dict:
+        # Plan (reads + LLM merge decisions) with a clean transaction, then
+        # one short write phase — never hold the lock across network calls.
+        _checkpoint(con)
+        planned = self._plan_entities(con, ents)
+        _checkpoint(con)
+        return self._apply_entities(con, planned, episode_id)
 
     def _reconcile_relations(self, con, rels, ent_id_of, episode_id) -> int:
         new_facts = []
@@ -342,13 +406,18 @@ class Memory:
         return None
 
     def _reindex_relation_vectors(self, con) -> None:
+        # Embed everything first (no writes outstanding), then insert: the
+        # embedding call must never run inside a write transaction.
+        pending = []
         for r in con.execute("SELECT id, fact, type FROM relations WHERE id NOT IN (SELECT relation_id FROM vec_relations)").fetchall():
             v = embedder.embed_text(f"{r['fact']} {r['type']}")
             if v:
-                try:
-                    con.execute("INSERT OR IGNORE INTO vec_relations(relation_id, embedding) VALUES(?,?)", (r["id"], db.pack_vec(v)))
-                except Exception:
-                    pass
+                pending.append((r["id"], v))
+        for rid, v in pending:
+            try:
+                con.execute("INSERT OR IGNORE INTO vec_relations(relation_id, embedding) VALUES(?,?)", (rid, db.pack_vec(v)))
+            except Exception:
+                pass
         for r in con.execute("SELECT id, type, fact FROM relations WHERE fact!=''").fetchall():
             try:
                 con.execute("INSERT OR REPLACE INTO fts_relations(rowid, fact, type) VALUES(?,?,?)", (r["id"], r["fact"], r["type"]))
@@ -500,10 +569,18 @@ class Memory:
                 task_lifecycle.review_pending(con)
             except Exception:
                 pass
+            # Each phase below fans out to LLM calls; checkpoint between them
+            # so a phase never runs network I/O on top of an older phase's
+            # uncommitted writes (the "database is locked" pattern).
+            _checkpoint(con)
             links = consolidation.link_notes(con)
+            _checkpoint(con)
             invalidations = consolidation.sweep_contradictions(con)
+            _checkpoint(con)
             communities = consolidation.rebuild_communities(con)
+            _checkpoint(con)
             core = consolidation.rewrite_core(con)
+            _checkpoint(con)
             user_facts_n = 0
             try:
                 from identity import userprofile as _up
@@ -512,6 +589,7 @@ class Memory:
                        WHERE r.invalid_at IS NULL ORDER BY r.created_at DESC LIMIT 60""").fetchall()
                 rels = [{"type": r["type"], "fact": r["fact"], "confidence": r["confidence"], "source": ""} for r in rows]
                 user_facts_n = _up.extract_user_facts_from_relations(con, rels)
+                _checkpoint(con)
                 try:
                     _up.rewrite_user_md(con, use_llm=True)
                 except Exception:

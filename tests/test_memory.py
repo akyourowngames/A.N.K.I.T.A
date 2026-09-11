@@ -77,8 +77,88 @@ def test_reinforce_and_decay(mem_db):
 def test_fts_query_sanitized():
     from memory.retrieval import _fts_query
 
-    assert _fts_query('what game?? is "Ankit" building?') == "what OR game OR is OR Ankit OR building"
+    # Function words must not outrank content tokens ("what is my email"
+    # has to reach the episode containing "email", not every "is"/"my").
+    assert _fts_query('what game?? is "Ankit" building?') == (
+        "game OR games OR gaming OR ankit OR ankits OR ankiting OR building OR build")
+    assert _fts_query("what is my email") == "email OR emails OR emailing"
+    assert _fts_query("where do i live") == "live OR lives OR living"
     assert _fts_query("!!!") == ""
+    assert _fts_query("what is it") != ""
+
+
+def test_salience_prompt_covers_named_people():
+    # Regression: "dont reply to dhanda just reply to ziya" was judged NOT
+    # memorable, so people facts never entered the graph. The calibration
+    # must keep third-party/people preferences memorable.
+    from memory import extraction as _ext
+
+    assert "dont reply to dhanda just reply to ziya" in _ext.SALIENCE_PROMPT
+    assert "naming a specific person" in _ext.SALIENCE_PROMPT
+
+
+def test_ingest_retries_flaky_extraction(mem_db, monkeypatch):
+    # The free extraction model returns empty ~50% of the time on hard
+    # exchanges (measured live on ep86): ingest must retry instead of
+    # silently dropping the exchange.
+    from memory import extraction as _ext
+    from memory.service import Memory
+
+    calls = []
+
+    def flaky(user, assistant, known=None):
+        calls.append(1)
+        if len(calls) < 3:
+            return [], []
+        return ([{"name": "Ziya", "type": "person", "description": "d"}],
+                [{"source": "Ziya", "target": "Ziya", "type": "is",
+                  "fact": "Ziya is Ziya", "confidence": 0.9}])
+
+    monkeypatch.setattr(_ext, "should_remember", lambda u, a: True)
+    monkeypatch.setattr(_ext, "extract_graph", flaky)
+    m = Memory(con=mem_db)
+    try:
+        r = m.ingest_episode("reply to ziya", "done", session_id="s-flake")
+    finally:
+        if m._own:
+            pass
+    assert r["extracted"] is True
+    assert len(calls) == 3
+    assert mem_db.execute("SELECT COUNT(*) FROM entities").fetchone()[0] >= 1
+
+
+def test_should_remember_passthrough(monkeypatch):
+    from memory import extraction as _ext
+    from memory import llm as _llm
+
+    monkeypatch.setattr(_llm, "chat_json", lambda *a, **k: {"memorable": True, "reasons": ["t"]})
+    assert _ext.should_remember("dont reply to dhanda just reply to ziya", "Done.") is True
+    monkeypatch.setattr(_llm, "chat_json", lambda *a, **k: {"memorable": False, "reasons": []})
+    assert _ext.should_remember("thanks!", "anytime") is False
+
+
+def test_user_md_kill_switch(monkeypatch):
+    from identity import userprofile as up
+
+    monkeypatch.setenv("ZUMBA_NO_USER_MD", "1")
+    assert up.user_md_disabled() is True
+    assert up.profile_block() == ""
+    monkeypatch.delenv("ZUMBA_NO_USER_MD")
+    assert up.user_md_disabled() is False
+
+
+def test_memory_block_message_labels_evidence():
+    from core.chat_pipeline import memory_block_message
+
+    msg = memory_block_message("Krish lives in Delhi.")
+    assert "authoritative" in msg.content
+    assert "Delhi" in msg.content
+
+
+def test_recall_budget_default():
+    from memory import fast_recall
+
+    assert fast_recall._budget() == 2.0
 
 
 def test_rrf_fusion_prefers_consistent_ids():

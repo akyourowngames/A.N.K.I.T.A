@@ -21,7 +21,7 @@ if "--profile" in sys.argv:
     from knowledge import extraction, storage, reasoning
     if "--auto" in sys.argv:
         import os
-        os.environ["ZUMBA_KNOWLEDGE_MODEL"] = "nvidia/nemotron-3-super-120b-a12b"
+        os.environ["ZUMBA_KNOWLEDGE_MODEL"] = "stepfun/step-3.7-flash:free"
     original = llm.chat_json
     def traced(*args, **kwargs):
         result = original(*args, **kwargs)

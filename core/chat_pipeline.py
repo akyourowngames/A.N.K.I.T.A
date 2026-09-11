@@ -88,6 +88,16 @@ def build_messages(session_id: str, system: str, user_text: str) -> List[Message
     return msgs
 
 
+MEMORY_LABEL = (
+    "Relevant memory (authoritative for personal facts — answer from this; "
+    "never say you lack personal information stated here):\n"
+)
+
+
+def memory_block_message(mem_block: str):
+    return Message(role="system", content=MEMORY_LABEL + mem_block)
+
+
 def recall_block(query: str) -> str:
     try:
         import os
@@ -117,7 +127,7 @@ def answer(session_id: str, text: str, system: str = DEFAULT_SYSTEM,
     msgs = build_messages(session_id, system or "", text)
     mem_block = recall_block(text)
     if mem_block:
-        msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+        msgs.insert(0, memory_block_message(mem_block))
     store.add_message(session_id, "user", text)
     transcript = []
     try:

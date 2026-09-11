@@ -94,5 +94,47 @@ def set_default_model(model: str) -> None:
         pass
 
 
+# --- Knowledge-graph provider (separate from chat) ---------------------------
+# Chat/normal tasks use the NIM trio above. Graph ingestion, extraction and
+# identity resolution need reliable structured JSON, which currently comes
+# from the Kilo gateway's nex-mini free model (verified live 2026-09-11:
+# step-3.7-flash:free burns the whole token budget on hidden reasoning and
+# returns empty on extraction prompts; nex-n2.5-mini returns valid schema).
+# Single switch point: set these three and all memory/knowledge LLM traffic
+# follows (chat is untouched).
+KNOWLEDGE_DEFAULT_MODEL = "nex-agi/nex-n2.5-mini:free"
+ENV_KNOWLEDGE_MODEL = "ZUMBA_KNOWLEDGE_MODEL"
+ENV_KNOWLEDGE_API_KEY = "ZUMBA_KNOWLEDGE_API_KEY"
+ENV_KNOWLEDGE_BASE_URL = "ZUMBA_KNOWLEDGE_BASE_URL"
+
+
+def get_knowledge_model() -> str:
+    env_model = (os.getenv(ENV_KNOWLEDGE_MODEL) or "").strip()
+    if env_model:
+        return env_model
+    return KNOWLEDGE_DEFAULT_MODEL
+
+
+def get_knowledge_base_url() -> str:
+    explicit = _first_env(ENV_KNOWLEDGE_BASE_URL, *LEGACY_BASE_URLS)
+    return (explicit or get_base_url()).rstrip("/")
+
+
+def get_knowledge_api_key(require: bool = True) -> str:
+    key = _first_env(ENV_KNOWLEDGE_API_KEY, *LEGACY_API_KEYS)
+    if key:
+        return key
+    return get_api_key(require=require)
+
+
+def get_knowledge_llm() -> dict:
+    """Triple used by all memory/knowledge structured calls: chat is untouched."""
+    return {
+        "model": get_knowledge_model(),
+        "api_key": get_knowledge_api_key(require=True),
+        "base_url": get_knowledge_base_url(),
+    }
+
+
 def get_sessions_dir() -> Path:
     return Path(__file__).resolve().parent / SESSIONS_DIR_NAME

@@ -9,9 +9,20 @@ maintains user.md from graph + table. Recall ALWAYS prepends user.md
 
 from __future__ import annotations
 
+import os
 import time
 
 PROFILE_CAP = 1800
+
+
+def user_md_disabled() -> bool:
+    """Kill-switch: the knowledge graph is the only source of truth.
+
+    With ZUMBA_NO_USER_MD=1 the profile file is never read nor regenerated —
+    personal facts come straight from graph recall (entities, relations,
+    user_facts). Reversible: unset + run consolidation to rebuild user.md.
+    """
+    return (os.getenv("ZUMBA_NO_USER_MD") or "").strip() == "1"
 
 SECTIONS = ("Identity", "Projects", "People", "Preferences", "Goals", "Current focus")
 
@@ -30,6 +41,8 @@ def load_profile_text(max_chars: int = PROFILE_CAP) -> str:
 
 
 def profile_block(max_chars: int = PROFILE_CAP) -> str:
+    if user_md_disabled():
+        return ""
     text = load_profile_text(max_chars)
     if not text:
         return ""
@@ -107,6 +120,8 @@ def rewrite_user_md(con, use_llm: bool = True) -> str:
             )
             if out and "## " in out:
                 capped = out.strip()[:PROFILE_CAP]
+                if user_md_disabled():
+                    return capped  # graph stays the only store; do not recreate the file
                 try:
                     from identity import soul as _soul
                     _soul.user_path().write_text(capped, encoding="utf-8")

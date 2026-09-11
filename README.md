@@ -144,6 +144,28 @@ python main.py doctor                 # terminal/rendering diagnostics
 python main.py version
 ```
 
+### Desktop voice GUI (Jarvis-style)
+
+```powershell
+pip install -r requirements-desktop.txt
+python desktop/run.py               # voice GUI: mic toggle, chat, interrupt, exit
+python desktop/run.py --text-only   # same GUI, typing only (no mic/speaker)
+```
+
+Frameless black window with the arc-reactor gif, Home/Chat screens, and a
+status line (`Listening...` → `Thinking...` → `Answering...` → `Available...`).
+Voice loop: mic toggle (or typed Submit) → Chrome Web Speech STT (Hindi by
+default, `ZUMBA_STT_LANG`) with live partial words on the status line →
+auto-translate to English → zumba answer → edge-tts speech. Interrupt
+anytime: mic toggle off, say "stop", or talk over it (barge-in keywords).
+Say "exit"/"bye" or press X to close.
+
+Mic troubleshooting (`python desktop/mic_test.py` — speak during the 6s test):
+- Fake device listed → fixed already: the app never substitutes a fake mic.
+- Default input is a Bluetooth hands-free mic → set `Settings → Sound →
+  Input` to `Microphone Array (Realtek Audio)` (Bluetooth HFP mics are
+  usually silent while stereo output is active).
+
 ### In-chat commands
 
 | Command        | Action                                        |

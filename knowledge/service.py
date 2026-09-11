@@ -34,8 +34,8 @@ def enqueue(name: str, kind: str, content: bytes, source_key: str = "upload"):
         if row:
             return row["id"]
         doc_id = uid()
-        con.execute("INSERT INTO documents VALUES(?,?,?,?,?,?,?)", (doc_id, name, kind, source_key, digest, content, time.time()))
-        con.execute("INSERT INTO jobs(id,updated_at) VALUES(?,?)", (doc_id, time.time()))
+        storage.execute_retry(con, "INSERT INTO documents VALUES(?,?,?,?,?,?,?)", (doc_id, name, kind, source_key, digest, content, time.time()))
+        storage.execute_retry(con, "INSERT INTO jobs(id,updated_at) VALUES(?,?)", (doc_id, time.time()))
         return doc_id
 
 
@@ -44,10 +44,12 @@ def stage(doc_id, label, **values):
     assert set(values) <= allowed
     with storage.connect() as con:
         fields = ["stage=?", "updated_at=?", "lease_until=?"] + [f"{k}=?" for k in values]
-        con.execute(f"UPDATE jobs SET {','.join(fields)} WHERE id=?", (label, time.time(), time.time() + 600, *values.values(), doc_id))
+        storage.execute_retry(con, f"UPDATE jobs SET {','.join(fields)} WHERE id=?", (label, time.time(), time.time() + 600, *values.values(), doc_id))
 
 
-def resolve(con, entity, vector, chunk_id, context):
+def resolve_plan(con, entity, vector, context):
+    """Identity decision: reads + one LLM call. No writes — safe to run with
+    other writers active (never hold a lock across the network)."""
     name = entity["name"].strip()
     rows = [dict(r) for r in con.execute("SELECT * FROM entities")]
     def rank(row):
@@ -77,11 +79,22 @@ def resolve(con, entity, vector, chunk_id, context):
             raise ValueError("Entity resolution returned invalid JSON")
         match = next((r for r in candidates if r["id"] == decision.get("id")), None)
         reason = str(decision.get("reason") or reason)
+    return {"name": name, "entity": entity, "vector": vector,
+            "match_id": match["id"] if match else None,
+            "match_aliases": match["aliases"] if match else "[]",
+            "reason": reason}
+
+
+def resolve_apply(con, plan, chunk_id):
+    """Apply one identity decision. Short write-only phase (no network)."""
+    name = plan["name"]
+    entity = plan["entity"]
+    vector = plan["vector"]
     now = time.time()
     aliases = [a for a in entity.get("aliases", []) if isinstance(a, str)] if isinstance(entity.get("aliases"), list) else []
-    if match:
-        entity_id = match["id"]
-        aliases = sorted(set(aliases + json.loads(match["aliases"]) + [name]))
+    if plan["match_id"]:
+        entity_id = plan["match_id"]
+        aliases = sorted(set(aliases + json.loads(plan["match_aliases"]) + [name]))
         con.execute("UPDATE entities SET aliases=?,updated_at=? WHERE id=?", (json.dumps(aliases), now, entity_id))
     else:
         entity_id = uid()
@@ -90,9 +103,14 @@ def resolve(con, entity, vector, chunk_id, context):
             str(entity.get("description") or ""), json.dumps(aliases), extraction.score(entity.get("confidence")),
             now, now, json.dumps(vector) if vector else None))
     con.execute("INSERT INTO resolution_audit(entity_id,mention,decision,reason,chunk_id,created_at) VALUES(?,?,?,?,?,?)",
-                (entity_id, name, "merged" if match else "created", reason, chunk_id, now))
+                (entity_id, name, "merged" if plan["match_id"] else "created", plan["reason"], chunk_id, now))
     con.execute("INSERT OR IGNORE INTO mentions VALUES(?,?,?)", (entity_id, chunk_id, entity["evidence"]))
     return entity_id
+
+
+def resolve(con, entity, vector, chunk_id, context):
+    """Backward-compat wrapper: plan then apply on the same connection."""
+    return resolve_apply(con, resolve_plan(con, entity, vector, context), chunk_id)
 
 
 def _parallelism():
@@ -122,10 +140,17 @@ def _process_chunk(doc, c):
 
 
 def _commit_chunk(payload):
-    """Serialize all database work and LLM-backed identity resolution."""
+    """Serialize all database work and LLM-backed identity resolution.
+
+    Two phases: identity decisions (reads + LLM, no writes, never holding a
+    lock across the network) then one short write transaction for all
+    inserts. This is what used to wedge graph.db with "database is locked".
+    """
     c, entities, relations, vectors = payload["chunk"], payload["entities"], payload["relations"], payload["vectors"]
     with storage.connect() as con:
-        mapped = {e["name"]: resolve(con, e, v, c["id"], c["text"]) for e, v in zip(entities, vectors)}
+        plans = [resolve_plan(con, e, v, c["text"]) for e, v in zip(entities, vectors)]
+    with storage.connect() as con:
+        mapped = {p["name"]: resolve_apply(con, p, c["id"]) for p in plans}
         method = f"{', '.join(payload['trace']) or llm._memory_model()} / extraction + independent entailment / v1"
         for r in relations:
             source, target, typ = mapped[r["source"]], mapped[r["target"]], r["type"].strip()
@@ -229,15 +254,26 @@ def sync_sources():
             rows = source.execute("SELECT id,user_text,session_id FROM episodes WHERE id>? ORDER BY id LIMIT 100", (cursor,)).fetchall()
         finally:
             source.close()
+        advanced = False
         for row in rows:
             if row["user_text"].strip():
                 enqueue(f"Conversation {row['id']}", "memory", row["user_text"].encode(), f"episode:{row['id']}")
             cursor = row["id"]
+            advanced = True
+        # Write sync state only when something changed: this runs every few
+        # seconds and unconditional writes contend with ingestion commits.
         with storage.connect() as con:
-            con.execute("INSERT OR REPLACE INTO sync_state VALUES('episode_cursor',?)", (str(cursor),))
-    with storage.connect() as con:
-        con.execute("INSERT OR REPLACE INTO sync_state VALUES('memory_available',?)", (str(path.is_file()).lower(),))
-        con.execute("INSERT OR REPLACE INTO sync_state VALUES('error','')")
+            current = {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM sync_state")}
+            writes = {}
+            if advanced and current.get("episode_cursor") != str(cursor):
+                writes["episode_cursor"] = str(cursor)
+            available = str(path.is_file()).lower()
+            if current.get("memory_available") != available:
+                writes["memory_available"] = available
+            if current.get("error") != "":
+                writes["error"] = ""
+            for key, value in writes.items():
+                storage.execute_retry(con, "INSERT OR REPLACE INTO sync_state VALUES(?,?)", (key, value))
 
 
 _stop = threading.Event()
@@ -255,7 +291,7 @@ def start():
             except Exception as exc:
                 log.exception("Memory sync failed")
                 with storage.connect() as con:
-                    con.execute("INSERT OR REPLACE INTO sync_state VALUES('error',?)", (str(exc)[:400],))
+                    storage.execute_retry(con, "INSERT OR REPLACE INTO sync_state VALUES('error',?)", (str(exc)[:400],))
             _stop.wait(5)
     def work():
         while not _stop.is_set():

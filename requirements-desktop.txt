@@ -1,0 +1,8 @@
+# Desktop voice GUI (same stack as the Jarvis reference: Qt + Chrome STT + edge-tts).
+# Install with:  pip install -r requirements-desktop.txt
+PyQt5>=5.15
+pygame>=2.5
+edge-tts>=7.0
+selenium>=4.20
+webdriver-manager>=4.0
+mtranslate>=1.8

@@ -16,6 +16,7 @@ from core.models import Message
 import core.store as store
 from core.chat import Conversation
 from core.chat_pipeline import build_messages as _pipeline_build, recall_block as _pipeline_recall
+from core.chat_pipeline import memory_block_message as _memory_block_message
 from server.tts import HEAVY_MALE_VOICES, tts_short_text as _tts_short_text
 
 @asynccontextmanager
@@ -44,6 +45,7 @@ app.include_router(knowledge_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:3000", "http://127.0.0.1:3000"],
+    allow_origin_regex=r"http://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -124,7 +126,7 @@ def chat(body: ChatRequest):
     msgs = _build_messages(sid, body.system or "", body.message)
     mem_block = _recall_block(body.message)
     if mem_block:
-        msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+        msgs.insert(0, _memory_block_message(mem_block))
     store.add_message(sid, "user", body.message)
     try:
         result = api_client.chat_completion(msgs, model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature)
@@ -174,7 +176,7 @@ def chat_agent(body: ChatRequest):
                 msgs = _build_messages(sid, body.system or "", body.message)
                 mem_block = _recall_block(body.message)
                 if mem_block:
-                    msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+                    msgs.insert(0, _memory_block_message(mem_block))
                 holder["context_ms"] = round((time.monotonic() - started) * 1000)
                 store.add_message(sid, "user", body.message)
                 from mcpclient.manager import manager, run_tool
@@ -234,7 +236,7 @@ def chat_stream(body: ChatRequest):
     msgs = _build_messages(sid, body.system or "", body.message)
     mem_block = _recall_block(body.message)
     if mem_block:
-        msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+        msgs.insert(0, _memory_block_message(mem_block))
     store.add_message(sid, "user", body.message)
 
     def gen():
@@ -284,7 +286,7 @@ async def ws_chat(ws: WebSocket):
             msgs = _build_messages(sid, body.system or "", body.message)
             mem_block = _recall_block(body.message)
             if mem_block:
-                msgs.insert(0, Message(role="system", content="Relevant memory:\n" + mem_block))
+                msgs.insert(0, _memory_block_message(mem_block))
             store.add_message(sid, "user", body.message)
             await ws.send_json({"type": "start", "session_id": sid, "model": model})
             full = ""

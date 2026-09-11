@@ -117,6 +117,71 @@ def test_importance_weighting_prefers_high_importance(tmp_path, monkeypatch):
     con.close()
 
 
+def test_hub_damping_paraphrase_ranks_first(tmp_path, monkeypatch):
+    """A hub entity (many generic relations) must not bury the paraphrase
+    match: 'where does H live' should top 'H lives in Delhi' above
+    H-owns-X noise (regression: hub PPR mass used to win regardless)."""
+    con = _con(tmp_path, monkeypatch)
+    from memory import embedder, retrieval
+    now = db.now()
+    hub = con.execute(
+        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('H','H','person',?,?)",
+        (now, now)).lastrowid
+    for i in range(6):
+        x = con.execute(
+            "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES(?,?, 'thing',?,?)",
+            (f"X{i}", f"X{i}", now, now)).lastrowid
+        r = con.execute(
+            "INSERT INTO relations(source_id, target_id, type, fact, valid_at, created_at) VALUES(?,?,?,?,?,?)",
+            (hub, x, "owns", f"H owns X{i}", now, now)).lastrowid
+        v = embedder.embed_text(f"H owns X{i}")
+        con.execute("INSERT INTO vec_relations(relation_id, embedding) VALUES(?,?)", (r, db.pack_vec(v)))
+        con.execute("INSERT OR REPLACE INTO fts_relations(rowid, fact, type) VALUES(?,?,?)", (r, f"H owns X{i}", "owns"))
+    city = con.execute(
+        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('Delhi','Delhi','city',?,?)",
+        (now, now)).lastrowid
+    target = con.execute(
+        "INSERT INTO relations(source_id, target_id, type, fact, valid_at, created_at) VALUES(?,?,?,?,?,?)",
+        (hub, city, "lives in", "H lives in Delhi", now, now)).lastrowid
+    v = embedder.embed_text("H lives in Delhi")
+    con.execute("INSERT INTO vec_relations(relation_id, embedding) VALUES(?,?)", (target, db.pack_vec(v)))
+    con.execute("INSERT OR REPLACE INTO fts_relations(rowid, fact, type) VALUES(?,?,?)",
+                (target, "H lives in Delhi", "lives in"))
+    for eid in (hub, city):
+        ve = embedder.embed_text("H Delhi")
+        con.execute("INSERT OR IGNORE INTO vec_entities(entity_id, embedding) VALUES(?,?)", (eid, db.pack_vec(ve)))
+    con.commit()
+    hits = retrieval.search(con, "where does H live", top_k=8)
+    rels = [h for h in hits if h.kind == "relation"]
+    assert rels, "expected relation hits"
+    assert rels[0].meta["id"] == target
+    con.close()
+
+
+def test_duplicate_relations_deduped(tmp_path, monkeypatch):
+    con = _con(tmp_path, monkeypatch)
+    from memory import embedder, retrieval
+    now = db.now()
+    a = con.execute(
+        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('A','A','person',?,?)",
+        (now, now)).lastrowid
+    b = con.execute(
+        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('B','B','thing',?,?)",
+        (now, now)).lastrowid
+    for fact in ("A uses B", "A uses B "):
+        r = con.execute(
+            "INSERT INTO relations(source_id, target_id, type, fact, valid_at, created_at) VALUES(?,?,?,?,?,?)",
+            (a, b, "uses", fact, now, now)).lastrowid
+        v = embedder.embed_text(fact)
+        con.execute("INSERT INTO vec_relations(relation_id, embedding) VALUES(?,?)", (r, db.pack_vec(v)))
+        con.execute("INSERT OR REPLACE INTO fts_relations(rowid, fact, type) VALUES(?,?,?)", (r, fact, "uses"))
+    con.commit()
+    hits = retrieval.search(con, "what does A use", top_k=8)
+    rels = [h for h in hits if h.kind == "relation" and "uses" in h.text]
+    assert len(rels) == 1
+    con.close()
+
+
 def test_ingest_immediate_recall_latency(tmp_path, monkeypatch):
     from memory.service import Memory
     con = _con(tmp_path, monkeypatch)

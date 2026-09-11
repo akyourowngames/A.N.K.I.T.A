@@ -11,31 +11,35 @@ from . import graph, llm
 
 
 def rebuild_communities(con) -> int:
-    """Run community detection and generate a summary per detected community."""
+    """Run community detection and generate a summary per detected community.
+
+    Two phases: plan (reads + LLM summaries, no writes) then a single short
+    write phase — the lock is never held across network calls.
+    """
     id_of, edges = graph.build_graph(con)
     if not edges:
         return 0
     communities = graph.detect_communities(id_of, edges)
-    con.execute("DELETE FROM community_members WHERE community_id IN (SELECT id FROM communities WHERE level=0)")
-    con.execute("DELETE FROM communities WHERE level=0")
-    count = 0
     ent_id_by_canon = {}
     for r in con.execute("SELECT id, canonical_name FROM entities").fetchall():
         ent_id_by_canon[r["canonical_name"]] = r["id"]
+    planned = []
     for members, level in communities:
         ent_ids = [ent_id_by_canon[m] for m in members if m in ent_id_by_canon]
         if not ent_ids:
             continue
+        planned.append((level, ent_ids, _community_summary(con, ent_ids)))
+    con.execute("DELETE FROM community_members WHERE community_id IN (SELECT id FROM communities WHERE level=0)")
+    con.execute("DELETE FROM communities WHERE level=0")
+    count = 0
+    for level, ent_ids, summary in planned:
         cur = con.execute(
             "INSERT INTO communities(label, level, summary, created_at, updated_at) VALUES(?,?,?,?,?)",
-            (None, level, "", time.time(), time.time()),
+            (None, level, summary or "", time.time(), time.time()),
         )
         cid = cur.lastrowid
         for eid in ent_ids:
             con.execute("INSERT OR IGNORE INTO community_members(community_id, entity_id) VALUES(?,?)", (cid, eid))
-        summary = _community_summary(con, ent_ids)
-        if summary:
-            con.execute("UPDATE communities SET summary=? WHERE id=?", (summary, cid))
         count += 1
     return count
 
@@ -133,7 +137,9 @@ def evolve_notes(con, new_note_id: int, use_llm: bool = True, max_updates: int =
             return 0
         emb = {r["id"]: r["embedding"] for r in rows}
         ranked = [oid for oid, _s in _cosine_all(new_emb["embedding"], emb) if oid != new_note_id][:max_updates]
-        n = 0
+        # Phase 1: LLM judgments with no writes outstanding. Phase 2 below
+        # applies them in one short write burst.
+        updates = []
         for oid in ranked:
             old = con.execute("SELECT title, content, keywords FROM notes WHERE id=?", (oid,)).fetchone()
             if not old:
@@ -155,6 +161,10 @@ def evolve_notes(con, new_note_id: int, use_llm: bool = True, max_updates: int =
                         kw = _j.dumps([str(k)[:40] for k in kws if str(k).strip()][:5])
                 except Exception:
                     desc, kw = "", ""
+            if desc or kw:
+                updates.append((oid, desc, kw))
+        n = 0
+        for oid, desc, kw in updates:
             if desc:
                 try:
                     con.execute("UPDATE notes SET description=?, updated_at=? WHERE id=?",

@@ -15,14 +15,17 @@ def _tool_calls_from(response: Any) -> list:
 
 def _transient(status: Any) -> bool:
     try:
-        return int(status) in (429, 502, 503)
+        # 500 rides along: the NIM gateway emits transient 500s under load
+        # (and after long tool-turn histories). Without this, one flaky turn
+        # kills the whole answer with the "temporarily unreachable" fallback.
+        return int(status) in (408, 429, 500, 502, 503)
     except Exception:
         return False
 
 
 def _call_with_retry(call_model, convo, model, tools, call_kwargs, retries: int = 2, control=None):
-    """Call the model, retrying transient gateway failures (502/503). 429s
-    already honor Retry-After inside api_client — only one agent-level retry
+    """Call the model, retrying transient gateway failures (408/429/500/502/503).
+    429s already honor Retry-After inside api_client — only one agent-level retry
     there to avoid long stalls."""
     import time as _time
 

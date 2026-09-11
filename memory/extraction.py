@@ -25,14 +25,19 @@ Calibration — memorable (store these):
 - "my name is Sam" / assistant: "Hi!" -> true (first-person identity fact, judge USER text primarily)
 - "I prefer dark mode for everything" -> true (stable preference)
 - "remember that the deploy key expires in June" -> true (explicit remember request)
+- "dont reply to dhanda just reply to ziya" / assistant: "Done" -> true (people preference: who to engage vs avoid — stable social fact)
+- "there are two people only, me and ziya" -> true (named people in the user's life persist across turns)
+- "ziya put up that note about crush" -> true (named person + their doings, referenceable later)
 
 Calibration — NOT memorable (skip these):
 - "thanks!" / assistant: "anytime" -> false (pure pleasantry, no fact)
 - "haha nice" / assistant: "glad you liked it" -> false (chit-chat)
 - "what time is it" / assistant: "3pm" -> false (one-off lookup, no future reuse)
 
-Bias: when in doubt about a first-person statement ("I ...", "my ..."), lean MEMORABLE.
-A false negative loses the user's identity forever; a false positive only costs tokens.
+Bias: when in doubt about a first-person statement ("I ...", "my ...") or any
+statement naming a specific person (friend, contact, who to reply to or
+avoid), lean MEMORABLE. A false negative loses the user's people and identity
+forever; a false positive only costs tokens.
 
 Do NOT store: transient pleasantries, pure chit-chat without facts, content that is only about the current one-off task and has no future reuse.
 

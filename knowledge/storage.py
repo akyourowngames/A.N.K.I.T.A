@@ -2,7 +2,31 @@
 from contextlib import contextmanager
 import os
 from pathlib import Path
+import random
 import sqlite3
+import time
+
+# Small status writes (stage heartbeats, sync cursors) must never kill a
+# worker on transient contention: retry busy locks with backoff.
+_BUSY_RETRIES = 8
+
+
+def _is_locked(exc: BaseException) -> bool:
+    return isinstance(exc, sqlite3.OperationalError) and "locked" in str(exc).lower()
+
+
+def execute_retry(con, sql, params=(), retries=_BUSY_RETRIES):
+    """Execute one statement, retrying SQLITE_BUSY with exponential backoff."""
+    last = None
+    for attempt in range(max(1, retries)):
+        try:
+            return con.execute(sql, params)
+        except sqlite3.OperationalError as exc:
+            if not _is_locked(exc):
+                raise
+            last = exc
+            time.sleep(min(5.0, 0.05 * (2 ** attempt)) + random.uniform(0, 0.05))
+    raise last
 
 
 def home() -> Path:
@@ -62,7 +86,9 @@ def connect():
     con = sqlite3.connect(home() / "graph.db", timeout=30)
     con.row_factory = sqlite3.Row
     con.execute("PRAGMA journal_mode=WAL")
-    con.execute("PRAGMA synchronous=FULL")
+    # NORMAL is the WAL-appropriate durability level; FULL fsyncs on every
+    # commit and stretches each lock window for no crash-safety gain here.
+    con.execute("PRAGMA synchronous=NORMAL")
     con.execute("PRAGMA foreign_keys=ON")
     con.executescript(SCHEMA)
     try:

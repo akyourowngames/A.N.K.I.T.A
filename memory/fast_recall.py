@@ -49,7 +49,16 @@ def revision():
     return tuple(result)
 
 
-def recall(query, budget=.35):
+def _budget() -> float:
+    import os
+
+    try:
+        return max(0.1, float(os.getenv("ZUMBA_RECALL_BUDGET", "2.0") or 2.0))
+    except ValueError:
+        return 2.0
+
+
+def recall(query, budget=None):
     from identity.userprofile import profile_block
     from memory import get_memory
     baseline = "\n".join(filter(None, [profile_block(), local_context(query), inbox.recent_context()]))
@@ -63,7 +72,7 @@ def recall(query, budget=.35):
             _active = (key, finished)
             def run():
                 try:
-                    text = get_memory().recall(query, top_k=6, max_bytes=3500) or ""
+                    text = get_memory().recall(query, top_k=8, max_bytes=4000) or ""
                     with _lock:
                         _cache[key] = text
                         while len(_cache) > 32:
@@ -75,6 +84,6 @@ def recall(query, budget=.35):
             threading.Thread(target=run, daemon=True, name="zumba-recall").start()
         wait_for = _active[1] if _active[0] == key else None
     if wait_for:
-        wait_for.wait(budget)
+        wait_for.wait(budget if budget is not None else _budget())
     with _lock:
         return (_cache.get(key, "") + "\n" + baseline).strip()

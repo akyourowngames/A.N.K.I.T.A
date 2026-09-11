@@ -36,12 +36,62 @@ def _vector(con, q, table, id_col, limit):
     return [(r["rid"], 1.0 - float(r["distance"])) for r in rows]
 
 
+# Structural FTS tokenization only (not a semantic classifier): drop
+# high-frequency English function words so they cannot outrank rare content
+# tokens (e.g. "what is my email" must reach the episode containing "email").
+_FTS_STOPWORDS = frozenset(
+    "a an the and or but if then else when what which who whom whose why how "
+    "where is are was were be been being am do does did done have has had having "
+    "my your his her its our their me you him us them this that these those "
+    "i we it to of in on at for with as by from up out about into over after "
+    "also just so than too very can will would should could there here what "
+    "s t m d ll re ve don doesn didn isn aren wasn weren haven hasn hadn won "
+    "wouldn couldn shouldn".split()
+)
+
+
+def _variant_forms(token: str) -> list:
+    """Light English inflections so 'live' also matches 'lives'/'living'.
+
+    FTS5 uses no stemming, so without this a query never meets an episode
+    that inflects the same word. Purely morphological (no semantics).
+    """
+    forms = [token]
+    if len(token) > 3 and token.isalpha():
+        if token.endswith("ing"):
+            forms.append(token[:-3])
+        elif token.endswith("ed"):
+            forms.append(token[:-2])
+            forms.append(token[:-1])
+        elif token.endswith("es"):
+            forms.append(token[:-2])
+        elif token.endswith("s"):
+            forms.append(token[:-1])
+        else:
+            forms.append(token + "s")
+            if token.endswith("e"):
+                forms.append(token[:-1] + "ing")
+            else:
+                forms.append(token + "ing")
+    seen = []
+    for f in forms:
+        if f and f not in seen:
+            seen.append(f)
+    return seen
+
+
 def _fts_query(q: str) -> str:
     """Sanitize user text into a safe FTS5 OR-query of word tokens."""
     import re
 
-    tokens = re.findall(r"[A-Za-z0-9_]{2,}", q)
-    return " OR ".join(tokens) if tokens else ""
+    tokens = [t for t in re.findall(r"[A-Za-z0-9_]{2,}", q.lower())
+              if t not in _FTS_STOPWORDS]
+    if not tokens:
+        tokens = re.findall(r"[A-Za-z0-9_]{2,}", q)
+    expanded = []
+    for t in tokens:
+        expanded.extend(_variant_forms(t))
+    return " OR ".join(expanded) if expanded else ""
 
 
 def _fts(con, q, table, id_col, limit):
@@ -148,10 +198,28 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
 
     # 1. Evidence channels (episode text is always FTS+vector indexed
     # synchronously at ingest, so raw-text recall never waits on enrichment).
-    vec_ep = _ns("ep", _vector(con, qv, "vec_episodes", "episode_id", top_k * 3))
-    vec_ent = _ns("ent", _vector(con, qv, "vec_entities", "entity_id", top_k * 3))
-    vec_rel = _ns("rel", _vector(con, qv, "vec_relations", "relation_id", top_k * 3))
-    vec_note = _ns("note", _vector(con, qv, "vec_notes", "note_id", top_k * 3))
+    # Raw cosine similarities are kept alongside the RRF ranks: rank-only
+    # fusion lets hub-adjacent PPR mass drown out the direct query↔fact
+    # similarity that answers paraphrase questions ("where do I live" vs
+    # "Krish lives in Delhi").
+    def _raw(pairs):
+        out = {}
+        for rid, sim in pairs:
+            try:
+                out[int(rid)] = max(out.get(int(rid), 0.0), float(sim))
+            except Exception:
+                continue
+        return out
+
+    _vec_ep_raw = _vector(con, qv, "vec_episodes", "episode_id", top_k * 3)
+    _vec_ent_raw = _vector(con, qv, "vec_entities", "entity_id", top_k * 3)
+    _vec_rel_raw = _vector(con, qv, "vec_relations", "relation_id", top_k * 3)
+    _vec_note_raw = _vector(con, qv, "vec_notes", "note_id", top_k * 3)
+    vec_ep = _ns("ep", _vec_ep_raw)
+    vec_ent = _ns("ent", _vec_ent_raw)
+    vec_rel = _ns("rel", _vec_rel_raw)
+    vec_note = _ns("note", _vec_note_raw)
+    cos_rel = _raw(_vec_rel_raw)
     fts_ep = _ns("ep", _fts(con, q, "fts_episodes", "rowid", top_k * 2))
     fts_rel = _ns("rel", _fts(con, q, "fts_relations", "rowid", top_k * 2))
     fts_note = _ns("note", _fts(con, q, "fts_notes", "rowid", top_k * 2))
@@ -208,6 +276,18 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
                     seeds[id_of[nkey]] = max(seeds.get(id_of[nkey], 0.0), float(score))
             if seeds:
                 ppr = graph.personalized_pagerank(id_of, edges, seeds)
+                # Undirected degree per node: hub endpoints (Krish touches
+                # everything) would otherwise dominate every relation score
+                # no matter what the query asks. Damping by degree keeps the
+                # graph signal without letting hubs win by default.
+                _deg: dict = {}
+                for a, b, _w in edges:
+                    _deg[a] = _deg.get(a, 0) + 1
+                    _deg[b] = _deg.get(b, 0) + 1
+
+                def _damp(idx) -> float:
+                    return 1.0 + _m.log(1.0 + float(_deg.get(idx, 0)))
+
                 ent_rows = con.execute("SELECT id, canonical_name FROM entities").fetchall()
                 ent_idx = {r["id"]: r["canonical_name"] for r in ent_rows}
                 as_of_f = None
@@ -228,8 +308,14 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
                             pass
                     s_name = ent_idx.get(r["source_id"])
                     t_name = ent_idx.get(r["target_id"])
-                    s_val = ppr.get(id_of.get(s_name), 0.0) if s_name else 0.0
-                    t_val = ppr.get(id_of.get(t_name), 0.0) if t_name else 0.0
+                    s_idx = id_of.get(s_name) if s_name else None
+                    t_idx = id_of.get(t_name) if t_name else None
+                    s_val = ppr.get(s_idx, 0.0) if s_idx is not None else 0.0
+                    t_val = ppr.get(t_idx, 0.0) if t_idx is not None else 0.0
+                    if s_idx is not None:
+                        s_val /= _damp(s_idx)
+                    if t_idx is not None:
+                        t_val /= _damp(t_idx)
                     score = float(r["weight"] or 1.0) * (0.5 * s_val + 0.5 * t_val)
                     if score > 0:
                         ppr_rel[r["id"]] = score
@@ -250,9 +336,13 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
                             pass
 
     # 3. Fuse channels; fold PPR in as an additive relation/episode/note weight.
+    # The direct query↔fact cosine rides along: without it, hub-damped PPR +
+    # rank-only RRF still bury paraphrase matches under generic hub facts.
     fused = _rrf([vec_ep, vec_ent, vec_rel, vec_note, fts_ep, fts_rel, fts_note])
     for rid, s in ppr_rel.items():
         fused[f"rel:{rid}"] = fused.get(f"rel:{rid}", 0.0) + s * 2.0
+    for rid, sim in cos_rel.items():
+        fused[f"rel:{rid}"] = fused.get(f"rel:{rid}", 0.0) + sim * 0.5
     for eid, s in ppr_ep.items():
         fused[f"ep:{eid}"] = fused.get(f"ep:{eid}", 0.0) + s * 1.5
     for nid, s in ppr_note.items():
@@ -296,6 +386,8 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
         return True
 
     mapped = []
+    seen_rel = set()  # near-duplicate facts (same triple, trailing-space
+    # variants) waste top slots; keep the best-scoring one only.
     for key, score in sorted(fused.items(), key=lambda kv: kv[1], reverse=True):
         ks = str(key)
         if ks.startswith("rel:"):
@@ -317,6 +409,10 @@ def search(con, query, top_k=8, use_ppr=True, max_bytes=6000, time_range=None, a
                             continue
                     except Exception:
                         pass
+                triple = ((row["s"] or "").strip().lower(), (row["type"] or "").strip().lower(), (row["t"] or "").strip().lower())
+                if triple in seen_rel:
+                    continue
+                seen_rel.add(triple)
                 try:
                     imp_w = 0.7 + float(row["confidence"] or 0.5)
                 except Exception:

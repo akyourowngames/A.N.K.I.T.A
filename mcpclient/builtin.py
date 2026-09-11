@@ -33,6 +33,29 @@ TOOL_GROUP = {'mcp_search': 'registry', 'mcp_add': 'registry',
               'shell_run': 'shell', 'shell_jobs': 'shell', 'shell_kill': 'shell'}
 
 
+def _graph_profile() -> str:
+    """Profile straight from the knowledge graph (user_facts table).
+
+    user.md is deleted by design; this is what me_show returns so the agent
+    never concludes "no profile" from a missing file.
+    """
+    try:
+        from memory import db as _db
+        con = _db.connect()
+        try:
+            rows = con.execute(
+                "SELECT key, value FROM user_facts ORDER BY updated_at DESC LIMIT 40"
+            ).fetchall()
+        finally:
+            con.close()
+    except Exception as exc:
+        return f"ERROR: profile unavailable ({str(exc)[:150]})."
+    if not rows:
+        return "(no profile facts stored yet — durable facts land here as chat is consolidated)"
+    return "[graph profile — durable user facts]\n" + "\n".join(
+        f"- {r['key']}: {r['value']}" for r in rows)
+
+
 def _tool(name: str, description: str, props: dict, required: list) -> dict:
     return {
         "type": "function",
@@ -180,7 +203,7 @@ BUILTIN_TOOLS = [
           "Discard the pending soul proposal.",
           {}, []),
     _tool("me_show",
-          "Show the user's profile (user.md: identity/projects/people/preferences). Always in context.",
+          "Show the user's graph-backed profile (durable facts: identity, contact, prefs). Secondary to the Relevant memory block already in context.",
           {}, []),
     _tool("vault_ask",
           "Answer from local documents with [Title p.N] citations. "
@@ -630,14 +653,9 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             _soul2.reject_proposal()
             return "Proposal discarded."
         if tool == "me_show":
-            try:
-                from identity import userprofile as _up
-                return _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
-            except Exception as exc:
-                return f"ERROR: profile unavailable ({str(exc)[:150]})."
+            return _graph_profile()
         try:
-            from identity import userprofile as _up
-            return _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
+            return _graph_profile()
         except Exception as exc:
             return f"ERROR: profile unavailable ({str(exc)[:150]})."
 

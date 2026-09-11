@@ -8,9 +8,9 @@ From the repository root, run `python -m server.run`. In a second terminal run `
 
 The API binds to localhost. This is a single-user local workspace; internet hosting requires authentication, workspace isolation, TLS, deployment limits, and a shared worker/event architecture. Do not expose the API directly to the internet.
 
-The existing Kilo configuration is used for extraction, identity resolution, verification and answers. Set `KILO_API_KEY` and optionally `ZUMBA_MEMORY_MODEL` using Zumba's existing configuration. Document excerpts go to that model. Local fastembed generates vectors; if unavailable, ingestion records a warning and keyword retrieval continues.
+Graph extraction, identity resolution, verification and answers run on a dedicated knowledge provider (default `stepfun/step-3.7-flash:free` on the Kilo gateway: reliable structured JSON). Chat stays on the NIM model. Set `KILO_API_KEY` (or `ZUMBA_KNOWLEDGE_API_KEY`) — `KILO_BASE_URL` is the endpoint fallback. Document excerpts go to the knowledge model. Local fastembed generates vectors; if unavailable, ingestion records a warning and keyword retrieval continues.
 
-For the graph alone, `ZUMBA_KNOWLEDGE_MODEL` overrides the memory model. Malformed output or provider errors receive one attempt through the same gateway's `kilo-auto/free` route. Override that route with `ZUMBA_KNOWLEDGE_FALLBACK`, or set it to an empty string to disable fallback. Evidence metadata records attempted models. Global chat preferences are unchanged.
+`ZUMBA_KNOWLEDGE_MODEL` / `ZUMBA_KNOWLEDGE_BASE_URL` / `ZUMBA_KNOWLEDGE_API_KEY` override the knowledge triple (see `core.config.get_knowledge_llm`). Malformed output or provider errors receive one retry through `ZUMBA_KNOWLEDGE_FALLBACK` (default: same knowledge model). Evidence metadata records attempted models. Global chat preferences are unchanged.
 
 ## Data and evidence
 
