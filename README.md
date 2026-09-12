@@ -55,6 +55,13 @@ python main.py soul show               # self-authored identity (soul.md spec)
 python main.py me                      # your graph-backed profile (user_facts, no user.md file)
 python main.py daily                   # morning briefing: follow-ups, dates, resurfaces
 python main.py daily --install-reminder --at 08:00  # Windows Task Scheduler job
+python main.py calendar today          # today's Google Calendar events
+python main.py calendar search "standup"  # search events
+python main.py calendar create "Party" --start 2026-09-13T18:00:00 --location Home
+python main.py calendar brief          # meetings + travel + prep links
+python main.py calendar auth           # interactive OAuth connect (paste code)
+python main.py calendar token --token <access>  # paste token directly
+python main.py calendar status         # connection status (redacted)
 python main.py mood                    # 30-day valence chart
 ```
 
@@ -73,6 +80,7 @@ python main.py mood                    # 30-day valence chart
 | `/fetch <url>`  | Read a web page as text                  |
 | `/scrape <url> [--mid\|--high]` | Scrape a page: low (static) / mid (stealth+fields) / high (crawl) |
 | `/fs <op> ...` | Files: read\|grep\|find\|list\|info\|glob\|tree\|edit (no shell needed) |
+| `/cal [today\|search\|brief\|status\|auth]` | Google Calendar (today/search/create + connect) |
 | `/vault ask\|find\|add\|status\|doc` | Local document vault      |
 
 Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrades gracefully — chat never breaks because of it.
@@ -102,6 +110,7 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **The Vault (local document RAG)** — drop files into `~/.zumba/vault/` (`zumba vault add <path>`, `watch`, `status`, `ask`, `find`, `doc`, `forget`, `reindex`); structure-aware chunking, hybrid vector+BM25+RRF, small-to-big parent sections, RAPTOR-lite summaries, local rerank, citations `[Title p.N]`; always-on `[VAULT CONTEXT]` recall hook + `zumba__vault_search/doc/read` tools + `/vault` chat commands; `ZUMBA_NO_VAULT=1` kill-switch
 - **Proactive goals (Tier 3)** — `goal add` auto-decomposes via LLM into steps with staggered micro-deadlines; natural-time reminders (`friday 5pm`, `in 3 days`, daily/weekly recur, snooze, desktop toast); background worker fires reminders + deadline/stall nudges + pre-deadline web research + win/fail detection (rate-limited, `config --set-proactive off`); goals lead the daily brief, sit in recall context, and are creatable by the agent (`goal_add`, `remind_add` tools) and chat (`/goal`, `/remind`)
 - **Geo / trip brain (PLAN-GO)** — 11 standalone model tools in `tools/geo.py` (`zumba__geo_geocode/reverse/route/traffic/nearby/weather/maps_link/track_start/track_stop/whereami/visit_log`): single questions take one call (how far → route, raining → weather, cafes near X → geocode + nearby); "I'm heading to X" chains geocode → route → live traffic → weather at arrival → nearby → ONE briefing with leave-by time, route, weather, personal context, maps link. TomTom-first when `ZUMBA_TT_KEY` is set (Search, Reverse Geocode, Category/Places Search, Routing + Traffic Incidents/Flow), OSM fallbacks (Nominatim/OSRM/Overpass) otherwise; `ZUMBA_NO_GEO=1` kill-switch. Telegram point/live locations store silently to SQLite (`server/geo_store.py`); the pipeline and Telegram both run the agent tool loop so geo tools fire everywhere, not just CLI
+- **Calendar (Google)** — 5 model tools in `tools/calendar.py` (`zumba__calendar_today/search/create/brief/status`): `today/search/brief` answer from live events, `create` books, `status` checks connection. One global token at `~/.zumba/calendar_token.json` (`0600`, redacted previews); connect via `zumba calendar auth` (OAuth code wizard) or `zumba calendar token` (paste), `/cal auth` in chat/Telegram (paste code as next message), or web `POST /api/calendar/*`. `daily` includes meetings + travel/maps + prep links when connected, honest “not connected” otherwise (never hallucinates); `ZUMBA_NO_CALENDAR=1` kill-switch. Telegram: `/cal [today|search|brief|status|auth]`
 - **301 passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, vault, goals/reminders, geo, DB-lock concurrency, JSON-retry, and desktop suites. Live recall eval: `python scripts/eval_graph_recall.py --n 12 --ep 6` (isolated DB snapshot, stratified IMP/NONIMP/episode questions, scored)
 
 ## Requirements
@@ -144,6 +153,10 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_OSRM_URL`    | Self-hosted OSRM override            | public demo                          |
 | `ZUMBA_OVERPASS_URL` | Overpass mirror override            | `overpass-api.de`                    |
 | `ZUMBA_GEO_TRACK_MAX_MIN` | Max live-location track window (min) | `90`                             |
+| `ZUMBA_NO_CALENDAR` | Disable calendar tools (`1`) | enabled |
+| `ZUMBA_CALENDAR_ID` | Default calendar id | `primary` |
+| `ZUMBA_CALENDAR_CLIENT_ID/SECRET` | Google OAuth client (for `calendar auth`) | — |
+| `ZUMBA_CALENDAR_TOKEN/REFRESH` | Paste-token override (no file needed) | — |
 | `ZUMBA_NO_SCRAPE` | Disable scrape tiers (`1`) | enabled |
 | `ZUMBA_SCRAPE_TIMEOUT` | Static fetch timeout (seconds) | `30` |
 | `ZUMBA_SCRAPE_STEALTH_TIMEOUT` | Stealth browser timeout (seconds) | `30` |
@@ -223,6 +236,7 @@ Mic troubleshooting (`python desktop/mic_test.py` — speak during the 6s test, 
 | `/tokens`      | Token estimate                                |
 | `/shell <cmd>` | Run a shell command directly (god-mode, persistent) |
 | `/why`         | Explain the last turn's memory recall         |
+| `/cal [today\|search\|brief\|status\|auth]` | Google Calendar |
 | `/clear`       | Clear history                                 |
 | `/exit`        | Save and exit (Ctrl+C also saves)             |
 
@@ -388,6 +402,7 @@ zumba/
 │   ├── websearch.py     # Zero-key web engine: DDG + GNews RSS + Wiki + HN + Reddit + fetch + cache
 │   ├── scrape.py        # Scrapling tiers: low (static) / mid (auto stealth + fields) / high (crawl)
 │   ├── filesystem.py    # 17 fs tools: read/grep/find/list/info/glob/tree + write/edit/patch/batch/undo
+│   ├── calendar.py      # Google Calendar: today/search/create/brief/status + OAuth file auth
 │   └── geo.py           # Trip-brain tools: TomTom-first geocode/reverse/nearby/route/traffic (+incidents/flow), Open-Meteo weather, maps links, track/whereami/visit
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)

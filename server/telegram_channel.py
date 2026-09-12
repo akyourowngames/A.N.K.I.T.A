@@ -198,6 +198,22 @@ class _Bucket:
         return True
 
 
+_CAL_PENDING: dict[int, float] = {}
+_CAL_PENDING_TTL = 10 * 60.0
+
+
+def _cal_looks_like_code(text: str) -> bool:
+    t = (text or "").strip()
+    if not t or " " in t or "\n" in t:
+        return False
+    # Google OAuth codes are long single tokens (4/..., ya29...); accept >=10 chars.
+    if len(t) < 10 or len(t) > 500:
+        return False
+    if t.startswith("/") or t.startswith("!"):
+        return False
+    return True
+
+
 class TelegramChannel:
     def __init__(self, api: TelegramAPI | None = None):
         self.api = api or TelegramAPI(get_token())
@@ -340,6 +356,53 @@ class TelegramChannel:
         except Exception:
             pass
 
+    async def _handle_cal(self, chat_id: int, text: str) -> None:
+        """Interactive calendar setup + reads (one global token, shared)."""
+        parts = (text or "").split(None, 2)
+        sub = (parts[1] if len(parts) > 1 else "today").lower() or "today"
+        rest = parts[2] if len(parts) > 2 else ""
+        try:
+            from tools import calendar as _cal
+        except Exception as e:
+            await self.api.send_message(chat_id, f"calendar error: {e}"[:500])
+            return
+        if not _cal.enabled():
+            await self.api.send_message(chat_id, "Calendar is disabled (ZUMBA_NO_CALENDAR=1).")
+            return
+        try:
+            if sub in ("today", ""):
+                out = await asyncio.to_thread(_cal.today, 10)
+            elif sub == "brief":
+                out = await asyncio.to_thread(_cal.brief)
+            elif sub == "status":
+                out = await asyncio.to_thread(_cal.status_text)
+            elif sub == "search" and rest.strip():
+                out = await asyncio.to_thread(_cal.search, rest.strip())
+            elif sub == "search":
+                out = "Usage: /cal search <text>"
+            elif sub == "auth":
+                if rest.strip():
+                    out = await asyncio.to_thread(_cal.auth_finish, rest.strip())
+                else:
+                    out = await asyncio.to_thread(_cal.auth_start)
+                    if not out.startswith("ERROR"):
+                        _CAL_PENDING[chat_id] = time.time()
+                        out += "\n\nNow paste the code here as your next message (expires in 10 min)."
+            elif sub == "token" and rest.strip():
+                # /cal token <access> [refresh] — pasted secret never echoed.
+                bits = rest.strip().split()
+                tok, ref = (bits[0], bits[1] if len(bits) > 1 else "")
+                out = await asyncio.to_thread(_cal.set_token, tok, ref)
+            elif sub == "token":
+                out = "Usage: /cal token <access_token> [refresh_token]"
+            elif sub == "forget":
+                out = "One global token — to forget it run `zumba calendar forget --yes` on the server."
+            else:
+                out = "Usage: /cal [today|search <q>|brief|status|auth [code]|token <access>]"
+            await self.api.send_message(chat_id, out[:3500])
+        except Exception as e:
+            await self.api.send_message(chat_id, f"calendar error: {e}"[:500])
+
     async def handle_location(self, chat_id: int, msg: dict) -> bool:
         loc = msg.get("location")
         if not isinstance(loc, dict):
@@ -387,7 +450,7 @@ class TelegramChannel:
             await self.api.send_message(chat_id, "Fresh session started.")
             return
         if cmd == '/help':
-            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>.")
+            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>, /cal [today|search|brief|status|auth].")
             return
         if cmd == '/memory':
             parts = text.split(maxsplit=1)
@@ -398,6 +461,20 @@ class TelegramChannel:
                 await self.api.send_message(chat_id, str(hits)[:3500] or "(nothing recalled)")
             except Exception as e:
                 await self.api.send_message(chat_id, f"memory error: {e}"[:500])
+            return
+        if cmd == '/cal' or text.strip().lower().startswith('/cal '):
+            await self._handle_cal(chat_id, text)
+            return
+        # Pending OAuth code paste: after `/cal auth`, the next code-like message finishes auth.
+        if not cmd and _cal_looks_like_code(text) and _CAL_PENDING.get(chat_id, 0) > time.time() - _CAL_PENDING_TTL:
+            _CAL_PENDING.pop(chat_id, None)
+            try:
+                from tools import calendar as _cal
+                out = await asyncio.to_thread(_cal.auth_finish, text.strip())
+                # Never echo the pasted code back.
+                await self.api.send_message(chat_id, out[:3500])
+            except Exception as e:
+                await self.api.send_message(chat_id, f"calendar auth error: {e}"[:500])
             return
         if await self.handle_location(chat_id, msg):
             return

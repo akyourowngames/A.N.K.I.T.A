@@ -41,6 +41,8 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="ZUMBA API", version="1.0.0", lifespan=_lifespan)
 from server.knowledge_api import router as knowledge_router
 app.include_router(knowledge_router)
+from server.calendar_api import router as calendar_router
+app.include_router(calendar_router)
 
 app.add_middleware(
     CORSMiddleware,

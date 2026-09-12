@@ -117,13 +117,19 @@ def compose_daily(con, use_llm: bool = True) -> str:
         parts.append("MOOD:\n- " + mood_ctx)
     if dates:
         parts.append("DATES:\n" + "\n".join(f"- {d}" for d in dates))
+    try:
+        from tools import calendar as _cal
+        if _cal.enabled() and _cal.is_connected():
+            parts.append("CALENDAR:\n" + _cal.brief()[:2000])
+    except Exception:
+        pass
     raw = "\n\n".join(parts) or "(nothing to brief yet)"
     if use_llm:
         try:
             from . import llm as _llm
             out = _llm.chat_text(
                 "Write a short morning briefing (bullets, warm, actionable) from this memory digest. "
-                "Lead with follow-ups, then dates, then memory resurfaces. Keep under 1200 chars.\n\n" + raw[:6000],
+                "Lead with follow-ups, then calendar meetings (with travel/prep), then dates, then memory resurfaces. Keep under 1500 chars.\n\n" + raw[:6000],
                 system="You write concise daily briefings.",
                 max_tokens=800,
             )
