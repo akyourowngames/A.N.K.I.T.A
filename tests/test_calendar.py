@@ -144,6 +144,9 @@ def test_travel_between_real_estimate(monkeypatch, tmp_path):
     assert C._travel_between("Home", "Office") == "~25 min drive (12.0 km)"
     monkeypatch.setattr(_G, "route", lambda a, b, m="drive": "ERROR: routing down.")
     assert C._travel_between("Home", "Office") == ""
+    # N4: route text without a parseable ETA falls back to the buffer note.
+    monkeypatch.setattr(_G, "route", lambda a, b, m="drive": "Something unexpected happened")
+    assert C._travel_between("Home", "Office") == ""
 
 
 def test_create_validation_and_mock(monkeypatch, tmp_path):
@@ -298,6 +301,39 @@ def test_token_file_and_dir_perms(monkeypatch, tmp_path):
     if os.name == "posix":
         assert (p.stat().st_mode & 0o777) == 0o600
         assert (p.parent.stat().st_mode & 0o777) == 0o700
+
+
+def test_auth_expired_pending_dropped(monkeypatch, tmp_path):
+    import json as _json
+    import time as _t
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"client_id": "cid", "client_secret": "csec",
+                  "pending_state": "old", "pending_ts": _t.time() - 700})
+    out = C.auth_finish(GOOD_CODE)
+    assert "expired" in out.lower()
+    stored = _json.loads((tmp_path / "calendar_token.json").read_text(encoding="utf-8"))
+    assert "pending_state" not in stored  # N3: no stale state left behind
+
+
+def test_web_callback_state(monkeypatch, tmp_path):
+    import types
+    _isolate(monkeypatch, tmp_path)
+    from fastapi import HTTPException as _HTTP
+    import pytest as _pt
+    from server import calendar_api as _api
+    C.save_token({"client_id": "cid", "client_secret": "csec"})
+    req = types.SimpleNamespace(headers={})
+    started = _api.auth_start(_api.AuthStart(), req)
+    assert started["ok"] and started["state"]
+    with _pt.raises(_HTTP):
+        _api.oauth_callback(code=GOOD_CODE)  # missing state -> 400
+    assert _api.oauth_callback(code=GOOD_CODE, state="wrong")["ok"] is False
+
+    def fake_post(url, data=None, timeout=0, **k):
+        return _Resp(200, {"access_token": "tok-via-callback", "expires_in": 3600})
+    monkeypatch.setattr(C, "_requests", type("R", (), {"post": staticmethod(fake_post)}))
+    ok = _api.oauth_callback(code=GOOD_CODE, state=started["state"])
+    assert ok["ok"] is True and C.is_connected()
 
 
 def test_web_writes_gated(monkeypatch, tmp_path):

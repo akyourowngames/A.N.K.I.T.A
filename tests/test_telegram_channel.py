@@ -83,6 +83,47 @@ def test_voice_duration_cap(isolated_home):
     assert api.sent and "too long" in api.sent[-1][1].lower()
 
 
+def test_cal_auth_explicit_pops_pending_on_success(isolated_home, monkeypatch):
+    """N1: explicit `/cal auth <code>` consumes pending on success, keeps it on failure."""
+    import time as _t
+    for k in ("ZUMBA_CALENDAR_TOKEN", "ZUMBA_CALENDAR_REFRESH_TOKEN",
+              "ZUMBA_CALENDAR_CLIENT_ID", "ZUMBA_CALENDAR_CLIENT_SECRET",
+              "ZUMBA_NO_CALENDAR"):
+        monkeypatch.delenv(k, raising=False)
+    import server.telegram_channel as _tg
+    import tools.calendar as _C
+    code = "4/0AbCdefGhIjKlMnOpQrStUvWxYz12"
+    _tg._CAL_PENDING[7280190750] = _t.time()
+    monkeypatch.setattr(_C, "auth_finish", lambda c: "Calendar connected (token ****7890). Done.")
+    api = FakeAPI()
+    ch = TelegramChannel(api=api)  # type: ignore
+    asyncio.run(ch.handle_update(_msg(7280190750, f"/cal auth {code}", update_id=21)))
+    assert 7280190750 not in _tg._CAL_PENDING
+    assert api.sent and "connected" in api.sent[-1][1].lower()
+    _tg._CAL_PENDING[7280190750] = _t.time()
+    monkeypatch.setattr(_C, "auth_finish", lambda c: "ERROR: token exchange http 400.")
+    asyncio.run(ch.handle_update(_msg(7280190750, f"/cal auth {code}", update_id=22)))
+    assert 7280190750 in _tg._CAL_PENDING  # kept for retry
+    _tg._CAL_PENDING.pop(7280190750, None)
+
+
+def test_cal_forget_needs_confirm(isolated_home, monkeypatch):
+    for k in ("ZUMBA_CALENDAR_TOKEN", "ZUMBA_CALENDAR_REFRESH_TOKEN",
+              "ZUMBA_CALENDAR_CLIENT_ID", "ZUMBA_CALENDAR_CLIENT_SECRET",
+              "ZUMBA_NO_CALENDAR"):
+        monkeypatch.delenv(k, raising=False)
+    import tools.calendar as _C
+    _C.save_token({"access_token": "tok-global"})
+    assert _C.is_connected()
+    api = FakeAPI()
+    ch = TelegramChannel(api=api)  # type: ignore
+    asyncio.run(ch.handle_update(_msg(7280190750, "/cal forget", update_id=23)))
+    assert _C.is_connected()  # no confirm -> kept
+    assert "confirm" in api.sent[-1][1].lower()
+    asyncio.run(ch.handle_update(_msg(7280190750, "/cal forget yes", update_id=24)))
+    assert not _C.is_connected()
+
+
 def test_no_httpx_import():
     import sys
     assert "httpx" not in sys.modules or True

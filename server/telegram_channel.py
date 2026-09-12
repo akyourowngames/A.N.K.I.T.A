@@ -397,6 +397,12 @@ class TelegramChannel:
             elif sub == "auth":
                 if rest.strip():
                     out = await asyncio.to_thread(_cal.auth_finish, rest.strip())
+                    if not out.startswith("ERROR"):
+                        # N1: explicit exchange consumed the code — drop any
+                        # lingering pending entry so it can't double-exchange.
+                        _CAL_PENDING.pop(chat_id, None)
+                    # Paste flow carries no CSRF state (same user, manual copy);
+                    # the stored state is verified on web-redirect callbacks.
                 else:
                     out = await asyncio.to_thread(_cal.auth_start)
                     if not out.startswith("ERROR"):

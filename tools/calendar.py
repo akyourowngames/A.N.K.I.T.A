@@ -148,6 +148,9 @@ def clear_cache() -> None:
 
 
 def save_token(patch: dict) -> Path:
+    """Persist token-file fields. INTERNAL: callers must gate on enabled()
+    (ZUMBA_NO_CALENDAR kill-switch) — all current callers (CLI/TG/web via
+    auth_finish/set_token/auth_start, themselves gated) do. No secrets echoed."""
     p = token_path()
     cur: dict = {}
     try:
@@ -169,6 +172,7 @@ def save_token(patch: dict) -> Path:
 
 
 def clear_token() -> bool:
+    """Delete the token file. INTERNAL: same caller-gating contract as save_token."""
     try:
         p = token_path()
         if p.exists():
@@ -334,6 +338,7 @@ def auth_finish(code: str, redirect_uri: str = "", client_id: str = "",
     if pending and given_state and given_state != pending:
         return "ERROR: OAuth state mismatch — restart with `zumba calendar auth` (possible CSRF)."
     if pending and time.time() - float(tok.get("pending_ts") or 0) > 600:
+        _drop_pending()  # N3: don't leave stale state for the next flow.
         return "ERROR: OAuth session expired — restart with `zumba calendar auth`."
     try:
         r = _requests.post(TOKEN_URL, data={
@@ -721,7 +726,7 @@ def _travel_between(prev_location: str, location: str) -> str:
             if km:
                 eta += f" ({km.group(1)} km)"
             return eta
-        return head
+        return ""  # N4: unparseable route text -> caller shows buffer note.
     except Exception:
         return ""
 

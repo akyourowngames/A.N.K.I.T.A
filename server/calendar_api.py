@@ -52,7 +52,26 @@ def auth_start(body: AuthStart, request: Request):
     msg = _cal.auth_start(body.client_id.strip(), body.redirect_uri.strip())
     m = re.search(r"https://accounts\.google\.com/\S+", msg)
     url = m.group(0).rstrip(").,") if m else ""
-    return {"ok": not msg.startswith("ERROR"), "message": msg, "auth_url": url}
+    sm = re.search(r"[?&]state=([^&\s)]+)", url)
+    state = sm.group(1) if sm else ""
+    return {"ok": not msg.startswith("ERROR"), "message": msg, "auth_url": url, "state": state}
+
+
+@router.get("/callback")
+def oauth_callback(code: str = "", state: str = "", redirect_uri: str = ""):
+    """OAuth redirect target (m1): Google returns ?code&state here after Approve.
+
+    CSRF protection is the pending-state check inside auth_finish (a random
+    state is stored at /auth/start and must match). The X-Zumba-Key header
+    can't apply to a browser redirect from Google, so this endpoint honors
+    the kill-switch and the state check instead."""
+    from tools import calendar as _cal
+    if not _cal.enabled():
+        raise HTTPException(403, "calendar tools are disabled (ZUMBA_NO_CALENDAR=1)")
+    if not state.strip():
+        raise HTTPException(400, "missing OAuth state — restart from /api/calendar/auth/start")
+    msg = _cal.auth_finish(code.strip(), redirect_uri.strip(), state=state.strip())
+    return {"ok": not msg.startswith("ERROR"), "message": msg}
 
 
 class AuthFinish(BaseModel):
