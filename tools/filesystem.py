@@ -12,20 +12,42 @@ Conventions (match websearch.py / scrape.py / geo.py):
 - ZUMBA_NO_FS=1 kill-switch.
 - Unrestricted paths (god-mode, like shell); every mutation is appended
   to ~/.zumba/fs_audit.log and auto-backed-up under .zumba_backups.
+
+  Unrestricted is an explicit owner decision (see PR #20 discussion):
+  no jail, no denylist. Safety comes from backups + diffs + audit +
+  confirm gates on delete/overwrite — not from path restrictions.
+  Callers that need confinement must enforce it themselves.
 """
 
 from __future__ import annotations
 
 import difflib
 import fnmatch
+import functools
+import json
 import os
 import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+
+_FS_WRITE_LOCK = threading.Lock()
+
+
+def _locked(fn):
+    """Serialize mutating ops process-wide (model calls are also grouped
+    under the fs TOOL_GROUP lock; this covers direct/CLI callers)."""
+
+    @functools.wraps(fn)
+    def wrapper(*a, **k):
+        with _FS_WRITE_LOCK:
+            return fn(*a, **k)
+
+    return wrapper
 
 MAX_READ_LINES = 2000
 SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
@@ -163,6 +185,24 @@ def atomic_write(path: Path, data: str) -> None:
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp_", suffix=".part")
     try:
         with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
+            f.write(data)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except Exception:
+            pass
+        raise
+
+
+def atomic_write_bytes(path: Path, data: bytes) -> None:
+    """Byte-exact variant — rollback must never decode/re-encode (mojibake)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp_", suffix=".part")
+    try:
+        with os.fdopen(fd, "wb") as f:
             f.write(data)
             f.flush()
             os.fsync(f.fileno())
@@ -716,8 +756,6 @@ def fs_insert(path: str, line: int, text: str, position: str = "after",
     pos = (position or "after").lower()
     if pos not in ("before", "after"):
         return "ERROR: 'position' must be before or after."
-    if pos == "after" and str(text).strip() == "" and False:
-        pass
     try:
         lines, trailing, nl = _read_lines(p)
     except Exception as exc:
@@ -816,16 +854,35 @@ def _parse_v4a(patch: str) -> tuple[list, str]:
                 cur_hunk["old"].append(raw[1:])
             else:
                 cur_hunk["new"].append(raw[1:])
-        elif raw.strip() == "" and cur and cur["op"] == "update" and cur_hunk is not None:
-            # blank context line (LLMs strip trailing whitespace)
-            cur_hunk["ctx"].append("")
-            cur_hunk["old"].append("")
-            cur_hunk["new"].append("")
+        elif raw.strip() == "" and cur and cur["op"] == "add":
+            cur["lines"].append("")
+        elif raw.strip() == "" and cur and cur["op"] == "update":
+            # blank line closes the current hunk (separator between hunks).
+            # A following hunk without @@ continues positionally, so split
+            # hunks still apply in order.
+            if cur_hunk is not None and (cur_hunk["old"] or cur_hunk["new"]):
+                cur_hunk = None
+            continue
         elif raw.strip() == "":
             continue
         else:
             if cur and cur["op"] == "add":
                 cur["lines"].append(raw)
+            elif (cur and cur["op"] == "update" and cur_hunk is None
+                    and raw[:1] in (" ", "-", "+")):
+                # continuation after a blank-line hunk split: new positional
+                # hunk. Checked BEFORE the bare-anchor fallback below —
+                # prefixed lines are hunk content, never anchors.
+                cur_hunk = {"anchor": "", "ctx": [], "old": [], "new": []}
+                cur["hunks"].append(cur_hunk)
+                if raw.startswith(" "):
+                    cur_hunk["ctx"].append(raw[1:])
+                    cur_hunk["old"].append(raw[1:])
+                    cur_hunk["new"].append(raw[1:])
+                elif raw.startswith("-"):
+                    cur_hunk["old"].append(raw[1:])
+                else:
+                    cur_hunk["new"].append(raw[1:])
             elif cur and cur["op"] == "update" and cur_hunk is None:
                 # bare context line before any @@ — treat as anchor
                 cur_hunk = {"anchor": raw.strip(), "ctx": [], "old": [], "new": []}
@@ -892,6 +949,7 @@ def _apply_hunks(lines: list[str], hunks: list, fname: str) -> tuple[list[str] |
     return cur, ""
 
 
+@_locked
 def fs_apply_patch(patch: str, dry_run: bool = False) -> str:
     if not (patch or "").strip():
         return "ERROR: 'patch' is required."
@@ -936,10 +994,17 @@ def fs_apply_patch(patch: str, dry_run: bool = False) -> str:
             parts.append(_diff(old if old != "__DELETE__" else "", new, p.name))
         return truncate("\n".join(parts))
     # Phase 2: apply (backups first so any I/O failure still allows undo).
+    undo: list[tuple[Path, bytes | None]] = []
     try:
         for p, old, _, _ in planned:
-            if old not in ("", "__DELETE__"):
-                _create_backup(p, "patch")
+            if old == "":
+                undo.append((p, None))  # add: rollback unlinks
+                continue
+            _create_backup(p, "patch")
+            try:
+                undo.append((p, p.read_bytes()))
+            except Exception:
+                undo.append((p, None))
         results = []
         for p, old, new, label in planned:
             if old == "__DELETE__":
@@ -950,9 +1015,30 @@ def fs_apply_patch(patch: str, dry_run: bool = False) -> str:
             results.append(f"{label} {_display(p)}")
         return "Patch applied atomically: " + "; ".join(results)
     except Exception as exc:
-        return f"ERROR: patch apply failed (backups kept under .zumba_backups): {exc}"
+        for p, data in reversed(undo):
+            try:
+                if data is None:
+                    if p.is_file():
+                        p.unlink()
+                else:
+                    atomic_write_bytes(p, data)
+            except Exception:
+                pass
+        return (f"ERROR: patch apply failed and rolled back "
+                f"(backups kept under .zumba_backups): {exc}")
 
 
+def _missing_parents(target: Path) -> list[str]:
+    """Ancestors of target that do not exist yet (deepest last)."""
+    out: list[str] = []
+    for parent in [target.parent, *target.parent.parents]:
+        if parent.exists():
+            break
+        out.append(str(parent))
+    return out
+
+
+@_locked
 def fs_batch(operations: list, dry_run: bool = False) -> str:
     """Transactional multi-op: write/edit/insert/replace_lines/delete/move/mkdir."""
     if not isinstance(operations, list) or not operations:
@@ -960,19 +1046,54 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
     if len(operations) > 100:
         return "ERROR: too many operations (max 100)."
     snaps: dict[Path, bytes | None] = {}
+    journal: list[tuple[str, str, str]] = []
 
     def remember(p: Path) -> None:
         if p not in snaps:
             snaps[p] = p.read_bytes() if p.is_file() else None
 
     def rollback() -> None:
+        # reverse structural ops first (moves back, created dirs + parents
+        # removed if empty, deleted dirs recreated), then restore file bytes.
+        for kind, a, b in reversed(journal):
+            try:
+                if kind == "move":
+                    if Path(b).exists():
+                        Path(a).parent.mkdir(parents=True, exist_ok=True)
+                        os.replace(str(b), str(a))
+                elif kind == "mkdir":
+                    try:
+                        Path(a).rmdir()
+                    except Exception:
+                        pass
+                    try:
+                        for parent in reversed(json.loads(b or "[]")):
+                            try:
+                                Path(parent).rmdir()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                elif kind == "rmdir":
+                    Path(a).mkdir(parents=True, exist_ok=True)
+                elif kind == "parents":
+                    try:
+                        for parent in reversed(json.loads(b or "[]")):
+                            try:
+                                Path(parent).rmdir()
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+            except Exception:
+                pass
         for p, data in snaps.items():
             try:
                 if data is None:
                     if p.is_file():
                         p.unlink()
                 else:
-                    atomic_write(p, data.decode("utf-8", errors="replace"))
+                    atomic_write_bytes(p, data)
             except Exception:
                 pass
 
@@ -989,6 +1110,8 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
                 if not dry_run:
                     if p.is_file():
                         _create_backup(p, "batch")
+                    else:
+                        journal.append(("parents", str(p), json.dumps(_missing_parents(p))))
                     atomic_write(p, content)
                 results.append(f"{i}. write {_display(p)}")
             elif action == "edit":
@@ -1044,6 +1167,7 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
                 remember(p)
                 if not dry_run:
                     if p.is_dir():
+                        journal.append(("rmdir", str(p), ""))
                         p.rmdir()
                     else:
                         p.unlink()
@@ -1052,15 +1176,21 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
                 s, d = resolve(str(op.get("source", ""))), resolve(str(op.get("destination", "")))
                 if not s.exists():
                     raise ValueError(f"operation {i}: source not found: {op.get('source')}")
+                if d.exists() and not op.get("confirm"):
+                    raise ValueError(f"operation {i}: destination exists: {op.get('destination')} (confirm=true required to overwrite)")
                 remember(s)
                 remember(d)
                 if not dry_run:
+                    journal.append(("move", str(s), str(d)))
+                    journal.append(("parents", str(d), json.dumps(_missing_parents(d))))
                     d.parent.mkdir(parents=True, exist_ok=True)
                     os.replace(str(s), str(d))
                 results.append(f"{i}. move {_display(s)} -> {_display(d)}")
             elif action in ("mkdir", "create_directory"):
                 p = resolve(str(op.get("path", "")))
                 if not dry_run:
+                    if not p.exists():
+                        journal.append(("mkdir", str(p), json.dumps(_missing_parents(p))))
                     p.mkdir(parents=True, exist_ok=True)
                 results.append(f"{i}. mkdir {_display(p)}")
             else:
@@ -1113,12 +1243,15 @@ def fs_mkdir(path: str) -> str:
     return f"Created directory {_display(p)}."
 
 
-def fs_move(source: str, destination: str) -> str:
+def fs_move(source: str, destination: str, confirm: bool = False) -> str:
     if not (source or "").strip() or not (destination or "").strip():
         return "ERROR: 'source' and 'destination' are required."
     s, d = resolve(source), resolve(destination)
     if not s.exists():
         return f"ERROR: source not found: {source}"
+    if d.exists() and not confirm:
+        return (f"ERROR: destination exists: {_display(d)}. "
+                f"Pass confirm=true to overwrite.")
     try:
         d.parent.mkdir(parents=True, exist_ok=True)
         over = " (overwrote existing)" if d.exists() else ""

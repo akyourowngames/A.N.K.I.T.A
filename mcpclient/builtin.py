@@ -29,11 +29,8 @@ TOOL_ACCESS = {
     'geo_reverse': 'read', 'geo_route': 'read', 'geo_traffic': 'read',
     'geo_nearby': 'read', 'geo_weather': 'read', 'geo_maps_link': 'read',
     'geo_whereami': 'read', 'task_list': 'read',
-    'calendar_today': 'read', 'calendar_search': 'read', 'calendar_brief': 'read',
-    'calendar_status': 'read',
     'goal_add': 'local', 'goal_complete_step': 'local', 'remind_add': 'local',
     'memory_remember': 'local', 'soul_propose': 'local', 'task_update': 'local',
-    'calendar_create': 'local',
 }
 
 # These capabilities share mutable session state even when a call is a read.
@@ -261,9 +258,11 @@ BUILTIN_TOOLS = [
           "Create a directory with parents (mkdir -p).",
           {"path": {"type": "string", "description": "Directory path"}}, ["path"]),
     _tool("fs_move",
-          "Move/rename a file or directory (creates destination parents).",
+          "Move/rename a file or directory (creates destination parents). "
+          "Overwriting an existing destination requires confirm=true.",
           {"source": {"type": "string", "description": "Current path"},
-           "destination": {"type": "string", "description": "New path"}}, ["source", "destination"]),
+           "destination": {"type": "string", "description": "New path"},
+           "confirm": {"type": "boolean", "description": "Required to overwrite existing destination"}}, ["source", "destination"]),
     _tool("fs_delete",
           "Delete a file or EMPTY directory. Requires confirm=true.",
           {"path": {"type": "string", "description": "Path to delete"},
@@ -373,17 +372,6 @@ BUILTIN_TOOLS = [
     _tool("geo_visit_log", "Record/query place visits. action=list|add|forget.",
           {"chat_id": {"type": "string"}, "action": {"type": "string"}, "place_name": {"type": "string"},
            "lat": {"type": "number"}, "lon": {"type": "number"}, "note": {"type": "string"}, "since": {"type": "string"}, "forget": {"type": "boolean"}}, []),
-    _tool("calendar_today", "Today's Google Calendar events (honest 'not connected' when no OAuth, never hallucinate).",
-          {"limit": {"type": "integer"}, "calendar_id": {"type": "string"}}, []),
-    _tool("calendar_search", "Search Google Calendar events by text.",
-          {"query": {"type": "string"}, "max_results": {"type": "integer"}, "calendar_id": {"type": "string"}}, ["query"]),
-    _tool("calendar_create", "Create a Google Calendar event (needs OAuth; start ISO e.g. 2026-09-13T09:30:00).",
-          {"summary": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
-           "location": {"type": "string"}, "description": {"type": "string"}, "calendar_id": {"type": "string"}}, ["summary", "start"]),
-    _tool("calendar_brief", "Meetings + travel/maps links + prep links for today.",
-          {"limit": {"type": "integer"}, "calendar_id": {"type": "string"}}, []),
-    _tool("calendar_status", "Calendar connection status (no secrets echoed).",
-          {}, []),
 ]
 
 
@@ -431,10 +419,6 @@ def visible_tools() -> list:
             ("__geo_geocode", "__geo_reverse", "__geo_route", "__geo_traffic", "__geo_nearby",
              "__geo_weather", "__geo_maps_link", "__geo_track_start", "__geo_track_stop",
              "__geo_whereami", "__geo_visit_log"))]
-    if os.getenv("ZUMBA_NO_CALENDAR", "") == "1":
-        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
-            ("__calendar_today", "__calendar_search", "__calendar_create",
-             "__calendar_brief", "__calendar_status"))]
     try:
         from tools import filesystem as _fs
 
@@ -781,6 +765,12 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
                 _fs.fs_apply_patch, patch, bool(args.get("dry_run", False)))
         if tool == "fs_batch":
             ops = args.get("operations", [])
+            if isinstance(ops, str):
+                try:
+                    import json as _jsonb
+                    ops = _jsonb.loads(ops)
+                except Exception:
+                    return "ERROR: 'operations' must be a list or JSON array string."
             if not isinstance(ops, list) or not ops:
                 return "ERROR: 'operations' must be a non-empty list."
             return await _asyncio2c.to_thread(
@@ -801,7 +791,8 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             dst = str(args.get("destination", "") or "").strip()
             if not src or not dst:
                 return "ERROR: 'source' and 'destination' are required."
-            return await _asyncio2c.to_thread(_fs.fs_move, src, dst)
+            return await _asyncio2c.to_thread(
+                _fs.fs_move, src, dst, bool(args.get("confirm", False)))
         path = str(args.get("path", "") or "").strip()
         if not path:
             return "ERROR: 'path' is required."
@@ -1096,32 +1087,6 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
                                          _num(args.get("lat", 0)), _num(args.get("lon", 0)),
                                          str(args.get("note", "") or ""), str(args.get("since", "") or ""),
                                          bool(args.get("forget", False)))
-
-    if tool in ("calendar_today", "calendar_search", "calendar_create",
-                "calendar_brief", "calendar_status"):
-        import asyncio as _asyncio10
-        from tools import calendar as _cal
-        if not _cal.enabled():
-            return "ERROR: calendar tools are disabled (ZUMBA_NO_CALENDAR=1)."
-        if tool == "calendar_status":
-            return await _asyncio10.to_thread(_cal.status_text)
-        if tool == "calendar_today":
-            try: lim = int(args.get("limit", 10) or 10)
-            except Exception: return "ERROR: 'limit' must be a number."
-            return await _asyncio10.to_thread(_cal.today, lim, str(args.get("calendar_id", "") or ""))
-        if tool == "calendar_search":
-            try: lim = int(args.get("max_results", 10) or 10)
-            except Exception: return "ERROR: 'max_results' must be a number."
-            return await _asyncio10.to_thread(_cal.search, str(args.get("query", "") or ""),
-                                              lim, str(args.get("calendar_id", "") or ""))
-        if tool == "calendar_brief":
-            try: lim = int(args.get("limit", 10) or 10)
-            except Exception: return "ERROR: 'limit' must be a number."
-            return await _asyncio10.to_thread(_cal.brief, str(args.get("calendar_id", "") or ""), lim)
-        return await _asyncio10.to_thread(
-            _cal.create, str(args.get("summary", "") or ""), str(args.get("start", "") or ""),
-            str(args.get("end", "") or ""), str(args.get("location", "") or ""),
-            str(args.get("description", "") or ""), str(args.get("calendar_id", "") or ""))
 
     return f"ERROR: unknown meta-tool '{tool}'."
 
