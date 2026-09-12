@@ -17,6 +17,11 @@ TOOL_ACCESS = {
     'mcp_search': 'read', 'mcp_list': 'read', 'shell_jobs': 'read',
     'web_search': 'read', 'web_news': 'read', 'web_fetch': 'read',
     'scrape_low': 'read', 'scrape_mid': 'read', 'scrape_high': 'read',
+    'fs_read': 'read', 'fs_grep': 'read', 'fs_find': 'read', 'fs_list': 'read',
+    'fs_info': 'read', 'fs_glob': 'read', 'fs_tree': 'read',
+    'fs_write': 'local', 'fs_edit': 'local', 'fs_insert': 'local',
+    'fs_replace_lines': 'local', 'fs_apply_patch': 'local', 'fs_batch': 'local',
+    'fs_undo': 'local', 'fs_mkdir': 'local', 'fs_move': 'local', 'fs_delete': 'local',
     'vault_search': 'read', 'vault_doc': 'read', 'vault_read': 'read',
     'goal_show': 'read', 'goal_list': 'read', 'memory_search': 'read',
     'brief': 'read', 'soul_show': 'read', 'soul_diff': 'read', 'me_show': 'read',
@@ -24,14 +29,20 @@ TOOL_ACCESS = {
     'geo_reverse': 'read', 'geo_route': 'read', 'geo_traffic': 'read',
     'geo_nearby': 'read', 'geo_weather': 'read', 'geo_maps_link': 'read',
     'geo_whereami': 'read', 'task_list': 'read',
+    'calendar_today': 'read', 'calendar_search': 'read', 'calendar_brief': 'read',
+    'calendar_status': 'read',
     'goal_add': 'local', 'goal_complete_step': 'local', 'remind_add': 'local',
     'memory_remember': 'local', 'soul_propose': 'local', 'task_update': 'local',
+    'calendar_create': 'local',
 }
 
 # These capabilities share mutable session state even when a call is a read.
 TOOL_GROUP = {'mcp_search': 'registry', 'mcp_add': 'registry',
               'mcp_remove': 'registry', 'mcp_list': 'registry',
-              'shell_run': 'shell', 'shell_jobs': 'shell', 'shell_kill': 'shell'}
+              'shell_run': 'shell', 'shell_jobs': 'shell', 'shell_kill': 'shell',
+              'fs_write': 'fs', 'fs_edit': 'fs', 'fs_insert': 'fs',
+              'fs_replace_lines': 'fs', 'fs_apply_patch': 'fs', 'fs_batch': 'fs',
+              'fs_undo': 'fs', 'fs_mkdir': 'fs', 'fs_move': 'fs', 'fs_delete': 'fs'}
 
 
 def _graph_profile() -> str:
@@ -163,6 +174,100 @@ BUILTIN_TOOLS = [
            "same_domain": {"type": "boolean", "description": "Stay on seed domain (default true)"},
            "selectors": {"type": "string", "description": "JSON object or 'k=css' field map applied per page (optional)"},
            "mode": {"type": "string", "description": "auto (default), static, stealth"}}, ["urls"]),
+    _tool("fs_read",
+          "Read a local text file with line numbers + nearby import/scope context. "
+          "Use instead of shell (Get-Content/cat) for ALL file reading.",
+          {"path": {"type": "string", "description": "File path"},
+           "start_line": {"type": "integer", "description": "First line (default 1)"},
+           "num_lines": {"type": "integer", "description": "Max lines (default 200)"}}, ["path"]),
+    _tool("fs_grep",
+          "Search file CONTENTS for a pattern (ripgrep-fast, Python fallback). "
+          "Use instead of shell grep/Select-String. Returns path:line:excerpt.",
+          {"pattern": {"type": "string", "description": "Regex/text to find"},
+           "path": {"type": "string", "description": "Directory or file (default .)"},
+           "glob": {"type": "string", "description": "File glob like *.py (optional)"},
+           "context": {"type": "integer", "description": "Context lines (default 0)"},
+           "case_sensitive": {"type": "boolean", "description": "Case-sensitive (default false)"},
+           "max_results": {"type": "integer", "description": "Max hits (default 100)"}}, ["pattern"]),
+    _tool("fs_find",
+          "Instantly locate files by NAME anywhere (rg --files + fuzzy rank). "
+          "Use instead of shell Get-ChildItem -Recurse / find for filename lookup.",
+          {"name": {"type": "string", "description": "Filename or fragment"},
+           "path": {"type": "string", "description": "Root to search from (default .)"},
+           "max_results": {"type": "integer", "description": "Max paths (default 50)"}}, ["name"]),
+    _tool("fs_list",
+          "List a directory with sizes. Use instead of shell ls/Get-ChildItem.",
+          {"path": {"type": "string", "description": "Directory (default .)"},
+           "max_items": {"type": "integer", "description": "Max items (default 30)"},
+           "sort": {"type": "string", "description": "name (default), mtime, size"}}, []),
+    _tool("fs_info",
+          "File metadata: type, size, timestamps, binary/symlink status.",
+          {"path": {"type": "string", "description": "File or directory"}}, ["path"]),
+    _tool("fs_glob",
+          "Find files by glob pattern (e.g. **/*.py). Ignore-aware.",
+          {"pattern": {"type": "string", "description": "Glob pattern"},
+           "path": {"type": "string", "description": "Root (default .)"},
+           "max_results": {"type": "integer", "description": "Max files (default 50)"}}, ["pattern"]),
+    _tool("fs_tree",
+          "Directory tree view (like tree). Depth-capped.",
+          {"path": {"type": "string", "description": "Root (default .)"},
+           "max_depth": {"type": "integer", "description": "Depth 1-10 (default 3)"}}, []),
+    _tool("fs_write",
+          "Create or FULLY OVERWRITE a file (atomic, auto-backup, diff in result, audit-logged). "
+          "For targeted changes use fs_edit/fs_insert/fs_replace_lines instead.",
+          {"path": {"type": "string", "description": "File path"},
+           "content": {"type": "string", "description": "Full file content"},
+           "dry_run": {"type": "boolean", "description": "Preview diff without writing"}}, ["path", "content"]),
+    _tool("fs_edit",
+          "Targeted edit: replace uniquely-matching old_text with new_text "
+          "(exact -> occurrence -> whitespace-normalized -> did-you-mean). Auto-backup + diff. "
+          "Use instead of shell sed/AWK for file edits.",
+          {"path": {"type": "string", "description": "File path"},
+           "old_text": {"type": "string", "description": "Text to find (must be unique unless occurrence given)"},
+           "new_text": {"type": "string", "description": "Replacement"},
+           "occurrence": {"type": "integer", "description": "Which match 1..N when repeated (default 0 = require unique)"},
+           "dry_run": {"type": "boolean", "description": "Preview diff without writing"}}, ["path", "old_text", "new_text"]),
+    _tool("fs_insert",
+          "Insert text before/after a 1-based line number. Auto-backup + diff.",
+          {"path": {"type": "string", "description": "File path"},
+           "line": {"type": "integer", "description": "1-based line number"},
+           "text": {"type": "string", "description": "Text to insert"},
+           "position": {"type": "string", "description": "before or after (default after)"},
+           "dry_run": {"type": "boolean", "description": "Preview without writing"}}, ["path", "line", "text"]),
+    _tool("fs_replace_lines",
+          "Inline edit: replace inclusive 1-based line range with new text. Auto-backup + diff.",
+          {"path": {"type": "string", "description": "File path"},
+           "start": {"type": "integer", "description": "First line"},
+           "end": {"type": "integer", "description": "Last line (inclusive)"},
+           "new_text": {"type": "string", "description": "Replacement text"},
+           "dry_run": {"type": "boolean", "description": "Preview without writing"}}, ["path", "start", "end", "new_text"]),
+    _tool("fs_apply_patch",
+          "Multi-file atomic patch (V4A context-anchored diffs: *** Add/Update/Delete File, "
+          "@@ anchors, -/+ lines). Validates ALL files in memory first; nothing touches disk "
+          "unless everything applies. Use for refactors across files.",
+          {"patch": {"type": "string", "description": "V4A patch text"},
+           "dry_run": {"type": "boolean", "description": "Validate only, show diffs"}}, ["patch"]),
+    _tool("fs_batch",
+          "Transactional multi-operation edit (write/edit/insert/replace_lines/delete/move/mkdir). "
+          "Rolls back ALL files if any operation fails.",
+          {"operations": {"type": "array", "items": {"type": "object"},
+                          "description": "List of {action, path, ...} ops"},
+           "dry_run": {"type": "boolean", "description": "Validate without changing files"}}, ["operations"]),
+    _tool("fs_undo",
+          "Restore a file from its newest auto-backup.",
+          {"path": {"type": "string", "description": "File path"},
+           "dry_run": {"type": "boolean", "description": "Preview restore diff"}}, ["path"]),
+    _tool("fs_mkdir",
+          "Create a directory with parents (mkdir -p).",
+          {"path": {"type": "string", "description": "Directory path"}}, ["path"]),
+    _tool("fs_move",
+          "Move/rename a file or directory (creates destination parents).",
+          {"source": {"type": "string", "description": "Current path"},
+           "destination": {"type": "string", "description": "New path"}}, ["source", "destination"]),
+    _tool("fs_delete",
+          "Delete a file or EMPTY directory. Requires confirm=true.",
+          {"path": {"type": "string", "description": "Path to delete"},
+           "confirm": {"type": "boolean", "description": "Must be true"}}, ["path"]),
     _tool("vault_search",
           "Search the local document vault (user files: contracts, leases, emails, PDFs). "
           "Use for 'what does my doc say / find the email / summarize the contract' questions. "
@@ -268,6 +373,17 @@ BUILTIN_TOOLS = [
     _tool("geo_visit_log", "Record/query place visits. action=list|add|forget.",
           {"chat_id": {"type": "string"}, "action": {"type": "string"}, "place_name": {"type": "string"},
            "lat": {"type": "number"}, "lon": {"type": "number"}, "note": {"type": "string"}, "since": {"type": "string"}, "forget": {"type": "boolean"}}, []),
+    _tool("calendar_today", "Today's Google Calendar events (honest 'not connected' when no OAuth, never hallucinate).",
+          {"limit": {"type": "integer"}, "calendar_id": {"type": "string"}}, []),
+    _tool("calendar_search", "Search Google Calendar events by text.",
+          {"query": {"type": "string"}, "max_results": {"type": "integer"}, "calendar_id": {"type": "string"}}, ["query"]),
+    _tool("calendar_create", "Create a Google Calendar event (needs OAuth; start ISO e.g. 2026-09-13T09:30:00).",
+          {"summary": {"type": "string"}, "start": {"type": "string"}, "end": {"type": "string"},
+           "location": {"type": "string"}, "description": {"type": "string"}, "calendar_id": {"type": "string"}}, ["summary", "start"]),
+    _tool("calendar_brief", "Meetings + travel/maps links + prep links for today.",
+          {"limit": {"type": "integer"}, "calendar_id": {"type": "string"}}, []),
+    _tool("calendar_status", "Calendar connection status (no secrets echoed).",
+          {}, []),
 ]
 
 
@@ -315,6 +431,21 @@ def visible_tools() -> list:
             ("__geo_geocode", "__geo_reverse", "__geo_route", "__geo_traffic", "__geo_nearby",
              "__geo_weather", "__geo_maps_link", "__geo_track_start", "__geo_track_stop",
              "__geo_whereami", "__geo_visit_log"))]
+    if os.getenv("ZUMBA_NO_CALENDAR", "") == "1":
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__calendar_today", "__calendar_search", "__calendar_create",
+             "__calendar_brief", "__calendar_status"))]
+    try:
+        from tools import filesystem as _fs
+
+        if not _fs.enabled():
+            raise RuntimeError("fs disabled")
+    except Exception:
+        tools = [t for t in tools if not str(t.get("function", {}).get("name", "")).endswith(
+            ("__fs_read", "__fs_grep", "__fs_find", "__fs_list", "__fs_info",
+             "__fs_glob", "__fs_tree", "__fs_write", "__fs_edit", "__fs_insert",
+             "__fs_replace_lines", "__fs_apply_patch", "__fs_batch", "__fs_undo",
+             "__fs_mkdir", "__fs_move", "__fs_delete"))]
     return tools
 
 # (search results live in mgr.meta_state["last_search"] — per-instance, no globals)
@@ -533,6 +664,149 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             bool(args.get("same_domain", True)), sels or "",
             str(args.get("mode", "auto") or "auto"))
         return (text + (f"\n{note}" if note and text else "")) if text else (note or "ERROR: crawl failed.")
+
+    if tool in ("fs_read", "fs_grep", "fs_find", "fs_list", "fs_info", "fs_glob",
+                "fs_tree", "fs_write", "fs_edit", "fs_insert", "fs_replace_lines",
+                "fs_apply_patch", "fs_batch", "fs_undo", "fs_mkdir", "fs_move", "fs_delete"):
+        import asyncio as _asyncio2c
+        from tools import filesystem as _fs
+
+        if not _fs.enabled():
+            return "ERROR: filesystem tools are disabled (ZUMBA_NO_FS=1)."
+
+        def _num(v, default=0):
+            try:
+                return int(v)
+            except Exception:
+                return default
+
+        if tool == "fs_read":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_read, path, _num(args.get("start_line", 1), 1) or 1,
+                _num(args.get("num_lines", 200), 200) or 200)
+        if tool == "fs_grep":
+            pattern = str(args.get("pattern", "") or "")
+            if not pattern.strip():
+                return "ERROR: 'pattern' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_grep, pattern, str(args.get("path", ".") or "."),
+                str(args.get("glob", "") or ""), _num(args.get("context", 0)),
+                bool(args.get("case_sensitive", False)),
+                _num(args.get("max_results", 100), 100) or 100)
+        if tool == "fs_find":
+            name = str(args.get("name", "") or "")
+            if not name.strip():
+                return "ERROR: 'name' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_find, name, str(args.get("path", ".") or "."),
+                _num(args.get("max_results", 50), 50) or 50)
+        if tool == "fs_list":
+            return await _asyncio2c.to_thread(
+                _fs.fs_list, str(args.get("path", ".") or "."),
+                _num(args.get("max_items", 30), 30) or 30,
+                str(args.get("sort", "name") or "name"))
+        if tool == "fs_info":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            return await _asyncio2c.to_thread(_fs.fs_info, path)
+        if tool == "fs_glob":
+            pattern = str(args.get("pattern", "") or "")
+            if not pattern.strip():
+                return "ERROR: 'pattern' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_glob, pattern, str(args.get("path", ".") or "."),
+                _num(args.get("max_results", 50), 50) or 50)
+        if tool == "fs_tree":
+            return await _asyncio2c.to_thread(
+                _fs.fs_tree, str(args.get("path", ".") or "."),
+                _num(args.get("max_depth", 3), 3) or 3)
+        if tool == "fs_write":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            if args.get("content") is None:
+                return "ERROR: 'content' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_write, path, str(args.get("content", "")),
+                bool(args.get("dry_run", False)))
+        if tool == "fs_edit":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            if not str(args.get("old_text", "") or ""):
+                return "ERROR: 'old_text' is required."
+            if args.get("new_text") is None:
+                return "ERROR: 'new_text' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_edit, path, str(args.get("old_text", "")),
+                str(args.get("new_text", "")), _num(args.get("occurrence", 0)),
+                bool(args.get("dry_run", False)))
+        if tool == "fs_insert":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            if args.get("text") is None:
+                return "ERROR: 'text' is required."
+            try:
+                line = int(args.get("line", 0) or 0)
+            except Exception:
+                return "ERROR: 'line' must be a number."
+            return await _asyncio2c.to_thread(
+                _fs.fs_insert, path, line, str(args.get("text", "")),
+                str(args.get("position", "after") or "after"),
+                bool(args.get("dry_run", False)))
+        if tool == "fs_replace_lines":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            if args.get("new_text") is None:
+                return "ERROR: 'new_text' is required."
+            try:
+                start = int(args.get("start", 0) or 0)
+                end = int(args.get("end", 0) or 0)
+            except Exception:
+                return "ERROR: 'start'/'end' must be numbers."
+            return await _asyncio2c.to_thread(
+                _fs.fs_replace_lines, path, start, end,
+                str(args.get("new_text", "")), bool(args.get("dry_run", False)))
+        if tool == "fs_apply_patch":
+            patch = str(args.get("patch", "") or "")
+            if not patch.strip():
+                return "ERROR: 'patch' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_apply_patch, patch, bool(args.get("dry_run", False)))
+        if tool == "fs_batch":
+            ops = args.get("operations", [])
+            if not isinstance(ops, list) or not ops:
+                return "ERROR: 'operations' must be a non-empty list."
+            return await _asyncio2c.to_thread(
+                _fs.fs_batch, ops, bool(args.get("dry_run", False)))
+        if tool == "fs_undo":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            return await _asyncio2c.to_thread(
+                _fs.fs_undo, path, bool(args.get("dry_run", False)))
+        if tool == "fs_mkdir":
+            path = str(args.get("path", "") or "").strip()
+            if not path:
+                return "ERROR: 'path' is required."
+            return await _asyncio2c.to_thread(_fs.fs_mkdir, path)
+        if tool == "fs_move":
+            src = str(args.get("source", "") or "").strip()
+            dst = str(args.get("destination", "") or "").strip()
+            if not src or not dst:
+                return "ERROR: 'source' and 'destination' are required."
+            return await _asyncio2c.to_thread(_fs.fs_move, src, dst)
+        path = str(args.get("path", "") or "").strip()
+        if not path:
+            return "ERROR: 'path' is required."
+        return await _asyncio2c.to_thread(
+            _fs.fs_delete, path, bool(args.get("confirm", False)))
 
     if tool in ("vault_search", "vault_doc", "vault_read"):
         import asyncio as _asyncio3
@@ -822,6 +1096,32 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
                                          _num(args.get("lat", 0)), _num(args.get("lon", 0)),
                                          str(args.get("note", "") or ""), str(args.get("since", "") or ""),
                                          bool(args.get("forget", False)))
+
+    if tool in ("calendar_today", "calendar_search", "calendar_create",
+                "calendar_brief", "calendar_status"):
+        import asyncio as _asyncio10
+        from tools import calendar as _cal
+        if not _cal.enabled():
+            return "ERROR: calendar tools are disabled (ZUMBA_NO_CALENDAR=1)."
+        if tool == "calendar_status":
+            return await _asyncio10.to_thread(_cal.status_text)
+        if tool == "calendar_today":
+            try: lim = int(args.get("limit", 10) or 10)
+            except Exception: return "ERROR: 'limit' must be a number."
+            return await _asyncio10.to_thread(_cal.today, lim, str(args.get("calendar_id", "") or ""))
+        if tool == "calendar_search":
+            try: lim = int(args.get("max_results", 10) or 10)
+            except Exception: return "ERROR: 'max_results' must be a number."
+            return await _asyncio10.to_thread(_cal.search, str(args.get("query", "") or ""),
+                                              lim, str(args.get("calendar_id", "") or ""))
+        if tool == "calendar_brief":
+            try: lim = int(args.get("limit", 10) or 10)
+            except Exception: return "ERROR: 'limit' must be a number."
+            return await _asyncio10.to_thread(_cal.brief, str(args.get("calendar_id", "") or ""), lim)
+        return await _asyncio10.to_thread(
+            _cal.create, str(args.get("summary", "") or ""), str(args.get("start", "") or ""),
+            str(args.get("end", "") or ""), str(args.get("location", "") or ""),
+            str(args.get("description", "") or ""), str(args.get("calendar_id", "") or ""))
 
     return f"ERROR: unknown meta-tool '{tool}'."
 

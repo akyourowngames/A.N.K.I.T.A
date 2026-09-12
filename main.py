@@ -148,6 +148,10 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "web_fetch is GENERAL reading, never scraping. "
         "Scrape: zumba__scrape_low (one simple page) / zumba__scrape_mid (blocked/JS page or named fields, auto stealth) / "
         "zumba__scrape_high (multi-page crawl, depth<=2, <=20 pages) — use ONLY when the user asks to scrape; pick the tier by need. "
+        "Files: zumba__fs_read / fs_grep / fs_find / fs_list / fs_info / fs_glob / fs_tree for discovery; "
+        "fs_write / fs_edit / fs_insert / fs_replace_lines / fs_apply_patch / fs_batch for changes (auto-backup + undo); "
+        "fs_undo / fs_mkdir / fs_move / fs_delete (confirm=true) for the rest. "
+        "NEVER use shell for file work (no Get-Content/cat/sed/grep/Select-String) — fs tools are faster and safer. "
         "Geo: zumba__geo_route for distance, zumba__geo_weather for rain, zumba__geo_geocode + "
         "zumba__geo_nearby for 'places near X'; on 'heading to X' chain geocode → route (from "
         "zumba__geo_whereami) → zumba__geo_traffic → weather at arrival → nearby → ONE briefing with "
@@ -158,6 +162,8 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "Goals: zumba__goal_add / zumba__goal_list / zumba__goal_show / zumba__goal_complete_step / zumba__remind_add track "
         "the user's stated intentions — create a goal when they say 'I want to ... by <date>' instead of "
         "letting it fade; complete steps as they report progress. "
+        "Calendar: zumba__calendar_today / zumba__calendar_search / zumba__calendar_brief answer 'what's on today / find meeting'; "
+        "zumba__calendar_create books; zumba__calendar_status checks connection. When not connected say so + point to /cal auth, never invent events. "
          "Memory: the Relevant memory system block ALREADY contains recall results for this turn — "
          "answer personal-fact questions from it first and never claim ignorance when the answer is there; "
          "call zumba__memory_search only when that block lacks what you need. zumba__memory_remember for durable facts; "
@@ -988,9 +994,11 @@ def chat_cmd(
         table.add_row("/news <q>", "Realtime news via Google News RSS")
         table.add_row("/fetch <url>", "Read a web page as text")
         table.add_row("/scrape <url> [--mid|--high]", "Scrape a page (low) / blocked+fields (mid) / crawl (high)")
+        table.add_row("/fs <op> ...", "Files: read|grep|find|list|info|glob|tree|edit (no shell needed)")
         table.add_row("/vault ask|find|add|status|doc", "Local document vault")
         table.add_row("/goal add|list|show|step ...", "Proactive goals")
         table.add_row("/remind <text> --at <time>", "Schedule a reminder")
+        table.add_row("/cal [today|search|brief|status|auth]", "Google Calendar (today/search/create + connect)")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -1202,6 +1210,9 @@ def chat_cmd(
         if user_text == "/scrape" or user_text.startswith("/scrape "):
             _scrape_chat_run(user_text[7:].strip(), allow_emoji)
             continue
+        if user_text == "/fs" or user_text.startswith("/fs "):
+            _fs_chat_run(user_text[3:].strip(), allow_emoji)
+            continue
         if user_text == "/vault" or user_text.startswith("/vault "):
             _vault_chat_run(user_text[6:].strip(), allow_emoji)
             continue
@@ -1211,12 +1222,15 @@ def chat_cmd(
         if user_text == "/remind" or user_text.startswith("/remind "):
             _remind_chat_run(user_text[7:].strip(), allow_emoji)
             continue
+        if user_text == "/cal" or user_text.startswith("/cal "):
+            _cal_chat_run(user_text[4:].strip(), allow_emoji)
+            continue
         if user_text.startswith("/"):
             import difflib as _dl
             _known = ["/help", "/models", "/model", "/system", "/clear", "/sessions", "/load", "/new",
                       "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/search", "/news",
-                      "/fetch", "/scrape", "/vault", "/goal", "/remind", "/remember", "/memory",
-                      "/why", "/forget", "/soul", "/me", "/brief", "/save", "/exit", "/quit"]
+                      "/fetch", "/scrape", "/fs", "/vault", "/goal", "/remind", "/remember", "/memory",
+                      "/why", "/forget", "/soul", "/me", "/brief", "/cal", "/save", "/exit", "/quit"]
             _word = user_text.split()[0].lower()
             _hit = _dl.get_close_matches(_word, _known, n=1, cutoff=0.6)
             _hint = f" Did you mean {_hit[0]}?" if _hit else ""
@@ -1454,7 +1468,59 @@ def _scrape_chat_run(arg: str, allow_emoji: bool) -> None:
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
 
 
-def _vault_chat_run(arg: str, allow_emoji: bool) -> None:
+def _fs_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/fs <op> ...' live, in-session (bypasses the model)."""
+    from tools import filesystem as _fs
+
+    if not _fs.enabled():
+        console.print(error_panel("filesystem tools are disabled (ZUMBA_NO_FS=1).", allow_emoji=allow_emoji))
+        return
+    parts = (arg or "").split(None, 1)
+    op = (parts[0] if parts else "").lower()
+    rest = parts[1] if len(parts) > 1 else ""
+    if op in ("read", "list", "info", "tree") and not rest:
+        console.print(info_panel(f"Usage: /fs {op} <path>", title="FS", allow_emoji=allow_emoji))
+        return
+    if op in ("grep", "find", "glob") and not rest:
+        console.print(info_panel(f"Usage: /fs {op} <pattern> [path]", title="FS", allow_emoji=allow_emoji))
+        return
+    if op == "edit" and not rest:
+        console.print(info_panel("Usage: /fs edit <path> :: <old> :: <new>",
+                                 title="FS", allow_emoji=allow_emoji))
+        return
+    if op not in ("read", "grep", "find", "list", "info", "glob", "tree", "edit"):
+        console.print(info_panel("Usage: /fs read|grep|find|list|info|glob|tree|edit ...",
+                                 title="FS", allow_emoji=allow_emoji))
+        return
+    title = f"FS {op.upper()}"
+    with console.status(f"[cyan]FS {op}...[/]", spinner="dots"):
+        if op == "read":
+            body = _fs.fs_read(rest)
+        elif op == "list":
+            body = _fs.fs_list(rest)
+        elif op == "info":
+            body = _fs.fs_info(rest)
+        elif op == "tree":
+            toks = rest.split()
+            body = _fs.fs_tree(toks[0], int(toks[1]) if len(toks) > 1 and toks[1].isdigit() else 3)
+        elif op == "glob":
+            toks = rest.split(None, 1)
+            body = _fs.fs_glob(toks[0], toks[1] if len(toks) > 1 else ".")
+        elif op == "grep":
+            toks = rest.split(None, 1)
+            body = _fs.fs_grep(toks[0], toks[1] if len(toks) > 1 else ".")
+        elif op == "find":
+            toks = rest.split(None, 1)
+            body = _fs.fs_find(toks[0], toks[1] if len(toks) > 1 else ".")
+        else:
+            segs = [s.strip() for s in rest.split("::")]
+            if len(segs) != 3:
+                body = "ERROR: usage: /fs edit <path> :: <old_text> :: <new_text>"
+            else:
+                body = _fs.fs_edit(segs[0], segs[1], segs[2])
+    border = "red" if body.startswith("ERROR") or body.startswith("No ") else "cyan"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title=title,
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
     """Handle '/vault ask|find|add|status|doc ...' live, in-session."""
     from vault import service as _v
 
@@ -1887,6 +1953,125 @@ def scrape_high_cmd(
                         title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
 
 
+fs_app = typer.Typer(help="Local filesystem: read / grep / find / list / edit (no shell needed).")
+app.add_typer(fs_app, name="fs")
+
+
+def _fs_guard() -> None:
+    from tools import filesystem as _fs
+
+    if not _fs.enabled():
+        _fail("filesystem tools are disabled (ZUMBA_NO_FS=1).")
+
+
+def _fs_panel(body: str, title: str, allow_emoji: bool) -> None:
+    border = "red" if body.startswith("ERROR") else "green"
+    console.print(Panel(safe_text(body[:12000], allow_emoji), title=title,
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+@fs_app.command("read")
+def fs_read_cmd(
+    path: str = typer.Argument(..., help="File path."),
+    start: int = typer.Option(1, "--start", help="First line."),
+    num: int = typer.Option(200, "--num", "-n", help="Max lines."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    with console.status("[cyan]Reading file...[/]", spinner="dots"):
+        _fs_panel(_fs.fs_read(path, start, num), "FS READ", allow_emoji)
+
+
+@fs_app.command("grep")
+def fs_grep_cmd(
+    pattern: str = typer.Argument(..., help="Regex/text to find."),
+    path: str = typer.Option(".", "--path", "-p", help="Directory or file."),
+    glob: str = typer.Option("", "--glob", "-g", help="File glob like *.py (use --glob=*.py form)."),
+    context: int = typer.Option(0, "--context", "-C", help="Context lines."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    with console.status("[cyan]Grepping...[/]", spinner="dots"):
+        _fs_panel(_fs.fs_grep(pattern, path, glob, context), "FS GREP", allow_emoji)
+
+
+@fs_app.command("find")
+def fs_find_cmd(
+    name: str = typer.Argument(..., help="Filename or fragment."),
+    path: str = typer.Option(".", "--path", "-p", help="Root to search from."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    with console.status("[cyan]Finding files...[/]", spinner="dots"):
+        _fs_panel(_fs.fs_find(name, path), "FS FIND", allow_emoji)
+
+
+@fs_app.command("list")
+def fs_list_cmd(
+    path: str = typer.Argument(".", help="Directory."),
+    sort: str = typer.Option("name", "--sort", help="name|mtime|size."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    _fs_panel(_fs.fs_list(path, sort=sort), "FS LIST", allow_emoji)
+
+
+@fs_app.command("edit")
+def fs_edit_cmd(
+    path: str = typer.Argument(..., help="File path."),
+    old: str = typer.Option(..., "--old", help="Text to find (must be unique)."),
+    new: str = typer.Option(..., "--new", help="Replacement text."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Preview diff only."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    with console.status("[cyan]Editing file...[/]", spinner="dots"):
+        _fs_panel(_fs.fs_edit(path, old, new, dry_run=dry_run), "FS EDIT", allow_emoji)
+
+
+@fs_app.command("patch")
+def fs_patch_cmd(
+    patch_file: str = typer.Argument(..., help="Path to a V4A patch file (or '-' for stdin)."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Validate only."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    if patch_file == "-":
+        import sys as _sys
+        patch = _sys.stdin.read()
+    else:
+        try:
+            patch = open(patch_file, encoding="utf-8").read()
+        except Exception as exc:
+            _fail(f"cannot read patch file: {exc}")
+            return
+    with console.status("[cyan]Applying patch...[/]", spinner="dots"):
+        _fs_panel(_fs.fs_apply_patch(patch, dry_run=dry_run), "FS PATCH", allow_emoji)
+
+
+@fs_app.command("undo")
+def fs_undo_cmd(
+    path: str = typer.Argument(..., help="File to restore."),
+) -> None:
+    from tools import filesystem as _fs
+    allow_emoji = _allow_emoji()
+    _fs_guard()
+    console.print(_header())
+    _fs_panel(_fs.fs_undo(path), "FS UNDO", allow_emoji)
+
+
 vault_app = typer.Typer(help="Local document vault: add / find / ask / status / doc / forget.")
 app.add_typer(vault_app, name="vault")
 
@@ -2279,6 +2464,230 @@ def goal_fail_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
         console.print(section_rule("FAILED" if _g.set_status(con, gid, "failed").get("updated") else "NOT FOUND"))
     finally:
         _goal_close(mem, con, owned)
+
+
+calendar_app = typer.Typer(help="Google Calendar: today / search / create / brief / auth.")
+app.add_typer(calendar_app, name="calendar")
+
+
+def _cal_guard() -> None:
+    from tools import calendar as _cal
+    if not _cal.enabled():
+        _fail("calendar tools are disabled (ZUMBA_NO_CALENDAR=1).")
+
+
+def _cal_panel(text: str, title: str, allow_emoji: bool) -> None:
+    border = "red" if text.startswith("ERROR") or "not connected" in text.lower() else "cyan"
+    console.print(Panel(safe_text(text[:12000], allow_emoji), title=title,
+                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
+
+
+@calendar_app.command("today")
+def calendar_today_cmd(
+    limit: int = typer.Option(10, "--limit", "-n", help="Max events."),
+    calendar: str = typer.Option("", "--calendar", help="Calendar id (default primary)."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    with console.status("[cyan]Reading today's calendar...[/]", spinner="dots"):
+        _cal_panel(_cal.today(limit, calendar), "CALENDAR TODAY", allow_emoji)
+
+
+@calendar_app.command("search")
+def calendar_search_cmd(
+    query: str = typer.Argument(..., help="Search text."),
+    limit: int = typer.Option(10, "--limit", "-n", help="Max events."),
+    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    with console.status("[cyan]Searching calendar...[/]", spinner="dots"):
+        _cal_panel(_cal.search(query, limit, calendar), "CALENDAR SEARCH", allow_emoji)
+
+
+@calendar_app.command("create")
+def calendar_create_cmd(
+    summary: str = typer.Argument(..., help="Event title."),
+    start: str = typer.Option(..., "--start", help="Start ISO e.g. 2026-09-13T09:30:00."),
+    end: str = typer.Option("", "--end", help="End ISO (default +1h)."),
+    location: str = typer.Option("", "--location", help="Where."),
+    description: str = typer.Option("", "--desc", help="Notes."),
+    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    with console.status("[cyan]Creating event...[/]", spinner="dots"):
+        _cal_panel(_cal.create(summary, start, end, location, description, calendar), "CALENDAR CREATE", allow_emoji)
+
+
+@calendar_app.command("brief")
+def calendar_brief_cmd(
+    limit: int = typer.Option(10, "--limit", "-n"),
+    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    with console.status("[cyan]Building calendar brief...[/]", spinner="dots"):
+        _cal_panel(_cal.brief(calendar, limit), "CALENDAR BRIEF", allow_emoji)
+
+
+@calendar_app.command("status")
+def calendar_status_cmd() -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_panel(_cal.status_text(), "CALENDAR STATUS", allow_emoji)
+
+
+@calendar_app.command("auth")
+def calendar_auth_cmd(
+    code: str = typer.Option("", "--code", help="OAuth code from Google (paste after Approve)."),
+    client_id: str = typer.Option("", "--client-id", help="Google OAuth client id."),
+    client_secret: str = typer.Option("", "--client-secret", help="Google OAuth client secret."),
+    redirect: str = typer.Option("", "--redirect", help="Redirect URI (must match OAuth client)."),
+    no_input: bool = typer.Option(False, "--no-input", help="Non-interactive (fail instead of prompting)."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    if code.strip():
+        with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
+            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret), "CALENDAR AUTH", allow_emoji)
+        return
+    cid = client_id.strip() or _cal.load_token().get("client_id", "")
+    sec = client_secret.strip() or _cal.load_token().get("client_secret", "")
+    if not cid and not no_input:
+        try:
+            cid = console.input("[bold cyan]Google client_id (Enter to skip, see setup link) › [/]").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+    if cid and not sec and not no_input:
+        import getpass as _gp
+        try:
+            sec = _gp.getpass("Google client_secret (hidden, Enter to skip): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+    if cid:
+        _cal.save_token({"client_id": cid, **({"client_secret": sec} if sec else {})})
+    step1 = _cal.auth_start(cid, redirect)
+    _cal_panel(step1, "CALENDAR AUTH  ·  step 1/2", allow_emoji)
+    if step1.startswith("ERROR"):
+        return
+    if no_input:
+        console.print("[dim]Re-run with --code <code> to finish.[/]")
+        return
+    try:
+        pasted = console.input("[bold cyan]Paste Google code (or Enter to stop) › [/]").strip()
+    except (KeyboardInterrupt, EOFError):
+        console.print()
+        return
+    if not pasted:
+        console.print("[dim]Stopped. Finish later with: zumba calendar auth --code <code>[/]")
+        return
+    with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
+        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
+
+
+@calendar_app.command("token")
+def calendar_token_cmd(
+    access_token: str = typer.Option("", "--token", help="OAuth access token to save."),
+    refresh_token: str = typer.Option("", "--refresh", help="OAuth refresh token (optional)."),
+    no_input: bool = typer.Option(False, "--no-input", help="Non-interactive."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    tok = access_token.strip()
+    ref = refresh_token.strip()
+    if not tok and not no_input:
+        import getpass as _gp
+        try:
+            tok = _gp.getpass("Paste calendar access token (hidden): ").strip()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        if tok:
+            try:
+                ref = console.input("[bold cyan]Refresh token (optional, Enter to skip) › [/]").strip()
+            except (KeyboardInterrupt, EOFError):
+                console.print()
+                return
+    with console.status("[cyan]Saving token...[/]", spinner="dots"):
+        _cal_panel(_cal.set_token(tok, ref), "CALENDAR TOKEN", allow_emoji)
+
+
+@calendar_app.command("forget")
+def calendar_forget_cmd(
+    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
+) -> None:
+    from tools import calendar as _cal
+    allow_emoji = _allow_emoji()
+    console.print(_header())
+    _cal_guard()
+    if not yes:
+        try:
+            ok = console.input("[bold cyan]Forget calendar token? [y/N] › [/]").strip().lower()
+        except (KeyboardInterrupt, EOFError):
+            console.print()
+            return
+        if ok not in ("y", "yes"):
+            console.print(section_rule("KEPT"))
+            return
+    console.print(section_rule("FORGOTTEN" if _cal.clear_token() else "NOTHING SAVED"))
+
+
+def _cal_chat_run(arg: str, allow_emoji: bool) -> None:
+    """Handle '/cal [today|search|create|brief|status|auth] ...' live, in-session."""
+    from tools import calendar as _cal
+    if not _cal.enabled():
+        console.print(error_panel("calendar is disabled (ZUMBA_NO_CALENDAR=1).", allow_emoji=allow_emoji))
+        return
+    parts = (arg or "").split(None, 1)
+    sub = (parts[0] if parts else "").lower() or "today"
+    rest = parts[1] if len(parts) > 1 else ""
+    if sub == "today":
+        lim = 10
+        try:
+            lim = int((rest.strip().split() or ["10"])[0]) if rest.strip() else 10
+        except Exception:
+            pass
+        _cal_panel(_cal.today(lim), "CALENDAR TODAY", allow_emoji)
+    elif sub == "search" and rest:
+        _cal_panel(_cal.search(rest), "CALENDAR SEARCH", allow_emoji)
+    elif sub == "brief":
+        _cal_panel(_cal.brief(), "CALENDAR BRIEF", allow_emoji)
+    elif sub == "status":
+        _cal_panel(_cal.status_text(), "CALENDAR STATUS", allow_emoji)
+    elif sub == "auth":
+        if rest.strip():
+            _cal_panel(_cal.auth_finish(rest.strip()), "CALENDAR AUTH", allow_emoji)
+        else:
+            _cal_panel(_cal.auth_start(), "CALENDAR AUTH", allow_emoji)
+            console.print(info_panel("Finish with: /cal auth <code>  (or `zumba calendar auth --code <code>`)", title="CAL", allow_emoji=allow_emoji))
+    elif sub == "create" and rest:
+        bits = [b.strip() for b in rest.split("::")]
+        if len(bits) < 2:
+            console.print(info_panel("Usage: /cal create <title> :: <start ISO> [:: <end ISO> :: <location> :: <notes>]", title="CAL", allow_emoji=allow_emoji))
+            return
+        title, start = bits[0], bits[1]
+        end = bits[2] if len(bits) > 2 else ""
+        loc = bits[3] if len(bits) > 3 else ""
+        notes = bits[4] if len(bits) > 4 else ""
+        _cal_panel(_cal.create(title, start, end, loc, notes), "CALENDAR CREATE", allow_emoji)
+    else:
+        console.print(info_panel("Usage: /cal [today [n]|search <q>|brief|status|auth [code]|create <title> :: <start ISO> ...]", title="CAL", allow_emoji=allow_emoji))
 
 
 memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")

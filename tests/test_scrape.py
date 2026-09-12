@@ -153,6 +153,21 @@ def test_high_respects_limit_and_depth_validation(monkeypatch, tmp_path):
     assert text2 == "" and err2.startswith("ERROR")
 
 
+def test_scrapling_noise_filter_drops_fetch_chatter():
+    import logging
+    scrape._silence_scrapling()
+    lg = logging.getLogger("scrapling")
+    assert any(isinstance(f, scrape._ScraplingNoiseFilter) for f in lg.filters)
+    rec = logging.LogRecord("scrapling", logging.INFO, __file__, 1,
+                            "Fetched (200) <GET https://example.com/> (referer: x)", None, None)
+    assert lg.filter(rec) is False
+    # level reset (what scrapling does per-fetch) must NOT drop the filter
+    lg.setLevel(logging.INFO)
+    assert any(isinstance(f, scrape._ScraplingNoiseFilter) for f in lg.filters)
+    assert lg.filter(rec) is False
+    scrape._silence_scrapling()
+
+
 def test_needs_stealth_structural_only():
     assert scrape.needs_stealth(None)
     assert scrape.needs_stealth(_Resp(status=403, text="x"))

@@ -30,6 +30,10 @@ python main.py web fetch <url>         # readable page text (Jina fallback)
 python main.py scrape low <url>        # scrape one simple page (Scrapling static)
 python main.py scrape mid <url> -s title=h1  # scrape blocked/JS page or fields (auto stealth)
 python main.py scrape high <url> --depth 1   # crawl multi-page (depth<=2, <=20 pages)
+python main.py fs read <file> --start 1 --num 200  # read with line numbers
+python main.py fs grep <pattern> --path . --glob *.py  # ripgrep-fast search
+python main.py fs find <name>                # instant filename locate
+python main.py fs edit <file> --old ... --new ...  # targeted edit + backup
 python main.py vault add ./docs        # ingest files/folders into the Vault
 python main.py vault ask "what does my lease say about pets?"  # cited answer
 python main.py vault find "client approval"  # raw hits, no LLM
@@ -68,6 +72,7 @@ python main.py mood                    # 30-day valence chart
 | `/news <q>`     | Realtime news (Google News RSS)          |
 | `/fetch <url>`  | Read a web page as text                  |
 | `/scrape <url> [--mid\|--high]` | Scrape a page: low (static) / mid (stealth+fields) / high (crawl) |
+| `/fs <op> ...` | Files: read\|grep\|find\|list\|info\|glob\|tree\|edit (no shell needed) |
 | `/vault ask\|find\|add\|status\|doc` | Local document vault      |
 
 Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrades gracefully — chat never breaks because of it.
@@ -93,6 +98,7 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **Soul + living memory (Tier 2)** — `~/.zumba/soul.md` is self-authored on first run (3 questions, skippable via `/soul wingit`; `user.md` companion holds your profile and is always injected); session-end reflection writes decisions/follow-ups/importance/mood in one LLM pass; retrieval is HippoRAG-2 passages-in-graph with importance + temporal filters (`as_of`, time ranges) and A-Mem note evolution; `zumba daily` briefs from follow-ups + on-this-day resurfaces; style corrections (`shorter`, `no tables`) fold into soul Voice via propose/accept; `zumba memory eval` keeps the regression net green
 - **Web search (zero-key)** — `zumba__web_search/web_news/web_fetch` model tools (DDG + Google News RSS + Wikipedia + HN + Reddit + readable fetch with Jina fallback); CLI `zumba web search|news|fetch`, in-chat `/search|/news|/fetch`; TTL cache, CAPTCHA fallback, `ZUMBA_NO_WEB=1` kill-switch
 - **Scraping (Scrapling tiers)** — `zumba__scrape_low/scrape_mid/scrape_high` model tools ONLY for explicit scrape requests (`web_fetch` stays general reading): low = fast static page, mid = auto stealth fallback (Cloudflare solver) + CSS/XPath fields, high = multi-page crawl (depth<=2, <=20 pages, same-domain); CLI `zumba scrape low|mid|high`, in-chat `/scrape [--mid|--high]`; `ZUMBA_NO_SCRAPE=1` kill-switch
+- **Filesystem (no shell needed)** — 17 model tools: `fs_read/grep/find/list/info/glob/tree` reads + `fs_write/edit/insert/replace_lines/apply_patch(V4A atomic)/batch/undo/mkdir/move/delete(confirm=true)` writes with auto-backup (`.zumba_backups`), unified-diff results, `fs_audit.log`; CLI `zumba fs read|grep|find|list|edit|patch|undo`, in-chat `/fs ...`; `ZUMBA_NO_FS=1` kill-switch
 - **The Vault (local document RAG)** — drop files into `~/.zumba/vault/` (`zumba vault add <path>`, `watch`, `status`, `ask`, `find`, `doc`, `forget`, `reindex`); structure-aware chunking, hybrid vector+BM25+RRF, small-to-big parent sections, RAPTOR-lite summaries, local rerank, citations `[Title p.N]`; always-on `[VAULT CONTEXT]` recall hook + `zumba__vault_search/doc/read` tools + `/vault` chat commands; `ZUMBA_NO_VAULT=1` kill-switch
 - **Proactive goals (Tier 3)** — `goal add` auto-decomposes via LLM into steps with staggered micro-deadlines; natural-time reminders (`friday 5pm`, `in 3 days`, daily/weekly recur, snooze, desktop toast); background worker fires reminders + deadline/stall nudges + pre-deadline web research + win/fail detection (rate-limited, `config --set-proactive off`); goals lead the daily brief, sit in recall context, and are creatable by the agent (`goal_add`, `remind_add` tools) and chat (`/goal`, `/remind`)
 - **Geo / trip brain (PLAN-GO)** — 11 standalone model tools in `tools/geo.py` (`zumba__geo_geocode/reverse/route/traffic/nearby/weather/maps_link/track_start/track_stop/whereami/visit_log`): single questions take one call (how far → route, raining → weather, cafes near X → geocode + nearby); "I'm heading to X" chains geocode → route → live traffic → weather at arrival → nearby → ONE briefing with leave-by time, route, weather, personal context, maps link. TomTom-first when `ZUMBA_TT_KEY` is set (Search, Reverse Geocode, Category/Places Search, Routing + Traffic Incidents/Flow), OSM fallbacks (Nominatim/OSRM/Overpass) otherwise; `ZUMBA_NO_GEO=1` kill-switch. Telegram point/live locations store silently to SQLite (`server/geo_store.py`); the pipeline and Telegram both run the agent tool loop so geo tools fire everywhere, not just CLI
@@ -143,6 +149,9 @@ copy .env.example .env   # then put your key in .env
 | `ZUMBA_SCRAPE_STEALTH_TIMEOUT` | Stealth browser timeout (seconds) | `30` |
 | `ZUMBA_SCRAPE_MAX_OUTPUT` | Scrape output cap (chars, head+tail) | `8000` |
 | `ZUMBA_SCRAPE_MAX_PAGES` | Crawl page cap | `20` |
+| `ZUMBA_NO_FS` | Disable filesystem tools (`1`) | enabled |
+| `ZUMBA_FS_MAX_OUTPUT` | FS output cap (chars, head+tail) | `8000` |
+| `ZUMBA_FS_SEARCH_TIMEOUT` | rg search timeout (seconds) | `15` |
 
 Model precedence: `--model` flag → `ZUMBA_MODEL` env → saved default → `nvidia/nemotron-3-super-120b-a12b`.
 
@@ -358,7 +367,7 @@ zumba/
 ├── identity/        # Who Zumba is + graph profile: persona (incl. GEO_BRIEF trip behavior), soul, userprofile (ZUMBA_NO_USER_MD kill-switch)
 ├── knowledge/       # Document graph workspace: service (plan/apply locking), extraction, reasoning (retry+fallback chain), storage (busy retry), parsers
 ├── scripts/         # eval_graph_recall.py (live stratified recall eval), check_knowledge_model.py
-├── tools/           # God-mode local tools: shelltool, websearch, geo (11 trip-brain tools)
+├── tools/           # God-mode local tools: shelltool, websearch, scrape (low/mid/high), filesystem (17 fs tools), geo (11 trip-brain tools)
 ├── server/          # HTTP + Telegram: app, run.py (backend+frontend launcher), telegram_channel (location/live pings), geo_store, channel_store
 ├── PLAN-GO.md       # Geo/trip-brain build plan (primitives → motion layer)
 ├── vault/           # Local document RAG (parsers, chunker, ingest, retrieve, rerank, summaries)
@@ -378,6 +387,7 @@ zumba/
 │   ├── shelltool.py     # God-mode persistent PowerShell session + background jobs + audit
 │   ├── websearch.py     # Zero-key web engine: DDG + GNews RSS + Wiki + HN + Reddit + fetch + cache
 │   ├── scrape.py        # Scrapling tiers: low (static) / mid (auto stealth + fields) / high (crawl)
+│   ├── filesystem.py    # 17 fs tools: read/grep/find/list/info/glob/tree + write/edit/patch/batch/undo
 │   └── geo.py           # Trip-brain tools: TomTom-first geocode/reverse/nearby/route/traffic (+incidents/flow), Open-Meteo weather, maps links, track/whereami/visit
 ├── mcpclient/       # MCP layer (pluggable tool servers)
 │   ├── config.py        # ~/.zumba/mcp.json + .mcp.json registry (Claude-Desktop format)

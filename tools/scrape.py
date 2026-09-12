@@ -23,10 +23,44 @@ Conventions (match websearch.py / geo.py):
 from __future__ import annotations
 
 import json
+import logging as _logging
 import os
 import re
 import time
 import urllib.parse as _url
+
+# Scrapling re-applies INFO to its logger on EVERY fetch (setup_logger is
+# lru_cached and re-called per request), so setLevel alone never sticks.
+# A logger-level Filter survives that: it lives on the logger object and is
+# consulted for every record regardless of level resets/handler re-adds.
+class _ScraplingNoiseFilter(_logging.Filter):
+    _DROP = ("Fetched (", "No Cloudflare challenge found")
+
+    def filter(self, record) -> bool:
+        try:
+            msg = record.getMessage()
+        except Exception:
+            return True
+        return not any(s in msg for s in self._DROP)
+
+
+def _silence_scrapling() -> None:
+    try:
+        lg = _logging.getLogger("scrapling")
+        if not any(isinstance(f, _ScraplingNoiseFilter) for f in lg.filters):
+            lg.addFilter(_ScraplingNoiseFilter())
+        lg.setLevel(_logging.WARNING)
+        for name in list(_logging.root.manager.loggerDict):
+            if name.startswith("scrapling."):
+                try:
+                    _logging.getLogger(name).setLevel(_logging.WARNING)
+                except Exception:
+                    pass
+    except Exception:
+        pass
+
+
+_silence_scrapling()
 
 
 def enabled() -> bool:
@@ -257,6 +291,7 @@ def _same_host(a: str, b: str) -> bool:
 # ---- fetchers (I/O; import scrapling lazily so tests can stub) ----
 
 def static_get(url: str):
+    _silence_scrapling()
     from scrapling.fetchers import Fetcher
     return Fetcher.get(
         url,
@@ -269,6 +304,7 @@ def static_get(url: str):
 
 
 def stealth_fetch(url: str, wait_selector: str = ""):
+    _silence_scrapling()
     from scrapling.fetchers import StealthyFetcher
     kw: dict = dict(
         headless=True,
