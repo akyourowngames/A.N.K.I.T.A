@@ -120,7 +120,11 @@ def compose_daily(con, use_llm: bool = True) -> str:
     try:
         from tools import calendar as _cal
         if _cal.enabled() and _cal.is_connected():
-            parts.append("CALENDAR:\n" + _cal.brief()[:2000])
+            # Fail-open (M4): short timeout, and never feed ERROR:/not-connected
+            # text into the LLM prompt — skip silently instead.
+            cal = _cal.brief(timeout=4.0)
+            if cal and not cal.startswith("ERROR") and "not connected" not in cal.lower():
+                parts.append("CALENDAR:\n" + cal[:2000])
     except Exception:
         pass
     raw = "\n\n".join(parts) or "(nothing to brief yet)"

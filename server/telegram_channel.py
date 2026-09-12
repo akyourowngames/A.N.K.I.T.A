@@ -202,16 +202,30 @@ _CAL_PENDING: dict[int, float] = {}
 _CAL_PENDING_TTL = 10 * 60.0
 
 
+def _cal_prune_pending(now: float = 0) -> None:
+    """Drop expired OAuth-wait entries (no leak, m7)."""
+    try:
+        ts = now or time.time()
+        for cid, at in list(_CAL_PENDING.items()):
+            if ts - at > _CAL_PENDING_TTL:
+                _CAL_PENDING.pop(cid, None)
+    except Exception:
+        pass
+
+
 def _cal_looks_like_code(text: str) -> bool:
-    t = (text or "").strip()
-    if not t or " " in t or "\n" in t:
-        return False
-    # Google OAuth codes are long single tokens (4/..., ya29...); accept >=10 chars.
-    if len(t) < 10 or len(t) > 500:
-        return False
-    if t.startswith("/") or t.startswith("!"):
-        return False
-    return True
+    """Strict Google authorization-code shape only ('4/...').
+
+    Access tokens (ya29...) are deliberately rejected here — they must go
+    through `/cal token`, never the code-exchange endpoint (M2: no exfil of
+    arbitrary chat text to Google).
+    """
+    try:
+        from tools.calendar import is_auth_code
+        return is_auth_code(text)
+    except Exception:
+        t = (text or "").strip()
+        return len(t) >= 20 and t.startswith("4/") and " " not in t
 
 
 class TelegramChannel:
@@ -386,8 +400,11 @@ class TelegramChannel:
                 else:
                     out = await asyncio.to_thread(_cal.auth_start)
                     if not out.startswith("ERROR"):
+                        _cal_prune_pending()
                         _CAL_PENDING[chat_id] = time.time()
-                        out += "\n\nNow paste the code here as your next message (expires in 10 min)."
+                        out += ("\n\nNow paste ONLY the Google code (starts with '4/') here "
+                                "as your next message (expires in 10 min). "
+                                "Prefer explicit `/cal auth <code>` — safer than auto-detect.")
             elif sub == "token" and rest.strip():
                 # /cal token <access> [refresh] — pasted secret never echoed.
                 bits = rest.strip().split()
@@ -395,10 +412,15 @@ class TelegramChannel:
                 out = await asyncio.to_thread(_cal.set_token, tok, ref)
             elif sub == "token":
                 out = "Usage: /cal token <access_token> [refresh_token]"
+            elif sub == "forget" and rest.strip().lower() in ("yes", "y", "confirm"):
+                forgotten = await asyncio.to_thread(_cal.clear_token)
+                out = ("Global calendar token forgotten." if forgotten
+                       else "Nothing was saved.")
             elif sub == "forget":
-                out = "One global token — to forget it run `zumba calendar forget --yes` on the server."
+                out = ("This forgets the ONE global token for all chats. "
+                       "Confirm with `/cal forget yes`.")
             else:
-                out = "Usage: /cal [today|search <q>|brief|status|auth [code]|token <access>]"
+                out = "Usage: /cal [today|search <q>|brief|status|auth [code]|token <access>|forget]"
             await self.api.send_message(chat_id, out[:3500])
         except Exception as e:
             await self.api.send_message(chat_id, f"calendar error: {e}"[:500])
@@ -450,7 +472,7 @@ class TelegramChannel:
             await self.api.send_message(chat_id, "Fresh session started.")
             return
         if cmd == '/help':
-            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>, /cal [today|search|brief|status|auth].")
+            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>, /cal [today|search|brief|status|auth|forget].")
             return
         if cmd == '/memory':
             parts = text.split(maxsplit=1)
@@ -465,7 +487,11 @@ class TelegramChannel:
         if cmd == '/cal' or text.strip().lower().startswith('/cal '):
             await self._handle_cal(chat_id, text)
             return
-        # Pending OAuth code paste: after `/cal auth`, the next code-like message finishes auth.
+        # Pending OAuth code paste: after `/cal auth`, the next message that
+        # strictly matches an auth-code shape finishes auth. Anything else
+        # (incl. access tokens) falls through to the agent — never POSTed
+        # to Google implicitly (M2).
+        _cal_prune_pending()
         if not cmd and _cal_looks_like_code(text) and _CAL_PENDING.get(chat_id, 0) > time.time() - _CAL_PENDING_TTL:
             _CAL_PENDING.pop(chat_id, None)
             try:
