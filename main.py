@@ -2553,6 +2553,7 @@ def calendar_auth_cmd(
     client_id: str = typer.Option("", "--client-id", help="Google OAuth client id."),
     client_secret: str = typer.Option("", "--client-secret", help="Google OAuth client secret."),
     redirect: str = typer.Option("", "--redirect", help="Redirect URI (must match OAuth client)."),
+    state: str = typer.Option("", "--state", help="OAuth state from step 1 (verified when given)."),
     no_input: bool = typer.Option(False, "--no-input", help="Non-interactive (fail instead of prompting)."),
 ) -> None:
     from tools import calendar as _cal
@@ -2561,7 +2562,7 @@ def calendar_auth_cmd(
     _cal_guard()
     if code.strip():
         with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret), "CALENDAR AUTH", allow_emoji)
+            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret, state), "CALENDAR AUTH", allow_emoji)
         return
     cid = client_id.strip() or _cal.load_token().get("client_id", "")
     sec = client_secret.strip() or _cal.load_token().get("client_secret", "")
@@ -2596,7 +2597,7 @@ def calendar_auth_cmd(
         console.print("[dim]Stopped. Finish later with: zumba calendar auth --code <code>[/]")
         return
     with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
+        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec, state), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
 
 
 @calendar_app.command("token")
