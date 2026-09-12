@@ -7,6 +7,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import scrape
 
+_REAL_CHECK_URL_PUBLIC = scrape.check_url_public
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _allow_net(monkeypatch):
+    # SSRF guard does real DNS; stub to allow-all except in SSRF tests,
+    # which rebind the real implementation explicitly.
+    monkeypatch.setattr(scrape, "check_url_public", lambda url: "")
+
 
 class _Node:
     def __init__(self, val):
@@ -147,10 +158,83 @@ def test_high_respects_limit_and_depth_validation(monkeypatch, tmp_path):
     _nocache(monkeypatch, tmp_path)
     monkeypatch.setattr(scrape, "static_get", lambda url: _Resp(url=url))
     text, note = scrape.scrape_high("https://example.com/a", depth=9, limit=1, use_cache=False)
-    # depth clamps to 2, so no error; bad limit type errors
-    assert "[1]" in text
+    # depth clamps to 2 with a visible note, no error
+    assert "[1]" in text and "clamped" in note
     text2, err2 = scrape.scrape_high("https://example.com/a", limit="xx", use_cache=False)
     assert text2 == "" and err2.startswith("ERROR")
+
+
+def test_ssrf_private_hosts_refused(monkeypatch):
+    monkeypatch.setattr(scrape, "check_url_public", _REAL_CHECK_URL_PUBLIC)
+    for bad in ("http://localhost/x", "http://127.0.0.1/", "http://192.168.1.1/",
+                "http://169.254.169.254/", "http://[::1]/"):
+        text, err = scrape.scrape_low(bad, use_cache=False)
+        assert text == "" and "refusing" in err, bad
+        text, err = scrape.scrape_mid(bad, use_cache=False)
+        assert text == "" and "refusing" in err, bad
+        text, err = scrape.scrape_high(bad, use_cache=False)
+        assert text == "" and "refusing" in err, bad
+
+
+def test_ssrf_redirect_landing_blocked(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "check_url_public",
+                        lambda url: "" if "example.com" in url else "ERROR: refusing (test).")
+    monkeypatch.setattr(scrape, "static_get",
+                        lambda url: _Resp(url="http://127.0.0.1/evil"))
+    text, err = scrape.scrape_low("https://example.com/a", use_cache=False)
+    assert text == "" and "non-public host" in err
+
+
+def test_json_out_always_parses():
+    import json
+    big = "x" * 20000
+    out = scrape.json_out([{"url": "https://example.com", "title": "T", "text": big}], cap=1000)
+    payload = json.loads(out)
+    assert payload[0]["truncated"] is True and len(out) <= 1000
+    small = scrape.json_out([{"url": "u", "fields": {"a": ["1"]}}], cap=8000)
+    assert json.loads(small)[0]["fields"] == {"a": ["1"]}
+
+
+def test_mid_json_output_parses(monkeypatch, tmp_path):
+    import json
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "static_get",
+                        lambda url: _Resp(text="word " * 5000))
+    text, note = scrape.scrape_mid("https://example.com/e", format="json",
+                                   max_chars=1200, use_cache=False)
+    payload = json.loads(text)
+    assert payload[0]["url"].startswith("https://")
+    assert "mid" in note
+
+
+def test_high_multiseed_hosts(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    pages = {
+        "https://a.com/1": _Resp(url="https://a.com/1", links=["https://a.com/2", "https://b.com/1"]),
+        "https://a.com/2": _Resp(url="https://a.com/2", links=[]),
+        "https://b.com/1": _Resp(url="https://b.com/1", links=[]),
+    }
+    monkeypatch.setattr(scrape, "static_get", lambda url: pages[url])
+    monkeypatch.setattr(
+        scrape, "extract_links",
+        lambda resp, base="": [h if h.startswith("http") else "https://a.com" + h
+                               for h in (resp._links or [])])
+    text, note = scrape.scrape_high("https://a.com/1 https://b.com/1", depth=1,
+                                    limit=10, same_domain=True, use_cache=False)
+    assert "https://a.com/2" in text and "https://b.com/1" in text
+    # cross-seed link must NOT leak: a.com crawl of depth1 from a/1 sees b/1 only as seed
+    text2, _ = scrape.scrape_high("https://a.com/1", depth=1, limit=10,
+                                  same_domain=True, use_cache=False)
+    assert "https://a.com/2" in text2 and "b.com/1" not in text2
+
+
+def test_fallback_truncate_caps(monkeypatch, tmp_path):
+    import sys
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setitem(sys.modules, "tools.websearch", None)
+    out, trunc = scrape.truncate_output("z" * 10000, 1000)
+    assert trunc and len(out) < 2000 and out.endswith("z" * 200)
 
 
 def test_scrapling_noise_filter_drops_fetch_chatter():

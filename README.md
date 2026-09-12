@@ -102,7 +102,7 @@ Set `ZUMBA_NO_MEMORY=1` to disable memory entirely; every memory failure degrade
 - **The Vault (local document RAG)** — drop files into `~/.zumba/vault/` (`zumba vault add <path>`, `watch`, `status`, `ask`, `find`, `doc`, `forget`, `reindex`); structure-aware chunking, hybrid vector+BM25+RRF, small-to-big parent sections, RAPTOR-lite summaries, local rerank, citations `[Title p.N]`; always-on `[VAULT CONTEXT]` recall hook + `zumba__vault_search/doc/read` tools + `/vault` chat commands; `ZUMBA_NO_VAULT=1` kill-switch
 - **Proactive goals (Tier 3)** — `goal add` auto-decomposes via LLM into steps with staggered micro-deadlines; natural-time reminders (`friday 5pm`, `in 3 days`, daily/weekly recur, snooze, desktop toast); background worker fires reminders + deadline/stall nudges + pre-deadline web research + win/fail detection (rate-limited, `config --set-proactive off`); goals lead the daily brief, sit in recall context, and are creatable by the agent (`goal_add`, `remind_add` tools) and chat (`/goal`, `/remind`)
 - **Geo / trip brain (PLAN-GO)** — 11 standalone model tools in `tools/geo.py` (`zumba__geo_geocode/reverse/route/traffic/nearby/weather/maps_link/track_start/track_stop/whereami/visit_log`): single questions take one call (how far → route, raining → weather, cafes near X → geocode + nearby); "I'm heading to X" chains geocode → route → live traffic → weather at arrival → nearby → ONE briefing with leave-by time, route, weather, personal context, maps link. TomTom-first when `ZUMBA_TT_KEY` is set (Search, Reverse Geocode, Category/Places Search, Routing + Traffic Incidents/Flow), OSM fallbacks (Nominatim/OSRM/Overpass) otherwise; `ZUMBA_NO_GEO=1` kill-switch. Telegram point/live locations store silently to SQLite (`server/geo_store.py`); the pipeline and Telegram both run the agent tool loop so geo tools fire everywhere, not just CLI
-- **301 passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, vault, goals/reminders, geo, DB-lock concurrency, JSON-retry, and desktop suites. Live recall eval: `python scripts/eval_graph_recall.py --n 12 --ep 6` (isolated DB snapshot, stratified IMP/NONIMP/episode questions, scored)
+- **325 passing tests** — mocked API, storage, renderer, memory-graph, MCP agent/manager, shell, context-budget, persona, why, tool-memory, plus soul, eval, reflection/mood/prefs/people, retrieval-v2, websearch, scrape, filesystem, vault, goals/reminders, geo, DB-lock concurrency, JSON-retry, and desktop suites. Live recall eval: `python scripts/eval_graph_recall.py --n 12 --ep 6` (isolated DB snapshot, stratified IMP/NONIMP/episode questions, scored)
 
 ## Requirements
 
@@ -429,7 +429,7 @@ zumba/
 ## Testing
 
 ```powershell
-python -m pytest tests -q                          # full suite (301 green)
+python -m pytest tests -q                          # full suite (325 green)
 python scripts/eval_graph_recall.py --n 12 --ep 6  # live recall eval (isolated snapshot)
 ```
 

@@ -158,6 +158,51 @@ def test_undo_mkdir_move_delete(tmp_path):
     assert F.fs_undo(str(tmp_path / "never.txt")).startswith("ERROR")
 
 
+def test_move_overwrite_requires_confirm(tmp_path):
+    a = _mk(tmp_path, "a.txt", "AAA")
+    b = _mk(tmp_path, "b.txt", "BBB")
+    out = F.fs_move(a, b)
+    assert out.startswith("ERROR") and "confirm" in out
+    assert Path(a).read_text() == "AAA" and Path(b).read_text() == "BBB"
+    assert "overwrote" in F.fs_move(a, b, confirm=True)
+    assert Path(b).read_text() == "AAA"
+
+
+def test_batch_move_mkdir_rollback(tmp_path):
+    a = _mk(tmp_path, "a.txt", "AAA")
+    newdir = str(tmp_path / "newdir")
+    out = F.fs_batch([
+        {"action": "mkdir", "path": newdir},
+        {"action": "move", "source": a, "destination": newdir + "/a.txt"},
+        {"action": "edit", "path": str(tmp_path / "missing.txt"),
+         "old_text": "x", "new_text": "y"},
+    ])
+    assert out.startswith("ERROR") and "rolled back" in out
+    assert Path(a).read_text() == "AAA"  # moved back
+    assert not Path(newdir).exists()  # created dir removed
+
+
+def test_patch_phase2_rollback(tmp_path, monkeypatch):
+    p1 = _mk(tmp_path, "p1.txt", "one\ntwo\n")
+    p2 = str(tmp_path / "p2.txt")
+    real_atomic = F.atomic_write
+    calls = []
+
+    def flaky(path, data):
+        calls.append(str(path))
+        if len(calls) == 2:
+            raise OSError("disk full (simulated)")
+        return real_atomic(path, data)
+
+    monkeypatch.setattr(F, "atomic_write", flaky)
+    patch = (f"*** Update File: {p1}\n@@ one\n-one\n+uno\n two\n\n"
+             f"*** Add File: {p2}\n+hello\n")
+    out = F.fs_apply_patch(patch)
+    assert out.startswith("ERROR") and "rolled back" in out
+    assert Path(p1).read_text() == "one\ntwo\n"
+    assert not Path(p2).exists()
+
+
 def test_kill_switch_and_dispatch(monkeypatch):
     import asyncio
     import mcpclient.builtin as _b
@@ -182,5 +227,21 @@ def test_kill_switch_and_dispatch(monkeypatch):
         assert "Created" in await _b.handle(_Mgr(), "fs_write", {"path": "x", "content": "y"})
         assert (await _b.handle(_Mgr(), "fs_edit", {"path": "x"})).startswith("ERROR")
         assert (await _b.handle(_Mgr(), "fs_delete", {"path": "x"})).startswith("ERROR")
+        # batch accepts a JSON-string operations list (models often send strings)
+        monkeypatch.setattr(F, "fs_batch", lambda *a, **k: "Batch applied: 1 operation(s)")
+        assert "Batch applied" in await _b.handle(
+            _Mgr(), "fs_batch", {"operations": '[{"action": "mkdir", "path": "d"}]'})
+        assert (await _b.handle(_Mgr(), "fs_batch", {"operations": "not-json"})).startswith("ERROR")
+        # move without confirm on existing destination is refused end-to-end
+        import tempfile as _tf
+        _d = Path(_tf.mkdtemp(prefix="fsmove"))
+        (_d / "s.txt").write_text("S")
+        (_d / "t.txt").write_text("T")
+        refused = await _b.handle(_Mgr(), "fs_move",
+                                  {"source": str(_d / "s.txt"), "destination": str(_d / "t.txt")})
+        assert refused.startswith("ERROR") and "confirm" in refused
+        assert (_d / "s.txt").read_text() == "S"
+        import shutil as _sh
+        _sh.rmtree(_d, ignore_errors=True)
     monkeypatch.delenv("ZUMBA_NO_FS", raising=False)
     asyncio.run(go())

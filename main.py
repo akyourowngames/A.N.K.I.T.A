@@ -161,9 +161,7 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "MUST cite [Doc Title p.N]. zumba__vault_ask answers with citations; zumba__vault_status reports health. "
         "Goals: zumba__goal_add / zumba__goal_list / zumba__goal_show / zumba__goal_complete_step / zumba__remind_add track "
         "the user's stated intentions — create a goal when they say 'I want to ... by <date>' instead of "
-        "letting it fade; complete steps as they report progress. "
-        "Calendar: zumba__calendar_today / zumba__calendar_search / zumba__calendar_brief answer 'what's on today / find meeting'; "
-        "zumba__calendar_create books; zumba__calendar_status checks connection. When not connected say so + point to /cal auth, never invent events. "
+         "letting it fade; complete steps as they report progress. "
          "Memory: the Relevant memory system block ALREADY contains recall results for this turn — "
          "answer personal-fact questions from it first and never claim ignorance when the answer is there; "
          "call zumba__memory_search only when that block lacks what you need. zumba__memory_remember for durable facts; "
@@ -998,7 +996,6 @@ def chat_cmd(
         table.add_row("/vault ask|find|add|status|doc", "Local document vault")
         table.add_row("/goal add|list|show|step ...", "Proactive goals")
         table.add_row("/remind <text> --at <time>", "Schedule a reminder")
-        table.add_row("/cal [today|search|brief|status|auth]", "Google Calendar (today/search/create + connect)")
         table.add_row("/tokens", "Show token estimate")
         table.add_row("/exit, /quit", "Save and exit")
         console.print(table)
@@ -1222,15 +1219,12 @@ def chat_cmd(
         if user_text == "/remind" or user_text.startswith("/remind "):
             _remind_chat_run(user_text[7:].strip(), allow_emoji)
             continue
-        if user_text == "/cal" or user_text.startswith("/cal "):
-            _cal_chat_run(user_text[4:].strip(), allow_emoji)
-            continue
         if user_text.startswith("/"):
             import difflib as _dl
             _known = ["/help", "/models", "/model", "/system", "/clear", "/sessions", "/load", "/new",
                       "/stream", "/emoji", "/tokens", "/mcp", "/tools", "/shell", "/search", "/news",
                       "/fetch", "/scrape", "/fs", "/vault", "/goal", "/remind", "/remember", "/memory",
-                      "/why", "/forget", "/soul", "/me", "/brief", "/cal", "/save", "/exit", "/quit"]
+                      "/why", "/forget", "/soul", "/me", "/brief", "/save", "/exit", "/quit"]
             _word = user_text.split()[0].lower()
             _hit = _dl.get_close_matches(_word, _known, n=1, cutoff=0.6)
             _hint = f" Did you mean {_hit[0]}?" if _hit else ""
@@ -2464,230 +2458,6 @@ def goal_fail_cmd(gid: int = typer.Argument(..., help="Goal id.")) -> None:
         console.print(section_rule("FAILED" if _g.set_status(con, gid, "failed").get("updated") else "NOT FOUND"))
     finally:
         _goal_close(mem, con, owned)
-
-
-calendar_app = typer.Typer(help="Google Calendar: today / search / create / brief / auth.")
-app.add_typer(calendar_app, name="calendar")
-
-
-def _cal_guard() -> None:
-    from tools import calendar as _cal
-    if not _cal.enabled():
-        _fail("calendar tools are disabled (ZUMBA_NO_CALENDAR=1).")
-
-
-def _cal_panel(text: str, title: str, allow_emoji: bool) -> None:
-    border = "red" if text.startswith("ERROR") or "not connected" in text.lower() else "cyan"
-    console.print(Panel(safe_text(text[:12000], allow_emoji), title=title,
-                        title_align="left", border_style=border, box=_box(allow_emoji), padding=(0, 2)))
-
-
-@calendar_app.command("today")
-def calendar_today_cmd(
-    limit: int = typer.Option(10, "--limit", "-n", help="Max events."),
-    calendar: str = typer.Option("", "--calendar", help="Calendar id (default primary)."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    with console.status("[cyan]Reading today's calendar...[/]", spinner="dots"):
-        _cal_panel(_cal.today(limit, calendar), "CALENDAR TODAY", allow_emoji)
-
-
-@calendar_app.command("search")
-def calendar_search_cmd(
-    query: str = typer.Argument(..., help="Search text."),
-    limit: int = typer.Option(10, "--limit", "-n", help="Max events."),
-    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    with console.status("[cyan]Searching calendar...[/]", spinner="dots"):
-        _cal_panel(_cal.search(query, limit, calendar), "CALENDAR SEARCH", allow_emoji)
-
-
-@calendar_app.command("create")
-def calendar_create_cmd(
-    summary: str = typer.Argument(..., help="Event title."),
-    start: str = typer.Option(..., "--start", help="Start ISO e.g. 2026-09-13T09:30:00."),
-    end: str = typer.Option("", "--end", help="End ISO (default +1h)."),
-    location: str = typer.Option("", "--location", help="Where."),
-    description: str = typer.Option("", "--desc", help="Notes."),
-    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    with console.status("[cyan]Creating event...[/]", spinner="dots"):
-        _cal_panel(_cal.create(summary, start, end, location, description, calendar), "CALENDAR CREATE", allow_emoji)
-
-
-@calendar_app.command("brief")
-def calendar_brief_cmd(
-    limit: int = typer.Option(10, "--limit", "-n"),
-    calendar: str = typer.Option("", "--calendar", help="Calendar id."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    with console.status("[cyan]Building calendar brief...[/]", spinner="dots"):
-        _cal_panel(_cal.brief(calendar, limit), "CALENDAR BRIEF", allow_emoji)
-
-
-@calendar_app.command("status")
-def calendar_status_cmd() -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_panel(_cal.status_text(), "CALENDAR STATUS", allow_emoji)
-
-
-@calendar_app.command("auth")
-def calendar_auth_cmd(
-    code: str = typer.Option("", "--code", help="OAuth code from Google (paste after Approve)."),
-    client_id: str = typer.Option("", "--client-id", help="Google OAuth client id."),
-    client_secret: str = typer.Option("", "--client-secret", help="Google OAuth client secret."),
-    redirect: str = typer.Option("", "--redirect", help="Redirect URI (must match OAuth client)."),
-    no_input: bool = typer.Option(False, "--no-input", help="Non-interactive (fail instead of prompting)."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    if code.strip():
-        with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret), "CALENDAR AUTH", allow_emoji)
-        return
-    cid = client_id.strip() or _cal.load_token().get("client_id", "")
-    sec = client_secret.strip() or _cal.load_token().get("client_secret", "")
-    if not cid and not no_input:
-        try:
-            cid = console.input("[bold cyan]Google client_id (Enter to skip, see setup link) › [/]").strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print()
-            return
-    if cid and not sec and not no_input:
-        import getpass as _gp
-        try:
-            sec = _gp.getpass("Google client_secret (hidden, Enter to skip): ").strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print()
-            return
-    if cid:
-        _cal.save_token({"client_id": cid, **({"client_secret": sec} if sec else {})})
-    step1 = _cal.auth_start(cid, redirect)
-    _cal_panel(step1, "CALENDAR AUTH  ·  step 1/2", allow_emoji)
-    if step1.startswith("ERROR"):
-        return
-    if no_input:
-        console.print("[dim]Re-run with --code <code> to finish.[/]")
-        return
-    try:
-        pasted = console.input("[bold cyan]Paste Google code (or Enter to stop) › [/]").strip()
-    except (KeyboardInterrupt, EOFError):
-        console.print()
-        return
-    if not pasted:
-        console.print("[dim]Stopped. Finish later with: zumba calendar auth --code <code>[/]")
-        return
-    with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
-
-
-@calendar_app.command("token")
-def calendar_token_cmd(
-    access_token: str = typer.Option("", "--token", help="OAuth access token to save."),
-    refresh_token: str = typer.Option("", "--refresh", help="OAuth refresh token (optional)."),
-    no_input: bool = typer.Option(False, "--no-input", help="Non-interactive."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    tok = access_token.strip()
-    ref = refresh_token.strip()
-    if not tok and not no_input:
-        import getpass as _gp
-        try:
-            tok = _gp.getpass("Paste calendar access token (hidden): ").strip()
-        except (KeyboardInterrupt, EOFError):
-            console.print()
-            return
-        if tok:
-            try:
-                ref = console.input("[bold cyan]Refresh token (optional, Enter to skip) › [/]").strip()
-            except (KeyboardInterrupt, EOFError):
-                console.print()
-                return
-    with console.status("[cyan]Saving token...[/]", spinner="dots"):
-        _cal_panel(_cal.set_token(tok, ref), "CALENDAR TOKEN", allow_emoji)
-
-
-@calendar_app.command("forget")
-def calendar_forget_cmd(
-    yes: bool = typer.Option(False, "--yes", help="Skip confirmation."),
-) -> None:
-    from tools import calendar as _cal
-    allow_emoji = _allow_emoji()
-    console.print(_header())
-    _cal_guard()
-    if not yes:
-        try:
-            ok = console.input("[bold cyan]Forget calendar token? [y/N] › [/]").strip().lower()
-        except (KeyboardInterrupt, EOFError):
-            console.print()
-            return
-        if ok not in ("y", "yes"):
-            console.print(section_rule("KEPT"))
-            return
-    console.print(section_rule("FORGOTTEN" if _cal.clear_token() else "NOTHING SAVED"))
-
-
-def _cal_chat_run(arg: str, allow_emoji: bool) -> None:
-    """Handle '/cal [today|search|create|brief|status|auth] ...' live, in-session."""
-    from tools import calendar as _cal
-    if not _cal.enabled():
-        console.print(error_panel("calendar is disabled (ZUMBA_NO_CALENDAR=1).", allow_emoji=allow_emoji))
-        return
-    parts = (arg or "").split(None, 1)
-    sub = (parts[0] if parts else "").lower() or "today"
-    rest = parts[1] if len(parts) > 1 else ""
-    if sub == "today":
-        lim = 10
-        try:
-            lim = int((rest.strip().split() or ["10"])[0]) if rest.strip() else 10
-        except Exception:
-            pass
-        _cal_panel(_cal.today(lim), "CALENDAR TODAY", allow_emoji)
-    elif sub == "search" and rest:
-        _cal_panel(_cal.search(rest), "CALENDAR SEARCH", allow_emoji)
-    elif sub == "brief":
-        _cal_panel(_cal.brief(), "CALENDAR BRIEF", allow_emoji)
-    elif sub == "status":
-        _cal_panel(_cal.status_text(), "CALENDAR STATUS", allow_emoji)
-    elif sub == "auth":
-        if rest.strip():
-            _cal_panel(_cal.auth_finish(rest.strip()), "CALENDAR AUTH", allow_emoji)
-        else:
-            _cal_panel(_cal.auth_start(), "CALENDAR AUTH", allow_emoji)
-            console.print(info_panel("Finish with: /cal auth <code>  (or `zumba calendar auth --code <code>`)", title="CAL", allow_emoji=allow_emoji))
-    elif sub == "create" and rest:
-        bits = [b.strip() for b in rest.split("::")]
-        if len(bits) < 2:
-            console.print(info_panel("Usage: /cal create <title> :: <start ISO> [:: <end ISO> :: <location> :: <notes>]", title="CAL", allow_emoji=allow_emoji))
-            return
-        title, start = bits[0], bits[1]
-        end = bits[2] if len(bits) > 2 else ""
-        loc = bits[3] if len(bits) > 3 else ""
-        notes = bits[4] if len(bits) > 4 else ""
-        _cal_panel(_cal.create(title, start, end, loc, notes), "CALENDAR CREATE", allow_emoji)
-    else:
-        console.print(info_panel("Usage: /cal [today [n]|search <q>|brief|status|auth [code]|create <title> :: <start ISO> ...]", title="CAL", allow_emoji=allow_emoji))
 
 
 memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")

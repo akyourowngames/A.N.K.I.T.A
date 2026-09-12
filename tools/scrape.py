@@ -129,7 +129,92 @@ def truncate_output(text: str, cap: int = 0) -> tuple[str, bool]:
         if len(text) <= cap:
             return text, False
         head = cap * 4 // 5
-        return text[:head] + f"\n[...truncated {len(text) - cap} chars...]\n" + text[head:], True
+        return text[:head] + f"\n[...truncated {len(text) - cap} chars...]\n" + text[-head:], True
+
+
+def _host_blocked_reason(url: str) -> str:
+    """SSRF guard: refuse non-public hosts (loopback/private/link-local/etc).
+
+    Structural check only (DNS + ipaddress globals), never content cues.
+    Unresolvable hosts fail closed.
+    """
+    import ipaddress
+    import socket
+    try:
+        host = (_url.urlparse((url or "").strip()).hostname or "").strip().lower().rstrip(".")
+    except Exception:
+        return "unparseable URL"
+    if not host:
+        return "missing host"
+    if host in ("localhost",):
+        return "loopback host"
+    try:
+        ips = [r[4][0] for r in socket.getaddrinfo(host, None)]
+    except Exception:
+        return f"DNS does not resolve: {host}"
+    if not ips:
+        return f"DNS does not resolve: {host}"
+    for ip in ips:
+        try:
+            if not ipaddress.ip_address(ip.split("%")[0]).is_global:
+                return f"non-public address ({ip})"
+        except Exception:
+            return f"unparseable address ({ip})"
+    return ""
+
+
+def check_url_public(url: str) -> str:
+    """'' when fetchable, else 'ERROR: ...' SSRF refusal. Never raises."""
+    reason = _host_blocked_reason(url)
+    if reason:
+        return f"ERROR: refusing to fetch {url} ({reason})."
+    return ""
+
+
+def json_out(items: list, cap: int = 0) -> str:
+    """Serialize to JSON that always parses: shrink text/fields to fit cap.
+
+    Never slices serialized JSON (which would corrupt it). Marks shrunk
+    items with "truncated": true.
+    """
+    cap = cap or max_output()
+    blob = json.dumps(items, ensure_ascii=False)
+    if len(blob) <= cap:
+        return blob
+    shrunk = False
+    budget = max(200, cap // max(1, len(items)))
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        if isinstance(it.get("text"), str) and len(it["text"]) > budget:
+            it["text"] = it["text"][:budget]
+            it["truncated"] = True
+            shrunk = True
+        fields = it.get("fields")
+        if isinstance(fields, dict):
+            for k, vals in fields.items():
+                if isinstance(vals, list):
+                    cut = [str(v)[:min(500, budget)] for v in vals[:10]]
+                    if cut != vals:
+                        fields[k] = cut
+                        shrunk = True
+            if shrunk:
+                it["truncated"] = True
+    blob = json.dumps(items, ensure_ascii=False)
+    if len(blob) > cap:
+        # last resort: hard per-item text budget, still valid JSON
+        tiny = max(200, cap // max(1, len(items)) // 2)
+        for it in items:
+            if isinstance(it, dict):
+                if isinstance(it.get("text"), str):
+                    it["text"] = it["text"][:tiny]
+                    it["truncated"] = True
+                if isinstance(it.get("fields"), dict):
+                    for k in it["fields"]:
+                        it["fields"][k] = [str(v)[:tiny] for v in it["fields"][k][:5]]
+                    it["truncated"] = True
+        blob = json.dumps(items, ensure_ascii=False)
+    return blob
 
 
 def parse_selectors(raw) -> dict:
@@ -281,13 +366,6 @@ def extract_links(resp, base_url: str = "") -> list[str]:
     return uniq
 
 
-def _same_host(a: str, b: str) -> bool:
-    try:
-        return _url.urlparse(a).netloc.lower() == _url.urlparse(b).netloc.lower()
-    except Exception:
-        return False
-
-
 # ---- fetchers (I/O; import scrapling lazily so tests can stub) ----
 
 def static_get(url: str):
@@ -371,6 +449,9 @@ def scrape_low(url: str, format: str = "markdown", max_chars: int = 0,
     u = (url or "").strip().split()[0] if (url or "").strip() else ""
     if not is_url(u):
         return "", "ERROR: 'url' must start with http(s)://."
+    denied = check_url_public(u)
+    if denied:
+        return "", denied
     fmt = (format or "markdown").strip().lower() or "markdown"
     if fmt not in ("markdown", "text", "json"):
         return "", "ERROR: 'format' must be markdown, text, or json."
@@ -384,6 +465,9 @@ def scrape_low(url: str, format: str = "markdown", max_chars: int = 0,
         resp = static_get(u)
     except Exception as exc:
         return "", f"ERROR: scrape-low fetch failed for {u}: {exc}"
+    landed = check_url_public(str(getattr(resp, "url", "") or u))
+    if landed:
+        return "", landed + " (redirect landed on a non-public host)."
     try:
         status = int(getattr(resp, "status", 200) or 200)
     except Exception:
@@ -403,7 +487,16 @@ def scrape_low(url: str, format: str = "markdown", max_chars: int = 0,
             title = _html.unescape(title)
         except Exception:
             title = ""
-        text = json.dumps([{"url": u, "title": title, "text": text[:cap]}], ensure_ascii=False)
+        text = json_out([{"url": u, "title": title, "text": text}], cap)
+        text = (text or "").strip()
+        if not text:
+            return "", (f"ERROR: no readable text at {u} (static). "
+                        "Use scrape-mid for JS/blocked pages.")
+        try:
+            _cache_put(ck, text)
+        except Exception:
+            pass
+        return text, "(low/static)"
     text = (text or "").strip()
     if not text:
         return "", (f"ERROR: no readable text at {u} (static). "
@@ -427,6 +520,9 @@ def scrape_mid(url: str, selectors=None, format: str = "markdown", mode: str = "
     u = (url or "").strip().split()[0] if (url or "").strip() else ""
     if not is_url(u):
         return "", "ERROR: 'url' must start with http(s)://."
+    denied = check_url_public(u)
+    if denied:
+        return "", denied
     md = (mode or "auto").strip().lower() or "auto"
     if md not in ("auto", "static", "stealth"):
         return "", "ERROR: 'mode' must be auto, static, or stealth."
@@ -460,6 +556,9 @@ def scrape_mid(url: str, selectors=None, format: str = "markdown", mode: str = "
             used = "static+stealth-failed"
     if resp is None:
         return "", f"ERROR: scrape-mid fetch failed for {u}."
+    landed = check_url_public(str(getattr(resp, "url", "") or u))
+    if landed:
+        return "", landed + " (redirect landed on a non-public host)."
     try:
         status = int(getattr(resp, "status", 200) or 200)
     except Exception:
@@ -468,8 +567,7 @@ def scrape_mid(url: str, selectors=None, format: str = "markdown", mode: str = "
         return "", f"ERROR: scrape-mid http {status} for {u} ({used})."
     if sels:
         fields = extract_fields(resp, sels)
-        payload = json.dumps([{"url": u, "mode": used, "fields": fields}], ensure_ascii=False)
-        out, _ = truncate_output(payload, cap)
+        out = json_out([{"url": u, "mode": used, "fields": fields}], cap)
         try:
             _cache_put(ck, out)
         except Exception:
@@ -484,8 +582,15 @@ def scrape_mid(url: str, selectors=None, format: str = "markdown", mode: str = "
             title = _html.unescape((t[0] if t else "")[:220])
         except Exception:
             title = ""
-        text = json.dumps([{"url": u, "mode": used, "title": title,
-                            "text": (text or "")[:cap]}], ensure_ascii=False)
+        out = json_out([{"url": u, "mode": used, "title": title,
+                         "text": text or ""}], cap)
+        if not out.strip():
+            return "", f"ERROR: no readable text at {u} ({used})."
+        try:
+            _cache_put(ck, out)
+        except Exception:
+            pass
+        return out, f"(mid/{used})"
     text = (text or "").strip()
     if not text:
         return "", f"ERROR: no readable text at {u} ({used})."
@@ -508,12 +613,29 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
     seeds = [s for s in seeds if is_url(s)]
     if not seeds:
         return "", "ERROR: 'urls' must be one or more http(s) URLs."
+    for s in seeds:
+        denied = check_url_public(s)
+        if denied:
+            return "", denied
+    seed_hosts = set()
+    for s in seeds:
+        try:
+            seed_hosts.add(_url.urlparse(s).netloc.lower())
+        except Exception:
+            pass
+    clamp_notes: list[str] = []
     try:
-        depth = max(0, min(2, int(depth if depth is not None else 1)))
+        want_depth = int(depth if depth is not None else 1)
+        depth = max(0, min(2, want_depth))
+        if want_depth != depth:
+            clamp_notes.append(f"depth clamped {want_depth}->{depth} (max 2)")
     except Exception:
         return "", "ERROR: 'depth' must be a number 0-2."
     try:
-        limit = max(1, min(max_pages(), int(limit or 8)))
+        want_limit = int(limit or 8)
+        limit = max(1, min(max_pages(), want_limit))
+        if want_limit != limit:
+            clamp_notes.append(f"limit clamped {want_limit}->{limit} (max {max_pages()})")
     except Exception:
         return "", "ERROR: 'limit' must be a number."
     md = (mode or "auto").strip().lower() or "auto"
@@ -539,6 +661,8 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
         key = normalize_url(cur)
         if key in visited:
             continue
+        if check_url_public(cur):
+            continue
         visited.add(key)
         resp = None
         used = "static"
@@ -559,6 +683,9 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
                 used = "static+stealth-failed"
         if resp is None:
             pages.append({"url": cur, "mode": "failed", "title": "", "text": ""})
+            continue
+        if check_url_public(str(getattr(resp, "url", "") or cur)):
+            pages.append({"url": cur, "mode": "blocked-private-redirect", "title": "", "text": ""})
             continue
         try:
             st = int(getattr(resp, "status", 200) or 200)
@@ -589,7 +716,10 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
         if d < depth and len(pages) + len(queue) < limit * 2:
             try:
                 for link in extract_links(resp, cur):
-                    if same_domain and not _same_host(link, seeds[0]):
+                    try:
+                        if same_domain and _url.urlparse(link).netloc.lower() not in seed_hosts:
+                            continue
+                    except Exception:
                         continue
                     if normalize_url(link) not in visited:
                         queue.append((link, d + 1))
@@ -598,13 +728,16 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
             time.sleep(0.2)
     if not pages:
         return "", "ERROR: crawl fetched nothing."
-    out = format_records(pages, f"(high/{md}; {len(pages)} page(s), {stealth_uses} stealth)")
+    tail = f"(high/{md}; {len(pages)} page(s), {stealth_uses} stealth)"
+    if clamp_notes:
+        tail += " [" + "; ".join(clamp_notes) + "]"
+    out = format_records(pages, tail)
     out, _ = truncate_output(out, cap)
     try:
         _cache_put(ck, out)
     except Exception:
         pass
-    return out, f"(high/{md}; {len(pages)} page(s), {stealth_uses} stealth)"
+    return out, tail
 
 
 # ---- renderers ----
