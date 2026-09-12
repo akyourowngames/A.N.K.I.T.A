@@ -182,6 +182,43 @@ def test_batch_move_mkdir_rollback(tmp_path):
     assert not Path(newdir).exists()  # created dir removed
 
 
+def test_batch_move_overwrite_needs_confirm(tmp_path):
+    a = _mk(tmp_path, "a.txt", "AAA")
+    b = _mk(tmp_path, "b.txt", "BBB")
+    out = F.fs_batch([
+        {"action": "move", "source": a, "destination": b},
+    ])
+    assert out.startswith("ERROR") and "confirm" in out
+    assert Path(a).read_text() == "AAA" and Path(b).read_text() == "BBB"
+    out2 = F.fs_batch([
+        {"action": "move", "source": a, "destination": b, "confirm": True},
+    ])
+    assert "move" in out2 and Path(b).read_text() == "AAA"
+
+
+def test_batch_binary_rollback_exact(tmp_path):
+    blob = bytes(range(256)) * 4 + b"\x00\xff binary \xfe"
+    p = tmp_path / "bin.dat"
+    p.write_bytes(blob)
+    out = F.fs_batch([
+        {"action": "write", "path": str(p), "content": "TEXT OVERWRITE"},
+        {"action": "edit", "path": str(tmp_path / "missing.txt"),
+         "old_text": "x", "new_text": "y"},
+    ])
+    assert out.startswith("ERROR")
+    assert p.read_bytes() == blob  # byte-exact, no mojibake
+
+
+def test_v4a_two_hunks_blank_separated(tmp_path):
+    # reviewer's repro shape: two hunks split by a blank line
+    p = _mk(tmp_path, "m.txt", "a\nb\nc\nd\n")
+    patch = (f"*** Update File: {p}\n@@ a\n-a\n+A\n b\n\n"
+             f"@@ c\n-c\n+C\n d\n")
+    out = F.fs_apply_patch(patch)
+    assert "Patched" in out, out
+    assert Path(p).read_text() == "A\nb\nC\nd\n"
+
+
 def test_patch_phase2_rollback(tmp_path, monkeypatch):
     p1 = _mk(tmp_path, "p1.txt", "one\ntwo\n")
     p2 = str(tmp_path / "p2.txt")

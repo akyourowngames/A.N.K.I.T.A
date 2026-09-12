@@ -171,49 +171,103 @@ def check_url_public(url: str) -> str:
     return ""
 
 
-def json_out(items: list, cap: int = 0) -> str:
-    """Serialize to JSON that always parses: shrink text/fields to fit cap.
+def landing_blocked(resp, fallback_url: str) -> str:
+    """Refuse when any hop of the redirect chain landed non-public.
 
-    Never slices serialized JSON (which would corrupt it). Marks shrunk
-    items with "truncated": true.
+    Best-effort by nature (TOCTOU: DNS may re-resolve between check and
+    fetch; pinning the IP would break virtual-host routing, so the chain
+    is re-checked post-fetch instead). Never raises.
     """
-    cap = cap or max_output()
+    urls: list[str] = []
+    try:
+        for h in (getattr(resp, "history", None) or []):
+            u = str(getattr(h, "url", "") or "")
+            if u and u not in urls:
+                urls.append(u)
+    except Exception:
+        pass
+    try:
+        final = str(getattr(resp, "url", "") or fallback_url or "")
+        if final and final not in urls:
+            urls.append(final)
+    except Exception:
+        pass
+    for u in urls:
+        # via check_url_public (single seam: stubbed in tests, DNS-backed live)
+        refused = check_url_public(u)
+        if refused:
+            return (f"ERROR: refusing {fallback_url} "
+                    f"(redirect chain hit non-public host: {refused}).")
+    return ""
+
+
+def _shrink_strings(node, limit: int) -> bool:
+    """Halve every string longer than `limit` in place. Returns True if cut."""
+    cut = False
+    if isinstance(node, dict):
+        for k, v in node.items():
+            if isinstance(v, str) and len(v) > limit:
+                node[k] = v[: max(limit // 2, limit - len(v) // 2) or 1]
+                cut = True
+            elif isinstance(v, (dict, list)):
+                cut = _shrink_strings(v, limit) or cut
+    elif isinstance(node, list):
+        for i, v in enumerate(node):
+            if isinstance(v, str) and len(v) > limit:
+                node[i] = v[: max(limit // 2, limit - len(v) // 2) or 1]
+                cut = True
+            elif isinstance(v, (dict, list)):
+                cut = _shrink_strings(v, limit) or cut
+    return cut
+
+
+def json_out(items: list, cap: int = 0) -> str:
+    """Serialize to JSON that always parses AND always fits `cap`.
+
+    Strategy (never slices serialized JSON, which would corrupt it):
+    1. deepcopy (never mutates the caller's structure),
+    2. shrink rounds: halve every string > 100 chars until it fits
+       (max 12 rounds — geometric shrink always terminates),
+    3. last resort: drop trailing items, append one marker item.
+    Shrunk payloads carry "truncated": true.
+    """
+    import copy
+    cap = max(200, cap or max_output())
+    items = copy.deepcopy(items)
     blob = json.dumps(items, ensure_ascii=False)
     if len(blob) <= cap:
         return blob
-    shrunk = False
-    budget = max(200, cap // max(1, len(items)))
-    for it in items:
-        if not isinstance(it, dict):
-            continue
-        if isinstance(it.get("text"), str) and len(it["text"]) > budget:
-            it["text"] = it["text"][:budget]
-            it["truncated"] = True
-            shrunk = True
-        fields = it.get("fields")
-        if isinstance(fields, dict):
-            for k, vals in fields.items():
-                if isinstance(vals, list):
-                    cut = [str(v)[:min(500, budget)] for v in vals[:10]]
-                    if cut != vals:
-                        fields[k] = cut
-                        shrunk = True
-            if shrunk:
-                it["truncated"] = True
-    blob = json.dumps(items, ensure_ascii=False)
-    if len(blob) > cap:
-        # last resort: hard per-item text budget, still valid JSON
-        tiny = max(200, cap // max(1, len(items)) // 2)
+    if isinstance(items, list):
         for it in items:
             if isinstance(it, dict):
-                if isinstance(it.get("text"), str):
-                    it["text"] = it["text"][:tiny]
-                    it["truncated"] = True
-                if isinstance(it.get("fields"), dict):
-                    for k in it["fields"]:
-                        it["fields"][k] = [str(v)[:tiny] for v in it["fields"][k][:5]]
-                    it["truncated"] = True
+                it["truncated"] = True
+    for _ in range(12):
+        if not _shrink_strings(items, 100):
+            break
         blob = json.dumps(items, ensure_ascii=False)
+        if len(blob) <= cap:
+            return blob
+    blob = json.dumps(items, ensure_ascii=False)
+    if len(blob) <= cap:
+        return blob
+    # guaranteed fit: keep head items that fit, replace the tail with a marker
+    kept: list = []
+    for it in (items if isinstance(items, list) else [items]):
+        trial = kept + [it]
+        if len(json.dumps(trial, ensure_ascii=False)) + 120 <= cap:
+            kept = trial
+        else:
+            break
+    dropped = (len(items) - len(kept)) if isinstance(items, list) else 0
+    kept.append({"truncated": True, "omitted_items": max(dropped, 0),
+                 "note": "tail omitted to fit output cap"})
+    blob = json.dumps(kept, ensure_ascii=False)
+    if len(blob) > cap:
+        # single huge scalar edge: truncate the dump of the first item only
+        first = json.dumps(items[0] if isinstance(items, list) and items else {}, ensure_ascii=False)
+        kept = [{"truncated": True, "omitted_items": len(items) if isinstance(items, list) else 0,
+                 "head": first[: max(0, cap - 120)]}]
+        blob = json.dumps(kept, ensure_ascii=False)
     return blob
 
 
@@ -465,9 +519,9 @@ def scrape_low(url: str, format: str = "markdown", max_chars: int = 0,
         resp = static_get(u)
     except Exception as exc:
         return "", f"ERROR: scrape-low fetch failed for {u}: {exc}"
-    landed = check_url_public(str(getattr(resp, "url", "") or u))
+    landed = landing_blocked(resp, u)
     if landed:
-        return "", landed + " (redirect landed on a non-public host)."
+        return "", landed
     try:
         status = int(getattr(resp, "status", 200) or 200)
     except Exception:
@@ -556,9 +610,9 @@ def scrape_mid(url: str, selectors=None, format: str = "markdown", mode: str = "
             used = "static+stealth-failed"
     if resp is None:
         return "", f"ERROR: scrape-mid fetch failed for {u}."
-    landed = check_url_public(str(getattr(resp, "url", "") or u))
+    landed = landing_blocked(resp, u)
     if landed:
-        return "", landed + " (redirect landed on a non-public host)."
+        return "", landed
     try:
         status = int(getattr(resp, "status", 200) or 200)
     except Exception:
@@ -661,7 +715,12 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
         key = normalize_url(cur)
         if key in visited:
             continue
-        if check_url_public(cur):
+        refused = check_url_public(cur)
+        if refused:
+            # visible skip (not silent): the crawl record shows what was cut
+            pages.append({"url": cur, "mode": "skipped-private", "title": "",
+                          "text": refused})
+            visited.add(key)
             continue
         visited.add(key)
         resp = None
@@ -684,7 +743,7 @@ def scrape_high(urls, depth: int = 1, limit: int = 8, same_domain: bool = True,
         if resp is None:
             pages.append({"url": cur, "mode": "failed", "title": "", "text": ""})
             continue
-        if check_url_public(str(getattr(resp, "url", "") or cur)):
+        if landing_blocked(resp, cur):
             pages.append({"url": cur, "mode": "blocked-private-redirect", "title": "", "text": ""})
             continue
         try:

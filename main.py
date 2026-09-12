@@ -151,6 +151,7 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "Files: zumba__fs_read / fs_grep / fs_find / fs_list / fs_info / fs_glob / fs_tree for discovery; "
         "fs_write / fs_edit / fs_insert / fs_replace_lines / fs_apply_patch / fs_batch for changes (auto-backup + undo); "
         "fs_undo / fs_mkdir / fs_move / fs_delete (confirm=true) for the rest. "
+        "fs paths are UNRESTRICTED by design — every write is backed up + audit-logged, delete/overwrite need confirm; "
         "NEVER use shell for file work (no Get-Content/cat/sed/grep/Select-String) — fs tools are faster and safer. "
         "Geo: zumba__geo_route for distance, zumba__geo_weather for rain, zumba__geo_geocode + "
         "zumba__geo_nearby for 'places near X'; on 'heading to X' chain geocode → route (from "

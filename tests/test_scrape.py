@@ -186,6 +186,32 @@ def test_ssrf_redirect_landing_blocked(monkeypatch, tmp_path):
     assert text == "" and "non-public host" in err
 
 
+def test_ssrf_history_chain_blocked(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "check_url_public",
+                        lambda url: "" if "example.com" in url else "ERROR: refusing (test).")
+    via = _Resp(url="https://example.com/go")
+    evil = _Resp(url="http://10.0.0.5/x")
+    resp = _Resp(url="https://example.com/land")
+    resp.history = [via, evil]
+    monkeypatch.setattr(scrape, "static_get", lambda url: resp)
+    text, err = scrape.scrape_mid("https://example.com/a", use_cache=False)
+    assert text == "" and "redirect chain" in err
+
+
+def test_high_private_link_visible_skip(monkeypatch, tmp_path):
+    _nocache(monkeypatch, tmp_path)
+    monkeypatch.setattr(scrape, "check_url_public",
+                        lambda url: "" if "example.com" in url else "ERROR: refusing (test).")
+    monkeypatch.setattr(scrape, "static_get", lambda url: _Resp(url=url, links=["/ok", "http://10.9.9.9/secret"]))
+    monkeypatch.setattr(
+        scrape, "extract_links",
+        lambda resp, base="": ["https://example.com/ok", "http://10.9.9.9/secret"])
+    text, note = scrape.scrape_high("https://example.com/a", depth=1, limit=5,
+                                    same_domain=False, use_cache=False)
+    assert "skipped-private" in text
+
+
 def test_json_out_always_parses():
     import json
     big = "x" * 20000
@@ -194,6 +220,29 @@ def test_json_out_always_parses():
     assert payload[0]["truncated"] is True and len(out) <= 1000
     small = scrape.json_out([{"url": "u", "fields": {"a": ["1"]}}], cap=8000)
     assert json.loads(small)[0]["fields"] == {"a": ["1"]}
+
+
+def test_json_out_guarantees():
+    import copy
+    import json
+    # non-list field values are preserved, never char-split
+    src = [{"url": "u", "fields": {"k": "notalist", "n": 42, "l": ["a", "b"]}}]
+    before = copy.deepcopy(src)
+    out = scrape.json_out(src, cap=400)
+    assert src == before  # input never mutated
+    payload = json.loads(out)
+    assert payload[0]["fields"]["k"] == "notalist"
+    assert payload[0]["fields"]["n"] == 42
+    # adversarial: cap always holds, output always parses
+    monster = [{"url": f"https://e.com/{i}", "text": "y" * 5000,
+                "fields": {"f": ["z" * 3000] * 5}} for i in range(10)]
+    out2 = scrape.json_out(monster, cap=600)
+    assert len(out2) <= 600
+    assert json.loads(out2)[-1].get("truncated") is True
+    # non-dict items survive
+    out3 = scrape.json_out(["plain", 7, {"url": "u", "text": "t" * 5000}], cap=500)
+    parsed = json.loads(out3)
+    assert len(out3) <= 500 and "plain" in json.dumps(parsed)
 
 
 def test_mid_json_output_parses(monkeypatch, tmp_path):
