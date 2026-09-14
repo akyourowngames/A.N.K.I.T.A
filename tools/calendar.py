@@ -30,7 +30,8 @@ try:
 except Exception:  # pragma: no cover
     _requests = None
 
-CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar"
+CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events.readonly"
+CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 AUTH_URL = "https://accounts.google.com/o/oauth2/v2/auth"
 TOKEN_URL = "https://oauth2.googleapis.com/token"
 API_BASE = "https://www.googleapis.com/calendar/v3"
@@ -68,13 +69,17 @@ def local_tz() -> _dt.tzinfo:
 
 
 def tz_name() -> str:
+    """Only return an IANA key accepted by Google, never an OS display label."""
     try:
         tz = local_tz()
         key = getattr(tz, "key", None)
         if key:
             return str(key)
-        now = _dt.datetime.now(tz)
-        return now.tzname() or ""
+        if tz == _dt.timezone.utc:
+            return "UTC"
+        # Fixed-offset system zones may be named "India Standard Time" or
+        # "PDT". Google expects IANA; our RFC3339 values already carry offsets.
+        return ""
     except Exception:
         return ""
 
@@ -194,8 +199,8 @@ def _drop_pending() -> None:
         cur = json.loads(p.read_text(encoding="utf-8") or "{}") or {}
         if not isinstance(cur, dict):
             return
-        if any(k in cur for k in ("pending_state", "pending_ts", "pending_redirect")):
-            for k in ("pending_state", "pending_ts", "pending_redirect"):
+        if any(k in cur for k in ("pending_state", "pending_ts", "pending_redirect", "pending_scope")):
+            for k in ("pending_state", "pending_ts", "pending_redirect", "pending_scope"):
                 cur.pop(k, None)
             p.write_text(json.dumps(cur, indent=2), encoding="utf-8")
             try:
@@ -242,6 +247,8 @@ def status_text() -> str:
     if (tok.get("client_id") or "").strip():
         bits.append(f"client_id: …{(tok.get('client_id') or '')[-6:]}")
     bits.append(f"calendar: {calendar_id_default()}")
+    if tok.get("scope") == CALENDAR_SCOPE:
+        bits.append("access: read-only (authorize `zumba calendar auth --write` to create events)")
     return "Calendar status — " + ", ".join(bits)
 
 
@@ -272,7 +279,7 @@ def _cput(k: str, v: str):
 
 # ---- OAuth helpers (pure URL building + token exchange, no google lib) ----
 
-def auth_start(client_id: str = "", redirect_uri: str = "", state: str = "") -> str:
+def auth_start(client_id: str = "", redirect_uri: str = "", state: str = "", *, write: bool = False) -> str:
     if not enabled():
         return "ERROR: calendar tools are disabled (ZUMBA_NO_CALENDAR=1)."
     cid = (client_id or load_token().get("client_id") or os.getenv("ZUMBA_CALENDAR_CLIENT_ID") or "").strip()
@@ -284,23 +291,25 @@ def auth_start(client_id: str = "", redirect_uri: str = "", state: str = "") -> 
         )
     redir = (redirect_uri or redirect_default()).strip()
     st = (state or hashlib.sha256(os.urandom(16)).hexdigest()[:16])
+    scope = CALENDAR_WRITE_SCOPE if write else CALENDAR_SCOPE
     # Persist the CSRF state + redirect so auth_finish can verify them.
     try:
-        save_token({"pending_state": st, "pending_ts": time.time(), "pending_redirect": redir})
+        save_token({"client_id": cid, "pending_state": st, "pending_ts": time.time(),
+                    "pending_redirect": redir, "pending_scope": scope})
     except Exception:
         pass
     qs = _url.urlencode({
         "client_id": cid,
         "redirect_uri": redir,
         "response_type": "code",
-        "scope": CALENDAR_SCOPE,
+        "scope": scope,
         "access_type": "offline",
         "prompt": "consent",
         "state": st,
     })
     url = f"{AUTH_URL}?{qs}"
     return (
-        "Google Calendar connect (one global token):\n"
+        f"Google Calendar connect ({'event read/write' if write else 'read-only'}; one global token):\n"
         f"1. Open: {url}\n"
         f"2. Approve, copy the code (starts with '4/'), then finish with:\n"
         f"   `zumba calendar auth --code <code>`  (CLI)\n"
@@ -335,6 +344,8 @@ def auth_finish(code: str, redirect_uri: str = "", client_id: str = "",
     redir = (redirect_uri or tok.get("pending_redirect") or redirect_default()).strip()
     pending = str(tok.get("pending_state") or "")
     given_state = (state or "").strip()
+    if given_state and not pending:
+        return "ERROR: no pending OAuth session — restart with `zumba calendar auth`."
     if pending and given_state and given_state != pending:
         return "ERROR: OAuth state mismatch — restart with `zumba calendar auth` (possible CSRF)."
     if pending and time.time() - float(tok.get("pending_ts") or 0) > 600:
@@ -357,13 +368,14 @@ def auth_finish(code: str, redirect_uri: str = "", client_id: str = "",
         if not access:
             return f"ERROR: no access_token in response ({str(d)[:200]})."
         saved = dict(tok)
-        for k in ("pending_state", "pending_ts", "pending_redirect"):
+        for k in ("pending_state", "pending_ts", "pending_redirect", "pending_scope"):
             saved.pop(k, None)
         saved.update({
             "access_token": access,
             "refresh_token": str(d.get("refresh_token") or tok.get("refresh_token") or ""),
             "client_id": cid, "client_secret": sec,
             "expiry": time.time() + float(d.get("expires_in") or 3600),
+            "scope": str(d.get("scope") or tok.get("pending_scope") or ""),
         })
         save_token(saved)
         _drop_pending()
@@ -654,6 +666,12 @@ def create(summary: str, start: str, end: str = "", location: str = "",
         return "ERROR: calendar tools are disabled (ZUMBA_NO_CALENDAR=1)."
     if not is_connected():
         return not_connected_msg()
+    scope = str(load_token().get("scope") or "")
+    if scope and not set(scope.split()).intersection({
+            CALENDAR_WRITE_SCOPE, "https://www.googleapis.com/auth/calendar",
+            "https://www.googleapis.com/auth/calendar.events.owned",
+            "https://www.googleapis.com/auth/calendar.app.created"}):
+        return "ERROR: Calendar access is read-only. Reconnect with `zumba calendar auth --write` to create events."
     title = (summary or "").strip()
     s_raw = (start or "").strip()
     if not title or not s_raw:
@@ -685,6 +703,7 @@ def create(summary: str, start: str, end: str = "", location: str = "",
     data, err = _api_post(f"/calendars/{_url.quote(cid, safe='')}/events", body, timeout=timeout)
     if data is None:
         return err
+    clear_cache()
     link = str((data or {}).get("htmlLink") or "")
     return f"Created: {title} {_short_time(s_dt.isoformat())}–{_short_time(e_dt.isoformat())}" + (f"\n{link}" if link else "")
 

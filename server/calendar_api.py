@@ -41,6 +41,7 @@ def status():
 class AuthStart(BaseModel):
     client_id: str = ""
     redirect_uri: str = ""
+    write: bool = False
 
 
 @router.post("/auth/start")
@@ -49,7 +50,7 @@ def auth_start(body: AuthStart, request: Request):
     from tools import calendar as _cal
     if body.client_id.strip():
         _cal.save_token({"client_id": body.client_id.strip()})
-    msg = _cal.auth_start(body.client_id.strip(), body.redirect_uri.strip())
+    msg = _cal.auth_start(body.client_id.strip(), body.redirect_uri.strip(), write=body.write)
     m = re.search(r"https://accounts\.google\.com/\S+", msg)
     url = m.group(0).rstrip(").,") if m else ""
     sm = re.search(r"[?&]state=([^&\s)]+)", url)

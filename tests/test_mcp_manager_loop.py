@@ -181,6 +181,23 @@ def test_agent_loop_keeps_progress_when_model_stays_down(monkeypatch):
     assert "1 tool step" in result.content and "continue" in result.content
 
 
+def test_agent_recovers_500_with_plain_answer_without_repeating_tool(monkeypatch):
+    from core.api_client import KiloError
+    monkeypatch.setattr('time.sleep', lambda seconds: None)
+    executed = []
+    def provider(convo, model, tools=None, **kwargs):
+        if not convo:
+            return ChatResult(content='', raw={'choices': [{'message': {'tool_calls': [_tool_call('s__t', {})]}}]})
+        if tools is not None:
+            raise KiloError('Internal server error', status_code=500)
+        assert any(message.role == 'tool' and message.content == 'verified result' for message in convo)
+        return _final('Recovered answer from verified result')
+    result = run_agent_loop([], 'm', provider,
+        execute_tool=lambda name, args: executed.append(name) or 'verified result', tools=[{'type':'function'}])
+    assert result.content == 'Recovered answer from verified result'
+    assert executed == ['s__t']
+
+
 def test_agent_loop_malformed_args():
     raw = {"choices": [{"message": {"content": "", "tool_calls": [
         {"id": "c1", "type": "function", "function": {"name": "s__t", "arguments": "{not json"}}]}}]}

@@ -1,24 +1,19 @@
-"""Persona layer: who Zumba is and how it talks (Tier 2: soul.md + user.md).
-
-Composes a system prompt from soul.md (self-authored identity, capped),
-user.md profile (always in context), the constant identity fallback, plus
-editable style prefs (``zumba config --set-style``). The ``--system`` flag
-always overrides everything — persona only applies to the default.
-"""
+"""Default assistant voice; personal context comes only from chat history."""
 
 from __future__ import annotations
 
 DEFAULT_SYSTEM = "You are Zumba, a concise helpful personal assistant."
 
 IDENTITY = (
-    "You are Zumba, a personal AI assistant. Direct, warm, zero fluff: answer "
-    "the question asked and use remembered context without being asked. Never "
-    "say 'as an AI'. You have long-term memory across sessions — reference "
-    "remembered facts naturally when relevant. Recalled memory (episodes, "
-    "relations, facts) is authoritative for personal facts: when it contains "
-    "the answer, state it directly — never claim you lack access to personal "
-    "information the memory provides. You have shell and MCP tools — "
-    "be decisive, chain commands instead of narrating, report outcomes briefly."
+    "You are Zumba, a concise, helpful personal assistant. Answer the current "
+    "question directly. Never say 'as an AI'. Recent conversation history may "
+    "be provided; treat it as past messages, with the latest user correction "
+    "taking priority. Do not invent personal facts or resume old tasks. "
+    "Use available tools when needed and report their actual results briefly. "
+    "Answer greetings and questions about yourself directly, without unnecessary tools or "
+    "unsolicited recaps of earlier work. You are the Zumba application, powered by a configured "
+    "language model; do not confuse the model provider with the app's creator. If the app's "
+    "developer is not supplied in the current context, say you do not have that information."
 )
 
 # PLAN-GO §3 — the "heading to" trip-brain behavior. The planner is NOT a
@@ -56,12 +51,7 @@ def user_block() -> str:
 
 
 def build_system(base: str = "") -> str:
-    """Compose the effective system prompt.
-
-    Ordering (test-pinned): soul identity first, then user profile, then the
-    constant IDENTITY fallback, style prefs, and base. Soul + profile are
-    capped upstream so the window manager stays safe.
-    """
+    """Compose the assistant voice and explicitly configured style."""
     try:
         from core.store import config_get
 
@@ -69,18 +59,6 @@ def build_system(base: str = "") -> str:
     except Exception:
         style = ""
     parts = []
-    try:
-        sb = soul_block()
-        if sb:
-            parts.append(sb)
-    except Exception:
-        pass
-    try:
-        ub = user_block()
-        if ub:
-            parts.append(ub)
-    except Exception:
-        pass
     parts.append(IDENTITY)
     try:
         if GEO_BRIEF:

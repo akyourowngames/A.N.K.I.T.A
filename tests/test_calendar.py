@@ -150,7 +150,9 @@ def test_travel_between_real_estimate(monkeypatch, tmp_path):
 
 
 def test_create_validation_and_mock(monkeypatch, tmp_path):
+    import datetime
     _isolate(monkeypatch, tmp_path)
+    monkeypatch.setattr(C, "local_tz", lambda: datetime.timezone.utc)
     C.save_token({"access_token": "tok123"})
     assert C.create("", "2026-09-13T09:30:00").startswith("ERROR:")
     assert C.create("t", "").startswith("ERROR:")
@@ -419,3 +421,120 @@ def test_daily_skips_calendar_errors(monkeypatch):
     out = _br.compose_daily(con, use_llm=False)
     assert "ERROR: calendar" not in out
     assert seen.get("timeout", 0) > 0  # daily uses a short timeout, not 10s
+
+
+def test_oauth_starts_readonly_and_explicit_write_uses_events_scope(monkeypatch, tmp_path):
+    from urllib.parse import urlsplit, parse_qs
+    _isolate(monkeypatch, tmp_path)
+    for write, expected in ((False, "https://www.googleapis.com/auth/calendar.events.readonly"),
+                            (True, "https://www.googleapis.com/auth/calendar.events")):
+        msg = C.auth_start("new-client", write=write)
+        url = next(line.removeprefix("1. Open: ") for line in msg.splitlines() if line.startswith("1. Open: "))
+        assert parse_qs(urlsplit(url).query)["scope"] == [expected]
+        assert C.load_token()["client_id"] == "new-client"
+
+
+def test_readonly_grant_blocks_creation_until_write_reconnect(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"client_id": "cid", "client_secret": "secret"})
+    C.auth_start()
+    monkeypatch.setattr(C, "_requests", type("R", (), {"post": staticmethod(
+        lambda *a, **k: _Resp(200, {"access_token": "readonly", "expires_in": 3600}))}))
+    assert C.auth_finish(GOOD_CODE).startswith("Calendar connected")
+    def no_create(*args, **kwargs):
+        raise AssertionError("Read-only grant must not attempt an event write")
+    monkeypatch.setattr(C, "_api_post", no_create)
+    out = C.create("Meeting", "2026-09-13T10:00:00")
+    assert out.startswith("ERROR:") and "--write" in out
+    assert "read-only" in C.status_text()
+
+
+def test_oauth_callback_rejects_unsolicited_state(monkeypatch, tmp_path):
+    from server import calendar_api
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"client_id": "cid", "client_secret": "secret"})
+    calls = []
+    def post(*args, **kwargs):
+        calls.append(1)
+        return _Resp(200, {"access_token": "unexpected", "expires_in": 3600})
+    monkeypatch.setattr(C, "_requests", type("R", (), {"post": staticmethod(post)}))
+    result = calendar_api.oauth_callback(code=GOOD_CODE, state="unsolicited")
+    assert result["ok"] is False
+    assert calls == []
+    assert not C.is_connected()
+
+
+def test_created_event_invalidates_today_and_search_cache(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"access_token": "write-token"})
+    events = {"items": []}
+    monkeypatch.setattr(C, "_api_get", lambda *a, **k: (events, ""))
+    assert "no events" in C.today()
+    assert "no events" in C.search("Standup")
+    def post(*args, **kwargs):
+        events["items"] = SAMPLE["items"][:1]
+        return {"htmlLink": "https://cal.example/e1"}, ""
+    monkeypatch.setattr(C, "_api_post", post)
+    assert C.create("Standup", "2026-09-13T09:30:00").startswith("Created:")
+    assert "Standup" in C.today()
+    assert "no events" not in C.search("Standup")
+
+
+def test_web_auth_explicit_write_permission(monkeypatch, tmp_path):
+    import types
+    from urllib.parse import urlsplit, parse_qs
+    from server import calendar_api
+    _isolate(monkeypatch, tmp_path)
+    out = calendar_api.auth_start(calendar_api.AuthStart(client_id="cid", write=True),
+                                  types.SimpleNamespace(headers={}))
+    assert parse_qs(urlsplit(out["auth_url"]).query)["scope"] == [
+        "https://www.googleapis.com/auth/calendar.events"]
+
+
+def test_windows_timezone_label_not_sent_to_google(monkeypatch, tmp_path):
+    import datetime
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"access_token": "tok"})
+    monkeypatch.setattr(C, "local_tz", lambda: datetime.timezone(
+        datetime.timedelta(hours=5, minutes=30), "India Standard Time"))
+    requests = []
+    def get(path, params=None, **kwargs):
+        requests.append(params)
+        return {"items": []}, ""
+    def post(path, body, **kwargs):
+        requests.extend([body["start"], body["end"]])
+        assert body["start"]["dateTime"] == "2026-09-13T09:30:00+05:30"
+        return {"htmlLink": "https://cal.example/new"}, ""
+    monkeypatch.setattr(C, "_api_get", get)
+    monkeypatch.setattr(C, "_api_post", post)
+    C.today()
+    C.search("meeting")
+    C.brief()
+    assert C.create("Meeting", "2026-09-13T09:30:00").startswith("Created:")
+    assert all("timeZone" not in value for value in requests)
+
+
+def test_pasted_token_does_not_inherit_previous_grant_scope(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"access_token": "old", "scope": C.CALENDAR_SCOPE})
+    C.set_token("new-external-token")
+    monkeypatch.setattr(C, "_api_post", lambda *a, **k: ({"id": "new"}, ""))
+    assert C.create("Meeting", "2026-09-13T09:30:00").startswith("Created:")
+
+
+def test_write_oauth_grant_can_create_through_mocked_google_api(monkeypatch, tmp_path):
+    _isolate(monkeypatch, tmp_path)
+    C.save_token({"client_id": "cid", "client_secret": "secret"})
+    C.auth_start(write=True)
+    def post(url, **kwargs):
+        if url == "https://oauth2.googleapis.com/token":
+            return _Resp(200, {"access_token": "write-access", "expires_in": 3600,
+                               "scope": "https://www.googleapis.com/auth/calendar.events"})
+        assert url == "https://www.googleapis.com/calendar/v3/calendars/primary/events"
+        assert kwargs["headers"]["Authorization"] == "Bearer write-access"
+        assert kwargs["json"]["summary"] == "Meeting"
+        return _Resp(201, {"id": "new", "htmlLink": "https://cal.example/new"})
+    monkeypatch.setattr(C, "_requests", type("R", (), {"post": staticmethod(post)}))
+    assert C.auth_finish(GOOD_CODE).startswith("Calendar connected")
+    result = C.create("Meeting", "2026-09-13T09:30:00")
+    assert result.startswith("Created:") and "https://cal.example/new" in result

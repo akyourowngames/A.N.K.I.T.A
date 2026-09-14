@@ -18,7 +18,7 @@ def _transient(status: Any) -> bool:
         # 500 rides along: the NIM gateway emits transient 500s under load
         # (and after long tool-turn histories). Without this, one flaky turn
         # kills the whole answer with the "temporarily unreachable" fallback.
-        return int(status) in (408, 429, 500, 502, 503)
+        return int(status) in (408, 429, 500, 502, 503, 504)
     except Exception:
         return False
 
@@ -64,7 +64,7 @@ def _progress_fallback(convo, model, last, exc) -> Any:
         "Tool results are saved in history — say 'continue' and I will pick up from there." % (
             str(exc)[:160], len(names), detail),
         model=getattr(last, "model", model) if last is not None else model,
-        raw=getattr(last, "raw", None) if last is not None else None,
+        raw={'zumba_error': True, 'status_code': getattr(exc, 'status_code', 0)},
     )
 
 
@@ -105,6 +105,21 @@ def run_agent_loop(
             raise
         except Exception as exc:
             if any(getattr(m, "role", "") == "tool" for m in convo):
+                if _transient(getattr(exc, 'status_code', 0)):
+                    # Recover the answer only. Completed tools must never be replayed.
+                    recovery = convo + [Message(role='system', content=
+                        'The tool-enabled model request failed. Answer the latest user request '
+                        'from the completed tool results already present. Do not request more '
+                        'tools, invent results, or claim missing work was completed.')]
+                    try:
+                        recovered = _call_with_retry(call_model, recovery, model, None,
+                                                     call_kwargs, retries=1, control=control)
+                        if getattr(recovered, 'content', '').strip() and not _tool_calls_from(getattr(recovered, 'raw', None) or {}):
+                            return recovered
+                    except ExecutionCancelled:
+                        raise
+                    except Exception:
+                        pass
                 return _progress_fallback(convo, model, last, exc)
             raise
         raw_calls = _tool_calls_from(getattr(last, "raw", None) or {})

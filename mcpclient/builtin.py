@@ -45,27 +45,11 @@ TOOL_GROUP = {'mcp_search': 'registry', 'mcp_add': 'registry',
               'fs_undo': 'fs', 'fs_mkdir': 'fs', 'fs_move': 'fs', 'fs_delete': 'fs'}
 
 
-def _graph_profile() -> str:
-    """Profile straight from the knowledge graph (user_facts table).
-
-    user.md is deleted by design; this is what me_show returns so the agent
-    never concludes "no profile" from a missing file.
-    """
-    try:
-        from memory import db as _db
-        con = _db.connect()
-        try:
-            rows = con.execute(
-                "SELECT key, value FROM user_facts ORDER BY updated_at DESC LIMIT 40"
-            ).fetchall()
-        finally:
-            con.close()
-    except Exception as exc:
-        return f"ERROR: profile unavailable ({str(exc)[:150]})."
-    if not rows:
-        return "(no profile facts stored yet — durable facts land here as chat is consolidated)"
-    return "[graph profile — durable user facts]\n" + "\n".join(
-        f"- {r['key']}: {r['value']}" for r in rows)
+def _saved_user_messages() -> str:
+    from memory import get_memory
+    rows = get_memory().messages()
+    messages = [m['content'] for m in rows if m['role'] == 'user']
+    return "Saved user messages (original text):\n" + "\n".join(messages[-12:])[:4000] if messages else "(no saved user messages)"
 
 
 def _tool(name: str, description: str, props: dict, required: list) -> dict:
@@ -309,17 +293,15 @@ BUILTIN_TOOLS = [
            'until': {'type': 'number', 'description': 'Future epoch at which unsolicited attention stops'},
            'expires_at': {'type': 'number', 'description': 'New future epoch when this action ceases to be useful'}}, ['kind', 'id', 'action']),
     _tool("memory_remember",
-          "Store a fact in long-term memory (goes through the full salience/extraction pipeline). "
-          "Use when the user says 'remember ...' or shares a durable fact/preference.",
+          "Save the user's exact text in the recent chat log. Use for explicit remember requests.",
           {"text": {"type": "string", "description": "Fact to remember"}}, ["text"]),
     _tool("memory_search",
-          "Search long-term memory (hybrid vector + BM25 + graph recall). "
-          "Use before answering 'what do you remember about ...' questions.",
+          "Read recent saved conversation messages in chronological order. No inferred profile or semantic search.",
           {"query": {"type": "string", "description": "Memory query"},
            "top_k": {"type": "integer", "description": "Max hits (default 8)"}}, ["query"]),
     _tool("memory_forget",
-          "Invalidate facts about an entity (bi-temporal invalidate, history kept).",
-          {"name": {"type": "string", "description": "Entity name to forget"}}, ["name"]),
+          "Delete a saved exchange by its exact ID from memory history.",
+          {"name": {"type": "string", "description": "Exact saved exchange ID"}}, ["name"]),
     _tool("brief",
           "Daily briefing from memory: follow-ups, deadlines, on-this-day resurfaces.",
           {}, []),
@@ -342,7 +324,7 @@ BUILTIN_TOOLS = [
           "Discard the pending soul proposal.",
           {}, []),
     _tool("me_show",
-          "Show the user's graph-backed profile (durable facts: identity, contact, prefs). Secondary to the Relevant memory block already in context.",
+          "Show recent original user messages from saved conversation. No inferred profile.",
           {}, []),
     _tool("vault_ask",
           "Answer from local documents with [Title p.N] citations. "
@@ -964,7 +946,7 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             if not text:
                 return "ERROR: 'text' is required."
             await _asyncio6.to_thread(mem.capture_async, text, "", "tool", "remember")
-            return "Saved to the durable memory inbox. Extraction/indexing continues in the background; the original text is already available to recall."
+            return "Saved to the chat log."
         if tool == "memory_search":
             query = str(args.get("query", "") or "").strip()
             if not query:
@@ -979,7 +961,7 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
         if not target:
             return "ERROR: 'name' is required."
         r = await _asyncio6.to_thread(mem.forget, target)
-        return "Forgot." if r.get("forgot") else "No facts found for that name."
+        return "Forgot." if r.get("forgot") else "No exchange found. Use its exact ID from saved history."
 
     if tool == "brief":
         import asyncio as _asyncio7
@@ -1027,9 +1009,9 @@ async def handle(mgr: Any, tool: str, arguments: dict) -> str:
             _soul2.reject_proposal()
             return "Proposal discarded."
         if tool == "me_show":
-            return _graph_profile()
+            return _saved_user_messages()
         try:
-            return _graph_profile()
+            return _saved_user_messages()
         except Exception as exc:
             return f"ERROR: profile unavailable ({str(exc)[:150]})."
 

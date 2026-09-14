@@ -2,7 +2,7 @@
 
 Mirrors the Jarvis TextToSpeech.py contract: playback polls a stop callback
 (about 10x/second) and aborts the moment it fires, so the mic toggle, the
-word "stop", or a barge-in keyword cuts speech immediately instead of
+explicit stop command or microphone speech activity cuts speech instead of
 waiting for the utterance to finish. Long answers are summarized aloud
 (first sentences + pointer to the chat screen) while the full text stays
 visible in the GUI.
@@ -43,7 +43,7 @@ class Speaker:
         self.rate = rate
         self.pitch = pitch
 
-    def _synthesize(self, text: str) -> str:
+    def _synthesize(self, text: str, stop_event=None) -> str:
         try:
             import edge_tts
         except ImportError as exc:
@@ -55,15 +55,32 @@ class Speaker:
             communicate = edge_tts.Communicate(
                 text, self.voice, rate=self.rate, pitch=self.pitch
             )
-            await communicate.save(path)
+            task = asyncio.create_task(communicate.save(path))
+            try:
+                deadline = asyncio.get_running_loop().time() + 25
+                while not task.done():
+                    if stop_event is not None and stop_event.is_set():
+                        return
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise RuntimeError('Speech service timed out after 25 seconds')
+                    await asyncio.wait({task}, timeout=.1)
+                await task
+            finally:
+                if not task.done():
+                    task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
 
         fd, path = tempfile.mkstemp(prefix="zumba_say_", suffix=".mp3")
         os.close(fd)
-        asyncio.run(_save(path))
+        try:
+            asyncio.run(_save(path))
+        except BaseException:
+            os.remove(path)
+            raise
         return path
 
     def speak(self, text: str, stop_event: "threading.Event | None" = None,
-              summarize: bool = True) -> bool:
+              summarize: bool = True, on_stage=None) -> bool:
         """Speak text. Returns True if finished, False if interrupted.
 
         Raises RuntimeError when the audio stack is unavailable so callers
@@ -78,11 +95,21 @@ class Speaker:
             raise RuntimeError(
                 "pygame is not installed (pip install -r requirements-desktop.txt)"
             ) from exc
-        path = self._synthesize(say)
+        if stop_event is not None and stop_event.is_set():
+            return False
+        if on_stage:
+            on_stage('synthesizing', 'Generating speech...')
+        path = self._synthesize(say, stop_event=stop_event)
         try:
+            if stop_event is not None and stop_event.is_set():
+                return False
+            if on_stage:
+                on_stage('playback', 'Opening speaker...')
             pygame.mixer.init()
             pygame.mixer.music.load(path)
             pygame.mixer.music.play()
+            if on_stage:
+                on_stage('speaking', 'Speaking...')
             clock = pygame.time.Clock()
             while pygame.mixer.music.get_busy():
                 if stop_event is not None and stop_event.is_set():

@@ -9,8 +9,9 @@ fs_batch (transactional), fs_undo, fs_mkdir, fs_move, fs_delete.
 
 Conventions (match websearch.py / scrape.py / geo.py):
 - ERROR: text prefix on failures, never raise into chat.
-- ZUMBA_NO_FS=1 kill-switch.
-- Unrestricted paths (god-mode, like shell); every mutation is appended
+- ZUMBA_NO_FS=1 / ZUMBA_NO_FILES=1 kill-switch.
+- Paths stay within ZUMBA_FS_ROOT (default: cwd), excluding private stores.
+  Every mutation is appended
   to ~/.zumba/fs_audit.log and auto-backed-up under .zumba_backups.
 """
 
@@ -25,6 +26,7 @@ import subprocess
 import tempfile
 import time
 from datetime import datetime, timezone
+from functools import wraps
 from pathlib import Path
 
 MAX_READ_LINES = 2000
@@ -33,7 +35,7 @@ SKIP_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv",
 
 
 def enabled() -> bool:
-    return os.getenv("ZUMBA_NO_FS", "") != "1"
+    return not any(os.getenv(flag, "") == "1" for flag in ("ZUMBA_NO_FS", "ZUMBA_NO_FILES"))
 
 
 def max_output() -> int:
@@ -52,9 +54,65 @@ def search_timeout_s() -> float:
 
 # ---- paths / display ----
 
+def scope_root() -> Path:
+    return Path(os.getenv("ZUMBA_FS_ROOT") or Path.cwd()).expanduser().resolve()
+
+
+def _private_roots() -> tuple[Path, ...]:
+    roots = [Path.home() / ".zumba"]
+    if os.getenv("ZUMBA_MEMORY_HOME"):
+        roots.append(Path(os.environ["ZUMBA_MEMORY_HOME"]).expanduser())
+    # Check both the named private directory and its physical location.
+    return tuple(p for root in roots for p in (root.absolute(), root.resolve()))
+
+
 def resolve(path: str = ".") -> Path:
-    p = (path or ".").strip() or "."
-    return Path(p).expanduser().absolute()
+    candidate = Path((str(path or ".")).strip() or ".").expanduser()
+    root = scope_root()
+    if not candidate.is_absolute():
+        candidate = root / candidate
+    lexical = Path(os.path.abspath(candidate))
+    physical = candidate.resolve()
+    if not lexical.is_relative_to(root) or not physical.is_relative_to(root):
+        raise PermissionError("path is outside the file workspace")
+    if any(p.is_relative_to(private) for private in _private_roots()
+           for p in (lexical, physical)):
+        raise PermissionError("Zumba private stores cannot be accessed by file tools")
+    # Hard links have no canonical target: reject multiply linked files so a
+    # link to a private database cannot bypass the directory policy.
+    if physical.is_file() and physical.stat().st_nlink > 1:
+        raise PermissionError("multiply linked files are outside the file tool policy")
+    return physical
+
+
+def _allowed(path: Path) -> bool:
+    try:
+        resolve(str(path))
+        return True
+    except (OSError, ValueError, RuntimeError):
+        return False
+
+
+def _check_directory_mutation(path: Path) -> None:
+    if path == scope_root() or any(private.is_relative_to(path) for private in _private_roots()):
+        raise PermissionError("cannot move or delete the workspace or an ancestor of a private store")
+    if path.is_dir():
+        for cur, dirs, files in os.walk(path):
+            for name in dirs + files:
+                resolve(str(Path(cur) / name))
+
+
+def _file_tool(fn):
+    """Keep errors and the kill switch consistent at every public entry point."""
+    @wraps(fn)
+    def guarded(*args, **kwargs):
+        if not enabled():
+            return "ERROR: file tools are disabled (ZUMBA_NO_FS / ZUMBA_NO_FILES)."
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:
+            return f"ERROR: {exc}"
+    return guarded
 
 
 def _display(path: Path) -> str:
@@ -87,7 +145,7 @@ def _load_ignore(root: Path) -> list[str]:
     pats: list[str] = []
     for name in (".gitignore", ".ignore"):
         f = root / name
-        if not f.is_file():
+        if not _allowed(f) or not f.is_file():
             continue
         try:
             for raw in f.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -100,6 +158,8 @@ def _load_ignore(root: Path) -> list[str]:
 
 
 def _ignored(path: Path, root: Path, pats: list[str] | None = None) -> bool:
+    if not _allowed(path):
+        return True
     try:
         rel = path.relative_to(root)
     except Exception:
@@ -140,7 +200,7 @@ def _audit(tool: str, detail: str) -> None:
 
 
 def _backup_path(path: Path, label: str = "auto") -> Path:
-    root = path.parent / ".zumba_backups"
+    root = resolve(str(path.parent / ".zumba_backups"))
     root.mkdir(parents=True, exist_ok=True)
     ts = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S%fZ")
     safe = "".join(c if c.isalnum() or c in "._-" else "_" for c in label)[:40]
@@ -150,8 +210,8 @@ def _backup_path(path: Path, label: str = "auto") -> Path:
 def _create_backup(path: Path, label: str = "auto") -> str:
     if not path.is_file():
         return ""
+    bp = _backup_path(path, label)
     try:
-        bp = _backup_path(path, label)
         shutil.copy2(path, bp)
         return str(bp)
     except Exception:
@@ -159,6 +219,7 @@ def _create_backup(path: Path, label: str = "auto") -> str:
 
 
 def atomic_write(path: Path, data: str) -> None:
+    path = resolve(str(path))
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=".tmp_", suffix=".part")
     try:
@@ -197,6 +258,7 @@ def _join(lines: list[str], trailing: bool, nl: str) -> str:
 
 # ================= READS =================
 
+@_file_tool
 def fs_read(path: str, start_line: int = 1, num_lines: int = 200) -> str:
     p = resolve(path)
     if not p.exists():
@@ -270,6 +332,7 @@ def _rg() -> str:
     return shutil.which("rg") or ""
 
 
+@_file_tool
 def fs_grep(pattern: str, path: str = ".", glob: str = "", context: int = 0,
             case_sensitive: bool = False, max_results: int = 100) -> str:
     """Line-oriented content search. rg --vimgrep first, Python fallback."""
@@ -278,10 +341,8 @@ def fs_grep(pattern: str, path: str = ".", glob: str = "", context: int = 0,
     root = resolve(path)
     if not root.exists():
         return f"ERROR: path not found: {path}"
-    if root.is_file():
-        root = root.parent
-    if not root.is_dir():
-        return f"ERROR: not a directory: {path}"
+    if not root.is_dir() and not root.is_file():
+        return f"ERROR: not a file or directory: {path}"
     cap = max(1, min(int(max_results or 100), 500))
     ctx = max(0, min(int(context or 0), 10))
     hits = _grep_rg(pattern, root, glob, ctx, case_sensitive, cap)
@@ -304,7 +365,7 @@ def _grep_rg(pattern: str, root: Path, glob: str, ctx: int,
     rg = _rg()
     if not rg:
         return None
-    cmd = [rg, "--vimgrep", "--no-heading", "--max-columns", "500",
+    cmd = [rg, "--no-config", "--vimgrep", "--with-filename", "--no-heading", "--max-columns", "500",
            "--max-count", "5"]
     if not case_sensitive:
         cmd.append("-i")
@@ -312,7 +373,16 @@ def _grep_rg(pattern: str, root: Path, glob: str, ctx: int,
         cmd += ["-C", str(ctx)]
     if (glob or "").strip():
         cmd += ["-g", glob.strip()]
-    cmd += ["--", pattern, str(root)]
+    # Give rg only validated files; recursive rg must not enter private stores.
+    files = [str(root)] if root.is_file() else (_find_rg(root) or _find_walk(root))
+    files = [str(resolve(fp)) for fp in files if _allowed(Path(fp))]
+    if not files:
+        return []
+    # Avoid platform command-line limits. Large trees use the same safe walk
+    # in the Python backend instead of handing a recursive root to rg.
+    if sum(len(fp) + 3 for fp in files) + len(pattern) > 24000:
+        return None
+    cmd += ["--", pattern, *files]
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace",
                            timeout=search_timeout_s())
@@ -347,40 +417,40 @@ def _grep_py(pattern: str, root: Path, glob: str, ctx: int,
         rx = re.compile(re.escape(pattern), 0 if case_sensitive else re.I)
     pats = _load_ignore(root)
     out: list = []
-    for dirpath, dirs, files in os.walk(root):
-        cur = Path(dirpath)
-        dirs[:] = [d for d in dirs if not _ignored(cur / d, root, pats)]
-        for fn in files:
-            fp = cur / fn
-            if _ignored(fp, root, pats):
+    candidates = [str(root)] if root.is_file() else _find_walk(root)
+    for candidate in candidates:
+        fp = Path(candidate)
+        fn = fp.name
+        if _ignored(fp, root, pats):
+            continue
+        if glob.strip() and not fnmatch.fnmatch(fn, glob.strip()):
+            continue
+        try:
+            if _is_binary(fp):
                 continue
-            if glob.strip() and not fnmatch.fnmatch(fn, glob.strip()):
-                continue
-            try:
-                if _is_binary(fp):
-                    continue
-                text = fp.read_text(encoding="utf-8", errors="replace").splitlines()
-            except Exception:
-                continue
-            per = 0
-            for i, ln in enumerate(text, 1):
-                if rx.search(ln):
-                    if ctx:
-                        snips = []
-                        for s in range(max(1, i - ctx), min(len(text), i + ctx) + 1):
-                            mark = ">" if s == i else " "
-                            snips.append(f"{mark}{s}: {text[s - 1].strip()[:300]}")
-                    else:
-                        snips = []
-                    out.append([str(fp), i, ln.strip()[:500], snips])
-                    per += 1
-                    if len(out) >= cap or per >= 5:
-                        break
-            if len(out) >= cap:
-                return out
+            text = fp.read_text(encoding="utf-8", errors="replace").splitlines()
+        except Exception:
+            continue
+        per = 0
+        for i, ln in enumerate(text, 1):
+            if rx.search(ln):
+                if ctx:
+                    snips = []
+                    for s in range(max(1, i - ctx), min(len(text), i + ctx) + 1):
+                        mark = ">" if s == i else " "
+                        snips.append(f"{mark}{s}: {text[s - 1].strip()[:300]}")
+                else:
+                    snips = []
+                out.append([str(fp), i, ln.strip()[:500], snips])
+                per += 1
+                if len(out) >= cap or per >= 5:
+                    break
+        if len(out) >= cap:
+            return out
     return out
 
 
+@_file_tool
 def fs_find(name: str, path: str = ".", max_results: int = 50) -> str:
     """Instant global filename locate: rg --files + fuzzy rank, os.walk fallback."""
     if not (name or "").strip():
@@ -437,13 +507,14 @@ def _find_rg(root: Path) -> list | None:
     if not rg:
         return None
     try:
-        r = subprocess.run([rg, "--files", str(root)], capture_output=True,
+        r = subprocess.run([rg, "--no-config", "--files", str(root)], capture_output=True,
                            text=True, errors="replace", timeout=search_timeout_s())
     except Exception:
         return None
     if r.returncode != 0:
         return None
-    return [ln.strip() for ln in (r.stdout or "").splitlines() if ln.strip()]
+    return [ln.strip() for ln in (r.stdout or "").splitlines()
+            if ln.strip() and _allowed(Path(ln.strip()))]
 
 
 def _find_walk(root: Path) -> list:
@@ -461,6 +532,7 @@ def _find_walk(root: Path) -> list:
     return out
 
 
+@_file_tool
 def fs_list(path: str = ".", max_items: int = 30, sort: str = "name") -> str:
     d = resolve(path)
     if not d.exists():
@@ -469,7 +541,7 @@ def fs_list(path: str = ".", max_items: int = 30, sort: str = "name") -> str:
         return f"ERROR: not a directory: {path}"
     sk = (sort or "name").lower()
     try:
-        items = list(d.iterdir())
+        items = [item for item in d.iterdir() if _allowed(item)]
     except Exception as exc:
         return f"ERROR: cannot list {path}: {exc}"
     if sk in ("mtime", "activity"):
@@ -502,6 +574,7 @@ def _safe_stat(p: Path):
         return None
 
 
+@_file_tool
 def fs_info(path: str) -> str:
     p = resolve(path)
     if not p.exists() and not p.is_symlink():
@@ -524,6 +597,7 @@ def fs_info(path: str) -> str:
     return "\n".join(lines)
 
 
+@_file_tool
 def fs_glob(pattern: str, path: str = ".", max_results: int = 50) -> str:
     if not (pattern or "").strip():
         return "ERROR: 'pattern' is required."
@@ -536,6 +610,8 @@ def fs_glob(pattern: str, path: str = ".", max_results: int = 50) -> str:
     pats = _load_ignore(root)
     matches: list[Path] = []
     try:
+        if Path(pattern).is_absolute() or ".." in Path(pattern).parts:
+            return "ERROR: glob pattern must stay within the file workspace."
         for m in root.rglob(pattern.strip()):
             if _ignored(m, root, pats):
                 continue
@@ -555,6 +631,7 @@ def fs_glob(pattern: str, path: str = ".", max_results: int = 50) -> str:
     return "\n".join(lines)
 
 
+@_file_tool
 def fs_tree(path: str = ".", max_depth: int = 3) -> str:
     root = resolve(path)
     if not root.exists():
@@ -596,6 +673,7 @@ def _write_result(tool: str, path: Path, old: str, new: str, action: str) -> str
     return f"{action} {_display(path)} (backup kept under .zumba_backups)\n{diff}"
 
 
+@_file_tool
 def fs_write(path: str, content: str, dry_run: bool = False) -> str:
     if not (path or "").strip():
         return "ERROR: 'path' is required."
@@ -638,6 +716,7 @@ def _closest_match(old_text: str, content: str, threshold: float = 0.6) -> str |
     return None
 
 
+@_file_tool
 def fs_edit(path: str, old_text: str, new_text: str, occurrence: int = 0,
             dry_run: bool = False) -> str:
     """Unique-match replace with cascade: exact -> occurrence -> whitespace -> suggest."""
@@ -676,12 +755,15 @@ def fs_edit(path: str, old_text: str, new_text: str, occurrence: int = 0,
         # whitespace-normalized match
         old_lns = old_text.replace("\r\n", "\n").split("\n")
         cl = content.replace("\r\n", "\n").split("\n")
-        match_at = None
+        matches = []
         norm_old = [f"{len(l) - len(l.lstrip())}:{l.strip()}" for l in old_lns]
         for i in range(len(cl) - len(norm_old) + 1):
             if [f"{len(l) - len(l.lstrip())}:{l.strip()}" for l in cl[i:i + len(norm_old)]] == norm_old:
-                match_at = i
-                break
+                matches.append(i)
+        if len(matches) > 1:
+            return (f"ERROR: old_text matches {len(matches)} locations in {_display(p)} "
+                    "after whitespace normalization. Add more context.")
+        match_at = matches[0] if matches else None
         if match_at is not None:
             rep = str(new_text).split("\n")
             new_content = "\n".join(cl[:match_at] + rep + cl[match_at + len(norm_old):])
@@ -704,6 +786,7 @@ def fs_edit(path: str, old_text: str, new_text: str, occurrence: int = 0,
     return _write_result("fs_edit", p, content, new_content, "Edited")
 
 
+@_file_tool
 def fs_insert(path: str, line: int, text: str, position: str = "after",
               dry_run: bool = False) -> str:
     if not (path or "").strip():
@@ -744,6 +827,7 @@ def fs_insert(path: str, line: int, text: str, position: str = "after",
     return _write_result("fs_insert", p, old_content, new_content, f"Inserted {pos} line {ln} in")
 
 
+@_file_tool
 def fs_replace_lines(path: str, start: int, end: int, new_text: str,
                      dry_run: bool = False) -> str:
     if not (path or "").strip():
@@ -892,6 +976,7 @@ def _apply_hunks(lines: list[str], hunks: list, fname: str) -> tuple[list[str] |
     return cur, ""
 
 
+@_file_tool
 def fs_apply_patch(patch: str, dry_run: bool = False) -> str:
     if not (patch or "").strip():
         return "ERROR: 'patch' is required."
@@ -953,6 +1038,7 @@ def fs_apply_patch(patch: str, dry_run: bool = False) -> str:
         return f"ERROR: patch apply failed (backups kept under .zumba_backups): {exc}"
 
 
+@_file_tool
 def fs_batch(operations: list, dry_run: bool = False) -> str:
     """Transactional multi-op: write/edit/insert/replace_lines/delete/move/mkdir."""
     if not isinstance(operations, list) or not operations:
@@ -1037,6 +1123,7 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
                 results.append(f"{i}. replace_lines {_display(p)}:{s}-{e}")
             elif action == "delete":
                 p = resolve(str(op.get("path", "")))
+                _check_directory_mutation(p)
                 if not p.exists():
                     raise ValueError(f"operation {i}: not found: {op.get('path')}")
                 if p.is_dir() and any(p.iterdir()):
@@ -1050,6 +1137,8 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
                 results.append(f"{i}. delete {_display(p)}")
             elif action == "move":
                 s, d = resolve(str(op.get("source", ""))), resolve(str(op.get("destination", "")))
+                _check_directory_mutation(s)
+                _check_directory_mutation(d)
                 if not s.exists():
                     raise ValueError(f"operation {i}: source not found: {op.get('source')}")
                 remember(s)
@@ -1076,15 +1165,16 @@ def fs_batch(operations: list, dry_run: bool = False) -> str:
     return f"{tag}: {len(operations)} operation(s)\n" + "\n".join(results)
 
 
+@_file_tool
 def fs_undo(path: str, dry_run: bool = False) -> str:
     if not (path or "").strip():
         return "ERROR: 'path' is required."
     p = resolve(path)
-    root = p.parent / ".zumba_backups"
+    root = resolve(str(p.parent / ".zumba_backups"))
     cands = sorted(root.glob(f"{p.name}.*.bak"), key=lambda x: x.name, reverse=True) if root.is_dir() else []
     if not cands:
         return f"ERROR: no backup found for {_display(p)}."
-    latest = cands[0]
+    latest = resolve(str(cands[0]))
     try:
         if dry_run:
             cur = p.read_text(encoding="utf-8", errors="replace") if p.is_file() else ""
@@ -1099,6 +1189,7 @@ def fs_undo(path: str, dry_run: bool = False) -> str:
     return f"Restored {_display(p)} from backup {_display(latest)}."
 
 
+@_file_tool
 def fs_mkdir(path: str) -> str:
     if not (path or "").strip():
         return "ERROR: 'path' is required."
@@ -1113,10 +1204,13 @@ def fs_mkdir(path: str) -> str:
     return f"Created directory {_display(p)}."
 
 
+@_file_tool
 def fs_move(source: str, destination: str) -> str:
     if not (source or "").strip() or not (destination or "").strip():
         return "ERROR: 'source' and 'destination' are required."
     s, d = resolve(source), resolve(destination)
+    _check_directory_mutation(s)
+    _check_directory_mutation(d)
     if not s.exists():
         return f"ERROR: source not found: {source}"
     try:
@@ -1129,6 +1223,7 @@ def fs_move(source: str, destination: str) -> str:
     return f"Moved {_display(s)} -> {_display(d)}{over}."
 
 
+@_file_tool
 def fs_delete(path: str, confirm: bool = False) -> str:
     if not (path or "").strip():
         return "ERROR: 'path' is required."
@@ -1137,6 +1232,7 @@ def fs_delete(path: str, confirm: bool = False) -> str:
     p = resolve(path)
     if not p.exists():
         return f"ERROR: not found: {path}"
+    _check_directory_mutation(p)
     if p.is_dir() and any(p.iterdir()):
         return f"ERROR: directory not empty: {_display(p)} (delete contents first)."
     try:
@@ -1148,4 +1244,3 @@ def fs_delete(path: str, confirm: bool = False) -> str:
         return f"ERROR: delete failed: {exc}"
     _audit("fs_delete", str(_display(p)))
     return f"Deleted {_display(p)}."
-

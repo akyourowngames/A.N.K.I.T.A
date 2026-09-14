@@ -1,111 +1,63 @@
-"""Microphone diagnostic: what does headless Chrome actually hear?
-
-    python desktop/mic_test.py              # current app flags
-    python desktop/mic_test.py --real-mic   # without the fake-device flag
-
-Speak at a normal volume during the 6-second measurement. The report shows
-the audio inputs Chrome sees, which track got opened, and the peak level.
-Peak ~0 + "fake" device label = Chrome is NOT hearing your real microphone.
-"""
-
+"""Offline STT diagnostic: --file recording.wav, or capture from the microphone."""
 import argparse
 import json
+import os
 import sys
-import tempfile
-import time
+from pathlib import Path
 
-PAGE = """<!DOCTYPE html><html><body><p id="report">...</p><script>
-window.__report = {devices: [], track: 'none', peak: 0};
-(async () => {
-  try {
-    const devs = await navigator.mediaDevices.enumerateDevices();
-    window.__report.devices = devs.filter(d => d.kind === 'audioinput')
-      .map(d => (d.label || '(no label)') + ' [' + d.deviceId.slice(0, 8) + ']');
-    const stream = await navigator.mediaDevices.getUserMedia({audio: true});
-    const track = stream.getAudioTracks()[0];
-    window.__report.track = track ? track.label : 'none';
-    const ctx = new (window.AudioContext || window.webkitAudioContext)();
-    const src = ctx.createMediaStreamSource(stream);
-    const analyser = ctx.createAnalyser();
-    analyser.fftSize = 2048;
-    src.connect(analyser);
-    const buf = new Float32Array(analyser.fftSize);
-    let peak = 0;
-    const t0 = performance.now();
-    while (performance.now() - t0 < 6000) {
-      analyser.getFloatTimeDomainData(buf);
-      for (let i = 0; i < buf.length; i++) {
-        const v = Math.abs(buf[i]);
-        if (v > peak) peak = v;
-      }
-      await new Promise(r => setTimeout(r, 50));
-    }
-    window.__report.peak = peak;
-    window.__report.done = true;
-  } catch (e) {
-    window.__report.error = String(e);
-    window.__report.done = true;
-  }
-})();
-</script></body></html>"""
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--real-mic", action="store_true",
-                        help="drop --use-fake-device-for-media-stream")
+def main():
+    from core import config  # Load shared .env defaults before command-line overrides.
+    from core import speech
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--file", type=Path, help="transcribe a local audio file without opening the mic")
+    parser.add_argument("--seconds", type=float, default=6)
+    parser.add_argument("--lang", help="auto, en, hi, or another Whisper language")
+    parser.add_argument("--device", help="input device id or name")
+    parser.add_argument("--list-devices", action="store_true")
+    parser.add_argument("--download-model", action="store_true", help="explicitly download configured model once")
     args = parser.parse_args()
-
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-    from selenium.webdriver.chrome.service import Service
-    from webdriver_manager.chrome import ChromeDriverManager
-
-    with tempfile.NamedTemporaryFile("w", suffix=".html", delete=False,
-                                     encoding="utf-8") as fh:
-        fh.write(PAGE)
-        url = "file:///" + fh.name.replace("\\", "/")
-
-    options = Options()
-    options.add_argument("--use-fake-ui-for-media-stream")
-    if not args.real_mic:
-        options.add_argument("--use-fake-device-for-media-stream")
-    options.add_argument("--headless=new")
-    options.add_argument("--log-level=3")
-    driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()),
-                              options=options)
+    if args.lang:
+        os.environ["ZUMBA_STT_LANG"] = args.lang
+    if not 0 < args.seconds <= speech.MAX_SECONDS:
+        parser.error("--seconds must be between 0 and 60")
     try:
-        driver.get(url)
-        print("SPEAK NOW at normal volume (6 seconds)...", flush=True)
-        for _ in range(40):
-            done = driver.execute_script("return window.__report.done === true")
-            if done:
-                break
-            time.sleep(0.5)
-        report = driver.execute_script("return window.__report")
-        print(json.dumps(report, indent=2, ensure_ascii=False))
-        peak = float(report.get("peak") or 0)
-        if report.get("error"):
-            print("RESULT: getUserMedia FAILED ->", report["error"])
+        if args.download_model:
+            from faster_whisper import WhisperModel
+            WhisperModel(os.getenv("ZUMBA_STT_MODEL", "tiny"), device="cpu", compute_type="int8")
+            print("Model cached. Subsequent transcription runs offline.")
+            return 0
+        if args.list_devices:
+            import sounddevice as sd
+            print(sd.query_devices())
+            print("Default input/output:", sd.default.device)
+            return 0
+        print(json.dumps(speech.diagnostics(), indent=2), flush=True)
+        if args.file:
+            with args.file.open("rb") as audio:
+                data = audio.read(speech.MAX_BYTES + 1)
+        else:
+            import sounddevice as sd
+            import numpy as np
+            print("Loading local model...", flush=True)
+            speech.prepare()
+            selected = args.device or os.getenv("ZUMBA_MIC_DEVICE")
+            device = int(selected) if selected and selected.isdigit() else selected
+            print(f"Speak now ({args.seconds:g} seconds)...", flush=True)
+            data = sd.rec(int(args.seconds * speech.SAMPLE_RATE), samplerate=speech.SAMPLE_RATE,
+                          channels=1, dtype="float32", device=device, blocking=True)[:, 0]
+            print(f"Peak microphone level: {float(np.max(np.abs(data))):.4f}", flush=True)
+        result = speech.transcribe(data, on_partial=lambda text: print("Partial:", text, flush=True))
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        if not result["transcript"]:
+            print("No speech detected. Check input device and microphone level.")
             return 1
-        track = str(report.get("track") or "")
-        low = track.lower()
-        if "fake" in low:
-            print("RESULT: FAKE DEVICE. Remove --use-fake-device-for-media-stream.")
-            return 1
-        if "hands-free" in low or "bluetooth" in low:
-            print("WARNING: default input is a Bluetooth hands-free mic. On Windows")
-            print("this is usually SILENT while stereo (A2DP) output is active.")
-            print("Fix: Settings -> Sound -> Input -> pick 'Microphone Array")
-            print("(Realtek Audio)' (or run: mmsys.cpl -> Recording tab -> Set Default).")
-        if peak < 0.01:
-            print("RESULT: SILENCE (peak %.4f). Speak during the test; if it stays" % peak)
-            print("0 while you speak, the default input above is the wrong mic.")
-            return 1
-        print("RESULT: MIC LIVE (peak %.3f)." % peak)
         return 0
-    finally:
-        driver.quit()
+    except Exception as exc:
+        print(f"STT failed: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":

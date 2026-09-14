@@ -1,31 +1,24 @@
-"""Bounded per-session summary cache; generation never holds up a new turn."""
-from collections import OrderedDict
-import threading
+"""Fit recent conversation messages without inferred summaries."""
 from . import context_budget
 
-_sessions = OrderedDict()
-_lock = threading.Lock()
 
-
-def fit(messages, session_id):
-    with _lock:
-        state = _sessions.setdefault(session_id, {"summary": "", "covered": -1, "pending": False})
-        _sessions.move_to_end(session_id)
-        while len(_sessions) > 128:
-            _sessions.popitem(last=False)
-        cache = {"summary": state["summary"], "covered": state["covered"]}
-    def summarize(dropped):
-        with _lock:
-            if not state["pending"]:
-                state["pending"] = True
-                def run():
-                    try:
-                        text = context_budget._default_summarizer(dropped)
-                        with _lock:
-                            state.update(summary=text, covered=len(dropped))
-                    finally:
-                        with _lock:
-                            state["pending"] = False
-                threading.Thread(target=run, daemon=True, name="zumba-summary").start()
-        return state["summary"] or "Earlier turns remain saved in session history; their summary is being prepared."
-    return context_budget.build_window(messages, model_limit=context_budget.get_context_limit(), cache=cache, summarizer=summarize)
+def fit(messages, session_id=""):
+    budget = max(1000, context_budget.get_context_limit() - 1500)
+    systems = [m for m in messages if m.role == "system"]
+    history = [m for m in messages if m.role != "system"]
+    used = sum(context_budget.message_tokens(m) for m in systems)
+    current = next((i for i in range(len(history) - 1, -1, -1) if history[i].role == "user"), len(history))
+    if used + sum(context_budget.message_tokens(m) for m in history[current:]) > budget:
+        raise ValueError("Current message or tool results are too long for the context window. Shorten the input or request a smaller tool result.")
+    recent = []
+    for message in reversed(history):
+        cost = context_budget.message_tokens(message)
+        if recent and used + cost > budget:
+            break
+        recent.append(message)
+        used += cost
+    recent.reverse()
+    # Never replay an orphaned tool result after dropping its call.
+    while recent and recent[0].role == "tool":
+        recent.pop(0)
+    return systems + recent
