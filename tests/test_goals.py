@@ -122,7 +122,6 @@ def test_briefing_digest_and_recall_context(tmp_path, monkeypatch):
     assert "Ship demo" in _g.goal_context(con)
     from memory.service import Memory
     m = Memory(con=con)
-    monkeypatch.setattr("memory.service.retrieval.search", lambda con, q, top_k=8, max_bytes=6000, **kw: [])
     text, _ = m.recall_with_hits("anything")
-    assert "Ship demo" in text
+    assert "Ship demo" not in text
     con.close()

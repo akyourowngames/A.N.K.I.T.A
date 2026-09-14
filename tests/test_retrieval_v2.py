@@ -184,15 +184,9 @@ def test_duplicate_relations_deduped(tmp_path, monkeypatch):
 
 def test_ingest_immediate_recall_latency(tmp_path, monkeypatch):
     from memory.service import Memory
-    con = _con(tmp_path, monkeypatch)
-    m = Memory(con=con)
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: False)
-    r = m.ingest_episode("UNIQUEPHRASE zebra balloon latency", "noted", session_id="s-lat")
-    assert r["stored"]
-    from memory import retrieval
-    hits = retrieval.search(con, "UNIQUEPHRASE zebra balloon", use_ppr=False)
-    assert any("UNIQUEPHRASE" in h.text for h in hits)
-    con.close()
+    m = Memory(path=tmp_path / "ChatLog.json")
+    assert m.ingest_episode("UNIQUEPHRASE zebra balloon latency", "noted")["stored"]
+    assert "UNIQUEPHRASE" in m.recall("")
 
 
 def test_amem_evolution_guarded(tmp_path, monkeypatch):

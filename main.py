@@ -67,7 +67,6 @@ console: Console = make_console(_allow_emoji())
 
 BANNER = "[bold white]ZUMBA[/]  [dim]v1.1.0  ·  Personal AI Assistant  ·  NIM[/]"
 
-_WINDOW_CACHE: dict[str, dict] = {}
 _WHY_LAST: dict[str, dict] = {}
 _WHY_ON: dict[str, bool] = {}
 
@@ -91,22 +90,14 @@ def _why_render(session_id: str) -> str:
     return "\n".join(lines)
 
 
-def _window_cache_for(msgs: list[Message]) -> dict:
-    """Per-session rolling-summary cache, keyed by the session anchor (first
-    user message). Lets build_window reuse summaries across turns."""
-    import hashlib
-
-    anchor = next((m.content for m in msgs if m.role == "user"), "")
-    key = hashlib.sha256(anchor.encode("utf-8", errors="replace")).hexdigest()[:16]
-    return _WINDOW_CACHE.setdefault(key, {})
 
 
 def _fit_window(msgs: list[Message]) -> list[Message]:
     try:
-        from core.context_budget import build_window, get_context_limit
+        from core.session_context import fit
 
-        return build_window(msgs, model_limit=get_context_limit(), cache=_window_cache_for(msgs))
-    except Exception:
+        return fit(msgs)
+    except ImportError:
         return msgs
 
 _MEM = None
@@ -164,12 +155,9 @@ def _mcp_preamble(msgs: list[Message], tools: list) -> list[Message]:
         "letting it fade; complete steps as they report progress. "
         "Calendar: zumba__calendar_today / zumba__calendar_search / zumba__calendar_brief answer 'what's on today / find meeting'; "
         "zumba__calendar_create books; zumba__calendar_status checks connection. When not connected say so + point to /cal auth, never invent events. "
-         "Memory: the Relevant memory system block ALREADY contains recall results for this turn — "
-         "answer personal-fact questions from it first and never claim ignorance when the answer is there; "
-         "call zumba__memory_search only when that block lacks what you need. zumba__memory_remember for durable facts; "
-         "zumba__memory_forget to invalidate. zumba__brief gives the daily briefing. "
-         "Identity: zumba__soul_show reads soul.md, zumba__me_show reads the graph-backed profile — "
-         "both are secondary to the Relevant memory block already in context. "
+         "Memory is recent saved conversation, not a profile. Use the latest user request. "
+         "zumba__memory_search reads recent messages; zumba__memory_remember saves exact text. "
+         "zumba__memory_forget deletes an exact exchange ID. "
         "Soul rewrite: when the user asks to rewrite/change your soul, say yes and ask what to change; "
         "then soul_show, draft the full file, soul_propose it, show soul_diff, and only soul_accept after explicit confirmation."
     ))
@@ -199,7 +187,7 @@ def _mcp_agent_turn(msgs: list[Message], model: str, key: str, max_tokens, tempe
         result = run_agent_loop(
             convo, model,
             call_model=lambda ms, m, tools, **kw: chat_completion(
-                ms, m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
+                _fit_window(ms), m, api_key=key, tools=tools, max_tokens=max_tokens, temperature=temperature),
             execute_tool=lambda name, args: mcp_run_tool(name, args),
             tools=tools,
             on_tool=on_tool,
@@ -299,30 +287,13 @@ def _memory():
 
 
 def _mem_capture(mem, session_id: str, user_text: str, reply: str, kind: str = "chat") -> None:
-    """Queue the exchange for background ingestion (serialized worker thread),
-    then opportunistically consolidate (decay, note links, contradictions,
-    communities, core blocks). Never blocks or crashes the chat loop."""
+    """Save the original exchange locally before continuing."""
     try:
         mem.capture_async(user_text, reply, session_id=session_id, kind=kind)
     except Exception:
         pass
 
 
-def _soul_onboarding(allow_emoji: bool) -> None:
-    try:
-        from identity import soul as _soul
-        if not _soul.needs_bootstrap():
-            return
-        console.print(info_panel(
-            "First run — let's give Zumba a soul (30s, skippable).\n"
-            f"1. {_soul.BOOTSTRAP_QUESTIONS[0]}\n"
-            f"2. {_soul.BOOTSTRAP_QUESTIONS[1]}\n"
-            f"3. {_soul.BOOTSTRAP_QUESTIONS[2]}\n"
-            "Answer with: /soul init <how I should sound> | <keep in mind> | <off-limits>\n"
-            "Or: /soul wingit (I'll draft it from our first exchanges)",
-            title="SOUL", allow_emoji=allow_emoji))
-    except Exception:
-        pass
 
 
 def _soul_chat_cmd(arg: str, allow_emoji: bool) -> bool:
@@ -370,43 +341,6 @@ def _soul_chat_cmd(arg: str, allow_emoji: bool) -> bool:
             console.print(error_panel(f"soul edit: {exc}", allow_emoji=allow_emoji))
         return True
     return False
-
-
-def _session_reflect(mem, session_id: str) -> None:
-    try:
-        if mem is None:
-            return
-        mem.flush(timeout=60.0)
-        try:
-            from memory import db as _mdb
-            _mdb.ensure_tier2(mem._con if getattr(mem, "_con", None) is not None else _mdb.connect())
-        except Exception:
-            pass
-        exchanges: list = []
-        try:
-            con = mem._open()
-            try:
-                rows = con.execute(
-                    "SELECT id, user_text, assistant_text FROM episodes WHERE session_id=? ORDER BY id", (session_id,)).fetchall()
-                exchanges = [{"user": r["user_text"], "assistant": r["assistant_text"], "episode_id": r["id"]} for r in rows]
-            finally:
-                if getattr(mem, "_own", True):
-                    try:
-                        con.close()
-                    except Exception:
-                        pass
-        except Exception:
-            exchanges = []
-        if not exchanges:
-            return
-        def _bg():
-            try:
-                mem.reflect_on_session(exchanges, session_id=session_id, use_llm=True)
-            except Exception:
-                pass
-        threading.Thread(target=_bg, daemon=True).start()
-    except Exception:
-        pass
 
 
 def _header() -> Panel:
@@ -640,6 +574,11 @@ def ask_cmd(
     eff_system = _plain_system(system, allow_emoji)
     msgs = [Message(role="system", content=eff_system), Message(role="user", content=prompt)] if eff_system else [Message(role="user", content=prompt)]
     mem = _memory()
+    from core.chat_pipeline import recall_block, memory_block_message
+    saved_context = recall_block(prompt)
+    if saved_context:
+        msgs.insert(0, memory_block_message(saved_context))
+    msgs = _fit_window(msgs)
     console.print(_header())
     console.print(section_rule("REQUEST"))
     console.print(f"{meta_line('Model', chosen)}   {meta_line('Endpoint', base)}")
@@ -959,12 +898,6 @@ def chat_cmd(
         _render_history(conv, chosen, allow_emoji)
     else:
         console.print(section_rule("CHAT"))
-    _soul_onboarding(allow_emoji)
-    try:
-        from memory import proactive as _pro
-        _pro.start()
-    except Exception:
-        pass
 
     def show_help() -> None:
         table = styled_table("COMMANDS", allow_emoji)
@@ -1011,7 +944,6 @@ def chat_cmd(
             break
         if not user_text:
             continue
-        _check_due_reminders(allow_emoji)
         if user_text.startswith("/ "):
             user_text = "/" + user_text[2:].lstrip()
         if user_text in ("/exit", "/quit"):
@@ -1172,9 +1104,9 @@ def chat_cmd(
             continue
         if user_text == "/me":
             try:
-                from identity import userprofile as _up
-                prof = _up.profile_block() or "(no user.md yet — chat a little, then consolidation writes it)"
-                console.print(Panel(safe_text(prof[:6000], allow_emoji), title="ME  ·  user.md",
+                from mcpclient.builtin import _saved_user_messages
+                prof = _saved_user_messages() or "(no saved messages yet)"
+                console.print(Panel(safe_text(prof[:6000], allow_emoji), title="SAVED USER MESSAGES",
                                     title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
             except Exception as exc:
                 console.print(error_panel(f"me: {exc}", allow_emoji=allow_emoji))
@@ -1242,9 +1174,9 @@ def chat_cmd(
         if mem is not None:
             try:
                 if _WHY_ON.get(session_id, True):
-                    recall_text, recall_hits = mem.recall_with_hits(user_text, top_k=5, max_bytes=3500)
+                    recall_text, recall_hits = mem.recall_with_hits(user_text, top_k=8, max_bytes=3500, exclude_session=session_id)
                 else:
-                    recall_text = mem.recall(user_text, top_k=5, max_bytes=3500)
+                    recall_text = mem.recall(user_text, top_k=8, max_bytes=3500, exclude_session=session_id)
             except Exception:
                 recall_text, recall_hits = "", []
         _why_store(session_id, user_text, recall_text, recall_hits)
@@ -1255,10 +1187,8 @@ def chat_cmd(
         # (kept out of conv so it never pollutes saved history).
         msgs = conv.history()
         if recall_text:
-            msgs = msgs[:-1] + [Message(role="system", content=(
-                "Relevant long-term memory about the user:\n" + recall_text +
-                "\n(These facts were distilled from past sessions. They may be outdated — the user's most recent statements in this conversation always override them.)"
-            )), msgs[-1]]
+            from core.chat_pipeline import memory_block_message
+            msgs = msgs[:-1] + [memory_block_message(recall_text), msgs[-1]]
             console.print(f"[dim]memory: {recall_text.count(chr(10)) + 1} recall line(s) injected[/]")
         try:
             from vault import service as _vault
@@ -1308,7 +1238,7 @@ def chat_cmd(
                 _print_assistant(result.content, result.model or chosen, allow_emoji, tokens)
                 reply_text = text
             if mem is not None and reply_text:
-                threading.Thread(target=_mem_capture, args=(mem, session_id, user_text, reply_text, reply_kind), daemon=True).start()
+                _mem_capture(mem, session_id, user_text, reply_text, reply_kind)
         except KiloError as exc:
             try:
                 conv.messages.pop()
@@ -1324,8 +1254,6 @@ def chat_cmd(
         if mem is not None:
             with console.status("[cyan]Saving memories...[/]", spinner="dots"):
                 mem.flush(timeout=60.0)
-            with console.status("[cyan]Reflecting on session (one LLM pass)...[/]", spinner="dots"):
-                _session_reflect(mem, session_id)
         db_set_last(session_id)
         from mcpclient.manager import shutdown as mcp_shutdown
         try:
@@ -1665,26 +1593,6 @@ def _remind_chat_run(arg: str, allow_emoji: bool) -> None:
         _goal_close(mem, con, owned)
 
 
-def _check_due_reminders(allow_emoji: bool) -> None:
-    try:
-        from memory import proactive as _pro, reminders as _rem
-        mem = _memory()
-        if mem is None:
-            return
-        con, owned = _goal_con(mem)
-        try:
-            out = _pro.tick(con, use_llm=False)
-            for f in out.get("fired") or []:
-                console.print(Panel(safe_text(f"⏰ {f.get('message','')[:300]}", allow_emoji),
-                                    title="REMINDER", title_align="left", border_style="green",
-                                    box=_box(allow_emoji), padding=(0, 2)))
-            for n in out.get("nudges") or []:
-                console.print(Panel(safe_text(n[:500], allow_emoji), title="GOALS",
-                                    title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
-        finally:
-            _goal_close(mem, con, owned)
-    except Exception:
-        pass
 
 
 def _mcp_tools_table(allow_emoji: bool) -> None:
@@ -2553,6 +2461,7 @@ def calendar_auth_cmd(
     client_id: str = typer.Option("", "--client-id", help="Google OAuth client id."),
     client_secret: str = typer.Option("", "--client-secret", help="Google OAuth client secret."),
     redirect: str = typer.Option("", "--redirect", help="Redirect URI (must match OAuth client)."),
+    state: str = typer.Option("", "--state", help="OAuth state from step 1 (verified when given)."),
     no_input: bool = typer.Option(False, "--no-input", help="Non-interactive (fail instead of prompting)."),
 ) -> None:
     from tools import calendar as _cal
@@ -2561,7 +2470,7 @@ def calendar_auth_cmd(
     _cal_guard()
     if code.strip():
         with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret), "CALENDAR AUTH", allow_emoji)
+            _cal_panel(_cal.auth_finish(code.strip(), redirect, client_id, client_secret, state), "CALENDAR AUTH", allow_emoji)
         return
     cid = client_id.strip() or _cal.load_token().get("client_id", "")
     sec = client_secret.strip() or _cal.load_token().get("client_secret", "")
@@ -2596,7 +2505,7 @@ def calendar_auth_cmd(
         console.print("[dim]Stopped. Finish later with: zumba calendar auth --code <code>[/]")
         return
     with console.status("[cyan]Exchanging code...[/]", spinner="dots"):
-        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
+        _cal_panel(_cal.auth_finish(pasted, redirect, cid, sec, state), "CALENDAR AUTH  ·  step 2/2", allow_emoji)
 
 
 @calendar_app.command("token")
@@ -2690,7 +2599,7 @@ def _cal_chat_run(arg: str, allow_emoji: bool) -> None:
         console.print(info_panel("Usage: /cal [today [n]|search <q>|brief|status|auth [code]|create <title> :: <start ISO> ...]", title="CAL", allow_emoji=allow_emoji))
 
 
-memory_app = typer.Typer(help="Long-term memory (hippocampus): stats, search, add, forget, consolidate.")
+memory_app = typer.Typer(help="Saved chat history: stats, search, add, forget, clear.")
 app.add_typer(memory_app, name="memory")
 
 
@@ -2705,9 +2614,7 @@ def memory_stats_cmd() -> None:
     table = styled_table("MEMORY STATS", allow_emoji)
     table.add_column("KEY", style="cyan", no_wrap=True)
     table.add_column("VALUE", style="white")
-    for k in ("episodes", "entities", "relations", "active_relations", "notes", "communities", "core_blocks",
-              "user_facts", "follow_ups_open", "moods", "eval_pairs", "eval_runs",
-              "goals_active", "goals_total", "reminders_pending", "database"):
+    for k in ("mode", "messages", "exchanges", "max_messages", "file"):
         table.add_row(k, str(s.get(k, "-")))
     console.print(table)
 
@@ -2737,14 +2644,14 @@ def memory_add_cmd(
         _fail("Memory is disabled.")
         return
     console.print(_header())
-    with console.status("[cyan]Curating into memory (LLM extraction)...[/]", spinner="dots"):
+    with console.status("[cyan]Saving to chat history...[/]", spinner="dots"):
         r = mem.ingest_episode(text, "", session_id="", kind="manual")
     console.print(section_rule(f"STORED  ·  {json.dumps(r)}"))
 
 
 @memory_app.command("forget")
 def memory_forget_cmd(
-    name: str = typer.Argument(..., help="Entity name to invalidate."),
+    name: str = typer.Argument(..., help="Exact exchange ID from memory history."),
 ) -> None:
     mem = _memory()
     if mem is None:
@@ -2759,7 +2666,7 @@ def memory_clear_cmd(
     yes: bool = typer.Option(False, "--yes", "-y", help="Skip confirmation."),
 ) -> None:
     if not yes:
-        console.print("This wipes ALL long-term memory. Re-run with --yes to confirm.")
+        console.print("This clears saved cross-chat history. Re-run with --yes to confirm.")
         return
     mem = _memory()
     if mem is None:
@@ -2769,77 +2676,8 @@ def memory_clear_cmd(
     console.print(section_rule("MEMORY CLEARED"))
 
 
-@memory_app.command("consolidate")
-def memory_consolidate_cmd() -> None:
-    allow_emoji = _allow_emoji()
-    mem = _memory()
-    if mem is None:
-        _fail("Memory is disabled.")
-        return
-    console.print(_header())
-    with console.status("[cyan]Sleep-time compute: decay, note links, communities, core blocks...[/]", spinner="dots"):
-        r = mem.consolidate(min_interval_s=0.0)
-    console.print(Panel(json.dumps(r), title="CONSOLIDATION", border_style="cyan", box=_box(allow_emoji)))
 
 
-@memory_app.command("eval")
-def memory_eval_cmd(
-    generate: bool = typer.Option(False, "--generate", help="Regenerate golden Q/A from current facts first."),
-    use_llm: bool = typer.Option(False, "--llm", help="Use LLM generation + LLM judge (default: deterministic offline)."),
-    top_k: int = typer.Option(6, "--top", "-k"),
-) -> None:
-    allow_emoji = _allow_emoji()
-    mem = _memory()
-    if mem is None:
-        _fail("Memory is disabled.")
-        return
-    console.print(_header())
-    from memory import db as _mdb, eval as _eval
-    con = mem._open()
-    try:
-        if generate:
-            with console.status("[cyan]Generating golden Q/A...[/]", spinner="dots"):
-                pairs = _eval.generate_pairs(con, use_llm=use_llm)
-            console.print(section_rule(f"EVAL PAIRS  ·  {len(pairs)} generated"))
-        with console.status("[cyan]Running eval (full read path per question)...[/]", spinner="dots"):
-            report = _eval.run_eval(mem, use_llm=use_llm, top_k=top_k)
-        table = styled_table("MEMORY EVAL", allow_emoji)
-        table.add_column("CATEGORY", style="cyan")
-        table.add_column("HITS", justify="right")
-        table.add_column("TOTAL", justify="right")
-        table.add_column("HIT RATE", justify="right")
-        for cat, d in (report.get("per_category") or {}).items():
-            table.add_row(cat, str(d.get("hits", 0)), str(d.get("total", 0)), f"{float(d.get('hit_rate', 0)):.0%}")
-        table.add_row("[bold]OVERALL[/]", str(report.get("hits", 0)), str(report.get("total", 0)), f"{float(report.get('hit_rate', 0)):.0%}")
-        console.print(table)
-    finally:
-        if getattr(mem, "_own", True):
-            try:
-                con.close()
-            except Exception:
-                pass
-
-
-@memory_app.command("people")
-def memory_people_cmd(limit: int = typer.Option(15, "--limit", "-n")) -> None:
-    allow_emoji = _allow_emoji()
-    mem = _memory()
-    if mem is None:
-        _fail("Memory is disabled.")
-        return
-    console.print(_header())
-    from memory import people as _people
-    con = mem._open()
-    try:
-        rows = _people.people_overview(con, limit=limit)
-        text = _people.render_people(rows)
-    finally:
-        if getattr(mem, "_own", True):
-            try:
-                con.close()
-            except Exception:
-                pass
-    console.print(Panel(safe_text(text, allow_emoji), title="PEOPLE", border_style="cyan", box=_box(allow_emoji)))
 
 
 soul_app = typer.Typer(help="Soul identity file: show / init / diff / accept / reject.")
@@ -2929,34 +2767,14 @@ def daily_cmd(
                         title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(1, 2)))
 
 
-@app.command("mood")
-def mood_cmd(days: int = typer.Option(30, "--days", "-d")) -> None:
-    allow_emoji = _allow_emoji()
-    mem = _memory()
-    if mem is None:
-        _fail("Memory is disabled.")
-        return
-    console.print(_header())
-    from memory import mood as _mood
-    con = mem._open()
-    try:
-        text = _mood.render_chart(con, days=days)
-    finally:
-        if getattr(mem, "_own", True):
-            try:
-                con.close()
-            except Exception:
-                pass
-    console.print(Panel(safe_text(text, allow_emoji), title="MOOD",
-                        title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
 
 
 @app.command("me")
 def me_cmd() -> None:
     allow_emoji = _allow_emoji()
-    from identity import userprofile as _up
+    from mcpclient.builtin import _saved_user_messages
     console.print(_header())
-    console.print(Panel(safe_text(_up.profile_block() or "(no user.md yet)", allow_emoji), title="ME  ·  user.md",
+    console.print(Panel(safe_text(_saved_user_messages() or "(no user.md yet)", allow_emoji), title="SAVED USER MESSAGES",
                         title_align="left", border_style="cyan", box=_box(allow_emoji), padding=(0, 2)))
 
 
@@ -2975,6 +2793,9 @@ def doctor_cmd() -> None:
     table.add_row("TERM_PROGRAM", str(info.get("term_program") or "-"))
     table.add_row("Console codepage", str(info.get("output_cp")))
     table.add_row("stdout encoding", str(info.get("stdout_encoding")))
+    from core.speech import diagnostics as speech_diagnostics
+    for key, value in speech_diagnostics().items():
+        table.add_row("Voice " + key, str(value))
     console.print(table)
     console.print(info_panel(
         "If emojis show as boxes in cmd:\n"
@@ -3007,7 +2828,7 @@ def root(ctx: typer.Context) -> None:
         table.add_row("zumba chat", "Interactive session (auto-saved, --last to resume)")
         table.add_row("zumba sessions", "List / search / show saved chats")
         table.add_row("zumba config", "Show or set default model + preferences")
-        table.add_row("zumba memory", "Long-term memory: stats / search / add / forget / consolidate")
+        table.add_row("zumba memory", "Chat history: stats / search / add / forget / clear")
         table.add_row("zumba goal", "Proactive goals: add / list / show / step / research / remind / tick")
         table.add_row("zumba web", "Realtime web: search / news / fetch (zero-key)")
         table.add_row("zumba mcp", "MCP servers: list / add / remove / tools / call")

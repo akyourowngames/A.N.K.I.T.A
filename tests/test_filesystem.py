@@ -3,9 +3,20 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from tools import filesystem as F
+
+
+@pytest.fixture(autouse=True)
+def scoped_files(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.delenv("ZUMBA_FS_ROOT", raising=False)
+    monkeypatch.delenv("ZUMBA_NO_FS", raising=False)
+    monkeypatch.delenv("ZUMBA_NO_FILES", raising=False)
+    monkeypatch.setattr(F, "_audit", lambda *args: None)
 
 
 def _mk(tmp_path, name="a.txt", content="line1\nline2\nline3\n"):

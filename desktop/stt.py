@@ -1,166 +1,151 @@
-"""Speech-to-text through headless Chrome + the Web Speech API.
-
-Same approach as the Jarvis reference (Backend/SpeechToText.py): a tiny
-local page runs webkitSpeechRecognition in continuous mode and the driver
-reads the accumulated transcript. Free, no API key, works with the default
-system microphone. All selenium imports stay inside this module so the rest
-of the desktop app keeps working when the voice stack is unavailable.
-"""
-
+"""Local microphone capture with energy VAD and faster-whisper transcription."""
 from __future__ import annotations
 
+import collections
 import os
-import tempfile
+import queue
 import threading
 import time
 
-HTML_PAGE = """<!DOCTYPE html>
-<html lang="en">
-<head><title>Zumba Speech Recognition</title></head>
-<body>
-    <button id="start" onclick="startRecognition()">Start Recognition</button>
-    <button id="end" onclick="stopRecognition()">Stop Recognition</button>
-    <p id="output"></p>
-    <p id="interim"></p>
-    <script>
-        const output = document.getElementById('output');
-        const interim = document.getElementById('interim');
-        let recognition;
-        function startRecognition() {{
-            recognition = new webkitSpeechRecognition() || new SpeechRecognition();
-            recognition.lang = '{lang}';
-            recognition.continuous = true;
-            recognition.interimResults = true;
-            recognition.onresult = function(event) {{
-                let interimText = '';
-                for (let i = event.resultIndex; i < event.results.length; i++) {{
-                    const transcript = event.results[i][0].transcript;
-                    if (event.results[i].isFinal) {{
-                        output.textContent += transcript + ' ';
-                    }} else {{
-                        interimText += transcript;
-                    }}
-                }}
-                interim.textContent = interimText;
-            }};
-            recognition.onend = function() {{
-                try {{ recognition.start(); }} catch (e) {{}}
-            }};
-            recognition.start();
-        }}
-        function stopRecognition() {{
-            try {{ recognition.stop(); }} catch (e) {{}}
-            output.innerHTML = "";
-            interim.innerHTML = "";
-        }}
-    </script>
-</body>
-</html>"""
+from core import speech
+from core.speech import STTUnavailable
 
 
-class STTUnavailable(RuntimeError):
-    pass
+class _Abort:
+    def __init__(self, closed, external):
+        self.closed, self.external = closed, external
+
+    def is_set(self):
+        return self.closed.is_set() or (self.external is not None and self.external.is_set())
 
 
-class ChromeSTT:
-    """Blocking, single-utterance listener. Create once, reuse, close at exit."""
+class LocalSTT:
+    """One microphone owner. Speech onset interrupts before recognition finishes."""
 
-    def __init__(self, lang: str = "en-US"):
-        self.lang = lang
-        self._driver = None
-        self._page_url = ""
+    def __init__(self, lang=None, device=None):
+        self.lang = speech.language(lang)
+        selected = device if device is not None else os.getenv("ZUMBA_MIC_DEVICE")
+        self.device = int(selected) if selected and str(selected).isdigit() else selected or None
         self._lock = threading.Lock()
+        self._closed = threading.Event()
 
-    def _ensure_driver(self):
-        if self._driver is not None:
-            return self._driver
+    def listen_once(self, timeout=30.0, abort=None, poll=.03,
+                    on_interim=None, on_speech=None, on_ready=None,
+                    on_stage=None, on_audio=None, on_device=None, finish=None):
+        import numpy as np
         try:
-            from selenium import webdriver
-            from selenium.webdriver.chrome.options import Options
-            from selenium.webdriver.chrome.service import Service
-            from webdriver_manager.chrome import ChromeDriverManager
+            import sounddevice as sd
         except ImportError as exc:
-            raise STTUnavailable(
-                "selenium is not installed (pip install -r requirements-desktop.txt)"
-            ) from exc
-        page = HTML_PAGE.format(lang=self.lang)
-        fd, path = tempfile.mkstemp(prefix="zumba_voice_", suffix=".html")
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write(page)
-        self._page_url = "file:///" + path.replace("\\", "/")
-        options = Options()
-        # Auto-grant the mic permission prompt, but NEVER substitute a fake
-        # audio device: --use-fake-device-for-media-stream hides the real
-        # microphone and feeds silence/a test tone, so nothing transcribes.
-        options.add_argument("--use-fake-ui-for-media-stream")
-        options.add_argument("--headless=new")
-        options.add_argument("--log-level=3")
-        service = Service(ChromeDriverManager().install())
-        self._driver = webdriver.Chrome(service=service, options=options)
-        return self._driver
-
-    def _element_text(self, element_id: str) -> str:
-        from selenium.webdriver.common.by import By
-
-        try:
-            return self._driver.find_element(by=By.ID, value=element_id).text or ""
-        except Exception:
+            raise STTUnavailable("Install requirements-desktop.txt to enable the microphone.") from exc
+        cancelled = _Abort(self._closed, abort)
+        if cancelled.is_set():
             return ""
-
-    def listen_once(self, timeout: float = 30.0,
-                    abort: "threading.Event | None" = None,
-                    poll: float = 0.4,
-                    on_interim=None) -> str:
-        """Wait for one utterance. Returns the transcript or "" on timeout/abort.
-
-        on_interim, when given, is called with the live partial transcript so
-        the GUI can show words as they are spoken.
-        """
-        with self._lock:
+        def stage(name, text):
+            if on_stage and not cancelled.is_set():
+                on_stage(name, text)
+        stage('device', 'Checking microphone...')
+        try:
+            device = sd.query_devices(self.device, kind='input')
+            if on_device:
+                on_device(device['name'])
+        except Exception as exc:
+            raise STTUnavailable('Microphone not available. Connect your headset or select a Windows input. ' + str(exc)) from exc
+        # Prepare before recording: a cold model load must not lose the utterance.
+        stage('loading', f'Loading local speech model ({os.getenv("ZUMBA_STT_MODEL", "tiny")})... Wait before speaking.')
+        try:
+            speech.prepare(abort=cancelled)
+        except STTUnavailable:
+            if cancelled.is_set():
+                return ""
+            raise
+        while not self._lock.acquire(timeout=.05):
+            if cancelled.is_set():
+                return ""
+        try:
+            if cancelled.is_set():
+                return ""
+            blocks = queue.Queue(maxsize=2100)
+            overflow = threading.Event()
+            def capture(data, frames, timing, status):
+                if status:
+                    overflow.set()
+                try:
+                    blocks.put_nowait(data[:, 0].copy())
+                except queue.Full:
+                    overflow.set()
+            samples, preroll = [], collections.deque(maxlen=10)
+            recent_voice = collections.deque(maxlen=5)
+            ambient = collections.deque(maxlen=100)
+            active, silent, total = False, 0, 0
+            configured_threshold = os.getenv('ZUMBA_VAD_THRESHOLD')
+            threshold = float(configured_threshold) if configured_threshold else .003
+            if not 0 < threshold < 1:
+                raise STTUnavailable('Microphone threshold must be between 0 and 1.')
+            deadline = time.monotonic() + min(float(timeout), speech.MAX_SECONDS)
+            last_audio = time.monotonic()
             try:
-                driver = self._ensure_driver()
-            except STTUnavailable:
+                stage('opening', 'Opening microphone...')
+                with sd.InputStream(samplerate=speech.SAMPLE_RATE, channels=1,
+                                    dtype="float32", blocksize=480, device=self.device,
+                                    callback=capture):
+                    stage('listening', 'Listening — speak in Hindi or English, then pause.')
+                    if on_ready:
+                        on_ready()
+                    while time.monotonic() < deadline and not cancelled.is_set():
+                        if finish is not None and finish.is_set():
+                            break
+                        if overflow.is_set():
+                            raise STTUnavailable("Microphone audio overflow. Select a different input or try again.")
+                        try:
+                            block = blocks.get(timeout=.05)
+                        except queue.Empty:
+                            if time.monotonic() - last_audio > 3:
+                                raise STTUnavailable('Microphone opened but delivered no audio for 3 seconds. Reconnect the headset or check Windows microphone access.')
+                            continue
+                        last_audio = time.monotonic()
+                        energy = float(np.sqrt(np.mean(block * block)))
+                        if on_audio:
+                            on_audio(energy, threshold, total / speech.SAMPLE_RATE)
+                        if not active:
+                            preroll.append(block)
+                            recent_voice.append(energy >= threshold)
+                            ambient.append(energy)
+                            if sum(recent_voice) < 3:
+                                if not configured_threshold and len(ambient) >= 10:
+                                    threshold = float(np.clip(np.percentile(ambient, 20) * 3, .002, .012))
+                                continue
+                            active = True
+                            samples.extend(preroll)
+                            total = sum(map(len, samples))
+                            stage('recording', 'Hearing you — pause to send, or click Transcribe now.')
+                            if on_speech:
+                                on_speech()
+                        else:
+                            samples.append(block)
+                            total += len(block)
+                        silent = silent + len(block) if energy < threshold else 0
+                        if silent >= speech.SAMPLE_RATE * 1.0 or total >= speech.SAMPLE_RATE * speech.MAX_SECONDS:
+                            break
+            except (STTUnavailable, ValueError):
                 raise
             except Exception as exc:
-                raise STTUnavailable(f"could not start Chrome STT: {exc}") from exc
-            from selenium.webdriver.common.by import By
-
-            try:
-                driver.get(self._page_url)
-                driver.find_element(by=By.ID, value="start").click()
-            except Exception as exc:
-                raise STTUnavailable(f"STT page failed: {exc}") from exc
-            baseline = len(self._element_text("output"))
-            last_interim = ""
-            deadline = time.monotonic() + timeout
-            try:
-                while time.monotonic() < deadline:
-                    if abort is not None and abort.is_set():
-                        return ""
-                    text = self._element_text("output")
-                    if len(text) > baseline and text[baseline:].strip():
-                        return text[baseline:].strip()
-                    if on_interim is not None:
-                        partial = self._element_text("interim").strip()
-                        if partial and partial != last_interim:
-                            last_interim = partial
-                            try:
-                                on_interim(partial)
-                            except Exception:
-                                pass
-                    time.sleep(poll)
+                raise STTUnavailable("Cannot open microphone. Run python desktop/mic_test.py --list-devices. "
+                                     + str(exc)) from exc
+            if cancelled.is_set():
                 return ""
-            finally:
-                try:
-                    driver.find_element(by=By.ID, value="end").click()
-                except Exception:
-                    pass
+            if not active:
+                stage('no_speech', 'No speech detected. Check the input meter and Windows microphone level; listening will retry.')
+                return ''
+            # Decode once after capture ends. Snapshot decoding used to occupy the
+            # same worker ahead of the final clip, doubling latency on CPU.
+            stage('transcribing', f'Transcribing {total / speech.SAMPLE_RATE:.1f}s of audio...')
+            result = speech.transcribe(np.concatenate(samples), lang=self.lang,
+                                     on_partial=on_interim, abort=cancelled)['transcript']
+            if not result:
+                stage('no_speech', 'Audio received, but no words recognized. Please try again.')
+            return result
+        finally:
+            self._lock.release()
 
-    def close(self) -> None:
-        with self._lock:
-            if self._driver is not None:
-                try:
-                    self._driver.quit()
-                except Exception:
-                    pass
-                self._driver = None
+    def close(self):
+        self._closed.set()

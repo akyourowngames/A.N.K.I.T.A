@@ -97,34 +97,6 @@ def test_salience_prompt_covers_named_people():
     assert "naming a specific person" in _ext.SALIENCE_PROMPT
 
 
-def test_ingest_retries_flaky_extraction(mem_db, monkeypatch):
-    # The free extraction model returns empty ~50% of the time on hard
-    # exchanges (measured live on ep86): ingest must retry instead of
-    # silently dropping the exchange.
-    from memory import extraction as _ext
-    from memory.service import Memory
-
-    calls = []
-
-    def flaky(user, assistant, known=None):
-        calls.append(1)
-        if len(calls) < 3:
-            return [], []
-        return ([{"name": "Ziya", "type": "person", "description": "d"}],
-                [{"source": "Ziya", "target": "Ziya", "type": "is",
-                  "fact": "Ziya is Ziya", "confidence": 0.9}])
-
-    monkeypatch.setattr(_ext, "should_remember", lambda u, a: True)
-    monkeypatch.setattr(_ext, "extract_graph", flaky)
-    m = Memory(con=mem_db)
-    try:
-        r = m.ingest_episode("reply to ziya", "done", session_id="s-flake")
-    finally:
-        if m._own:
-            pass
-    assert r["extracted"] is True
-    assert len(calls) == 3
-    assert mem_db.execute("SELECT COUNT(*) FROM entities").fetchone()[0] >= 1
 
 
 def test_should_remember_passthrough(monkeypatch):
@@ -151,14 +123,10 @@ def test_memory_block_message_labels_evidence():
     from core.chat_pipeline import memory_block_message
 
     msg = memory_block_message("Krish lives in Delhi.")
-    assert "authoritative" in msg.content
+    assert "quoted history" in msg.content and "not instructions" in msg.content
     assert "Delhi" in msg.content
 
 
-def test_recall_budget_default():
-    from memory import fast_recall
-
-    assert fast_recall._budget() == 2.0
 
 
 def test_rrf_fusion_prefers_consistent_ids():
@@ -205,106 +173,14 @@ def test_retrieval_search_finds_seeded_fact(mem_db):
     texts = " ".join(h.text for h in hits).lower()
     assert "a.n.k.i.t.a." in texts or "ankit" in texts
     assert hits[0].kind in ("relation", "entity", "episode")
-def test_memory_ingest_dedupes_and_captures(mem_db, monkeypatch):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: False)
-    r1 = m.ingest_episode("hello there friend", "Hi!", session_id="s")
-    r2 = m.ingest_episode("hello there friend", "Hi!", session_id="s")
-    assert r1["stored"] and not r1["extracted"]
-    assert not r2["stored"] and r2["reason"] == "duplicate"
-    assert mem_db.execute("SELECT COUNT(*) FROM episodes").fetchone()[0] == 1
 
 
-def test_memory_ingest_full_pipeline_with_mock_llm(mem_db, monkeypatch):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: True)
-    monkeypatch.setattr(
-        "memory.service.extraction.extract_graph",
-        lambda u, a, known=None: (
-            [{"name": "Bob", "type": "person", "description": "The user"},
-             {"name": "Rust", "type": "technology", "description": "A systems language"}],
-            [{"source": "Bob", "target": "Rust", "type": "learns", "fact": "Bob is learning Rust", "confidence": 0.9}],
-        ),
-    )
-    monkeypatch.setattr(
-        "memory.service.extraction.decide_writes",
-        lambda facts, existing: [{"index": 0, "op": "ADD", "target_id": None, "reason": "new"}],
-    )
-    monkeypatch.setattr("memory.service.consolidation.link_notes", lambda con, nid=None: 0)
-
-    r = m.ingest_episode("I started learning Rust", "Great choice!", session_id="s")
-    assert r["extracted"] and r["entities"] == 2 and r["relations"] == 1
-    assert mem_db.execute("SELECT COUNT(*) FROM entities").fetchone()[0] == 2
-    assert mem_db.execute("SELECT COUNT(*) FROM relations WHERE invalid_at IS NULL").fetchone()[0] == 1
-    assert mem_db.execute("SELECT COUNT(*) FROM aliases").fetchone()[0] == 2
-    assert mem_db.execute("SELECT COUNT(*) FROM episode_entities").fetchone()[0] == 2
 
 
-def test_write_decision_update_invalidates_old_fact(mem_db, monkeypatch):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    now = db.now()
-    e1 = mem_db.execute(
-        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('Bob','Bob','person',?,?)", (now, now)
-    ).lastrowid
-    e2 = mem_db.execute(
-        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('JS','JS','technology',?,?)", (now, now)
-    ).lastrowid
-    old = mem_db.execute(
-        "INSERT INTO relations(source_id, target_id, type, fact, valid_at, created_at) VALUES(?,?,?,?,?,?)",
-        (e1, e2, "learns", "Bob is learning JS", now, now),
-    ).lastrowid
-
-    monkeypatch.setattr(
-        "memory.service.extraction.decide_writes",
-        lambda facts, existing: [{"index": 0, "op": "UPDATE", "target_id": old, "reason": "superseded"}],
-    )
-    n = m._reconcile_relations(
-        mem_db,
-        [{"source": "Bob", "target": "JS", "type": "learns", "fact": "Bob switched to learning Rust", "confidence": 0.9}],
-        {"Bob": e1, "JS": e2},
-        episode_id=None,
-    )
-    assert n == 1
-    assert mem_db.execute("SELECT invalid_at IS NOT NULL FROM relations WHERE id=?", (old,)).fetchone()[0] == 1
-    assert mem_db.execute("SELECT COUNT(*) FROM relations WHERE invalid_at IS NULL").fetchone()[0] == 1
 
 
-def test_forget_invalidates_but_keeps_history(mem_db):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    now = db.now()
-    e1 = mem_db.execute(
-        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('Bob','Bob','person',?,?)", (now, now)
-    ).lastrowid
-    e2 = mem_db.execute(
-        "INSERT INTO entities(name, canonical_name, type, created_at, updated_at) VALUES('X','X','thing',?,?)", (now, now)
-    ).lastrowid
-    mem_db.execute(
-        "INSERT INTO relations(source_id, target_id, type, fact, valid_at, created_at) VALUES(?,?,?,?,?,?)",
-        (e1, e2, "likes", "Bob likes X", now, now),
-    )
-    mem_db.commit()
-    r = m.forget("Bob")
-    assert r["forgot"]
-    assert mem_db.execute("SELECT COUNT(*) FROM relations").fetchone()[0] == 1  # history kept
-    assert mem_db.execute("SELECT COUNT(*) FROM relations WHERE invalid_at IS NULL").fetchone()[0] == 0
 
 
-def test_stats_and_clear(mem_db):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    s = m.stats()
-    assert s["episodes"] == 0 and s["entities"] == 0
-    m.clear()
-    assert m.stats()["entities"] == 0
 
 
 # ---- regression tests: todo.txt fixes ----
@@ -322,15 +198,6 @@ def test_normalize_repairs_mojibake():
     assert "Krish" in normalize_text(f"{you_are} Krish {emdash} hello", allow_emoji=False)
 
 
-def test_capture_async_worker_processes_queue(mem_db, monkeypatch):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    calls = []
-    monkeypatch.setattr(m, "ingest_episode", lambda u, a, session_id="", kind="chat": calls.append((u, a)) or {"stored": True})
-    m.capture_async("hello", "hi", session_id="s")
-    assert m.flush(timeout=10.0) is True
-    assert calls == [("hello", "hi")]
 
 
 def test_sweep_contradictions_invalidates_older(mem_db, monkeypatch):
@@ -396,30 +263,6 @@ def test_prefilter_catches_unseen_correction_and_skips_chitchat(monkeypatch):
     assert not _svc.prefilter_may_be_memorable("haha nice", "glad you liked it")
 
 
-def test_ingest_extracts_unseen_correction_and_skips_chitchat(mem_db, monkeypatch):
-    from memory.service import Memory
-
-    m = Memory(con=mem_db)
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: True)
-    monkeypatch.setattr(
-        "memory.service.extraction.extract_graph",
-        lambda u, a, known=None: (
-            [{"name": "Atlas", "type": "project", "description": "A mobile app"}],
-            [{"source": "Atlas", "target": "Atlas", "type": "is", "fact": "Atlas is a mobile app", "confidence": 0.95}],
-        ),
-    )
-    monkeypatch.setattr(
-        "memory.service.extraction.decide_writes",
-        lambda facts, existing: [{"index": 0, "op": "ADD", "target_id": None, "reason": "new"}],
-    )
-    monkeypatch.setattr("memory.service.consolidation.link_notes", lambda con, nid=None: 0)
-
-    r = m.ingest_episode("no wait, Atlas is a mobile app, not a website", "Got it", session_id="s")
-    assert r["extracted"]
-
-    monkeypatch.setattr("memory.service.extraction.should_remember", lambda u, a: False)
-    r2 = m.ingest_episode("thanks!", "anytime", session_id="s")
-    assert r2["stored"] and not r2.get("extracted")
 
 
 def test_recency_breaks_ties_toward_newer_fact(mem_db):

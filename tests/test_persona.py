@@ -48,5 +48,5 @@ def test_tier2_profile_wired(monkeypatch, tmp_path):
     soul.bootstrap_flow({"sound": "terse", "keep": "likes Rust"})
     monkeypatch.setattr("core.store.config_get", lambda k, d="": d)
     out = build_system(DEFAULT_SYSTEM)
-    assert "soul.md" in out
-    assert "user.md" in out or "likes Rust" in out
+    assert "soul.md" not in out and "user.md" not in out
+    assert "likes Rust" not in out

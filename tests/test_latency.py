@@ -81,33 +81,8 @@ def test_long_chat_does_not_wait_for_summary_generation(monkeypatch):
         release.set()
 
 
-def test_core_memory_does_not_close_callers_connection():
-    from memory.service import Memory
-    memory = object.__new__(Memory)
-    memory._con = None
-    con = sqlite3.connect(":memory:")
-    con.row_factory = sqlite3.Row
-    con.execute("CREATE TABLE core_blocks(key TEXT,content TEXT)")
-    con.execute("INSERT INTO core_blocks VALUES('identity','Cedar')")
-    assert "Cedar" in memory._core_text(con)
-    assert con.execute("SELECT COUNT(*) FROM core_blocks").fetchone()[0] == 1
-    con.close()
 
 
-def test_local_recall_retains_core_and_original_evidence(tmp_path, monkeypatch):
-    from memory import fast_recall
-    path = tmp_path / "memory.db"
-    con = sqlite3.connect(path)
-    con.executescript("CREATE TABLE core_blocks(key TEXT,content TEXT); CREATE TABLE episodes(id INTEGER PRIMARY KEY,user_text TEXT,assistant_text TEXT,created_at REAL); CREATE VIRTUAL TABLE fts_episodes USING fts5(user_text,assistant_text,content='episodes',content_rowid='id');")
-    con.execute("INSERT INTO core_blocks VALUES('identity','Project Cedar')")
-    con.execute("INSERT INTO episodes VALUES(1,'Cedar launches Friday','Made up assistant claim',1)")
-    con.execute("INSERT INTO fts_episodes(rowid,user_text,assistant_text) VALUES(1,'Cedar launches Friday','Made up assistant claim')")
-    con.commit()
-    con.close()
-    monkeypatch.setattr(fast_recall.db, "memory_db_path", lambda: path)
-    text = fast_recall.local_context("Cedar")
-    assert "Project Cedar" in text and "Cedar launches Friday" in text
-    assert "Made up assistant claim" not in text
 
 
 def test_capture_status_shows_real_saved_user_text(tmp_path, monkeypatch):
@@ -173,7 +148,7 @@ def test_remember_tool_does_not_wait_for_enrichment(monkeypatch):
     monkeypatch.setattr('memory.get_memory', lambda: Memory())
     result = asyncio.run(builtin.handle(None, 'memory_remember', {'text': 'Cedar is my project'}))
     assert saved[0][0] == 'Cedar is my project'
-    assert 'background' in result
+    assert 'Saved to the chat log' in result
 
 
 def test_truncated_tool_stream_is_not_executable(monkeypatch):

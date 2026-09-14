@@ -198,6 +198,36 @@ class _Bucket:
         return True
 
 
+_CAL_PENDING: dict[int, float] = {}
+_CAL_PENDING_TTL = 10 * 60.0
+
+
+def _cal_prune_pending(now: float = 0) -> None:
+    """Drop expired OAuth-wait entries (no leak, m7)."""
+    try:
+        ts = now or time.time()
+        for cid, at in list(_CAL_PENDING.items()):
+            if ts - at > _CAL_PENDING_TTL:
+                _CAL_PENDING.pop(cid, None)
+    except Exception:
+        pass
+
+
+def _cal_looks_like_code(text: str) -> bool:
+    """Strict Google authorization-code shape only ('4/...').
+
+    Access tokens (ya29...) are deliberately rejected here — they must go
+    through `/cal token`, never the code-exchange endpoint (M2: no exfil of
+    arbitrary chat text to Google).
+    """
+    try:
+        from tools.calendar import is_auth_code
+        return is_auth_code(text)
+    except Exception:
+        t = (text or "").strip()
+        return len(t) >= 20 and t.startswith("4/") and " " not in t
+
+
 class TelegramChannel:
     def __init__(self, api: TelegramAPI | None = None):
         self.api = api or TelegramAPI(get_token())
@@ -340,6 +370,67 @@ class TelegramChannel:
         except Exception:
             pass
 
+    async def _handle_cal(self, chat_id: int, text: str) -> None:
+        """Interactive calendar setup + reads (one global token, shared)."""
+        parts = (text or "").split(None, 2)
+        sub = (parts[1] if len(parts) > 1 else "today").lower() or "today"
+        rest = parts[2] if len(parts) > 2 else ""
+        try:
+            from tools import calendar as _cal
+        except Exception as e:
+            await self.api.send_message(chat_id, f"calendar error: {e}"[:500])
+            return
+        if not _cal.enabled():
+            await self.api.send_message(chat_id, "Calendar is disabled (ZUMBA_NO_CALENDAR=1).")
+            return
+        try:
+            if sub in ("today", ""):
+                out = await asyncio.to_thread(_cal.today, 10)
+            elif sub == "brief":
+                out = await asyncio.to_thread(_cal.brief)
+            elif sub == "status":
+                out = await asyncio.to_thread(_cal.status_text)
+            elif sub == "search" and rest.strip():
+                out = await asyncio.to_thread(_cal.search, rest.strip())
+            elif sub == "search":
+                out = "Usage: /cal search <text>"
+            elif sub == "auth":
+                if rest.strip():
+                    out = await asyncio.to_thread(_cal.auth_finish, rest.strip())
+                    if not out.startswith("ERROR"):
+                        # N1: explicit exchange consumed the code — drop any
+                        # lingering pending entry so it can't double-exchange.
+                        _CAL_PENDING.pop(chat_id, None)
+                    # Paste flow carries no CSRF state (same user, manual copy);
+                    # the stored state is verified on web-redirect callbacks.
+                else:
+                    out = await asyncio.to_thread(_cal.auth_start)
+                    if not out.startswith("ERROR"):
+                        _cal_prune_pending()
+                        _CAL_PENDING[chat_id] = time.time()
+                        out += ("\n\nNow paste ONLY the Google code (starts with '4/') here "
+                                "as your next message (expires in 10 min). "
+                                "Prefer explicit `/cal auth <code>` — safer than auto-detect.")
+            elif sub == "token" and rest.strip():
+                # /cal token <access> [refresh] — pasted secret never echoed.
+                bits = rest.strip().split()
+                tok, ref = (bits[0], bits[1] if len(bits) > 1 else "")
+                out = await asyncio.to_thread(_cal.set_token, tok, ref)
+            elif sub == "token":
+                out = "Usage: /cal token <access_token> [refresh_token]"
+            elif sub == "forget" and rest.strip().lower() in ("yes", "y", "confirm"):
+                forgotten = await asyncio.to_thread(_cal.clear_token)
+                out = ("Global calendar token forgotten." if forgotten
+                       else "Nothing was saved.")
+            elif sub == "forget":
+                out = ("This forgets the ONE global token for all chats. "
+                       "Confirm with `/cal forget yes`.")
+            else:
+                out = "Usage: /cal [today|search <q>|brief|status|auth [code]|token <access>|forget]"
+            await self.api.send_message(chat_id, out[:3500])
+        except Exception as e:
+            await self.api.send_message(chat_id, f"calendar error: {e}"[:500])
+
     async def handle_location(self, chat_id: int, msg: dict) -> bool:
         loc = msg.get("location")
         if not isinstance(loc, dict):
@@ -387,7 +478,7 @@ class TelegramChannel:
             await self.api.send_message(chat_id, "Fresh session started.")
             return
         if cmd == '/help':
-            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>.")
+            await self.api.send_message(chat_id, "Send text or a voice note. Commands: /status (saved tasks and results), /cancel (stop your active/queued tasks), /new (fresh session), /help, /memory <query>, /cal [today|search|brief|status|auth|forget].")
             return
         if cmd == '/memory':
             parts = text.split(maxsplit=1)
@@ -398,6 +489,24 @@ class TelegramChannel:
                 await self.api.send_message(chat_id, str(hits)[:3500] or "(nothing recalled)")
             except Exception as e:
                 await self.api.send_message(chat_id, f"memory error: {e}"[:500])
+            return
+        if cmd == '/cal' or text.strip().lower().startswith('/cal '):
+            await self._handle_cal(chat_id, text)
+            return
+        # Pending OAuth code paste: after `/cal auth`, the next message that
+        # strictly matches an auth-code shape finishes auth. Anything else
+        # (incl. access tokens) falls through to the agent — never POSTed
+        # to Google implicitly (M2).
+        _cal_prune_pending()
+        if not cmd and _cal_looks_like_code(text) and _CAL_PENDING.get(chat_id, 0) > time.time() - _CAL_PENDING_TTL:
+            _CAL_PENDING.pop(chat_id, None)
+            try:
+                from tools import calendar as _cal
+                out = await asyncio.to_thread(_cal.auth_finish, text.strip())
+                # Never echo the pasted code back.
+                await self.api.send_message(chat_id, out[:3500])
+            except Exception as e:
+                await self.api.send_message(chat_id, f"calendar auth error: {e}"[:500])
             return
         if await self.handle_location(chat_id, msg):
             return

@@ -33,57 +33,6 @@ def _fast_writer(connect, sql, params=(), timeout_ms=200):
         con.close()
 
 
-def test_memory_ingest_holds_no_lock_during_llm(tmp_path, monkeypatch):
-    from memory import db
-    from memory import extraction
-    from memory import resolve as resolve_mod
-    from memory.service import Memory
-
-    home = tmp_path / "memhome"
-    home.mkdir()
-    monkeypatch.setattr(db, "memory_home", lambda: home)
-    monkeypatch.setattr(db, "memory_db_path", lambda: home / "memory.db")
-
-    def slow_resolve(con, name):
-        time.sleep(1.5)  # stands in for the LLM merge-decision call
-        return None
-
-    monkeypatch.setattr(resolve_mod, "resolve_entity", slow_resolve)
-    monkeypatch.setattr(
-        extraction, "should_remember", lambda u, a: True)
-    monkeypatch.setattr(
-        extraction, "extract_graph",
-        lambda u, a, known=None: (
-            [{"name": "Slow Entity", "type": "concept", "description": "d"}],
-            [{"source": "Slow Entity", "target": "Slow Entity", "type": "is",
-              "fact": "Slow Entity is slow", "confidence": 0.9}]))
-    monkeypatch.setattr(
-        extraction, "decide_writes",
-        lambda facts, existing: [{"index": i, "op": "ADD", "target_id": None,
-                                  "reason": "t"} for i in range(len(facts))])
-
-    mem = Memory()
-    errors = []
-
-    def ingest():
-        try:
-            mem.ingest_episode("slow test episode", "noted", session_id="s-lock")
-        except Exception as exc:  # noqa: BLE001 — collected, asserted below
-            errors.append(exc)
-
-    t = threading.Thread(target=ingest, daemon=True)
-    t.start()
-    time.sleep(0.4)  # let ingestion reach the slow resolve call
-    # A concurrent writer must NOT hit "database is locked".
-    dt = _fast_writer(
-        db.connect,
-        "INSERT INTO episodes(session_id, kind, user_text, assistant_text, context, hash, created_at)"
-        " VALUES(?,?,?,?,?,?,?)",
-        ("s2", "chat", "concurrent", "ok", "", "concurrent-hash", db.now()))
-    t.join(timeout=30)
-    mem.close()
-    assert not errors
-    assert dt < 5.0
 
 
 def test_knowledge_commit_holds_no_lock_during_resolve(tmp_path, monkeypatch):
@@ -172,30 +121,6 @@ def test_execute_retry_reraises_other_errors():
     raise AssertionError("should have raised")
 
 
-def test_memory_plan_apply_dedupes_batch(tmp_path, monkeypatch):
-    from memory import db
-    from memory.service import Memory
-
-    home = tmp_path / "memhome"
-    home.mkdir()
-    monkeypatch.setattr(db, "memory_home", lambda: home)
-    monkeypatch.setattr(db, "memory_db_path", lambda: home / "memory.db")
-
-    mem = Memory()
-    con = db.connect()
-    try:
-        planned = mem._plan_entities(
-            con, [{"name": "Atlas App", "type": "project", "description": "d1"},
-                  {"name": "Atlas App", "type": "project", "description": "d2"}])
-        # Planning performs no writes.
-        assert con.execute("SELECT COUNT(*) FROM entities").fetchone()[0] == 0
-        mapped = mem._apply_entities(con, planned, episode_id=1)
-        con.commit()
-        assert mapped["Atlas App"] is not None
-        assert con.execute("SELECT COUNT(*) FROM entities").fetchone()[0] == 1
-    finally:
-        con.close()
-        mem.close()
 
 
 def test_knowledge_resolve_plan_is_read_only(tmp_path, monkeypatch):

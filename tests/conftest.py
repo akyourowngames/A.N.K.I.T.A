@@ -12,6 +12,7 @@ _SCRUBBED_FLAGS = ("ZUMBA_NO_USER_MD",)
 
 
 @pytest.fixture(autouse=True)
-def _scrub_personal_behavior_flags(monkeypatch):
+def _scrub_personal_behavior_flags(monkeypatch, tmp_path):
     for name in _SCRUBBED_FLAGS:
         monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("ZUMBA_MEMORY_HOME", str(tmp_path / "chat-memory"))

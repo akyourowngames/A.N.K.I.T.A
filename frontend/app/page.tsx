@@ -9,6 +9,7 @@ import {
   Copy, Check, Menu, X, Zap, Circle, AlertTriangle, CheckCircle2
 } from 'lucide-react';
 import { streamAgent, getSessions, getModels, Msg, ToolStep, API_URL } from '../lib/api';
+import { useLocalStt } from '../lib/useLocalStt';
 
 const SUGGESTIONS = ['Plan my day', 'What can you do?', 'Search latest AI news', 'Check python version'];
 
@@ -274,7 +275,6 @@ export default function Page() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [sessions, setSessions] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [listening, setListening] = useState(false);
   const [voiceOn, setVoiceOn] = useState(false);
   const [models, setModels] = useState<any[]>([]);
   const [model, setModel] = useState('');
@@ -282,7 +282,7 @@ export default function Page() {
   const [backendOk, setBackendOk] = useState<boolean | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
-  const recRef = useRef<any>(null);
+  const { listening, transcribing, language: sttLanguage, error: sttError, toggleMic } = useLocalStt(setInput, text => { void send(text); });
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   // ── Edge-TTS voice: heavy male GOAT default ──
@@ -445,23 +445,6 @@ export default function Page() {
     setLoading(false);
   }
 
-  function toggleMic() {
-    const SR: any = (window as any).webkitSpeechRecognition || (window as any).SpeechRecognition;
-    if (!SR) { alert('Voice input works best in Chrome.'); return; }
-    if (listening) { recRef.current?.stop(); setListening(false); return; }
-    const rec = new SR();
-    rec.lang = 'en-US'; rec.interimResults = true;
-    rec.onresult = (e: any) => {
-      const t = Array.from(e.results).map((r: any) => r[0].transcript).join('');
-      setInput(t);
-      if (e.results[e.results.length - 1].isFinal) { setListening(false); send(t); }
-    };
-    rec.onend = () => setListening(false);
-    rec.onerror = () => setListening(false);
-    recRef.current = rec;
-    try { rec.start(); setListening(true); } catch {}
-  }
-
   async function loadSession(id: string) {
     try {
       const r = await fetch(`${API_URL}/api/sessions/${id}`);
@@ -557,7 +540,7 @@ export default function Page() {
               )}
             </div>
             <div className="text-[11px] text-zinc-600 mt-0.5 font-mono">
-              {loading ? 'running tools…' : listening ? 'listening…' : 'agent · tools · streaming'}
+              {loading ? 'running tools…' : transcribing ? 'transcribing…' : listening ? 'listening · tap mic to finish' : 'agent · tools · streaming'}
             </div>
           </div>
 
@@ -634,7 +617,7 @@ export default function Page() {
                 placeholder="Message Zumba…  (Enter to send)"
                 className="flex-1 bg-transparent text-[14px] placeholder:text-zinc-600 resize-none max-h-[140px] py-2.5 leading-relaxed"
               />
-              <button onClick={toggleMic} title="voice input"
+              <button onClick={toggleMic} disabled={transcribing || loading} title={listening ? 'Finish recording' : `Voice input · ${sttLanguage}`}
                 className={`p-2.5 rounded-xl border transition shrink-0 ${listening ? 'bg-white text-black border-white animate-pulse' : 'border-white/[0.08] text-zinc-400 hover:bg-white/[0.05] hover:text-zinc-200'}`}>
                 <Mic size={15} />
               </button>
@@ -646,6 +629,7 @@ export default function Page() {
             <div className="text-center text-[10px] text-zinc-600 mt-2.5 font-mono tracking-wide">
               {backendOk === false ? 'backend offline' : API_URL} · agent mode
             </div>
+            {sttError && <p role="alert" className="text-center text-xs text-red-400 mt-2">{sttError}</p>}
           </div>
         </div>
       </main>

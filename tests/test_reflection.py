@@ -75,9 +75,8 @@ def test_user_facts_and_profile_prepend(tmp_path, monkeypatch):
     assert "Sam likes Rust" in _up.profile_block()
     from memory.service import Memory
     m = Memory(con=con)
-    monkeypatch.setattr("memory.service.retrieval.search", lambda con, q, top_k=8, max_bytes=6000, **kw: [])
     text, hits = m.recall_with_hits("anything")
-    assert "Sam likes Rust" in text or "user.md" in text
+    assert "Sam likes Rust" not in text and "user.md" not in text
     con.close()
 
 

@@ -238,42 +238,8 @@ def snapshot():
 
 
 def sync_sources():
-    """Read Zumba's source databases without loading extensions or altering memory."""
-    root = Path(os.getenv("ZUMBA_MEMORY_HOME", str(Path.home() / ".zumba")))
-    profile = root / "user.md"
-    if profile.is_file():
-        enqueue("user.md", "profile", profile.read_bytes(), "profile:user.md")
-    path = root / "memory.db"
-    if path.is_file():
-        with storage.connect() as con:
-            row = con.execute("SELECT value FROM sync_state WHERE key='episode_cursor'").fetchone()
-            cursor = int(row[0]) if row else 0
-        source = sqlite3.connect(path.as_uri() + "?mode=ro", uri=True, timeout=5)
-        source.row_factory = sqlite3.Row
-        try:
-            rows = source.execute("SELECT id,user_text,session_id FROM episodes WHERE id>? ORDER BY id LIMIT 100", (cursor,)).fetchall()
-        finally:
-            source.close()
-        advanced = False
-        for row in rows:
-            if row["user_text"].strip():
-                enqueue(f"Conversation {row['id']}", "memory", row["user_text"].encode(), f"episode:{row['id']}")
-            cursor = row["id"]
-            advanced = True
-        # Write sync state only when something changed: this runs every few
-        # seconds and unconditional writes contend with ingestion commits.
-        with storage.connect() as con:
-            current = {r["key"]: r["value"] for r in con.execute("SELECT key, value FROM sync_state")}
-            writes = {}
-            if advanced and current.get("episode_cursor") != str(cursor):
-                writes["episode_cursor"] = str(cursor)
-            available = str(path.is_file()).lower()
-            if current.get("memory_available") != available:
-                writes["memory_available"] = available
-            if current.get("error") != "":
-                writes["error"] = ""
-            for key, value in writes.items():
-                storage.execute_retry(con, "INSERT OR REPLACE INTO sync_state VALUES(?,?)", (key, value))
+    """Chat logs and profiles are no longer copied into document knowledge."""
+    return None
 
 
 _stop = threading.Event()
@@ -284,15 +250,6 @@ def start():
     if any(t.is_alive() for t in _threads):
         return
     _stop.clear()
-    def watch():
-        while not _stop.is_set():
-            try:
-                sync_sources()
-            except Exception as exc:
-                log.exception("Memory sync failed")
-                with storage.connect() as con:
-                    storage.execute_retry(con, "INSERT OR REPLACE INTO sync_state VALUES('error',?)", (str(exc)[:400],))
-            _stop.wait(5)
     def work():
         while not _stop.is_set():
             try:
@@ -308,7 +265,7 @@ def start():
             except Exception:
                 log.exception("Knowledge worker error")
                 _stop.wait(5)
-    for fn in (watch, work):
+    for fn in (work,):
         t = threading.Thread(target=fn, name="zumba-knowledge-" + fn.__name__, daemon=True)
         _threads.append(t)
         t.start()

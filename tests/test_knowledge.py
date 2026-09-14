@@ -113,21 +113,16 @@ def test_entity_resolution_requires_reasoning_even_identical_vectors(monkeypatch
     assert len([a for a in graph["audit"] if a["decision"] == "merged"]) == 2
 
 
-def test_memory_sync_reads_only_user_evidence_and_versions(tmp_path):
+def test_memory_and_profile_are_not_copied_into_document_graph(tmp_path):
     root = tmp_path / "memory"
     root.mkdir()
-    (root / "user.md").write_text("# Profile\nMira founded Atlas.", encoding="utf-8")
+    (root / "user.md").write_text("# Profile\nOld inferred fact", encoding="utf-8")
     with sqlite3.connect(root / "memory.db") as con:
         con.execute("CREATE TABLE episodes(id INTEGER PRIMARY KEY,user_text TEXT,assistant_text TEXT,session_id TEXT)")
-        con.execute("INSERT INTO episodes VALUES(1,'Mira founded Atlas.','Mira owns the moon.','s')")
+        con.execute("INSERT INTO episodes VALUES(1,'Old user text','Old reply','s')")
     service.sync_sources()
     service.sync_sources()
-    with storage.connect() as con:
-        assert con.execute("SELECT COUNT(*) FROM documents").fetchone()[0] == 2
-        assert all(b"moon" not in row[0] for row in con.execute("SELECT content FROM documents"))
-    (root / "user.md").write_text("# Profile\nUpdated profile", encoding="utf-8")
-    service.sync_sources()
-    assert len(service.snapshot()["documents"]) == 3
+    assert service.snapshot()["documents"] == []
 
 
 @pytest.mark.parametrize("kind", ["txt", "md", "markdown", "json", "csv"])
@@ -207,13 +202,12 @@ def test_durable_inbox_survives_reopen(tmp_path, monkeypatch):
     assert inbox.pending() == []
 
 
-def test_flush_respects_timeout():
+def test_flush_finishes_immediately_without_background_workers(tmp_path):
     from memory.service import Memory
-    memory = Memory(con=object())
-    memory._idle.clear()
-    start = time.monotonic()
-    assert memory.flush(.02) is False
-    assert time.monotonic() - start < .5
+    memory = Memory(path=tmp_path / "ChatLog.json")
+    memory.capture_async("Remember this", "Saved")
+    assert memory.flush(.02)
+    assert "Remember this" in memory.recall("")
 
 
 def test_profile_selection_is_llm_driven(monkeypatch):

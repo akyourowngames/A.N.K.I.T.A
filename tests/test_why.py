@@ -17,33 +17,21 @@ class _Hit:
 
 
 def _mem(tmp_path, monkeypatch):
-    home = tmp_path / "whyhome"
-    home.mkdir(exist_ok=True)
-    monkeypatch.setattr(db, "memory_home", lambda: home)
-    monkeypatch.setattr(db, "memory_db_path", lambda: home / "memory.db")
     from memory.service import Memory
-
-    return Memory(con=db.connect())
+    return Memory(path=tmp_path / "ChatLog.json")
 
 
 def test_recall_with_hits_passthrough(tmp_path, monkeypatch):
     m = _mem(tmp_path, monkeypatch)
-    hits = [_Hit("relation", "Atlas is a mobile app", 0.92, {"id": 7}),
-            _Hit("entity", "Atlas [project]: mobile app", 0.31, {"id": 3})]
-    monkeypatch.setattr("memory.service.retrieval.search", lambda con, q, top_k=8, max_bytes=6000: hits)
-    text, prove = m.recall_with_hits("what is Atlas?", top_k=5, max_bytes=3500)
-    assert "[relation] Atlas is a mobile app" in text
-    assert len(prove) == 2
-    assert prove[0] == {"kind": "relation", "score": 0.92, "meta": {"id": 7}, "snippet": "Atlas is a mobile app"}
-    m.close()
+    saved = m.capture_async("Atlas is a mobile app.", "Understood.")
+    text, prove = m.recall_with_hits("Atlas")
+    assert "Atlas is a mobile app." in text
+    assert [h["meta"]["role"] for h in prove] == ["user", "assistant"]
+    assert all(h["meta"]["id"] == saved["id"] for h in prove)
 
 
 def test_recall_still_returns_text(tmp_path, monkeypatch):
-    m = _mem(tmp_path, monkeypatch)
-    monkeypatch.setattr("memory.service.retrieval.search", lambda con, q, top_k=8, max_bytes=6000: [])
-    out = m.recall("anything")
-    assert isinstance(out, str)
-    m.close()
+    assert _mem(tmp_path, monkeypatch).recall("anything") == ""
 
 
 def test_why_render_with_and_without_hits():

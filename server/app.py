@@ -15,6 +15,7 @@ from core.config import get_api_key, get_base_url, get_default_model
 from core.models import Message
 import core.store as store
 from core.chat import Conversation
+from core.session_context import fit as fit_context
 from core.chat_pipeline import build_messages as _pipeline_build, recall_block as _pipeline_recall
 from core.chat_pipeline import memory_block_message as _memory_block_message
 from server.tts import HEAVY_MALE_VOICES, tts_short_text as _tts_short_text
@@ -41,6 +42,8 @@ async def _lifespan(app: FastAPI):
 app = FastAPI(title="ZUMBA API", version="1.0.0", lifespan=_lifespan)
 from server.knowledge_api import router as knowledge_router
 app.include_router(knowledge_router)
+from server.calendar_api import router as calendar_router
+app.include_router(calendar_router)
 
 app.add_middleware(
     CORSMiddleware,
@@ -110,8 +113,8 @@ def delete_session(sid: str):
 def _build_messages(session_id: str, system: str, user_text: str):
     return _pipeline_build(session_id, system, user_text)
 
-def _recall_block(query: str) -> str:
-    return _pipeline_recall(query)
+def _recall_block(query: str, session_id: str = "") -> str:
+    return _pipeline_recall(query, session_id)
 
 @app.post("/api/chat")
 def chat(body: ChatRequest):
@@ -124,12 +127,12 @@ def chat(body: ChatRequest):
     if not store.get_session(sid):
         store.create_session(sid, model, body.system or "")
     msgs = _build_messages(sid, body.system or "", body.message)
-    mem_block = _recall_block(body.message)
+    mem_block = _recall_block(body.message, sid)
     if mem_block:
         msgs.insert(0, _memory_block_message(mem_block))
     store.add_message(sid, "user", body.message)
     try:
-        result = api_client.chat_completion(msgs, model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature)
+        result = api_client.chat_completion(fit_context(msgs), model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature)
     except api_client.KiloError as e:
         raise HTTPException(502, str(e))
     store.add_message(sid, "assistant", result.content)
@@ -174,7 +177,7 @@ def chat_agent(body: ChatRequest):
         def run():
             try:
                 msgs = _build_messages(sid, body.system or "", body.message)
-                mem_block = _recall_block(body.message)
+                mem_block = _recall_block(body.message, sid)
                 if mem_block:
                     msgs.insert(0, _memory_block_message(mem_block))
                 holder["context_ms"] = round((time.monotonic() - started) * 1000)
@@ -188,7 +191,7 @@ def chat_agent(body: ChatRequest):
                 result = run_agent_loop(
                     msgs, model,
                     call_model=lambda ms, m, tools, **kw: api_client.stream_agent_completion(
-                        ms, m, api_key=key, tools=tools, max_tokens=body.max_tokens,
+                        fit_context(ms), m, api_key=key, tools=tools, max_tokens=body.max_tokens,
                         temperature=body.temperature, on_token=on_token),
                     execute_tool=run_tool, tools=tools, on_tool_start=on_start,
                     on_tool=on_end, transcript_out=holder["transcript"],
@@ -234,7 +237,7 @@ def chat_stream(body: ChatRequest):
     if not store.get_session(sid):
         store.create_session(sid, model, body.system or "")
     msgs = _build_messages(sid, body.system or "", body.message)
-    mem_block = _recall_block(body.message)
+    mem_block = _recall_block(body.message, sid)
     if mem_block:
         msgs.insert(0, _memory_block_message(mem_block))
     store.add_message(sid, "user", body.message)
@@ -243,7 +246,7 @@ def chat_stream(body: ChatRequest):
         yield f"event: meta\ndata: {json.dumps({'session_id': sid, 'model': model})}\n\n"
         full = ""
         try:
-            for chunk in api_client.stream_chat_completion(msgs, model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature):
+            for chunk in api_client.stream_chat_completion(fit_context(msgs), model, api_key=key, max_tokens=body.max_tokens, temperature=body.temperature):
                 full += chunk
                 yield f"data: {json.dumps({'token': chunk})}\n\n"
         except Exception as e:
@@ -284,7 +287,7 @@ async def ws_chat(ws: WebSocket):
             if not store.get_session(sid):
                 store.create_session(sid, model, body.system or "")
             msgs = _build_messages(sid, body.system or "", body.message)
-            mem_block = _recall_block(body.message)
+            mem_block = _recall_block(body.message, sid)
             if mem_block:
                 msgs.insert(0, _memory_block_message(mem_block))
             store.add_message(sid, "user", body.message)
@@ -293,7 +296,7 @@ async def ws_chat(ws: WebSocket):
             try:
                 loop = asyncio.get_event_loop()
                 def _run():
-                    return api_client.chat_completion(msgs, model, api_key=key)
+                    return api_client.chat_completion(fit_context(msgs), model, api_key=key)
                 result = await loop.run_in_executor(None, _run)
                 full = result.content
                 for i in range(0, len(full), 24):
@@ -341,23 +344,48 @@ def memory_add(body: MemoryAdd):
 
 @app.post("/api/memory/retry")
 def memory_retry():
-    from memory import get_memory, inbox
-    count = inbox.retry_failed()
-    mem = get_memory()
-    mem._restore_captures()
-    return {"queued": count}
+    return {"queued": 0, "mode": "chat history"}
 
 
 @app.get("/api/memory/captures")
 def memory_captures():
-    from memory import inbox
-    return inbox.status()
+    from memory import get_memory
+    return get_memory().status()
+
+
+@app.get("/api/memory/history")
+def memory_history():
+    from memory import get_memory
+    mem = get_memory()
+    return {"messages": mem.messages(), "stats": mem.stats()}
 
 @app.post("/api/voice/stt")
-async def voice_stt(file: UploadFile = File(...)):
-    data = await file.read()
-    return {"transcript": "", "note": "STT not configured yet — plug Whisper/faster-whisper here. Received bytes: %d" % len(data),
-            "ready_for": "frontend MediaRecorder webm/opus upload", "next": "POST /api/chat with transcript"}
+async def voice_stt(file: UploadFile = File(...), stream: bool = False):
+    from core import speech
+    data = await file.read(speech.MAX_BYTES + 1)
+    if not data:
+        raise HTTPException(400, "Empty audio upload")
+    if len(data) > speech.MAX_BYTES:
+        raise HTTPException(413, "Audio exceeds 10 MB")
+    if stream:
+        from server.voice_events import transcription_events
+        def events():
+            for kind, payload in transcription_events(data):
+                yield f"event: {kind}\ndata: {json.dumps(payload)}\n\n"
+        return StreamingResponse(events(), media_type="text/event-stream",
+            headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+    try:
+        return await asyncio.to_thread(speech.transcribe, data)
+    except speech.InvalidAudio as exc:
+        raise HTTPException(400, str(exc))
+    except speech.STTUnavailable as exc:
+        raise HTTPException(503, str(exc))
+
+
+@app.get("/api/voice/config")
+def voice_config():
+    from core.speech import diagnostics
+    return diagnostics()
 
 class TTSRequest(BaseModel):
     text: str
@@ -431,17 +459,47 @@ def telegram_status():
 
 @app.websocket("/ws/voice")
 async def ws_voice(ws: WebSocket):
+    import base64
+    from core import speech
+    from server.voice_events import transcription_events
     await ws.accept()
-    await ws.send_json({"type": "ready", "message": "voice socket open — send {audio_chunk_b64} or {transcript}; server will reply with chat tokens"})
+    await ws.send_json({"type": "ready", "language": speech.language() or "auto",
+        "message": "Send base64 audio_chunk_b64 chunks of one audio file, then {finish:true}."})
+    audio = bytearray()
     try:
         while True:
             msg = await ws.receive_json()
-            if "transcript" in msg:
-                await ws.send_json({"type": "ack", "echo": msg["transcript"][:200], "hint": "now POST /api/chat/stream or send {message} here"})
-            elif "message" in msg:
-                await ws.send_json({"type": "token", "token": "(voice chat path: forward to /ws/chat — frontend already does this)"})
-                await ws.send_json({"type": "done"})
-            else:
-                await ws.send_json({"type": "ack", "hint": "send base64 opus chunks as {audio_chunk_b64} — buffered for future Whisper"})
+            if not isinstance(msg, dict):
+                await ws.send_json({"type": "error", "error": "Expected a JSON object"})
+                continue
+            if "audio_chunk_b64" in msg:
+                try:
+                    chunk = msg["audio_chunk_b64"]
+                    if not isinstance(chunk, str) or len(chunk) > speech.MAX_BYTES * 4 // 3 + 4:
+                        raise ValueError("Audio chunk exceeds 10 MB")
+                    audio.extend(base64.b64decode(chunk, validate=True))
+                    if len(audio) > speech.MAX_BYTES:
+                        raise ValueError("Audio exceeds 10 MB")
+                except ValueError as exc:
+                    audio.clear()
+                    await ws.send_json({"type": "error", "error": str(exc)})
+                    continue
+                if not msg.get("finish"):
+                    await ws.send_json({"type": "ack", "bytes": len(audio)})
+            if msg.get("finish"):
+                events = transcription_events(bytes(audio))
+                audio.clear()
+                try:
+                    # The iterator blocks during inference, so keep it off the event loop.
+                    while True:
+                        event = await asyncio.to_thread(next, events, None)
+                        if event is None:
+                            break
+                        kind, payload = event
+                        await ws.send_json({"type": kind, **payload})
+                finally:
+                    events.close()
+            elif "audio_chunk_b64" not in msg:
+                await ws.send_json({"type": "error", "error": "Send audio chunks and finish, then use /api/chat for the transcript."})
     except WebSocketDisconnect:
         return
