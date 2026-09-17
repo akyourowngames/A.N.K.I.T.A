@@ -145,7 +145,9 @@ test('watch due times respect the interval', (t) => {
   assert.equal(store.dueWatches(now).length, 1, 'never checked = due');
   store.recordWatchCheck('x', { value: null, text: 'page' });
   assert.equal(store.dueWatches(now).length, 0);
-  assert.equal(store.dueWatches(new Date(now.getTime() + 3600001)).length, 1);
+  // 10s of slack: the check above takes a few ms, so a 1ms margin is a flake.
+  assert.equal(store.dueWatches(new Date(now.getTime() + 3610000)).length, 1);
+  assert.equal(store.dueWatches(new Date(now.getTime() + 3590000)).length, 0, 'not due before the interval');
 });
 
 test('value extraction uses capture group 1 and fails loudly', () => {
@@ -290,8 +292,41 @@ test('the daemon picks up routines added while it is already running', async (t)
   new RoutineStore(file).load().addRoutine({ name: 'Later', cron: '0 8 * * *', prompt: 'go' });
 
   await daemon.tickOnce();
+  await daemon.drain(); // tickOnce returns once work is dispatched, not finished
   assert.equal(delivered.length, 1, 'the daemon noticed without a restart');
   assert.match(delivered[0], /ran it/);
+});
+
+test('state written by a tool mid-routine survives the daemon bookkeeping', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-clobber-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'state.json');
+  const store = new RoutineStore(file).load();
+  store.addRoutine({ name: 'Watcher', cron: 'daily 08:00', prompt: 'add a watch' });
+
+  const daemon = new Daemon({
+    store,
+    config: {},
+    client: {},
+    model: 'gpt-4.1',
+    // Stands in for the agent calling the `watch` tool, which owns its own store.
+    runPrompt: async () => {
+      new RoutineStore(file).load().addWatch({ name: 'created by agent', url: 'https://ex.test/' });
+      return 'added the watch';
+    },
+    deliver: async () => {},
+    now: () => new Date(2026, 8, 21, 8, 0, 5),
+  });
+  daemon.checkDueWatches = async () => ({ checked: 0, alerted: 0 });
+  daemon.pollInbox = async () => 0;
+
+  await daemon.runDueRoutines();
+
+  const after = new RoutineStore(file).load();
+  assert.equal(after.watches.length, 1, 'the agent-created watch was not overwritten');
+  assert.equal(after.watches[0].name, 'created by agent');
+  assert.equal(after.routines.length, 1, 'and the routine is still there');
+  assert.equal(after.findRoutine('watcher').lastStatus, 'ok');
 });
 
 test('daemon chat agents inherit the resolved model', (t) => {

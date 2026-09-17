@@ -55,6 +55,19 @@ export class RoutineStore {
     return this;
   }
 
+  /**
+   * Re-read from disk before every mutation.
+   *
+   * The daemon, the REPL and the schedule/watch tools each hold their own
+   * RoutineStore. Without this, whichever instance writes last wins with a
+   * stale snapshot, so a watch the agent created mid-routine is silently
+   * erased by the daemon's next bookkeeping write.
+   */
+  _fresh() {
+    this.load();
+    return this;
+  }
+
   get routines() {
     return this.data.routines;
   }
@@ -82,6 +95,7 @@ export class RoutineStore {
   /* ----------------------------- routines ----------------------------- */
 
   addRoutine({ name, cron, prompt, channel = "telegram", enabled = true, runAt = null }) {
+    this._fresh();
     const expr = normalizeSchedule(cron);
     if (!expr || !parseCron(expr)) throw new Error(`invalid schedule: ${cron}`);
     if (!String(prompt ?? "").trim()) throw new Error("prompt is required");
@@ -116,6 +130,7 @@ export class RoutineStore {
   }
 
   removeRoutine(id) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
     this.data.routines = this.routines.filter((r) => r !== routine);
@@ -124,6 +139,7 @@ export class RoutineStore {
   }
 
   setRoutineEnabled(id, enabled) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
     routine.enabled = Boolean(enabled);
@@ -136,6 +152,7 @@ export class RoutineStore {
    * Stops the next tick re-dispatching work that is still in flight.
    */
   claimRoutine(id, at) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
     routine.lastRun = at || new Date().toISOString();
@@ -145,6 +162,7 @@ export class RoutineStore {
   }
 
   markRoutineRun(id, { status, summary, at }) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
     // `at` lets the daemon stamp runs with the same clock it used to decide the
@@ -159,6 +177,7 @@ export class RoutineStore {
 
   /** Ask for a routine to fire on the next daemon tick, cron notwithstanding. */
   scheduleRoutineNow(id) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
     routine.runAt = new Date().toISOString();
@@ -190,6 +209,7 @@ export class RoutineStore {
 
   /** One-shot routines clear their one-shot marker once fired. */
   clearRunAt(id) {
+    this._fresh();
     const routine = this.findRoutine(id);
     if (routine && routine.runAt) {
       routine.runAt = null;
@@ -201,6 +221,7 @@ export class RoutineStore {
   /* ------------------------------ watches ----------------------------- */
 
   addWatch({ name, url, selector = "", regex = "", interval = "1h", enabled = true, notify = true }) {
+    this._fresh();
     let parsed;
     try {
       parsed = new URL(String(url ?? "").trim());
@@ -247,6 +268,7 @@ export class RoutineStore {
   }
 
   removeWatch(id) {
+    this._fresh();
     const watch = this.findWatch(id);
     if (!watch) return null;
     this.data.watches = this.watches.filter((w) => w !== watch);
@@ -255,6 +277,7 @@ export class RoutineStore {
   }
 
   setWatchEnabled(id, enabled) {
+    this._fresh();
     const watch = this.findWatch(id);
     if (!watch) return null;
     watch.enabled = Boolean(enabled);
@@ -268,6 +291,7 @@ export class RoutineStore {
    * extraction also yields a delta: "1,204" -> "1,227" is +23.
    */
   recordWatchCheck(id, { value = null, text = null, error = null }) {
+    this._fresh();
     const watch = this.findWatch(id);
     if (!watch) return null;
     const previous = watch.lastValue;

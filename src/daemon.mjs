@@ -60,6 +60,7 @@ export class Daemon {
     log = () => {},
     logFile = null,
     tickMs = 20000,
+    maxConcurrent = null,
     now = () => new Date(),
   }) {
     this.store = store;
@@ -97,6 +98,11 @@ export class Daemon {
     // be dispatched again by the next tick.
     this.runningRoutines = new Set();
     this.runningWatches = new Set();
+    // Every routine scheduled for the same minute would otherwise start at
+    // once and rate-limit the provider. Serialise the agent turns instead.
+    this.maxConcurrent = Math.max(1, Number(maxConcurrent ?? config.maxConcurrent) || 4);
+    this.active = 0;
+    this.waiting = [];
     // Config is in SECONDS; the floor keeps a typo from making approval impossible.
     this.confirmTimeoutMs = Math.max(30000, (Number(config.telegramConfirmTimeout) || 300) * 1000);
     this.stats = { routinesRun: 0, changesAlerted: 0, messagesHandled: 0, errors: 0 };
@@ -462,11 +468,40 @@ export class Daemon {
     return this.chain(`chat:${job.chatId}`, () => this.handleJob(job));
   }
 
-  /** Serialises work per key without ever blocking the poll loop. */
+  /** Global concurrency gate for agent turns. */
+  async acquire() {
+    if (this.active < this.maxConcurrent) {
+      this.active++;
+      return;
+    }
+    await new Promise((resolve) => this.waiting.push(resolve));
+  }
+
+  release() {
+    this.active--;
+    const next = this.waiting.shift();
+    if (next) {
+      this.active++;
+      next();
+    }
+  }
+
+  /**
+   * Serialises work per key without blocking the poll loop, and caps how many
+   * keys run at once. The poll itself is never gated.
+   */
   chain(key, work) {
+    const gated = async () => {
+      await this.acquire();
+      try {
+        return await work();
+      } finally {
+        this.release();
+      }
+    };
     const previous = this.chains.get(key) || Promise.resolve();
     const next = previous
-      .then(work)
+      .then(gated)
       .catch((err) => {
         this.stats.errors++;
         this.log(`${key} failed: ${err.message}`);

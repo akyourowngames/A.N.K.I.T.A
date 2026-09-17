@@ -872,6 +872,7 @@ export async function main() {
       log: (m) => term.line(c.dim(`  ${m}`)),
       logFile: DAEMON_LOG,
       tickMs: config.daemonTick * 1000,
+      maxConcurrent: config.maxConcurrent,
     });
     daemonRef = daemon;
     process.on("SIGINT", () => {
