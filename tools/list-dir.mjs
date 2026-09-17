@@ -1,0 +1,89 @@
+import fs from "node:fs";
+import path from "node:path";
+import { resolvePath, relativeTo, SKIP_DIRS as SKIP } from "./_shared.mjs";
+
+export const name = "list_dir";
+export const description = "List the files and subdirectories of a directory, with sizes.";
+
+export const parameters = {
+  type: "object",
+  properties: {
+    path: {
+      type: "string",
+      description: "Directory path, absolute or relative to the working directory. Defaults to the working directory.",
+    },
+    recursive: {
+      type: "boolean",
+      description: "Walk the whole tree and return paths relative to the directory. Default false.",
+    },
+    max_results: {
+      type: "integer",
+      description: "Maximum entries to return. Default 500.",
+    },
+  },
+};
+
+export const readOnly = true;
+export const needsApproval = false;
+
+export function run(args, ctx) {
+  const p = resolvePath(args.path, ctx);
+  if (!fs.existsSync(p)) return `Error: no such directory: ${p}`;
+  if (!fs.statSync(p).isDirectory()) return `Error: ${p} is a file (use read_file).`;
+
+  let entries;
+  try {
+    entries = fs.readdirSync(p, { withFileTypes: true });
+  } catch (err) {
+    return `Error: ${err.message}`;
+  }
+  if (!entries.length) return `${p}\n(empty directory)`;
+
+  const max = Math.min(Math.max(1, Number(args.max_results) || 500), 5000);
+
+  if (args.recursive) {
+    const hits = [];
+    const stack = [p];
+    const seen = new Set();
+    while (stack.length && hits.length < max) {
+      const dir = stack.pop();
+      let dirEntries;
+      try {
+        dirEntries = fs.readdirSync(dir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const entry of dirEntries) {
+        if (hits.length >= max) break;
+        const full = path.join(dir, entry.name);
+        const rel = relativeTo(p, full);
+        if (seen.has(rel)) continue;
+        seen.add(rel);
+        if (entry.isDirectory()) {
+          hits.push(rel + "/");
+          if (!SKIP.has(entry.name)) stack.push(full);
+        } else if (entry.isFile()) {
+          hits.push(rel);
+        }
+      }
+    }
+    hits.sort();
+    const more = hits.length >= max ? `\n... reached ${max} entries` : "";
+    return `${p}\n${hits.join("\n")}${more}`;
+  }
+
+  const lines = entries
+    .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
+    .slice(0, max)
+    .map((e) => {
+      if (e.isDirectory()) return `${e.name}/`;
+      try {
+        return `${e.name}  ${fs.statSync(path.join(p, e.name)).size}b`;
+      } catch {
+        return e.name;
+      }
+    });
+
+  const more = entries.length > max ? `\n... ${entries.length - max} more entries` : "";
+  return `${p}\n${lines.join("\n")}${more}`;
+}

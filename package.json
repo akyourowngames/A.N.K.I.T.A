@@ -1,0 +1,16 @@
+{
+  "name": "ankita",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Terminal coding agent powered by GitHub Copilot models, with shell and file-editing tools.",
+  "bin": { "ankita": "chat.mjs", "ankita-chat": "chat.mjs" },
+  "main": "chat.mjs",
+  "engines": { "node": ">=18" },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "start": "node chat.mjs",
+    "models": "node chat.mjs --list-models",
+    "config": "node chat.mjs --config"
+  }
+}
