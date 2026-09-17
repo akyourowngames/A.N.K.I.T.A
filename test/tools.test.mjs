@@ -6,6 +6,7 @@ import path from 'node:path';
 import http from 'node:http';
 import * as registry from '../tools/index.mjs';
 import * as edit from '../tools/edit-file.mjs';
+import * as shared from '../tools/_shared.mjs';
 import { renderDiff } from '../tools/_diff.mjs';
 
 function workspace(t) {
@@ -14,6 +15,32 @@ function workspace(t) {
   return { cwd, state: {} };
 }
 const ui = Object.fromEntries(['cyan','red','green','dim','bold'].map(k => [k, s => s]));
+
+test('paths handed to the model are usable: cwd-relative inside, absolute outside', () => {
+  const cwd = path.join('C:', 'work', 'proj');
+  assert.equal(shared.displayPath(cwd, path.join(cwd, 'src', 'a.mjs')), 'src/a.mjs');
+  assert.equal(shared.displayPath(cwd, cwd), path.resolve(cwd).split(path.sep).join('/'));
+  assert.equal(
+    shared.displayPath(cwd, path.join('C:', 'other', 'pic.jpg')),
+    'C:/other/pic.jpg'
+  );
+  assert.equal(shared.displayPath(cwd, path.join(cwd, '..', 'sibling', 'b.txt')), 'C:/work/sibling/b.txt');
+});
+
+test('search results outside the working directory come back absolute', (t) => {
+  const ctx = workspace(t);
+  const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-outside-'));
+  t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
+  fs.writeFileSync(path.join(outside, 'needle.txt'), 'haystack needle here');
+
+  const found = registry.get('glob').run({ pattern: 'needle.txt', path: outside }, ctx);
+  assert.ok(path.isAbsolute(found.split('\n')[0]), `expected absolute path, got ${found}`);
+
+  const hit = registry.get('search_files').run({ pattern: 'needle', path: outside }, ctx);
+  // "C:/path/file.txt:1: text" — lazy match so the drive colon is not mistaken for a separator.
+  const filePart = /^(.*?):\d+: /.exec(hit)?.[1] ?? '';
+  assert.ok(path.isAbsolute(filePart), `expected absolute path, got ${hit}`);
+});
 
 test('approval diff includes the last change and full long lines', () => {
   const after = Array.from({length: 90}, (_, i) => `${i} ${'x'.repeat(150)}`).join('\n');
@@ -76,6 +103,21 @@ test('fetch_url bounds streaming responses and enforces timeout', async t => {
   const out = await registry.get('fetch_url').run({url,max_bytes:2048},{});
   assert.ok(Buffer.byteLength(out)<3000); assert.match(out,/truncat/i);
   await assert.rejects(registry.get('fetch_url').run({url:url+'/slow',timeout_ms:100},{}),/timeout|abort/i);
+});
+
+test('shell failures surface a non-zero exit instead of a silent success', async t => {
+  const ctx = workspace(t);
+  const cmd = process.platform === 'win32'
+    ? 'Get-ChildItem C:/definitely/not/here'
+    : 'cat /definitely/not/here';
+  const out = await registry.get('run_command').run({ command: cmd }, ctx);
+  assert.match(out, /exit code: [1-9]/);
+  if (process.platform === 'win32') {
+    const lenient = await registry.get('run_command').run(
+      { command: 'Get-ChildItem C:/nope -ErrorAction SilentlyContinue; Write-Output continued' }, ctx);
+    assert.match(lenient, /exit code: 0/);
+    assert.match(lenient, /continued/);
+  }
 });
 
 test('command input/environment, bounded output and background jobs', async t => {

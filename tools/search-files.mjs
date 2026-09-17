@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { resolvePath, walkFiles, relativeTo, globToRegExp, isBinary } from "./_shared.mjs";
+import { resolvePath, walkFiles, relativeTo, displayPath, globToRegExp, isBinary } from "./_shared.mjs";
 
 export const name = "search_files";
 export const description =
@@ -77,7 +77,7 @@ export function run(args, ctx) {
       re.lastIndex = 0;
       if (!re.test(lines[i])) continue;
       const text = lines[i].length > 200 ? lines[i].slice(0, 200) + "\u2026" : lines[i];
-      matches.push(`${rel}:${i + 1}: ${text.trim()}`);
+      matches.push(`${displayPath(ctx.cwd, file)}:${i + 1}: ${text.trim()}`);
       if (matches.length >= max) {
         return `${matches.join("\n")}\n\n[stopped at ${max} matches - narrow the search]`;
       }

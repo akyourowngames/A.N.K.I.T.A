@@ -1,3 +1,4 @@
+import os from "node:os";
 import { specs, get, names, needsApproval } from "../tools/index.mjs";
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
@@ -20,10 +21,23 @@ export function buildSystemPrompt(config, cwd) {
     `The user's name is ${config.username}. Address them by name when it fits naturally.`,
     "",
     `Working directory: ${cwd}`,
+    `Home directory: ${os.homedir()}`,
     `Platform: ${process.platform} · shell: ${shell}`,
     `Today: ${today}`,
     "",
     `You have these tools: ${names().join(", ")}.`,
+    "The web is your realtime internet: use web_search for anything time-sensitive instead of guessing, " +
+      "then web_fetch the top result for depth. Scrape tiers (scrape_low/mid/high) are ONLY for when the " +
+      "user asks to scrape — structured fields, blocked pages, or multi-page crawls.",
+    "",
+    "You are NOT confined to the working directory. Any absolute path works, and every path a tool " +
+      "prints (including search results outside the working directory) is directly usable in your next " +
+      "call — pass it back verbatim, never re-relativise it.",
+    "When a tool fails, diagnose the cause and try again with a corrected path, quoting, or command " +
+      "before reporting a problem. One failed attempt is not an answer.",
+    "Do not ask the user to confirm things they already asked for, and do not ask permission to run " +
+      "read-only discovery (searches, listings, reads) — just run it. Only ask when you truly need a " +
+      "decision you cannot make yourself (e.g. which of two files to overwrite).",
     "Ground every claim in a tool result. Read a file before editing it.",
     "Prefer edit_file over rewriting whole files with write_file.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",

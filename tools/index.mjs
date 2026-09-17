@@ -10,6 +10,11 @@ import * as createDir from "./create-dir.mjs";
 import * as moveFile from "./move-file.mjs";
 import * as deleteFile from "./delete-file.mjs";
 import * as fetchUrl from "./fetch-url.mjs";
+import * as webSearch from "./web-search.mjs";
+import * as webFetch from "./web-fetch.mjs";
+import * as scrapeLow from "./scrape-low.mjs";
+import * as scrapeMid from "./scrape-mid.mjs";
+import * as scrapeHigh from "./scrape-high.mjs";
 import * as writeTodos from "./write-todos.mjs";
 import * as jobStatus from "./job-status.mjs";
 import * as jobStop from "./job-stop.mjs";
@@ -28,6 +33,11 @@ const modules = [
   moveFile,
   deleteFile,
   fetchUrl,
+  webSearch,
+  webFetch,
+  scrapeLow,
+  scrapeMid,
+  scrapeHigh,
   writeTodos,
   jobStatus,
   jobStop,
