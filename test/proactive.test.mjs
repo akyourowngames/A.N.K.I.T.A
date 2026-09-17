@@ -14,7 +14,7 @@ import {
 import { RoutineStore, numericDelta, toNumber, hashContent } from '../src/routines.mjs';
 import { extractValue, formatWatchStatus } from '../src/watcher.mjs';
 import { splitMessage, updateToJob, parseChatIds, TG_LIMIT } from '../src/telegram.mjs';
-import { Daemon } from '../src/daemon.mjs';
+import { Daemon, parseApproval, stripAnsi } from '../src/daemon.mjs';
 import { bucketNotifications, formatNotification, tokenCandidates } from '../tools/github-notifications.mjs';
 
 function tmpStore(t) {
@@ -262,6 +262,293 @@ test('github token candidates are deduped and never empty strings', () => {
       else process.env[k] = v;
     }
   }
+});
+
+test('the daemon picks up routines added while it is already running', async (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-live-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'state.json');
+  const store = new RoutineStore(file).load();
+
+  const delivered = [];
+  const daemon = new Daemon({
+    store,
+    config: {},
+    client: {},
+    model: 'gpt-4.1',
+    runPrompt: async () => 'ran it',
+    deliver: async (text) => delivered.push(text),
+    now: () => new Date(2026, 8, 21, 8, 0, 5),
+  });
+  daemon.checkDueWatches = async () => ({ checked: 0, alerted: 0 });
+  daemon.pollInbox = async () => 0;
+
+  await daemon.tickOnce();
+  assert.equal(delivered.length, 0, 'nothing scheduled yet');
+
+  // Another process (the REPL, or the agent's own schedule tool) writes state.
+  new RoutineStore(file).load().addRoutine({ name: 'Later', cron: '0 8 * * *', prompt: 'go' });
+
+  await daemon.tickOnce();
+  assert.equal(delivered.length, 1, 'the daemon noticed without a restart');
+  assert.match(delivered[0], /ran it/);
+});
+
+test('daemon chat agents inherit the resolved model', (t) => {
+  const store = tmpStore(t);
+  const seen = [];
+  const daemon = new Daemon({
+    store,
+    config: { autoApprove: false },
+    client: {},
+    model: 'gpt-4.1',
+    runPrompt: async () => '',
+    deliver: async () => {},
+  });
+  // Stub the Agent construction path by checking what chatAgent would set.
+  const agent = daemon.chatAgent(42);
+  assert.equal(agent.model, 'gpt-4.1', 'chat agent must not send model:null');
+  assert.equal(daemon.chatAgent(42), agent, 'same chat reuses one agent');
+  assert.notEqual(daemon.chatAgent(43), agent, 'different chats get their own agent');
+  seen.push(daemon.model);
+  assert.deepEqual(seen, ['gpt-4.1']);
+});
+
+/** Polls a condition so tests do not depend on microtask ordering. */
+async function waitFor(predicate, timeoutMs = 2000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (predicate()) return true;
+    await new Promise((r) => setTimeout(r, 5));
+  }
+  throw new Error('waitFor timed out');
+}
+
+function fakeBot() {
+  const sent = [];
+  return {
+    enabled: true,
+    sent,
+    async send(chatId, text) { sent.push({ chatId: String(chatId), text }); return [{}]; },
+    async sendTyping() {},
+    async sendVoice() {},
+    async poll() { return { jobs: [], denied: [], offset: 0, error: null }; },
+  };
+}
+
+function daemonWith(t, bot, extra = {}) {
+  return new Daemon({
+    store: tmpStore(t),
+    bot,
+    config: { autoApprove: false, telegramChatId: '7280190750', ...extra },
+    client: {},
+    model: 'gpt-4.1',
+    runPrompt: async () => '',
+    deliver: async () => {},
+  });
+}
+
+test('approval timeout is read as seconds, with a sane floor', (t) => {
+  const at = (seconds) => daemonWith(t, fakeBot(), { telegramConfirmTimeout: seconds }).confirmTimeoutMs;
+  assert.equal(at(300), 300000, 'default 5 minutes');
+  assert.equal(at(60), 60000);
+  assert.equal(at(1), 30000, 'never below 30s or approvals become impossible');
+  assert.equal(at(undefined), 300000);
+});
+
+test('approval replies parse the way people actually type them', () => {
+  for (const yes of ['y', 'Y', 'yes', 'yeah', 'ok', 'sure', 'go', 'do it', 'Approved.']) {
+    assert.equal(parseApproval(yes), 'yes', yes);
+  }
+  for (const always of ['a', 'always', 'A', 'always allow']) {
+    assert.equal(parseApproval(always), 'always', always);
+  }
+  for (const no of ['n', 'no', 'nah', 'deny', 'stop', 'cancel', '', 'what?']) {
+    assert.equal(parseApproval(no), 'no', JSON.stringify(no));
+  }
+  assert.equal(stripAnsi('\u001b[31m-red\u001b[0m plain'), '-red plain');
+});
+
+test('a DM tool call asks in Telegram and honours the reply', async (t) => {
+  const bot = fakeBot();
+  const daemon = daemonWith(t, bot);
+  const agent = daemon.chatAgent('7280190750');
+
+  const decision = agent.confirm('run_command', '$ rm -rf build');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(bot.sent.length, 1, 'the question was sent to the chat');
+  assert.match(bot.sent[0].text, /Permission needed: run_command/);
+  assert.match(bot.sent[0].text, /rm -rf build/);
+
+  const consumed = daemon.resolvePending({ chatId: 7280190750, kind: 'text', text: 'y' });
+  assert.equal(consumed, true, 'the reply is consumed, not treated as a new request');
+  assert.equal(await decision, true);
+});
+
+test('answering "always" approves this call and the rest of the session', async (t) => {
+  const bot = fakeBot();
+  const daemon = daemonWith(t, bot);
+  const agent = daemon.chatAgent('7280190750');
+
+  const first = agent.confirm('write_file', 'create notes.txt');
+  await new Promise((r) => setTimeout(r, 10));
+  daemon.resolvePending({ chatId: 7280190750, kind: 'text', text: 'always' });
+  assert.equal(await first, true);
+
+  assert.equal(await agent.confirm('delete_file', 'delete notes.txt'), true, 'no second question');
+  assert.equal(bot.sent.length, 1, 'nothing else was sent to the chat');
+});
+
+test('denying is a denial, and a question times out to denial', async (t) => {
+  const bot = fakeBot();
+  const daemon = daemonWith(t, bot, { telegramConfirmTimeout: undefined });
+  daemon.confirmTimeoutMs = 40;
+  const agent = daemon.chatAgent('7280190750');
+
+  const denied = agent.confirm('delete_file', 'rm important.txt');
+  await new Promise((r) => setTimeout(r, 10));
+  daemon.resolvePending({ chatId: 7280190750, kind: 'text', text: 'n' });
+  assert.equal(await denied, false);
+
+  const timedOut = agent.confirm('run_command', 'sleep');
+  assert.equal(await timedOut, false, 'no reply means no permission');
+  assert.ok(bot.sent.some((m) => /No reply/.test(m.text)), 'and it says so');
+});
+
+test('voice notes cannot approve, and read-only work never asks', async (t) => {
+  const bot = fakeBot();
+  const daemon = daemonWith(t, bot);
+  const agent = daemon.chatAgent('7280190750');
+
+  const waiting = agent.confirm('run_command', 'x');
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(daemon.resolvePending({ chatId: 7280190750, kind: 'voice', fileId: 'F' }), true);
+  assert.ok(bot.sent.some((m) => /Reply with text/.test(m.text)), 'it asks for a text answer');
+  assert.ok(daemon.pending.has('7280190750'), 'still waiting: a voice note is not an approval');
+
+  daemon.resolvePending({ chatId: 7280190750, kind: 'text', text: 'n' });
+  assert.equal(await waiting, false);
+});
+
+test('the poll loop stays free while a turn waits for approval', async (t) => {
+  const bot = fakeBot();
+  // One approval request, then the approval reply on the next poll.
+  let round = 0;
+  bot.poll = async (offset) => {
+    round++;
+    if (round === 1) return { jobs: [{ chatId: 7280190750, kind: 'text', text: 'delete it', messageId: 1 }], denied: [], offset: 2, error: null };
+    if (round === 2) return { jobs: [{ chatId: 7280190750, kind: 'text', text: 'y', messageId: 2 }], denied: [], offset: 3, error: null };
+    return { jobs: [], denied: [], offset: 3, error: null };
+  };
+
+  const daemon = daemonWith(t, bot);
+  daemon.offsetReady = true;
+  let ran = null;
+  daemon.handleJob = async (job) => {
+    const agent = daemon.chatAgent(job.chatId);
+    ran = job.text;
+    await agent.confirm('run_command', 'rm -rf build');
+    ran += ' -> allowed';
+  };
+
+  await daemon.pollInbox();               // receives the request, parks it
+  await new Promise((r) => setTimeout(r, 20));
+  await daemon.pollInbox();               // receives the approval while parked
+  await daemon.drain();
+  assert.equal(ran, 'delete it -> allowed', 'the turn resumed with permission');
+});
+
+test('a routine parked on approval still lets the inbox be polled', async (t) => {
+  const store = tmpStore(t);
+  store.addRoutine({ name: 'Needs permission', cron: 'daily 08:00', prompt: 'write a file' });
+
+  const bot = fakeBot();
+  let pollRounds = 0;
+  bot.poll = async () => {
+    pollRounds++;
+    // Your reply is only waiting on the second poll, after the question is out.
+    if (pollRounds >= 2) {
+      return { jobs: [{ chatId: 7280190750, kind: 'text', text: 'y', messageId: 9 }], denied: [], offset: 3, error: null };
+    }
+    return { jobs: [], denied: [], offset: 2, error: null };
+  };
+
+  const delivered = [];
+  const daemon = new Daemon({
+    store,
+    bot,
+    config: { autoApprove: false, telegramChatId: '7280190750' },
+    client: {},
+    model: 'gpt-4.1',
+    // Stands in for the agent: asks for approval, then reports.
+    runPrompt: async () => {
+      const allowed = await daemon.confirmOwner('write_file', 'create notes.txt');
+      return allowed ? 'created it' : 'not allowed';
+    },
+    deliver: async (text) => delivered.push(text),
+    now: () => new Date(2026, 8, 21, 8, 0, 5),
+  });
+
+  daemon.offsetReady = true; // skip the first-run backlog drain
+  // The regression: tickOnce must return while the routine is still parked, so
+  // the next poll can pick up the approval. Before the fix it awaited the work
+  // and the answer could never arrive.
+  await daemon.tickOnce();
+  await waitFor(() => bot.sent.some((m) => /Permission needed: write_file/.test(m.text)));
+  assert.equal(delivered.length, 0, 'routine is parked waiting for permission');
+
+  await daemon.tickOnce();               // your "y" arrives here
+  await waitFor(() => delivered.length === 1);
+  await daemon.drain();
+  assert.match(delivered[0], /created it/);
+});
+
+test('a stray "y" with nothing pending is answered, not fed to the model', async (t) => {
+  const bot = fakeBot();
+  bot.poll = async () => ({
+    jobs: [{ chatId: 7280190750, kind: 'text', text: 'y', messageId: 3 }],
+    denied: [],
+    offset: 2,
+    error: null,
+  });
+  const daemon = daemonWith(t, bot);
+  daemon.offsetReady = true;
+  let ran = false;
+  daemon.handleJob = async () => { ran = true; };
+
+  await daemon.pollInbox();
+  await daemon.drain();
+  assert.equal(ran, false, 'the model never saw it');
+  assert.ok(
+    bot.sent.some((m) => /Nothing is waiting for approval/.test(m.text)),
+    'and the user is told why nothing happened'
+  );
+});
+
+test('remote DMs cannot approve mutations unless auto-approve is on', async (t) => {
+  const store = tmpStore(t);
+  const build = (autoApprove) =>
+    new Daemon({
+      store,
+      config: { autoApprove },
+      client: {},
+      model: 'gpt-4.1',
+      runPrompt: async () => '',
+      deliver: async () => {},
+    }).chatAgent('42');
+
+  let denied = false;
+  const strict = build(false);
+  await strict.runToolCall({ id: '1', type: 'function', function: { name: 'delete_file', arguments: JSON.stringify({ path: 'x' }) } })
+    .then((r) => { denied = /denied permission/.test(r); });
+  assert.equal(denied, true, 'a DM must not silently delete files');
+
+  const permissive = await build(true).runToolCall({
+    id: '2',
+    type: 'function',
+    function: { name: 'delete_file', arguments: JSON.stringify({ path: 'definitely-missing-file' }) },
+  });
+  assert.doesNotMatch(permissive, /denied permission/, 'auto-approve=on allows it through to the tool');
 });
 
 test('daemon records a failed routine instead of dying', async (t) => {

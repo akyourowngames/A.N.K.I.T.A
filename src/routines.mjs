@@ -41,9 +41,10 @@ export class RoutineStore {
         version: STATE_VERSION,
         routines: Array.isArray(parsed.routines) ? parsed.routines : [],
         watches: Array.isArray(parsed.watches) ? parsed.watches : [],
+        telegramOffset: Number(parsed.telegramOffset) || 0,
       };
     } catch {
-      this.data = { version: STATE_VERSION, routines: [], watches: [] };
+      this.data = { version: STATE_VERSION, routines: [], watches: [], telegramOffset: 0 };
     }
     return this;
   }
@@ -59,6 +60,23 @@ export class RoutineStore {
   }
   get watches() {
     return this.data.watches;
+  }
+
+  /**
+   * Telegram's getUpdates cursor. Telegram keeps returning every update whose
+   * id is >= offset, so an in-memory-only cursor replays the last batch after
+   * every restart (duplicate replies to you). Persist it.
+   */
+  get telegramOffset() {
+    return Number(this.data.telegramOffset) || 0;
+  }
+
+  setTelegramOffset(value) {
+    const next = Number(value);
+    if (!Number.isFinite(next)) return this.telegramOffset;
+    this.data.telegramOffset = next;
+    this.save();
+    return next;
   }
 
   /* ----------------------------- routines ----------------------------- */
@@ -109,6 +127,19 @@ export class RoutineStore {
     const routine = this.findRoutine(id);
     if (!routine) return null;
     routine.enabled = Boolean(enabled);
+    this.save();
+    return routine;
+  }
+
+  /**
+   * Claims a routine for this minute without counting it as a completed run.
+   * Stops the next tick re-dispatching work that is still in flight.
+   */
+  claimRoutine(id, at) {
+    const routine = this.findRoutine(id);
+    if (!routine) return null;
+    routine.lastRun = at || new Date().toISOString();
+    if (routine.runAt) routine.runAt = null;
     this.save();
     return routine;
   }

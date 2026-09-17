@@ -8,6 +8,7 @@ import {
   SESSIONS_DIR,
   AUTOSAVE_NAME,
   STATE_FILE,
+  DAEMON_LOG,
 } from "./config.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
 import { TelegramBot, parseChatIds } from "./telegram.mjs";
@@ -814,11 +815,18 @@ export async function main() {
     return "terminal";
   };
 
+  // Set once the daemon exists, so routine/brief work can ask for approval in
+  // Telegram instead of being silently denied.
+  let daemonRef = null;
+
   const freshAgent = () =>
     new Agent({
       client,
       config,
-      confirm: async () => config.autoApprove,
+      confirm: (toolName, detail) =>
+        daemonRef
+          ? daemonRef.confirmOwner(toolName, detail)
+          : Promise.resolve(Boolean(config.autoApprove)),
       print: () => {},
       write: () => {},
     });
@@ -858,11 +866,14 @@ export async function main() {
       bot,
       config,
       client,
+      model,
       runPrompt,
       deliver,
       log: (m) => term.line(c.dim(`  ${m}`)),
+      logFile: DAEMON_LOG,
       tickMs: config.daemonTick * 1000,
     });
+    daemonRef = daemon;
     process.on("SIGINT", () => {
       term.line(c.dim("\n  stopping..."));
       daemon.stop();

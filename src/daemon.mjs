@@ -24,15 +24,41 @@ import {
  * terminal.
  */
 
+const ANSI = /\x1b\[[0-9;]*m/g;
+
+/** Approval diffs come from the CLI renderer with colour codes; Telegram wants plain text. */
+export const stripAnsi = (s) => String(s ?? "").replace(ANSI, "");
+
+/** Approval replies are short: "y", "yes", "ok", "always", "a", "n", "no". */
+export function parseApproval(text) {
+  const t = String(text || "").trim().toLowerCase().replace(/[.!]+$/, "");
+  if (!t) return "no";
+  if (/^(a|always|all|yes always|y always|yes all|always allow)$/.test(t)) return "always";
+  if (/^(y|ye|yes|yeah|yep|ok|okay|sure|approve|approved|allow|allowed|go|do it|fine|k)$/.test(t)) return "yes";
+  return "no";
+}
+
+/**
+ * True for a bare affirmative ("y", "yes", "ok", "a", "always") and nothing
+ * else. Used to catch a late answer to an expired approval so it is not fed
+ * to the model as a prompt — which produces "did you mean to type y?".
+ */
+export function isBareApproval(text) {
+  const t = String(text || "").trim().toLowerCase().replace(/[.!]+$/, "");
+  return /^(y|ye|yes|yeah|yep|ok|okay|sure|approve|approved|allow|allowed|go|do it|fine|k|a|always|all)$/.test(t);
+}
+
 export class Daemon {
   constructor({
     store,
     bot = null,
     config,
     client,
+    model = null,
     runPrompt,
     deliver,
     log = () => {},
+    logFile = null,
     tickMs = 20000,
     now = () => new Date(),
   }) {
@@ -40,15 +66,39 @@ export class Daemon {
     this.bot = bot?.enabled ? bot : null;
     this.config = config;
     this.client = client;
+    // Chat agents must use the same resolved model as the REPL; without this
+    // they send model:null and depend on the server's fallback.
+    this.model = model;
     this.runPrompt = runPrompt;
     this.deliver = deliver;
-    this.log = log;
+    this.logFile = logFile;
+    // Tee every line to a UTF-8 log file, and to the terminal when one exists.
+    this.log = (message) => {
+      log(message);
+      if (!this.logFile) return;
+      try {
+        fs.mkdirSync(path.dirname(this.logFile), { recursive: true });
+        fs.appendFileSync(this.logFile, `[${new Date().toISOString()}] ${message}\n`, "utf8");
+      } catch {}
+    };
     this.tickMs = Math.max(5000, tickMs);
     this.now = now;
 
     this.stopping = false;
-    this.offset = 0;
+    // Resume the inbox cursor so a restart neither replays nor drops messages.
+    this.offset = store.telegramOffset || 0;
+    this.offsetReady = this.offset > 0;
     this.chatAgents = new Map();
+    // Per-chat work chains: the poll loop must stay free to receive an
+    // approval reply while an agent turn is parked waiting for one.
+    this.chains = new Map();
+    this.pending = new Map();
+    // Guards so a long-running routine (e.g. one parked on an approval) cannot
+    // be dispatched again by the next tick.
+    this.runningRoutines = new Set();
+    this.runningWatches = new Set();
+    // Config is in SECONDS; the floor keeps a typo from making approval impossible.
+    this.confirmTimeoutMs = Math.max(30000, (Number(config.telegramConfirmTimeout) || 300) * 1000);
     this.stats = { routinesRun: 0, changesAlerted: 0, messagesHandled: 0, errors: 0 };
   }
 
@@ -69,10 +119,14 @@ export class Daemon {
     const agent = new Agent({
       client: this.client,
       config: this.config,
-      confirm: async () => true, // remote DMs cannot answer y/n prompts; read-only tools auto-run
+      // A DM cannot answer a terminal prompt, so the question is forwarded to
+      // Telegram and the turn parks until you reply. Read-only tools never
+      // reach here. Without a bot, fall back to the configured default.
+      confirm: (toolName, detail) => this.confirmFrom(key, toolName, detail),
       print: () => {},
       write: () => {},
     });
+    if (this.model) agent.model = this.model;
     try {
       const saved = JSON.parse(fs.readFileSync(this.sessionFile(key), "utf8"));
       const restored = sanitizeMessages((saved.messages || []).filter((m) => m.role !== "system"));
@@ -80,6 +134,81 @@ export class Daemon {
     } catch {}
     this.chatAgents.set(key, agent);
     return agent;
+  }
+
+  /* ------------------------------ approvals ------------------------------ */
+
+  /** Approval for routine/brief work: asks the owner's chat when there is one. */
+  confirmOwner(toolName, detail) {
+    const chatId = this.config.telegramChatId || this.ownerFallbackChat();
+    if (this.bot && chatId) return this.confirmFrom(String(chatId), toolName, detail);
+    return Promise.resolve(Boolean(this.config.autoApprove));
+  }
+
+  ownerFallbackChat() {
+    const first = String(this.config.telegramAllowedChatIds || "").split(/[,\s]+/).filter(Boolean)[0];
+    return first || null;
+  }
+
+  /**
+   * Sends the approval question to a chat and resolves when that chat replies.
+   * Returns true to allow. A reply of "always" also flips the chat's agent to
+   * auto-approve for the rest of the session.
+   */
+  async confirmFrom(chatId, toolName, detail) {
+    const key = String(chatId);
+    const agent = this.chatAgents.get(key);
+    if (this.config.autoApprove || agent?.autoApprove) return true;
+    if (!this.bot) return false;
+
+    const body = stripAnsi(detail).trim();
+    await this.bot.send(
+      chatId,
+      `Permission needed: ${toolName}\n\n${body}\n\nReply y = allow once, a = always, n = deny` +
+        `\n(times out in ${Math.round(this.confirmTimeoutMs / 60000)} min)`
+    );
+
+    this.log(`waiting for ${toolName} approval in chat ${key}`);
+    return new Promise((resolve) => {
+      const entry = {
+        toolName,
+        settle: (answer) => {
+          clearTimeout(entry.timer);
+          if (this.pending.get(key) === entry) this.pending.delete(key);
+          this.log(`${toolName} ${answer === "no" ? "denied" : "approved"} in chat ${key}`);
+          resolve(answer === "yes" || answer === "always");
+        },
+      };
+      entry.timer = setTimeout(() => {
+        const stillWaiting = this.pending.get(key) === entry;
+        entry.settle("no");
+        if (stillWaiting) {
+          this.bot.send(chatId, `No reply, so I skipped ${toolName}.`).catch(() => {});
+        }
+      }, this.confirmTimeoutMs);
+      this.pending.set(key, entry);
+    });
+  }
+
+  /**
+   * If this message is an answer to a pending approval, consume it and return
+   * true so it is not also treated as a new request.
+   */
+  resolvePending(job) {
+    const key = String(job.chatId);
+    const waiting = this.pending.get(key);
+    if (!waiting) return false;
+    if (job.kind !== "text") {
+      this.bot?.send(key, `Reply with text (y / n / a) to approve ${waiting.toolName}.`).catch(() => {});
+      return true;
+    }
+    const answer = parseApproval(job.text);
+    if (answer === "always") {
+      const agent = this.chatAgents.get(key);
+      if (agent) agent.autoApprove = true;
+    }
+    waiting.settle(answer);
+    return true;
   }
 
   saveChat(chatId) {
@@ -98,67 +227,104 @@ export class Daemon {
 
   /* ------------------------------- routines ------------------------------ */
 
-  async runDueRoutines() {
+  /**
+   * Queues due routines and returns immediately.
+   *
+   * Never await the work here: a routine that needs approval parks until you
+   * answer in Telegram, and the poll that would deliver your answer lives in
+   * this same loop. Blocking on it guarantees the approval times out.
+   */
+  dispatchRoutines() {
     const due = this.store.dueRoutines(this.now());
+    let queued = 0;
     for (const routine of due) {
+      if (this.runningRoutines.has(routine.id)) continue;
+      this.runningRoutines.add(routine.id);
+      // Claim it now so the next tick cannot double-fire while it is in flight.
+      this.store.claimRoutine(routine.id, this.now().toISOString());
       this.log(`routine ${routine.id} (${describeCron(routine.cron)}) firing`);
-      let status = "ok";
-      let summary = "";
-      try {
-        const text = await this.runPrompt(routine.prompt, { purpose: "routine", routine });
-        summary = String(text || "").trim();
-        if (!summary) {
-          status = "empty";
-        } else {
-          await this.deliver(`*${routine.name}*\n\n${summary}`, { routine });
-        }
-      } catch (err) {
-        status = "error";
-        summary = err.message;
-        this.stats.errors++;
-        this.log(`routine ${routine.id} failed: ${err.message}`);
-      }
+      this.chain(`routine:${routine.id}`, () => this.executeRoutine(routine));
+      queued++;
+    }
+    return queued;
+  }
+
+  async executeRoutine(routine) {
+    let status = "ok";
+    let summary = "";
+    try {
+      const text = await this.runPrompt(routine.prompt, { purpose: "routine", routine });
+      summary = String(text || "").trim();
+      if (!summary) status = "empty";
+      else await this.deliver(`*${routine.name}*\n\n${summary}`, { routine });
+    } catch (err) {
+      status = "error";
+      summary = err.message;
+      this.stats.errors++;
+      this.log(`routine ${routine.id} failed: ${err.message}`);
+    } finally {
+      this.runningRoutines.delete(routine.id);
       this.store.markRoutineRun(routine.id, {
         status,
         summary,
         at: this.now().toISOString(),
       });
-      this.store.clearRunAt(routine.id);
       this.stats.routinesRun++;
     }
-    return due.length;
+  }
+
+  /** Dispatch and wait - used by tests and by callers that want completion. */
+  async runDueRoutines() {
+    const queued = this.dispatchRoutines();
+    await this.drain();
+    return queued;
   }
 
   /* -------------------------------- watches ------------------------------ */
 
-  async checkDueWatches() {
+  /** Queues due watch checks and returns immediately (same reason as routines). */
+  dispatchWatches() {
     const due = this.store.dueWatches(this.now());
-    let alerted = 0;
+    let queued = 0;
     for (const watch of due) {
-      const ctx = { cwd: process.cwd(), config: this.config };
-      let result;
-      try {
-        result = await checkWatch(watch, ctx);
-      } catch (err) {
-        result = { error: err.message };
-      }
-      const recorded = this.store.recordWatchCheck(watch.id, {
-        value: result.value ?? null,
-        text: result.text ?? null,
-        error: result.error ?? null,
-      });
-      if (result.error) {
-        this.log(`watch ${watch.id}: ${result.error}`);
-        continue;
-      }
-      if (recorded?.changed && watch.notify) {
-        alerted++;
-        this.stats.changesAlerted++;
-        const line = formatWatchStatus(recorded.watched, recorded);
-        await this.deliver(`\u{1F514} ${line}\n${watch.url}`, { watch: recorded.watched });
-      }
+      if (this.runningWatches.has(watch.id)) continue;
+      this.runningWatches.add(watch.id);
+      this.chain(`watch:${watch.id}`, () => this.executeWatch(watch));
+      queued++;
     }
-    return { checked: due.length, alerted };
+    return queued;
+  }
+
+  async executeWatch(watch) {
+    let result;
+    try {
+      result = await checkWatch(watch, { cwd: process.cwd(), config: this.config });
+    } catch (err) {
+      result = { error: err.message };
+    } finally {
+      this.runningWatches.delete(watch.id);
+    }
+    const recorded = this.store.recordWatchCheck(watch.id, {
+      value: result.value ?? null,
+      text: result.text ?? null,
+      error: result.error ?? null,
+    });
+    if (result.error) {
+      this.log(`watch ${watch.id}: ${result.error}`);
+      return;
+    }
+    if (recorded?.changed && watch.notify) {
+      this.stats.changesAlerted++;
+      const line = formatWatchStatus(recorded.watched, recorded);
+      await this.deliver(`\u{1F514} ${line}\n${watch.url}`, { watch: recorded.watched });
+    }
+  }
+
+  /** Dispatch and wait - used by tests. */
+  async checkDueWatches() {
+    const queued = this.dispatchWatches();
+    await this.drain();
+    return { checked: queued, alerted: 0 };
   }
 
   /* -------------------------------- inbox -------------------------------- */
@@ -195,7 +361,6 @@ export class Daemon {
       }
 
       await this.bot.sendTyping(job.chatId);
-      agent.autoApprove = this.config.autoApprove;
       const reply = await agent.send(prompt, {});
       const text = String(reply || "").trim() || "(no reply)";
       await this.bot.send(job.chatId, text, { replyTo: job.messageId });
@@ -240,11 +405,30 @@ export class Daemon {
 
   async pollInbox() {
     if (!this.bot) return 0;
+
+    // First ever run: skip whatever backlog is sitting in the bot's queue
+    // rather than answering week-old messages.
+    if (!this.offsetReady) {
+      const drain = await this.bot.poll(-1, { timeoutSec: 0 });
+      this.offsetReady = true;
+      if (!drain.error && drain.offset > 0) {
+        this.offset = drain.offset;
+        this.store.setTelegramOffset(this.offset);
+        this.log(`inbox: skipping backlog, cursor at ${this.offset}`);
+      } else {
+        this.log("inbox: no backlog");
+      }
+      return 0;
+    }
+
     const { jobs, denied, offset, error } = await this.bot.poll(this.offset);
-    this.offset = offset ?? this.offset;
     if (error) {
       this.log(`telegram poll: ${error}`);
       return 0;
+    }
+    if (offset !== this.offset && offset > 0) {
+      this.offset = offset;
+      this.store.setTelegramOffset(offset);
     }
     for (const job of denied || []) {
       try {
@@ -254,16 +438,84 @@ export class Daemon {
         );
       } catch {}
     }
-    for (const job of jobs) await this.handleJob(job);
+    for (const job of jobs) {
+      if (this.resolvePending(job)) continue;
+      // A stray "y" with nothing pending is an answer to a question that has
+      // already expired; say so instead of asking the model what it meant.
+      if (job.kind === "text" && isBareApproval(job.text)) {
+        this.bot
+          .send(job.chatId, "Nothing is waiting for approval right now.", { replyTo: job.messageId })
+          .catch(() => {});
+        continue;
+      }
+      this.dispatch(job);
+    }
     return jobs.length;
+  }
+
+  /**
+   * Runs a job without blocking the poll loop, serialised per chat so two
+   * messages cannot interleave inside one conversation. Staying non-blocking
+   * is what lets an approval reply be received while a turn waits for it.
+   */
+  dispatch(job) {
+    return this.chain(`chat:${job.chatId}`, () => this.handleJob(job));
+  }
+
+  /** Serialises work per key without ever blocking the poll loop. */
+  chain(key, work) {
+    const previous = this.chains.get(key) || Promise.resolve();
+    const next = previous
+      .then(work)
+      .catch((err) => {
+        this.stats.errors++;
+        this.log(`${key} failed: ${err.message}`);
+      })
+      .finally(() => {
+        if (this.chains.get(key) === next) this.chains.delete(key);
+      });
+    this.chains.set(key, next);
+    return next;
+  }
+
+  /**
+   * Waits for in-flight turns, but never forever: a turn parked on an
+   * approval would otherwise hold shutdown open until it times out.
+   */
+  async drain(timeoutMs = 10000) {
+    const pending = [...this.chains.values()];
+    if (!pending.length) return false;
+    let timer;
+    try {
+      const finished = await Promise.race([
+        Promise.allSettled(pending).then(() => true),
+        new Promise((resolve) => {
+          timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+          timer.unref?.();
+        }),
+      ]);
+      if (!finished) this.log(`${this.chains.size} turn(s) still running after ${timeoutMs}ms`);
+      return finished;
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   /** One pass of everything. Exposed so tests can step the loop deterministically. */
   async tickOnce() {
-    const routines = await this.runDueRoutines();
-    const watches = await this.checkDueWatches();
+    // Re-read state first: routines and watches can be added from the REPL or
+    // by the agent itself while this daemon is already running.
+    try {
+      this.store.load();
+    } catch (err) {
+      this.log(`could not reload state: ${err.message}`);
+    }
+    const routines = this.dispatchRoutines();
+    const checked = this.dispatchWatches();
+    // Only the poll is awaited: it is the sleep, and it must keep running so a
+    // Telegram approval can be received while a routine is parked.
     const messages = await this.pollInbox();
-    return { routines, ...watches, messages };
+    return { routines, checked, messages };
   }
 
   async run() {
@@ -299,7 +551,9 @@ export class Daemon {
         await new Promise((r) => setTimeout(r, 2000));
       }
     }
-    this.log(`daemon stopping - ${JSON.stringify(this.stats)}`);
+    this.log("waiting for in-flight turns to finish");
+    await this.drain();
     for (const chatId of this.chatAgents.keys()) this.saveChat(chatId);
+    this.log(`daemon stopping - ${JSON.stringify(this.stats)}`);
   }
 }

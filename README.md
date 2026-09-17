@@ -92,6 +92,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | Bot + your chat for the inbox and outbound alerts |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | `TELEGRAM_CHAT_ID` | Who may talk to the bot; empty means nobody |
 | `TELEGRAM_VOICE_REPLY` | `off` | Answer voice notes with a spoken reply |
+| `TELEGRAM_CONFIRM_TIMEOUT` | `300` | Seconds to wait for a Telegram approval before skipping |
 | `DAEMON_TICK` / `BRIEFING_PROMPT` | `20` / built in | Scheduler tick seconds; what `--brief` asks for |
 
 ## Tools
@@ -197,6 +198,19 @@ ankita › tell me if the signups on https://my.app/dashboard change
 The first read is a baseline, so you get `Signups: 1,204 → 1,227 (+23)` rather than a spurious alert. A `regex` (capture group 1) or a CSS `selector` narrows the watch to a value; without either, the whole page is hashed and any edit is reported. Selector watches go through the scrape tiers, so Cloudflare-protected dashboards still work.
 
 **The Telegram inbox** lets you talk to ankita from your phone: text or voice notes in (Whisper), replies out (text, or spoken with `TELEGRAM_VOICE_REPLY=1`). Only chat ids in `TELEGRAM_ALLOWED_CHAT_IDS` are served; anyone else gets their own id back so you can add it.
+
+**Approvals come to your phone.** A DM cannot answer a terminal y/n prompt, so when a requested action would change something, ankita sends you the diff in the chat and parks the turn until you reply:
+
+```
+Permission needed: write_file
+
+notes/plan.md  +12 -0
+
+Reply y = allow once, a = always, n = deny
+(times out in 5 min)
+```
+
+`y` allows it once, `a` allows it for the rest of the session, anything else (or no reply) skips it. The approval reply is consumed, not treated as a new request, and the poll loop keeps running while the turn waits — so replying immediately works. Routines and `--brief` ask the same way instead of being silently denied. Set `AUTO_APPROVE=on` to skip the questions entirely.
 
 `/brief` (or `ankita --brief`) runs the briefing prompt immediately — GitHub inbox, watch changes, anything needing a decision — and prints it or sends it to Telegram.
 

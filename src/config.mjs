@@ -9,6 +9,7 @@ export const HISTORY_FILE = path.join(CONFIG_DIR, "history");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 export const AUTOSAVE_NAME = "autosave";
 export const STATE_FILE = path.join(CONFIG_DIR, "state.json");
+export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
 const DEFAULTS = {
   username: "user",
@@ -44,6 +45,7 @@ const DEFAULTS = {
   telegramChatId: "",
   telegramAllowedChatIds: "",
   telegramVoiceReply: false,
+  telegramConfirmTimeout: 300,
   daemonTick: 20,
   briefingPrompt: "",
   groqApiKey: "",
@@ -184,6 +186,7 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     telegramChatId: pick("TELEGRAM_CHAT_ID") || "",
     telegramAllowedChatIds: pick("TELEGRAM_ALLOWED_CHAT_IDS") || pick("TELEGRAM_CHAT_ID") || "",
     telegramVoiceReply: onOff(pick("TELEGRAM_VOICE_REPLY"), false),
+    telegramConfirmTimeout: posInt(pick("TELEGRAM_CONFIRM_TIMEOUT"), 300),
     daemonTick: posInt(pick("DAEMON_TICK"), 20),
     briefingPrompt: pick("BRIEFING_PROMPT") || "",
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
