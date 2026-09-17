@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePath, walkFiles, relativeTo, globToRegExp } from "./_shared.mjs";
+import { resolvePath, walkFiles, relativeTo, displayPath, globToRegExp } from "./_shared.mjs";
 
 export const name = "glob";
 export const description =
@@ -39,7 +39,7 @@ export function run(args, ctx) {
     const base = path.basename(file);
     if (!re.test(rel) && !re.test(base)) continue;
     if (exclude && (exclude.test(rel) || exclude.test(base))) continue;
-    hits.push(rel);
+    hits.push(displayPath(ctx.cwd, file));
     if (hits.length >= max) {
       return `${hits.sort().join("\n")}\n\n[stopped at ${max} - narrow the pattern]`;
     }

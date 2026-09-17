@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePath, relativeTo, SKIP_DIRS as SKIP } from "./_shared.mjs";
+import { resolvePath, displayPath, SKIP_DIRS as SKIP } from "./_shared.mjs";
 
 export const name = "list_dir";
 export const description = "List the files and subdirectories of a directory, with sizes.";
@@ -56,14 +56,13 @@ export function run(args, ctx) {
       for (const entry of dirEntries) {
         if (hits.length >= max) break;
         const full = path.join(dir, entry.name);
-        const rel = relativeTo(p, full);
-        if (seen.has(rel)) continue;
-        seen.add(rel);
+        if (seen.has(full)) continue;
+        seen.add(full);
         if (entry.isDirectory()) {
-          hits.push(rel + "/");
+          hits.push(displayPath(ctx.cwd, full) + "/");
           if (!SKIP.has(entry.name)) stack.push(full);
         } else if (entry.isFile()) {
-          hits.push(rel);
+          hits.push(displayPath(ctx.cwd, full));
         }
       }
     }

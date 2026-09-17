@@ -165,3 +165,19 @@ export function globToRegExp(pattern) {
 export function relativeTo(root, file) {
   return path.relative(root, file).split(path.sep).join("/");
 }
+
+/**
+ * A path the model can hand straight back to another tool: relative to the
+ * working directory when the file lives inside it, otherwise absolute.
+ *
+ * Returning paths relative to a *search root* (e.g. "Pictures/a.jpg" when
+ * globbing C:\Users\me from a different cwd) produces paths that no other
+ * tool can resolve, which is how a working search still ends in failure.
+ */
+export function displayPath(cwd, file) {
+  const abs = path.resolve(file);
+  const base = path.resolve(cwd || process.cwd());
+  const rel = path.relative(base, abs);
+  if (!rel || rel.startsWith("..") || path.isAbsolute(rel)) return abs.split(path.sep).join("/");
+  return rel.split(path.sep).join("/");
+}

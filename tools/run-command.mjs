@@ -55,10 +55,22 @@ function shell() {
   return shellExe;
 }
 
+/**
+ * PowerShell keeps going after a non-terminating error and still exits 0, so
+ * a failed command looks like success ("Wallpaper changed to " with no path).
+ * Stop on the first error by default; set PS_STRICT=0 to get the old lenient
+ * behaviour, or -ErrorAction SilentlyContinue per command.
+ */
+export function strictEnabled() {
+  return String(process.env.PS_STRICT ?? "1") !== "0";
+}
+
 function argvFor(command) {
-  return process.platform === "win32"
-    ? ["-NoProfile", "-NonInteractive", "-Command", command]
-    : ["-c", command];
+  if (process.platform === "win32") {
+    const prelude = strictEnabled() ? "$ErrorActionPreference='Stop'; " : "";
+    return ["-NoProfile", "-NonInteractive", "-Command", prelude + command];
+  }
+  return ["-c", command];
 }
 
 /** Kill a child and everything it spawned (Windows grandchildren need /T). */
