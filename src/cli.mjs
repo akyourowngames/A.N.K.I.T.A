@@ -1,6 +1,18 @@
 import fs from "node:fs";
 import path from "node:path";
-import { loadConfig, ensureDirs, AUTH_FILE, HISTORY_FILE, SESSIONS_DIR, AUTOSAVE_NAME } from "./config.mjs";
+import {
+  loadConfig,
+  ensureDirs,
+  AUTH_FILE,
+  HISTORY_FILE,
+  SESSIONS_DIR,
+  AUTOSAVE_NAME,
+  STATE_FILE,
+} from "./config.mjs";
+import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
+import { TelegramBot, parseChatIds } from "./telegram.mjs";
+import { Daemon } from "./daemon.mjs";
+import { describeCron } from "./cron.mjs";
 import { readAuth, writeAuth, deviceLogin, CopilotClient } from "./auth.mjs";
 import { pickModel, CompatibleClient } from "./provider.mjs";
 import { sanitizeMessages } from "./history.mjs";
@@ -58,6 +70,8 @@ ${c.bold("options")}
       --api-key <key>   credentials for --api-base
       --speak           read replies aloud (Edge TTS)
       --voice           start in voice mode (mic in, speech out)
+      --daemon          run in the background: schedules, watches, Telegram inbox
+      --brief           print a briefing now and exit
   -h, --help            show this
   -v, --version         show version
 
@@ -90,6 +104,8 @@ function parseArgs(argv) {
     apiKey: null,
     speak: false,
     voiceLoop: false,
+    daemon: false,
+    brief: false,
     help: false,
     version: false,
   };
@@ -171,6 +187,12 @@ function parseArgs(argv) {
       case "--voice":
         opts.voiceLoop = true;
         break;
+      case "--daemon":
+        opts.daemon = true;
+        break;
+      case "--brief":
+        opts.brief = true;
+        break;
       default:
         if (a.startsWith("-")) {
           console.error(`unknown option: ${a} (try --help)`);
@@ -224,7 +246,8 @@ function completePath(prefix) {
 const COMMANDS = [
   "/help", "/config", "/reload", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
-  "/speak", "/voices", "/clear", "/exit", "/quit",
+  "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon", "/clear",
+  "/exit", "/quit",
 ];
 
 function makeCompleter(models) {
@@ -449,7 +472,7 @@ export async function main() {
     process.exit(code);
   };
 
-  if (opts.banner && opts.prompt === null) {
+  if (opts.banner && opts.prompt === null && !opts.brief && !opts.daemon) {
     banner({
       agentName: config.agentName,
       username: config.username,
@@ -755,6 +778,99 @@ export async function main() {
     process.exit(0);
   }
 
+  /* ---------------------- proactive: schedule/watch/inbox ---------------------- */
+
+  const BRIEFING_PROMPT =
+    config.briefingPrompt ||
+    "Give me a short briefing for right now. Cover, in this order and only if there is " +
+      "something to say: (1) my GitHub inbox via github_notifications - mentions, review " +
+      "requests, invitations; (2) any watch reports via watch action=check where something " +
+      "moved; (3) anything that needs a decision from me today. " +
+      "Be specific and brief: a few lines, no preamble, no restating this request.";
+
+  const store = new RoutineStore(STATE_FILE).load();
+  const bot = new TelegramBot({
+    token: config.telegramBotToken,
+    allowedChatIds: parseChatIds(config.telegramAllowedChatIds),
+    ownerChatId: config.telegramChatId,
+  });
+
+  const ownerChat = () => {
+    if (config.telegramChatId) return config.telegramChatId;
+    const allowed = parseChatIds(config.telegramAllowedChatIds);
+    return allowed.length ? allowed[0] : null;
+  };
+
+  const deliver = async (text, meta = {}) => {
+    const chatId = ownerChat();
+    if (bot.enabled && chatId) {
+      await bot.send(chatId, text);
+      return "telegram";
+    }
+    term.line("");
+    term.line(c.magenta(`  \u25d7 ${meta.routine ? meta.routine.name : "alert"}`));
+    term.line(text.replace(/^/gm, "  "));
+    term.line("");
+    return "terminal";
+  };
+
+  const freshAgent = () =>
+    new Agent({
+      client,
+      config,
+      confirm: async () => config.autoApprove,
+      print: () => {},
+      write: () => {},
+    });
+
+  const runPrompt = async (prompt) => {
+    const worker = freshAgent();
+    worker.model = agent.model;
+    return worker.send(prompt, {});
+  };
+
+  if (opts.brief) {
+    const text = String((await runPrompt(BRIEFING_PROMPT)) || "").trim() || "(nothing to report)";
+    if (bot.enabled && ownerChat()) {
+      await deliver(`*Briefing*\n\n${text}`);
+      term.line(c.dim("  briefing sent to telegram"));
+    } else {
+      term.line("");
+      term.line(text.replace(/^/gm, "  "));
+      term.line("");
+    }
+    process.exit(0);
+  }
+
+  if (opts.daemon) {
+    banner({
+      agentName: `${config.agentName} \u25d7 daemon`,
+      username: config.username,
+      model,
+      tools: agent.useTools,
+      autoApprove: agent.autoApprove,
+      cwd: process.cwd(),
+      envPath: config.envPath || config.globalEnvPath,
+      count: 0,
+    });
+    const daemon = new Daemon({
+      store,
+      bot,
+      config,
+      client,
+      runPrompt,
+      deliver,
+      log: (m) => term.line(c.dim(`  ${m}`)),
+      tickMs: config.daemonTick * 1000,
+    });
+    process.on("SIGINT", () => {
+      term.line(c.dim("\n  stopping..."));
+      daemon.stop();
+    });
+    await daemon.run();
+    process.exit(0);
+  }
+
   if (opts.voiceLoop) {
     await voiceLoop();
   }
@@ -1021,6 +1137,59 @@ export async function main() {
         term.line(usageLine("turn", agent.turnUsage));
         term.line(usageLine("session", agent.sessionUsage));
         term.line("");
+        break;
+      }
+
+      case "/brief": {
+        term.line(c.dim("  gathering..."));
+        try {
+          const text = await runPrompt(BRIEFING_PROMPT);
+          term.line("");
+          term.line(String(text || "(nothing to report)").replace(/^/gm, "  "));
+          term.line("");
+        } catch (err) {
+          term.line(c.red(`  briefing failed: ${err.message}`));
+        }
+        break;
+      }
+
+      case "/routines": {
+        store.load();
+        term.line("");
+        if (!store.routines.length) {
+          term.line(c.dim("  no routines scheduled - ask me to set one up, e.g."));
+          term.line(c.dim('  "every morning at 8, brief me on my GitHub inbox"'));
+        }
+        for (const routine of store.routines) {
+          term.line(`  ${describeRoutine(routine)}`);
+          if (routine.lastRun) {
+            term.line(
+              c.dim(
+                `      last run ${routine.lastRun.slice(0, 16).replace("T", " ")} (${routine.lastStatus})` +
+                  (routine.lastSummary ? ` - ${routine.lastSummary.slice(0, 60)}` : "")
+              )
+            );
+          }
+        }
+        term.line("");
+        term.line(c.dim(`  ${bot.enabled ? "telegram delivery on" : "no TELEGRAM_BOT_TOKEN - alerts print here"}`));
+        term.line(c.dim("  run them with: ankita --daemon"));
+        term.line("");
+        break;
+      }
+
+      case "/watches": {
+        store.load();
+        term.line("");
+        if (!store.watches.length) term.line(c.dim("  no watches - ask me to watch a page, e.g."));
+        for (const w of store.watches) term.line(`  ${describeWatch(w)}`);
+        term.line("");
+        break;
+      }
+
+      case "/daemon": {
+        term.line(c.dim("  daemon runs as its own process: ankita --daemon"));
+        term.line(c.dim(`  routines ${store.routines.length}, watches ${store.watches.length}`));
         break;
       }
 

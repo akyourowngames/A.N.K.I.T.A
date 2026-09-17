@@ -723,6 +723,53 @@ export async function playMp3(mp3, { signal } = {}) {
 }
 
 /* ------------------------------------------------------------------ */
+/* audio conversion (ffmpeg)                                           */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Runs ffmpeg over an in-memory buffer, returning the converted buffer.
+ * Used to turn Telegram voice notes (OGG/Opus) into the 16 kHz WAV that
+ * Whisper wants, and Edge MP3 into the OGG/Opus that sendVoice wants.
+ */
+export async function convertAudio(input, { to = "wav", timeoutMs = 60000 } = {}) {
+  const src = tmpVoiceFile("in");
+  const dst = tmpVoiceFile(to);
+  const args =
+    to === "wav"
+      ? ["-hide_banner", "-loglevel", "error", "-i", src, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", dst]
+      : ["-hide_banner", "-loglevel", "error", "-i", src, "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-ac", "1", "-y", dst];
+  try {
+    fs.writeFileSync(src, input);
+    const { code, stderr } = await new Promise((resolve) => {
+      const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
+      let err = "";
+      const timer = setTimeout(() => {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+      }, Math.max(5000, timeoutMs));
+      child.stderr?.on("data", (d) => (err += d.toString()));
+      child.on("error", (e) => {
+        clearTimeout(timer);
+        resolve({ code: -1, stderr: e.message });
+      });
+      child.on("close", (c) => {
+        clearTimeout(timer);
+        resolve({ code: c, stderr: err });
+      });
+    });
+    if (code !== 0) throw new Error(`ffmpeg exited ${code}: ${stderr.slice(0, 200)}`);
+    return fs.readFileSync(dst);
+  } finally {
+    for (const f of [src, dst]) {
+      try {
+        fs.unlinkSync(f);
+      } catch {}
+    }
+  }
+}
+
+/* ------------------------------------------------------------------ */
 /* markdown -> speakable text                                          */
 /* ------------------------------------------------------------------ */
 
