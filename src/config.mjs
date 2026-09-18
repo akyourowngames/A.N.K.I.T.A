@@ -40,6 +40,7 @@ const DEFAULTS = {
   scrapeRetries: 1,
   pythonBin: "",
   jinaFallback: true,
+  allowPrivateHosts: false,
   pythonBin: "",
   telegramBotToken: "",
   telegramChatId: "",
@@ -182,6 +183,8 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     scrapeRetries: Math.max(0, Math.min(3, Math.floor(Number(pick("SCRAPE_RETRIES") ?? 1)) || 0)),
     pythonBin: pick("PYTHON_BIN") || "",
     jinaFallback: onOff(pick("JINA_FALLBACK"), true),
+    // Opt-in: lets web tools reach loopback/LAN, e.g. your own dev dashboard.
+    allowPrivateHosts: onOff(pick("ALLOW_PRIVATE_HOSTS"), false),
     pythonBin: pick("PYTHON_BIN") || "",
     telegramBotToken: pick("TELEGRAM_BOT_TOKEN") || "",
     telegramChatId: pick("TELEGRAM_CHAT_ID") || "",

@@ -131,9 +131,15 @@ async function defaultResolve(host) {
 
 /**
  * "" when fetchable, else an "ERROR: ..." refusal. Never throws.
+ *
+ * Loopback and private ranges are refused by default (a fetched page must not
+ * be able to make the agent probe your LAN). Pass allowPrivate:true — from
+ * ALLOW_PRIVATE_HOSTS=1 — to watch your own dev server or a home dashboard.
+ * The host must still resolve, so a typo is still caught.
+ *
  * resolveFn(host) -> string[] is injectable for tests.
  */
-export async function checkUrlPublic(url, resolveFn = defaultResolve) {
+export async function checkUrlPublic(url, resolveFn = defaultResolve, { allowPrivate = false } = {}) {
   let host = "";
   try {
     host = (new URL(String(url || "").trim()).hostname || "").toLowerCase().replace(/\.+$/, "");
@@ -141,7 +147,9 @@ export async function checkUrlPublic(url, resolveFn = defaultResolve) {
     return `ERROR: refusing to fetch ${url} (unparseable URL).`;
   }
   if (!host) return `ERROR: refusing to fetch ${url} (missing host).`;
-  if (host === "localhost") return `ERROR: refusing to fetch ${url} (loopback host).`;
+  if (!allowPrivate && host === "localhost") {
+    return `ERROR: refusing to fetch ${url} (loopback host). Set ALLOW_PRIVATE_HOSTS=1 to watch local pages.`;
+  }
   let ips;
   try {
     ips = await resolveFn(host);
@@ -149,10 +157,23 @@ export async function checkUrlPublic(url, resolveFn = defaultResolve) {
     return `ERROR: refusing to fetch ${url} (DNS does not resolve: ${host}).`;
   }
   if (!ips || !ips.length) return `ERROR: refusing to fetch ${url} (DNS does not resolve: ${host}).`;
+  if (allowPrivate) return "";
   for (const ip of ips) {
-    if (!isPublicIp(ip)) return `ERROR: refusing to fetch ${url} (non-public address (${ip})).`;
+    if (!isPublicIp(ip)) {
+      return `ERROR: refusing to fetch ${url} (non-public address (${ip})). Set ALLOW_PRIVATE_HOSTS=1 to watch local pages.`;
+    }
   }
   return "";
+}
+
+/** checkUrlPublic with the session's ALLOW_PRIVATE_HOSTS preference applied. */
+export function guardUrl(url, ctx) {
+  return checkUrlPublic(url, undefined, { allowPrivate: allowPrivateHosts(ctx) });
+}
+
+/** landingBlocked with the session's ALLOW_PRIVATE_HOSTS preference applied. */
+export function guardLanding(history, finalUrl, fallback, ctx) {
+  return landingBlocked(history, finalUrl, fallback, { allowPrivate: allowPrivateHosts(ctx) });
 }
 
 /* ------------------------------------------------------------------ */
@@ -341,9 +362,16 @@ const CONFIG_CAMEL = {
   SCRAPE_MAX_PAGES: "scrapeMaxPages",
   SCRAPE_RETRIES: "scrapeRetries",
   PYTHON_BIN: "pythonBin",
+  ALLOW_PRIVATE_HOSTS: "allowPrivateHosts",
   ANKITA_NO_WEB: null,
   ANKITA_NO_SCRAPE: null,
 };
+
+/** True when the user has opted into fetching loopback/private hosts. */
+export function allowPrivateHosts(ctx) {
+  const raw = cfgVal(ctx, "ALLOW_PRIVATE_HOSTS", "");
+  return raw === true || /^(1|on|true|yes)$/i.test(String(raw));
+}
 
 /** App config (camelCase) > UPPER env var > default. Parsing is the caller's job. */
 export function cfgVal(ctx, upper, dflt) {
@@ -395,11 +423,11 @@ export function needsStealthResult(result, hasSelectors = false) {
 }
 
 /** Re-check every hop of a redirect chain; "" when clean, else ERROR text. */
-export async function landingBlocked(history = [], finalUrl = "", fallback = "") {
+export async function landingBlocked(history = [], finalUrl = "", fallback = "", opts = {}) {
   const urls = [...(history || []), finalUrl || fallback].filter(Boolean);
   const seen = [...new Set(urls)];
   for (const u of seen) {
-    const refused = await checkUrlPublic(u);
+    const refused = await checkUrlPublic(u, undefined, opts);
     if (refused) {
       return `ERROR: refusing ${fallback} (redirect chain hit non-public host: ${refused}).`;
     }

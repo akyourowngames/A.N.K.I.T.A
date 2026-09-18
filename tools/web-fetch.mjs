@@ -7,6 +7,7 @@ import {
   webCache,
   decodeEntities,
   cfgVal,
+  allowPrivateHosts,
   checkUrlPublic,
   httpFetch,
 } from "./_web.mjs";
@@ -121,7 +122,7 @@ export async function fetchRun(
   if (!u || !/^https?:\/\//i.test(u)) return "ERROR: 'url' must start with http(s)://.";
   const cfg = webCfg(ctx);
   if (cfg.disabled) return "ERROR: web fetch is disabled (ANKITA_NO_WEB=1).";
-  const refused = await checkUrlPublic(u);
+  const refused = await checkUrlPublic(u, undefined, { allowPrivate: allowPrivateHosts(ctx) });
   if (refused) return refused;
 
   const cap = Math.max(500, Math.floor(Number(max_chars) || 0) || cfg.maxOutput);

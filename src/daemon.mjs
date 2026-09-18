@@ -320,7 +320,12 @@ export class Daemon {
       return;
     }
     if (recorded?.changed && watch.notify) {
+      if (!this.store.shouldAlert(recorded.watched, this.now())) {
+        this.log(`watch ${watch.id} moved but is inside its alert cooldown`);
+        return;
+      }
       this.stats.changesAlerted++;
+      this.store.markAlerted(watch.id, this.now().toISOString());
       const line = formatWatchStatus(recorded.watched, recorded);
       await this.deliver(`\u{1F514} ${line}\n${watch.url}`, { watch: recorded.watched });
     }

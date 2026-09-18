@@ -85,6 +85,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `ANKITA_NO_WEB` / `ANKITA_NO_SCRAPE` | unset | Kill switches for web and scraping |
 | `WEB_TIMEOUT` / `WEB_MAX_OUTPUT` / `WEB_CACHE_TTL` / `WEB_RETRIES` | `20` / `8000` / `300` / `1` | Search + fetch timeouts, output caps, result cache, retries |
 | `WEB_REGION` / `JINA_FALLBACK` | `wt-wt` / `1` | Search region; use `r.jina.ai` when extraction is thin |
+| `ALLOW_PRIVATE_HOSTS` | `off` | Opt in to loopback/LAN pages — for watching your own dev server |
 | `SCRAPE_TIMEOUT` / `SCRAPE_STEALTH_TIMEOUT` | `30` / `30` | Static and browser timeouts (seconds) |
 | `SCRAPE_MAX_OUTPUT` / `SCRAPE_MAX_PAGES` / `SCRAPE_RETRIES` | `8000` / `20` / `1` | Scrape caps |
 | `PYTHON_BIN` | auto | Interpreter for the Scrapling bridge |
@@ -197,6 +198,20 @@ ankita › tell me if the signups on https://my.app/dashboard change
 ```
 
 The first read is a baseline, so you get `Signups: 1,204 → 1,227 (+23)` rather than a spurious alert. A `regex` (capture group 1) or a CSS `selector` narrows the watch to a value; without either, the whole page is hashed and any edit is reported. Selector watches go through the scrape tiers, so Cloudflare-protected dashboards still work.
+
+Detection is a hash comparison, not a diff and not a model call: fetch fresh (never from cache), extract the value, `sha256` it, compare with the stored hash. Different hash means changed; if both old and new parse as numbers you also get a delta. Because the regex picks only your number, a rotating banner elsewhere on the page cannot trigger a false alert.
+
+Two knobs worth knowing:
+- **`alert_every`** (default `10m`) rate-limits *notifications*, not checks. A number that moves every 20 seconds is checked every 20 seconds but only messages you once per cooldown, so a busy dashboard cannot flood you.
+- **`ALLOW_PRIVATE_HOSTS=1`** lifts the loopback/LAN block so you can watch your own dev server. Off by default: a page you fetch should not be able to make the agent probe your network.
+
+A dashboard to practise against ships in the repo — it serves numbers that wander up and down:
+
+```bash
+node scripts/demo-dashboard.mjs 4173
+# then, with ALLOW_PRIVATE_HOSTS=1
+ankita › watch http://127.0.0.1:4173, grab "Active users: ([\d,]+)", alert me at most every 10m
+```
 
 **The Telegram inbox** lets you talk to ankita from your phone: text or voice notes in (Whisper), replies out (text, or spoken with `TELEGRAM_VOICE_REPLY=1`). Only chat ids in `TELEGRAM_ALLOWED_CHAT_IDS` are served; anyone else gets their own id back so you can add it.
 

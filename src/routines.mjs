@@ -220,7 +220,16 @@ export class RoutineStore {
 
   /* ------------------------------ watches ----------------------------- */
 
-  addWatch({ name, url, selector = "", regex = "", interval = "1h", enabled = true, notify = true }) {
+  addWatch({
+    name,
+    url,
+    selector = "",
+    regex = "",
+    interval = "1h",
+    alertEvery = "10m",
+    enabled = true,
+    notify = true,
+  }) {
     this._fresh();
     let parsed;
     try {
@@ -232,7 +241,8 @@ export class RoutineStore {
       throw new Error("url must be http(s)");
     }
     const everyMs = parseDuration(interval, 3600000);
-    if (everyMs < 60000) throw new Error("interval must be at least 1m");
+    // 15s floor: fine for a local dashboard, still far above a busy loop.
+    if (everyMs < 15000) throw new Error("interval must be at least 15s");
 
     const taken = new Set(this.watches.map((w) => w.id));
     const watch = {
@@ -242,8 +252,12 @@ export class RoutineStore {
       selector: String(selector || ""),
       regex: String(regex || ""),
       intervalMs: everyMs,
+      // Checking often is cheap; alerting often is not. A busy number would
+      // otherwise send a message every check.
+      alertCooldownMs: Math.max(0, parseDuration(alertEvery, 600000)),
       enabled: Boolean(enabled),
       notify: Boolean(notify),
+      lastAlerted: null,
       createdAt: new Date().toISOString(),
       lastChecked: null,
       lastValue: null,
@@ -318,6 +332,25 @@ export class RoutineStore {
     return { watched: watch, changed, delta, value, previous };
   }
 
+  /** True when a change is worth telling the user about right now. */
+  shouldAlert(watch, now = new Date()) {
+    if (!watch.notify) return false;
+    const cooldown = watch.alertCooldownMs ?? 600000;
+    if (!cooldown) return true;
+    if (!watch.lastAlerted) return true;
+    const last = Date.parse(watch.lastAlerted);
+    return !Number.isFinite(last) || now.getTime() - last >= cooldown;
+  }
+
+  markAlerted(id, at) {
+    this._fresh();
+    const watch = this.findWatch(id);
+    if (!watch) return null;
+    watch.lastAlerted = at || new Date().toISOString();
+    this.save();
+    return watch;
+  }
+
   dueWatches(now = new Date()) {
     return this.watches.filter((watch) => {
       if (!watch.enabled) return false;
@@ -363,7 +396,7 @@ export function describeRoutine(routine) {
 }
 
 export function describeWatch(watch) {
-  const every = formatDuration(watch.intervalMs || 3600000);
+  const every = formatDuration(watch.intervalMs || 3600000) + (watch.alertCooldownMs ? "/alert " + formatDuration(watch.alertCooldownMs) : "");
   const value = watch.lastValue === null || watch.lastValue === undefined ? "-" : String(watch.lastValue).slice(0, 30);
   return `${watch.enabled ? "on " : "off"} ${watch.id.padEnd(18)} every ${every.padEnd(6)} ${value.padEnd(12)} ${watch.name}`;
 }

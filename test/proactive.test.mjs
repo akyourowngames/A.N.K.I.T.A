@@ -105,7 +105,7 @@ test('watches store readings, detect change and compute deltas', (t) => {
   const watch = store.addWatch({ name: 'Signups', url: 'https://ex.test/dash', regex: '([\\d,]+) users', interval: '30m' });
   assert.equal(watch.id, 'signups');
   assert.throws(() => store.addWatch({ url: 'ftp://x.test' }), /http/);
-  assert.throws(() => store.addWatch({ url: 'https://x.test', interval: '10s' }), /at least 1m/);
+  assert.throws(() => store.addWatch({ url: 'https://x.test', interval: '10s' }), /at least 15s/);
 
   const first = store.recordWatchCheck('signups', { value: '1,204', text: '1,204 users' });
   assert.equal(first.changed, false, 'first reading is a baseline, not a change');
@@ -148,6 +148,26 @@ test('watch due times respect the interval', (t) => {
   // 10s of slack: the check above takes a few ms, so a 1ms margin is a flake.
   assert.equal(store.dueWatches(new Date(now.getTime() + 3610000)).length, 1);
   assert.equal(store.dueWatches(new Date(now.getTime() + 3590000)).length, 0, 'not due before the interval');
+});
+
+test('alerts are rate-limited so a busy number cannot spam', (t) => {
+  const store = tmpStore(t);
+  const w = store.addWatch({ name: 'busy', url: 'https://ex.test/', interval: '20s' });
+  assert.equal(w.alertCooldownMs, 600000, 'default 10m cooldown');
+  assert.throws(() => store.addWatch({ name: 'fast', url: 'https://ex.test/', interval: '5s' }), /at least 15s/);
+
+  const t0 = new Date('2026-09-21T08:00:00Z');
+  assert.equal(store.shouldAlert(w, t0), true, 'never alerted yet');
+
+  store.markAlerted('busy', t0.toISOString());
+  assert.equal(store.shouldAlert(store.findWatch('busy'), new Date(t0.getTime() + 60000)), false, 'inside cooldown');
+  assert.equal(store.shouldAlert(store.findWatch('busy'), new Date(t0.getTime() + 600001)), true, 'after cooldown');
+
+  const always = store.addWatch({ name: 'always', url: 'https://ex.test/', alertEvery: '0s' });
+  assert.equal(always.alertCooldownMs, 0);
+  store.markAlerted('always', t0.toISOString());
+  assert.equal(store.shouldAlert(store.findWatch('always'), t0), true, '0 disables the cooldown');
+  assert.equal(store.shouldAlert(store.findWatch('always'), t0), true, 'and stays disabled');
 });
 
 test('value extraction uses capture group 1 and fails loudly', () => {

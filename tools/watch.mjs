@@ -16,7 +16,12 @@ export const parameters = {
     action: { type: "string", description: "add, list, remove, check, enable, or disable." },
     name: { type: "string", description: "Short label, e.g. 'Signup count'." },
     url: { type: "string", description: "http(s) page to watch." },
-    interval: { type: "string", description: "How often to check: 15m, 1h, 6h, 1d. Default 1h." },
+    interval: { type: "string", description: "How often to check: 20s, 15m, 1h, 6h, 1d. Default 1h." },
+    alert_every: {
+      type: "string",
+      description:
+        "Minimum gap between alerts for this watch, e.g. 10m, 1h. Default 10m - stops a busy number spamming you.",
+    },
     regex: {
       type: "string",
       description:
@@ -57,6 +62,7 @@ export async function run(args = {}, ctx = {}) {
         selector: args.selector || "",
         regex: args.regex || "",
         interval: args.interval || "1h",
+        alertEvery: args.alert_every || "10m",
       });
       const first = await checkWatch(watch, ctx);
       if (first.error) {

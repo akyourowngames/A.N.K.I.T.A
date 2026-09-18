@@ -4,10 +4,12 @@ import {
   cacheKey,
   webCache,
   fitJson,
-  checkUrlPublic,
+  allowPrivateHosts,
   runBridge,
   scrapeCfg,
   landingBlocked,
+  guardUrl,
+  guardLanding,
   needsStealthResult,
 } from "./_web.mjs";
 
@@ -41,7 +43,7 @@ export async function run(args, ctx = {}) {
   if (!u || !/^https?:\/\//i.test(u)) return "ERROR: 'url' must start with http(s)://.";
   const cfg = scrapeCfg(ctx);
   if (cfg.disabled) return "ERROR: scraping is disabled (ANKITA_NO_SCRAPE=1).";
-  const refused = await checkUrlPublic(u);
+  const refused = await guardUrl(u, ctx);
   if (refused) return refused;
 
   const md = String(args.mode || "auto").trim().toLowerCase() || "auto";
@@ -76,6 +78,7 @@ export async function run(args, ctx = {}) {
         retries: cfg.retries,
         markdown: fmt !== "text",
         selectors,
+        allow_private: allowPrivateHosts(ctx),
       },
       { timeoutMs: (cfg.timeoutS + 15) * 1000, pythonBin: cfg.pythonBin }
     );
@@ -96,6 +99,7 @@ export async function run(args, ctx = {}) {
         timeout_ms: cfg.stealthTimeoutMs,
         markdown: fmt !== "text",
         selectors,
+        allow_private: allowPrivateHosts(ctx),
       },
       { timeoutMs: cfg.stealthTimeoutMs + 20000, pythonBin: cfg.pythonBin }
     );
@@ -110,7 +114,7 @@ export async function run(args, ctx = {}) {
   }
   if (!result) return `ERROR: scrape-mid fetch failed for ${u}.`;
 
-  const landed = await landingBlocked(result.history, result.final_url, u);
+  const landed = await guardLanding(result.history, result.final_url, u, ctx);
   if (landed) return landed;
   const status = Number(result.status) || 200;
   if (status < 200 || status >= 400) return `ERROR: scrape-mid http ${status} for ${u} (${used}).`;
