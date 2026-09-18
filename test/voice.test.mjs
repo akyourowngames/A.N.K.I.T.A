@@ -67,6 +67,29 @@ test('voice temp files are unique per call', () => {
   assert.notEqual(a, b);
 });
 
+test('groq tts translates a terms-acceptance 400 into something actionable', async (t) => {
+  const { synthesizeGroq } = await import('../src/voice.mjs');
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({ error: { message: 'The model `canopylabs/orpheus-v1-english` requires terms acceptance.' } }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
+  await assert.rejects(
+    synthesizeGroq({ apiKey: 'k', model: 'canopylabs/orpheus-v1-english', text: 'hi' }),
+    (err) => /terms accepted/.test(err.message) && /console\.groq\.com/.test(err.message) && /TTS_PROVIDER=edge/.test(err.message)
+  );
+});
+
+test('groq tts surfaces other failures verbatim', async (t) => {
+  const { synthesizeGroq } = await import('../src/voice.mjs');
+  const original = globalThis.fetch;
+  t.after(() => { globalThis.fetch = original; });
+  globalThis.fetch = async () => new Response('rate limited', { status: 429 });
+  await assert.rejects(synthesizeGroq({ apiKey: 'k', text: 'hi' }), /Groq TTS 429/);
+});
+
 test('voice config defaults and rate validation', () => {
   const config = loadConfig('definitely-not-a-real-file.env');
   assert.equal(config.groqApiKey, '');

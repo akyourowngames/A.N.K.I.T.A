@@ -3,10 +3,12 @@ import {
   truncateHeadTail,
   cacheKey,
   webCache,
-  checkUrlPublic,
+  allowPrivateHosts,
   runBridge,
   scrapeCfg,
   landingBlocked,
+  guardUrl,
+  guardLanding,
   needsStealthResult,
   formatRecord,
 } from "./_web.mjs";
@@ -51,7 +53,7 @@ export async function run(args, ctx = {}) {
   const cfg = scrapeCfg(ctx);
   if (cfg.disabled) return "ERROR: scraping is disabled (ANKITA_NO_SCRAPE=1).";
   for (const s of seeds) {
-    const refused = await checkUrlPublic(s);
+    const refused = await guardUrl(s, ctx);
     if (refused) return refused;
   }
 
@@ -105,7 +107,15 @@ export async function run(args, ctx = {}) {
 
   const fetchStatic = async (urls) => {
     const bridge = await runBridge(
-      { cmd: "static", urls, timeout_s: cfg.timeoutS, retries: cfg.retries, markdown: true, selectors },
+      {
+        cmd: "static",
+        urls,
+        timeout_s: cfg.timeoutS,
+        retries: cfg.retries,
+        markdown: true,
+        selectors,
+        allow_private: allowPrivateHosts(ctx),
+      },
       { timeoutMs: (cfg.timeoutS + 15) * 1000 + urls.length * 5000, pythonBin: cfg.pythonBin }
     );
     if (!bridge.ok) return urls.map((u) => ({ url: u, error: bridge.error }));
@@ -113,7 +123,15 @@ export async function run(args, ctx = {}) {
   };
   const fetchStealth = async (url) => {
     const bridge = await runBridge(
-      { cmd: "stealth", url, wait_selector: "", timeout_ms: cfg.stealthTimeoutMs, markdown: true, selectors },
+      {
+        cmd: "stealth",
+        url,
+        wait_selector: "",
+        timeout_ms: cfg.stealthTimeoutMs,
+        markdown: true,
+        selectors,
+        allow_private: allowPrivateHosts(ctx),
+      },
       { timeoutMs: cfg.stealthTimeoutMs + 20000, pythonBin: cfg.pythonBin }
     );
     if (!bridge.ok || !bridge.result || bridge.result.error) {
@@ -144,7 +162,7 @@ export async function run(args, ctx = {}) {
     for (let i = 0; i < level.length; i++) {
       if (pages.length >= limit || Date.now() - t0 >= budgetMs) break;
       const { url, d } = level[i];
-      const refused = await checkUrlPublic(url);
+    const refused = await guardUrl(s, ctx);
       if (refused) {
         pages.push({ url, mode: "skipped-private", title: "", text: refused });
         continue;
@@ -174,7 +192,7 @@ export async function run(args, ctx = {}) {
         pages.push({ url, mode: "failed", title: "", text: "" });
         continue;
       }
-      const landed = await landingBlocked(entry.history, entry.final_url, url);
+      const landed = await guardLanding(entry.history, entry.final_url, url, ctx);
       if (landed) {
         pages.push({ url, mode: "blocked-private-redirect", title: "", text: "" });
         continue;

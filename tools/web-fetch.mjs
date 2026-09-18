@@ -7,6 +7,7 @@ import {
   webCache,
   decodeEntities,
   cfgVal,
+  allowPrivateHosts,
   checkUrlPublic,
   httpFetch,
 } from "./_web.mjs";
@@ -26,6 +27,10 @@ export const parameters = {
     max_chars: { type: "integer", description: "Cap returned characters. Default 8000." },
     timeout_ms: { type: "integer", description: "Give up after this many milliseconds. Default 20000." },
     raw: { type: "boolean", description: "Return the raw body without text extraction. Default false." },
+    no_cache: {
+      type: "boolean",
+      description: "Always go to the network. Use when the current value matters more than speed.",
+    },
   },
   required: ["url"],
 };
@@ -108,19 +113,25 @@ function webCfg(ctx = {}) {
   };
 }
 
-export async function fetchRun({ url, max_chars = 0, timeout_ms = 0, raw = false } = {}, ctx = {}, http = httpFetch) {
+export async function fetchRun(
+  { url, max_chars = 0, timeout_ms = 0, raw = false, no_cache = false } = {},
+  ctx = {},
+  http = httpFetch
+) {
   const u = String(url || "").trim();
   if (!u || !/^https?:\/\//i.test(u)) return "ERROR: 'url' must start with http(s)://.";
   const cfg = webCfg(ctx);
   if (cfg.disabled) return "ERROR: web fetch is disabled (ANKITA_NO_WEB=1).";
-  const refused = await checkUrlPublic(u);
+  const refused = await checkUrlPublic(u, undefined, { allowPrivate: allowPrivateHosts(ctx) });
   if (refused) return refused;
 
   const cap = Math.max(500, Math.floor(Number(max_chars) || 0) || cfg.maxOutput);
   const key = cacheKey("fetch", { url: normalizeUrl(u), cap, raw: !!raw });
   webCache.setTtl(cfg.cacheTtl);
-  const [hit, ok] = webCache.get(key);
-  if (ok && hit) return hit + "\n(cached)";
+  if (!no_cache) {
+    const [hit, ok] = webCache.get(key);
+    if (ok && hit) return hit + "\n(cached)";
+  }
 
   const timeout = Math.max(1000, Math.floor(Number(timeout_ms) || 0) || cfg.timeoutMs);
   let res;
@@ -172,13 +183,20 @@ export async function fetchRun({ url, max_chars = 0, timeout_ms = 0, raw = false
     );
   }
   const out = truncateHeadTail(text, cap).text;
-  webCache.put(key, out);
+  // A caller asking for the current value did not ask for it to be remembered.
+  if (!no_cache) webCache.put(key, out);
   return out;
 }
 
 export function run(args, ctx) {
   return fetchRun(
-    { url: args.url, max_chars: args.max_chars, timeout_ms: args.timeout_ms, raw: args.raw },
+    {
+      url: args.url,
+      max_chars: args.max_chars,
+      timeout_ms: args.timeout_ms,
+      raw: args.raw,
+      no_cache: args.no_cache,
+    },
     ctx || {}
   );
 }

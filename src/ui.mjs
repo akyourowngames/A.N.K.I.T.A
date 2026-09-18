@@ -181,6 +181,9 @@ export function helpText({ agentName }) {
   ${c.cyan("/sessions")}          list saved conversations
   ${c.cyan("/paste")}             paste multiple lines (end with a single .)
   ${c.cyan("/usage")}             show token usage for this turn and session
+  ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you
+  ${c.cyan("/routines")}          scheduled prompts and their last result
+  ${c.cyan("/watches")}           pages being watched and their last reading
   ${c.cyan("/mic")}               dictate one message (Groq Whisper)
   ${c.cyan("/voice")}             hands-free voice loop (mic in, speech out)
   ${c.cyan("/say")} <text>        speak text aloud (Edge TTS)

@@ -65,15 +65,17 @@ def _silence_scrapling() -> None:
         pass
 
 
-def _host_blocked(url: str) -> str:
+def _host_blocked(url: str, allow_private: bool = False) -> str:
+    """SSRF guard, matching the Node side. allow_private mirrors
+    ALLOW_PRIVATE_HOSTS so a user can watch their own local dashboard."""
     try:
         host = (_url.urlparse((url or "").strip()).hostname or "").strip().lower().rstrip(".")
     except Exception:
         return "unparseable URL"
     if not host:
         return "missing host"
-    if host == "localhost":
-        return "loopback host"
+    if host == "localhost" and not allow_private:
+        return "loopback host (set ALLOW_PRIVATE_HOSTS=1 to allow)"
     try:
         infos = socket.getaddrinfo(host, None)
     except Exception:
@@ -81,10 +83,12 @@ def _host_blocked(url: str) -> str:
     ips = [r[4][0] for r in infos]
     if not ips:
         return f"DNS does not resolve: {host}"
+    if allow_private:
+        return ""
     for ip in ips:
         try:
             if not ipaddress.ip_address(ip.split("%")[0]).is_global:
-                return f"non-public address ({ip})"
+                return f"non-public address ({ip}) (set ALLOW_PRIVATE_HOSTS=1 to allow)"
         except Exception:
             return f"unparseable address ({ip})"
     return ""
@@ -257,6 +261,7 @@ def cmd_check(_args: dict) -> dict:
 
 def cmd_static(args: dict) -> dict:
     _silence_scrapling()
+    allow_private = bool(args.get("allow_private"))
     try:
         from scrapling.fetchers import Fetcher
     except Exception as exc:
@@ -272,7 +277,7 @@ def cmd_static(args: dict) -> dict:
         if not _is_url(u):
             results.append({"url": u, "error": "not an http(s) URL"})
             continue
-        blocked = _host_blocked(u)
+        blocked = _host_blocked(u, allow_private)
         if blocked:
             results.append({"url": u, "error": f"refusing ({blocked})"})
             continue
@@ -288,6 +293,7 @@ def cmd_static(args: dict) -> dict:
 
 def cmd_stealth(args: dict) -> dict:
     _silence_scrapling()
+    allow_private = bool(args.get("allow_private"))
     try:
         from scrapling.fetchers import StealthyFetcher
     except Exception as exc:
@@ -295,7 +301,7 @@ def cmd_stealth(args: dict) -> dict:
     u = str(args.get("url") or "").strip().split()[0] if str(args.get("url") or "").strip() else ""
     if not _is_url(u):
         return {"ok": False, "error": "not an http(s) URL"}
-    blocked = _host_blocked(u)
+    blocked = _host_blocked(u, allow_private)
     if blocked:
         return {"ok": False, "error": f"refusing ({blocked})"}
     kw: dict = dict(headless=True, solve_cloudflare=True, network_idle=True,

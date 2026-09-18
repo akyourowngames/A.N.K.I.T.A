@@ -1,6 +1,6 @@
 # ankita
 
-Terminal coding agent powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, and talk hands-free with mic input + spoken replies — from your terminal, zero npm dependencies.
+A coding agent and personal assistant in your terminal, powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, talk hands-free — and let it work while you are away: scheduled briefings, watched pages, and a Telegram inbox. Zero npm dependencies.
 
 ```
 ankita › search for the latest Node.js LTS release and fetch the announcement
@@ -35,6 +35,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 - **Act** through 20 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
+- **Works while you are away**: `ankita --daemon` runs scheduled routines, watches pages for changes, and answers Telegram messages — see [The proactive assistant](#the-proactive-assistant)
 - **Remember**: named sessions, autosave after every turn, `--continue`, sanitized restores, persistent history, tab-completion
 - **Run anywhere**: interactive REPL, one-shot `-p`, script-friendly `--plain` / `--json`, or any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …)
 
@@ -58,9 +59,11 @@ ankita [options] [message...]
       --api-key <key>   credentials for --api-base
       --speak           read replies aloud
       --voice           start in voice mode (mic in, speech out)
+      --daemon          run in the background: schedules, watches, Telegram inbox
+      --brief           print a briefing now and exit
 ```
 
-Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /load /sessions /paste /usage /mic /voice /say /speak /voices /clear /exit`.
+Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /load /sessions /paste /usage /mic /voice /say /speak /voices /brief /routines /watches /daemon /clear /exit`.
 
 ## Configuration
 
@@ -82,10 +85,18 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `ANKITA_NO_WEB` / `ANKITA_NO_SCRAPE` | unset | Kill switches for web and scraping |
 | `WEB_TIMEOUT` / `WEB_MAX_OUTPUT` / `WEB_CACHE_TTL` / `WEB_RETRIES` | `20` / `8000` / `300` / `1` | Search + fetch timeouts, output caps, result cache, retries |
 | `WEB_REGION` / `JINA_FALLBACK` | `wt-wt` / `1` | Search region; use `r.jina.ai` when extraction is thin |
+| `ALLOW_PRIVATE_HOSTS` | `off` | Opt in to loopback/LAN pages — for watching your own dev server |
 | `SCRAPE_TIMEOUT` / `SCRAPE_STEALTH_TIMEOUT` | `30` / `30` | Static and browser timeouts (seconds) |
 | `SCRAPE_MAX_OUTPUT` / `SCRAPE_MAX_PAGES` / `SCRAPE_RETRIES` | `8000` / `20` / `1` | Scrape caps |
 | `PYTHON_BIN` | auto | Interpreter for the Scrapling bridge |
 | `PS_STRICT` | `1` | PowerShell stops on first error (set `0` for lenient) |
+| `TELEGRAM_BOT_TOKEN` / `TELEGRAM_CHAT_ID` | unset | Bot + your chat for the inbox and outbound alerts |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | `TELEGRAM_CHAT_ID` | Who may talk to the bot; empty means nobody |
+| `TELEGRAM_VOICE_REPLY` | `off` | Answer voice notes with a spoken reply |
+| `TELEGRAM_CONFIRM_TIMEOUT` | `300` | Seconds to wait for a Telegram approval before skipping |
+| `DAEMON_TICK` / `BRIEFING_PROMPT` | `20` / built in | Scheduler tick seconds; what `--brief` asks for |
+| `MAX_CONCURRENT` | `4` | Routines that may run at once (everything at 08:00 would otherwise stampede the API) |
+| `WATCH_ALERT_LLM` / `WATCH_ALERT_PROMPT` | `on` / built in | Model-written alerts; override the wording with placeholders |
 
 ## Tools
 
@@ -103,6 +114,9 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
+| `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
+| `watch` | Track a page or a number on it (signups, logins, prices) and report changes |
+| `github_notifications` | Your GitHub inbox: mentions, review requests, invitations |
 | `write_todos` | Session checklist for multi-step work |
 | `job_status` / `job_stop` | Read and stop background jobs |
 
@@ -128,7 +142,12 @@ src/
   markdown.mjs        streaming markdown renderer (LiveRenderer commits scrollback)
   net.mjs             fetch with selective retry (429/5xx + transient sockets only)
   ui.mjs              terminal I/O, colors, banner, completion
-  voice.mjs           mic record, Groq STT, Edge/Groq TTS, playback
+  voice.mjs           mic record, Groq STT, Edge/Groq TTS, audio conversion
+  cron.mjs            cron parsing/matching plus "every 30m" / "daily 08:00" shorthands
+  routines.mjs        durable store: schedules, watches, readings, change detection
+  watcher.mjs         page fetch + value extraction, shared by tool and daemon
+  telegram.mjs        Bot API long-polling, allowlist, message splitting
+  daemon.mjs          the proactive loop: routines + watches + inbox → agent
 scripts/
   scrape_bridge.py    stdlib Python bridge to Scrapling (JSON argv → JSON stdout)
 tools/
@@ -157,13 +176,81 @@ test/                 node:test suite — core, provider, tools, voice, web
 
 **Voice.** Mic audio is captured with ffmpeg (16kHz mono WAV), transcribed by Groq Whisper. Replies are stripped of code/markdown and spoken — via Edge neural TTS over a raw-TLS WebSocket that reproduces the official handshake (`Sec-MS-GEC` time-windowed token, `ConnectionId`, MUID cookie), or via Groq Orpheus (sentence-chunked, WAV-joined) when selected.
 
+## The proactive assistant
+
+`ankita --daemon` turns the agent into something that works while you are away. It runs three loops against the same tools the REPL uses:
+
+**Routines** are prompts on a schedule. Ask in plain language — *"every weekday at 8, brief me on my GitHub inbox and any watch changes"* — and the agent sets it up itself:
+
+```
+ankita › remind me every morning at 8 about my inbox
+  → schedule({"action":"add","name":"Morning briefing","cron":"weekdays 08:00","prompt":"..."})
+    Scheduled "Morning briefing" (morning-briefing) - weekdays at 08:00
+```
+
+`cron` accepts standard five-field expressions, shorthands (`every 30m`, `daily 08:00`, `weekdays 09:30`) and `@daily`/`@hourly`. Results are delivered to Telegram when configured, otherwise printed locally.
+
+**Watches** track a page — or one number on it — and alert only when something moves:
+
+```
+ankita › tell me if the signups on https://my.app/dashboard change
+  → watch({"action":"add","url":"...","regex":"([\\d,]+)\\s+users","interval":"1h"})
+    First reading: 1,204
+```
+
+The first read is a baseline, so you get `Signups: 1,204 → 1,227 (+23)` rather than a spurious alert. A `regex` (capture group 1) or a CSS `selector` narrows the watch to a value; without either, the whole page is hashed and any edit is reported. Selector watches go through the scrape tiers, so Cloudflare-protected dashboards still work.
+
+Detection is a hash comparison, not a diff and not a model call: fetch fresh (never from cache), extract the value, `sha256` it, compare with the stored hash. Different hash means changed; if both old and new parse as numbers you also get a delta. Because the regex picks only your number, a rotating banner elsewhere on the page cannot trigger a false alert.
+
+**Alerts are written by the model, not a template.** Instead of `Active users: 1,305 → 1,298 (-7)` you get a sentence:
+
+> Krish, a quick update: "Signups today" just jumped from 335 to 350 🎉, while "Active users" nudged down from 1,305 to 1,298. Great to see more signups coming in, and the dip looks mild — worth a quick glance if you're tracking trends.
+
+Everything that moved in one check becomes **one message**, not one per watch. Alerts run with tools enabled but **read-only**: an alert may fetch the page or search to ground its wording, and mutations are declined outright, so an unattended notification can never change your machine. If the model is unavailable the plain one-liner is sent instead, so a change is never silently dropped. Tune the wording with `WATCH_ALERT_PROMPT`, or set `WATCH_ALERT_LLM=off` to skip the model.
+
+Two knobs worth knowing:
+- **`alert_every`** (default `10m`) rate-limits *notifications*, not checks. A number that moves every 20 seconds is checked every 20 seconds but only messages you once per cooldown, so a busy dashboard cannot flood you.
+- Alerts that decide to look something up take 10–25s instead of ~5s. That is the price of a grounded message.
+- **`ALLOW_PRIVATE_HOSTS=1`** lifts the loopback/LAN block so you can watch your own dev server. Off by default: a page you fetch should not be able to make the agent probe your network.
+
+A dashboard to practise against ships in the repo — it serves numbers that wander up and down:
+
+```bash
+node scripts/demo-dashboard.mjs 4173
+# then, with ALLOW_PRIVATE_HOSTS=1
+ankita › watch http://127.0.0.1:4173, grab "Active users: ([\d,]+)", alert me at most every 10m
+```
+
+**The Telegram inbox** lets you talk to ankita from your phone: text or voice notes in (Whisper), replies out (text, or spoken with `TELEGRAM_VOICE_REPLY=1`). Only chat ids in `TELEGRAM_ALLOWED_CHAT_IDS` are served; anyone else gets their own id back so you can add it.
+
+**Approvals come to your phone.** A DM cannot answer a terminal y/n prompt, so when a requested action would change something, ankita sends you the diff in the chat and parks the turn until you reply:
+
+```
+Permission needed: write_file
+
+notes/plan.md  +12 -0
+
+Reply y = allow once, a = always, n = deny
+(times out in 5 min)
+```
+
+`y` allows it once, `a` allows it for the rest of the session, anything else (or no reply) skips it. The approval reply is consumed, not treated as a new request, and the poll loop keeps running while the turn waits — so replying immediately works. Routines and `--brief` ask the same way instead of being silently denied. Set `AUTO_APPROVE=on` to skip the questions entirely.
+
+`/brief` (or `ankita --brief`) runs the briefing prompt immediately — GitHub inbox, watch changes, anything needing a decision — and prints it or sends it to Telegram.
+
+**Routines can create routines.** The agent has the same `schedule` and `watch` tools you do, so a routine can set up follow-on work for itself. State is shared through one file (`~/.copilot-chat-cli/state.json`) that every writer re-reads before it changes anything, so a watch the agent adds mid-routine is never lost to the daemon's bookkeeping. `MAX_CONCURRENT` (default 4) caps how many routines run at once, so a pile of schedules landing on 08:00 queue instead of stampeding the provider.
+
+### One honest limitation
+
+A Telegram **bot** only receives messages sent *to it*, plus posts in groups and channels it is a member of. It cannot read your personal DMs with other people — that needs a user-account (MTProto) client, which is a different design and a different set of ToS questions. For "DMs and invitations" from the developer side, `github_notifications` covers mentions, review requests and repo invitations. Also use a **separate bot** from any other app: Telegram delivers each update to exactly one long-poller, so two processes sharing a token silently steal each other's messages.
+
 ## Tests
 
 ```bash
 npm test   # node --test "test/*.test.mjs"
 ```
 
-56 tests across `core`, `provider`, `tools`, `voice` and `web`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
+74 tests across `core`, `provider`, `tools`, `voice`, `web` and `proactive`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
 
 ## Security notes
 

@@ -8,6 +8,8 @@ export const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
 export const HISTORY_FILE = path.join(CONFIG_DIR, "history");
 export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 export const AUTOSAVE_NAME = "autosave";
+export const STATE_FILE = path.join(CONFIG_DIR, "state.json");
+export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
 const DEFAULTS = {
   username: "user",
@@ -38,7 +40,18 @@ const DEFAULTS = {
   scrapeRetries: 1,
   pythonBin: "",
   jinaFallback: true,
+  allowPrivateHosts: false,
   pythonBin: "",
+  telegramBotToken: "",
+  telegramChatId: "",
+  telegramAllowedChatIds: "",
+  telegramVoiceReply: false,
+  telegramConfirmTimeout: 300,
+  daemonTick: 20,
+  maxConcurrent: 4,
+  watchAlertLlm: true,
+  watchAlertPrompt: "",
+  briefingPrompt: "",
   groqApiKey: "",
   sttModel: "whisper-large-v3-turbo",
   ttsProvider: "edge",
@@ -172,7 +185,19 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     scrapeRetries: Math.max(0, Math.min(3, Math.floor(Number(pick("SCRAPE_RETRIES") ?? 1)) || 0)),
     pythonBin: pick("PYTHON_BIN") || "",
     jinaFallback: onOff(pick("JINA_FALLBACK"), true),
+    // Opt-in: lets web tools reach loopback/LAN, e.g. your own dev dashboard.
+    allowPrivateHosts: onOff(pick("ALLOW_PRIVATE_HOSTS"), false),
     pythonBin: pick("PYTHON_BIN") || "",
+    telegramBotToken: pick("TELEGRAM_BOT_TOKEN") || "",
+    telegramChatId: pick("TELEGRAM_CHAT_ID") || "",
+    telegramAllowedChatIds: pick("TELEGRAM_ALLOWED_CHAT_IDS") || pick("TELEGRAM_CHAT_ID") || "",
+    telegramVoiceReply: onOff(pick("TELEGRAM_VOICE_REPLY"), false),
+    telegramConfirmTimeout: posInt(pick("TELEGRAM_CONFIRM_TIMEOUT"), 300),
+    maxConcurrent: Math.min(12, posInt(pick("MAX_CONCURRENT"), 4)),
+    watchAlertLlm: onOff(pick("WATCH_ALERT_LLM"), true),
+    watchAlertPrompt: pick("WATCH_ALERT_PROMPT") || "",
+    daemonTick: posInt(pick("DAEMON_TICK"), 20),
+    briefingPrompt: pick("BRIEFING_PROMPT") || "",
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,
     ttsProvider: (() => {
