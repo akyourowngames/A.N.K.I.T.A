@@ -56,7 +56,9 @@ export async function checkWatch(watch, ctx = {}) {
 
   let text;
   try {
-    text = await fetchRun({ url: watch.url, max_chars: 20000 }, ctx);
+    // no_cache: a watch asks what the value is NOW. Reading a cached copy is
+    // how a watch reports "no change" from a page it never actually fetched.
+    text = await fetchRun({ url: watch.url, max_chars: 20000, no_cache: true }, ctx);
   } catch (err) {
     return { error: `fetch failed: ${err.message}` };
   }

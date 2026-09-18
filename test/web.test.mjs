@@ -182,6 +182,31 @@ test('web fetch validates, refuses private hosts, and uses jina when thin', asyn
   assert.match(await fetchRun({ url: 'https://example.com/c' }, {}, bad), /http 404/);
 });
 
+test('no_cache bypasses the fetch cache so watches see the current value', async () => {
+  let calls = 0;
+  const http = async () => {
+    calls++;
+    return {
+      status: 200,
+      headers: { get: () => 'text/plain' },
+      // Over 600 chars, or the thin-page reader fallback fires a second request.
+      text: `value ${calls} ${'x'.repeat(700)}`,
+    };
+  };
+  const url = 'https://example.com/cache-probe'; // must resolve: the SSRF guard runs first
+
+  const first = await fetchRun({ url, no_cache: true }, {}, http);
+  const second = await fetchRun({ url, no_cache: true }, {}, http);
+  assert.equal(calls, 2, 'no_cache must hit the network every time');
+  assert.notEqual(first, second, 'and must not serve a stale body');
+
+  const warm = await fetchRun({ url }, {}, http);
+  assert.equal(calls, 3, 'a normal fetch goes to the network once');
+  const cached = await fetchRun({ url }, {}, http);
+  assert.equal(calls, 3, 'and the second is served from cache');
+  assert.equal(cached, warm + '\n(cached)');
+});
+
 test('fitJson always parses and always fits', () => {
   const blob = [{ a: 'x'.repeat(5000), b: 'y'.repeat(5000) }];
   const out = JSON.parse(fitJson(blob, 1000));
