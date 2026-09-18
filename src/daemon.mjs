@@ -3,8 +3,9 @@ import path from "node:path";
 import { SESSIONS_DIR } from "./config.mjs";
 import { Agent } from "./agent.mjs";
 import { sanitizeMessages } from "./history.mjs";
-import { checkWatch, formatWatchStatus } from "./watcher.mjs";
+import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
+import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
 import {
   transcribeGroq,
   synthesizeEdge,
@@ -61,6 +62,7 @@ export class Daemon {
     logFile = null,
     tickMs = 20000,
     maxConcurrent = null,
+    checker = checkWatch,
     now = () => new Date(),
   }) {
     this.store = store;
@@ -83,6 +85,8 @@ export class Daemon {
       } catch {}
     };
     this.tickMs = Math.max(5000, tickMs);
+    // Injectable so tests can drive the real dispatch/flush path.
+    this.checker = checker;
     this.now = now;
 
     this.stopping = false;
@@ -98,6 +102,9 @@ export class Daemon {
     // be dispatched again by the next tick.
     this.runningRoutines = new Set();
     this.runningWatches = new Set();
+    // Changes collected during a tick, flushed as one composed message.
+    this.alertQueue = [];
+    this.flushing = false;
     // Every routine scheduled for the same minute would otherwise start at
     // once and rate-limit the provider. Serialise the agent turns instead.
     this.maxConcurrent = Math.max(1, Number(maxConcurrent ?? config.maxConcurrent) || 4);
@@ -291,20 +298,64 @@ export class Daemon {
   /** Queues due watch checks and returns immediately (same reason as routines). */
   dispatchWatches() {
     const due = this.store.dueWatches(this.now());
-    let queued = 0;
+    const pending = [];
     for (const watch of due) {
       if (this.runningWatches.has(watch.id)) continue;
       this.runningWatches.add(watch.id);
-      this.chain(`watch:${watch.id}`, () => this.executeWatch(watch));
-      queued++;
+      pending.push(this.chain(`watch:${watch.id}`, () => this.executeWatch(watch)));
     }
-    return queued;
+    // Once this tick's checks settle, report everything in one message. The
+    // flush is not awaited: the poll loop must stay free.
+    if (pending.length) {
+      Promise.allSettled(pending)
+        .then(() => this.flushAlerts())
+        .catch((err) => this.log(`alert flush failed: ${err.message}`));
+    }
+    return due.length;
+  }
+
+  /**
+   * Sends one composed message covering every change from the last check.
+   * Falls back to plain text if the model is unavailable, so a change is
+   * never silently dropped.
+   */
+  async flushAlerts() {
+    if (this.flushing || !this.alertQueue.length) return null;
+    const changes = this.alertQueue.splice(0, this.alertQueue.length);
+    this.flushing = true;
+    try {
+      if (this.config.watchAlertLlm === false) {
+        await this.deliver(renderAlertFallback(changes), { watch: changes[0].watch });
+        return "fallback";
+      }
+      const prompt = buildAlertPrompt({
+        username: this.config.username,
+        agentName: this.config.agentName,
+        changes,
+        template: this.config.watchAlertPrompt,
+      });
+      let text = "";
+      try {
+        text = String((await this.runPrompt(prompt, { purpose: "alert", changes })) || "").trim();
+      } catch (err) {
+        this.log(`alert composition failed (${err.message}); sending plain text`);
+      }
+      const message = text || renderAlertFallback(changes);
+      const mode = text ? "composed" : "fallback";
+      this.log(
+        `alert (${mode}) covering ${changes.length} change(s): ${message.replace(/\s+/g, " ").slice(0, 120)}`
+      );
+      await this.deliver(message, { watch: changes[0].watch });
+      return mode;
+    } finally {
+      this.flushing = false;
+    }
   }
 
   async executeWatch(watch) {
     let result;
     try {
-      result = await checkWatch(watch, { cwd: process.cwd(), config: this.config });
+      result = await this.checker(watch, { cwd: process.cwd(), config: this.config });
     } catch (err) {
       result = { error: err.message };
     } finally {
@@ -326,8 +377,13 @@ export class Daemon {
       }
       this.stats.changesAlerted++;
       this.store.markAlerted(watch.id, this.now().toISOString());
-      const line = formatWatchStatus(recorded.watched, recorded);
-      await this.deliver(`\u{1F514} ${line}\n${watch.url}`, { watch: recorded.watched });
+      // Queue it: the tick reports every change in one message.
+      this.alertQueue.push({
+        watch: recorded.watched,
+        previous: recorded.previous ?? null,
+        value: recorded.value ?? null,
+        delta: recorded.delta ?? null,
+      });
     }
   }
 

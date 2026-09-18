@@ -654,8 +654,14 @@ export async function main() {
       term.line(c.dim("  install: winget install Gyan.FFmpeg   (then restart the terminal)"));
       return false;
     }
+    // Re-read .env: adding a key should not require /reload or a restart.
+    config = loadConfig();
+    if (opts.model) config.model = opts.model;
+    if (opts.maxTokens) config.maxTokens = opts.maxTokens;
+    agent.config = config;
     if (!config.groqApiKey) {
       term.line(c.red("  voice needs GROQ_API_KEY in .env (free key at console.groq.com)."));
+      term.line(c.dim("  add it, then run /voice again - no restart needed."));
       return false;
     }
     return true;
@@ -819,20 +825,25 @@ export async function main() {
   // Telegram instead of being silently denied.
   let daemonRef = null;
 
-  const freshAgent = () =>
+  const freshAgent = (purpose) =>
     new Agent({
       client,
       config,
-      confirm: (toolName, detail) =>
-        daemonRef
-          ? daemonRef.confirmOwner(toolName, detail)
-          : Promise.resolve(Boolean(config.autoApprove)),
+      confirm:
+        purpose === "alert"
+          ? // An unattended alert may look things up, but must never change
+            // anything behind the user's back.
+            async () => false
+          : (toolName, detail) =>
+              daemonRef
+                ? daemonRef.confirmOwner(toolName, detail)
+                : Promise.resolve(Boolean(config.autoApprove)),
       print: () => {},
       write: () => {},
     });
 
-  const runPrompt = async (prompt) => {
-    const worker = freshAgent();
+  const runPrompt = async (prompt, meta = {}) => {
+    const worker = freshAgent(meta.purpose);
     worker.model = agent.model;
     return worker.send(prompt, {});
   };

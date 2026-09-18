@@ -668,7 +668,17 @@ export async function synthesizeGroq({ apiKey, model = DEFAULT_TTS_MODEL, voice 
       }
       throw err;
     }
-    if (!res.ok) throw new Error(`Groq TTS ${res.status}: ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) {
+      const body = await res.text();
+      if (/terms acceptance/i.test(body)) {
+        throw new Error(
+          `Groq TTS model "${model}" needs its terms accepted first - open ` +
+            `https://console.groq.com/playground?model=${encodeURIComponent(model)} and accept them, ` +
+            `or set TTS_PROVIDER=edge (no key needed).`
+        );
+      }
+      throw new Error(`Groq TTS ${res.status}: ${body.slice(0, 200)}`);
+    }
     wavs.push(Buffer.from(await res.arrayBuffer()));
   }
   return concatWav(wavs);

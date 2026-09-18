@@ -96,6 +96,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `TELEGRAM_CONFIRM_TIMEOUT` | `300` | Seconds to wait for a Telegram approval before skipping |
 | `DAEMON_TICK` / `BRIEFING_PROMPT` | `20` / built in | Scheduler tick seconds; what `--brief` asks for |
 | `MAX_CONCURRENT` | `4` | Routines that may run at once (everything at 08:00 would otherwise stampede the API) |
+| `WATCH_ALERT_LLM` / `WATCH_ALERT_PROMPT` | `on` / built in | Model-written alerts; override the wording with placeholders |
 
 ## Tools
 
@@ -201,8 +202,15 @@ The first read is a baseline, so you get `Signups: 1,204 → 1,227 (+23)` rather
 
 Detection is a hash comparison, not a diff and not a model call: fetch fresh (never from cache), extract the value, `sha256` it, compare with the stored hash. Different hash means changed; if both old and new parse as numbers you also get a delta. Because the regex picks only your number, a rotating banner elsewhere on the page cannot trigger a false alert.
 
+**Alerts are written by the model, not a template.** Instead of `Active users: 1,305 → 1,298 (-7)` you get a sentence:
+
+> Krish, a quick update: "Signups today" just jumped from 335 to 350 🎉, while "Active users" nudged down from 1,305 to 1,298. Great to see more signups coming in, and the dip looks mild — worth a quick glance if you're tracking trends.
+
+Everything that moved in one check becomes **one message**, not one per watch. Alerts run with tools enabled but **read-only**: an alert may fetch the page or search to ground its wording, and mutations are declined outright, so an unattended notification can never change your machine. If the model is unavailable the plain one-liner is sent instead, so a change is never silently dropped. Tune the wording with `WATCH_ALERT_PROMPT`, or set `WATCH_ALERT_LLM=off` to skip the model.
+
 Two knobs worth knowing:
 - **`alert_every`** (default `10m`) rate-limits *notifications*, not checks. A number that moves every 20 seconds is checked every 20 seconds but only messages you once per cooldown, so a busy dashboard cannot flood you.
+- Alerts that decide to look something up take 10–25s instead of ~5s. That is the price of a grounded message.
 - **`ALLOW_PRIVATE_HOSTS=1`** lifts the loopback/LAN block so you can watch your own dev server. Off by default: a page you fetch should not be able to make the agent probe your network.
 
 A dashboard to practise against ships in the repo — it serves numbers that wander up and down:
