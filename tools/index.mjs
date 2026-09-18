@@ -15,6 +15,7 @@ import * as webFetch from "./web-fetch.mjs";
 import * as scrapeLow from "./scrape-low.mjs";
 import * as scrapeMid from "./scrape-mid.mjs";
 import * as scrapeHigh from "./scrape-high.mjs";
+import * as project from "./project.mjs";
 import * as schedule from "./schedule.mjs";
 import * as watch from "./watch.mjs";
 import * as githubNotifications from "./github-notifications.mjs";
@@ -41,6 +42,7 @@ const modules = [
   scrapeLow,
   scrapeMid,
   scrapeHigh,
+  project,
   schedule,
   watch,
   githubNotifications,

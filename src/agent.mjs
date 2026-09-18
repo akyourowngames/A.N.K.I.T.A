@@ -11,7 +11,7 @@ toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui
 
 const MAX_TOOL_STEPS = 16;
 
-export function buildSystemPrompt(config, cwd) {
+export function buildSystemPrompt(config, cwd, project = null) {
   const today = new Date().toISOString().slice(0, 10);
   const shell =
     process.platform === "win32" ? "PowerShell 5.1 (so: no && chaining, use ; instead)" : "/bin/sh";
@@ -48,6 +48,7 @@ export function buildSystemPrompt(config, cwd) {
       "When the user asks for something to happen regularly or to be told when something " +
       "changes, set it up with those tools instead of saying you cannot. Scheduled work runs " +
       "in `ankita --daemon`, so mention that if it is not already running.",
+    project ? `\n${project}` : "",
     "Skip preamble and pleasantries. Report failures honestly instead of guessing.",
     config.systemExtra ? `\nAdditional instructions from the user:\n${config.systemExtra}` : "",
   ]
@@ -56,7 +57,7 @@ export function buildSystemPrompt(config, cwd) {
 }
 
 export class Agent {
-  constructor({ client, config, confirm, print = console.log, write = (s) => process.stdout.write(s) }) {
+  constructor({ client, config, confirm, print = console.log, write = (s) => process.stdout.write(s), project = "" }) {
     this.client = client;
     this.config = config;
     this.confirm = confirm;
@@ -68,21 +69,30 @@ export class Agent {
     this.useTools = config.tools;
     this.autoApprove = config.autoApprove;
     this.cwd = process.cwd();
+    // Bounded block describing the active project, or "" when none is set.
+    this.project = project || "";
     this.abort = null;
     this.state = { todos: [], jobs: new Map() };
     this.contextWindow = config.contextWindow || 32768;
     this.sessionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.turnUsage = { ...this.sessionUsage };
-    this.messages = [{ role: "system", content: buildSystemPrompt(config, this.cwd) }];
+    this.messages = [{ role: "system", content: buildSystemPrompt(config, this.cwd, this.project) }];
   }
 
   clear() {
-    this.messages = [{ role: "system", content: buildSystemPrompt(this.config, this.cwd) }];
+    this.messages = [{ role: "system", content: buildSystemPrompt(this.config, this.cwd, this.project) }];
   }
 
   rebase() {
     this.cwd = process.cwd();
-    this.messages[0] = { role: "system", content: buildSystemPrompt(this.config, this.cwd) };
+    this.messages[0] = { role: "system", content: buildSystemPrompt(this.config, this.cwd, this.project) };
+  }
+
+  /** Point the agent at a different project (or none) and rebuild the prompt. */
+  setProject(block) {
+    this.project = block || "";
+    this.rebase();
+    return this;
   }
 
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */

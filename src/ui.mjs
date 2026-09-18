@@ -135,7 +135,7 @@ export class Terminal {
   }
 }
 
-export function banner({ agentName, username, model, tools, autoApprove, cwd, envPath, count }) {
+export function banner({ agentName, username, model, tools, autoApprove, cwd, envPath, count, project = null }) {
   const width = 58;
   const pad = (s, len = width) => s + " ".repeat(Math.max(0, len - visibleLen(s)));
   const visibleLen = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "").length;
@@ -143,6 +143,7 @@ export function banner({ agentName, username, model, tools, autoApprove, cwd, en
   const rows = [
     `agent      ${agentName}`,
     `user       ${username}`,
+    project ? `project    ${project}` : null,
     `model      ${model}`,
     `tools      ${tools ? "on" : "off"}${autoApprove ? "  (auto-approve)" : ""}`,
     `cwd        ${cwd}`,
@@ -181,6 +182,8 @@ export function helpText({ agentName }) {
   ${c.cyan("/sessions")}          list saved conversations
   ${c.cyan("/paste")}             paste multiple lines (end with a single .)
   ${c.cyan("/usage")}             show token usage for this turn and session
+  ${c.cyan("/project")} [name]    switch project (no name = show the active one)
+  ${c.cyan("/projects")}          list the projects I know about
   ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you
   ${c.cyan("/routines")}          scheduled prompts and their last result
   ${c.cyan("/watches")}           pages being watched and their last reading

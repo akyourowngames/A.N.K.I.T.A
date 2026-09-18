@@ -35,6 +35,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 - **Act** through 20 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
+- **Knows your projects**: tell her about one — a folder, a server, a client — and she keeps the details, the conventions and the open questions, and stops asking you the same things
 - **Works while you are away**: `ankita --daemon` runs scheduled routines, watches pages for changes, and answers Telegram messages — see [The proactive assistant](#the-proactive-assistant)
 - **Remember**: named sessions, autosave after every turn, `--continue`, sanitized restores, persistent history, tab-completion
 - **Run anywhere**: interactive REPL, one-shot `-p`, script-friendly `--plain` / `--json`, or any OpenAI-compatible endpoint (Ollama, LM Studio, OpenRouter, …)
@@ -63,7 +64,7 @@ ankita [options] [message...]
       --brief           print a briefing now and exit
 ```
 
-Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /load /sessions /paste /usage /mic /voice /say /speak /voices /brief /routines /watches /daemon /clear /exit`.
+Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /load /sessions /paste /usage /mic /voice /say /speak /voices /brief /routines /watches /daemon /project /projects /clear /exit`.
 
 ## Configuration
 
@@ -114,6 +115,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
+| `project` | Add/list/show/switch projects; records what each one is, where it lives, how you like it done |
 | `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
 | `watch` | Track a page or a number on it (signups, logins, prices) and report changes |
 | `github_notifications` | Your GitHub inbox: mentions, review requests, invitations |
@@ -175,6 +177,45 @@ test/                 node:test suite — core, provider, tools, voice, web
 **SSRF guard.** Every web tool resolves the host and refuses loopback, private, link-local and other non-global addresses, failing closed when DNS doesn't resolve. Redirect chains are re-checked hop by hop, on both the Node and Python sides.
 
 **Voice.** Mic audio is captured with ffmpeg (16kHz mono WAV), transcribed by Groq Whisper. Replies are stripped of code/markdown and spoken — via Edge neural TTS over a raw-TLS WebSocket that reproduces the official handshake (`Sec-MS-GEC` time-windowed token, `ConnectionId`, MUID cookie), or via Groq Orpheus (sentence-chunked, WAV-joined) when selected.
+
+## Projects
+
+A project is anything you keep coming back to: a folder or repo, a server and its database, a client you do work for — or all three. Only a **name** is required to start, and she asks for the rest instead of inventing it:
+
+```
+you › add this to our project
+  → project({"action":"add"})
+ankita › Which project shall I add? I don't know any yet.
+
+you › zumba, it's my telegram assistant at C:\Users\anime\zumba
+  → project({"action":"add","name":"zumba","path":"C:\\Users\\anime\\zumba"})
+    Added project "zumba" and made it the active project.
+    Worth asking about: what it is, which database, which servers, how you like things done.
+ankita › Saved. What is zumba, and does it use a database?
+```
+
+The rest fills in as you go, with `update` or just by telling her:
+
+```
+you › remember we use pnpm here, not npm
+  → project({"action":"update","name":"zumba","convention":"pnpm not npm"})
+```
+
+Once a project is active, a short block carries into her system prompt, so she simply knows:
+
+```
+Active project: zumba (zumba)
+  what it is: My Telegram personal assistant (Python/FastAPI)
+  path: C:\Users\anime\zumba
+  conventions: pnpm not npm; edge-tts for voice
+  databases: sqlite memory
+```
+
+Ask *"which project am I on and how do I like things done here?"* and she answers without touching a single tool. `/project <name>` switches, `/projects` lists, `/project` shows the active one, and switching `cd`s into the project's path if it has one. Adding a project makes it active automatically — you were clearly about to work on it.
+
+Databases and environments record a credential **name**, never a value — nothing secret is stored. `project action=forget` removes the record and touches nothing on disk.
+
+The block is capped (200-char summary, 5 conventions of 60 chars) because it is paid on every turn alongside the tool specs.
 
 ## The proactive assistant
 
