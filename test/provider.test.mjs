@@ -38,6 +38,20 @@ test('invalid positive settings fall back to usable defaults', () => {
   assert.equal(config.outputCostPerMillion, null);
 });
 
+test('gpt-4o is preferred over gpt-4.1 for auto-pick (measured throughput)', () => {
+  const models = [
+    { id: 'gpt-4.1', tools: true },
+    { id: 'gpt-4o', tools: true },
+    { id: 'gpt-4o-mini', tools: true },
+  ];
+  assert.equal(provider.pickModel(models, '', true).id, 'gpt-4o');
+  // Explicit choice still wins over the preference order.
+  assert.equal(provider.pickModel(models, 'gpt-4.1', true).id, 'gpt-4.1');
+  // Falls through to the next preference when 4o is unavailable.
+  const without4o = models.filter((m) => m.id !== 'gpt-4o');
+  assert.equal(provider.pickModel(without4o, '', true).id, 'gpt-4.1');
+});
+
 test('model selection respects tool support and server default without stale preferences', () => {
   assert.equal(typeof provider.pickModel, 'function');
   const models = [{ id: 'chat-only', tools: false }, { id: 'first', tools: null }, { id: 'preferred', tools: true, default: true }];

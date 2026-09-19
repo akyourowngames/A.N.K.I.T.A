@@ -1,5 +1,7 @@
-import { STATE_FILE } from "../src/config.mjs";
+import { STATE_FILE, PROJECTS_FILE } from "../src/config.mjs";
 import { RoutineStore, describeWatch } from "../src/routines.mjs";
+import { ProjectStore, resolveProjectRef } from "../src/projects.mjs";
+import { tagNote } from "./schedule.mjs";
 import { checkWatch } from "../src/watcher.mjs";
 import { formatDuration } from "../src/cron.mjs";
 
@@ -32,6 +34,11 @@ export const parameters = {
       description: "Optional CSS selector to read instead of the whole page (uses the scrape tiers).",
     },
     id: { type: "string", description: "Watch id or name (for remove/check/enable/disable)." },
+    project: {
+      type: "string",
+      description:
+        "Project to attach this watch to, by name or id. Defaults to the active project. Use 'none' to leave it unattached.",
+    },
   },
   required: ["action"],
 };
@@ -55,6 +62,8 @@ export async function run(args = {}, ctx = {}) {
         return `Error: invalid regex: ${err.message}`;
       }
     }
+    const resolved = resolveProjectRef(new ProjectStore(PROJECTS_FILE).load(), args.project, ctx.projectId);
+    if (!resolved.ok) return `Error: ${resolved.error}`;
     try {
       const watch = s.addWatch({
         name: args.name || new URL(args.url).hostname,
@@ -63,6 +72,7 @@ export async function run(args = {}, ctx = {}) {
         regex: args.regex || "",
         interval: args.interval || "1h",
         alertEvery: args.alert_every || "10m",
+        projectId: resolved.projectId,
       });
       const first = await checkWatch(watch, ctx);
       if (first.error) {
@@ -71,8 +81,9 @@ export async function run(args = {}, ctx = {}) {
       }
       s.recordWatchCheck(watch.id, { value: first.value, text: first.text });
       return (
-        `Watching "${watch.name}" (${watch.id}) every ${formatDuration(watch.intervalMs)}\n` +
-        `First reading: ${first.value ?? "(page content tracked)"}\n` +
+        `Watching "${watch.name}" (${watch.id}) every ${formatDuration(watch.intervalMs)}` +
+        tagNote(watch.projectId) +
+        `\nFirst reading: ${first.value ?? "(page content tracked)"}\n` +
         `Alerts arrive when it changes; start the loop with: ankita --daemon`
       );
     } catch (err) {
@@ -82,7 +93,10 @@ export async function run(args = {}, ctx = {}) {
 
   if (action === "list") {
     if (!s.watches.length) return "No watches configured.";
-    return s.watches.map(describeWatch).join("\n") + "\n\n(columns: state, id, interval, last value, name)";
+    return (
+      s.watches.map(describeWatch).join("\n") +
+      "\n\n(columns: state, id, interval, last value, name; [project] at the end when attached)"
+    );
   }
 
   if (action === "check") {

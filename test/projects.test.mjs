@@ -85,6 +85,24 @@ test('update merges fields and a single convention appends without wiping the li
   assert.ok(store.find('zumba').conventions.length <= 5, 'conventions capped');
 });
 
+test('a long convention is stored intact, and only the prompt block is trimmed', (t) => {
+  const { store } = tmpStore(t);
+  // 76 chars - longer than the old 60-char write-time cap that silently
+  // truncated a real value ("…edge-tts for voice, scrapling for scraping").
+  const long = 'python + fastapi, pnpm for the frontend; edge-tts for voice, scrapling for scraping';
+  store.add({ name: 'zumba', conventions: [long] });
+  assert.equal(store.find('zumba').conventions[0], long, 'storage must keep every character');
+
+  // It also survives an update round-trip, which is where the truncation bit.
+  store.update('zumba', { conventions: [long] });
+  assert.equal(store.find('zumba').conventions[0], long);
+
+  store.use('zumba');
+  const block = store.promptBlock();
+  assert.ok(block.length < 700, `block still bounded, got ${block.length}`);
+  assert.ok(block.includes('python + fastapi'), 'the start is shown');
+});
+
 test('update only touches the fields it is given', (t) => {
   const { store } = tmpStore(t);
   store.add({ name: 'zumba', summary: 'keep me', client: 'acme' });

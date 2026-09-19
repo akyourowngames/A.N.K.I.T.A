@@ -30,6 +30,43 @@ export const PROJECT_FIELDS = [
   "databases",
 ];
 
+export const STATUSES = ["active", "paused", "shipped", "on-hold"];
+
+// Contacts and links are small, but "small" plus "forever" is unbounded growth.
+export const MAX_CONTACTS = 20;
+export const MAX_LINKS = 40;
+
+// Remembered things. Newest kept; the tool says when older entries were dropped.
+export const MAX_NOTES = 50;
+export const MAX_DECISIONS = 50;
+export const MAX_TODOS = 100;
+
+/** "6d ago" reads like a memory; "2026-09-12T09:14:22Z" reads like a database. */
+export function since(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const secs = Math.max(0, Math.floor((now - t) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+function nextTodoId(todos = []) {
+  let max = 0;
+  for (const todo of todos) {
+    const m = /^t(\d+)$/.exec(String(todo.id || ""));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `t${max + 1}`;
+}
+
 /** Questions worth asking, in the order they usually matter. */
 const INTAKE_QUESTIONS = [
   ["summary", "what it is"],
@@ -56,19 +93,25 @@ function uniqueId(base, taken) {
   return id;
 }
 
-function cleanList(value, cap, itemCap = 0) {
+function cleanList(value, cap) {
   if (value === undefined || value === null) return undefined;
   const list = Array.isArray(value) ? value : [value];
   return list
     .map((v) => String(v).trim())
     .filter(Boolean)
-    .map((v) => (itemCap ? v.slice(0, itemCap) : v))
     .slice(0, cap);
 }
 
-/** Every entry point must respect the same limits, or the prompt block grows. */
+/**
+ * Caps how many conventions are kept, never their length.
+ *
+ * A length cap here would silently truncate what the user wrote - it happened:
+ * "…edge-tts for voice, scrapling for scraping" was stored as "…edge-tts for
+ * voice,". Storage keeps the real value; the prompt block is where the size
+ * bound belongs.
+ */
 function normalizeConventions(value) {
-  return cleanList(value, MAX_CONVENTIONS, CONVENTION_CAP) || [];
+  return cleanList(value, MAX_CONVENTIONS) || [];
 }
 
 export class ProjectStore {
@@ -143,6 +186,13 @@ export class ProjectStore {
       conventions: normalizeConventions(conventions),
       environments: Array.isArray(environments) ? environments.slice(0, 10) : [],
       databases: Array.isArray(databases) ? databases.slice(0, 10) : [],
+      status: "active",
+      archived: false,
+      contacts: [],
+      links: [],
+      notes: [],
+      decisions: [],
+      todos: [],
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
     };
@@ -190,6 +240,170 @@ export class ProjectStore {
     }
     this.save();
     return project;
+  }
+
+  /**
+   * Renames the display name only. The id is a stable handle that routines and
+   * watches are tagged with, so it must not move underneath them.
+   */
+  renameProject(idOrName, newName) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const label = String(newName ?? "").trim();
+    if (!project || !label) return null;
+    project.name = label;
+    this.save();
+    return project;
+  }
+
+  setStatus(idOrName, status) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(status ?? "").trim().toLowerCase();
+    if (!project) return null;
+    if (!STATUSES.includes(value)) return { error: `status must be one of ${STATUSES.join(", ")}` };
+    project.status = value;
+    this.save();
+    return project;
+  }
+
+  setArchived(idOrName, archived = true) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    project.archived = Boolean(archived);
+    // An archived project should not also be the active one.
+    if (project.archived && this.data.active === project.id) this.data.active = null;
+    this.save();
+    return project;
+  }
+
+  addContact(idOrName, { name, role, email } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const label = String(name ?? "").trim();
+    if (!project) return null;
+    if (!label) return { error: "a contact needs a name" };
+
+    // Only the fields actually supplied are written: defaulting role/email to
+    // "" and assigning anyway would wipe a value the caller never mentioned.
+    const patch = { name: label };
+    if (role !== undefined) patch.role = String(role).trim();
+    if (email !== undefined) patch.email = String(email).trim();
+
+    project.contacts = [...(project.contacts || [])];
+    const existing = project.contacts.find((c) => c.name.toLowerCase() === label.toLowerCase());
+    if (existing) Object.assign(existing, patch);
+    else project.contacts.push({ name: label, role: patch.role ?? "", email: patch.email ?? "" });
+
+    project.contacts = project.contacts.slice(-MAX_CONTACTS);
+    this.save();
+    return project;
+  }
+
+  addLink(idOrName, { label, url } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    const target = String(url ?? "").trim();
+    if (!target) return { error: "a link needs a url" };
+    try {
+      const parsed = new URL(target);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { error: "link url must be http(s)" };
+      }
+    } catch {
+      return { error: `not a valid url: ${target}` };
+    }
+    project.links = [...(project.links || []), { label: String(label || target).trim(), url: target }].slice(-MAX_LINKS);
+    this.save();
+    return project;
+  }
+
+  /* ------------------------------- memory -------------------------------- */
+
+  addNote(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a note needs some text" };
+    project.notes = [...(project.notes || []), { at: new Date().toISOString(), text: value }].slice(-MAX_NOTES);
+    this.save();
+    return project;
+  }
+
+  addDecision(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a decision needs some text" };
+    project.decisions = [...(project.decisions || []), { at: new Date().toISOString(), text: value }].slice(
+      -MAX_DECISIONS
+    );
+    this.save();
+    return project;
+  }
+
+  addTodo(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a todo needs some text" };
+    project.todos = [
+      ...(project.todos || []),
+      { id: nextTodoId(project.todos), at: new Date().toISOString(), text: value, done: false, doneAt: null },
+    ].slice(-MAX_TODOS);
+    this.save();
+    return project;
+  }
+
+  /**
+   * Closes one todo. `ref` is a t-id, a 1-based position among the *open*
+   * items, or a substring of the text. Ambiguity is reported, never guessed.
+   */
+  completeTodo(idOrName, ref) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    const todos = project.todos || [];
+    const open = todos.filter((t) => !t.done);
+    if (!open.length) return { error: "nothing is open" };
+
+    const key = String(ref ?? "").trim();
+    if (!key) return { error: "which one? pass an id, a number, or some of the text" };
+
+    let target = todos.find((t) => t.id === key && !t.done);
+    if (!target && /^\d+$/.test(key)) {
+      const n = Number(key);
+      if (n >= 1 && n <= open.length) target = open[n - 1];
+      else return { error: `there is no open item ${n} (${open.length} open)` };
+    }
+    if (!target) {
+      const matches = todos.filter((t) => !t.done && t.text.toLowerCase().includes(key.toLowerCase()));
+      if (matches.length === 1) target = matches[0];
+      else if (matches.length > 1) {
+        return { error: `"${key}" matches ${matches.length}: ${matches.map((t) => `${t.id} ${t.text}`).join(" | ")}` };
+      }
+    }
+    if (!target) return { error: `no open item matches "${key}"` };
+
+    target.done = true;
+    target.doneAt = new Date().toISOString();
+    this.save();
+    return { project, closed: target };
+  }
+
+  memoryCounts(project) {
+    const todos = project?.todos || [];
+    return {
+      notes: (project?.notes || []).length,
+      decisions: (project?.decisions || []).length,
+      todos: todos.length,
+      open: todos.filter((t) => !t.done).length,
+    };
   }
 
   use(idOrName) {
@@ -251,6 +465,33 @@ export class ProjectStore {
   }
 }
 
+/**
+ * Works out which project something new belongs to.
+ *
+ *   project: "zumba"  -> that project (by id or name)
+ *   project: "none"   -> explicitly unattached
+ *   omitted           -> whatever is active right now
+ *
+ * Returns { ok, projectId } or { ok: false, error } for an unknown name.
+ */
+export function resolveProjectRef(store, asked, activeId = null) {
+  const name = String(asked ?? "").trim();
+  if (!name) return { ok: true, projectId: activeId || null };
+  if (name.toLowerCase() === "none") return { ok: true, projectId: null };
+
+  const found = store.find(name);
+  if (found) return { ok: true, projectId: found.id, projectName: found.name };
+
+  const known = store.projects.map((p) => p.id);
+  return {
+    ok: false,
+    error:
+      `no project "${name}". ` +
+      (known.length ? `Known: ${known.join(", ")}. ` : "No projects exist yet. ") +
+      "Use 'none' to leave it unattached.",
+  };
+}
+
 export function describeProject(project, activeId) {
   const mark = project.id === activeId ? "*" : " ";
   const where = project.path || project.client || "-";
@@ -258,9 +499,12 @@ export function describeProject(project, activeId) {
     project.databases?.length ? `${project.databases.length} db` : null,
     project.environments?.length ? `${project.environments.length} env` : null,
   ].filter(Boolean);
+  const marks = [];
+  if (project.status && project.status !== "active") marks.push(`<${project.status}>`);
+  if (project.archived) marks.push("<archived>");
   return `${mark} ${project.id.padEnd(18)} ${String(where).padEnd(34)} ${(project.summary || "").slice(0, 40)}${
     counts.length ? "  (" + counts.join(", ") + ")" : ""
-  }`;
+  }${marks.length ? "  " + marks.join(" ") : ""}`;
 }
 
 export function describeProjectFull(project, store) {
@@ -281,6 +525,13 @@ export function describeProjectFull(project, store) {
   for (const env of project.environments || []) {
     lines.push(`  environment  ${env.name || "?"}${env.host ? ` at ${env.host}` : ""}`);
   }
+  for (const c of project.contacts || []) {
+    lines.push(`  contact      ${[c.name, c.role, c.email].filter(Boolean).join(" · ")}`);
+  }
+  for (const l of project.links || []) {
+    lines.push(`  link         ${l.label}  ${l.url}`);
+  }
+  lines.push(`  status       ${project.status || "active"}${project.archived ? "  (archived)" : ""}`);
   lines.push(`  created      ${project.createdAt}`);
   if (project.lastUsedAt) lines.push(`  last used    ${project.lastUsedAt}`);
   if (store && store.activeId === project.id) lines.push(`  (active)`);

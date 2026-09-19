@@ -32,7 +32,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 ## What it can do
 
 - **Chat** with streaming markdown replies (syntax-highlighted code boxes, tables) that re-render live without garbling, even on long answers
-- **Act** through 20 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
+- **Act** through 24 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
 - **Knows your projects**: tell her about one — a folder, a server, a client — and she keeps the details, the conventions and the open questions, and stops asking you the same things
@@ -115,7 +115,8 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
-| `project` | Add/list/show/switch projects; records what each one is, where it lives, how you like it done |
+| `project` | Add/list/show/switch/rename/archive projects; records what each one is, where it lives, how you like it done, who the client is |
+| `project_memory` | Remember notes, decisions and open todos per project; `log` shows the timeline, `brief` hands over a catch-up |
 | `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
 | `watch` | Track a page or a number on it (signups, logins, prices) and report changes |
 | `github_notifications` | Your GitHub inbox: mentions, review requests, invitations |
@@ -215,7 +216,32 @@ Ask *"which project am I on and how do I like things done here?"* and she answer
 
 Databases and environments record a credential **name**, never a value — nothing secret is stored. `project action=forget` removes the record and touches nothing on disk.
 
-The block is capped (200-char summary, 5 conventions of 60 chars) because it is paid on every turn alongside the tool specs.
+### It remembers what you did together
+
+Notes, decisions and open items, each dated, so a project has a state beyond its fields:
+
+```
+you › remember we chose SQLite because there's nothing to run
+  → project_memory({"action":"decide","text":"chose SQLite - single writer, nothing to run"})
+ankita › Decision recorded on "Zumba Bot". (2 notes, 3 decisions, 2 open)
+
+you › where does zumba stand?
+  → project_memory({"action":"brief"})
+ankita › The Zumba Bot project is progressing well, Krish. It's your local-first Telegram
+         assistant... Voice now works end to end. SQLite was chosen for memory, consistent
+         with staying local-first. Open: rotate the exposed Groq key, wire project tags into
+         the daemon worker. Worth deciding next is which environments it runs on - still unknown.
+```
+
+`log` is the raw timeline; `brief` assembles everything — tasks, decisions, recent notes, plus that project's own routines and watches — and the **model** writes the catch-up from it. A tool can't call a model, so `brief` returns the material and the writing happens in the reply. That also means it only costs tokens when you ask.
+
+`done` closes an item by id (`t2`), by its number among the open ones, or by part of its text — and refuses to guess when a reference is ambiguous, listing the candidates instead.
+
+**Memory never enters the system prompt.** Only the name, summary, path and conventions do. Ten notes later the block is still the same size — otherwise every turn would pay for history you didn't ask for. This is exactly why `brief` exists as the deliberate, opt-in way to pull memory into context.
+
+Lists are capped (50 notes, 50 decisions, 100 todos, newest kept) and `show` says when older entries were dropped.
+
+The block is capped (200-char summary, 5 conventions) because it is paid on every turn alongside the tool specs.
 
 ## The proactive assistant
 
@@ -291,7 +317,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-74 tests across `core`, `provider`, `tools`, `voice`, `web` and `proactive`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
+153 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive` and `projects`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
 
 ## Security notes
 

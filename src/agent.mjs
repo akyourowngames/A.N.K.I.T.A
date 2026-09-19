@@ -57,7 +57,15 @@ export function buildSystemPrompt(config, cwd, project = null) {
 }
 
 export class Agent {
-  constructor({ client, config, confirm, print = console.log, write = (s) => process.stdout.write(s), project = "" }) {
+  constructor({
+    client,
+    config,
+    confirm,
+    print = console.log,
+    write = (s) => process.stdout.write(s),
+    project = "",
+    projectId = null,
+  }) {
     this.client = client;
     this.config = config;
     this.confirm = confirm;
@@ -71,6 +79,8 @@ export class Agent {
     this.cwd = process.cwd();
     // Bounded block describing the active project, or "" when none is set.
     this.project = project || "";
+    // Id of that project, so tools can tag what they create. Null when none.
+    this.projectId = this.project ? projectId || null : null;
     this.abort = null;
     this.state = { todos: [], jobs: new Map() };
     this.contextWindow = config.contextWindow || 32768;
@@ -88,9 +98,14 @@ export class Agent {
     this.messages[0] = { role: "system", content: buildSystemPrompt(this.config, this.cwd, this.project) };
   }
 
-  /** Point the agent at a different project (or none) and rebuild the prompt. */
-  setProject(block) {
+  /**
+   * Point the agent at a different project (or none) and rebuild the prompt.
+   * `id` is the stable handle tools tag new routines/watches with; `block` is
+   * the rendered text that goes into the system prompt.
+   */
+  setProject(block, id = null) {
     this.project = block || "";
+    this.projectId = this.project ? id || null : null;
     this.rebase();
     return this;
   }
@@ -246,6 +261,8 @@ export class Agent {
       width: process.stdout.columns || 80,
       signal: this.abort?.signal,
       state: this.state,
+      // Lets the schedule/watch tools default a new entry to the active project.
+      projectId: this.projectId,
     };
 
     const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;

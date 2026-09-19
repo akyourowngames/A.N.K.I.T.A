@@ -1,5 +1,6 @@
-import { STATE_FILE } from "../src/config.mjs";
+import { STATE_FILE, PROJECTS_FILE } from "../src/config.mjs";
 import { RoutineStore, describeRoutine } from "../src/routines.mjs";
+import { ProjectStore, resolveProjectRef } from "../src/projects.mjs";
 import { describeCron, normalizeSchedule, parseCron } from "../src/cron.mjs";
 
 export const name = "schedule";
@@ -23,6 +24,11 @@ export const parameters = {
       description: "What to ask when it fires. Put every instruction here; nothing else is passed.",
     },
     id: { type: "string", description: "Routine id or name (for remove/enable/disable/run)." },
+    project: {
+      type: "string",
+      description:
+        "Project to attach this routine to, by name or id. Defaults to the active project. Use 'none' to leave it unattached.",
+    },
   },
   required: ["action"],
 };
@@ -31,6 +37,11 @@ export const needsApproval = false;
 
 function store() {
   return new RoutineStore(STATE_FILE).load();
+}
+
+/** Small note appended to results so the tag is never silent. */
+export function tagNote(projectId) {
+  return projectId ? `\nAttached to project "${projectId}".` : "\nNot attached to any project.";
 }
 
 export function run(args = {}, ctx = {}) {
@@ -43,13 +54,20 @@ export function run(args = {}, ctx = {}) {
     if (!parseCron(args.cron)) {
       return `Error: could not parse schedule "${args.cron}". Try "0 8 * * *", "daily 08:00", "weekdays 09:30" or "every 2h".`;
     }
+    const resolved = resolveProjectRef(new ProjectStore(PROJECTS_FILE).load(), args.project, ctx.projectId);
+    if (!resolved.ok) return `Error: ${resolved.error}`;
     try {
       const routine = s.addRoutine({
         name: args.name || args.cron,
         cron: args.cron,
         prompt: args.prompt,
+        projectId: resolved.projectId,
       });
-      return `Scheduled "${routine.name}" (${routine.id}) - ${describeCron(routine.cron)}\nIt will run in the background; start one with: ankita --daemon`;
+      return (
+        `Scheduled "${routine.name}" (${routine.id}) - ${describeCron(routine.cron)}` +
+        tagNote(routine.projectId) +
+        "\nIt will run in the background; start one with: ankita --daemon"
+      );
     } catch (err) {
       return `Error: ${err.message}`;
     }
@@ -57,7 +75,10 @@ export function run(args = {}, ctx = {}) {
 
   if (action === "list") {
     if (!s.routines.length) return "No routines scheduled.";
-    return s.routines.map(describeRoutine).join("\n") + "\n\n(ids are the second column)";
+    return (
+      s.routines.map(describeRoutine).join("\n") +
+      "\n\n(ids are the second column; [project] at the end when attached)"
+    );
   }
 
   if (action === "remove" || action === "enable" || action === "disable") {
