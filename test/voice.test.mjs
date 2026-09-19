@@ -1,6 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+// Isolate the config layer BEFORE anything loads it. Without this the suite
+// reads the machine's real ~/.copilot-chat-cli/config.env, so the defaults
+// assertions below would pass or fail depending on whose computer it runs on.
+const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-voice-cfg-'));
+process.env.CONFIG_DIR = SANDBOX;
+test.after(() => fs.rmSync(SANDBOX, { recursive: true, force: true }));
+
+const {
   stripForSpeech,
   buildSsml,
   escapeXml,
@@ -15,8 +26,8 @@ import {
   edgeWsTarget,
   DEFAULT_STT_MODEL,
   DEFAULT_TTS_MODEL,
-} from '../src/voice.mjs';
-import { loadConfig } from '../src/config.mjs';
+} = await import('../src/voice.mjs');
+const { loadConfig } = await import('../src/config.mjs');
 
 test('speech text drops code fences but keeps inline code', () => {
   const out = stripForSpeech('Here is how:\n```js\nconst x = 1;\n```\nUse `npm test` to verify.');
@@ -92,7 +103,9 @@ test('groq tts surfaces other failures verbatim', async (t) => {
 
 test('voice config defaults and rate validation', () => {
   const config = loadConfig('definitely-not-a-real-file.env');
-  assert.equal(config.groqApiKey, '');
+  // Assert falsiness rather than emptiness: `assert.equal(key, '')` prints the
+  // actual value on failure, which would put a real API key in the test log.
+  assert.ok(!config.groqApiKey, 'no key is set by default');
   assert.equal(config.sttModel, DEFAULT_STT_MODEL);
   assert.equal(config.ttsProvider, 'edge');
   assert.equal(config.ttsModel, DEFAULT_TTS_MODEL);
