@@ -11,7 +11,7 @@ toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui
 
 const MAX_TOOL_STEPS = 16;
 
-export function buildSystemPrompt(config, cwd, project = null) {
+export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) {
   const today = new Date().toISOString().slice(0, 10);
   const shell =
     process.platform === "win32" ? "PowerShell 5.1 (so: no && chaining, use ; instead)" : "/bin/sh";
@@ -31,6 +31,10 @@ export function buildSystemPrompt(config, cwd, project = null) {
     ...CATEGORIES.map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
     "For anything time-sensitive or factual about the world, load `web` with find_tools and search " +
       "rather than guessing.",
+    mcpServers.length
+      ? "Connected MCP servers provide extra tools you can call directly, named mcp__<server>__<tool>:\n" +
+        mcpServers.map((s) => `  ${s.id}: ${s.tools.join(", ")}`).join("\n")
+      : "",
     "",
     "You are NOT confined to the working directory. Any absolute path works, and every path a tool " +
       "prints (including search results outside the working directory) is directly usable in your next " +
@@ -67,6 +71,7 @@ export class Agent {
     project = "",
     projectId = null,
     deferTools = true,
+    mcp = null,
   }) {
     this.client = client;
     this.config = config;
@@ -89,19 +94,32 @@ export class Agent {
     // One-shot agents (routines, briefings, alerts) always send everything:
     // there is no session to amortise a discovery round trip across.
     this.deferTools = deferTools !== false;
+    // A reference, not ownership: the manager is process-level so every
+    // freshAgent worker shares the same live server processes.
+    this.mcp = mcp;
     this.contextWindow = config.contextWindow || 32768;
     this.sessionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.turnUsage = { ...this.sessionUsage };
-    this.messages = [{ role: "system", content: buildSystemPrompt(config, this.cwd, this.project) }];
+    this.messages = [
+      { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || []) },
+    ];
   }
 
   clear() {
-    this.messages = [{ role: "system", content: buildSystemPrompt(this.config, this.cwd, this.project) }];
+    this.messages = [
+      {
+        role: "system",
+        content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || []),
+      },
+    ];
   }
 
   rebase() {
     this.cwd = process.cwd();
-    this.messages[0] = { role: "system", content: buildSystemPrompt(this.config, this.cwd, this.project) };
+    this.messages[0] = {
+      role: "system",
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || []),
+    };
   }
 
   /**
@@ -126,10 +144,31 @@ export class Agent {
    */
   currentSpecs() {
     if (!this.useTools) return [];
-    if (!this.deferTools) return specs;
-    const active = this.state?.activatedTools;
-    if (!active || active.size === 0) return coreSpecs;
-    return [...coreSpecs, ...specsFor([...active])];
+
+    // Which static branch applies is independent of MCP. A deferTools:false
+    // worker returns the whole static catalog without ever consulting
+    // activatedTools, so hanging MCP specs off that branch would make MCP
+    // invisible to daemon workers - the opposite of what is wanted.
+    let base;
+    if (!this.deferTools) {
+      base = specs;
+    } else {
+      const active = this.state?.activatedTools;
+      base = active && active.size ? [...coreSpecs, ...specsFor([...active])] : coreSpecs;
+    }
+
+    const mcp = this.mcp ? this.mcp.specs() : [];
+    return mcp.length ? [...base, ...mcp] : base;
+  }
+
+  /** Rebuild messages[0] so the model sees the current tool groups. */
+  refreshPrompt() {
+    if (!this.messages?.length) return this;
+    this.messages[0] = {
+      role: "system",
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp ? this.mcp.summaries() : []),
+    };
+    return this;
   }
 
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */
@@ -265,7 +304,39 @@ export class Agent {
     return { content, toolCalls: acc.filter(Boolean) };
   }
 
+  /**
+   * An MCP tool call: namespaced, resolved against the live connections, and
+   * approved according to the server's own hints. Routed here before the local
+   * registry is consulted, since no local tool starts with the prefix.
+   */
+  async runMcpToolCall(call) {
+    const name = call.function.name;
+    const found = this.mcp?.findTool(name);
+    if (!found) return `Error: no connected MCP server provides "${name}".`;
+
+    let args;
+    try {
+      args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+    } catch (err) {
+      return `Error: arguments were not valid JSON (${err.message}).`;
+    }
+
+    if (this.mcp.needsApproval(name) && !this.autoApprove) {
+      const detail = this.mcp.approvalDetail(name, args);
+      const ok = await this.confirm?.(name, detail);
+      if (!ok) return "The user denied permission for this action. Do not retry it; ask what to do instead.";
+    }
+
+    try {
+      return await this.mcp.callTool(name, args);
+    } catch (err) {
+      return `Error while running ${name}: ${err.message}`;
+    }
+  }
+
   async runToolCall(call) {
+    if (String(call.function.name || "").startsWith("mcp__")) return this.runMcpToolCall(call);
+
     const tool = get(call.function.name);
     if (!tool) return `Error: unknown tool "${call.function.name}".`;
 
