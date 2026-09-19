@@ -9,9 +9,12 @@ import {
   AUTOSAVE_NAME,
   STATE_FILE,
   PROJECTS_FILE,
+  MCP_FILE,
   DAEMON_LOG,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "./projects.mjs";
+import { McpManager } from "./mcp-manager.mjs";
+import { McpStore, describeServer } from "./mcp-store.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
 import { TelegramBot, parseChatIds } from "./telegram.mjs";
 import { Daemon } from "./daemon.mjs";
@@ -250,8 +253,10 @@ const COMMANDS = [
   "/help", "/config", "/reload", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
   "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
-  "/project", "/projects", "/clear", "/exit", "/quit",
+  "/project", "/projects", "/mcp", "/clear", "/exit", "/quit",
 ];
+
+const MCP_ACTIONS = ["list", "add", "remove", "enable", "disable", "reload"];
 
 function makeCompleter(models) {
   return (line) => {
@@ -272,6 +277,20 @@ function makeCompleter(models) {
           const names = new ProjectStore(PROJECTS_FILE).load().projects.map((p) => p.id);
           const hits = names.map((n) => `${cmd} ${n}`).filter((s) => s.startsWith(line));
           return [hits, line];
+        }
+        if (cmd === "/mcp") {
+          if (!arg.includes(" ")) {
+            const hits = MCP_ACTIONS.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
+            return [hits, line];
+          }
+          const action = arg.split(/\s+/)[0];
+          if (action === "reload" || action === "remove" || action === "enable" || action === "disable") {
+            const ids = new McpStore(MCP_FILE).load().servers.map((s) => s.id);
+            const used = `${cmd} ${action}`;
+            const hits = ids.map((id) => `${used} ${id}`).filter((s) => s.startsWith(line));
+            return [hits, line];
+          }
+          return [[], line];
         }
         if (cmd === "/load" || cmd === "/cd" || cmd === "/save") {
           const [hits, frag] = completePath(arg);
@@ -415,6 +434,13 @@ export async function main() {
 
   // Projects: which one is active shapes the system prompt from here on.
   let projects = new ProjectStore(PROJECTS_FILE).load();
+
+  // Process-level, not per-Agent: every freshAgent worker must share these
+  // live connections, or a routine would spawn a server for one call.
+  const mcp = new McpManager({
+    log: (m) => term.line(c.dim(`  mcp: ${m}`)),
+    onChange: () => agent?.refreshPrompt?.(),
+  });
   const activeProject = () => projects.active;
   const projectBlock = () => projects.promptBlock();
 
@@ -423,6 +449,7 @@ export async function main() {
     config,
     project: projectBlock(),
     projectId: activeProject()?.id || null,
+    mcp,
     print: (s) => term.line(s),
     write: (s) => term.write(s),
     confirm: async (toolName, detail) => {
@@ -450,6 +477,20 @@ export async function main() {
     },
   });
   agent.model = model;
+
+  // Connect any MCP servers the user has already approved, so their tools are
+  // in the very first request. Only approved servers start, so this cannot
+  // execute anything new without a fresh yes. Cold uvx/npx pulls make the
+  // first run of a server slow; after that it is cached.
+  if (agent.useTools) {
+    const mcpStore = new McpStore(MCP_FILE).load();
+    if (mcpStore.enabled.some((s) => mcpStore.isApproved(s))) {
+      term.write(c.dim("  connecting MCP servers..."));
+      await mcp.reconcile(mcpStore).catch(() => {});
+      term.write("\r\x1b[K");
+      agent.refreshPrompt();
+    }
+  }
 
   const writeSession = (name) => {
     const file = sessionPath(name);
@@ -482,6 +523,9 @@ export async function main() {
     term.saveHistory(HISTORY_FILE);
     try {
       await cleanupJobs(agent.state);
+    } catch {}
+    try {
+      await mcp.closeAll();
     } catch {}
     term.line(code === 0 ? c.dim("bye") : "");
     process.exit(code);
@@ -848,6 +892,9 @@ export async function main() {
       // tool: there is no session to amortise a find_tools round trip across,
       // and the briefing prompt needs github_notifications and watch every time.
       deferTools: false,
+      // The same manager the REPL uses, so a routine reaches the live servers
+      // instead of spawning its own and abandoning it.
+      mcp,
       confirm:
         purpose === "alert"
           ? // An unattended alert may look things up, but must never change
@@ -864,7 +911,14 @@ export async function main() {
   const runPrompt = async (prompt, meta = {}) => {
     const worker = freshAgent(meta.purpose);
     worker.model = agent.model;
-    return worker.send(prompt, {});
+    try {
+      return await worker.send(prompt, {});
+    } finally {
+      // The worker's state dies with it. A background job it started would
+      // otherwise be orphaned the moment this returns - the child outlives the
+      // Map that tracked it, and no shutdown path ever sees it.
+      await cleanupJobs(worker.state).catch(() => {});
+    }
   };
 
   if (opts.brief) {
@@ -903,6 +957,7 @@ export async function main() {
       logFile: DAEMON_LOG,
       tickMs: config.daemonTick * 1000,
       maxConcurrent: config.maxConcurrent,
+      mcp,
     });
     daemonRef = daemon;
     process.on("SIGINT", () => {
@@ -910,6 +965,12 @@ export async function main() {
       daemon.stop();
     });
     await daemon.run();
+    // The daemon's own agents are gone by now, so anything they left running
+    // - background commands, MCP servers - has to be shut down here or it
+    // outlives the process that owns it.
+    await cleanupJobs(agent.state).catch(() => {});
+    await mcp.closeAll().catch(() => {});
+    term.line(c.dim("bye"));
     process.exit(0);
   }
 
@@ -1204,6 +1265,115 @@ export async function main() {
         } catch (err) {
           term.line(c.red(`  briefing failed: ${err.message}`));
         }
+        break;
+      }
+
+      case "/mcp": {
+        const [sub, ...rest] = arg.split(/\s+/).filter(Boolean);
+        const target = rest.join(" ").trim();
+        const store = new McpStore(MCP_FILE).load();
+
+        if (!sub || sub === "list") {
+          term.line("");
+          if (!store.servers.length) {
+            term.line(c.dim("  no MCP servers configured"));
+            term.line(c.dim("  add one with:  /mcp add <name> <command> [args...]"));
+            term.line(c.dim("  example:       /mcp add everything npx -y @modelcontextprotocol/server-everything"));
+          }
+          for (const rec of store.servers) {
+            term.line(`  ${describeServer(rec, mcp.has(rec.id))}`);
+          }
+          if (store.servers.length) {
+            term.line("");
+            term.line(c.dim(`  ${mcp.connectedIds.length} live · ${store.enabled.length} enabled`));
+          }
+          term.line("");
+          break;
+        }
+
+        if (sub === "add") {
+          const [name, command, ...cmdArgs] = target.split(/\s+/).filter(Boolean);
+          if (!name || !command) {
+            term.line(c.red("  usage: /mcp add <name> <command> [args...]"));
+            break;
+          }
+          try {
+            const record = store.add({ name, command, args: cmdArgs });
+            term.line(c.dim(`  registered "${record.id}"`));
+            term.line(c.dim(`  command: ${record.command} ${(record.args || []).join(" ")}`));
+            term.line(c.dim(`  start it with:  /mcp reload ${record.id}   (asks for approval first)`));
+          } catch (err) {
+            term.line(c.red(`  ${err.message}`));
+          }
+          break;
+        }
+
+        if (sub === "remove" || sub === "enable" || sub === "disable") {
+          if (!target) {
+            term.line(c.red(`  usage: /mcp ${sub} <id>`));
+            break;
+          }
+          if (sub === "remove") {
+            const gone = store.remove(target);
+            if (gone) await mcp.disconnect(gone.id).catch(() => {});
+            term.line(gone ? c.dim(`  removed "${gone.id}"`) : c.red(`  no server "${target}"`));
+          } else {
+            const rec = store.setEnabled(target, sub === "enable");
+            if (!rec) {
+              term.line(c.red(`  no server "${target}"`));
+              break;
+            }
+            if (sub === "disable") await mcp.disconnect(rec.id).catch(() => {});
+            term.line(c.dim(`  "${rec.id}" ${rec.enabled ? "enabled" : "disabled"}`));
+          }
+          break;
+        }
+
+        if (sub === "reload") {
+          if (!target) {
+            term.line(c.red("  usage: /mcp reload <id>"));
+            break;
+          }
+          const record = store.find(target);
+          if (!record) {
+            term.line(c.red(`  no server "${target}"`));
+            break;
+          }
+          const cmdline = `${record.command} ${(record.args || []).join(" ")}`.trim();
+          term.line(c.yellow(`  ── start MCP server "${record.id}" ─────────────`));
+          term.line(`  command: ${cmdline}`);
+          term.line(c.dim("  runs third-party code; approval is remembered for this exact command"));
+          term.line(c.yellow("  " + "─".repeat(44)));
+          const yes = ((await term.ask("  allow? [y/n] > ")) || "").trim().toLowerCase();
+          if (yes !== "y" && yes !== "yes") {
+            term.line(c.dim("  not started"));
+            break;
+          }
+          store.markApproved(record.id);
+          term.write(c.dim("  starting..."));
+          try {
+            if (mcp.has(record.id)) await mcp.disconnect(record.id);
+            await mcp.connect({
+              id: record.id,
+              command: record.command,
+              args: record.args,
+              env: record.env,
+              transport: record.transport,
+            });
+            const tools = mcp.servers.get(record.id)?.tools?.map((t) => t.name) || [];
+            store.markConnected(record.id, true, null);
+            term.write("\r\x1b[K");
+            term.line(c.green(`  live · ${tools.length} tool(s): ${tools.join(", ") || "(none)"}`));
+            agent.refreshPrompt();
+          } catch (err) {
+            term.write("\r\x1b[K");
+            store.markConnected(record.id, false, err.message);
+            term.line(c.red(`  failed: ${err.message}`));
+          }
+          break;
+        }
+
+        term.line(c.red(`  unknown action "${sub}" - try: ${MCP_ACTIONS.join(", ")}`));
         break;
       }
 

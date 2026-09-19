@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { SESSIONS_DIR } from "./config.mjs";
+import { SESSIONS_DIR, MCP_FILE } from "./config.mjs";
+import { McpStore } from "./mcp-store.mjs";
 import { Agent } from "./agent.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { checkWatch } from "./watcher.mjs";
@@ -63,6 +64,7 @@ export class Daemon {
     tickMs = 20000,
     maxConcurrent = null,
     checker = checkWatch,
+    mcp = null,
     now = () => new Date(),
   }) {
     this.store = store;
@@ -87,6 +89,8 @@ export class Daemon {
     this.tickMs = Math.max(5000, tickMs);
     // Injectable so tests can drive the real dispatch/flush path.
     this.checker = checker;
+    // The process-level MCP manager, shared with the REPL when both run here.
+    this.mcp = mcp;
     this.now = now;
 
     this.stopping = false;
@@ -606,6 +610,17 @@ export class Daemon {
     } catch (err) {
       this.log(`could not reload state: ${err.message}`);
     }
+    // Bring MCP connections in line with the store, so `/mcp add` in another
+    // window reaches a running daemon without a restart. Same reasoning as
+    // reloading routines and watches above.
+    if (this.mcp) {
+      try {
+        await this.mcp.reconcile(new McpStore(MCP_FILE).load());
+      } catch (err) {
+        this.log(`mcp reconcile failed: ${err.message}`);
+      }
+    }
+
     const routines = this.dispatchRoutines();
     const checked = this.dispatchWatches();
     // Only the poll is awaited: it is the sleep, and it must keep running so a

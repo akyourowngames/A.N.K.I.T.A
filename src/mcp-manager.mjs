@@ -170,6 +170,54 @@ export class McpManager {
     return formatToolResult(result);
   }
 
+  /**
+   * Brings live connections in line with what the store says should be on.
+   *
+   * Called every daemon tick, so `/mcp add` in one window reaches a running
+   * daemon without a restart. Only servers whose stored approval matches their
+   * current command are started - a changed command waits for a fresh yes.
+   */
+  async reconcile(store) {
+    const wanted = new Map();
+    const skipped = [];
+    for (const record of store.enabled) {
+      if (store.isApproved(record)) wanted.set(record.id, record);
+      else skipped.push(record.id);
+    }
+
+    let changed = false;
+    for (const id of [...this.servers.keys()]) {
+      if (!wanted.has(id)) {
+        await this.disconnect(id).catch(() => {});
+        changed = true;
+      }
+    }
+
+    for (const [id, record] of wanted) {
+      if (this.has(id)) continue;
+      try {
+        await this.connect({
+          id,
+          command: record.command,
+          args: record.args,
+          env: record.env,
+          transport: record.transport,
+        });
+        store.markConnected(id, true, null);
+        changed = true;
+      } catch (err) {
+        // One bad server must not stop the rest, or take the daemon down.
+        this.log(`could not start MCP server "${id}": ${err.message}`);
+        store.markConnected(id, false, err.message);
+      }
+    }
+
+    if (skipped.length) {
+      this.log(`${skipped.join(", ")} need approval - run /mcp add or /mcp reload to approve`);
+    }
+    return { connected: this.connectedIds, skipped, changed };
+  }
+
   /** Specs for every connected server. Gating happens in the agent. */
   specs({ only = null } = {}) {
     const out = [];
