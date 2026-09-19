@@ -14,7 +14,7 @@ import {
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "./projects.mjs";
 import { McpManager } from "./mcp-manager.mjs";
-import { McpStore, describeServer } from "./mcp-store.mjs";
+import { McpStore, describeServer, enableMessage, disableMessage } from "./mcp-store.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
 import { TelegramBot, parseChatIds } from "./telegram.mjs";
 import { Daemon } from "./daemon.mjs";
@@ -1323,8 +1323,11 @@ export async function main() {
               term.line(c.red(`  no server "${target}"`));
               break;
             }
+            // Disabling takes effect here and now; enabling waits for reload,
+            // because starting a process is what approval is for.
             if (sub === "disable") await mcp.disconnect(rec.id).catch(() => {});
-            term.line(c.dim(`  "${rec.id}" ${rec.enabled ? "enabled" : "disabled"}`));
+            const msg = rec.enabled ? enableMessage(rec, store.isApproved(rec)) : disableMessage(rec);
+            term.line(c.dim(`  ${msg}`));
           }
           break;
         }

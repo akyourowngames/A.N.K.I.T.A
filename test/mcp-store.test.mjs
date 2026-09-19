@@ -269,6 +269,21 @@ test('enabling says it is still not running, disabling says the tools are gone',
   assert.match(disable, /disabled and its tools are gone/);
 });
 
+test('the /mcp command and the mcp_manage tool word things identically', async () => {
+  // These were two copies of the same strings and the tool's fix did not reach
+  // the command. They now share helpers; this fails if anyone re-forks them.
+  const { enableMessage, disableMessage } = await import('../src/mcp-store.mjs');
+  const store = new McpStore(MCP_FILE).load();
+  for (const s of [...store.servers]) store.remove(s.id);
+  const rec = store.add({ name: 'same', command: 'python' });
+
+  assert.equal(manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), false));
+  assert.equal(manage.run({ action: 'disable', id: 'same' }, {}), disableMessage(store.find('same')));
+
+  store.markApproved(rec.id);
+  assert.equal(manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), true));
+});
+
 test('the mcp category is discoverable through find_tools', async () => {
   const { CATEGORIES } = await import('../tools/catalog.mjs');
   const findTools = await import('../tools/find-tools.mjs');
