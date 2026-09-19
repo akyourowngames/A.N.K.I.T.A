@@ -4,9 +4,19 @@ import { fetchWithRetry } from "./net.mjs";
  * Default picks when the user did not pin a model. Ordered by preference;
  * refreshed against the live model list rather than frozen in time.
  */
+/**
+ * Auto-pick order.
+ *
+ * gpt-4o leads on measured throughput, not reputation. Same prompt set,
+ * streamed, 4 rounds each (median): gpt-4o 194 tok/s vs gpt-4.1 58.5 tok/s,
+ * with time-to-first-token a wash (1048ms vs 1066ms). A 300-token answer
+ * projects to 2.6s on gpt-4o against 6.2s on gpt-4.1.
+ *
+ * Do not reorder without re-measuring - see docs/benchmark notes in the PR.
+ */
 const PREFERRED = [
-  "gpt-4.1",
   "gpt-4o",
+  "gpt-4.1",
   "gpt-4o-mini",
   "claude-sonnet-5",
   "gemini-3.5-flash",
@@ -53,11 +63,13 @@ export function pickModel(models, wanted = "", useTools = true) {
   const from = pool.length ? pool : list;
   if (!from.length) throw new Error("No models are available from this provider.");
 
+  // Two passes: all exact ids first, then partial. A single pass lets the
+  // loose match cross models - "gpt-4o" would hit "gpt-4o-mini" before the
+  // preference list ever reached "gpt-4.1".
   const auto =
     from.find((m) => m.default) ||
-    PREFERRED.map(
-      (p) => from.find((m) => m.id === p) || from.find((m) => m.id.includes(p))
-    ).find(Boolean) ||
+    PREFERRED.map((p) => from.find((m) => m.id === p)).find(Boolean) ||
+    PREFERRED.map((p) => from.find((m) => m.id.includes(p))).find(Boolean) ||
     [...from].sort((a, b) => (b.context || 0) - (a.context || 0))[0] ||
     from[0];
   return { ...auto, matched: !name };
