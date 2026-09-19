@@ -6,27 +6,21 @@ import * as editLines from "./edit-lines.mjs";
 import * as listDir from "./list-dir.mjs";
 import * as searchFiles from "./search-files.mjs";
 import * as glob from "./glob.mjs";
-import * as createDir from "./create-dir.mjs";
 import * as moveFile from "./move-file.mjs";
 import * as deleteFile from "./delete-file.mjs";
 import * as fetchUrl from "./fetch-url.mjs";
-import * as webSearch from "./web-search.mjs";
-import * as webFetch from "./web-fetch.mjs";
-import * as scrapeLow from "./scrape-low.mjs";
-import * as scrapeMid from "./scrape-mid.mjs";
-import * as scrapeHigh from "./scrape-high.mjs";
-import * as project from "./project.mjs";
-import * as projectMemory from "./project-memory.mjs";
-import * as schedule from "./schedule.mjs";
-import * as watch from "./watch.mjs";
-import * as githubNotifications from "./github-notifications.mjs";
-import * as writeTodos from "./write-todos.mjs";
 import * as jobStatus from "./job-status.mjs";
 import * as jobStop from "./job-stop.mjs";
+import * as writeTodos from "./write-todos.mjs";
+import * as findTools from "./find-tools.mjs";
 import { killTree, waitForExit } from "./run-command.mjs";
+import { CATEGORIES, deferredTools, deferredSpecByName, categoryOfTool, specOf } from "./catalog.mjs";
 
-const modules = [
-  runCommand,
+/**
+ * The tools almost every task needs, sent on every request. Deliberately short:
+ * every schema here is paid on every turn, forever.
+ */
+export const CORE = [
   readFile,
   writeFile,
   editFile,
@@ -34,40 +28,42 @@ const modules = [
   listDir,
   searchFiles,
   glob,
-  createDir,
   moveFile,
   deleteFile,
-  fetchUrl,
-  webSearch,
-  webFetch,
-  scrapeLow,
-  scrapeMid,
-  scrapeHigh,
-  project,
-  projectMemory,
-  schedule,
-  watch,
-  githubNotifications,
-  writeTodos,
+  runCommand,
   jobStatus,
   jobStop,
+  writeTodos,
+  fetchUrl,
+  findTools,
 ];
 
-const byName = new Map(modules.map((m) => [m.name, m]));
+const byName = new Map([...CORE, ...deferredTools].map((m) => [m.name, m]));
 
-export const tools = modules;
+/** Every tool, core and deferred alike. Used by the daemon and --config. */
+export const tools = [...byName.values()];
 
-export const specs = modules.map((m) => ({
-  type: "function",
-  function: { name: m.name, description: m.description, parameters: m.parameters },
-}));
+export const specs = tools.map(specOf);
+
+export const coreSpecs = CORE.map(specOf);
+
+export { CATEGORIES, deferredSpecByName, categoryOfTool };
 
 export function get(name) {
   return byName.get(name);
 }
 
 export function names() {
-  return modules.map((m) => m.name);
+  return tools.map((m) => m.name);
+}
+
+export function coreNames() {
+  return CORE.map((m) => m.name);
+}
+
+/** Full specs for a set of deferred tool names. */
+export function specsFor(names) {
+  return names.map((n) => deferredSpecByName.get(n)).filter(Boolean);
 }
 
 /** Tools that only ever read state can skip the confirmation prompt. */
