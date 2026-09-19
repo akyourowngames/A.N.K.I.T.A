@@ -317,7 +317,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-116 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive` and `projects`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
+153 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive` and `projects`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
 
 ## Security notes
 
