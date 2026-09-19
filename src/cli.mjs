@@ -844,6 +844,10 @@ export async function main() {
     new Agent({
       client,
       config,
+      // One-shot agents for routines, briefings and alerts always carry every
+      // tool: there is no session to amortise a find_tools round trip across,
+      // and the briefing prompt needs github_notifications and watch every time.
+      deferTools: false,
       confirm:
         purpose === "alert"
           ? // An unattended alert may look things up, but must never change

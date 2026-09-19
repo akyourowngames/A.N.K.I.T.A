@@ -1,5 +1,5 @@
 import os from "node:os";
-import { specs, get, names, needsApproval } from "../tools/index.mjs";
+import { specs, coreSpecs, specsFor, get, needsApproval, coreNames, CATEGORIES } from "../tools/index.mjs";
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
 import { renderDiff } from "../tools/_diff.mjs";
@@ -25,10 +25,12 @@ export function buildSystemPrompt(config, cwd, project = null) {
     `Platform: ${process.platform} · shell: ${shell}`,
     `Today: ${today}`,
     "",
-    `You have these tools: ${names().join(", ")}.`,
-    "The web is your realtime internet: use web_search for anything time-sensitive instead of guessing, " +
-      "then web_fetch the top result for depth. Scrape tiers (scrape_low/mid/high) are ONLY for when the " +
-      "user asks to scrape — structured fields, blocked pages, or multi-page crawls.",
+    `You have these tools: ${coreNames().join(", ")}.`,
+    "More tools are available but not loaded yet, because every schema costs context on every turn. " +
+      "Call find_tools to load them when a task needs them - they become callable straight away. Groups:",
+    ...CATEGORIES.map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
+    "For anything time-sensitive or factual about the world, load `web` with find_tools and search " +
+      "rather than guessing.",
     "",
     "You are NOT confined to the working directory. Any absolute path works, and every path a tool " +
       "prints (including search results outside the working directory) is directly usable in your next " +
@@ -42,12 +44,11 @@ export function buildSystemPrompt(config, cwd, project = null) {
     "Prefer edit_file over rewriting whole files with write_file.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",
     "",
-    "You are also a personal assistant. You can set up your own recurring work with the " +
-      "`schedule` tool (briefings, reminders, standing checks) and track pages with the `watch` " +
-      "tool (numbers like signups or logins, or any page that should not change silently). " +
-      "When the user asks for something to happen regularly or to be told when something " +
-      "changes, set it up with those tools instead of saying you cannot. Scheduled work runs " +
-      "in `ankita --daemon`, so mention that if it is not already running.",
+    "You are also a personal assistant. You can set up your own recurring work and track pages " +
+      "that should not change silently (numbers like signups or logins). When the user asks for " +
+      "something to happen regularly, or to be told when something changes, load the `automation` " +
+      "group with find_tools and set it up instead of saying you cannot. Scheduled work runs in " +
+      "`ankita --daemon`, so mention that if it is not already running.",
     project ? `\n${project}` : "",
     "Skip preamble and pleasantries. Report failures honestly instead of guessing.",
     config.systemExtra ? `\nAdditional instructions from the user:\n${config.systemExtra}` : "",
@@ -65,6 +66,7 @@ export class Agent {
     write = (s) => process.stdout.write(s),
     project = "",
     projectId = null,
+    deferTools = true,
   }) {
     this.client = client;
     this.config = config;
@@ -82,7 +84,11 @@ export class Agent {
     // Id of that project, so tools can tag what they create. Null when none.
     this.projectId = this.project ? projectId || null : null;
     this.abort = null;
-    this.state = { todos: [], jobs: new Map() };
+    // activatedTools: deferred tool names find_tools has loaded this session.
+    this.state = { todos: [], jobs: new Map(), activatedTools: new Set() };
+    // One-shot agents (routines, briefings, alerts) always send everything:
+    // there is no session to amortise a discovery round trip across.
+    this.deferTools = deferTools !== false;
     this.contextWindow = config.contextWindow || 32768;
     this.sessionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.turnUsage = { ...this.sessionUsage };
@@ -110,11 +116,27 @@ export class Agent {
     return this;
   }
 
+  /**
+   * The tool specs to send right now.
+   *
+   * Core only until find_tools loads a group, unless this agent is a one-shot
+   * worker. The saving is not just a shorter list for the model to read: the
+   * budget below is computed from this, so a normal session gets far more
+   * room for history.
+   */
+  currentSpecs() {
+    if (!this.useTools) return [];
+    if (!this.deferTools) return specs;
+    const active = this.state?.activatedTools;
+    if (!active || active.size === 0) return coreSpecs;
+    return [...coreSpecs, ...specsFor([...active])];
+  }
+
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */
   trimHistory(max) {
     // UTF-8 bytes are a conservative token upper bound; reserve output + tools.
     const available = this.contextWindow - (this.config.maxTokens || 4096) - 1024 -
-      (this.useTools ? Buffer.byteLength(JSON.stringify(specs)) : 0);
+      Buffer.byteLength(JSON.stringify(this.currentSpecs()));
     if (available < 512) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
     this.messages = trimMessages(this.messages, max, available);
   }
@@ -155,7 +177,7 @@ export class Agent {
     };
     if (this.config.temperature != null) body.temperature = this.config.temperature;
     if (this.useTools) {
-      body.tools = specs;
+      body.tools = this.currentSpecs();
       body.tool_choice = "auto";
     }
 
