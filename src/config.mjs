@@ -165,6 +165,10 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     maxTokens: posInt(pick("MAX_TOKENS"), DEFAULTS.maxTokens),
     maxToolChars: posInt(pick("MAX_TOOL_CHARS"), DEFAULTS.maxToolChars),
     contextWindow: posInt(pick("CONTEXT_WINDOW"), DEFAULTS.contextWindow),
+    // Whether that value was chosen or just defaulted. Providers advertise each
+    // model's real window, and it is usually far above the default - but an
+    // explicit CONTEXT_WINDOW is a deliberate choice and must win.
+    contextWindowExplicit: pick("CONTEXT_WINDOW") !== undefined,
     apiBase: pick("API_BASE") || DEFAULTS.apiBase,
     apiKey: pick("API_KEY") || DEFAULTS.apiKey,
     inputCostPerMillion: price(pick("INPUT_COST_PER_MILLION")),

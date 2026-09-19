@@ -242,30 +242,32 @@ test('mcp_manage only asks for approval when it will run something', () => {
   assert.equal(manage.approval({ action: 'reload', id: 'ghost' }), null);
 });
 
-test('mcp_manage reports rather than inventing when there is nothing to act on', () => {
+test('mcp_manage reports rather than inventing when there is nothing to act on', async () => {
   const store = new McpStore(MCP_FILE).load();
   for (const s of [...store.servers]) store.remove(s.id);
 
-  assert.match(manage.run({ action: 'list' }, {}), /No MCP servers configured/);
-  assert.match(manage.run({ action: 'add' }, {}), /'command' is required/);
-  assert.match(manage.run({ action: 'remove', id: 'ghost' }, {}), /no MCP server/);
-  assert.match(manage.run({ action: 'reload', id: 'ghost' }, {}), /no MCP server/);
-  assert.match(manage.run({ action: 'wat' }, {}), /unknown action/);
+  assert.match(await manage.run({ action: 'list' }, {}), /No MCP servers configured/);
+  assert.match(await manage.run({ action: 'add' }, {}), /'command' is required/);
+  assert.match(await manage.run({ action: 'remove', id: 'ghost' }, {}), /no MCP server/);
+  assert.match(await manage.run({ action: 'reload', id: 'ghost' }, {}), /no MCP server/);
+  assert.match(await manage.run({ action: 'wat' }, {}), /unknown action/);
+  assert.match(await manage.run({ action: 'search' }, {}), /'query' is required/);
+  assert.match(await manage.run({ action: 'install' }, {}), /'server' is required/);
 });
 
-test('enabling says it is still not running, disabling says the tools are gone', () => {
+test('enabling says it is still not running, disabling says the tools are gone', async () => {
   const store = new McpStore(MCP_FILE).load();
   for (const s of [...store.servers]) store.remove(s.id);
   store.add({ name: 'hint', command: 'python' });
 
-  const enable = manage.run({ action: 'enable', id: 'hint' }, {});
+  const enable = await manage.run({ action: 'enable', id: 'hint' }, {});
   assert.match(enable, /enabled, but not running yet/);
   assert.match(enable, /asks for approval first/, 'unapproved servers say so');
 
   store.markApproved('hint');
-  assert.match(manage.run({ action: 'enable', id: 'hint' }, {}), /Run reload to start it\.$/);
+  assert.match(await manage.run({ action: 'enable', id: 'hint' }, {}), /Run reload to start it\.$/);
 
-  const disable = manage.run({ action: 'disable', id: 'hint' }, {});
+  const disable = await manage.run({ action: 'disable', id: 'hint' }, {});
   assert.match(disable, /disabled and its tools are gone/);
 });
 
@@ -277,11 +279,11 @@ test('the /mcp command and the mcp_manage tool word things identically', async (
   for (const s of [...store.servers]) store.remove(s.id);
   const rec = store.add({ name: 'same', command: 'python' });
 
-  assert.equal(manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), false));
-  assert.equal(manage.run({ action: 'disable', id: 'same' }, {}), disableMessage(store.find('same')));
+  assert.equal(await manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), false));
+  assert.equal(await manage.run({ action: 'disable', id: 'same' }, {}), disableMessage(store.find('same')));
 
   store.markApproved(rec.id);
-  assert.equal(manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), true));
+  assert.equal(await manage.run({ action: 'enable', id: 'same' }, {}), enableMessage(store.find('same'), true));
 });
 
 test('the mcp category is discoverable through find_tools', async () => {

@@ -1,4 +1,6 @@
 import { spawn } from "node:child_process";
+import fs from "node:fs";
+import path from "node:path";
 import { killTree, waitForExit } from "../tools/run-command.mjs";
 
 /**
@@ -16,15 +18,74 @@ import { killTree, waitForExit } from "../tools/run-command.mjs";
 export const LATEST_PROTOCOL = "2025-11-25";
 
 /**
- * On Windows a bare `npx` is not spawnable - CreateProcess wants npx.cmd.
- * Same shape as pythonCandidates() in tools/_web.mjs.
+ * The Node tool shims, and the script each one wraps.
+ *
+ * Windows resolves `npx` to npx.cmd, and Node refuses to spawn a .cmd without
+ * a shell (the CVE-2024-27980 fix). A shell is precisely what must not be
+ * used here: package names come from a registry, and interpolating them into
+ * a command line is the injection class that fix closed. So we run the script
+ * the shim wraps, with node, exactly as the shim would have.
+ */
+const NODE_SHIMS = {
+  npx: ["npm", "bin", "npx-cli.js"],
+  npm: ["npm", "bin", "npm-cli.js"],
+};
+
+function npmRoots() {
+  const roots = [];
+  if (process.execPath) roots.push(path.join(path.dirname(process.execPath), "node_modules"));
+  if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, "npm", "node_modules"));
+  if (process.env.ProgramFiles) roots.push(path.join(process.env.ProgramFiles, "nodejs", "node_modules"));
+  return roots;
+}
+
+/** The .js a `npx`/`npm` command really runs, or null if we cannot find it. */
+function shimScript(command) {
+  const key = String(command || "").trim().toLowerCase().replace(/\.(cmd|bat)$/, "");
+  const rel = NODE_SHIMS[key];
+  if (!rel) return null;
+  for (const root of npmRoots()) {
+    const candidate = path.join(root, ...rel);
+    try {
+      if (fs.existsSync(candidate)) return candidate;
+    } catch {}
+  }
+  return null;
+}
+
+/**
+ * Executable candidates to try, as {command, args} pairs so a candidate can
+ * prepend its own arguments. On win32 the Node shims become `node <cli.js>`;
+ * anything else falls back to the usual extensions, and an unresolvable batch
+ * shim is reported rather than attempted (spawning one throws EINVAL).
  */
 export function commandCandidates(command) {
   const cmd = String(command || "").trim();
   if (!cmd) return [];
-  if (process.platform !== "win32") return [cmd];
-  if (/\.(cmd|exe|bat|com)$/i.test(cmd)) return [cmd];
-  return [`${cmd}.cmd`, cmd];
+  if (process.platform !== "win32") return [{ command: cmd, args: [] }];
+
+  if (/\.(exe|com)$/i.test(cmd)) return [{ command: cmd, args: [] }];
+
+  const script = shimScript(cmd);
+  if (script) return [{ command: process.execPath || "node", args: [script] }];
+
+  if (/\.(cmd|bat)$/i.test(cmd)) {
+    return [
+      {
+        command: cmd,
+        args: [],
+        problem:
+          `"${cmd}" is a batch shim, and Windows will not let a program start one without a ` +
+          `command shell. Point the server at the underlying script instead.`,
+      },
+    ];
+  }
+
+  return [
+    { command: `${cmd}.exe`, args: [] },
+    { command: `${cmd}.cmd`, args: [] },
+    { command: cmd, args: [] },
+  ];
 }
 
 /** Environment a spawned server is allowed to see. Not the whole process env. */
@@ -110,9 +171,16 @@ export class McpClient {
     if (!candidates.length) throw new Error("no command to run for this MCP server");
 
     const errors = [];
-    for (const exe of candidates) {
+    for (const candidate of candidates) {
+      if (candidate.problem) {
+        errors.push(candidate.problem);
+        continue;
+      }
+      const exe = candidate.command;
+      // A candidate may prepend its own args (node <cli.js>) ahead of ours.
+      const argv = [...candidate.args, ...this.args];
       try {
-        this.child = spawn(exe, this.args, {
+        this.child = spawn(exe, argv, {
           cwd: this.cwd || process.cwd(),
           env: serverEnv(this.env),
           windowsHide: true,

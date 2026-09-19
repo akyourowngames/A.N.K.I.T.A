@@ -75,7 +75,7 @@ export class McpStore {
     );
   }
 
-  add({ name, command, args = [], env = {}, transport = "stdio", id }) {
+  add({ name, command, args = [], env = {}, transport = "stdio", id, source = null }) {
     this._fresh();
     const cmd = String(command ?? "").trim();
     if (!cmd) throw new Error("a command is required (e.g. 'npx' or 'python')");
@@ -89,6 +89,9 @@ export class McpStore {
       args: Array.isArray(args) ? args.map(String) : String(args).split(/\s+/).filter(Boolean),
       env: env && typeof env === "object" ? env : {},
       transport,
+      // Where this came from, when it was installed from the registry. Purely
+      // provenance: it never influences what runs, only what we can tell you.
+      source: source && typeof source === "object" ? source : null,
       enabled: true,
       // Nothing runs until the user approves this exact command.
       approvedAt: null,
@@ -153,6 +156,13 @@ export function describeServer(record, connected) {
   const approved = record.approvedHash === record.commandHash ? "" : "  (needs approval)";
   const err = record.lastError ? `  ! ${String(record.lastError).slice(0, 60)}` : "";
   return `${state.padEnd(4)} ${record.id.padEnd(16)} ${(record.command + " " + (record.args || []).join(" ")).slice(0, 50)}${approved}${err}`;
+}
+
+/** "io.github.microsoft/playwright-mcp @ 0.0.82", or null when added by hand. */
+export function describeSource(record) {
+  const from = record?.source;
+  if (!from?.registryName) return null;
+  return `${from.registryName}${from.version ? ` @ ${from.version}` : ""}`;
 }
 
 // Enabling is configuration only - it does not start the process, because

@@ -39,13 +39,27 @@ const skip = HAVE_FIXTURE ? false : 'python + mcp package not available';
 test('command candidates handle the Windows shim problem', () => {
   const c = commandCandidates('npx');
   if (process.platform === 'win32') {
-    assert.deepEqual(c, ['npx.cmd', 'npx'], 'a bare npx is not spawnable on Windows');
+    // npx.cmd cannot be spawned at all (Node refuses a .cmd without a shell,
+    // CVE-2024-27980), and a shell would mean interpolating package names
+    // from a registry into a command line. So we run the script it wraps.
+    assert.equal(c.length, 1);
+    assert.equal(c[0].command, process.execPath, 'runs under the same node');
+    assert.equal(c[0].args.length, 1, 'prepends the cli script');
+    assert.match(c[0].args[0].replace(/\\/g, '/'), /npm\/bin\/npx-cli\.js$/);
+    assert.doesNotMatch(c[0].command, /\.cmd$/i, 'never a batch shim');
   } else {
-    assert.deepEqual(c, ['npx']);
+    assert.deepEqual(c, [{ command: 'npx', args: [] }]);
   }
-  // An explicit extension is left alone on every platform.
-  assert.deepEqual(commandCandidates('python.exe'), ['python.exe']);
+
+  // An explicit .exe is left alone on every platform.
+  assert.deepEqual(commandCandidates('python.exe'), [{ command: 'python.exe', args: [] }]);
   assert.deepEqual(commandCandidates(''), []);
+
+  // A .cmd we cannot resolve is reported, not attempted - spawning one throws.
+  const batch = commandCandidates('some-tool.cmd');
+  assert.equal(batch.length, 1);
+  assert.match(batch[0].problem || '', /batch shim/);
+  assert.match(batch[0].problem || '', /command shell/);
 });
 
 test('spawned servers get a stripped environment, not the whole process', () => {
