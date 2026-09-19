@@ -8,8 +8,10 @@ import {
   SESSIONS_DIR,
   AUTOSAVE_NAME,
   STATE_FILE,
+  PROJECTS_FILE,
   DAEMON_LOG,
 } from "./config.mjs";
+import { ProjectStore, describeProject, describeProjectFull } from "./projects.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
 import { TelegramBot, parseChatIds } from "./telegram.mjs";
 import { Daemon } from "./daemon.mjs";
@@ -247,8 +249,8 @@ function completePath(prefix) {
 const COMMANDS = [
   "/help", "/config", "/reload", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
-  "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon", "/clear",
-  "/exit", "/quit",
+  "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
+  "/project", "/projects", "/clear", "/exit", "/quit",
 ];
 
 function makeCompleter(models) {
@@ -264,6 +266,11 @@ function makeCompleter(models) {
         const arg = line.slice(space + 1);
         if (cmd === "/model") {
           const hits = models.map((m) => `${cmd} ${m.id}`).filter((s) => s.startsWith(line));
+          return [hits, line];
+        }
+        if (cmd === "/project") {
+          const names = new ProjectStore(PROJECTS_FILE).load().projects.map((p) => p.id);
+          const hits = names.map((n) => `${cmd} ${n}`).filter((s) => s.startsWith(line));
           return [hits, line];
         }
         if (cmd === "/load" || cmd === "/cd" || cmd === "/save") {
@@ -406,9 +413,15 @@ export async function main() {
   const term = new Terminal({ completer: makeCompleter(models) });
   term.loadHistory(HISTORY_FILE);
 
+  // Projects: which one is active shapes the system prompt from here on.
+  let projects = new ProjectStore(PROJECTS_FILE).load();
+  const activeProject = () => projects.active;
+  const projectBlock = () => projects.promptBlock();
+
   const agent = new Agent({
     client,
     config,
+    project: projectBlock(),
     print: (s) => term.line(s),
     write: (s) => term.write(s),
     confirm: async (toolName, detail) => {
@@ -483,6 +496,7 @@ export async function main() {
       cwd: process.cwd(),
       envPath: config.envPath || config.globalEnvPath,
       count: models.length,
+      project: activeProject() ? `${activeProject().name}${activeProject().path ? "  " + activeProject().path : ""}` : null,
     });
     if (config.apiBase) console.log(c.dim(`  endpoint: ${config.apiBase}\n`));
   }
@@ -910,6 +924,18 @@ export async function main() {
       try {
         writeSession(AUTOSAVE_NAME);
       } catch {}
+      // The agent can switch projects with the project tool; keep in step.
+      const fresh = new ProjectStore(PROJECTS_FILE).load();
+      if (fresh.activeId !== projects.activeId) {
+        projects = fresh;
+        if (projects.active?.path) {
+          try {
+            process.chdir(projects.active.path);
+          } catch {}
+        }
+        agent.setProject(projectBlock());
+        term.line(c.dim(`  project → ${projects.active ? projects.active.name : "(none)"}`));
+      }
       if (voice.speak && outcome.text) await speakText(outcome.text);
       continue;
     }
@@ -1173,6 +1199,49 @@ export async function main() {
         } catch (err) {
           term.line(c.red(`  briefing failed: ${err.message}`));
         }
+        break;
+      }
+
+      case "/projects": {
+        projects = new ProjectStore(PROJECTS_FILE).load();
+        term.line("");
+        if (!projects.projects.length) {
+          term.line(c.dim("  no projects yet - ask me to add one, e.g. \"add zumba to my projects\""));
+        } else {
+          for (const p of projects.projects) term.line(`  ${describeProject(p, projects.activeId)}`);
+        }
+        term.line("");
+        break;
+      }
+
+      case "/project": {
+        projects = new ProjectStore(PROJECTS_FILE).load();
+        if (!arg) {
+          const current = projects.active;
+          term.line("");
+          term.line(current ? describeProjectFull(current, projects) : c.dim("  no active project"));
+          term.line("");
+          break;
+        }
+        const picked = projects.use(arg);
+        if (!picked) {
+          term.line(c.red(`  no project "${arg}" - try /projects`));
+          break;
+        }
+        projects = new ProjectStore(PROJECTS_FILE).load();
+        if (picked.path) {
+          try {
+            process.chdir(picked.path);
+          } catch (err) {
+            term.line(c.yellow(`  (could not cd to ${picked.path}: ${err.message})`));
+          }
+        }
+        agent.setProject(projectBlock());
+        term.line(
+          c.dim(`  project → ${picked.name}`) + (picked.path ? c.dim(`  ·  cwd ${process.cwd()}`) : "")
+        );
+        const unknown = projects.missingFor(picked);
+        if (unknown.length) term.line(c.dim(`  still unknown: ${unknown.join(", ")}`));
         break;
       }
 
