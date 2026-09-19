@@ -422,6 +422,7 @@ export async function main() {
     client,
     config,
     project: projectBlock(),
+    projectId: activeProject()?.id || null,
     print: (s) => term.line(s),
     write: (s) => term.write(s),
     confirm: async (toolName, detail) => {
@@ -933,7 +934,7 @@ export async function main() {
             process.chdir(projects.active.path);
           } catch {}
         }
-        agent.setProject(projectBlock());
+        agent.setProject(projectBlock(), projects.activeId);
         term.line(c.dim(`  project → ${projects.active ? projects.active.name : "(none)"}`));
       }
       if (voice.speak && outcome.text) await speakText(outcome.text);
@@ -1236,7 +1237,7 @@ export async function main() {
             term.line(c.yellow(`  (could not cd to ${picked.path}: ${err.message})`));
           }
         }
-        agent.setProject(projectBlock());
+        agent.setProject(projectBlock(), projects.activeId);
         term.line(
           c.dim(`  project → ${picked.name}`) + (picked.path ? c.dim(`  ·  cwd ${process.cwd()}`) : "")
         );

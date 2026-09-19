@@ -94,7 +94,7 @@ export class RoutineStore {
 
   /* ----------------------------- routines ----------------------------- */
 
-  addRoutine({ name, cron, prompt, channel = "telegram", enabled = true, runAt = null }) {
+  addRoutine({ name, cron, prompt, channel = "telegram", enabled = true, runAt = null, projectId = null }) {
     this._fresh();
     const expr = normalizeSchedule(cron);
     if (!expr || !parseCron(expr)) throw new Error(`invalid schedule: ${cron}`);
@@ -107,6 +107,8 @@ export class RoutineStore {
       cron: expr,
       prompt: String(prompt).trim(),
       channel,
+      // Metadata only: which project this belongs to. Never changes execution.
+      projectId: projectId ? String(projectId) : null,
       enabled: Boolean(enabled),
       createdAt: new Date().toISOString(),
       lastRun: null,
@@ -229,6 +231,7 @@ export class RoutineStore {
     alertEvery = "10m",
     enabled = true,
     notify = true,
+    projectId = null,
   }) {
     this._fresh();
     let parsed;
@@ -252,6 +255,8 @@ export class RoutineStore {
       selector: String(selector || ""),
       regex: String(regex || ""),
       intervalMs: everyMs,
+      // Metadata only, same as routines.
+      projectId: projectId ? String(projectId) : null,
       // Checking often is cheap; alerting often is not. A busy number would
       // otherwise send a message every check.
       alertCooldownMs: Math.max(0, parseDuration(alertEvery, 600000)),
@@ -391,12 +396,17 @@ export function toNumber(value) {
   return Number.isFinite(n) ? n : null;
 }
 
+/** " [zumba]" when tagged, "" otherwise. Keeps existing lines byte-identical. */
+function tag(entry) {
+  return entry.projectId ? `  [${entry.projectId}]` : "";
+}
+
 export function describeRoutine(routine) {
-  return `${routine.enabled ? "on " : "off"} ${routine.id.padEnd(18)} ${describeCron(routine.cron).padEnd(22)} ${routine.name}`;
+  return `${routine.enabled ? "on " : "off"} ${routine.id.padEnd(18)} ${describeCron(routine.cron).padEnd(22)} ${routine.name}${tag(routine)}`;
 }
 
 export function describeWatch(watch) {
   const every = formatDuration(watch.intervalMs || 3600000) + (watch.alertCooldownMs ? "/alert " + formatDuration(watch.alertCooldownMs) : "");
   const value = watch.lastValue === null || watch.lastValue === undefined ? "-" : String(watch.lastValue).slice(0, 30);
-  return `${watch.enabled ? "on " : "off"} ${watch.id.padEnd(18)} every ${every.padEnd(6)} ${value.padEnd(12)} ${watch.name}`;
+  return `${watch.enabled ? "on " : "off"} ${watch.id.padEnd(18)} every ${every.padEnd(6)} ${value.padEnd(12)} ${watch.name}${tag(watch)}`;
 }

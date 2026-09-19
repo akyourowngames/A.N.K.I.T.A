@@ -251,6 +251,33 @@ export class ProjectStore {
   }
 }
 
+/**
+ * Works out which project something new belongs to.
+ *
+ *   project: "zumba"  -> that project (by id or name)
+ *   project: "none"   -> explicitly unattached
+ *   omitted           -> whatever is active right now
+ *
+ * Returns { ok, projectId } or { ok: false, error } for an unknown name.
+ */
+export function resolveProjectRef(store, asked, activeId = null) {
+  const name = String(asked ?? "").trim();
+  if (!name) return { ok: true, projectId: activeId || null };
+  if (name.toLowerCase() === "none") return { ok: true, projectId: null };
+
+  const found = store.find(name);
+  if (found) return { ok: true, projectId: found.id, projectName: found.name };
+
+  const known = store.projects.map((p) => p.id);
+  return {
+    ok: false,
+    error:
+      `no project "${name}". ` +
+      (known.length ? `Known: ${known.join(", ")}. ` : "No projects exist yet. ") +
+      "Use 'none' to leave it unattached.",
+  };
+}
+
 export function describeProject(project, activeId) {
   const mark = project.id === activeId ? "*" : " ";
   const where = project.path || project.client || "-";

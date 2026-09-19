@@ -32,7 +32,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 ## What it can do
 
 - **Chat** with streaming markdown replies (syntax-highlighted code boxes, tables) that re-render live without garbling, even on long answers
-- **Act** through 20 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
+- **Act** through 24 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
 - **Knows your projects**: tell her about one — a folder, a server, a client — and she keeps the details, the conventions and the open questions, and stops asking you the same things
@@ -291,7 +291,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-74 tests across `core`, `provider`, `tools`, `voice`, `web` and `proactive`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
+116 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive` and `projects`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
 
 ## Security notes
 
