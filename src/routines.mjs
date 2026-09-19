@@ -356,6 +356,34 @@ export class RoutineStore {
     return watch;
   }
 
+  /**
+   * Tags routines and watches with a project.
+   *
+   * Pass explicit id arrays to tag those; omit them to adopt everything that
+   * is currently untagged. Returns the ids that actually changed.
+   */
+  attachToProject(projectId, { routines = null, watches = null } = {}) {
+    this._fresh();
+    const target = String(projectId);
+    const pick = (list, ids) => {
+      if (Array.isArray(ids) && ids.length) {
+        const wanted = ids.map((i) => String(i).toLowerCase());
+        return list.filter(
+          (item) => wanted.includes(item.id) || wanted.includes(String(item.name).toLowerCase())
+        );
+      }
+      return list.filter((item) => !item.projectId);
+    };
+
+    const tagged = [...pick(this.routines, routines), ...pick(this.watches, watches)];
+    for (const item of tagged) item.projectId = target;
+    if (tagged.length) this.save();
+    return {
+      routines: tagged.filter((i) => this.routines.includes(i)).map((i) => i.id),
+      watches: tagged.filter((i) => this.watches.includes(i)).map((i) => i.id),
+    };
+  }
+
   dueWatches(now = new Date()) {
     return this.watches.filter((watch) => {
       if (!watch.enabled) return false;

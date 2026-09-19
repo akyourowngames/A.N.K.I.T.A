@@ -30,6 +30,12 @@ export const PROJECT_FIELDS = [
   "databases",
 ];
 
+export const STATUSES = ["active", "paused", "shipped", "on-hold"];
+
+// Contacts and links are small, but "small" plus "forever" is unbounded growth.
+export const MAX_CONTACTS = 20;
+export const MAX_LINKS = 40;
+
 /** Questions worth asking, in the order they usually matter. */
 const INTAKE_QUESTIONS = [
   ["summary", "what it is"],
@@ -56,19 +62,25 @@ function uniqueId(base, taken) {
   return id;
 }
 
-function cleanList(value, cap, itemCap = 0) {
+function cleanList(value, cap) {
   if (value === undefined || value === null) return undefined;
   const list = Array.isArray(value) ? value : [value];
   return list
     .map((v) => String(v).trim())
     .filter(Boolean)
-    .map((v) => (itemCap ? v.slice(0, itemCap) : v))
     .slice(0, cap);
 }
 
-/** Every entry point must respect the same limits, or the prompt block grows. */
+/**
+ * Caps how many conventions are kept, never their length.
+ *
+ * A length cap here would silently truncate what the user wrote - it happened:
+ * "…edge-tts for voice, scrapling for scraping" was stored as "…edge-tts for
+ * voice,". Storage keeps the real value; the prompt block is where the size
+ * bound belongs.
+ */
 function normalizeConventions(value) {
-  return cleanList(value, MAX_CONVENTIONS, CONVENTION_CAP) || [];
+  return cleanList(value, MAX_CONVENTIONS) || [];
 }
 
 export class ProjectStore {
@@ -143,6 +155,10 @@ export class ProjectStore {
       conventions: normalizeConventions(conventions),
       environments: Array.isArray(environments) ? environments.slice(0, 10) : [],
       databases: Array.isArray(databases) ? databases.slice(0, 10) : [],
+      status: "active",
+      archived: false,
+      contacts: [],
+      links: [],
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
     };
@@ -188,6 +204,84 @@ export class ProjectStore {
       project.conventions.push(value);
       project.conventions = project.conventions.slice(-MAX_CONVENTIONS);
     }
+    this.save();
+    return project;
+  }
+
+  /**
+   * Renames the display name only. The id is a stable handle that routines and
+   * watches are tagged with, so it must not move underneath them.
+   */
+  renameProject(idOrName, newName) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const label = String(newName ?? "").trim();
+    if (!project || !label) return null;
+    project.name = label;
+    this.save();
+    return project;
+  }
+
+  setStatus(idOrName, status) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(status ?? "").trim().toLowerCase();
+    if (!project) return null;
+    if (!STATUSES.includes(value)) return { error: `status must be one of ${STATUSES.join(", ")}` };
+    project.status = value;
+    this.save();
+    return project;
+  }
+
+  setArchived(idOrName, archived = true) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    project.archived = Boolean(archived);
+    // An archived project should not also be the active one.
+    if (project.archived && this.data.active === project.id) this.data.active = null;
+    this.save();
+    return project;
+  }
+
+  addContact(idOrName, { name, role, email } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const label = String(name ?? "").trim();
+    if (!project) return null;
+    if (!label) return { error: "a contact needs a name" };
+
+    // Only the fields actually supplied are written: defaulting role/email to
+    // "" and assigning anyway would wipe a value the caller never mentioned.
+    const patch = { name: label };
+    if (role !== undefined) patch.role = String(role).trim();
+    if (email !== undefined) patch.email = String(email).trim();
+
+    project.contacts = [...(project.contacts || [])];
+    const existing = project.contacts.find((c) => c.name.toLowerCase() === label.toLowerCase());
+    if (existing) Object.assign(existing, patch);
+    else project.contacts.push({ name: label, role: patch.role ?? "", email: patch.email ?? "" });
+
+    project.contacts = project.contacts.slice(-MAX_CONTACTS);
+    this.save();
+    return project;
+  }
+
+  addLink(idOrName, { label, url } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    const target = String(url ?? "").trim();
+    if (!target) return { error: "a link needs a url" };
+    try {
+      const parsed = new URL(target);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+        return { error: "link url must be http(s)" };
+      }
+    } catch {
+      return { error: `not a valid url: ${target}` };
+    }
+    project.links = [...(project.links || []), { label: String(label || target).trim(), url: target }].slice(-MAX_LINKS);
     this.save();
     return project;
   }
@@ -285,9 +379,12 @@ export function describeProject(project, activeId) {
     project.databases?.length ? `${project.databases.length} db` : null,
     project.environments?.length ? `${project.environments.length} env` : null,
   ].filter(Boolean);
+  const marks = [];
+  if (project.status && project.status !== "active") marks.push(`<${project.status}>`);
+  if (project.archived) marks.push("<archived>");
   return `${mark} ${project.id.padEnd(18)} ${String(where).padEnd(34)} ${(project.summary || "").slice(0, 40)}${
     counts.length ? "  (" + counts.join(", ") + ")" : ""
-  }`;
+  }${marks.length ? "  " + marks.join(" ") : ""}`;
 }
 
 export function describeProjectFull(project, store) {
@@ -308,6 +405,13 @@ export function describeProjectFull(project, store) {
   for (const env of project.environments || []) {
     lines.push(`  environment  ${env.name || "?"}${env.host ? ` at ${env.host}` : ""}`);
   }
+  for (const c of project.contacts || []) {
+    lines.push(`  contact      ${[c.name, c.role, c.email].filter(Boolean).join(" · ")}`);
+  }
+  for (const l of project.links || []) {
+    lines.push(`  link         ${l.label}  ${l.url}`);
+  }
+  lines.push(`  status       ${project.status || "active"}${project.archived ? "  (archived)" : ""}`);
   lines.push(`  created      ${project.createdAt}`);
   if (project.lastUsedAt) lines.push(`  last used    ${project.lastUsedAt}`);
   if (store && store.activeId === project.id) lines.push(`  (active)`);

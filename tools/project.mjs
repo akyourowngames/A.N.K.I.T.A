@@ -1,5 +1,6 @@
-import { PROJECTS_FILE } from "../src/config.mjs";
-import { ProjectStore, describeProject, describeProjectFull } from "../src/projects.mjs";
+import { PROJECTS_FILE, STATE_FILE } from "../src/config.mjs";
+import { ProjectStore, describeProject, describeProjectFull, STATUSES } from "../src/projects.mjs";
+import { RoutineStore } from "../src/routines.mjs";
 
 export const name = "project";
 export const description =
@@ -7,7 +8,8 @@ export const description =
   "or all three. Use this when the user mentions a project, asks to add one, or asks what you " +
   "know about it. Only a name is required to start; ask the user for the rest rather than " +
   "inventing it, then fill the fields in with update. " +
-  "Actions: add, list, show, use, update, forget.";
+  "Actions: add, list, show, use, rename, update, status, archive, restore, attach, contact, " +
+  "link, forget.";
 
 export const parameters = {
   type: "object",
@@ -51,6 +53,24 @@ export const parameters = {
           credential: { type: "string" },
         },
       },
+    },
+    new_name: { type: "string", description: "For rename: the new display name (the id never changes)." },
+    status: { type: "string", description: `For status: one of ${STATUSES.join(", ")}.` },
+    archived: { type: "boolean", description: "For list: include archived projects. Default false." },
+    contact_name: { type: "string", description: "For contact: the person's name." },
+    role: { type: "string", description: "For contact: their role, e.g. PM, CTO." },
+    email: { type: "string", description: "For contact: their email." },
+    label: { type: "string", description: "For link: a short label for the url." },
+    url: { type: "string", description: "For link: the url to record." },
+    routines: {
+      type: "array",
+      description: "For attach: specific routine ids to tag. Omit to tag every untagged routine.",
+      items: { type: "string" },
+    },
+    watches: {
+      type: "array",
+      description: "For attach: specific watch ids to tag. Omit to tag every untagged watch.",
+      items: { type: "string" },
     },
   },
   required: ["action"],
@@ -116,9 +136,96 @@ export function run(args = {}) {
     if (!s.projects.length) {
       return "No projects yet. Ask the user whether to add one, starting with its name.";
     }
+    const all = s.projects;
+    const shown = args.archived ? all : all.filter((p) => !p.archived);
+    if (!shown.length) {
+      return `All ${all.length} project(s) are archived. Use archived: true to see them.`;
+    }
+    const hidden = all.length - shown.length;
     return (
-      s.projects.map((p) => describeProject(p, s.activeId)).join("\n") +
-      "\n\n(the * marks the active project; ids are the second column)"
+      shown.map((p) => describeProject(p, s.activeId)).join("\n") +
+      "\n\n(the * marks the active project; ids are the second column)" +
+      (hidden ? `\n(${hidden} archived project(s) hidden - pass archived: true to include)` : "")
+    );
+  }
+
+  if (action === "rename") {
+    if (!args.name) return "Error: 'name' is required to rename (which project?).";
+    if (!args.new_name) return "Error: 'new_name' is required. What should it be called?";
+    const before = s.find(args.name);
+    if (!before) return `Error: no project "${args.name}". See project action=list.`;
+    if (s.find(args.new_name) && s.find(args.new_name).id !== before.id) {
+      return `Error: another project is already called "${args.new_name}".`;
+    }
+    const renamed = s.renameProject(before.id, args.new_name);
+    return (
+      `Renamed "${before.name}" to "${renamed.name}".\n` +
+      `Id is unchanged at "${renamed.id}", so anything already tagged with it still points here.`
+    );
+  }
+
+  if (action === "status") {
+    if (!args.name) return "Error: 'name' is required.";
+    if (!args.status) {
+      const p = s.find(args.name);
+      if (!p) return `Error: no project "${args.name}".`;
+      return `"${p.name}" is ${p.status || "active"}${p.archived ? " (archived)" : ""}. Set it with status: one of ${STATUSES.join(", ")}.`;
+    }
+    const updated = s.setStatus(args.name, args.status);
+    if (!updated) return `Error: no project "${args.name}".`;
+    if (updated.error) return `Error: ${updated.error}.`;
+    return `"${updated.name}" is now ${updated.status}.`;
+  }
+
+  if (action === "archive" || action === "restore") {
+    if (!args.name) return `Error: 'name' is required to ${action}.`;
+    const updated = s.setArchived(args.name, action === "archive");
+    if (!updated) return `Error: no project "${args.name}".`;
+    return action === "archive"
+      ? `Archived "${updated.name}". It is hidden from list and is no longer active; nothing on disk was touched. Use restore to bring it back.`
+      : `Restored "${updated.name}". It shows in list again.`;
+  }
+
+  if (action === "contact" || action === "link") {
+    if (!args.name) return `Error: 'name' is required to add a ${action}. Which project?`;
+    const updated =
+      action === "contact"
+        ? s.addContact(args.name, { name: args.contact_name, role: args.role, email: args.email })
+        : s.addLink(args.name, { label: args.label, url: args.url });
+    if (!updated) return `Error: no project "${args.name}".`;
+    if (updated.error) return `Error: ${updated.error}.`;
+    const rows = action === "contact" ? updated.contacts : updated.links;
+    return (
+      `Updated "${updated.name}".\n` +
+      rows
+        .map((r) =>
+          action === "contact"
+            ? `  ${[r.name, r.role, r.email].filter(Boolean).join(" · ")}`
+            : `  ${r.label}  ${r.url}`
+        )
+        .join("\n")
+    );
+  }
+
+  if (action === "attach") {
+    if (!args.name) return "Error: 'name' is required to attach. Which project?";
+    const project = s.find(args.name);
+    if (!project) return `Error: no project "${args.name}". See project action=list.`;
+
+    const store = new RoutineStore(STATE_FILE).load();
+    const moved = store.attachToProject(project.id, { routines: args.routines, watches: args.watches });
+    const total = moved.routines.length + moved.watches.length;
+    if (!total) {
+      return args.routines || args.watches
+        ? `Nothing matched, so "${project.name}" was left alone. Check the ids with schedule action=list / watch action=list.`
+        : `Every routine and watch is already tagged, so there was nothing to attach.`;
+    }
+    return (
+      `Attached ${total} item(s) to "${project.name}":\n` +
+      [
+        ...moved.routines.map((id) => `  routine ${id}`),
+        ...moved.watches.map((id) => `  watch ${id}`),
+      ].join("\n")
     );
   }
 
@@ -169,5 +276,5 @@ export function run(args = {}) {
     return `Forgot project "${removed.name}". Nothing on disk was touched - only the record.`;
   }
 
-  return `Error: unknown action "${action}". Use add, list, show, use, update, or forget.`;
+  return `Error: unknown action "${action}". Use add, list, show, use, rename, update, status, archive, restore, attach, contact, link, or forget.`;
 }
