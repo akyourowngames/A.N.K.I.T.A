@@ -154,3 +154,18 @@ export function describeServer(record, connected) {
   const err = record.lastError ? `  ! ${String(record.lastError).slice(0, 60)}` : "";
   return `${state.padEnd(4)} ${record.id.padEnd(16)} ${(record.command + " " + (record.args || []).join(" ")).slice(0, 50)}${approved}${err}`;
 }
+
+// Enabling is configuration only - it does not start the process, because
+// starting one is execution and that is what the approval gate is for. Both
+// the /mcp command and the mcp_manage tool report through these, so the two
+// paths cannot drift apart.
+export function enableMessage(record, approved) {
+  const next = approved
+    ? "Run reload to start it."
+    : "Run reload to start it, which asks for approval first.";
+  return `MCP server "${record.id}" is enabled, but not running yet. ${next}`;
+}
+
+export function disableMessage(record) {
+  return `MCP server "${record.id}" is disabled and its tools are gone. Enable it to use it again.`;
+}
