@@ -7,6 +7,7 @@ import * as projectMemory from "./project-memory.mjs";
 import * as schedule from "./schedule.mjs";
 import * as watch from "./watch.mjs";
 import * as githubNotifications from "./github-notifications.mjs";
+import * as mcpManage from "./mcp-manage.mjs";
 
 /**
  * The tools that are NOT sent on every request, grouped so one discovery call
@@ -56,6 +57,15 @@ export const CATEGORIES = [
       "review request", "invitation", "inbox",
     ],
     tools: [githubNotifications],
+  },
+  {
+    id: "mcp",
+    summary: "add, list, remove or reload MCP servers (external tool providers)",
+    keywords: [
+      "mcp", "model context protocol", "server", "integrate", "plugin", "external tools",
+      "connect a service", "tool server",
+    ],
+    tools: [mcpManage],
   },
   {
     id: "filesystem",

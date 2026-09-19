@@ -134,6 +134,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
+| `mcp_manage` | Add/list/remove/enable/disable MCP servers — extra tools from external processes |
 | `project` | Add/list/show/switch/rename/archive projects; records what each one is, where it lives, how you like it done, who the client is |
 | `project_memory` | Remember notes, decisions and open todos per project; `log` shows the timeline, `brief` hands over a catch-up |
 | `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
@@ -262,6 +263,42 @@ Lists are capped (50 notes, 50 decisions, 100 todos, newest kept) and `show` say
 
 The block is capped (200-char summary, 5 conventions) because it is paid on every turn alongside the tool specs.
 
+## MCP servers
+
+Ankita can use [Model Context Protocol](https://modelcontextprotocol.io) servers — external processes that provide tools. Hand-rolled over stdio, so the zero-dependency rule holds.
+
+```
+/mcp add time uvx mcp-server-time
+  registered "time"
+  command: uvx mcp-server-time
+  start it with:  /mcp reload time   (asks for approval first)
+
+/mcp reload time
+  ── start MCP server "time" ──────────────
+  command: uvx mcp-server-time
+  runs third-party code; approval is remembered for this exact command
+  ─────────────────────────────────────────
+  allow? [y/n] > y
+  live · 2 tool(s): get_current_time, convert_time
+```
+
+Then just ask:
+
+```
+you › what time is it in Tokyo?
+  → mcp__time__get_current_time({"timezone": "Asia/Tokyo"})
+    { "datetime": "2026-09-20T02:01:29+09:00", "day_of_week": "Sunday" }
+In Tokyo it's 2:01 AM on Sunday.
+```
+
+**Adding is separate from running.** `add` only records a command; nothing executes until you approve that exact command. Approval is remembered against a hash of `command + args`, so bumping a version `npx -y pkg@1.0.0` → `@2.0.0` asks again rather than silently running different code.
+
+**Tools are namespaced** `mcp__<server>__<tool>`, so they can't collide with built-ins. Approval follows the server's own `readOnlyHint`: only an explicit read-only hint skips the gate; anything unset or destructive asks first, and the prompt shows the command that will spawn.
+
+**Servers are process-level, not per-session.** The REPL, Telegram chats and every routine worker share one live connection — so a cron job calling an MCP tool reuses the running server instead of spawning one per invocation. The daemon reconciles against `~/.copilot-chat-cli/mcp.json` every tick, so `/mcp add` reaches a running daemon without a restart.
+
+**Servers get a stripped environment** (PATH, HOME, SystemRoot and an explicit per-server map) — third-party code does not inherit your secrets. Teardown closes every server, including on daemon exit.
+
 ## The proactive assistant
 
 `ankita --daemon` turns the agent into something that works while you are away. It runs three loops against the same tools the REPL uses:
@@ -336,7 +373,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-153 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive` and `projects`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed.
+204 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects` and `mcp`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable.
 
 ## Security notes
 

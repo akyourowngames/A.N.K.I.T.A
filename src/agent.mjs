@@ -362,9 +362,14 @@ export class Agent {
     try {
       if (this.cancelled()) return 'Action cancelled by user.';
       if (needsApproval(tool.name) && !this.autoApprove) {
-        const detail = await tool.approval?.(args, ctx, this.ui) || JSON.stringify(args, null, 2);
-        const ok = await this.confirm?.(tool.name, detail);
-        if (!ok) return "The user denied permission for this action. Do not retry it; ask what to do instead.";
+        // A tool may declare approval() and return nothing for the harmless
+        // half of its actions (mcp_manage: listing is fine, starting a
+        // third-party process is not). Falsy means "no gate", not "unset".
+        const detail = tool.approval ? await tool.approval(args, ctx, this.ui) : JSON.stringify(args, null, 2);
+        if (detail) {
+          const ok = await this.confirm?.(tool.name, detail);
+          if (!ok) return "The user denied permission for this action. Do not retry it; ask what to do instead.";
+        }
       }
       if (this.cancelled()) return 'Action cancelled by user.';
       return capOutput(await tool.run(args, ctx), budget);

@@ -10,6 +10,7 @@ export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 export const AUTOSAVE_NAME = "autosave";
 export const STATE_FILE = path.join(CONFIG_DIR, "state.json");
 export const PROJECTS_FILE = path.join(CONFIG_DIR, "projects.json");
+export const MCP_FILE = path.join(CONFIG_DIR, "mcp.json");
 export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
 const DEFAULTS = {
