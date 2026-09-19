@@ -113,7 +113,15 @@ export function run(args = {}, ctx = {}) {
   if (action === "enable" || action === "disable") {
     const record = s.setEnabled(args.id || args.name, action === "enable");
     if (!record) return `Error: no MCP server "${args.id || args.name}".`;
-    return `MCP server "${record.id}" is now ${record.enabled ? "enabled" : "disabled"}.`;
+    if (action === "enable") {
+      // Enabling is configuration only - it does not start the process, so say
+      // what it takes to actually get the tools.
+      const next = s.isApproved(record)
+        ? `Run reload to start it.`
+        : `Run reload to start it, which asks for approval first.`;
+      return `MCP server "${record.id}" is enabled, but not running yet. ${next}`;
+    }
+    return `MCP server "${record.id}" is disabled and its tools are gone. Enable it to use it again.`;
   }
 
   if (action === "reload") {

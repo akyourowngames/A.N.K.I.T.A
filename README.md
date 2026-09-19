@@ -373,7 +373,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-204 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects` and `mcp`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable.
+205 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects` and `mcp`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable.
 
 ## Security notes
 
