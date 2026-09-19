@@ -14,6 +14,13 @@ import { McpClient, formatToolResult } from "./mcp-client.mjs";
 
 const PREFIX = "mcp__";
 
+/**
+ * How much of a request one MCP server's tool list may occupy before it is
+ * held back and loaded on demand instead. Roughly the size of the whole
+ * built-in core set, so a server never crowds out the basics.
+ */
+export const ALWAYS_ON_TOKENS = 1200;
+
 export function slug(text) {
   return String(text || "")
     .toLowerCase()
@@ -228,12 +235,35 @@ export class McpManager {
     return out;
   }
 
+  /** Roughly what one server's tool list costs per request. */
+  estimatedTokens(id) {
+    const serverId = String(id);
+    if (!this.servers.has(serverId)) return 0;
+    return Math.ceil(JSON.stringify(this.specs({ only: new Set([serverId]) })).length / 4);
+  }
+
+  /**
+   * Servers small enough to ship with every request, and those too big to.
+   *
+   * A big server cannot simply be always-on: Playwright's 25 browser tools
+   * are ~4.6k tokens, which alone is enough to push a request past the context
+   * window and fail it outright. Those load on demand through find_tools.
+   */
+  alwaysOnIds() {
+    return [...this.servers.keys()].filter((id) => this.estimatedTokens(id) <= ALWAYS_ON_TOKENS);
+  }
+
+  deferredIds() {
+    return [...this.servers.keys()].filter((id) => this.estimatedTokens(id) > ALWAYS_ON_TOKENS);
+  }
+
   /** One line per server, for find_tools and the system prompt. */
   summaries() {
     return [...this.servers.values()].map((r) => ({
       id: r.id,
       tools: r.tools.map((t) => t.name),
       summary: `${r.tools.length} tool(s) from MCP server "${r.id}"`,
+      deferred: this.estimatedTokens(r.id) > ALWAYS_ON_TOKENS,
     }));
   }
 

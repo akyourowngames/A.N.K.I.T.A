@@ -1,3 +1,6 @@
 .env
 node_modules/
 *.log
+
+# Artifacts written into the working directory by tools we drive.
+.playwright-mcp/

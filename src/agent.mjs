@@ -11,6 +11,37 @@ toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui
 
 const MAX_TOOL_STEPS = 16;
 
+/**
+ * How connected MCP servers are described to the model.
+ *
+ * A small server's tools are already in the request, so it just lists them. A
+ * large one (Playwright is 25 tools) is held back to protect the context
+ * window, so the model is told it exists and what to call to load it - and
+ * explicitly that its tools are NOT callable yet, or it will try anyway.
+ */
+export function mcpPromptLines(mcpServers = []) {
+  if (!mcpServers.length) return [];
+  const loaded = mcpServers.filter((s) => !s.deferred);
+  const held = mcpServers.filter((s) => s.deferred);
+  const lines = [];
+
+  if (loaded.length) {
+    lines.push(
+      "Connected MCP servers provide extra tools you can call directly, named mcp__<server>__<tool>:",
+      ...loaded.map((s) => `  ${s.id}: ${s.tools.join(", ")}`)
+    );
+  }
+  if (held.length) {
+    lines.push(
+      "These MCP servers are connected, but their tool lists are large so they are NOT loaded yet:",
+      ...held.map((s) => `  ${s.id}: ${s.tools.length} tool(s) - e.g. ${s.tools.slice(0, 4).join(", ")}`),
+      `Call find_tools with the server name (e.g. find_tools("${held[0].id}")) to load one. Do not try ` +
+        "to call mcp__ tools from those servers before doing so."
+    );
+  }
+  return lines;
+}
+
 export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) {
   const today = new Date().toISOString().slice(0, 10);
   const shell =
@@ -31,10 +62,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) 
     ...CATEGORIES.map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
     "For anything time-sensitive or factual about the world, load `web` with find_tools and search " +
       "rather than guessing.",
-    mcpServers.length
-      ? "Connected MCP servers provide extra tools you can call directly, named mcp__<server>__<tool>:\n" +
-        mcpServers.map((s) => `  ${s.id}: ${s.tools.join(", ")}`).join("\n")
-      : "",
+    ...mcpPromptLines(mcpServers),
     "",
     "You are NOT confined to the working directory. Any absolute path works, and every path a tool " +
       "prints (including search results outside the working directory) is directly usable in your next " +
@@ -157,7 +185,17 @@ export class Agent {
       base = active && active.size ? [...coreSpecs, ...specsFor([...active])] : coreSpecs;
     }
 
-    const mcp = this.mcp ? this.mcp.specs() : [];
+    // MCP servers follow the same rule as the built-ins: small ones are always
+    // in the request, large ones only once find_tools has loaded them by id.
+    // specsFor() above ignores these ids (it only knows deferred static names),
+    // so a server id sitting in activatedTools is inert until here.
+    if (!this.mcp) return base;
+    const active = this.state?.activatedTools;
+    const wanted = new Set(this.mcp.alwaysOnIds());
+    if (active && active.size) {
+      for (const entry of active) if (this.mcp.has(entry)) wanted.add(String(entry));
+    }
+    const mcp = wanted.size ? this.mcp.specs({ only: wanted }) : [];
     return mcp.length ? [...base, ...mcp] : base;
   }
 
@@ -356,6 +394,9 @@ export class Agent {
       state: this.state,
       // Lets the schedule/watch tools default a new entry to the active project.
       projectId: this.projectId,
+      // mcp_manage reloads through this, and find_tools loads a big server's
+      // tools by name. Without it a tool-driven reload cannot reconnect.
+      mcp: this.mcp,
     };
 
     const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;

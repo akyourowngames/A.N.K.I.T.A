@@ -1,17 +1,35 @@
 import { MCP_FILE } from "../src/config.mjs";
-import { McpStore, describeServer, enableMessage, disableMessage } from "../src/mcp-store.mjs";
+import { McpStore, describeServer, describeSource, enableMessage, disableMessage } from "../src/mcp-store.mjs";
+import { collapseToLatest, commandFor, describeCandidate, resolveServer, searchRegistry, shortName } from "../src/mcp-registry.mjs";
 
 export const name = "mcp_manage";
 export const description =
   "Manage MCP (Model Context Protocol) servers - extra tools provided by external processes. " +
-  "Use this when the user asks to add, list, remove, enable, disable or reload an MCP server. " +
-  "Adding a server records the exact command that will run; nothing executes until the user " +
-  "approves it. Actions: add, list, remove, enable, disable, reload.";
+  "Use this when the user asks to add, list, remove, enable, disable or reload an MCP server, " +
+  "or to find one (search the official MCP registry for browser automation, databases, " +
+  "design tools and so on, then install it). " +
+  "Adding or installing a server records the exact command that will run; nothing executes " +
+  "until the user approves it. " +
+  "Actions: search, install, add, list, remove, enable, disable, reload.";
 
 export const parameters = {
   type: "object",
   properties: {
-    action: { type: "string", description: "add, list, remove, enable, disable, or reload." },
+    action: {
+      type: "string",
+      description: "search, install, add, list, remove, enable, disable, or reload.",
+    },
+    query: {
+      type: "string",
+      description: "For search: what to look for, e.g. 'playwright', 'postgres', 'figma'.",
+    },
+    server: {
+      type: "string",
+      description:
+        "For install: the registry name from search results, e.g. io.github.microsoft/playwright-mcp.",
+    },
+    version: { type: "string", description: "For install: a specific version. Defaults to latest." },
+    as: { type: "string", description: "For install: a short local id. Defaults to the package name." },
     name: { type: "string", description: "For add: a short name for the server." },
     command: {
       type: "string",
@@ -62,10 +80,99 @@ function manager(ctx) {
   return ctx?.mcp || null;
 }
 
-export function run(args = {}, ctx = {}) {
+export async function run(args = {}, ctx = {}) {
   const s = store();
   const mcp = manager(ctx);
   const action = String(args.action || "list").toLowerCase();
+
+  if (action === "search") {
+    const query = String(args.query || args.name || "").trim();
+    if (!query) {
+      return "Error: 'query' is required. Ask the user what kind of server they want (browser automation, a database, a design tool) and search for that.";
+    }
+    let entries;
+    try {
+      entries = await searchRegistry(query, { signal: ctx.signal, fetchImpl: ctx.fetchImpl });
+    } catch (err) {
+      return `Error: could not reach the MCP registry: ${err.message}`;
+    }
+    const latest = collapseToLatest(entries);
+    if (!latest.length) {
+      return `Nothing in the official MCP registry matches "${query}". Try a broader word.`;
+    }
+
+    // Usable ones first: a wall of remote-only entries would bury the two the
+    // user can actually install.
+    const described = latest.map(describeCandidate);
+    const usable = described.filter((c) => c.usable);
+    const rest = described.filter((c) => !c.usable);
+
+    const lines = [
+      `${usable.length} installable match(es) for "${query}" (official MCP registry):`,
+      "",
+      ...usable.slice(0, 8).map((c) => c.line),
+    ];
+    if (rest.length) {
+      lines.push("", `Also matched, but ankita cannot launch these:`, ...rest.slice(0, 4).map((c) => c.line));
+    }
+    lines.push(
+      "",
+      "Installing records the command; nothing runs until the user approves it.",
+      "Call again with action 'install' and the registry name to install one - ask the user which first."
+    );
+    return lines.join("\n");
+  }
+
+  if (action === "install") {
+    const wanted = String(args.server || args.id || "").trim();
+    if (!wanted) {
+      return "Error: 'server' is required. Run a search first and use the registry name it returned.";
+    }
+    let info;
+    try {
+      info = await resolveServer(wanted, {
+        version: args.version,
+        signal: ctx.signal,
+        fetchImpl: ctx.fetchImpl,
+      });
+    } catch (err) {
+      return `Error: could not reach the MCP registry: ${err.message}`;
+    }
+    if (info.error) return `Error: ${info.error}`;
+
+    let record;
+    try {
+      record = s.add({
+        id: args.as,
+        name: args.as || shortName(info.registryName),
+        command: info.command,
+        args: info.args,
+        env: args.env,
+        source: { registryName: info.registryName, version: info.version, repository: info.repository },
+      });
+    } catch (err) {
+      return `Error: ${err.message}`;
+    }
+
+    const missing = info.env.filter((v) => v.required && !(record.env || {})[v.name]);
+    const lines = [
+      `Installed "${record.id}" from ${info.registryName} @ ${info.version}.`,
+      `  command: ${record.command} ${(record.args || []).join(" ")}`,
+    ];
+    if (missing.length) {
+      lines.push(
+        "",
+        `This server expects ${missing.map((v) => v.name).join(", ")}. It may refuse to start without ` +
+          `${missing.length > 1 ? "them" : "it"} - ask the user for the value and pass it as 'env'.`
+      );
+    }
+    lines.push(
+      "",
+      "It has NOT been started. Run action 'reload' with this id to start it - that asks the user to",
+      "approve the exact command above before anything executes."
+    );
+    return lines.join("\n");
+  }
 
   if (action === "add") {
     if (!args.command) {
@@ -96,7 +203,11 @@ export function run(args = {}, ctx = {}) {
     if (!s.servers.length) {
       return "No MCP servers configured. Ask the user whether to add one (a command to run).";
     }
-    const lines = s.servers.map((r) => describeServer(r, mcp ? mcp.has(r.id) : false));
+    const lines = s.servers.map((r) => {
+      const row = describeServer(r, mcp ? mcp.has(r.id) : false);
+      const from = describeSource(r);
+      return from ? `${row}\n       from ${from}` : row;
+    });
     return (
       lines.join("\n") +
       "\n\n(state: off = disabled, live = connected and callable, idle = approved but not started)" +
@@ -131,7 +242,7 @@ export function run(args = {}, ctx = {}) {
     return withReconnect(mcp, s, record);
   }
 
-  return `Error: unknown action "${action}". Use add, list, remove, enable, disable, or reload.`;
+  return `Error: unknown action "${action}". Use search, install, add, list, remove, enable, disable, or reload.`;
 }
 
 /** Async part kept separate so run() stays a plain function for the registry. */

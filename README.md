@@ -267,6 +267,49 @@ The block is capped (200-char summary, 5 conventions) because it is paid on ever
 
 Ankita can use [Model Context Protocol](https://modelcontextprotocol.io) servers — external processes that provide tools. Hand-rolled over stdio, so the zero-dependency rule holds.
 
+### Finding and installing them
+
+Just ask. Ankita searches the [official MCP registry](https://registry.modelcontextprotocol.io), tells you what it found, and installs what you pick:
+
+```
+you › I want you to be able to drive a browser
+
+  → mcp_manage({"action": "search", "query": "playwright"})
+    8 installable match(es) for "playwright" (official MCP registry):
+
+    - io.github.microsoft/playwright-mcp (v0.0.82)
+        Playwright Tools for MCP
+        command: npx @playwright/mcp@0.0.82
+    ...
+
+  → mcp_manage({"action": "install", "server": "io.github.microsoft/playwright-mcp"})
+    Installed "playwright-mcp" from io.github.microsoft/playwright-mcp @ 0.0.82.
+      command: npx @playwright/mcp@0.0.82
+
+    It has NOT been started. Run action 'reload' with this id to start it.
+```
+
+Then `/mcp reload playwright-mcp` shows you that exact command and asks before anything executes. After that, ask for what you wanted:
+
+```
+you › open example.com and tell me the h1
+
+  → find_tools({"query": "playwright-mcp"})
+  → mcp__playwright-mcp__browser_navigate({"url": "https://example.com"})
+  → mcp__playwright-mcp__browser_evaluate({"function": "() => document.querySelector('h1').textContent"})
+The h1 heading is "Example Domain".
+```
+
+**Installing is not running, and the command is built from typed fields.** The registry returns structured package data — registry type, identifier, version, runtime arguments — not a command string, and we assemble `npx @playwright/mcp@0.0.82` from those fields with the version pinned exactly. The registry payload never picks the executable: an entry that asks for a `curl` runtime, or whose identifier contains shell metacharacters or a version range like `1.x`, is refused rather than run. Search and install touch only config; the approval gate on `reload` is what guards execution.
+
+### Big servers load on demand
+
+A server's tool list is sent with every request, so size matters. Playwright's 25 browser tools are ~4,700 tokens — enough on its own to push a request past the context window and fail it outright.
+
+So a server under ~1,200 tokens (`time`, 2 tools) is always available, and a bigger one is connected but held back. The system prompt says it exists and how to load it, and `find_tools("playwright")` pulls its tools in for the rest of the session. You get the capability without paying for it on every unrelated turn.
+
+### Adding one by hand
+
 ```
 /mcp add time uvx mcp-server-time
   registered "time"
@@ -373,7 +416,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-206 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects` and `mcp`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable.
+242 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp` and `registry`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
 
 ## Security notes
 

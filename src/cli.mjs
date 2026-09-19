@@ -429,6 +429,15 @@ export async function main() {
   }
   const model = picked.id;
 
+  // Adopt the model's advertised context window unless CONTEXT_WINDOW was set
+  // deliberately. The 32768 default is well below what a current model offers,
+  // and a small window is what makes a large MCP server fail outright: the
+  // request cannot fit its tools plus the reserved output. Set on the shared
+  // config so routine workers, which build their own Agents, get it too.
+  if (!config.contextWindowExplicit && picked.context) {
+    config.contextWindow = picked.context;
+  }
+
   const term = new Terminal({ completer: makeCompleter(models) });
   term.loadHistory(HISTORY_FILE);
 
