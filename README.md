@@ -115,7 +115,8 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
-| `project` | Add/list/show/switch projects; records what each one is, where it lives, how you like it done |
+| `project` | Add/list/show/switch/rename/archive projects; records what each one is, where it lives, how you like it done, who the client is |
+| `project_memory` | Remember notes, decisions and open todos per project; `log` shows the timeline, `brief` hands over a catch-up |
 | `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
 | `watch` | Track a page or a number on it (signups, logins, prices) and report changes |
 | `github_notifications` | Your GitHub inbox: mentions, review requests, invitations |
@@ -215,7 +216,32 @@ Ask *"which project am I on and how do I like things done here?"* and she answer
 
 Databases and environments record a credential **name**, never a value — nothing secret is stored. `project action=forget` removes the record and touches nothing on disk.
 
-The block is capped (200-char summary, 5 conventions of 60 chars) because it is paid on every turn alongside the tool specs.
+### It remembers what you did together
+
+Notes, decisions and open items, each dated, so a project has a state beyond its fields:
+
+```
+you › remember we chose SQLite because there's nothing to run
+  → project_memory({"action":"decide","text":"chose SQLite - single writer, nothing to run"})
+ankita › Decision recorded on "Zumba Bot". (2 notes, 3 decisions, 2 open)
+
+you › where does zumba stand?
+  → project_memory({"action":"brief"})
+ankita › The Zumba Bot project is progressing well, Krish. It's your local-first Telegram
+         assistant... Voice now works end to end. SQLite was chosen for memory, consistent
+         with staying local-first. Open: rotate the exposed Groq key, wire project tags into
+         the daemon worker. Worth deciding next is which environments it runs on - still unknown.
+```
+
+`log` is the raw timeline; `brief` assembles everything — tasks, decisions, recent notes, plus that project's own routines and watches — and the **model** writes the catch-up from it. A tool can't call a model, so `brief` returns the material and the writing happens in the reply. That also means it only costs tokens when you ask.
+
+`done` closes an item by id (`t2`), by its number among the open ones, or by part of its text — and refuses to guess when a reference is ambiguous, listing the candidates instead.
+
+**Memory never enters the system prompt.** Only the name, summary, path and conventions do. Ten notes later the block is still the same size — otherwise every turn would pay for history you didn't ask for. This is exactly why `brief` exists as the deliberate, opt-in way to pull memory into context.
+
+Lists are capped (50 notes, 50 decisions, 100 todos, newest kept) and `show` says when older entries were dropped.
+
+The block is capped (200-char summary, 5 conventions) because it is paid on every turn alongside the tool specs.
 
 ## The proactive assistant
 

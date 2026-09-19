@@ -36,6 +36,37 @@ export const STATUSES = ["active", "paused", "shipped", "on-hold"];
 export const MAX_CONTACTS = 20;
 export const MAX_LINKS = 40;
 
+// Remembered things. Newest kept; the tool says when older entries were dropped.
+export const MAX_NOTES = 50;
+export const MAX_DECISIONS = 50;
+export const MAX_TODOS = 100;
+
+/** "6d ago" reads like a memory; "2026-09-12T09:14:22Z" reads like a database. */
+export function since(iso, now = Date.now()) {
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return "";
+  const secs = Math.max(0, Math.floor((now - t) / 1000));
+  if (secs < 60) return "just now";
+  const mins = Math.floor(secs / 60);
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  const weeks = Math.floor(days / 7);
+  if (weeks < 5) return `${weeks}w ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
+function nextTodoId(todos = []) {
+  let max = 0;
+  for (const todo of todos) {
+    const m = /^t(\d+)$/.exec(String(todo.id || ""));
+    if (m) max = Math.max(max, Number(m[1]));
+  }
+  return `t${max + 1}`;
+}
+
 /** Questions worth asking, in the order they usually matter. */
 const INTAKE_QUESTIONS = [
   ["summary", "what it is"],
@@ -159,6 +190,9 @@ export class ProjectStore {
       archived: false,
       contacts: [],
       links: [],
+      notes: [],
+      decisions: [],
+      todos: [],
       createdAt: new Date().toISOString(),
       lastUsedAt: null,
     };
@@ -284,6 +318,92 @@ export class ProjectStore {
     project.links = [...(project.links || []), { label: String(label || target).trim(), url: target }].slice(-MAX_LINKS);
     this.save();
     return project;
+  }
+
+  /* ------------------------------- memory -------------------------------- */
+
+  addNote(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a note needs some text" };
+    project.notes = [...(project.notes || []), { at: new Date().toISOString(), text: value }].slice(-MAX_NOTES);
+    this.save();
+    return project;
+  }
+
+  addDecision(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a decision needs some text" };
+    project.decisions = [...(project.decisions || []), { at: new Date().toISOString(), text: value }].slice(
+      -MAX_DECISIONS
+    );
+    this.save();
+    return project;
+  }
+
+  addTodo(idOrName, text) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim();
+    if (!project) return null;
+    if (!value) return { error: "a todo needs some text" };
+    project.todos = [
+      ...(project.todos || []),
+      { id: nextTodoId(project.todos), at: new Date().toISOString(), text: value, done: false, doneAt: null },
+    ].slice(-MAX_TODOS);
+    this.save();
+    return project;
+  }
+
+  /**
+   * Closes one todo. `ref` is a t-id, a 1-based position among the *open*
+   * items, or a substring of the text. Ambiguity is reported, never guessed.
+   */
+  completeTodo(idOrName, ref) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    const todos = project.todos || [];
+    const open = todos.filter((t) => !t.done);
+    if (!open.length) return { error: "nothing is open" };
+
+    const key = String(ref ?? "").trim();
+    if (!key) return { error: "which one? pass an id, a number, or some of the text" };
+
+    let target = todos.find((t) => t.id === key && !t.done);
+    if (!target && /^\d+$/.test(key)) {
+      const n = Number(key);
+      if (n >= 1 && n <= open.length) target = open[n - 1];
+      else return { error: `there is no open item ${n} (${open.length} open)` };
+    }
+    if (!target) {
+      const matches = todos.filter((t) => !t.done && t.text.toLowerCase().includes(key.toLowerCase()));
+      if (matches.length === 1) target = matches[0];
+      else if (matches.length > 1) {
+        return { error: `"${key}" matches ${matches.length}: ${matches.map((t) => `${t.id} ${t.text}`).join(" | ")}` };
+      }
+    }
+    if (!target) return { error: `no open item matches "${key}"` };
+
+    target.done = true;
+    target.doneAt = new Date().toISOString();
+    this.save();
+    return { project, closed: target };
+  }
+
+  memoryCounts(project) {
+    const todos = project?.todos || [];
+    return {
+      notes: (project?.notes || []).length,
+      decisions: (project?.decisions || []).length,
+      todos: todos.length,
+      open: todos.filter((t) => !t.done).length,
+    };
   }
 
   use(idOrName) {

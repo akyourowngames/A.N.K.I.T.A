@@ -236,7 +236,29 @@ export function run(args = {}) {
         ? `Error: no project "${args.name}". See project action=list.`
         : "No project is active and none was named. Ask which project they mean.";
     }
-    return describeProjectFull(project, s);
+    const lines = [describeProjectFull(project, s)];
+
+    // Memory and the things tagged with it, so `show` answers "where does this
+    // stand" without a second call.
+    const mem = s.memoryCounts(project);
+    if (mem.notes || mem.decisions || mem.todos) {
+      lines.push(
+        `  memory       ${mem.notes} note(s), ${mem.decisions} decision(s), ${mem.open} open` +
+          (mem.done ? ` (${mem.done} done)` : "")
+      );
+      for (const t of project.todos.filter((x) => !x.done).slice(0, 4)) {
+        lines.push(`               · ${t.text}  (${t.id})`);
+      }
+      if (mem.open > 4) lines.push(`               · +${mem.open - 4} more (project_memory action=log)`);
+    }
+
+    const tagged = new RoutineStore(STATE_FILE).load();
+    const routines = tagged.routines.filter((r) => r.projectId === project.id);
+    const watches = tagged.watches.filter((w) => w.projectId === project.id);
+    if (routines.length || watches.length) {
+      lines.push(`  tagged       ${routines.length} routine(s), ${watches.length} watch(es)`);
+    }
+    return lines.join("\n");
   }
 
   if (action === "use") {
