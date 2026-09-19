@@ -253,6 +253,22 @@ test('mcp_manage reports rather than inventing when there is nothing to act on',
   assert.match(manage.run({ action: 'wat' }, {}), /unknown action/);
 });
 
+test('enabling says it is still not running, disabling says the tools are gone', () => {
+  const store = new McpStore(MCP_FILE).load();
+  for (const s of [...store.servers]) store.remove(s.id);
+  store.add({ name: 'hint', command: 'python' });
+
+  const enable = manage.run({ action: 'enable', id: 'hint' }, {});
+  assert.match(enable, /enabled, but not running yet/);
+  assert.match(enable, /asks for approval first/, 'unapproved servers say so');
+
+  store.markApproved('hint');
+  assert.match(manage.run({ action: 'enable', id: 'hint' }, {}), /Run reload to start it\.$/);
+
+  const disable = manage.run({ action: 'disable', id: 'hint' }, {});
+  assert.match(disable, /disabled and its tools are gone/);
+});
+
 test('the mcp category is discoverable through find_tools', async () => {
   const { CATEGORIES } = await import('../tools/catalog.mjs');
   const findTools = await import('../tools/find-tools.mjs');
