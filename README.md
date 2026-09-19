@@ -15,6 +15,25 @@ ankita › search for the latest Node.js LTS release and fetch the announcement
 **Prereqs:** Node.js 18+ (Node 22+ recommended).
 Optional: `ffmpeg`/`ffplay` on PATH for voice (`winget install Gyan.FFmpeg`), and Python 3 + `pip install scrapling` for the stealth scraping tier.
 
+### Run it from anywhere
+
+```bash
+npm link          # once, from the repo
+ankita            # now works from any folder
+```
+
+`npm link` puts `ankita` on your PATH (your npm global prefix must be on it — check with `npm config get prefix`). Because it is a link, edits to the source take effect immediately with no re-install.
+
+Then, so it behaves the same in folders with no `.env`, put your settings in the global fallback:
+
+```bash
+cp .env ~/.copilot-chat-cli/config.env
+```
+
+Without that, running from `C:\` would fall back to defaults — and on Windows `USERNAME` is already set to your OS account name, so the agent would call you `anime` instead of whatever you chose.
+
+Either way, from the repo:
+
 ```bash
 node chat.mjs
 # or
