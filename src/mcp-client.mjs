@@ -110,8 +110,16 @@ export function serverEnv(extra = {}) {
  * call as a successful one.
  */
 export function formatToolResult({ text, isError } = {}) {
-  const body = String(text ?? "").trim() || "(empty result)";
-  return isError ? `Error: ${body}` : body;
+  const raw = String(text ?? "").trim() || "(empty result)";
+  if (!isError) return raw;
+  // Errors arrive in several shapes: "### Error\nError: ..." from Playwright,
+  // "Error executing tool boom: ..." from the Python SDK. Normalise to a single
+  // leading "Error: " so it reads as one failure and is unambiguous to match on.
+  const body = raw
+    .replace(/^#+\s*error\s*:?\s*/i, "")
+    .replace(/^error\b[^:]*:\s*/i, "")
+    .trim();
+  return `Error: ${body || raw}`;
 }
 
 /** Flattens an MCP tool result into text the model can read. */

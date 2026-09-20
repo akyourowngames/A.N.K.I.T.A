@@ -79,6 +79,23 @@ test('the prompt lists loaded servers as callable and held ones as not', () => {
   assert.match(lines, /Do not try\s+to call mcp__ tools from those servers/, 'or it calls them anyway');
 });
 
+test('a browser server gets guidance on the failure modes that are not bugs', () => {
+  // Observed live: a CSS selector that never matched, then one stale ref
+  // retried three times, each attempt a full round trip. None of that is
+  // discoverable from the tool schemas.
+  const browser = [{ id: 'playwright-mcp', tools: ['browser_navigate', 'browser_snapshot'], deferred: true }];
+  const lines = mcpPromptLines(browser).join('\n');
+  assert.match(lines, /prefer navigating straight to a URL/);
+  assert.match(lines, /go stale on navigation/);
+  assert.match(lines, /never retry a ref that just failed/);
+  assert.match(lines, /browser_evaluate with one small expression/);
+});
+
+test('a non-browser server gets no browser advice', () => {
+  const lines = mcpPromptLines([{ id: 'time', tools: ['get_current_time', 'convert_time'], deferred: false }]);
+  assert.equal(lines.some((l) => /Refs like/.test(l)), false);
+});
+
 test('no MCP servers adds no prompt text', () => {
   assert.deepEqual(mcpPromptLines([]), []);
   const prompt = buildSystemPrompt({}, process.cwd(), null, []);

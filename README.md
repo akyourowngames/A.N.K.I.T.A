@@ -308,6 +308,8 @@ A server's tool list is sent with every request, so size matters. Playwright's 2
 
 So a server under ~1,200 tokens (`time`, 2 tools) is always available, and a bigger one is connected but held back. The system prompt says it exists and how to load it, and `find_tools("playwright")` pulls its tools in for the rest of the session. You get the capability without paying for it on every unrelated turn.
 
+When a browser server is connected, the prompt also carries the three things about browser automation that aren't discoverable from the tool schemas: put search terms in the URL rather than typing into a site's search box, treat `[ref=e12]` as valid only until the next page change, and use `browser_evaluate` to read a value rather than parsing a snapshot. Without them a model will retry a stale ref until you give up on it.
+
 ### Adding one by hand
 
 ```
@@ -416,7 +418,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-242 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp` and `registry`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
+244 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp` and `registry`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
 
 ## Security notes
 

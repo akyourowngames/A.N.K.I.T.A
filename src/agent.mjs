@@ -19,11 +19,34 @@ const MAX_TOOL_STEPS = 16;
  * window, so the model is told it exists and what to call to load it - and
  * explicitly that its tools are NOT callable yet, or it will try anyway.
  */
+/**
+ * Browser automation has failure modes that read as tool bugs and are not.
+ * Observed live on YouTube: a CSS selector that never matched, then a ref
+ * harvested from browser_find and reused three times after it had gone stale,
+ * each attempt costing a full round trip. None of that is discoverable from
+ * the tool schemas, so it is worth three lines.
+ */
+const BROWSER_HINTS = [
+  "Browser tools: prefer navigating straight to a URL - put the search terms in the query string " +
+    "(youtube.com/results?search_query=...) - over typing into a site's own search box.",
+  "Refs like [ref=e12] come from browser_snapshot and go stale on navigation or any page change. " +
+    "Take a fresh snapshot before each interaction, and never retry a ref that just failed.",
+  "To read something off a page, browser_evaluate with one small expression is far more reliable " +
+    "than parsing a snapshot.",
+];
+
+function isBrowserServer(server) {
+  const tools = server?.tools || [];
+  return tools.includes("browser_snapshot") && tools.some((t) => t.startsWith("browser_"));
+}
+
 export function mcpPromptLines(mcpServers = []) {
   if (!mcpServers.length) return [];
   const loaded = mcpServers.filter((s) => !s.deferred);
   const held = mcpServers.filter((s) => s.deferred);
   const lines = [];
+
+  if (mcpServers.some(isBrowserServer)) lines.push(...BROWSER_HINTS);
 
   if (loaded.length) {
     lines.push(
