@@ -98,10 +98,15 @@ export function run(args = {}, ctx = {}) {
   const matched = matchCategories(query);
   const servers = matchMcpServers(query, held);
   if (!matched.length && !servers.length) {
-    // Never guess which family was meant - show them all and ask again.
+    // Never guess which family was meant - show them all and ask again. But a
+    // miss usually means the capability is not here at all, so point at the one
+    // place it might be bought in from, rather than dead-ending.
     return (
-      `Nothing matched "${query}". Everything you can load:\n${catalogue(held)}\n\n` +
-      "Call find_tools again with one of those words."
+      `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held)}\n\n` +
+      "If instead you need a whole capability that is not in that list - driving a browser, " +
+      "a specific database, a design tool - load the `mcp` group and search the MCP registry " +
+      'with mcp_manage action="search" before trying to do it by shelling out. Ask the user ' +
+      "before installing anything."
     );
   }
 

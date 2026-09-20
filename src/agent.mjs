@@ -96,6 +96,15 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) 
       "read-only discovery (searches, listings, reads) — just run it. Only ask when you truly need a " +
       "decision you cannot make yourself (e.g. which of two files to overwrite).",
     "Ground every claim in a tool result. Read a file before editing it.",
+    "A zero exit code is not proof anything happened. A silent command - no output, no file " +
+      "written, no value returned - tells you it did not crash, not that it worked; a browser " +
+      "or GUI action printing nothing is unverified, so say it launched but you could not " +
+      "confirm the result, rather than asserting success. When you need to know something " +
+      "actually happened, prefer a tool whose result you can read (page content, a diff, a " +
+      "returned value) over one that reports nothing.",
+    "If you need a capability you do not have - driving a browser, querying a specific service - " +
+      'search the MCP registry (find_tools, then mcp_manage action="search") and ask the user ' +
+      "before installing, instead of guessing at shell commands for an external program.",
     "Prefer edit_file over rewriting whole files with write_file.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",
     "",
@@ -477,19 +486,51 @@ export class Agent {
       }
 
       const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;
+
+      // Exactly one reply per declared tool_call, whatever happens. The API
+      // rejects the entire next request if any call is unanswered ("must be
+      // followed by tool messages responding to each tool_call_id"), so one
+      // thrown tool - or one throwing UI callback - would end the session
+      // rather than just fail a step.
+      const reply = (call, content) => ({ role: "tool", tool_call_id: call.id, content });
+
       const run = async (call) => {
-        onToolCall?.(call);
-        const result = await this.runToolCall(call);
-        onToolResult?.(call, result);
-        return { role: "tool", tool_call_id: call.id, content: capOutput(result, budget) };
+        try {
+          onToolCall?.(call);
+        } catch {}
+        let result;
+        try {
+          result = await this.runToolCall(call);
+        } catch (err) {
+          result = `Error while running ${call?.function?.name || "tool"}: ${err.message}`;
+        }
+        try {
+          onToolResult?.(call, result);
+        } catch {}
+        try {
+          return reply(call, capOutput(result, budget));
+        } catch (err) {
+          return reply(call, `Error: the result could not be formatted (${err.message}).`);
+        }
       };
+
       // Mutations are barriers: only contiguous read-only calls overlap.
       for (let i = 0; i < toolCalls.length;) {
+        if (this.cancelled()) {
+          // Cancelling must stop the remaining work, and still answer every
+          // call the assistant already declared, or the next turn is invalid.
+          for (; i < toolCalls.length; i++) {
+            this.messages.push(reply(toolCalls[i], "Not run: the user cancelled before this step."));
+          }
+          break;
+        }
         if (get(toolCalls[i].function.name)?.readOnly === true) {
           const batch = [];
           while (i < toolCalls.length && get(toolCalls[i].function.name)?.readOnly === true) batch.push(toolCalls[i++]);
           this.messages.push(...await Promise.all(batch.map(run)));
-        } else this.messages.push(await run(toolCalls[i++]));
+        } else {
+          this.messages.push(await run(toolCalls[i++]));
+        }
       }
 
       if (this.cancelled()) {
