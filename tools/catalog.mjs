@@ -60,11 +60,20 @@ export const CATEGORIES = [
   },
   {
     id: "mcp",
-    summary: "add, list, remove or reload MCP servers (external tool providers)",
+    summary:
+      "find, install and manage MCP servers - extra tools from external programs " +
+      "(browser automation, databases, design tools), searched from the official registry",
     keywords: [
       "mcp", "model context protocol", "server", "integrate", "plugin", "external tools",
       "connect a service", "tool server",
+      // Discovery, so a capability the user wants but does not have lands here
+      // rather than becoming a shell guess.
+      "marketplace", "registry", "discover", "install", "find a tool", "add a tool",
+      "browser", "playwright", "automation", "database", "figma", "integration",
     ],
+    // Only mcp_manage is loadable directly; its search action is the way in to
+    // everything else. Nothing from a server is callable until it is installed,
+    // approved and connected.
     tools: [mcpManage],
   },
   {

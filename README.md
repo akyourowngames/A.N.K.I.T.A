@@ -187,7 +187,7 @@ test/                 node:test suite — core, provider, tools, voice, web
 
 **Auth.** The CLI runs the OAuth device flow with the Copilot client id, polls for a user token, then exchanges it at `copilot_internal/v2/token` for a short-lived Copilot token (refreshed automatically on 401). With `API_BASE` set, the device flow is skipped entirely.
 
-**Agentic loop.** Each turn sends `messages + tools` to `/chat/completions` and streams SSE deltas. Text renders live; `tool_calls` accumulate by index, execute (read-only ones concurrently as a batch, mutations as barriers), and results return as `tool` messages for up to 16 steps. Between steps, history is trimmed to the token budget without orphaning tool pairs, every tool result is head+tail capped, and a dropped stream keeps its partial reply with an interruption marker instead of losing it.
+**Agentic loop.** Each turn sends `messages + tools` to `/chat/completions` and streams SSE deltas. Text renders live; `tool_calls` accumulate by index, execute (read-only ones concurrently as a batch, mutations as barriers), and results return as `tool` messages for up to 16 steps. Between steps, history is trimmed to the token budget without orphaning tool pairs, every tool result is head+tail capped, and a dropped stream keeps its partial reply with an interruption marker instead of losing it. Every declared `tool_call` gets exactly one reply even when the tool throws, when a UI callback throws, or when you cancel mid-batch — an unanswered call makes the API reject the entire next request, which would end the session rather than fail one step.
 
 **Rendering.** The reply re-renders as tokens arrive. Once output exceeds the screen, finished lines are committed to the scrollback and only the tail redraws — verified by a terminal simulation asserting cursor moves never leave the visible screen.
 
@@ -310,6 +310,8 @@ So a server under ~1,200 tokens (`time`, 2 tools) is always available, and a big
 
 When a browser server is connected, the prompt also carries the three things about browser automation that aren't discoverable from the tool schemas: put search terms in the URL rather than typing into a site's search box, treat `[ref=e12]` as valid only until the next page change, and use `browser_evaluate` to read a value rather than parsing a snapshot. Without them a model will retry a stale ref until you give up on it.
 
+If a capability isn't connected at all, `find_tools` no longer dead-ends. A miss points at the registry, and the `mcp` group's catalogue line names what discovery is for — so a request to drive a browser or reach a specific service loads `mcp_manage` instead of becoming a guess at a shell command.
+
 ### Adding one by hand
 
 ```
@@ -418,7 +420,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-244 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp` and `registry`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
+255 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp`, `registry` and `tool-loop`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
 
 ## Security notes
 
