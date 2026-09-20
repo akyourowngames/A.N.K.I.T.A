@@ -88,6 +88,14 @@ test('a server result becomes Error: when the server flags it', () => {
   assert.equal(formatToolResult({ text: 'all good', isError: false }), 'all good');
   assert.equal(formatToolResult({ text: 'boom', isError: true }), 'Error: boom');
   assert.equal(formatToolResult({ text: '', isError: true }), 'Error: (empty result)');
+
+  // Some servers head their error body with a markdown heading. Prefixing that
+  // naively yields "Error: ### Error\nError: ...", which reads as two failures.
+  const playwright = { text: '### Error\nError: "input#search" does not match any elements.', isError: true };
+  assert.equal(formatToolResult(playwright), 'Error: "input#search" does not match any elements.');
+  assert.equal(formatToolResult({ text: '### Error\nsomething broke', isError: true }), 'Error: something broke');
+  // A heading is only stripped when it is actually an error heading.
+  assert.equal(formatToolResult({ text: '### Results\nall fine', isError: false }), '### Results\nall fine');
   assert.equal(toolResultText({ content: [{ type: 'text', text: 'a' }, { type: 'text', text: 'b' }] }), 'a\nb');
   assert.equal(toolResultText({ content: [{ type: 'image' }] }), '[image]');
   assert.equal(toolResultText(null), '(no result)');
