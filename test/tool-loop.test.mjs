@@ -105,6 +105,125 @@ test('parallel read-only calls still get one reply each, in declaration order', 
   assert.deepEqual(ids, ['a', 'b', 'c']);
 });
 
+/* ---------------------- chat / tool model split ------------------------- */
+
+test('once a turn uses a tool, the tool model runs the loop and writes the reply', async () => {
+  const calls = [];
+  const agent = makeAgent({ tool: { client: { tag: 'kilo' }, model: 'tool-model' } });
+  agent.runToolCall = async () => 'file list';
+  agent.streamTurn = async (opts = {}) => {
+    calls.push({ tag: opts.client?.tag || 'chat', model: opts.model, useTools: opts.useTools });
+    if (opts.client?.tag === 'kilo') {
+      if (opts.useTools === false) {
+        opts.onDelta?.('kilo reply');
+        return { content: 'kilo reply', toolCalls: [], model: 'tool-model' };
+      }
+      return { content: 'tool draft', toolCalls: [], model: 'tool-model' };
+    }
+    return { content: '', toolCalls: [call('a', 'read_file')], model: 'chat-model' };
+  };
+
+  const deltas = [];
+  const out = await agent.send('go', { onDelta: (d) => deltas.push(d) });
+
+  assert.equal(out, 'kilo reply');
+  assert.equal(agent.toolLoopUsed, true);
+  assert.equal(agent.replyModel, 'tool-model');
+  assert.equal(calls[0].tag, 'chat', 'the chat model makes the first tool decision');
+  const kilo = calls.filter((c) => c.tag === 'kilo');
+  assert.equal(kilo.length, 2, 'the tool model runs the loop then writes the reply');
+  assert.notEqual(kilo[0].useTools, false, 'the loop step keeps tools');
+  assert.equal(kilo[1].useTools, false, 'the reply step has no tools');
+  assert.equal(agent.messages.at(-1).content, 'kilo reply');
+  assert.ok(!agent.messages.some((m) => m.content === 'tool draft'), 'the tool draft is discarded');
+  assert.ok(!deltas.includes('tool draft'), 'the intermediate tool text is not shown');
+});
+
+test('a turn with no tools is answered by the primary alone', async () => {
+  const calls = [];
+  const agent = makeAgent({ tool: { client: { tag: 'kilo' }, model: 'tool' } });
+  agent.streamTurn = async (opts = {}) => {
+    calls.push(opts.client?.tag || 'chat');
+    return { content: 'hi', toolCalls: [] };
+  };
+  const out = await agent.send('hi');
+  assert.equal(out, 'hi');
+  assert.deepEqual(calls, ['chat'], 'the tool model is never woken for plain chat');
+  assert.equal(agent.toolLoopUsed, false);
+});
+
+test('a failed reply falls back to the tool model draft instead of losing the turn', async () => {
+  const agent = makeAgent({ tool: { client: { tag: 'kilo' }, model: 'tool' } });
+  agent.runToolCall = async () => 'ok';
+  agent.streamTurn = async (opts = {}) => {
+    if (opts.client?.tag === 'kilo') {
+      if (opts.useTools === false) throw new Error('reply model down');
+      return { content: 'tool draft', toolCalls: [] };
+    }
+    return { content: '', toolCalls: [call('a', 'read_file')] };
+  };
+  const out = await agent.send('go');
+  assert.equal(out, 'tool draft');
+  assert.equal(agent.messages.at(-1).content, 'tool draft');
+  assert.equal(agent.toolLoopUsed, true);
+});
+
+test('a rate-limited chat model falls back to the tool model instead of waiting out the backoff', async () => {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const model = JSON.parse(opts.body).model;
+    calls.push(model);
+    if (model === 'chat') return new Response('rate limited', { status: 429, headers: { 'retry-after': '30' } });
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'from tool model' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const agent = new Agent({
+      client: { baseUrl: 'http://chat', headers: () => ({}) },
+      config: { tools: false, autoApprove: true, model: 'chat', historyMessages: 40, historyLines: 40, maxTokens: 1000 },
+      tool: { client: { baseUrl: 'http://tool', headers: () => ({}) }, model: 'tool' },
+      print: () => {},
+    });
+    const start = performance.now();
+    const out = await agent.send('hi');
+    assert.equal(out, 'from tool model');
+    assert.deepEqual(calls, ['chat', 'tool'], 'the chat model was tried once, then the tool model');
+    assert.ok(performance.now() - start < 1000, 'it did not sit out the 30s Retry-After');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
+test('a too-large request (413) also falls back instead of ending the turn', async () => {
+  const calls = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = async (url, opts) => {
+    const model = JSON.parse(opts.body).model;
+    calls.push(model);
+    if (model === 'chat') {
+      return new Response(JSON.stringify({ error: { message: 'Request too large for model', code: 'rate_limit_exceeded' } }),
+        { status: 413, headers: { 'content-type': 'application/json' } });
+    }
+    return new Response(JSON.stringify({ choices: [{ message: { content: 'kilo answered' } }] }),
+      { status: 200, headers: { 'content-type': 'application/json' } });
+  };
+  try {
+    const agent = new Agent({
+      client: { baseUrl: 'http://chat', headers: () => ({}) },
+      config: { tools: false, autoApprove: true, model: 'chat', historyMessages: 40, historyLines: 40, maxTokens: 1000 },
+      tool: { client: { baseUrl: 'http://tool', headers: () => ({}) }, model: 'tool' },
+      print: () => {},
+    });
+    const out = await agent.send('continue');
+    assert.equal(out, 'kilo answered');
+    assert.deepEqual(calls, ['chat', 'tool']);
+    assert.equal(agent.replyModel, 'tool', 'the status line reports who actually replied');
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+
 /* ------------------------- capability discovery -------------------------- */
 
 test('a capability you do not have routes to the mcp group', () => {

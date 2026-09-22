@@ -1,248 +1,90 @@
-import { spawn, spawnSync } from "node:child_process";
-import { BoundedOutput } from "./_shared.mjs";
+import { spawn, spawnSync } from 'node:child_process';
+import { JobOutput, clamp, jobsOf, jobSnapshot, notifyJob, waitForExit } from './_jobs.mjs';
+export { waitForExit } from './_jobs.mjs';
 
-export const name = "run_command";
-export const description =
-  "Run a shell command on the user's machine and return its combined stdout and stderr, " +
-  "bounded so huge logs cannot flood the conversation. " +
-  (process.platform === "win32"
-    ? "On Windows this runs in PowerShell (pwsh when installed, else powershell.exe) via -Command, so use PowerShell syntax."
-    : "Runs via /bin/sh -c.") +
-  " Pass background:true for long-running processes (servers, watchers); read them with job_status and stop them with job_stop.";
+export const name = 'run_command';
+export const description = 'Run a shell command. Returns after yield_ms (default 1000) with a job ID if still running, so the conversation can continue. Use background:true for servers; job_status lists/reads jobs, job_input sends stdin, job_wait waits briefly, job_stop ends them. ' +
+  (process.platform === 'win32' ? 'Uses PowerShell: use PowerShell syntax.' : 'Uses /bin/sh.');
+export const parameters = { type: 'object', properties: {
+  command: { type: 'string' }, background: { type: 'boolean', description: 'Return immediately with a job ID.' },
+  yield_ms: { type: 'integer', description: 'Initial wait before returning a live job; default 1000, max 10000.' },
+  timeout_ms: { type: 'integer', description: 'Optional execution deadline; 0/default means no automatic kill, max 600000.' },
+  stdin: { type: 'string' },
+  keep_stdin_open: { type: 'boolean', description: 'Keep input open after initial stdin; default true for background, false for supplied foreground stdin.' },
+  env: { type: 'object', additionalProperties: { type: 'string' } },
+  max_output_bytes: { type: 'integer', description: 'Retained output, default 65536, max 4 MiB.' },
+}, required: ['command'] };
 
-export const parameters = {
-  type: "object",
-  properties: {
-    command: { type: "string", description: "The command line to execute." },
-    timeout_ms: {
-      type: "integer",
-      description: "Kill a foreground command after this many milliseconds (default 60000, max 600000).",
-    },
-    stdin: {
-      type: "string",
-      description: "Text piped to the command's standard input.",
-    },
-    env: {
-      type: "object",
-      description: "Extra environment variables merged over the process environment.",
-      additionalProperties: { type: "string" },
-    },
-    max_output_bytes: {
-      type: "integer",
-      description: "Keep at most this many output bytes (head+tail). Default 65536.",
-    },
-    background: {
-      type: "boolean",
-      description: "Start the command as a background job and return immediately with a job id.",
-    },
-  },
-  required: ["command"],
-};
-
-let shellExe = null;
+let shellExe;
 function shell() {
-  if (shellExe) return shellExe;
-  if (process.platform === "win32") {
-    try {
-      const found = spawnSync("where", ["pwsh"], { windowsHide: true, stdio: "ignore" });
-      shellExe = found.status === 0 ? "pwsh" : "powershell.exe";
-    } catch {
-      shellExe = "powershell.exe";
-    }
-  } else {
-    shellExe = "/bin/sh";
-  }
+  if (!shellExe) shellExe = process.platform === 'win32'
+    ? (spawnSync('where', ['pwsh'], { windowsHide: true, stdio: 'ignore' }).status === 0 ? 'pwsh' : 'powershell.exe') : '/bin/sh';
   return shellExe;
 }
-
-/**
- * PowerShell keeps going after a non-terminating error and still exits 0, so
- * a failed command looks like success ("Wallpaper changed to " with no path).
- * Stop on the first error by default; set PS_STRICT=0 to get the old lenient
- * behaviour, or -ErrorAction SilentlyContinue per command.
- */
-export function strictEnabled() {
-  return String(process.env.PS_STRICT ?? "1") !== "0";
-}
-
+export function strictEnabled() { return String(process.env.PS_STRICT ?? '1') !== '0'; }
 function argvFor(command) {
-  if (process.platform === "win32") {
-    const prelude = strictEnabled() ? "$ErrorActionPreference='Stop'; " : "";
-    return ["-NoProfile", "-NonInteractive", "-Command", prelude + command];
-  }
-  return ["-c", command];
+  return process.platform === 'win32' ? ['-NoProfile', '-Command', (strictEnabled() ? "$ErrorActionPreference='Stop'; " : '') + command] : ['-c', command];
 }
-
-/** Kill a child and everything it spawned (Windows grandchildren need /T). */
-export function killTree(child) {
-  if (!child || child.exitCode !== null || child.signalCode !== null) return;
-  if (process.platform === "win32") {
-    try {
-      spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], { windowsHide: true });
-    } catch {}
-  }
-  try {
-    child.kill("SIGKILL");
-  } catch {}
+/** Terminate descendants before their parent; every POSIX command owns a group. */
+export async function killTree(child) {
+  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (process.platform === 'win32') {
+    await new Promise(resolve => {
+      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
+      const timer = setTimeout(() => { killer.kill(); resolve(); }, 5000);
+      const done = () => { clearTimeout(timer); resolve(); };
+      killer.once('error', done); killer.once('close', done);
+    });
+  } else { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
+  try { child.kill('SIGKILL'); } catch {}
 }
-
-/** Resolves when the job's process exits (or the wait times out). */
-export function waitForExit(job, timeoutMs = 5000) {
-  if (!job || job.done) return Promise.resolve(true);
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      try {
-        job.child?.off?.("close", onClose);
-      } catch {}
-      resolve(job.done);
-    }, Math.max(0, timeoutMs));
-    const onClose = () => {
-      clearTimeout(timer);
-      resolve(true);
-    };
-    try {
-      job.child?.once?.("close", onClose);
-    } catch {
-      clearTimeout(timer);
-      resolve(job.done);
-    }
-  });
-}
-
 export function jobSummary(job) {
-  const secs = ((Date.now() - job.startedAt) / 1000).toFixed(1);
-  const state = job.done ? `done (exit ${job.code ?? "?"})` : job.stopped ? "stopped" : "running";
-  return `job ${job.id}: ${state} after ${secs}s\n$ ${job.command}`;
+  return `job ${job.id}: ${job.done ? `done (exit ${job.code ?? '?'})` : job.stopped ? 'stopping' : 'running'} after ${(((job.endedAt || Date.now()) - job.startedAt) / 1000).toFixed(1)}s\n$ ${job.command}`;
 }
+export function approval(args) { return `$ ${args.command}${args.background ? '  (background job)' : '  (returns a job ID if still running)'}`; }
 
-function jobsOf(ctx) {
-  const state = ctx.state || (ctx.state = {});
-  return state.jobs || (state.jobs = new Map());
-}
-
-function nextJobId(ctx) {
-  const state = ctx.state || (ctx.state = {});
-  state._jobSeq = (state._jobSeq || 0) + 1;
-  return String(state._jobSeq);
-}
-
-export function approval(args) {
-  return `$ ${args.command}${args.background ? "  (background job)" : ""}`;
-}
-
-function clampInt(value, fallback, min, max) {
-  const n = Number(value);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.floor(n)));
-}
-
-function feedStdin(child, stdin) {
-  if (stdin === undefined || stdin === null || !child.stdin) return;
-  try {
-    child.stdin.on("error", () => {});
-    child.stdin.write(String(stdin));
-    child.stdin.end();
-  } catch {}
-}
-
-function startBackground({ exe, argv, env, cwd, maxBytes, ctx, command }) {
+export async function run(args, ctx = {}) {
+  if (typeof args.command !== 'string' || !args.command.trim()) return 'Error: command must be a non-empty string.';
+  if (ctx.signal?.aborted) return 'Command cancelled by user.';
   const jobs = jobsOf(ctx);
-  const id = nextJobId(ctx);
-  let child;
-  try {
-    child = spawn(exe, argv, {
-      cwd,
-      env,
-      windowsHide: true,
-      detached: process.platform !== "win32",
-    });
-  } catch (err) {
-    return `failed to start background job: ${err.message}`;
-  }
-  const job = {
-    id,
-    command,
-    child,
-    out: new BoundedOutput(maxBytes),
-    startedAt: Date.now(),
-    done: false,
-    stopped: false,
-    code: null,
-  };
-  jobs.set(id, job);
-  child.stdout?.on("data", (d) => job.out.append(d));
-  child.stderr?.on("data", (d) => job.out.append(d));
-  feedStdin(child, undefined);
-  child.on("error", () => {
-    job.done = true;
-  });
-  child.on("close", (code) => {
-    job.done = true;
-    job.code = code;
-  });
-  if (process.platform !== "win32") child.unref?.();
-  return `started background job ${id}\n$ ${command}\n(use job_status to read its output, job_stop to end it)`;
-}
-
-export function run(args, ctx = {}) {
-  const command = args.command;
-  if (typeof command !== "string" || !command.trim()) {
-    return "Error: command must be a non-empty string.";
-  }
-  const exe = shell();
-  const argv = argvFor(command);
+  for (const [id, job] of jobs) if (jobs.size >= 100 && job.done) jobs.delete(id);
+  if ([...jobs.values()].filter(j => !j.done).length >= 32) return 'Error: 32 jobs are already running. Stop one first.';
+  const id = String(ctx.state._jobSeq = (ctx.state._jobSeq || 0) + 1);
   const cwd = ctx.cwd || process.cwd();
-  const env = { ...process.env };
-  if (args.env && typeof args.env === "object") {
-    for (const [k, v] of Object.entries(args.env)) env[k] = String(v);
+  const env = { ...process.env, ...Object.fromEntries(Object.entries(args.env || {}).map(([k, v]) => [k, String(v)])) };
+  let child;
+  try { child = spawn(shell(), argvFor(args.command), { cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+  catch (err) { return `Error: failed to spawn: ${err.message}`; }
+  const job = { id, command: args.command, cwd, child, out: new JobOutput(clamp(args.max_output_bytes, 65536, 1024, 4 * 1024 * 1024)),
+    startedAt: Date.now(), done: false, stopped: false, code: null, readOffset: 0, background: !!args.background };
+  jobs.set(id, job);
+  child.stdout.on('data', d => job.out.append(d)); child.stderr.on('data', d => job.out.append(d));
+  child.stdin.on('error', () => {});
+  let deadline;
+  const finish = (code, signal, error) => {
+    if (job.done) return;
+    job.done = true; job.code = code; job.signal = signal; job.error = error; job.endedAt = Date.now();
+    clearTimeout(deadline);
+    if (job.background) notifyJob(ctx, 'finished', job);
+  };
+  child.once('error', err => finish(null, null, err.message));
+  child.once('close', (code, signal) => finish(code, signal));
+  const timeout = clamp(args.timeout_ms, 0, 0, 600000);
+  if (timeout) deadline = setTimeout(() => { job.timedOut = true; job.stopped = true; void killTree(child); }, timeout);
+  if (args.stdin !== undefined) {
+    child.stdin.write(String(args.stdin));
+    if (!(args.keep_stdin_open ?? !!args.background)) child.stdin.end();
   }
-  const maxBytes = clampInt(args.max_output_bytes, 65536, 1024, 4 * 1024 * 1024);
-
-  if (args.background) return startBackground({ exe, argv, env, cwd, maxBytes, ctx, command });
-
-  const timeoutMs = clampInt(args.timeout_ms, 60000, 1000, 600000);
-
-  return new Promise((resolve) => {
-    let child;
-    try {
-      child = spawn(exe, argv, { cwd, env, windowsHide: true });
-    } catch (err) {
-      return resolve(`failed to spawn: ${err.message}`);
-    }
-
-    const out = new BoundedOutput(maxBytes);
-    let settled = false;
-    const finish = (text) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      ctx.signal?.removeEventListener("abort", onAbort);
-      resolve(text);
-    };
-
-    const timer = setTimeout(() => {
-      killTree(child);
-      finish(`exit code: -1\n${out.toString() || "(no output)"}\n[killed after ${timeoutMs}ms]`);
-    }, timeoutMs);
-
-    const onAbort = () => {
-      killTree(child);
-      finish(`Command cancelled by user.\n${out.toString()}`);
-    };
-    if (ctx.signal?.aborted) return onAbort();
-    ctx.signal?.addEventListener("abort", onAbort, { once: true });
-
-    child.stdout.on("data", (d) => out.append(d));
-    child.stderr.on("data", (d) => out.append(d));
-    feedStdin(child, args.stdin);
-
-    child.on("error", (err) => {
-      finish(`failed to run: ${err.message}`);
-    });
-
-    child.on("close", (code) => {
-      const body = out.toString() || "(no output)";
-      finish(`exit code: ${code ?? 0}\n${body}`);
-    });
-  });
+  const onAbort = () => { job.stopped = true; void killTree(child); };
+  ctx.signal?.addEventListener('abort', onAbort, { once: true });
+  if (args.background) notifyJob(ctx, 'started', job);
+  else await waitForExit(job, clamp(args.yield_ms, 1000, 0, 10000), ctx.signal);
+  ctx.signal?.removeEventListener('abort', onAbort);
+  if (ctx.signal?.aborted) return `Command cancelled by user.\n${jobSummary(job)}`;
+  if (job.done) {
+    job.readOffset = job.out.total;
+    return `exit code: ${job.code ?? -1}\n${jobSummary(job)}\n${job.error || job.out.toString() || '(no output)'}`;
+  }
+  if (!job.background) { job.background = true; notifyJob(ctx, 'started', job); }
+  return `${jobSummary(job)}\n${JSON.stringify(jobSnapshot(job))}\nUse job_status/job_input/job_wait/job_stop. Continue other work; do not wait for servers to exit.`;
 }

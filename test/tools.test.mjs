@@ -110,11 +110,11 @@ test('shell failures surface a non-zero exit instead of a silent success', async
   const cmd = process.platform === 'win32'
     ? 'Get-ChildItem C:/definitely/not/here'
     : 'cat /definitely/not/here';
-  const out = await registry.get('run_command').run({ command: cmd }, ctx);
+  const out = await registry.get('run_command').run({ command: cmd, yield_ms: 10000 }, ctx);
   assert.match(out, /exit code: [1-9]/);
   if (process.platform === 'win32') {
     const lenient = await registry.get('run_command').run(
-      { command: 'Get-ChildItem C:/nope -ErrorAction SilentlyContinue; Write-Output continued' }, ctx);
+      { command: 'Get-ChildItem C:/nope -ErrorAction SilentlyContinue; Write-Output continued', yield_ms: 10000 }, ctx);
     assert.match(lenient, /exit code: 0/);
     assert.match(lenient, /continued/);
   }
@@ -126,14 +126,14 @@ test('command input/environment, bounded output and background jobs', async t =>
   const command = process.platform === 'win32'
     ? "[Console]::In.ReadToEnd(); [Console]::Write($env:CHAT_TOOLS_TEST)"
     : "cat; printf '%s' \"$CHAT_TOOLS_TEST\"";
-  const out = await registry.get('run_command').run({command,stdin:'hello',env:{CHAT_TOOLS_TEST:'world'}},ctx);
+  const out = await registry.get('run_command').run({command,stdin:'hello',env:{CHAT_TOOLS_TEST:'world'},yield_ms:10000},ctx);
   assert.match(out,/hello/); assert.match(out,/world/);
   const burst = process.platform === 'win32' ? "[Console]::Write(('x' * 200000))" : "head -c 200000 /dev/zero | tr '\\0' x";
-  assert.ok(Buffer.byteLength(await registry.get('run_command').run({command:burst},ctx))<66000);
+  assert.ok(Buffer.byteLength(await registry.get('run_command').run({command:burst,yield_ms:10000},ctx))<66000);
   const sleep = process.platform === 'win32' ? 'Start-Sleep -Seconds 60' : 'sleep 60';
   const started = await registry.get('run_command').run({command:sleep,background:true},ctx);
-  assert.match(started,/job/i); assert.equal(ctx.state.jobs.size,1);
-  const jobId = [...ctx.state.jobs.keys()][0];
+  assert.match(started,/job/i); assert.equal([...ctx.state.jobs.values()].filter(j=>!j.done).length,1);
+  const jobId = [...ctx.state.jobs.keys()].at(-1);
   assert.match(await registry.get('job_status').run({job_id:jobId},ctx),/running/);
   assert.match(await registry.get('job_stop').run({job_id:jobId},ctx),/stopped|cancelled/);
 });

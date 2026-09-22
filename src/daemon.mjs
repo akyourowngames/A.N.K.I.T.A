@@ -59,6 +59,7 @@ export class Daemon {
     config,
     client,
     model = null,
+    tool = null,
     runPrompt,
     deliver,
     flushNotifications = null,
@@ -75,6 +76,8 @@ export class Daemon {
     this.bot = bot?.enabled ? bot : null;
     this.config = config;
     this.client = client;
+    // Same chat/tool-model split as the REPL, so Telegram DMs get it too.
+    this.tool = tool;
     // Chat agents must use the same resolved model as the REPL; without this
     // they send model:null and depend on the server's fallback.
     this.model = model;
@@ -141,6 +144,7 @@ export class Daemon {
 
     const agent = new Agent({
       client: this.client,
+      tool: this.tool,
       config: this.config,
       journal: turn => recordTurn(turn, { timeZone: this.config.timeZone }),
       // A DM cannot answer a terminal prompt, so the question is forwarded to
@@ -646,7 +650,13 @@ export class Daemon {
         ![...this.chains.keys()].some(key => key !== 'notifications')) {
       // Low-priority maintenance starts only while idle, without using a chat slot.
       const work = this.consolidator.run()
-        .then(result => { if (result.processed) this.log(`memory: consolidated ${result.processed} transcript part(s)`); })
+        .then(async result => {
+          if (result.processed) {
+            this.log(`memory: consolidated ${result.processed} transcript part(s)`);
+            const { warmRecall } = await import('../tools/recall.mjs');
+            void warmRecall({ config: this.config });
+          }
+        })
         .catch(err => { this.stats.errors++; this.log(`memory consolidation failed: ${err.message}`); })
         .finally(() => this.chains.delete('consolidation'));
       this.chains.set('consolidation', work);

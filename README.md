@@ -97,12 +97,18 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `HISTORY_MESSAGES` | `40` | Turns kept in context (`HISTORY_LINES` still works) |
 | `MAX_TOKENS` / `MAX_TOOL_CHARS` / `CONTEXT_WINDOW` | `4096` / `65536` / `32768` | Output cap, per-result context cap, trim budget |
 | `INPUT_COST_PER_MILLION` / `OUTPUT_COST_PER_MILLION` | unset | Enables `$` estimates in `/usage` |
-| `PROVIDER` | `copilot` | Backend: `copilot`, or `kilo` — the [Kilo AI Gateway](https://kilo.ai/docs/gateway) with free, keyless models (`nex-agi/nex-n2.5-mini:free` by default) |
+| `PROVIDER` | `copilot` | Backend: `copilot`, `groq` (low latency; reuses `GROQ_API_KEY`, defaults to `openai/gpt-oss-120b`), or `kilo` — the [Kilo AI Gateway](https://kilo.ai/docs/gateway) with free, keyless models (`nex-agi/nex-n2.5-mini:free` by default) |
 | `API_BASE` / `API_KEY` | unset | OpenAI-compatible endpoint instead of Copilot (always wins over `PROVIDER`) |
+| `TOOL_PROVIDER` / `TOOL_MODEL` | unset | Split the turn: the main model handles chat and the first tool decision, and once a turn uses a tool this model runs the rest of the loop (e.g. `kilo` + `nex-agi/nex-n2.5-mini:free`) while the main model writes the reply. Blank = one model for everything |
 | `GROQ_API_KEY` / `STT_MODEL` | unset / `whisper-large-v3-turbo` | Mic transcription (free key at console.groq.com) |
 | `TTS_PROVIDER` | `edge` | `edge`, `groq`, or `auto` (groq when a key exists) |
 | `TTS_MODEL` / `TTS_VOICE` | `canopylabs/orpheus-v1-english` / provider default | `tara` on groq, `en-US-AriaNeural` on edge — see `/voices` |
 | `TTS_RATE` / `SPEAK` / `MIC_DEVICE` | `+0%` / `off` / auto | Edge speech rate, auto-speak replies, preferred mic |
+| `VOICE_VAD` / `VOICE_SILENCE_MS` / `VOICE_NOISE_DB` | `on` / `1200` / `-35` | Hands-free turn-taking: auto-send on a pause (ffmpeg `silencedetect`) |
+| `VOICE_BARGE_IN` / `VOICE_BARGE_DB` | `on` / `-25` | Interrupt a spoken reply by talking over it |
+| `VOICE_HFP_ROUTING` | `on` | Keep Bluetooth speech audible while the mic is open (routes playback to the headset's Hands-Free endpoint) |
+| `VOICE_ADDRESS` / `VOICE_SPEAK_ITEMS` / `VOICE_SPEAK_SENTENCES` / `VOICE_SPEAK_MAX_CHARS` / `VOICE_FULL_READ` | `sir` / `8` / `6` / `1200` / `off` | Spoken-reply shaping for long lists and paragraphs |
+| `VOICE_SUMMARY_NOTE` | `{address}, that's {spoken} of {total}. The rest is on your screen, {address}.` | Template for the "rest is on screen" note |
 | `ANKITA_NO_WEB` / `ANKITA_NO_SCRAPE` | unset | Kill switches for web and scraping |
 | `WEB_TIMEOUT` / `WEB_MAX_OUTPUT` / `WEB_CACHE_TTL` / `WEB_RETRIES` | `20` / `8000` / `300` / `1` | Search + fetch timeouts, output caps, result cache, retries |
 | `WEB_REGION` / `JINA_FALLBACK` | `wt-wt` / `1` | Search region; use `r.jina.ai` when extraction is thin |
@@ -190,6 +196,8 @@ test/                 node:test suite — core, provider, tools, voice, web
 
 **Agentic loop.** Each turn sends `messages + tools` to `/chat/completions` and streams SSE deltas. Text renders live; `tool_calls` accumulate by index, execute (read-only ones concurrently as a batch, mutations as barriers), and results return as `tool` messages for up to 16 steps. Between steps, history is trimmed to the token budget without orphaning tool pairs, every tool result is head+tail capped, and a dropped stream keeps its partial reply with an interruption marker instead of losing it. Every declared `tool_call` gets exactly one reply even when the tool throws, when a UI callback throws, or when you cancel mid-batch — an unanswered call makes the API reject the entire next request, which would end the session rather than fail one step.
 
+**Two-model turns.** With `TOOL_PROVIDER` set, the primary model handles chat and the first tool decision, and the tool model runs the loop. If the primary's opening response calls no tool, it is a plain chat turn and the tool model is never woken. Once a tool is called, the tool model takes over the loop *and* writes the user-facing reply (the status line shows `nex-agi/nex-n2.5-mini:free`); keeping the reply on the tool model matters because a post-tool context is large and a small per-minute token budget on the chat model would reject it. Its intermediate text is withheld from the UI, and if it never gets to write, the draft is restored rather than losing the turn. When the chat model is rate-limited (429), over its per-minute token budget (413), or returns 5xx, the call fails fast and is retried on the tool model instead of sitting out the retry backoff — so a busy free tier degrades to the other provider rather than stalling or stopping mid-turn. Tool loops run up to 100 steps.
+
 **Rendering.** The reply re-renders as tokens arrive. Once output exceeds the screen, finished lines are committed to the scrollback and only the tail redraws — verified by a terminal simulation asserting cursor moves never leave the visible screen.
 
 **Web.** `web_search` fans out to DuckDuckGo (with a lite fallback when the HTML endpoint 202s), Google News RSS, Wikipedia, Hacker News and Reddit, then fuses and de-dupes by normalized URL. `web_fetch` extracts readable text without a DOM, drops comments/CDATA/declarations, and falls back to `r.jina.ai` when the page is a script shell. Both share a TTL cache keyed on normalized URL.
@@ -199,6 +207,8 @@ test/                 node:test suite — core, provider, tools, voice, web
 **SSRF guard.** Every web tool resolves the host and refuses loopback, private, link-local and other non-global addresses, failing closed when DNS doesn't resolve. Redirect chains are re-checked hop by hop, on both the Node and Python sides.
 
 **Voice.** Mic audio is captured with ffmpeg (16kHz mono WAV), transcribed by Groq Whisper. Replies are stripped of code/markdown and spoken — via Edge neural TTS over a raw-TLS WebSocket that reproduces the official handshake (`Sec-MS-GEC` time-windowed token, `ConnectionId`, MUID cookie), or via Groq Orpheus (sentence-chunked, WAV-joined) when selected.
+
+`/voice` is hands-free: a single ffmpeg process both records and streams `silencedetect` speech boundaries, so a turn ends when you pause (no Enter) and talking over a reply barges in — playback stops and your interruption becomes the next turn. On Bluetooth headsets, capturing through the Hands-Free mic drops A2DP and would silence replies; voice mode detects the headset's matching Hands-Free playback endpoint and routes speech there for the session (`VOICE_HFP_ROUTING`, via the Windows Core Audio API with no extra dependency), then restores your device on exit. Long replies are shaped before they are spoken: the first `VOICE_SPEAK_ITEMS` list items or `VOICE_SPEAK_SENTENCES` sentences are read, then a note built from the real counts (`{address}`, `{spoken}`, `{total}`, `{remaining}`) says the rest is on screen. Every threshold and the note wording are config, not constants; `/say` and `VOICE_FULL_READ=on` read in full.
 
 ## Projects
 
@@ -282,13 +292,31 @@ you › What did we decide about backups?
 
 `recall` searches personal facts, project notes, decisions, todos and session summaries, returning source information. Optional `project`, `offset` and `limit` narrow or page results. Search uses local lexical ranking; when wording has no overlap, it returns a bounded page of stored candidates explicitly marked as a browse fallback. The conversational model judges relevance, reformulates terms or paginates. A small fact-count indicator tells fresh sessions that unpinned memory exists without injecting its contents. The model is instructed to check memory before personal recommendations or asking users to repeat preferences, and to save through a successful tool call before claiming anything was remembered. There is no topic-specific router, embedding service or hidden classification model call.
 
-Fresh turns also perform a **local** personal recall before contacting the model, so using memory does not depend solely on the model remembering to search. Up to six candidates fit within `MEMORY_RECALL_CHARS=1600` UTF-8 bytes of temporary tool-result content. The query and candidate bundle are bounded, count against the context budget, and never accumulate in history/autosaves or the system prompt. The model decides whether they matter and can request more; keyword ranking does not determine the answer. This removes a model round trip when the candidates already answer the request. Set `MEMORY_RECALL_CHARS=0` for exclusively model-requested recall. Unpinned memory is never promoted to a permanent prompt block.
+Fresh turns perform personal recall before contacting the reply model, so using memory does not depend solely on the model remembering to search. Up to six candidates fit within `MEMORY_RECALL_CHARS=1600` UTF-8 bytes of temporary tool-result content. The query and candidate bundle are bounded, count against the context budget, and never accumulate in history/autosaves or the system prompt. The model decides whether they matter and can request more. This removes a chat-model round trip when the candidates already answer the request. Set `MEMORY_RECALL_CHARS=0` for exclusively model-requested recall. Unpinned memory is never promoted to a permanent prompt block.
+
+That automatic recall must not turn a slow embedding provider into a slow reply. It waits at most `MEMORY_RECALL_BUDGET_MS=300` for the semantic ranking; if the provider has not answered by then it uses local lexical candidates for this turn and lets the query embedding finish in the background, where it is cached so a model-requested `recall` is still semantic and instant. At boot, one throwaway embedding request warms DNS/TLS and any provider cold start so the first real turn does not pay for it. Set `MEMORY_RECALL_BUDGET_MS=0` to wait for embeddings on every turn (the old behaviour); raise it if you would rather block longer for semantic ordering.
+
+For **semantic recall**, set these in `~/.copilot-chat-cli/config.env`:
+
+```dotenv
+CLOUDFLARE_ACCOUNT_ID=your-account-id
+CLOUDFLARE_API_TOKEN=your-workers-ai-token
+EMBED_MODEL=@cf/qwen/qwen3-embedding-0.6b
+```
+
+Cloudflare Workers AI embeds the query and memories; cosine similarity ranks paraphrases without topic rules. The same `recall` tool searches personal facts, project notes/decisions/todos, and session summaries. Project filters apply before embedding and ranking. Query instructions are configurable with `EMBED_QUERY_INSTRUCTION`; the reply model still decides whether a candidate is relevant. The hosted model's current [Cloudflare reference](https://developers.cloudflare.com/workers-ai/models/qwen3-embedding-0.6b/) lists an 8,192-token window. Embedding inputs are capped at 6,000 UTF-8 bytes each; full memories remain stored and available to recall.
+
+Document vectors are cached atomically under `~/.copilot-chat-cli/embeddings/`, keyed by model and content hash. New and edited memories get new vectors; deleted memories are excluded using the current source stores. Startup, memory writes and completed consolidation warm the cache in the background, in batches of 32, within `EMBED_INDEX_TIMEOUT_MS=30000`. Repeated queries reuse an in-process cache of 128 vectors. A warm search normally makes one embedding request and no extra chat-model request. Uncached foreground work shares a strict `EMBED_TIMEOUT_MS=2000` budget; slow or unavailable Cloudflare falls back to local recall, and failed services back off for 30 seconds. Partial indexes report `hybrid` with coverage; complete indexes report `semantic`. Cold indexing progresses across searches and background passes.
+
+Configuring Cloudflare sends memory text and search queries to Cloudflare for embedding. This does not upload raw session transcripts. The vector cache contains derived vectors and hashes, not plaintext memories, queries, or credentials. Old vector cache files can remain after edits/deletions but cannot participate in recall without a current source record; deleting the `embeddings/` directory safely rebuilds them. `EMBEDDINGS=off` disables all embedding requests and uses local recall. `--config` redacts the API token. No new dependencies are required.
+
+Live semantic verification with synthetic memories: `node scripts/verify-embeddings.mjs --live --timeout-ms=15000`. The longer verification deadline measures actual provider latency; normal chat retains its configured foreground deadline.
 
 With `ankita --daemon`, `MEMORY_CONSOLIDATION=on` (default) processes yesterday and older unprocessed transcripts after `MEMORY_CONSOLIDATION_HOUR` (default **03:00**, in `TIMEZONE` or system local time). New CLI and Telegram turns are journaled under `sessions/journal/`; old saved sessions and autosaves are also read. A journal preserves completed user/final-assistant exchanges before autosave replacement or history trimming. Existing legacy autosaves are archived on the first journaled replacement.
 
 The configured model extracts durable facts, project decisions and open/completed tasks as structured JSON. It gets no executable tools, must cite transcript evidence, and cannot automatically pin facts. Validated writes use the same `remember` and `project_memory` operations as chat. Project memory is only written when the transcript has an unambiguous project ID. One-line summaries and crash-recovery checkpoints live in `memory-index.json`; replay does not duplicate completed batches. Newer explicit personal corrections take precedence over old transcripts. Forgetting keeps no deleted text: a deletion timestamp prevents **all older transcripts from creating personal facts again**, while newer conversations and explicit `remember` requests can still add them. Raw sessions and their historical summaries remain separate records.
 
-Maintenance starts when the daemon is idle, does not occupy a chat concurrency slot, and processes at most `MEMORY_BATCH_SIZE=4` chunks per run (`MEMORY_CHUNK_CHARS=12000`, `MEMORY_TIMEOUT=60` seconds per model call). Backlogs continue on later ticks; empty scans and failures back off for an hour. Chat adds local recall and a journal write, with no extra classification or consolidation model call. Set `MEMORY_CONSOLIDATION=off` to disable automatic journaling and consolidation; personal memory still works. Journals and summaries remain local until a consolidation batch sends its transcript to your configured model provider. They have no automatic retention deletion.
+Maintenance starts when the daemon is idle, does not occupy a chat concurrency slot, and processes at most `MEMORY_BATCH_SIZE=4` chunks per run (`MEMORY_CHUNK_CHARS=12000`, `MEMORY_TIMEOUT=60` seconds per model call). Backlogs continue on later ticks; empty scans and failures back off for an hour. Chat adds bounded recall and a journal write, with no extra classification or consolidation model call. Set `MEMORY_CONSOLIDATION=off` to disable automatic journaling and consolidation; personal memory still works. Journals and summaries remain local until a consolidation batch sends its transcript to your configured model provider; configuring embeddings also sends extracted memories and summary text to Cloudflare. They have no automatic retention deletion.
 
 ## Notification delivery
 
@@ -458,6 +486,27 @@ npm test   # node --test "test/*.test.mjs"
 ```
 
 Tests cover `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, personal memory, consolidation, notifications, `mcp`, `registry` and `tool-loop`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
+
+## Benchmarking latency
+
+When replies feel slow, measure instead of guessing. `scripts/bench-latency.mjs` drives the real agent loop and splits each turn into the phases a user actually waits on:
+
+```bash
+npm run bench                                    # configured model, 3 runs
+npm run bench -- --runs 5 --tools
+npm run bench -- --models "a,b,c"                # compare models on your account
+npm run bench -- --json                          # raw per-run samples
+```
+
+| Phase | What it is |
+|---|---|
+| `pre` | personal recall + system-prompt rebuild + history trim |
+| `ttft` | request sent → first streamed token — **the number you feel** |
+| `gen` | first token → last (decode throughput, reported as `tok/s`) |
+| `total` | whole turn, including any tool rounds |
+
+Warmup sends are discarded so a provider cold start does not skew the medians, and the first token dominates short replies while `gen` matters for long ones. On a keyless Kilo account only `:free` models run without signing in; paid IDs return `PAID_MODEL_AUTH_REQUIRED`. Benchmarks run with tools on, so a model marked `no-tools` is skipped.
+
 
 ## Security notes
 

@@ -10,6 +10,9 @@ import * as githubNotifications from "./github-notifications.mjs";
 import * as mcpManage from "./mcp-manage.mjs";
 import * as remember from "./remember.mjs";
 import * as recall from "./recall.mjs";
+import * as git from './git.mjs';
+import * as portStatus from './port-status.mjs';
+import * as killProcess from './kill-process.mjs';
 
 /**
  * Grouped tools: most schemas are deferred so discovery loads a whole family.
@@ -22,6 +25,16 @@ import * as recall from "./recall.mjs";
  * Keywords are matched with plain substring checks - no embeddings, no index.
  */
 export const CATEGORIES = [
+  {
+    id: 'git', summary: 'Git working tree, diffs, history, branches, staging, commits and stash',
+    keywords: ['git', 'commit', 'checkout', 'stage', 'unstage', 'stash', 'branch', 'blame', 'version control'],
+    tools: [git],
+  },
+  {
+    id: 'process', summary: 'find port owners and terminate an approved process or port listener',
+    keywords: ['port', 'process', 'pid', 'address in use', 'eaddrinuse', 'kill', 'listener', 'taskkill'],
+    tools: [portStatus, killProcess],
+  },
   {
     id: "personal",
     alwaysOn: true,

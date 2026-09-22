@@ -24,10 +24,21 @@ const {
   generateSecMsGec,
   edgeDateString,
   edgeWsTarget,
+  buildSilenceFilter,
+  parseSilenceLine,
+  parseSilenceEvents,
+  createSilenceParser,
+  createTurnDetector,
+  splitListItems,
+  splitSentences,
+  renderSummaryNote,
+  summarizeForSpeech,
+  DEFAULT_SUMMARY_NOTE,
   DEFAULT_STT_MODEL,
   DEFAULT_TTS_MODEL,
 } = await import('../src/voice.mjs');
 const { loadConfig } = await import('../src/config.mjs');
+const { findHandsFreePlayback } = await import('../src/audio-device.mjs');
 
 test('speech text drops code fences but keeps inline code', () => {
   const out = stripForSpeech('Here is how:\n```js\nconst x = 1;\n```\nUse `npm test` to verify.');
@@ -69,6 +80,137 @@ test('mic list parses ffmpeg dshow device output', () => {
   assert.equal(mics[0].name, 'Microphone (Realtek(R) Audio)');
   assert.equal(mics[0].alt, 'mic0');
   assert.deepEqual(parseMicList('no devices here'), []);
+});
+
+test('silence filter builds an ffmpeg silencedetect expression', () => {
+  assert.equal(buildSilenceFilter({ noiseDb: -35, silenceSec: 1.2 }), 'silencedetect=noise=-35dB:d=1.2');
+  assert.equal(buildSilenceFilter({ noiseDb: -20, silenceSec: 0.05 }), 'silencedetect=noise=-20dB:d=0.2');
+  assert.equal(buildSilenceFilter({ noiseDb: 'junk', silenceSec: 'junk' }), 'silencedetect=noise=-35dB:d=1.2');
+});
+
+test('silence lines parse start/end and ignore everything else', () => {
+  assert.deepEqual(parseSilenceLine('[Parsed_silencedetect_0 @ 0x1] silence_start: 0.5'), {
+    type: 'silence_start',
+    at: 0.5,
+  });
+  assert.deepEqual(
+    parseSilenceLine('[Parsed_silencedetect_0 @ 0x1] silence_end: 2.500062 | silence_duration: 2.000062'),
+    { type: 'silence_end', at: 2.500062, duration: 2.000062 }
+  );
+  assert.equal(parseSilenceLine('frame= 100 fps=0.0'), null);
+});
+
+test('silence events parse in order from a stderr blob', () => {
+  const stderr = [
+    'ffmpeg version 7',
+    '[Parsed_silencedetect_0 @ 0x1] silence_start: 0.5',
+    'size=N/A time=00:00:01.02',
+    '[Parsed_silencedetect_0 @ 0x1] silence_end: 2.5 | silence_duration: 2.0',
+    '[Parsed_silencedetect_0 @ 0x1] silence_start: 3',
+  ].join('\n');
+  assert.deepEqual(parseSilenceEvents(stderr), [
+    { type: 'silence_start', at: 0.5 },
+    { type: 'silence_end', at: 2.5, duration: 2 },
+    { type: 'silence_start', at: 3 },
+  ]);
+});
+
+test('streaming silence parser survives split chunks', () => {
+  const parser = createSilenceParser();
+  assert.deepEqual(parser.push('[Parsed] silence_st'), []);
+  const evs = [
+    ...parser.push('art: 0.5\n[Parsed] silence_end: 2.5 | sil'),
+    ...parser.push('ence_duration: 2.0\npartial tail'),
+    ...parser.flush(),
+  ];
+  assert.deepEqual(evs, [
+    { type: 'silence_start', at: 0.5 },
+    { type: 'silence_end', at: 2.5, duration: 2 },
+  ]);
+});
+
+test('turn detector reports speech start then utterance end', () => {
+  const d = createTurnDetector();
+  // Leading silence before any speech is not an utterance end.
+  assert.equal(d.feed({ type: 'silence_start', at: 0 }), null);
+  assert.equal(d.heard, false);
+  // Speech starts when silence ends.
+  assert.equal(d.feed({ type: 'silence_end', at: 1, duration: 1 }), 'speech');
+  assert.equal(d.heard, true);
+  // A later pause closes the utterance.
+  assert.equal(d.feed({ type: 'silence_start', at: 3 }), 'end');
+  // The same pause does not fire twice.
+  assert.equal(d.feed({ type: 'silence_start', at: 3 }), null);
+});
+
+test('hands-free playback match pairs a Bluetooth mic with its render endpoint', () => {
+  const devices = [
+    { flow: 'render', id: 'r1', name: 'Headphones (Airdopes 181 Pro Stereo)' },
+    { flow: 'render', id: 'r2', name: 'Headset (Airdopes 181 Pro Hands-Free AG Audio)' },
+    { flow: 'capture', id: 'c1', name: 'Headset (Airdopes 181 Pro Hands-Free AG Audio)' },
+    { flow: 'render', id: 'r3', name: 'Speakers (Realtek Audio)' },
+  ];
+  const hit = findHandsFreePlayback('Headset (Airdopes 181 Pro Hands-Free AG Audio)', devices);
+  assert.equal(hit && hit.id, 'r2', 'picks the render twin, not the capture endpoint');
+  assert.equal(findHandsFreePlayback('  HEADSET (airdopes 181 pro hands-free ag audio) ', devices)?.id, 'r2');
+  assert.equal(findHandsFreePlayback('Microphone Array (Realtek Audio)', devices), null);
+  assert.equal(findHandsFreePlayback('', devices), null);
+  assert.equal(findHandsFreePlayback('Headset (Airdopes 181 Pro Hands-Free AG Audio)', []), null);
+});
+
+test('list items are detected from bullets and numbers', () => {
+  const md = ['Intro line.', '- first', '* second', '2. third', '  1) fourth', 'outro'].join('\n');
+  assert.deepEqual(splitListItems(md), ['first', 'second', 'third', 'fourth']);
+  assert.deepEqual(splitListItems('no list here'), []);
+  assert.deepEqual(splitSentences('One. Two! Three?'), ['One.', 'Two!', 'Three?']);
+});
+
+test('summary note fills placeholders and tidies an empty address', () => {
+  assert.equal(
+    renderSummaryNote({ address: 'sir', spoken: 8, total: 20, remaining: 12 }),
+    "sir, that's 8 of 20. The rest is on your screen, sir."
+  );
+  assert.equal(
+    renderSummaryNote({ address: '', spoken: 8, total: 20, remaining: 12 }),
+    "that's 8 of 20. The rest is on your screen."
+  );
+  assert.equal(
+    renderSummaryNote({ template: '{address}: {spoken}/{total} ({remaining} left)', address: 'boss', spoken: 1, total: 5, remaining: 4 }),
+    'boss: 1/5 (4 left)'
+  );
+});
+
+test('long lists are read in part with a dynamic note', () => {
+  const items = Array.from({ length: 12 }, (_, i) => `- Point number ${i + 1}`);
+  const out = summarizeForSpeech(items.join('\n'), { address: 'sir', maxItems: 4 });
+  assert.ok(out.includes('Point number 1'));
+  assert.ok(out.includes('Point number 4'));
+  assert.ok(!out.includes('Point number 5'), 'items past the cap are not read');
+  assert.ok(out.includes("Point number 4. sir, that's 4 of 12. The rest is on your screen, sir."));
+});
+
+test('short lists are read whole with no note', () => {
+  const out = summarizeForSpeech('- alpha\n- beta\n- gamma', { address: 'sir', maxItems: 8 });
+  assert.equal(out, 'alpha. beta. gamma');
+  assert.ok(!out.includes('on your screen'));
+});
+
+test('long prose is read in part with a dynamic note', () => {
+  const prose = Array.from({ length: 10 }, (_, i) => `Sentence number ${i + 1} here.`).join(' ');
+  const out = summarizeForSpeech(prose, { address: 'sir', maxSentences: 3 });
+  assert.ok(out.includes('Sentence number 1 here.'));
+  assert.ok(out.includes('Sentence number 3 here.'));
+  assert.ok(!out.includes('Sentence number 4 here.'));
+  assert.ok(out.includes("sir, that's 3 of 10. The rest is on your screen, sir."));
+});
+
+test('fullRead ignores the caps and empty input is silent', () => {
+  const items = Array.from({ length: 12 }, (_, i) => `- Point ${i + 1}`).join('\n');
+  const out = summarizeForSpeech(items, { fullRead: true, maxItems: 2 });
+  assert.ok(out.includes('Point 12'));
+  assert.ok(!out.includes('on your screen'));
+  assert.equal(summarizeForSpeech('   '), '');
+  assert.equal(summarizeForSpeech(''), '');
 });
 
 test('voice temp files are unique per call', () => {
@@ -113,6 +255,51 @@ test('voice config defaults and rate validation', () => {
   assert.equal(config.ttsRate, '+0%');
   assert.equal(config.speak, false);
   assert.equal(config.micDevice, '');
+});
+
+test('voice activity defaults are on with sane bounds', () => {
+  const config = loadConfig('definitely-not-a-real-file.env');
+  assert.equal(config.voiceVad, true);
+  assert.equal(config.voiceSilenceMs, 1200);
+  assert.equal(config.voiceNoiseDb, -35);
+  assert.equal(config.voiceMaxUtteranceMs, 30000);
+  assert.equal(config.voiceBargeIn, true);
+  assert.equal(config.voiceBargeDb, -25);
+  assert.equal(config.voiceHfpRouting, true);
+  assert.equal(config.voiceAddress, 'sir');
+  assert.equal(config.voiceSpeakItems, 8);
+  assert.equal(config.voiceSpeakSentences, 6);
+  assert.equal(config.voiceSpeakMaxChars, 1200);
+  assert.equal(config.voiceFullRead, false);
+  assert.equal(config.voiceSummaryNote, DEFAULT_SUMMARY_NOTE);
+});
+
+test('voice env overrides parse and clamp', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-voice-env-'));
+  const file = path.join(dir, '.env');
+  fs.writeFileSync(
+    file,
+    [
+      'VOICE_VAD=off',
+      'VOICE_SILENCE_MS=99999', // clamps to 10000
+      'VOICE_NOISE_DB=-12.5',
+      'VOICE_BARGE_IN=0',
+      'VOICE_ADDRESS=none', // disables the salutation
+      'VOICE_SPEAK_ITEMS=3',
+      'VOICE_FULL_READ=on',
+      'VOICE_SUMMARY_NOTE=Heads up {address}: {spoken}/{total} shown.',
+    ].join('\n')
+  );
+  const config = loadConfig(file);
+  fs.rmSync(dir, { recursive: true, force: true });
+  assert.equal(config.voiceVad, false);
+  assert.equal(config.voiceSilenceMs, 10000);
+  assert.equal(config.voiceNoiseDb, -12.5);
+  assert.equal(config.voiceBargeIn, false);
+  assert.equal(config.voiceAddress, '');
+  assert.equal(config.voiceSpeakItems, 3);
+  assert.equal(config.voiceFullRead, true);
+  assert.equal(config.voiceSummaryNote, 'Heads up {address}: {spoken}/{total} shown.');
 });
 
 test('tts provider resolves to groq with a key, edge without', () => {

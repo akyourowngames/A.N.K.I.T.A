@@ -9,8 +9,12 @@ import * as glob from "./glob.mjs";
 import * as moveFile from "./move-file.mjs";
 import * as deleteFile from "./delete-file.mjs";
 import * as fetchUrl from "./fetch-url.mjs";
+import * as httpRequest from './http-request.mjs';
+import * as applyPatch from './apply-patch.mjs';
 import * as jobStatus from "./job-status.mjs";
 import * as jobStop from "./job-stop.mjs";
+import * as jobInput from './job-input.mjs';
+import * as jobWait from './job-wait.mjs';
 import * as writeTodos from "./write-todos.mjs";
 import * as findTools from "./find-tools.mjs";
 import { killTree, waitForExit } from "./run-command.mjs";
@@ -26,6 +30,7 @@ export const CORE = [
   writeFile,
   editFile,
   editLines,
+  applyPatch,
   listDir,
   searchFiles,
   glob,
@@ -34,15 +39,19 @@ export const CORE = [
   runCommand,
   jobStatus,
   jobStop,
+  jobInput,
+  jobWait,
   writeTodos,
-  fetchUrl,
+  httpRequest,
   findTools,
 ];
 
 const byName = new Map([...CORE, ...deferredTools].map((m) => [m.name, m]));
+// Compatibility for existing tool-call transcripts; new turns use http_request.
+byName.set(fetchUrl.name, fetchUrl);
 
 /** Every tool, core and deferred alike. Used by the daemon and --config. */
-export const tools = [...byName.values()];
+export const tools = [...CORE, ...deferredTools];
 
 export const specs = tools.map(specOf);
 
@@ -68,8 +77,19 @@ export function specsFor(names) {
 }
 
 /** Tools that only ever read state can skip the confirmation prompt. */
-export function needsApproval(name) {
-  return byName.get(name)?.needsApproval !== false;
+export function needsApproval(name, args = {}, ctx = {}) {
+  const value = byName.get(name)?.needsApproval;
+  return typeof value === 'function' ? value(args, ctx) !== false : value !== false;
+}
+
+export function isReadOnly(name, args = {}, ctx = {}) {
+  const value = byName.get(name)?.readOnly;
+  return typeof value === 'function' ? value(args, ctx) === true : value === true;
+}
+
+export function displayArgs(name, args, ctx = {}) {
+  const display = byName.get(name)?.display;
+  return display ? display(args, ctx) : args;
 }
 
 /**
@@ -82,13 +102,12 @@ export async function cleanupJobs(state) {
   let stopped = 0;
   const waits = [];
   for (const job of jobs.values()) {
-    if (!job.done && !job.stopped) {
+    if (!job.done) {
       job.stopped = true;
       try {
-        killTree(job.child);
+        waits.push(killTree(job.child).then(() => waitForExit(job, 5000)));
       } catch {}
       stopped++;
-      waits.push(waitForExit(job, 5000));
     }
   }
   await Promise.all(waits);

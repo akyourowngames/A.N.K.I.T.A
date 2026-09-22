@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { DEFAULT_SUMMARY_NOTE } from "./voice.mjs";
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -12,6 +13,7 @@ export const STATE_FILE = path.join(CONFIG_DIR, "state.json");
 export const PROJECTS_FILE = path.join(CONFIG_DIR, "projects.json");
 export const PROFILE_FILE = path.join(CONFIG_DIR, "profile.json");
 export const MEMORY_INDEX_FILE = path.join(CONFIG_DIR, "memory-index.json");
+export const EMBEDDINGS_DIR = path.join(CONFIG_DIR, "embeddings");
 export const JOURNAL_DIR = path.join(SESSIONS_DIR, "journal");
 export const NOTIFY_QUEUE_FILE = path.join(CONFIG_DIR, "notification-queue.json");
 export const MCP_FILE = path.join(CONFIG_DIR, "mcp.json");
@@ -32,6 +34,10 @@ const DEFAULTS = {
   provider: "",
   apiBase: "",
   apiKey: "",
+  toolProvider: "",
+  toolModel: "",
+  toolApiBase: "",
+  toolApiKey: "",
   inputCostPerMillion: null,
   outputCostPerMillion: null,
   webTimeout: 20,
@@ -67,6 +73,19 @@ const DEFAULTS = {
   ttsRate: "+0%",
   speak: false,
   micDevice: "",
+  voiceVad: true,
+  voiceSilenceMs: 1200,
+  voiceNoiseDb: -35,
+  voiceMaxUtteranceMs: 30000,
+  voiceBargeIn: true,
+  voiceBargeDb: -25,
+  voiceHfpRouting: true,
+  voiceAddress: "sir",
+  voiceSpeakItems: 8,
+  voiceSpeakSentences: 6,
+  voiceSpeakMaxChars: 1200,
+  voiceFullRead: false,
+  voiceSummaryNote: DEFAULT_SUMMARY_NOTE,
 };
 
 export function parseEnv(text) {
@@ -109,6 +128,19 @@ function price(value) {
   if (value === undefined || value === null || value === "") return null;
   const n = Number(value);
   return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Numeric setting clamped to a range; garbage falls back to the default. */
+function clampNum(value, min, max, fallback) {
+  if (value === undefined || value === null || value === "") return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, n));
+}
+
+/** Integer variant of clampNum. */
+function clampInt(value, min, max, fallback) {
+  return Math.round(clampNum(value, min, max, fallback));
 }
 
 function readVars(file) {
@@ -177,6 +209,13 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     provider: (pick("PROVIDER") || DEFAULTS.provider).trim().toLowerCase(),
     apiBase: pick("API_BASE") || DEFAULTS.apiBase,
     apiKey: pick("API_KEY") || DEFAULTS.apiKey,
+    // Optional tool-loop model. The primary model (above) handles chat and the
+    // first tool decision; once a turn uses a tool, this model runs the rest of
+    // the loop, and the primary writes the user-facing reply. Empty = one model.
+    toolProvider: (pick("TOOL_PROVIDER") || "").trim().toLowerCase(),
+    toolModel: pick("TOOL_MODEL") || "",
+    toolApiBase: pick("TOOL_API_BASE") || "",
+    toolApiKey: pick("TOOL_API_KEY") || "",
     inputCostPerMillion: price(pick("INPUT_COST_PER_MILLION")),
     outputCostPerMillion: price(pick("OUTPUT_COST_PER_MILLION")),
     webTimeout: posInt(pick("WEB_TIMEOUT"), 20),
@@ -219,9 +258,25 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     pushoverUser: pick("PUSHOVER_USER") || "",
     notifyTimeout: posInt(pick("NOTIFY_TIMEOUT"), 10),
     memoryConsolidation: onOff(pick("MEMORY_CONSOLIDATION"), true),
+    embeddings: onOff(pick("EMBEDDINGS"), true),
+    cloudflareAccountId: pick("CLOUDFLARE_ACCOUNT_ID") || "",
+    cloudflareApiToken: pick("CLOUDFLARE_API_TOKEN") || pick("CLOUDFLARE_AUTH_TOKEN") || "",
+    embedModel: pick("EMBED_MODEL") || "@cf/qwen/qwen3-embedding-0.6b",
+    embedQueryInstruction: pick("EMBED_QUERY_INSTRUCTION"),
+    embedTimeoutMs: Math.min(30000, posInt(pick("EMBED_TIMEOUT_MS"), 2000)),
+    embedIndexTimeoutMs: Math.min(120000, posInt(pick("EMBED_INDEX_TIMEOUT_MS"), 30000)),
     memoryRecallChars: (() => {
       const n = Number(pick('MEMORY_RECALL_CHARS') ?? 1600);
       return Number.isFinite(n) && n >= 0 ? Math.min(4096, Math.floor(n)) : 1600;
+    })(),
+    // How long the automatic pre-turn recall may block the reply on a slow
+    // embedding provider before falling back to local lexical candidates. The
+    // query embedding keeps running in the background and stays cached, so an
+    // explicit recall by the model is still semantic and fast. 0 disables the
+    // foreground wait entirely (local candidates only).
+    memoryRecallBudgetMs: (() => {
+      const n = Number(pick('MEMORY_RECALL_BUDGET_MS') ?? 300);
+      return Number.isFinite(n) && n >= 0 ? Math.min(10000, Math.floor(n)) : 300;
     })(),
     memoryConsolidationHour: Math.min(23, Math.max(0, Math.floor(Number(pick("MEMORY_CONSOLIDATION_HOUR") ?? 3)) || 0)),
     memoryBatchSize: Math.min(20, posInt(pick("MEMORY_BATCH_SIZE"), 4)),
@@ -242,6 +297,26 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     })(),
     speak: onOff(pick("SPEAK"), DEFAULTS.speak),
     micDevice: pick("MIC_DEVICE") || DEFAULTS.micDevice,
+    voiceVad: onOff(pick("VOICE_VAD"), DEFAULTS.voiceVad),
+    voiceSilenceMs: clampInt(pick("VOICE_SILENCE_MS"), 200, 10000, DEFAULTS.voiceSilenceMs),
+    voiceNoiseDb: clampNum(pick("VOICE_NOISE_DB"), -80, 0, DEFAULTS.voiceNoiseDb),
+    voiceMaxUtteranceMs: clampInt(pick("VOICE_MAX_UTTERANCE_MS"), 2000, 300000, DEFAULTS.voiceMaxUtteranceMs),
+    voiceBargeIn: onOff(pick("VOICE_BARGE_IN"), DEFAULTS.voiceBargeIn),
+    voiceBargeDb: clampNum(pick("VOICE_BARGE_DB"), -80, 0, DEFAULTS.voiceBargeDb),
+    // Route playback to a Bluetooth headset's Hands-Free endpoint while its mic
+    // is open, so barge-in doesn't silence replies (A2DP drops during capture).
+    voiceHfpRouting: onOff(pick("VOICE_HFP_ROUTING"), DEFAULTS.voiceHfpRouting),
+    // An empty address is useful ("off" / "none" disables the salutation).
+    voiceAddress: (() => {
+      const v = pick("VOICE_ADDRESS");
+      if (v === undefined) return DEFAULTS.voiceAddress;
+      return /^(off|none|no)$/i.test(v) ? "" : v;
+    })(),
+    voiceSpeakItems: clampInt(pick("VOICE_SPEAK_ITEMS"), 1, 100, DEFAULTS.voiceSpeakItems),
+    voiceSpeakSentences: clampInt(pick("VOICE_SPEAK_SENTENCES"), 1, 100, DEFAULTS.voiceSpeakSentences),
+    voiceSpeakMaxChars: clampInt(pick("VOICE_SPEAK_MAX_CHARS"), 100, 10000, DEFAULTS.voiceSpeakMaxChars),
+    voiceFullRead: onOff(pick("VOICE_FULL_READ"), DEFAULTS.voiceFullRead),
+    voiceSummaryNote: pick("VOICE_SUMMARY_NOTE") || DEFAULTS.voiceSummaryNote,
   };
 }
 

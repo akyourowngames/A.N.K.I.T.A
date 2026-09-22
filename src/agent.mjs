@@ -5,7 +5,8 @@ import { PROFILE_FILE, PROJECTS_FILE } from './config.mjs';
 import { ProjectStore } from './projects.mjs';
 import { randomUUID } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from './memory-context.mjs';
-import { specs, coreSpecs, specsFor, get, needsApproval, coreNames, CATEGORIES } from "../tools/index.mjs";
+import { warmRecall } from '../tools/recall.mjs';
+import { specs, coreSpecs, specsFor, get, needsApproval, isReadOnly, coreNames, CATEGORIES } from "../tools/index.mjs";
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
 import { renderDiff } from "../tools/_diff.mjs";
@@ -15,7 +16,7 @@ import { trimMessages } from "./history.mjs";
 const toolUi = { ...c, preview, short, clip };
 toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: toolUi, ...opts });
 
-const MAX_TOOL_STEPS = 16;
+const MAX_TOOL_STEPS = 100;
 
 /**
  * How connected MCP servers are described to the model.
@@ -122,7 +123,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
     project ? `\n${project}` : "",
     "Personal memory tools remember/recall are directly available; no find_tools needed. Before personal questions " +
       "or advice shaped by interests, preferences or circumstances, consult recalled personal context. " +
-      "The runtime retrieves bounded candidates locally; use them when relevant and call recall(project=personal) " +
+      "The runtime retrieves bounded memory candidates; use them when relevant and call recall(project=personal) " +
       "only when you need more facts/detail. Do not repeat a lookup already answered by this context. Check BEFORE " +
       "asking users to repeat personal details or claiming none are saved. Unpinned facts are outside this prompt, " +
       "not forgotten. Interpret candidates by meaning; rephrase, browse or paginate on inconclusive searches. " +
@@ -151,8 +152,12 @@ export class Agent {
     deferTools = true,
     mcp = null,
     journal = null,
+    // Optional { client, model }: the primary handles chat and the first tool
+    // decision; once a turn uses a tool, this model runs the rest of the loop.
+    tool = null,
   }) {
     this.client = client;
+    this.tool = tool && tool.client && tool.model ? tool : null;
     this.journal = journal;
     this.memoryContext = null;
     this.journalComplete = Boolean(journal) && config.memoryConsolidation !== false;
@@ -183,9 +188,12 @@ export class Agent {
     this.contextWindow = config.contextWindow || 32768;
     this.sessionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.turnUsage = { ...this.sessionUsage };
+    this.toolLoopUsed = false;
+    this.replyModel = null;
     this.messages = [
       { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()) },
     ];
+    if (this.useTools) void warmRecall({ config });
   }
 
   clear() {
@@ -317,33 +325,59 @@ export class Agent {
     onUsage?.({ ...normalized });
   }
 
-  async streamTurn({ onDelta, onReasoning, onUsage } = {}) {
-    const body = {
-      model: this.model,
-      messages: withMemoryContext(this.messages, this.memoryContext),
-      stream: true,
-      max_tokens: this.config.maxTokens || 4096,
-      stream_options: { include_usage: true },
-    };
-    if (this.config.temperature != null) body.temperature = this.config.temperature;
-    if (this.useTools) {
-      body.tools = this.currentSpecs();
-      body.tool_choice = "auto";
-    }
-
+  async streamTurn({ onDelta, onReasoning, onUsage, client = this.client, model = this.model, useTools = this.useTools, fallback = null } = {}) {
     this.abort ??= new AbortController();
     const signal = this.abort.signal;
 
-    const res = await fetchWithRetry(
-      `${this.client.baseUrl}/chat/completions`,
-      {
-        method: "POST",
-        headers: this.client.headers(true),
-        body: JSON.stringify(body),
-        signal,
-      },
-      { onRetry: (status, waitMs) => this.print(`  (rate limited ${status}, retrying in ${Math.round(waitMs / 1000)}s)`)}
-    );
+    const request = (cli, mdl, retries) => {
+      const body = {
+        model: mdl,
+        messages: withMemoryContext(this.messages, this.memoryContext),
+        stream: true,
+        max_tokens: this.config.maxTokens || 4096,
+        stream_options: { include_usage: true },
+      };
+      if (this.config.temperature != null) body.temperature = this.config.temperature;
+      if (useTools) {
+        body.tools = this.currentSpecs();
+        body.tool_choice = "auto";
+      }
+      return fetchWithRetry(
+        `${cli.baseUrl}/chat/completions`,
+        {
+          method: "POST",
+          headers: cli.headers(true),
+          body: JSON.stringify(body),
+          signal,
+        },
+        { retries, onRetry: (status, waitMs) => this.print(`  (rate limited ${status}, retrying in ${Math.round(waitMs / 1000)}s)`) }
+      );
+    };
+
+    // With a fallback available, do not sit out the primary's whole backoff:
+    // fail fast so a rate limit switches models instead of stalling the turn.
+    const swap = fallback && fallback.client && fallback.model ? fallback : null;
+    let served = model;
+    let res;
+    try {
+      res = await request(client, model, swap ? 0 : 3);
+    } catch (err) {
+      if (!swap || err.name === "AbortError") throw err;
+      this.print(`  (${String(err.message).slice(0, 60)} - using ${swap.model})`);
+      served = swap.model;
+      res = await request(swap.client, swap.model, 3);
+    }
+    // Rate limit (429), payload too large for the model's per-minute token
+    // budget (413), and server errors all mean "this provider cannot take this
+    // request right now" - switch models rather than end the turn.
+    if (swap && !res.ok && (res.status === 429 || res.status === 413 || res.status >= 500)) {
+      try {
+        await res.body?.cancel();
+      } catch {}
+      this.print(`  (${res.status === 413 ? "request too large" : `rate limited ${res.status}`} - using ${swap.model})`);
+      served = swap.model;
+      res = await request(swap.client, swap.model, 3);
+    }
 
     if (!res.ok) {
       const text = await res.text();
@@ -359,7 +393,7 @@ export class Agent {
       if (msg.content) onDelta?.(msg.content);
       if (msg.reasoning_content || msg.reasoning_text) onReasoning?.(msg.reasoning_content || msg.reasoning_text);
       this.recordUsage(data.usage, onUsage);
-      return { content: msg.content || "", toolCalls: msg.tool_calls || [] };
+      return { content: msg.content || "", toolCalls: msg.tool_calls || [], model: served };
     }
 
     const reader = res.body.getReader();
@@ -412,7 +446,7 @@ export class Agent {
     if (!finished) throw new Error('Response stream was cut off before completion.');
     } finally { reader.releaseLock(); }
 
-    return { content, toolCalls: acc.filter(Boolean) };
+    return { content, toolCalls: acc.filter(Boolean), model: served };
   }
 
   /**
@@ -475,12 +509,12 @@ export class Agent {
     const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;
     try {
       if (this.cancelled()) return 'Action cancelled by user.';
-      if (needsApproval(tool.name) && !this.autoApprove) {
+      if (needsApproval(tool.name, args, ctx)) {
         // A tool may declare approval() and return nothing for the harmless
         // half of its actions (mcp_manage: listing is fine, starting a
         // third-party process is not). Falsy means "no gate", not "unset".
         const detail = tool.approval ? await tool.approval(args, ctx, this.ui) : JSON.stringify(args, null, 2);
-        if (detail) {
+        if (detail && !this.autoApprove) {
           const ok = await this.confirm?.(tool.name, detail);
           if (!ok) return "The user denied permission for this action. Do not retry it; ask what to do instead.";
         }
@@ -488,6 +522,7 @@ export class Agent {
       if (this.cancelled()) return 'Action cancelled by user.';
       const result = await tool.run(args, ctx);
       if (tool.name === 'remember' && args.action !== 'list' && !String(result).startsWith('Error:')) this.memoryContext = null;
+      if (['remember', 'project_memory', 'project'].includes(tool.name) && !String(result).startsWith('Error:')) void warmRecall(ctx);
       if (tool.name === 'project' && ['add', 'use', 'archive', 'forget', 'update'].includes(args.action) && !String(result).startsWith('Error:')) {
         const projects = new ProjectStore(PROJECTS_FILE).load();
         if (!['add', 'use'].includes(args.action)) {
@@ -507,8 +542,10 @@ export class Agent {
    * without requesting a tool. Returns the final assistant text.
    */
   async send(text, options = {}) {
+    this.abort = new AbortController();
     this.turnProjects = new Set(this.projectId ? [this.projectId] : []);
-    this.memoryContext = this.useTools ? personalMemoryContext(text, this.config) : null;
+    this.memoryContext = this.useTools ? await personalMemoryContext(text, this.config, { signal: this.abort.signal }) : null;
+    if (this.abort.signal.aborted) throw this.abort.signal.reason;
     if (this.memoryContext) {
       try { options.onToolCall?.(this.memoryContext.call); } catch {}
       try { options.onToolResult?.(this.memoryContext.call, this.memoryContext.result); } catch {}
@@ -516,6 +553,7 @@ export class Agent {
     let reply;
     try { reply = await this.sendTurn(text, options); }
     catch (err) { this.journalComplete = false; throw err; }
+    if (this.useTools) void warmRecall({ config: this.config });
     if (this.config.memoryConsolidation === false) this.journalComplete = false;
     if (this.journal && text !== null && this.config.memoryConsolidation !== false) {
       const projectId = this.turnProjects.size === 1 ? [...this.turnProjects][0] : null;
@@ -525,21 +563,70 @@ export class Agent {
     return reply;
   }
 
+  /**
+   * Once the tool model has finished the loop, it also writes the user-facing
+   * reply (no tools, so it only writes). After tools the context is large - too
+   * large for a small per-minute budget on the chat model - so the reply stays
+   * on the tool model rather than spending a doomed call. If writing fails, the
+   * draft is restored so the turn is never lost.
+   */
+  async writeReply({ onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd } = {}) {
+    const draft = this.messages.pop();
+    const client = this.tool ? this.tool.client : this.client;
+    const model = this.tool ? this.tool.model : this.model;
+    onMessageStart?.();
+    try {
+      const result = await this.streamTurn({
+        client,
+        model,
+        useTools: false,
+        onDelta, onReasoning, onUsage,
+      });
+      this.replyModel = result.model || model;
+      this.messages.push({ role: "assistant", content: result.content || null });
+      return result.content;
+    } catch (err) {
+      this.messages.push(draft);
+      this.replyModel = model;
+      return draft?.content || "";
+    } finally {
+      onMessageEnd?.();
+    }
+  }
+
   async sendTurn(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd } = {}) {
-    this.abort = new AbortController();
+    this.abort ??= new AbortController();
     this.turnUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
+    this.toolLoopUsed = false;
+    this.replyModel = null;
     if (text !== null) this.messages.push({ role: "user", content: text });
+    // The primary handles chat. Once a turn calls a tool, a configured tool
+    // model takes over the loop and the primary writes the final reply; the
+    // tool model's own text is intermediate, so it is withheld from the UI.
+    let usedTools = false;
 
     for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+      const onToolModel = usedTools && this.tool;
+      if (onToolModel) this.toolLoopUsed = true;
+      const callClient = onToolModel ? this.tool.client : this.client;
+      const callModel = onToolModel ? this.tool.model : this.model;
+
       this.refreshPrompt();
       this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       onMessageStart?.();
+      const live = !onToolModel;
       let content, toolCalls;
       let partial = '';
+      let result;
       try {
-        ({ content, toolCalls } = await this.streamTurn({
-          onDelta: d => { partial += d; onDelta?.(d); }, onReasoning, onUsage,
-        }));
+        result = await this.streamTurn({
+          client: callClient, model: callModel,
+          // The chat model falls back to the tool model on a rate limit; the
+          // tool model runs the loop on its own.
+          fallback: onToolModel ? null : this.tool,
+          onDelta: d => { partial += d; if (live) onDelta?.(d); }, onReasoning, onUsage,
+        });
+        ({ content, toolCalls } = result);
       } catch (err) {
         if (partial) this.messages.push({ role: 'assistant', content: partial + '\n[This response was interrupted and cut off. Continue only when requested.]' });
         throw err;
@@ -552,9 +639,18 @@ export class Agent {
       this.messages.push(assistant);
 
       if (!toolCalls.length) {
+        // The tool model finished the loop; the primary writes the reply.
+        if (onToolModel) {
+          const reply = await this.writeReply({ onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd });
+          this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+          return reply;
+        }
+        this.replyModel = result.model || callModel;
         this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
         return content;
       }
+
+      usedTools = true;
 
       const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;
 
@@ -595,9 +691,12 @@ export class Agent {
           }
           break;
         }
-        if (get(toolCalls[i].function.name)?.readOnly === true) {
+        const canOverlap = call => {
+          try { return isReadOnly(call.function.name, JSON.parse(call.function.arguments || '{}')); } catch { return false; }
+        };
+        if (canOverlap(toolCalls[i])) {
           const batch = [];
-          while (i < toolCalls.length && get(toolCalls[i].function.name)?.readOnly === true) batch.push(toolCalls[i++]);
+          while (i < toolCalls.length && canOverlap(toolCalls[i])) batch.push(toolCalls[i++]);
           this.messages.push(...await Promise.all(batch.map(run)));
         } else {
           this.messages.push(await run(toolCalls[i++]));

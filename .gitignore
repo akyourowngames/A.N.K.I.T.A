@@ -4,3 +4,4 @@ node_modules/
 
 # Artifacts written into the working directory by tools we drive.
 .playwright-mcp/
+.kilo/

@@ -61,7 +61,7 @@ try {
   const p = new ProjectStore(PROJECTS_FILE).load().find(project.id);
   assert.ok(p.decisions.some(d => /SQLite/i.test(d.text)));
   assert.ok(p.todos.some(t => /backup/i.test(t.text)));
-  assert.ok(JSON.parse(recall({ query: 'Pixel' })).results.length);
+  assert.ok(JSON.parse(await recall({ query: 'Pixel' }, { config })).results.length);
   assert.equal((await c.run()).processed, 0);
   const personalized = [];
   for (const scenario of [

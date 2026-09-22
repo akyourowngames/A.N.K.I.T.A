@@ -71,6 +71,11 @@ test('named providers resolve to a keyless gateway or fail loudly', () => {
   assert.equal(kilo.keyless, true);
   assert.equal(kilo.defaultModel, 'nex-agi/nex-n2.5-mini:free');
   assert.equal(provider.resolveProvider('KILO').name, 'kilo');
+  const groq = provider.resolveProvider('groq');
+  assert.equal(groq.apiBase, 'https://api.groq.com/openai/v1');
+  assert.equal(groq.defaultModel, 'openai/gpt-oss-120b');
+  assert.equal(groq.keyConfig, 'groqApiKey');
+  assert.equal(groq.keyless, false);
   assert.equal(provider.resolveProvider('nope'), null);
 });
 

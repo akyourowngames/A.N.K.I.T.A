@@ -187,8 +187,8 @@ export function helpText({ agentName }) {
   ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you
   ${c.cyan("/routines")}          scheduled prompts and their last result
   ${c.cyan("/watches")}           pages being watched and their last reading
-  ${c.cyan("/mic")}               dictate one message (Groq Whisper)
-  ${c.cyan("/voice")}             hands-free voice loop (mic in, speech out)
+  ${c.cyan("/mic")}               dictate one message (auto-sends on pause)
+  ${c.cyan("/voice")}             hands-free loop: VAD, barge-in, spoken replies
   ${c.cyan("/say")} <text>        speak text aloud (Edge TTS)
   ${c.cyan("/speak")} on|off      auto-speak every reply
   ${c.cyan("/voices")} [filter]   list Edge TTS voices

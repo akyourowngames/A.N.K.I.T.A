@@ -11,6 +11,7 @@
     "test": "node --test \"test/*.test.mjs\"",
     "start": "node chat.mjs",
     "models": "node chat.mjs --list-models",
-    "config": "node chat.mjs --config"
+    "config": "node chat.mjs --config",
+    "bench": "node scripts/bench-latency.mjs"
   }
 }

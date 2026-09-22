@@ -92,6 +92,16 @@ export const PROVIDERS = {
     defaultModel: "nex-agi/nex-n2.5-mini:free",
     keyless: true,
   },
+  groq: {
+    label: "Groq",
+    apiBase: "https://api.groq.com/openai/v1",
+    // Tool-capable and low-latency; measured ~0.8s TTFT on the free tier.
+    defaultModel: "openai/gpt-oss-120b",
+    // The key is the same GROQ_API_KEY already used for Whisper/Orpheus, so it
+    // lives in config.groqApiKey rather than being duplicated into API_KEY.
+    keyConfig: "groqApiKey",
+    keyless: false,
+  },
 };
 
 /**

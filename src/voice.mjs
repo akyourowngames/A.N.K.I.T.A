@@ -77,11 +77,28 @@ export function tmpVoiceFile(ext) {
 /* mic                                                                 */
 /* ------------------------------------------------------------------ */
 
-/** Parse `ffmpeg -list_devices` stderr into [{ name, alt }]. */
+/**
+ * Parse `ffmpeg -list_devices` stderr into [{ name, alt }] for audio devices.
+ * Each device's "Alternative name" line follows its own name line, so pair
+ * them line-by-line — otherwise interleaved video devices shift the alts.
+ */
 export function parseMicList(stderr) {
-  const names = [...String(stderr).matchAll(/"([^"]+)"\s*\(audio\)/g)].map((m) => m[1]);
-  const alts = [...String(stderr).matchAll(/Alternative name\s+"([^"]+)"/g)].map((m) => m[1]);
-  return names.map((name, i) => ({ name, alt: alts[i] || "" }));
+  const devices = [];
+  let pending = null;
+  for (const line of String(stderr).split(/\r?\n/)) {
+    const dev = line.match(/"([^"]+)"\s*\((audio|video)\)/);
+    if (dev) {
+      pending = { name: dev[1], kind: dev[2], alt: "" };
+      devices.push(pending);
+      continue;
+    }
+    const alt = line.match(/Alternative name\s+"([^"]+)"/);
+    if (alt && pending) {
+      pending.alt = alt[1];
+      pending = null;
+    }
+  }
+  return devices.filter((d) => d.kind === "audio").map(({ name, alt }) => ({ name, alt }));
 }
 
 export async function detectMic(preferred = "") {
@@ -90,7 +107,7 @@ export async function detectMic(preferred = "") {
       ? ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
       : ["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""];
   const out = await new Promise((resolve) => {
-    const child = spawn("ffmpeg", args, { windowsHide: true, stdio: "ignore" });
+    const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
     let stderr = "";
     child.stderr?.on("data", (d) => (stderr += d.toString()));
     child.on("error", () => resolve(""));
@@ -188,6 +205,168 @@ export async function startRecording(outFile, device) {
         }, 3000);
       }),
   };
+}
+
+/* ------------------------------------------------------------------ */
+/* voice activity detection (ffmpeg silencedetect)                     */
+/*                                                                     */
+/* A single ffmpeg process both records the mic and streams speech     */
+/* boundaries on stderr, so hands-free turns and barge-in need no      */
+/* extra device or dependency.                                         */
+/* ------------------------------------------------------------------ */
+
+/** `silencedetect=noise=-35dB:d=1.2` — silence below noiseDb lasting silenceSec. */
+export function buildSilenceFilter({ noiseDb = -35, silenceSec = 1.2 } = {}) {
+  const db = Number(noiseDb);
+  const secs = Number(silenceSec);
+  const noise = Number.isFinite(db) ? db : -35;
+  const duration = Number.isFinite(secs) ? Math.max(0.2, secs) : 1.2;
+  return `silencedetect=noise=${noise}dB:d=${duration}`;
+}
+
+/** One ffmpeg stderr line -> { type, at, duration? } or null. */
+export function parseSilenceLine(line) {
+  const s = String(line);
+  let m = s.match(/silence_start:\s*(-?[\d.]+)/);
+  if (m) return { type: "silence_start", at: Number(m[1]) };
+  m = s.match(/silence_end:\s*(-?[\d.]+)\s*\|\s*silence_duration:\s*([\d.]+)/);
+  if (m) return { type: "silence_end", at: Number(m[1]), duration: Number(m[2]) };
+  return null;
+}
+
+/** Stateful line splitter: feed stderr chunks, get parsed events back. */
+export function createSilenceParser() {
+  let buf = "";
+  const drain = () => {
+    const events = [];
+    let nl;
+    while ((nl = buf.indexOf("\n")) >= 0) {
+      const ev = parseSilenceLine(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      if (ev) events.push(ev);
+    }
+    return events;
+  };
+  return {
+    push(chunk) {
+      buf += String(chunk);
+      return drain();
+    },
+    flush() {
+      const ev = parseSilenceLine(buf);
+      buf = "";
+      return ev ? [ev] : [];
+    },
+  };
+}
+
+/** Parse a full stderr blob into silence events (order preserved). */
+export function parseSilenceEvents(stderr) {
+  const parser = createSilenceParser();
+  return [...parser.push(stderr), ...parser.flush()];
+}
+
+/**
+ * Turn-boundary detector fed by silencedetect events. Returns 'speech' when
+ * sound starts after silence, 'end' when a pause closes a spoken utterance,
+ * else null. Shared by hands-free capture and barge-in.
+ */
+export function createTurnDetector() {
+  let heard = false;
+  return {
+    get heard() {
+      return heard;
+    },
+    feed(ev) {
+      if (!ev) return null;
+      if (ev.type === "silence_end" && !heard) {
+        heard = true;
+        return "speech";
+      }
+      if (ev.type === "silence_start" && heard) {
+        heard = false;
+        return "end";
+      }
+      return null;
+    },
+    reset() {
+      heard = false;
+    },
+  };
+}
+
+/**
+ * Open the mic once, recording to outFile while emitting VAD events.
+ * Returns a handle: { child, ready, stop, onEvent, stderr }. `ready`
+ * rejects if ffmpeg dies immediately (bad device); assign `onEvent`
+ * after creation to receive { type: 'silence_start' | 'silence_end', at }.
+ */
+export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent } = {}) {
+  const args = [
+    "-hide_banner",
+    "-loglevel",
+    "info",
+    ...micInputArgs(device),
+    "-af",
+    buildSilenceFilter({ noiseDb, silenceSec }),
+    "-ac",
+    "1",
+    "-ar",
+    "16000",
+    "-c:a",
+    "pcm_s16le",
+    "-y",
+    outFile,
+  ];
+  const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
+  const parser = createSilenceParser();
+  const handle = { child, onEvent: typeof onEvent === "function" ? onEvent : null, stderr: "" };
+
+  child.stderr?.on("data", (d) => {
+    const text = d.toString();
+    handle.stderr += text;
+    for (const ev of parser.push(text)) handle.onEvent?.(ev);
+  });
+
+  handle.ready = new Promise((resolve, reject) => {
+    const timer = setTimeout(() => resolve(true), 1000);
+    child.once("error", (err) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+    child.once("close", (code) => {
+      clearTimeout(timer);
+      reject(new Error(`ffmpeg exited immediately (code ${code}) — bad mic device?`));
+    });
+  });
+
+  handle.stop = () =>
+    new Promise((resolve) => {
+      let done = false;
+      const finish = () => {
+        if (done) return;
+        done = true;
+        try {
+          resolve(fs.statSync(outFile).size > 1000);
+        } catch {
+          resolve(false);
+        }
+      };
+      child.once("close", finish);
+      try {
+        child.stdin.write("q");
+      } catch {}
+      setTimeout(() => {
+        if (!done) {
+          try {
+            child.kill("SIGKILL");
+          } catch {}
+          setTimeout(finish, 400);
+        }
+      }, 3000);
+    });
+
+  return handle;
 }
 
 /* ------------------------------------------------------------------ */
@@ -805,4 +984,120 @@ export function stripForSpeech(md, maxChars = 1800) {
     s = cut > maxChars * 0.4 ? s.slice(0, cut + 1) : s.slice(0, maxChars);
   }
   return s;
+}
+
+/* ------------------------------------------------------------------ */
+/* long-reply shaping for speech                                       */
+/*                                                                     */
+/* Reading a whole wall of text aloud is hostile, so long lists and    */
+/* paragraphs are read in part and closed with a note that reports the */
+/* real counts. The wording is a template ({address}, {spoken}, ...)   */
+/* so nothing is hardcoded — set VOICE_SUMMARY_NOTE to change it.      */
+/* ------------------------------------------------------------------ */
+
+export const DEFAULT_SUMMARY_NOTE =
+  "{address}, that's {spoken} of {total}. The rest is on your screen, {address}.";
+
+/** Fill the summary template and tidy punctuation left by an empty address. */
+export function renderSummaryNote({
+  template = DEFAULT_SUMMARY_NOTE,
+  address = "",
+  spoken = 0,
+  total = 0,
+  remaining = 0,
+} = {}) {
+  const out = String(template)
+    .replace(/\{address\}/g, address || "")
+    .replace(/\{spoken\}/g, String(spoken))
+    .replace(/\{total\}/g, String(total))
+    .replace(/\{remaining\}/g, String(remaining))
+    .replace(/\s*,\s*(?=[,.;!?])/g, "")
+    .replace(/^\s*[,;:]\s*/, "")
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([.,!?])/g, "$1")
+    .trim();
+  return out;
+}
+
+/** Markdown bullet / numbered list item bodies, in order. */
+export function splitListItems(markdown) {
+  const items = [];
+  for (const line of String(markdown ?? "").split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:[-*+]|\d+[.)])\s+(.*\S)\s*$/);
+    if (m) items.push(m[1]);
+  }
+  return items;
+}
+
+/** Sentence splitter for already-plain text. */
+export function splitSentences(text) {
+  return String(text ?? "")
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+function clipChars(text, maxChars) {
+  const s = String(text);
+  if (!Number.isFinite(maxChars) || maxChars <= 0 || s.length <= maxChars) return s;
+  const cut = s.lastIndexOf(". ", maxChars);
+  if (cut > maxChars * 0.5) return s.slice(0, cut + 1);
+  return s.slice(0, maxChars).trimEnd() + "…";
+}
+
+/** Ensure a spoken chunk ends with terminal punctuation before a note follows. */
+function endSentence(text) {
+  const s = String(text).trim();
+  return /[.!?…]$/.test(s) ? s : `${s}.`;
+}
+
+/**
+ * Decide what to actually say for a reply. Reads the first `maxItems` list
+ * items or `maxSentences` sentences, then appends a dynamic "the rest is on
+ * screen" note when anything was held back. `fullRead` ignores the caps.
+ */
+export function summarizeForSpeech(markdown, opts = {}) {
+  const {
+    address = "",
+    maxItems = 8,
+    maxSentences = 6,
+    maxChars = 1200,
+    fullRead = false,
+    noteTemplate = DEFAULT_SUMMARY_NOTE,
+  } = opts;
+
+  const raw = String(markdown ?? "");
+  if (!raw.trim()) return "";
+
+  const items = splitListItems(raw);
+  if (items.length) {
+    const total = items.length;
+    const count = fullRead ? total : Math.min(total, Math.max(1, maxItems));
+    const spoken = items
+      .slice(0, count)
+      .map((i) => stripForSpeech(i, Infinity))
+      .filter(Boolean)
+      .join(". ");
+    const note =
+      count < total
+        ? renderSummaryNote({ template: noteTemplate, address, spoken: count, total, remaining: total - count })
+        : "";
+    return clipChars(note ? `${endSentence(spoken)} ${note}` : spoken, maxChars);
+  }
+
+  const clean = stripForSpeech(raw, Infinity);
+  const sentences = splitSentences(clean);
+  if (!fullRead && sentences.length > maxSentences) {
+    const count = Math.max(1, maxSentences);
+    const spoken = sentences.slice(0, count).join(" ");
+    const note = renderSummaryNote({
+      template: noteTemplate,
+      address,
+      spoken: count,
+      total: sentences.length,
+      remaining: sentences.length - count,
+    });
+    return clipChars(`${endSentence(spoken)} ${note}`, maxChars);
+  }
+  return clipChars(clean, maxChars);
 }

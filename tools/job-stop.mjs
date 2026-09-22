@@ -18,7 +18,7 @@ export async function run(args, ctx = {}) {
   if (!job) return `Error: no background job "${args.job_id}".`;
   if (job.done) return `job ${job.id} already finished (exit ${job.code ?? "?"}).`;
   job.stopped = true;
-  killTree(job.child);
+  await killTree(job.child);
   await waitForExit(job, 5000);
   return job.done
     ? `stopped job ${job.id} (exit ${job.code ?? "?"})`

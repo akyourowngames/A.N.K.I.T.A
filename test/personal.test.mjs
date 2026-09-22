@@ -53,7 +53,7 @@ test('tool list/update/forget roundtrip and prompt refresh do not call a model',
   assert.doesNotMatch(agent.messages[0].content, /Prefer concise replies/);
 });
 
-test('recall searches personal facts, project notes/decisions/todos and session summaries', () => {
+test('recall searches personal facts, project notes/decisions/todos and session summaries', async () => {
   remember.run({ action: 'add', text: 'I enjoy lunar photography' });
   const s = new ProjectStore(PROJECTS_FILE).load();
   const p = s.add({ name: 'Observatory' });
@@ -61,11 +61,11 @@ test('recall searches personal facts, project notes/decisions/todos and session 
   s.addDecision(p.id, 'lunar images use RAW');
   s.addTodo(p.id, 'calibrate lunar camera');
   fs.writeFileSync(MEMORY_INDEX_FILE, JSON.stringify({ entries: [{ id: 'session-one', summary: 'Discussed lunar equipment', at: '2026-09-20', projectId: p.id }] }));
-  const result = JSON.parse(recall.run({ query: 'lunar' }));
+  const result = JSON.parse(await recall.run({ query: 'lunar' }));
   assert.equal(result.total, 5);
   assert.deepEqual(new Set(result.results.map(r => r.type)), new Set(['personal', 'note', 'decision', 'todo', 'summary']));
-  assert.equal(JSON.parse(recall.run({ query: 'lunar', project: p.id })).total, 4);
-  assert.equal(JSON.parse(recall.run({ query: 'lunar', limit: 2 })).results.length, 2);
+  assert.equal(JSON.parse(await recall.run({ query: 'lunar', project: p.id })).total, 4);
+  assert.equal(JSON.parse(await recall.run({ query: 'lunar', limit: 2 })).results.length, 2);
 });
 
 test('fresh agents can read and write memory in their first request without discovery', () => {
@@ -76,18 +76,18 @@ test('fresh agents can read and write memory in their first request without disc
   assert.equal(new Set(names).size, names.length);
 });
 
-test('a wording mismatch returns bounded candidates for the model instead of pretending nothing is remembered', () => {
+test('a wording mismatch returns bounded candidates for the model instead of pretending nothing is remembered', async () => {
   const profileFile = path.join(dir, 'vocabulary.json');
   const s = new ProfileStore(profileFile).load();
   s.add({ text: 'Enjoys pottery', kind: 'preference' });
   s.add({ text: 'Loves hand-pulled noodles', kind: 'preference' });
-  const result = JSON.parse(recall.run({ query: 'dining favorites', project: 'personal', limit: 1 }, { profileFile }));
+  const result = JSON.parse(await recall.run({ query: 'dining favorites', project: 'personal', limit: 1 }, { profileFile }));
   assert.equal(result.matched, 0);
   assert.equal(result.mode, 'browse');
   assert.equal(result.total, 2);
   assert.equal(result.results.length, 1);
   assert.equal(result.nextOffset, 1);
-  const second = JSON.parse(recall.run({ query: 'dining favorites', project: 'personal', limit: 1, offset: 1 }, { profileFile }));
+  const second = JSON.parse(await recall.run({ query: 'dining favorites', project: 'personal', limit: 1, offset: 1 }, { profileFile }));
   assert.notEqual(result.results[0].id, second.results[0].id);
 });
 

@@ -1,24 +1,25 @@
-import { jobSummary } from "./run-command.mjs";
+import { jobInfo, jobSnapshot } from './_jobs.mjs';
 
 export const name = "job_status";
 export const description =
-  "Read a background job started with run_command background:true. Returns whether it is " +
-  "running or done plus the output collected so far.";
+  "List jobs (omit job_id), or read incremental output. Default resumes the last cursor; since_offset replays bytes, tail returns recent lines. Reports dropped bytes when output rolled over.";
 
 export const parameters = {
   type: "object",
   properties: {
     job_id: { type: "string", description: "The job id returned when the job was started." },
+    since_offset: { type: 'integer', minimum: 0 },
+    tail: { type: 'integer', minimum: 1, maximum: 1000 },
+    max_bytes: { type: 'integer', minimum: 256, maximum: 65536 },
   },
-  required: ["job_id"],
 };
 
 export const readOnly = true;
 export const needsApproval = false;
 
 export function run(args, ctx = {}) {
+  if (!args.job_id) return JSON.stringify({ jobs: [...(ctx.state?.jobs?.values() || [])].map(jobInfo) });
   const job = ctx.state?.jobs?.get?.(String(args.job_id));
   if (!job) return `Error: no background job "${args.job_id}". Start one with run_command background:true.`;
-  const output = job.out.toString() || "(no output yet)";
-  return `${jobSummary(job)}\n${output}`;
+  return JSON.stringify(jobSnapshot(job, args));
 }

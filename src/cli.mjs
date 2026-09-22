@@ -36,7 +36,8 @@ import {
   audioDeps,
   tmpVoiceFile,
   detectMic,
-  startRecording,
+  openVoiceInput,
+  createTurnDetector,
   transcribeGroq,
   synthesizeEdge,
   synthesizeGroq,
@@ -47,7 +48,9 @@ import {
   playMp3,
   stopPlayback,
   stripForSpeech,
+  summarizeForSpeech,
 } from "./voice.mjs";
+import { useHandsFreePlayback } from "./audio-device.mjs";
 
 function packageVersion() {
   try {
@@ -80,7 +83,7 @@ ${c.bold("options")}
       --api-base <url>  use an OpenAI-compatible endpoint instead of Copilot
       --api-key <key>   credentials for --api-base
       --speak           read replies aloud (Edge TTS)
-      --voice           start in voice mode (mic in, speech out)
+      --voice           start hands-free voice mode (VAD + barge-in)
       --daemon          run in the background: schedules, watches, Telegram inbox
       --brief           print a briefing now and exit
   -h, --help            show this
@@ -344,12 +347,14 @@ export async function main() {
   // rather than quietly sending requests to the wrong place.
   const provider = resolveProvider(config.provider);
   if (!provider) {
-    console.error(c.red(`  unknown PROVIDER "${config.provider}" (try copilot or kilo)`));
+    console.error(c.red(`  unknown PROVIDER "${config.provider}" (try copilot, kilo or groq)`));
     process.exit(2);
   }
   if (provider.name !== "copilot" && !config.apiBase) {
     config.apiBase = provider.apiBase;
     if (!config.apiKey && provider.apiKey) config.apiKey = provider.apiKey;
+    // Some gateways reuse an existing key (Groq shares GROQ_API_KEY with voice).
+    if (!config.apiKey && provider.keyConfig && config[provider.keyConfig]) config.apiKey = config[provider.keyConfig];
     if (!config.model && provider.defaultModel) config.model = provider.defaultModel;
   }
 
@@ -367,6 +372,9 @@ export async function main() {
       ["PROVIDER", provider.name],
       ["API_BASE", config.apiBase || "(copilot)"],
       ["API_KEY", config.apiKey ? "(set)" : "(not set)"],
+      ["TOOL", (config.toolProvider || config.toolModel)
+        ? `${config.toolProvider || provider.name} · ${config.toolModel || "(provider default)"}`
+        : "(off)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
       ["STT_MODEL", config.sttModel],
       ["TTS_PROVIDER", config.ttsProvider],
@@ -375,6 +383,15 @@ export async function main() {
       ["TTS_RATE", config.ttsRate],
       ["SPEAK", config.speak ? "on" : "off"],
       ["MIC_DEVICE", config.micDevice || "(auto)"],
+      ["VOICE_VAD", config.voiceVad ? "on" : "off"],
+      ["VOICE_SILENCE_MS", config.voiceSilenceMs],
+      ["VOICE_NOISE_DB", config.voiceNoiseDb],
+      ["VOICE_BARGE_IN", config.voiceBargeIn ? "on" : "off"],
+      ["VOICE_HFP_ROUTING", config.voiceHfpRouting ? "on" : "off"],
+      ["VOICE_ADDRESS", config.voiceAddress || "(none)"],
+      ["VOICE_SPEAK_ITEMS", config.voiceSpeakItems],
+      ["VOICE_SPEAK_SENTENCES", config.voiceSpeakSentences],
+      ["VOICE_FULL_READ", config.voiceFullRead ? "on" : "off"],
       ["TIMEZONE", config.timeZone || "(system local)"],
       ["QUIET_HOURS", config.quietHours || "(off)"],
       ["DESKTOP_NOTIFICATIONS", config.desktopNotifications ? "on" : "off"],
@@ -383,6 +400,12 @@ export async function main() {
       ["PUSHOVER", config.pushoverToken && config.pushoverUser ? "(set)" : "(not set)"],
       ["MEMORY_CONSOLIDATION", config.memoryConsolidation ? "on" : "off"],
       ["MEMORY_RECALL_CHARS", config.memoryRecallChars],
+      ["EMBEDDINGS", config.embeddings ? "on (when configured)" : "off"],
+      ["EMBED_MODEL", config.embedModel],
+      ["CLOUDFLARE_ACCOUNT_ID", config.cloudflareAccountId || "(not set)"],
+      ["CLOUDFLARE_API_TOKEN", config.cloudflareApiToken ? "(set)" : "(not set)"],
+      ["EMBED_TIMEOUT_MS", config.embedTimeoutMs],
+      ["EMBED_INDEX_TIMEOUT_MS", config.embedIndexTimeoutMs],
       ["MEMORY_CONSOLIDATION_HOUR", config.memoryConsolidationHour],
       ["MEMORY_BATCH_SIZE", config.memoryBatchSize],
       ["MEMORY_CHUNK_CHARS", config.memoryChunkChars],
@@ -418,6 +441,41 @@ export async function main() {
     }
     client = new CopilotClient(githubToken);
     await client.ensureToken();
+  }
+
+  // Optional tool-loop model: the primary handles chat and the first tool
+  // decision; once a turn uses a tool, this model runs the rest of the loop and
+  // the primary writes the reply. Opt in with TOOL_PROVIDER / TOOL_MODEL; empty
+  // keeps single-model behaviour.
+  let tool = null;
+  if (config.toolProvider || config.toolModel) {
+    const tp = resolveProvider(config.toolProvider || config.provider);
+    if (!tp) {
+      console.error(c.red(`  unknown TOOL_PROVIDER "${config.toolProvider}" (try copilot, kilo or groq)`));
+      process.exit(2);
+    }
+    const tModel = config.toolModel || tp.defaultModel || config.model;
+    const tApiBase = config.toolApiBase || tp.apiBase;
+    if (tApiBase) {
+      const tApiKey = config.toolApiKey || tp.apiKey || (tp.keyConfig && config[tp.keyConfig]) || "";
+      tool = {
+        client: new CompatibleClient({ apiBase: tApiBase, apiKey: tApiKey, model: tModel, contextWindow: config.contextWindow }),
+        model: tModel,
+      };
+    } else {
+      // Copilot exposes no base URL; reuse the primary Copilot client, or log in.
+      let tClient = client;
+      if (!(tClient instanceof CopilotClient)) {
+        const token = resolveGithubToken();
+        if (!token) {
+          console.error(c.red("  TOOL_PROVIDER copilot needs a GitHub login"));
+          process.exit(2);
+        }
+        tClient = new CopilotClient(token);
+        await tClient.ensureToken();
+      }
+      tool = { client: tClient, model: tModel };
+    }
   }
 
   let models;
@@ -487,6 +545,7 @@ export async function main() {
 
   const agent = new Agent({
     client,
+    tool,
     config,
     journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
     project: projectBlock(),
@@ -685,7 +744,10 @@ export async function main() {
         const secs = ((Date.now() - started) / 1000).toFixed(1);
         const u = agent.turnUsage;
         const use = u.total_tokens > 0 ? ` · ${fmtTokens(u.prompt_tokens)} in / ${fmtTokens(u.completion_tokens)} out` : "";
-        term.line(c.dim(`  · ${secs}s · ${agent.model}${use}`));
+        const replyModel = agent.replyModel || agent.model;
+        const toolModel = agent.toolLoopUsed && agent.tool ? agent.tool.model : null;
+        const label = toolModel && toolModel !== replyModel ? `${toolModel} \u25b8 ${replyModel}` : replyModel;
+        term.line(c.dim(`  · ${secs}s · ${label}${use}`));
       }
     } catch (err) {
       spin?.stop();
@@ -708,29 +770,42 @@ export async function main() {
     return outcome;
   };
 
-  const speakText = async (text) => {
-    const clean = stripForSpeech(text);
-    if (!clean) return;
+  const speechOpts = () => ({
+    address: config.voiceAddress,
+    maxItems: config.voiceSpeakItems,
+    maxSentences: config.voiceSpeakSentences,
+    maxChars: config.voiceSpeakMaxChars,
+    fullRead: config.voiceFullRead,
+    noteTemplate: config.voiceSummaryNote,
+  });
+
+  const synthesizeSpeech = async (clean) => {
     const provider = resolveTtsProvider(config);
     if (provider === "groq" && !config.groqApiKey) {
       term.line(c.dim("  (tts: set GROQ_API_KEY in .env, or TTS_PROVIDER=edge)"));
-      return;
+      return null;
     }
+    return provider === "groq"
+      ? synthesizeGroq({
+          apiKey: config.groqApiKey,
+          model: config.ttsModel,
+          voice: resolveTtsVoice(config, "groq"),
+          text: clean,
+        })
+      : synthesizeEdge({
+          voice: resolveTtsVoice(config, "edge"),
+          rate: config.ttsRate,
+          text: clean,
+        });
+  };
+
+  /** Speak a reply. Long lists/paragraphs are summarized unless `full`. */
+  const speakText = async (text, { full = false } = {}) => {
+    const clean = full ? stripForSpeech(text) : summarizeForSpeech(text, speechOpts());
+    if (!clean) return;
     try {
-      const audio =
-        provider === "groq"
-          ? await synthesizeGroq({
-              apiKey: config.groqApiKey,
-              model: config.ttsModel,
-              voice: resolveTtsVoice(config, "groq"),
-              text: clean,
-            })
-          : await synthesizeEdge({
-              voice: resolveTtsVoice(config, "edge"),
-              rate: config.ttsRate,
-              text: clean,
-            });
-      await playMp3(audio);
+      const audio = await synthesizeSpeech(clean);
+      if (audio) await playMp3(audio);
     } catch (err) {
       term.line(c.dim(`  (tts: ${err.message})`));
     }
@@ -761,43 +836,9 @@ export async function main() {
     return true;
   };
 
-  /** Record until Enter, transcribe with Groq. null = cancelled, "" = nothing usable. */
-  const voiceTurn = async () => {
-    const wav = tmpVoiceFile("wav");
-    let rec;
+  const transcribeWav = async (wav) => {
+    term.write(c.dim("  transcribing…"));
     try {
-      const mic = await detectMic(config.micDevice);
-      if (!mic) {
-        term.line(c.red("  no microphone found (set MIC_DEVICE in .env to pick one)."));
-        return "";
-      }
-      rec = await startRecording(wav, mic.name);
-    } catch (err) {
-      term.line(c.red(`  mic: ${err.message}`));
-      return "";
-    }
-
-    const started = Date.now();
-    const tick = setInterval(() => {
-      term.write(
-        `\r  listening… ${Math.floor((Date.now() - started) / 1000)}s  (Enter to send, Ctrl+C to cancel)\x1b[K`
-      );
-    }, 250);
-    cancelHook = () => {
-      rec.stop().catch(() => {});
-    };
-    const line = await term.ask("");
-    cancelHook = null;
-    clearInterval(tick);
-    term.write("\r\x1b[K");
-    const ok = await rec.stop();
-    try {
-      if (line === null) return null;
-      if (!ok) {
-        term.line(c.red("  recording failed (nothing captured)."));
-        return "";
-      }
-      term.write(c.dim("  transcribing…"));
       const text = await transcribeGroq({
         apiKey: config.groqApiKey,
         model: config.sttModel,
@@ -809,7 +850,216 @@ export async function main() {
       term.write("\r\x1b[K");
       term.line(c.red(`  stt: ${err.message}`));
       return "";
+    }
+  };
+
+  /**
+   * Capture one turn. Hands-free stops on a pause (ffmpeg silencedetect);
+   * otherwise Enter sends. Enter always force-sends, Ctrl+C cancels.
+   * Returns the transcript, "" (nothing usable), or null (cancelled).
+   */
+  const captureTurn = async ({ handsFree = false } = {}) => {
+    const wav = tmpVoiceFile("wav");
+    let mic;
+    try {
+      mic = await detectMic(config.micDevice);
+    } catch (err) {
+      term.line(c.red(`  mic: ${err.message}`));
+      return "";
+    }
+    if (!mic) {
+      term.line(c.red("  no microphone found (set MIC_DEVICE in .env to pick one)."));
+      return "";
+    }
+
+    let input = null;
+    for (let attempt = 0; attempt < 2 && !input; attempt++) {
+      try {
+        const candidate = openVoiceInput({
+          device: mic.name,
+          outFile: wav,
+          noiseDb: config.voiceNoiseDb,
+          silenceSec: config.voiceSilenceMs / 1000,
+        });
+        await candidate.ready;
+        input = candidate;
+      } catch (err) {
+        if (attempt === 0) {
+          // A Bluetooth device can still be releasing from the previous turn.
+          await new Promise((r) => setTimeout(r, 400));
+          continue;
+        }
+        term.line(c.red(`  mic: ${err.message}`));
+        return "";
+      }
+    }
+
+    const started = Date.now();
+    let reason = null;
+    const detector = createTurnDetector();
+    input.onEvent = (ev) => {
+      if (reason !== null) return;
+      if (detector.feed(ev) === "end") reason = "silence";
+    };
+
+    const hint = handsFree ? "pause to send" : "Enter to send";
+    const tick = setInterval(() => {
+      const secs = Math.floor((Date.now() - started) / 1000);
+      const label = handsFree && !detector.heard ? "speak now" : "listening";
+      term.write(`\r  ${label}… ${secs}s  (${hint}, Ctrl+C to cancel)\x1b[K`);
+    }, 250);
+    cancelHook = () => {
+      reason = "cancel";
+    };
+
+    await new Promise((resolve) => {
+      const poll = setInterval(() => {
+        if (reason !== null) {
+          clearInterval(poll);
+          resolve();
+        } else if (handsFree && Date.now() - started > config.voiceMaxUtteranceMs) {
+          reason = "max";
+          clearInterval(poll);
+          resolve();
+        }
+      }, 120);
+      term.ask("").then((line) => {
+        if (reason === null) reason = line === null ? "cancel" : "enter";
+        clearInterval(poll);
+        resolve();
+      });
+    });
+
+    cancelHook = null;
+    term.cancelPending();
+    clearInterval(tick);
+    term.write("\r\x1b[K");
+    const ok = await input.stop();
+
+    try {
+      if (reason === "cancel") return null;
+      if (!ok) {
+        term.line(c.red("  recording failed (nothing captured)."));
+        return "";
+      }
+      return await transcribeWav(wav);
     } finally {
+      try {
+        fs.unlinkSync(wav);
+      } catch {}
+    }
+  };
+
+  /**
+   * Speak a reply while listening for barge-in: talking over the reply stops
+   * playback and the interruption becomes the next turn.
+   */
+  const speakWithBargeIn = async (text) => {
+    const clean = summarizeForSpeech(text, speechOpts());
+    if (!clean) return { bargedIn: false };
+
+    let audio;
+    try {
+      audio = await synthesizeSpeech(clean);
+    } catch (err) {
+      term.line(c.dim(`  (tts: ${err.message})`));
+      return { bargedIn: false };
+    }
+    if (!audio) return { bargedIn: false };
+    if (!config.voiceBargeIn) {
+      try {
+        await playMp3(audio);
+      } catch {}
+      return { bargedIn: false };
+    }
+
+    const wav = tmpVoiceFile("wav");
+    let input = null;
+    let stopped = false;
+    const stopInput = async () => {
+      if (!input || stopped) return false;
+      stopped = true;
+      try {
+        return await input.stop();
+      } catch {
+        return false;
+      }
+    };
+    try {
+      const mic = await detectMic(config.micDevice);
+      if (mic) {
+        input = openVoiceInput({
+          device: mic.name,
+          outFile: wav,
+          noiseDb: config.voiceBargeDb,
+          silenceSec: config.voiceSilenceMs / 1000,
+        });
+        await input.ready;
+      }
+    } catch {
+      input = null;
+    }
+
+    cancelHook = () => stopPlayback();
+    try {
+      const playback = playMp3(audio).catch(() => {});
+      if (!input) {
+        await playback;
+        return { bargedIn: false };
+      }
+
+      const bargeAt = Date.now();
+      let phase = "listen";
+      let barged = false;
+      let reason = null;
+      const detector = createTurnDetector();
+      input.onEvent = (ev) => {
+        const signal = detector.feed(ev);
+        if (phase === "listen") {
+          if (signal === "speech" && Date.now() - bargeAt > 400) {
+            barged = true;
+            phase = "capture";
+          }
+        } else if (signal === "end") {
+          reason = "silence";
+        }
+      };
+
+      const winner = await new Promise((resolve) => {
+        const poll = setInterval(() => {
+          if (barged) {
+            clearInterval(poll);
+            resolve("barge");
+          }
+        }, 80);
+        playback.then(() => {
+          clearInterval(poll);
+          resolve("done");
+        });
+      });
+
+      if (winner === "done") {
+        await stopInput();
+        return { bargedIn: false };
+      }
+
+      stopPlayback();
+      term.write(c.dim("  (interrupted) "));
+      const started = Date.now();
+      await new Promise((resolve) => {
+        const poll = setInterval(() => {
+          if (reason !== null || Date.now() - started > config.voiceMaxUtteranceMs) {
+            clearInterval(poll);
+            resolve();
+          }
+        }, 120);
+      });
+      const ok = await stopInput();
+      if (!ok) return { bargedIn: true, text: "" };
+      return { bargedIn: true, text: await transcribeWav(wav) };
+    } finally {
+      await stopInput();
+      cancelHook = null;
       try {
         fs.unlinkSync(wav);
       } catch {}
@@ -819,15 +1069,41 @@ export async function main() {
   const voiceLoop = async () => {
     if (!voiceReady()) return;
     voiceActive = true;
-    term.line(c.dim('  voice mode — speak, press Enter to send each turn. Say "exit" to leave.'));
+    const handsFree = config.voiceVad;
+    term.line(
+      c.dim(
+        handsFree
+          ? '  voice mode — just speak; pause to send. Interrupt anytime. Say "exit" to leave.'
+          : '  voice mode — speak, press Enter to send each turn. Say "exit" to leave.'
+      )
+    );
+    let pending = null;
+    let routing = null;
     try {
+      // A Bluetooth headset drops A2DP while its mic is open, which would make
+      // barge-in replies silent. Point playback at its Hands-Free endpoint.
+      if (config.voiceBargeIn && config.voiceHfpRouting) {
+        try {
+          const mic = await detectMic(config.micDevice);
+          if (mic) routing = useHandsFreePlayback(mic.name);
+          if (routing) {
+            term.line(c.dim(`  speech via "${routing.device.name}" so barge-in stays audible`));
+          }
+        } catch {}
+      }
       while (true) {
-        const said = await voiceTurn();
-        if (said === null) {
-          term.line(c.dim("  (cancelled)"));
-          break;
+        let said;
+        if (pending !== null) {
+          said = pending;
+          pending = null;
+        } else {
+          said = await captureTurn({ handsFree });
+          if (said === null) {
+            term.line(c.dim("  (cancelled)"));
+            break;
+          }
         }
-        const clean = said.trim();
+        const clean = String(said || "").trim();
         if (!clean) continue;
         if (/^(exit|quit|stop|goodbye|bye)[.!]?$/i.test(clean)) {
           term.line(c.dim("  leaving voice mode."));
@@ -839,9 +1115,13 @@ export async function main() {
         try {
           writeSession(AUTOSAVE_NAME);
         } catch {}
-        if (outcome && !outcome.error && outcome.text) await speakText(outcome.text);
+        if (outcome && !outcome.error && outcome.text) {
+          const r = await speakWithBargeIn(outcome.text);
+          if (r.bargedIn && r.text && r.text.trim()) pending = r.text.trim();
+        }
       }
     } finally {
+      routing?.restore();
       voiceActive = false;
       cancelHook = null;
     }
@@ -920,6 +1200,7 @@ export async function main() {
   const freshAgent = (purpose) =>
     new Agent({
       client,
+      tool,
       config,
       // One-shot agents for routines, briefings and alerts always carry every
       // tool: there is no session to amortise a find_tools round trip across,
@@ -979,6 +1260,7 @@ export async function main() {
       config,
       client,
       model,
+      tool,
       runPrompt,
       deliver,
       flushNotifications: () => notifications.flush(),
@@ -1070,6 +1352,26 @@ export async function main() {
         term.line(`  ${"STT_MODEL".padEnd(16)} ${config.sttModel}`);
         term.line(`  ${"GROQ_API_KEY".padEnd(16)} ${config.groqApiKey ? "(set)" : "(not set)"}`);
         term.line(`  ${"MIC_DEVICE".padEnd(16)} ${config.micDevice || "(auto)"}`);
+        term.line(
+          `  ${"VOICE_VAD".padEnd(16)} ${config.voiceVad ? "on" : "off"}${c.dim(
+            `  silence ${config.voiceSilenceMs}ms @ ${config.voiceNoiseDb}dB`
+          )}`
+        );
+        term.line(
+          `  ${"VOICE_BARGE_IN".padEnd(16)} ${config.voiceBargeIn ? "on" : "off"}${c.dim(
+            `  threshold ${config.voiceBargeDb}dB`
+          )}`
+        );
+        term.line(
+          `  ${"VOICE_HFP_ROUTING".padEnd(16)} ${config.voiceHfpRouting ? "on" : "off"}${c.dim(
+            "  keep speech audible with the mic open (Bluetooth)"
+          )}`
+        );
+        term.line(
+          `  ${"VOICE_SUMMARY".padEnd(16)} ${config.voiceFullRead ? "full read" : `${config.voiceSpeakItems} items / ${config.voiceSpeakSentences} sentences`}${c.dim(
+            `  address: ${config.voiceAddress || "(none)"}`
+          )}`
+        );
         term.line(c.dim(`  project env: ${config.envPath || "(no .env found)"}`));
         term.line(c.dim(`  global env:  ${config.globalEnvPath || "(none)"}`));
         term.line("");
@@ -1179,7 +1481,7 @@ export async function main() {
         voiceActive = true;
         let said;
         try {
-          said = await voiceTurn();
+          said = await captureTurn({ handsFree: config.voiceVad });
         } finally {
           voiceActive = false;
         }
@@ -1218,7 +1520,7 @@ export async function main() {
           term.line(c.red("  /say needs ffplay on PATH (winget install Gyan.FFmpeg)."));
           break;
         }
-        await speakText(arg);
+        await speakText(arg, { full: true });
         break;
       }
 
