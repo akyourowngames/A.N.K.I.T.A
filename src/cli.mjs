@@ -1,5 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
+import { NotificationDelivery } from './notify.mjs';
+import { MemoryConsolidator } from './consolidate.mjs';
+import { extractMemory } from './memory-extract.mjs';
+import { recordTurn, saveSession } from './sessions.mjs';
 import {
   loadConfig,
   ensureDirs,
@@ -11,6 +15,7 @@ import {
   PROJECTS_FILE,
   MCP_FILE,
   DAEMON_LOG,
+  NOTIFY_QUEUE_FILE,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "./projects.mjs";
 import { McpManager } from "./mcp-manager.mjs";
@@ -20,7 +25,7 @@ import { TelegramBot, parseChatIds } from "./telegram.mjs";
 import { Daemon } from "./daemon.mjs";
 import { describeCron } from "./cron.mjs";
 import { readAuth, writeAuth, deviceLogin, CopilotClient } from "./auth.mjs";
-import { pickModel, CompatibleClient } from "./provider.mjs";
+import { pickModel, CompatibleClient, resolveProvider } from "./provider.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
@@ -334,6 +339,20 @@ export async function main() {
   if (opts.apiBase) config.apiBase = opts.apiBase;
   if (opts.apiKey) config.apiKey = opts.apiKey;
 
+  // A named PROVIDER fills in a base URL and default model unless the user
+  // pinned their own. Copilot needs no preset; anything unknown fails loudly
+  // rather than quietly sending requests to the wrong place.
+  const provider = resolveProvider(config.provider);
+  if (!provider) {
+    console.error(c.red(`  unknown PROVIDER "${config.provider}" (try copilot or kilo)`));
+    process.exit(2);
+  }
+  if (provider.name !== "copilot" && !config.apiBase) {
+    config.apiBase = provider.apiBase;
+    if (!config.apiKey && provider.apiKey) config.apiKey = provider.apiKey;
+    if (!config.model && provider.defaultModel) config.model = provider.defaultModel;
+  }
+
   if (opts.showConfig) {
     const rows = [
       ["USERNAME", config.username],
@@ -345,6 +364,7 @@ export async function main() {
       ["MAX_TOKENS", config.maxTokens],
       ["MAX_TOOL_CHARS", config.maxToolChars],
       ["CONTEXT_WINDOW", config.contextWindow],
+      ["PROVIDER", provider.name],
       ["API_BASE", config.apiBase || "(copilot)"],
       ["API_KEY", config.apiKey ? "(set)" : "(not set)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
@@ -355,6 +375,18 @@ export async function main() {
       ["TTS_RATE", config.ttsRate],
       ["SPEAK", config.speak ? "on" : "off"],
       ["MIC_DEVICE", config.micDevice || "(auto)"],
+      ["TIMEZONE", config.timeZone || "(system local)"],
+      ["QUIET_HOURS", config.quietHours || "(off)"],
+      ["DESKTOP_NOTIFICATIONS", config.desktopNotifications ? "on" : "off"],
+      ["NTFY_URL", config.ntfyUrl ? "(set)" : "(not set)"],
+      ["DISCORD_WEBHOOK_URL", config.discordWebhookUrl ? "(set)" : "(not set)"],
+      ["PUSHOVER", config.pushoverToken && config.pushoverUser ? "(set)" : "(not set)"],
+      ["MEMORY_CONSOLIDATION", config.memoryConsolidation ? "on" : "off"],
+      ["MEMORY_RECALL_CHARS", config.memoryRecallChars],
+      ["MEMORY_CONSOLIDATION_HOUR", config.memoryConsolidationHour],
+      ["MEMORY_BATCH_SIZE", config.memoryBatchSize],
+      ["MEMORY_CHUNK_CHARS", config.memoryChunkChars],
+      ["MEMORY_TIMEOUT", config.memoryTimeout],
       ["SYSTEM_EXTRA", config.systemExtra || ""],
     ];
     console.log(c.bold("\nresolved config"));
@@ -370,7 +402,7 @@ export async function main() {
 
   let client;
   if (config.apiBase) {
-    if (!config.apiKey) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
+    if (!config.apiKey && !provider.keyless) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
     client = new CompatibleClient({
       apiBase: config.apiBase,
       apiKey: config.apiKey,
@@ -456,6 +488,7 @@ export async function main() {
   const agent = new Agent({
     client,
     config,
+    journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
     project: projectBlock(),
     projectId: activeProject()?.id || null,
     mcp,
@@ -503,14 +536,7 @@ export async function main() {
 
   const writeSession = (name) => {
     const file = sessionPath(name);
-    fs.writeFileSync(
-      file,
-      JSON.stringify(
-        { name, model: agent.model, savedAt: new Date().toISOString(), messages: agent.messages },
-        null,
-        2
-      )
-    );
+    saveSession(file, { name, model: agent.model, savedAt: new Date().toISOString(), messages: agent.messages, projectId: agent.projectId, journaled: agent.journalComplete });
     return file;
   };
 
@@ -876,18 +902,16 @@ export async function main() {
     return allowed.length ? allowed[0] : null;
   };
 
-  const deliver = async (text, meta = {}) => {
-    const chatId = ownerChat();
-    if (bot.enabled && chatId) {
-      await bot.send(chatId, text);
-      return "telegram";
-    }
-    term.line("");
-    term.line(c.magenta(`  \u25d7 ${meta.routine ? meta.routine.name : "alert"}`));
-    term.line(text.replace(/^/gm, "  "));
-    term.line("");
-    return "terminal";
-  };
+  const notifications = new NotificationDelivery({
+    config, file: NOTIFY_QUEUE_FILE,
+    telegram: async text => {
+      if (!bot.enabled || !ownerChat()) return false;
+      await bot.send(ownerChat(), text);
+    },
+    print: text => { term.line(''); term.line(text.replace(/^/gm, '  ')); term.line(''); },
+    log: text => term.line(c.dim(`  ${text}`)),
+  });
+  const deliver = text => opts.daemon ? notifications.queueMessage(text) : notifications.send(text);
 
   // Set once the daemon exists, so routine/brief work can ask for approval in
   // Telegram instead of being silently denied.
@@ -918,6 +942,7 @@ export async function main() {
     });
 
   const runPrompt = async (prompt, meta = {}) => {
+    if (meta.purpose === 'consolidation') return extractMemory(prompt, { client, config, model: agent.model });
     const worker = freshAgent(meta.purpose);
     worker.model = agent.model;
     try {
@@ -932,14 +957,8 @@ export async function main() {
 
   if (opts.brief) {
     const text = String((await runPrompt(BRIEFING_PROMPT)) || "").trim() || "(nothing to report)";
-    if (bot.enabled && ownerChat()) {
-      await deliver(`*Briefing*\n\n${text}`);
-      term.line(c.dim("  briefing sent to telegram"));
-    } else {
-      term.line("");
-      term.line(text.replace(/^/gm, "  "));
-      term.line("");
-    }
+    const channel = await notifications.send(`Briefing\n\n${text}`);
+    if (channel !== 'terminal') term.line(c.dim(`  briefing ${channel === 'queued' ? 'queued for delivery' : `submitted via ${channel}`}`));
     process.exit(0);
   }
 
@@ -962,6 +981,8 @@ export async function main() {
       model,
       runPrompt,
       deliver,
+      flushNotifications: () => notifications.flush(),
+      consolidator: new MemoryConsolidator({ config, extract: runPrompt, log: m => term.line(c.dim(`  ${m}`)) }),
       log: (m) => term.line(c.dim(`  ${m}`)),
       logFile: DAEMON_LOG,
       tickMs: config.daemonTick * 1000,

@@ -63,6 +63,24 @@ test('model selection respects tool support and server default without stale pre
   assert.throws(() => provider.pickModel([{ id: 'chat', tools: false }], '', true), /tool/i);
 });
 
+test('named providers resolve to a keyless gateway or fail loudly', () => {
+  assert.equal(provider.resolveProvider('').name, 'copilot');
+  assert.equal(provider.resolveProvider('copilot').apiBase, '');
+  const kilo = provider.resolveProvider('kilo');
+  assert.equal(kilo.apiBase, 'https://api.kilo.ai/api/gateway');
+  assert.equal(kilo.keyless, true);
+  assert.equal(kilo.defaultModel, 'nex-agi/nex-n2.5-mini:free');
+  assert.equal(provider.resolveProvider('KILO').name, 'kilo');
+  assert.equal(provider.resolveProvider('nope'), null);
+});
+
+test('PROVIDER is read from config and normalized', () => {
+  const project = path.join(temp, 'provider.env');
+  fs.writeFileSync(project, 'PROVIDER=Kilo\n');
+  assert.equal(loadConfig(project).provider, 'kilo');
+  assert.equal(loadConfig(path.join(temp, 'missing-provider')).provider, '');
+});
+
 test('compatible client normalizes models and uses only configured API credentials', async t => {
   assert.equal(typeof provider.CompatibleClient, 'function');
   const client = new provider.CompatibleClient({ apiBase: 'http://localhost:1234/v1/', apiKey: 'secret', model: 'fallback' });

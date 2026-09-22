@@ -14,13 +14,14 @@ import * as jobStop from "./job-stop.mjs";
 import * as writeTodos from "./write-todos.mjs";
 import * as findTools from "./find-tools.mjs";
 import { killTree, waitForExit } from "./run-command.mjs";
-import { CATEGORIES, deferredTools, deferredSpecByName, categoryOfTool, specOf } from "./catalog.mjs";
+import { CATEGORIES, alwaysOnTools, deferredTools, deferredSpecByName, categoryOfTool, specOf } from "./catalog.mjs";
 
 /**
  * The tools almost every task needs, sent on every request. Deliberately short:
  * every schema here is paid on every turn, forever.
  */
 export const CORE = [
+  ...alwaysOnTools,
   readFile,
   writeFile,
   editFile,

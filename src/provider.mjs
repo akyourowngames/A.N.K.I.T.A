@@ -76,6 +76,40 @@ export function pickModel(models, wanted = "", useTools = true) {
 }
 
 /**
+ * Named OpenAI-compatible gateways. "copilot" is handled by the CLI's GitHub
+ * device flow; every other entry is a plain CompatibleClient target. A preset
+ * only supplies defaults, so an explicit API_BASE / API_KEY / MODEL still wins.
+ *
+ * `keyless: true` means the gateway serves its free models with no credentials
+ * at all - the CLI then skips its "no API_KEY set" note.
+ */
+export const PROVIDERS = {
+  kilo: {
+    label: "Kilo AI Gateway",
+    apiBase: "https://api.kilo.ai/api/gateway",
+    // Fastest free model that streams normal content (not reasoning-only) and
+    // supports tool calls - measured, see docs/benchmark notes in the PR.
+    defaultModel: "nex-agi/nex-n2.5-mini:free",
+    keyless: true,
+  },
+};
+
+/**
+ * Resolve a PROVIDER name to its preset. Unknown names return null so the CLI
+ * can fail loudly instead of silently falling back to Copilot. The default
+ * (empty or "copilot") is GitHub Copilot itself.
+ */
+export function resolveProvider(name) {
+  const key = String(name || "").trim().toLowerCase();
+  if (!key || key === "copilot") {
+    return { name: "copilot", label: "GitHub Copilot", apiBase: "", apiKey: "", defaultModel: "", keyless: false };
+  }
+  const preset = PROVIDERS[key];
+  if (!preset) return null;
+  return { name: key, apiKey: "", keyless: false, ...preset };
+}
+
+/**
  * Minimal client for any OpenAI-compatible `/chat/completions` endpoint
  * (Ollama, LM Studio, OpenRouter, ...). Same surface as CopilotClient:
  * baseUrl, headers(stream), ensureToken(), models().

@@ -112,7 +112,9 @@ function daemonWith(t, extra = {}) {
       return 'Krish, active users dipped 7 to 1,298 - want me to dig in?';
     },
     deliver: async (text, meta) => delivered.push({ text, meta }),
-    now: () => new Date(2026, 8, 21, 8, 0, 5),
+    // recordWatchCheck uses real time. Advance past its interval rather than
+    // freezing a date that eventually lies before every baseline reading.
+    now: () => new Date(Date.now() + 60000),
   });
   daemon.pollInbox = async () => 0;
   return { daemon, store, prompts, delivered };
@@ -186,6 +188,21 @@ test('an empty queue sends nothing', async (t) => {
   assert.equal(await daemon.flushAlerts(), null);
   assert.equal(prompts.length, 0);
   assert.equal(delivered.length, 0);
+});
+
+test('failed alert enqueue retains changes and a later tick retries even without new watches', async t => {
+  const { daemon, store, delivered } = daemonWith(t, { config: { watchAlertLlm: false } });
+  store.removeWatch('active-users'); store.removeWatch('signups');
+  let failed = true;
+  daemon.deliver = async text => { if (failed) throw Error('queue busy'); delivered.push(text); };
+  daemon.alertQueue.push(CHANGE);
+  await assert.rejects(daemon.flushAlerts(), /queue busy/);
+  assert.equal(daemon.alertQueue.length, 1);
+  failed = false;
+  await daemon.tickOnce();
+  await daemon.drain();
+  assert.equal(delivered.length, 1);
+  assert.equal(daemon.alertQueue.length, 0);
 });
 
 test('alerts cannot mutate: mutations are declined, reads are allowed', async (t) => {

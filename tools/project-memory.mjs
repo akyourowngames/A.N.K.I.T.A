@@ -27,8 +27,8 @@ export const parameters = {
 
 export const needsApproval = false;
 
-function store() {
-  return new ProjectStore(PROJECTS_FILE).load();
+function store(ctx = {}) {
+  return new ProjectStore(ctx.projectsFile || PROJECTS_FILE).load();
 }
 
 function pickProject(s, args, ctx) {
@@ -78,7 +78,7 @@ function taggedItems(projectId) {
 }
 
 export function run(args = {}, ctx = {}) {
-  const s = store();
+  const s = store(ctx);
   const action = String(args.action || "log").toLowerCase();
   const found = pickProject(s, args, ctx);
   if (found.error) return `Error: ${found.error}`;
@@ -88,10 +88,10 @@ export function run(args = {}, ctx = {}) {
     if (!args.text) return `Error: 'text' is required to add a ${action}.`;
     const written =
       action === "note"
-        ? s.addNote(project.id, args.text)
+        ? s.addNote(project.id, args.text, ctx.memorySource)
         : action === "decide"
-          ? s.addDecision(project.id, args.text)
-          : s.addTodo(project.id, args.text);
+          ? s.addDecision(project.id, args.text, ctx.memorySource)
+          : s.addTodo(project.id, args.text, ctx.memorySource);
     if (!written) return `Error: no project "${project.id}".`;
     if (written.error) return `Error: ${written.error}.`;
 

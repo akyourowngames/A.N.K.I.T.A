@@ -8,10 +8,12 @@ import * as schedule from "./schedule.mjs";
 import * as watch from "./watch.mjs";
 import * as githubNotifications from "./github-notifications.mjs";
 import * as mcpManage from "./mcp-manage.mjs";
+import * as remember from "./remember.mjs";
+import * as recall from "./recall.mjs";
 
 /**
- * The tools that are NOT sent on every request, grouped so one discovery call
- * loads a whole family and the obvious follow-up is already available.
+ * Grouped tools: most schemas are deferred so discovery loads a whole family.
+ * Compact personal tools are always on, avoiding discovery for everyday memory.
  *
  * This lives apart from index.mjs on purpose: find_tools.mjs needs the
  * categories, and index.mjs needs find_tools, so putting both in one file
@@ -20,6 +22,13 @@ import * as mcpManage from "./mcp-manage.mjs";
  * Keywords are matched with plain substring checks - no embeddings, no index.
  */
 export const CATEGORIES = [
+  {
+    id: "personal",
+    alwaysOn: true,
+    summary: "personal preferences and facts across projects; recall memories and past sessions",
+    keywords: ["personal", "memory", "remember", "recall", "preference", "about me", "timezone", "yesterday"],
+    tools: [remember, recall],
+  },
   {
     id: "web",
     summary: "search the internet, read pages, scrape blocked or JS-heavy sites",
@@ -84,7 +93,8 @@ export const CATEGORIES = [
   },
 ];
 
-export const deferredTools = CATEGORIES.flatMap((c) => c.tools);
+export const alwaysOnTools = CATEGORIES.filter(c => c.alwaysOn).flatMap(c => c.tools);
+export const deferredTools = CATEGORIES.filter(c => !c.alwaysOn).flatMap((c) => c.tools);
 
 export const specOf = (m) => ({
   type: "function",

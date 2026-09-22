@@ -97,7 +97,8 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `HISTORY_MESSAGES` | `40` | Turns kept in context (`HISTORY_LINES` still works) |
 | `MAX_TOKENS` / `MAX_TOOL_CHARS` / `CONTEXT_WINDOW` | `4096` / `65536` / `32768` | Output cap, per-result context cap, trim budget |
 | `INPUT_COST_PER_MILLION` / `OUTPUT_COST_PER_MILLION` | unset | Enables `$` estimates in `/usage` |
-| `API_BASE` / `API_KEY` | unset | OpenAI-compatible endpoint instead of Copilot |
+| `PROVIDER` | `copilot` | Backend: `copilot`, or `kilo` — the [Kilo AI Gateway](https://kilo.ai/docs/gateway) with free, keyless models (`nex-agi/nex-n2.5-mini:free` by default) |
+| `API_BASE` / `API_KEY` | unset | OpenAI-compatible endpoint instead of Copilot (always wins over `PROVIDER`) |
 | `GROQ_API_KEY` / `STT_MODEL` | unset / `whisper-large-v3-turbo` | Mic transcription (free key at console.groq.com) |
 | `TTS_PROVIDER` | `edge` | `edge`, `groq`, or `auto` (groq when a key exists) |
 | `TTS_MODEL` / `TTS_VOICE` | `canopylabs/orpheus-v1-english` / provider default | `tara` on groq, `en-US-AriaNeural` on edge — see `/voices` |
@@ -257,11 +258,47 @@ ankita › The Zumba Bot project is progressing well, Krish. It's your local-fir
 
 `done` closes an item by id (`t2`), by its number among the open ones, or by part of its text — and refuses to guess when a reference is ambiguous, listing the candidates instead.
 
-**Memory never enters the system prompt.** Only the name, summary, path and conventions do. Ten notes later the block is still the same size — otherwise every turn would pay for history you didn't ask for. This is exactly why `brief` exists as the deliberate, opt-in way to pull memory into context.
+**Project memory never enters the system prompt.** Only the name, summary, path and conventions do. Ten notes later the block is still the same size — otherwise every turn would pay for history you didn't ask for. This is exactly why `brief` exists as the deliberate, opt-in way to pull memory into context. Personal memory has a separate, strictly bounded exception for explicitly pinned preferences, described below.
 
 Lists are capped (50 notes, 50 decisions, 100 todos, newest kept) and `show` says when older entries were dropped.
 
 The block is capped (200-char summary, 5 conventions) because it is paid on every turn alongside the tool specs.
+
+## Personal memory and recall
+
+Personal facts live in `~/.copilot-chat-cli/profile.json` (or `CONFIG_DIR`), independently of projects. Ask naturally; the model chooses when to call `remember` and `recall`. These compact tools in the `personal` catalog group are available in the first request, so memory does not require a `find_tools` round trip:
+
+```text
+you › Remember I always want PowerShell, and avoid em dashes in replies.
+  → remember({"action":"add","text":"Use PowerShell","kind":"preference","always":true})
+  → remember({"action":"add","text":"Avoid em dashes in replies","kind":"style","always":true})
+you › What do you know about me?
+  → remember({"action":"list"})
+you › What did we decide about backups?
+  → recall({"query":"backups"})
+```
+
+`remember` supports `add`, `list`, `update` and `forget`. Corrections and deletion use stable IDs returned by `list`; `always: false` unpins a fact. Only the latest **12 facts explicitly marked `always: true`**, each limited to **160 characters**, enter the permanent system block. Full text stays on disk. Prompt refresh checks the file timestamp and reuses the bounded block when unchanged; it makes no model request.
+
+`recall` searches personal facts, project notes, decisions, todos and session summaries, returning source information. Optional `project`, `offset` and `limit` narrow or page results. Search uses local lexical ranking; when wording has no overlap, it returns a bounded page of stored candidates explicitly marked as a browse fallback. The conversational model judges relevance, reformulates terms or paginates. A small fact-count indicator tells fresh sessions that unpinned memory exists without injecting its contents. The model is instructed to check memory before personal recommendations or asking users to repeat preferences, and to save through a successful tool call before claiming anything was remembered. There is no topic-specific router, embedding service or hidden classification model call.
+
+Fresh turns also perform a **local** personal recall before contacting the model, so using memory does not depend solely on the model remembering to search. Up to six candidates fit within `MEMORY_RECALL_CHARS=1600` UTF-8 bytes of temporary tool-result content. The query and candidate bundle are bounded, count against the context budget, and never accumulate in history/autosaves or the system prompt. The model decides whether they matter and can request more; keyword ranking does not determine the answer. This removes a model round trip when the candidates already answer the request. Set `MEMORY_RECALL_CHARS=0` for exclusively model-requested recall. Unpinned memory is never promoted to a permanent prompt block.
+
+With `ankita --daemon`, `MEMORY_CONSOLIDATION=on` (default) processes yesterday and older unprocessed transcripts after `MEMORY_CONSOLIDATION_HOUR` (default **03:00**, in `TIMEZONE` or system local time). New CLI and Telegram turns are journaled under `sessions/journal/`; old saved sessions and autosaves are also read. A journal preserves completed user/final-assistant exchanges before autosave replacement or history trimming. Existing legacy autosaves are archived on the first journaled replacement.
+
+The configured model extracts durable facts, project decisions and open/completed tasks as structured JSON. It gets no executable tools, must cite transcript evidence, and cannot automatically pin facts. Validated writes use the same `remember` and `project_memory` operations as chat. Project memory is only written when the transcript has an unambiguous project ID. One-line summaries and crash-recovery checkpoints live in `memory-index.json`; replay does not duplicate completed batches. Newer explicit personal corrections take precedence over old transcripts. Forgetting keeps no deleted text: a deletion timestamp prevents **all older transcripts from creating personal facts again**, while newer conversations and explicit `remember` requests can still add them. Raw sessions and their historical summaries remain separate records.
+
+Maintenance starts when the daemon is idle, does not occupy a chat concurrency slot, and processes at most `MEMORY_BATCH_SIZE=4` chunks per run (`MEMORY_CHUNK_CHARS=12000`, `MEMORY_TIMEOUT=60` seconds per model call). Backlogs continue on later ticks; empty scans and failures back off for an hour. Chat adds local recall and a journal write, with no extra classification or consolidation model call. Set `MEMORY_CONSOLIDATION=off` to disable automatic journaling and consolidation; personal memory still works. Journals and summaries remain local until a consolidation batch sends its transcript to your configured model provider. They have no automatic retention deletion.
+
+## Notification delivery
+
+Proactive messages try **Telegram → configured HTTP service → desktop → terminal**, falling through when a channel fails. HTTP services are optional and use built-in `fetch`: [ntfy publishing](https://docs.ntfy.sh/publish/) via `NTFY_URL` and optional `NTFY_TOKEN`, Discord via `DISCORD_WEBHOOK_URL`, or [Pushover](https://pushover.net/api) via `PUSHOVER_TOKEN` plus `PUSHOVER_USER`. If several are configured, ntfy takes precedence, then Discord, then Pushover. Discord mentions are disabled. `NOTIFY_TIMEOUT=10` bounds each HTTP request.
+
+Windows uses an existing `New-BurntToastNotification` command when available, otherwise the built-in [taskbar balloon API](https://learn.microsoft.com/en-us/dotnet/api/system.windows.forms.notifyicon.showballoontip). Nothing is installed. macOS uses [`osascript` notifications](https://developer.apple.com/library/archive/documentation/LanguagesUtilities/Conceptual/MacAutomationScriptingGuide/DisplayNotifications.html); Linux uses an installed `notify-send`. Desktop submission cannot guarantee display when the OS suppresses notifications. Set `DESKTOP_NOTIFICATIONS=off` to disable it.
+
+`QUIET_HOURS=22:00-08:00` holds proactive messages in `notification-queue.json`, including across restarts; `TIMEZONE=Asia/Kolkata` is an example IANA timezone, not a hardcoded user preference. After quiet hours, pending messages are combined into digests. Completed routine/watch messages batch at daemon ticks; large digests split to channel limits. Telegram chat replies and approval questions stay immediate. The daemon must be running to flush queued notifications. Equal quiet-hour endpoints disable the quiet interval.
+
+Run `node --test "test/*.test.mjs"` for automated checks. `node scripts/verify-personal-memory.mjs --live` also checks real model tool selection, fresh-session memory, extraction, recall and replay using synthetic data in a temporary config directory and your configured provider credentials.
 
 ## MCP servers
 
@@ -420,7 +457,7 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 npm test   # node --test "test/*.test.mjs"
 ```
 
-255 tests across `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, `mcp`, `registry` and `tool-loop`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
+Tests cover `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, personal memory, consolidation, notifications, `mcp`, `registry` and `tool-loop`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
 
 ## Security notes
 

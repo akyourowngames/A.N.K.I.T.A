@@ -1,12 +1,14 @@
 import fs from "node:fs";
 import path from "node:path";
-import { SESSIONS_DIR, MCP_FILE } from "./config.mjs";
+import { SESSIONS_DIR, MCP_FILE, PROJECTS_FILE } from "./config.mjs";
+import { ProjectStore } from './projects.mjs';
 import { McpStore } from "./mcp-store.mjs";
 import { Agent } from "./agent.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
 import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
+import { recordTurn, saveSession } from './sessions.mjs';
 import {
   transcribeGroq,
   synthesizeEdge,
@@ -59,6 +61,8 @@ export class Daemon {
     model = null,
     runPrompt,
     deliver,
+    flushNotifications = null,
+    consolidator = null,
     log = () => {},
     logFile = null,
     tickMs = 20000,
@@ -76,6 +80,8 @@ export class Daemon {
     this.model = model;
     this.runPrompt = runPrompt;
     this.deliver = deliver;
+    this.flushNotifications = flushNotifications;
+    this.consolidator = consolidator;
     this.logFile = logFile;
     // Tee every line to a UTF-8 log file, and to the terminal when one exists.
     this.log = (message) => {
@@ -136,6 +142,7 @@ export class Daemon {
     const agent = new Agent({
       client: this.client,
       config: this.config,
+      journal: turn => recordTurn(turn, { timeZone: this.config.timeZone }),
       // A DM cannot answer a terminal prompt, so the question is forwarded to
       // Telegram and the turn parks until you reply. Read-only tools never
       // reach here. Without a bot, fall back to the configured default.
@@ -146,6 +153,13 @@ export class Daemon {
     if (this.model) agent.model = this.model;
     try {
       const saved = JSON.parse(fs.readFileSync(this.sessionFile(key), "utf8"));
+      if (saved.projectId) {
+        const projects = new ProjectStore(PROJECTS_FILE).load();
+        if (projects.find(saved.projectId)) {
+          projects.data.active = saved.projectId;
+          agent.setProject(projects.promptBlock(), saved.projectId);
+        }
+      }
       const restored = sanitizeMessages((saved.messages || []).filter((m) => m.role !== "system"));
       agent.messages.push(...restored);
     } catch {}
@@ -233,10 +247,7 @@ export class Daemon {
     if (!agent) return;
     try {
       fs.mkdirSync(SESSIONS_DIR, { recursive: true });
-      fs.writeFileSync(
-        this.sessionFile(chatId),
-        JSON.stringify({ savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages }, null, 2)
-      );
+      saveSession(this.sessionFile(chatId), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, projectId: agent.projectId, journaled: agent.journalComplete });
     } catch (err) {
       this.log(`could not save dm session: ${err.message}`);
     }
@@ -351,6 +362,9 @@ export class Daemon {
       );
       await this.deliver(message, { watch: changes[0].watch });
       return mode;
+    } catch (err) {
+      this.alertQueue.unshift(...changes);
+      throw err;
     } finally {
       this.flushing = false;
     }
@@ -623,15 +637,34 @@ export class Daemon {
 
     const routines = this.dispatchRoutines();
     const checked = this.dispatchWatches();
+    if (!checked && this.alertQueue.length && !this.flushing && !this.chains.has('alert-retry')) {
+      this.chain('alert-retry', () => this.flushAlerts());
+    }
+    // Receive interactive work before deciding whether maintenance can start.
+    const messages = await this.pollInbox();
+    if (this.consolidator?.due() && !this.chains.has('consolidation') && this.active === 0 && this.waiting.length === 0 &&
+        ![...this.chains.keys()].some(key => key !== 'notifications')) {
+      // Low-priority maintenance starts only while idle, without using a chat slot.
+      const work = this.consolidator.run()
+        .then(result => { if (result.processed) this.log(`memory: consolidated ${result.processed} transcript part(s)`); })
+        .catch(err => { this.stats.errors++; this.log(`memory consolidation failed: ${err.message}`); })
+        .finally(() => this.chains.delete('consolidation'));
+      this.chains.set('consolidation', work);
+    }
+    if (this.flushNotifications && !this.chains.has('notifications')) {
+      const work = Promise.resolve().then(this.flushNotifications)
+        .catch(err => this.log(`notification flush failed: ${err.message}`))
+        .finally(() => this.chains.delete('notifications'));
+      this.chains.set('notifications', work);
+    }
     // Only the poll is awaited: it is the sleep, and it must keep running so a
     // Telegram approval can be received while a routine is parked.
-    const messages = await this.pollInbox();
     return { routines, checked, messages };
   }
 
   async run() {
     if (!this.bot) {
-      this.log("no TELEGRAM_BOT_TOKEN: running schedules and watches only (alerts print locally)");
+      this.log("no TELEGRAM_BOT_TOKEN: running schedules and watches with configured notification fallbacks");
     } else {
       try {
         const me = await this.bot.whoami();
@@ -664,6 +697,7 @@ export class Daemon {
     }
     this.log("waiting for in-flight turns to finish");
     await this.drain();
+    if (this.flushNotifications) await this.flushNotifications();
     for (const chatId of this.chatAgents.keys()) this.saveChat(chatId);
     this.log(`daemon stopping - ${JSON.stringify(this.stats)}`);
   }

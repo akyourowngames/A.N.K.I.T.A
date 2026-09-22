@@ -1,4 +1,10 @@
 import os from "node:os";
+import { ProfileStore } from './profile.mjs';
+import fs from 'node:fs';
+import { PROFILE_FILE, PROJECTS_FILE } from './config.mjs';
+import { ProjectStore } from './projects.mjs';
+import { randomUUID } from 'node:crypto';
+import { personalMemoryContext, withMemoryContext } from './memory-context.mjs';
 import { specs, coreSpecs, specsFor, get, needsApproval, coreNames, CATEGORIES } from "../tools/index.mjs";
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
@@ -65,13 +71,13 @@ export function mcpPromptLines(mcpServers = []) {
   return lines;
 }
 
-export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) {
+export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], personal = '') {
   const today = new Date().toISOString().slice(0, 10);
   const shell =
     process.platform === "win32" ? "PowerShell 5.1 (so: no && chaining, use ; instead)" : "/bin/sh";
 
   return [
-    `You are ${config.agentName}, a command-line coding assistant running on the user's machine.`,
+    `You are ${config.agentName}, a coding and personal assistant running on the user's machine.`,
     `The user's name is ${config.username}. Address them by name when it fits naturally.`,
     "",
     `Working directory: ${cwd}`,
@@ -82,7 +88,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) 
     `You have these tools: ${coreNames().join(", ")}.`,
     "More tools are available but not loaded yet, because every schema costs context on every turn. " +
       "Call find_tools to load them when a task needs them - they become callable straight away. Groups:",
-    ...CATEGORIES.map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
+    ...CATEGORIES.filter(group => !group.alwaysOn).map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
     "For anything time-sensitive or factual about the world, load `web` with find_tools and search " +
       "rather than guessing.",
     ...mcpPromptLines(mcpServers),
@@ -114,6 +120,18 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = []) 
       "group with find_tools and set it up instead of saying you cannot. Scheduled work runs in " +
       "`ankita --daemon`, so mention that if it is not already running.",
     project ? `\n${project}` : "",
+    "Personal memory tools remember/recall are directly available; no find_tools needed. Before personal questions " +
+      "or advice shaped by interests, preferences or circumstances, consult recalled personal context. " +
+      "The runtime retrieves bounded candidates locally; use them when relevant and call recall(project=personal) " +
+      "only when you need more facts/detail. Do not repeat a lookup already answered by this context. Check BEFORE " +
+      "asking users to repeat personal details or claiming none are saved. Unpinned facts are outside this prompt, " +
+      "not forgotten. Interpret candidates by meaning; rephrase, browse or paginate on inconclusive searches. " +
+      "Recall past project context too. remember(action=list) lists personal facts; distinguish facts from assumptions.",
+    "Use remember for clear lasting personal facts/preferences, especially when asked or when the user answers " +
+      "something you offered to save. Skip small talk, guesses and temporary states. Read before correcting facts. " +
+      "Never claim saved, updated or forgotten without a successful tool result. always=true is only for instructions " +
+      "meant to apply every turn; other facts are recalled on demand. Project facts belong in project_memory.",
+    personal,
     "Skip preamble and pleasantries. Report failures honestly instead of guessing.",
     config.systemExtra ? `\nAdditional instructions from the user:\n${config.systemExtra}` : "",
   ]
@@ -132,8 +150,13 @@ export class Agent {
     projectId = null,
     deferTools = true,
     mcp = null,
+    journal = null,
   }) {
     this.client = client;
+    this.journal = journal;
+    this.memoryContext = null;
+    this.journalComplete = Boolean(journal) && config.memoryConsolidation !== false;
+    this.sessionId = randomUUID();
     this.config = config;
     this.confirm = confirm;
     this.print = print;
@@ -161,7 +184,7 @@ export class Agent {
     this.sessionUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.turnUsage = { ...this.sessionUsage };
     this.messages = [
-      { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || []) },
+      { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()) },
     ];
   }
 
@@ -169,7 +192,7 @@ export class Agent {
     this.messages = [
       {
         role: "system",
-        content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || []),
+        content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()),
       },
     ];
   }
@@ -178,7 +201,7 @@ export class Agent {
     this.cwd = process.cwd();
     this.messages[0] = {
       role: "system",
-      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || []),
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()),
     };
   }
 
@@ -190,6 +213,7 @@ export class Agent {
   setProject(block, id = null) {
     this.project = block || "";
     this.projectId = this.project ? id || null : null;
+    if (this.projectId) this.turnProjects?.add(this.projectId);
     this.rebase();
     return this;
   }
@@ -236,16 +260,33 @@ export class Agent {
     if (!this.messages?.length) return this;
     this.messages[0] = {
       role: "system",
-      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp ? this.mcp.summaries() : []),
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp ? this.mcp.summaries() : [], this.personalBlock()),
     };
     return this;
+  }
+
+  personalBlock() {
+    try {
+      const stat = fs.statSync(PROFILE_FILE);
+      const version = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
+      if (this.profileCache?.version === version) return this.profileCache.block;
+      const profile = new ProfileStore(PROFILE_FILE).load();
+      const block = [profile.facts.length
+        ? `Personal memory store: ${profile.facts.length} saved fact(s); only pins appear here. ` +
+          'Call recall before personal recommendations or asking about interests/preferences.'
+        : 'Personal memory store: no saved facts yet.', profile.promptBlock()].filter(Boolean).join('\n');
+      this.profileCache = { version, block };
+      return block;
+    }
+    catch { return ''; }
   }
 
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */
   trimHistory(max) {
     // UTF-8 bytes are a conservative token upper bound; reserve output + tools.
     const available = this.contextWindow - (this.config.maxTokens || 4096) - 1024 -
-      Buffer.byteLength(JSON.stringify(this.currentSpecs()));
+      Buffer.byteLength(JSON.stringify(this.currentSpecs())) -
+      (this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0);
     if (available < 512) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
     this.messages = trimMessages(this.messages, max, available);
   }
@@ -279,7 +320,7 @@ export class Agent {
   async streamTurn({ onDelta, onReasoning, onUsage } = {}) {
     const body = {
       model: this.model,
-      messages: this.messages,
+      messages: withMemoryContext(this.messages, this.memoryContext),
       stream: true,
       max_tokens: this.config.maxTokens || 4096,
       stream_options: { include_usage: true },
@@ -445,7 +486,17 @@ export class Agent {
         }
       }
       if (this.cancelled()) return 'Action cancelled by user.';
-      return capOutput(await tool.run(args, ctx), budget);
+      const result = await tool.run(args, ctx);
+      if (tool.name === 'remember' && args.action !== 'list' && !String(result).startsWith('Error:')) this.memoryContext = null;
+      if (tool.name === 'project' && ['add', 'use', 'archive', 'forget', 'update'].includes(args.action) && !String(result).startsWith('Error:')) {
+        const projects = new ProjectStore(PROJECTS_FILE).load();
+        if (!['add', 'use'].includes(args.action)) {
+          const current = projects.find(this.projectId);
+          projects.data.active = current && !current.archived ? current.id : null;
+        }
+        this.setProject(projects.promptBlock(), projects.activeId);
+      }
+      return capOutput(result, budget);
     } catch (err) {
       return `Error while running ${tool.name}: ${err.message}`;
     }
@@ -455,12 +506,32 @@ export class Agent {
    * Sends `text` and drives the tool-calling loop until the model replies
    * without requesting a tool. Returns the final assistant text.
    */
-  async send(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd } = {}) {
+  async send(text, options = {}) {
+    this.turnProjects = new Set(this.projectId ? [this.projectId] : []);
+    this.memoryContext = this.useTools ? personalMemoryContext(text, this.config) : null;
+    if (this.memoryContext) {
+      try { options.onToolCall?.(this.memoryContext.call); } catch {}
+      try { options.onToolResult?.(this.memoryContext.call, this.memoryContext.result); } catch {}
+    }
+    let reply;
+    try { reply = await this.sendTurn(text, options); }
+    catch (err) { this.journalComplete = false; throw err; }
+    if (this.config.memoryConsolidation === false) this.journalComplete = false;
+    if (this.journal && text !== null && this.config.memoryConsolidation !== false) {
+      const projectId = this.turnProjects.size === 1 ? [...this.turnProjects][0] : null;
+      try { this.journal({ text, reply, projectId, sessionId: this.sessionId }); }
+      catch (err) { this.journalComplete = false; this.print(`Could not journal this turn: ${err.message}`); }
+    }
+    return reply;
+  }
+
+  async sendTurn(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd } = {}) {
     this.abort = new AbortController();
     this.turnUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     if (text !== null) this.messages.push({ role: "user", content: text });
 
     for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+      this.refreshPrompt();
       this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       onMessageStart?.();
       let content, toolCalls;

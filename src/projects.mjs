@@ -322,31 +322,31 @@ export class ProjectStore {
 
   /* ------------------------------- memory -------------------------------- */
 
-  addNote(idOrName, text) {
+  addNote(idOrName, text, source = null) {
     this._fresh();
     const project = this.find(idOrName);
     const value = String(text ?? "").trim();
     if (!project) return null;
     if (!value) return { error: "a note needs some text" };
-    project.notes = [...(project.notes || []), { at: new Date().toISOString(), text: value }].slice(-MAX_NOTES);
+    project.notes = [...(project.notes || []), { at: new Date().toISOString(), text: value, ...(source ? { source } : {}) }].slice(-MAX_NOTES);
     this.save();
     return project;
   }
 
-  addDecision(idOrName, text) {
+  addDecision(idOrName, text, source = null) {
     this._fresh();
     const project = this.find(idOrName);
     const value = String(text ?? "").trim();
     if (!project) return null;
     if (!value) return { error: "a decision needs some text" };
-    project.decisions = [...(project.decisions || []), { at: new Date().toISOString(), text: value }].slice(
+    project.decisions = [...(project.decisions || []), { at: new Date().toISOString(), text: value, ...(source ? { source } : {}) }].slice(
       -MAX_DECISIONS
     );
     this.save();
     return project;
   }
 
-  addTodo(idOrName, text) {
+  addTodo(idOrName, text, source = null) {
     this._fresh();
     const project = this.find(idOrName);
     const value = String(text ?? "").trim();
@@ -354,7 +354,7 @@ export class ProjectStore {
     if (!value) return { error: "a todo needs some text" };
     project.todos = [
       ...(project.todos || []),
-      { id: nextTodoId(project.todos), at: new Date().toISOString(), text: value, done: false, doneAt: null },
+      { id: nextTodoId(project.todos), at: new Date().toISOString(), text: value, done: false, doneAt: null, ...(source ? { source } : {}) },
     ].slice(-MAX_TODOS);
     this.save();
     return project;

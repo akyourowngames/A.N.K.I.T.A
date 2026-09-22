@@ -10,6 +10,10 @@ export const SESSIONS_DIR = path.join(CONFIG_DIR, "sessions");
 export const AUTOSAVE_NAME = "autosave";
 export const STATE_FILE = path.join(CONFIG_DIR, "state.json");
 export const PROJECTS_FILE = path.join(CONFIG_DIR, "projects.json");
+export const PROFILE_FILE = path.join(CONFIG_DIR, "profile.json");
+export const MEMORY_INDEX_FILE = path.join(CONFIG_DIR, "memory-index.json");
+export const JOURNAL_DIR = path.join(SESSIONS_DIR, "journal");
+export const NOTIFY_QUEUE_FILE = path.join(CONFIG_DIR, "notification-queue.json");
 export const MCP_FILE = path.join(CONFIG_DIR, "mcp.json");
 export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
@@ -25,6 +29,7 @@ const DEFAULTS = {
   maxTokens: 4096,
   maxToolChars: 65536,
   contextWindow: 32768,
+  provider: "",
   apiBase: "",
   apiKey: "",
   inputCostPerMillion: null,
@@ -169,6 +174,7 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     // model's real window, and it is usually far above the default - but an
     // explicit CONTEXT_WINDOW is a deliberate choice and must win.
     contextWindowExplicit: pick("CONTEXT_WINDOW") !== undefined,
+    provider: (pick("PROVIDER") || DEFAULTS.provider).trim().toLowerCase(),
     apiBase: pick("API_BASE") || DEFAULTS.apiBase,
     apiKey: pick("API_KEY") || DEFAULTS.apiKey,
     inputCostPerMillion: price(pick("INPUT_COST_PER_MILLION")),
@@ -203,6 +209,24 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     watchAlertLlm: onOff(pick("WATCH_ALERT_LLM"), true),
     watchAlertPrompt: pick("WATCH_ALERT_PROMPT") || "",
     daemonTick: posInt(pick("DAEMON_TICK"), 20),
+    timeZone: pick("TIMEZONE") || "",
+    quietHours: pick("QUIET_HOURS") || "",
+    desktopNotifications: onOff(pick("DESKTOP_NOTIFICATIONS"), true),
+    ntfyUrl: pick("NTFY_URL") || "",
+    ntfyToken: pick("NTFY_TOKEN") || "",
+    discordWebhookUrl: pick("DISCORD_WEBHOOK_URL") || "",
+    pushoverToken: pick("PUSHOVER_TOKEN") || "",
+    pushoverUser: pick("PUSHOVER_USER") || "",
+    notifyTimeout: posInt(pick("NOTIFY_TIMEOUT"), 10),
+    memoryConsolidation: onOff(pick("MEMORY_CONSOLIDATION"), true),
+    memoryRecallChars: (() => {
+      const n = Number(pick('MEMORY_RECALL_CHARS') ?? 1600);
+      return Number.isFinite(n) && n >= 0 ? Math.min(4096, Math.floor(n)) : 1600;
+    })(),
+    memoryConsolidationHour: Math.min(23, Math.max(0, Math.floor(Number(pick("MEMORY_CONSOLIDATION_HOUR") ?? 3)) || 0)),
+    memoryBatchSize: Math.min(20, posInt(pick("MEMORY_BATCH_SIZE"), 4)),
+    memoryChunkChars: Math.min(24000, posInt(pick("MEMORY_CHUNK_CHARS"), 12000)),
+    memoryTimeout: posInt(pick("MEMORY_TIMEOUT"), 60),
     briefingPrompt: pick("BRIEFING_PROMPT") || "",
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,

@@ -114,6 +114,7 @@ export function run(args = {}, ctx = {}) {
   const already = [];
   for (const id of matched) {
     for (const tool of findCategory(id).tools) {
+      if (findCategory(id).alwaysOn) { already.push(tool.name); continue; }
       if (set && !set.has(tool.name)) {
         set.add(tool.name);
         loaded.push(tool.name);

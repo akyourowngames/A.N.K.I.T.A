@@ -22,7 +22,7 @@ const ctx = { state: { activatedTools: new Set() } };
 
 test('every tool sits in exactly one bucket', () => {
   const coreNames = CORE.map((t) => t.name);
-  const deferredNames = CATEGORIES.flatMap((c) => c.tools.map((t) => t.name));
+  const deferredNames = CATEGORIES.filter(c => !c.alwaysOn).flatMap((c) => c.tools.map((t) => t.name));
 
   assert.equal(new Set(coreNames).size, coreNames.length, 'no duplicate core entries');
   assert.equal(new Set(deferredNames).size, deferredNames.length, 'no tool in two categories');
@@ -180,7 +180,7 @@ test('the system prompt never offers a deferred tool as directly available', () 
   for (const name of index.coreNames()) {
     assert.ok(toolLine.includes(name), `core tool ${name} is listed`);
   }
-  const deferred = CATEGORIES.flatMap((c) => c.tools.map((t) => t.name));
+  const deferred = CATEGORIES.filter(c => !c.alwaysOn).flatMap((c) => c.tools.map((t) => t.name));
   for (const name of deferred) {
     assert.ok(!toolLine.includes(name), `${name} must NOT be listed as directly available`);
   }
