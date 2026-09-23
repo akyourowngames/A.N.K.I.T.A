@@ -12,10 +12,18 @@ export class JobOutput extends BoundedOutput {
   read(since = 0, maxBytes = 16384) {
     const wanted = clamp(since, 0, 0, this.total);
     const start = this.total - this.recent.length;
-    const offset = Math.max(start, wanted);
+    let offset = Math.max(start, wanted);
+    while (offset < this.total && (this.recent[offset - start] & 0xc0) === 0x80) offset++;
     let end = Math.min(this.total, offset + maxBytes);
     while (end < this.total && end > offset && (this.recent[end - start] & 0xc0) === 0x80) end--;
-    return { output: this.recent.subarray(offset - start, end - start).toString('utf8').replace(/^\uFFFD+/u, ''),
+    if (end === this.total && end > offset) {
+      let lead = end - 1;
+      while (lead > offset && (this.recent[lead - start] & 0xc0) === 0x80) lead--;
+      const byte = this.recent[lead - start];
+      const width = byte >= 0xf0 ? 4 : byte >= 0xe0 ? 3 : byte >= 0xc0 ? 2 : 1;
+      if (lead + width > end) end = lead;
+    }
+    return { output: this.recent.subarray(offset - start, end - start).toString('utf8'),
       offset, next_offset: end, dropped: Math.max(0, start - wanted), more: end < this.total };
   }
 }

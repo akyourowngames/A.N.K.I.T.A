@@ -40,7 +40,7 @@ export function readOnly(args = {}) {
 export function needsApproval(args) { return !readOnly(args); }
 
 function argvFor(args) {
-  const argv = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false"];
+  const argv = ["--no-pager", "--literal-pathspecs", "-c", "color.ui=false", "-c", "core.fsmonitor=false"];
   const paths = pathsOf(args, ["stage", "unstage", "restore", "blame"].includes(args.action));
   const revision = args.ref === undefined ? undefined : ref(args.ref);
   if (args.operation !== undefined && !["branch", "stash"].includes(args.action)) throw new Error("operation is only supported for branch and stash.");
@@ -51,7 +51,7 @@ function argvFor(args) {
     case "show": argv.push("show", "--no-ext-diff", "--no-textconv", revision || "HEAD"); break;
     case "blame":
       if (paths.length !== 1) throw new Error("blame requires exactly one path.");
-      argv.push("blame", ...(revision ? [revision] : [])); break;
+      argv.push("blame", "--no-textconv", ...(revision ? [revision] : [])); break;
     case "branch": {
       const op = args.operation ?? "list";
       if (op === "list") argv.push("branch", "--list");

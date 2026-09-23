@@ -134,9 +134,9 @@ test('the manager tracks connections and disconnects cleanly', async () => {
   assert.deepEqual(await mcp.closeAll(), []);
 });
 
-test('a non-stdio transport is refused rather than silently ignored', async () => {
+test('an unsupported transport is refused rather than silently ignored', async () => {
   const mcp = new McpManager();
-  await assert.rejects(mcp.connect({ id: 'x', command: 'python', transport: 'http' }), /not supported yet/);
+  await assert.rejects(mcp.connect({ id: 'x', command: 'python', transport: 'websocket' }), /not supported/);
 });
 
 /* ---------------------------- against the fixture ----------------------- */

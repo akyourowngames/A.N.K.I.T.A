@@ -1,6 +1,6 @@
 # ankita
 
-A coding agent and personal assistant in your terminal, powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, talk hands-free — and let it work while you are away: scheduled briefings, watched pages, and a Telegram inbox. Zero npm dependencies.
+A coding agent and personal assistant in your terminal, powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, talk hands-free — and let it work while you are away: scheduled briefings, watched pages, and a Telegram inbox. The CLI has zero runtime npm dependencies.
 
 ```
 ankita › search for the latest Node.js LTS release and fetch the announcement
@@ -41,6 +41,23 @@ npm start
 ```
 
 First run prints a code and opens `github.com/login/device` — sign in once and the token is cached (`~/.copilot-chat-cli/auth.json`, mode `0600`). Every later run skips login.
+
+### Desktop app
+
+The desktop app uses the same agent, configuration, models, tools, and saved GitHub login as the CLI. It adds teammate conversations with their own personas and saved threads, streaming replies, tool cards, approvals, and a model picker.
+
+```bash
+npm install
+npm run desktop:dev        # Vite + Electron for development
+
+# Or run the production bundle locally:
+npm run desktop:build
+npm run desktop:start
+```
+
+Run these commands from the repository root. With Copilot selected and no cached login, the desktop window shows a GitHub device code; open the verification page and enter it to sign in. Open **Settings** from the sidebar gear or with `Ctrl+,` (`Cmd+,` on macOS) to choose a model or provider, add a Composio key, test a custom OpenAI-compatible endpoint, and change the appearance. Desktop settings are saved in `~/.copilot-chat-cli/desktop-settings.json` and take priority over `.env` in the desktop app. The CLI continues to use `.env` or its global fallback.
+
+Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
 ```bash
 ankita -p "summarise what this repo does"        # one-shot
@@ -129,28 +146,62 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 
 | Tool | Does |
 |---|---|
-| `run_command` | Shell (pwsh/`sh`), stdin, env, timeout, 64KB bounded output, background jobs |
+| `run_command` | Shell (PowerShell/`sh`), stdin/env, bounded output; yields a live job after 1 second by default |
 | `read_file` / `write_file` | Numbered reads; atomic create/overwrite with overwrite diff |
 | `edit_file` | Exact string edits, atomic multi-edit, fuzzy fallback ladder (line-endings → trailing whitespace → indentation), refuses ambiguity |
 | `edit_lines` | Line-range replace/insert/delete, validated atomically |
+| `apply_patch` | Unified multi-file/multi-hunk diffs, renames, additions/deletions; validates first, stages writes and rolls back failures |
 | `list_dir` / `glob` / `search_files` | Browse (recursive), find by glob, regex search with excludes — all read-only, run in parallel |
 | `create_dir` / `move_file` / `delete_file` | Filesystem verbs (root-protected, no silent overwrites) |
-| `fetch_url` | Byte-capped, timed raw HTTP(S) fetch for APIs/exact content |
+| `http_request` | HTTP methods, headers, JSON/form/raw bodies, bearer/basic auth, status/headers, redirect policy and text/base64 responses |
+| `git` | Deferred `git` group: status/diff/log/show/blame/branch/checkout/stage/unstage/commit/stash/restore |
+| `port_status` / `kill_process` | Deferred `process` group: port owners and approved PID/port termination with identity rechecks |
 | `web_search` | Keyless live search (DuckDuckGo + Wikipedia + news + HN + Reddit), fused and de-duped |
 | `web_fetch` | Read a page as text, Jina reader fallback when extraction is thin |
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
 | `mcp_manage` | Add/list/remove/enable/disable MCP servers — extra tools from external processes |
+| `composio` | Manage connected apps, accounts, and authorization links |
 | `project` | Add/list/show/switch/rename/archive projects; records what each one is, where it lives, how you like it done, who the client is |
 | `project_memory` | Remember notes, decisions and open todos per project; `log` shows the timeline, `brief` hands over a catch-up |
 | `schedule` | Create/list/pause recurring prompts ("every weekday at 8, brief me") |
 | `watch` | Track a page or a number on it (signups, logins, prices) and report changes |
 | `github_notifications` | Your GitHub inbox: mentions, review requests, invitations |
 | `write_todos` | Session checklist for multi-step work |
-| `job_status` / `job_stop` | Read and stop background jobs |
+| `job_status` / `job_wait` | List jobs, read incremental output by byte cursor or tail, and wait briefly |
+| `job_input` / `job_stop` | Send stdin/EOF and stop session-owned background jobs |
 
-Read-only tools skip approval and execute concurrently; mutations are sequential barriers and always confirm first.
+Read-only actions skip approval and execute concurrently; mutations are sequential barriers and show a preview unless auto-approval is enabled. Git and HTTP choose their approval behavior by action/method. Stopping an existing session job is available without an extra prompt. `fetch_url` remains callable for old transcripts; new tool schemas offer `http_request`.
+
+### Background commands you can control
+
+`run_command` waits up to `yield_ms=1000`, then returns a job ID if the command is still running. The command keeps running while the assistant continues other work or replies. `background:true` returns immediately. `timeout_ms` is a separate, optional execution deadline; servers have no automatic one-minute lifetime. Use `yield_ms` up to 10000 when a short command's result is needed immediately.
+
+The interactive CLI prints start/completion notices and shows the active job count in its prompt. These commands work without a model call, including while the assistant is busy:
+
+```text
+/bg npm run dev
+/jobs
+/job 1
+/job 1 0
+/input 1 yes
+/eof 1
+/wait 1 1000
+/stop 1
+```
+
+`/job` reads only new output; offset `0` replays retained output. Tool calls can specify `since_offset`, `max_bytes`, or `tail` (lines). Results include absolute `next_offset`, `dropped` byte counts and `more`, so log rollover is explicit. `job_wait` caps each wait at 10 seconds and cancellation stops waiting without killing the job. `job_input` sends exact text; `/input` adds a newline. Supplied foreground stdin closes after writing unless `keep_stdin_open:true`; background stdin stays open unless explicitly closed.
+
+Jobs belong to the current CLI session, survive conversation clearing, and stop when that session exits. They are not restored from saved transcripts. Retention is bounded to 100 jobs and 32 simultaneously running commands. Input/output use pipes: line-based prompts work; full-screen terminals and programs requiring a real TTY need a separate terminal. No terminal-emulation dependency is installed.
+
+### Structured developer actions
+
+Load `git` or `process` with `find_tools`. Git uses literal paths and shell-free arguments; read-only status/history/diffs run without prompts, while stage/unstage/commit/checkout/restore and branch/stash changes show their commands. `port_status` inspects a port; `kill_process` accepts exactly one PID or port, shows process identities, and rechecks them before termination. Windows uses `netstat -ano` and `taskkill /T`.
+
+`apply_patch` accepts standard unified diffs with Git rename metadata. It validates every file and hunk before writing, preserves line endings and newline markers, stages replacements and rolls back ordinary write failures. Multi-file visibility is not simultaneous and power-loss recovery is not guaranteed. If rollback fails, recovery backups are retained and reported. Binary patches, symlinks and moves that overwrite an existing destination are rejected. Patch paths stay within the working directory; other filesystem tools retain their absolute-path support.
+
+`http_request` supports localhost development APIs, custom methods/headers, one of `json`, `form`, or raw `body`, and `auth` with bearer/basic credentials. Responses contain status, headers and a bounded body even for HTTP errors; `expected_status` makes mismatches explicit. Redirect policy is `follow`, `manual`, or `error`; cross-origin redirects strip credentials, HTTPS downgrade is rejected, and mutations are not automatically replayed (303 can follow as GET). One deadline covers redirects and streaming. Request auth is redacted in traces, while response headers/body remain available for API workflows.
 
 ### Working outside the project directory
 
@@ -328,9 +379,19 @@ Windows uses an existing `New-BurntToastNotification` command when available, ot
 
 Run `node --test "test/*.test.mjs"` for automated checks. `node scripts/verify-personal-memory.mjs --live` also checks real model tool selection, fresh-session memory, extraction, recall and replay using synthetic data in a temporary config directory and your configured provider credentials.
 
+## Connected apps (Composio)
+
+Set `COMPOSIO_API_KEY=ak_...` in `.env` or `~/.copilot-chat-cli/config.env`, then restart Ankita. The key stays in that environment file. Ankita creates a Composio session, saves its user and session IDs in `~/.copilot-chat-cli/composio.json`, and connects Composio's HTTP MCP endpoint automatically. The agent can find connected app tools with `COMPOSIO_SEARCH_TOOLS`, inspect their schemas, and call them.
+
+Use `/composio status`, `/composio list`, `/composio search gmail`, `/composio connect gmail`, `/composio accounts`, `/composio disconnect gmail [account-id]`, or `/composio reload`. `connect` prints an HTTPS authorization link; finish OAuth in your browser. The deferred `composio` agent tool exposes the same actions. `disconnect` revokes the upstream account grant.
+
+Alternatively, set `COMPOSIO_BROKER_URL` for a managed broker. The client registers once and stores the installation token in `composio.json`; an explicit `COMPOSIO_BROKER_TOKEN` can be supplied. A project key takes precedence. Hosting the broker Worker is a later phase and is not included here.
+
+**Composio MCP tools run without approval prompts, even when `AUTO_APPROVE=off`.** They can send email, post messages, edit documents, and change repositories. Only configure a Composio project whose connected accounts you want Ankita to control. Project keys are never saved in `composio.json`; that file is written with owner-only permissions where supported.
+
 ## MCP servers
 
-Ankita can use [Model Context Protocol](https://modelcontextprotocol.io) servers — external processes that provide tools. Hand-rolled over stdio, so the zero-dependency rule holds.
+Ankita can use [Model Context Protocol](https://modelcontextprotocol.io) servers — external processes that provide tools. The client supports stdio for user-added servers and streamable HTTP for Composio, with no runtime dependencies.
 
 ### Finding and installing them
 
@@ -405,7 +466,7 @@ In Tokyo it's 2:01 AM on Sunday.
 
 **Adding is separate from running.** `add` only records a command; nothing executes until you approve that exact command. Approval is remembered against a hash of `command + args`, so bumping a version `npx -y pkg@1.0.0` → `@2.0.0` asks again rather than silently running different code.
 
-**Tools are namespaced** `mcp__<server>__<tool>`, so they can't collide with built-ins. Approval follows the server's own `readOnlyHint`: only an explicit read-only hint skips the gate; anything unset or destructive asks first, and the prompt shows the command that will spawn.
+**Tools are namespaced** `mcp__<server>__<tool>`, so they can't collide with built-ins. User-added server approval follows the server's own `readOnlyHint`: only an explicit read-only hint skips the gate; anything unset or destructive asks first, and the prompt shows the command that will spawn. Composio is the configured trusted exception described above.
 
 **Servers are process-level, not per-session.** The REPL, Telegram chats and every routine worker share one live connection — so a cron job calling an MCP tool reuses the running server instead of spawning one per invocation. The daemon reconciles against `~/.copilot-chat-cli/mcp.json` every tick, so `/mcp add` reaches a running daemon without a restart.
 

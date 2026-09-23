@@ -89,6 +89,7 @@ export function isReadOnly(name, args = {}, ctx = {}) {
 
 export function displayArgs(name, args, ctx = {}) {
   const display = byName.get(name)?.display;
+  if (display && (!args || typeof args !== 'object' || Array.isArray(args))) return '[invalid arguments omitted]';
   return display ? display(args, ctx) : args;
 }
 

@@ -1,0 +1,17 @@
+# Signing overlay for Azure Trusted Signing.
+#
+# Kept separate from electron-builder.yml so normal local builds stay unsigned
+# and never try to reach Azure. Use it only when the AZURE_* values are set:
+#
+#   npx electron-builder --win --publish always --config electron-builder.signing.yml
+#
+# The workflow does this automatically when the Azure secrets exist.
+# Auth uses Azure Identity's EnvironmentCredential, i.e. the runner must also
+# have AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET set.
+extends: ./electron-builder.yml
+win:
+  azureSignOptions:
+    publisherName: ${env.AZURE_PUBLISHER_NAME}
+    endpoint: ${env.AZURE_CODE_SIGNING_ENDPOINT}
+    codeSigningAccountName: ${env.AZURE_CODE_SIGNING_ACCOUNT}
+    certificateProfileName: ${env.AZURE_CERT_PROFILE}

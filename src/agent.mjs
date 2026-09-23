@@ -54,6 +54,9 @@ export function mcpPromptLines(mcpServers = []) {
   const lines = [];
 
   if (mcpServers.some(isBrowserServer)) lines.push(...BROWSER_HINTS);
+  if (mcpServers.some((s) => s.id === "composio")) {
+    lines.push("Connected apps (Gmail, Slack, and more) are reachable through the composio tools: find one with COMPOSIO_SEARCH_TOOLS, read its arguments with COMPOSIO_GET_TOOL_SCHEMAS, run it with COMPOSIO_MULTI_EXECUTE_TOOL, and manage accounts with COMPOSIO_MANAGE_CONNECTIONS.");
+  }
 
   if (loaded.length) {
     lines.push(
@@ -113,6 +116,10 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       'search the MCP registry (find_tools, then mcp_manage action="search") and ask the user ' +
       "before installing, instead of guessing at shell commands for an external program.",
     "Prefer edit_file over rewriting whole files with write_file.",
+    "Use apply_patch for unified multi-file changes. Use http_request for APIs and find_tools(git) for Git actions.",
+    "Commands return a live job after a short wait. This is not failure or completion. Continue independent work; " +
+      "use job_status for incremental output and job_input for stdin. Do not repeatedly wait for servers/watchers to exit. " +
+      "Tell the user the job ID and let the conversation continue. Wait only when the next step needs that command's result.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",
     "",
     "You are also a personal assistant. You can set up your own recurring work and track pages " +
@@ -334,9 +341,11 @@ export class Agent {
         model: mdl,
         messages: withMemoryContext(this.messages, this.memoryContext),
         stream: true,
-        max_tokens: this.config.maxTokens || 4096,
         stream_options: { include_usage: true },
       };
+      // Only cap the output when the user asked for it; otherwise let the
+      // model/provider decide the reply length.
+      if (this.config.maxTokensExplicit) body.max_tokens = this.config.maxTokens;
       if (this.config.temperature != null) body.temperature = this.config.temperature;
       if (useTools) {
         body.tools = this.currentSpecs();

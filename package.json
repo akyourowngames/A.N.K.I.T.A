@@ -4,14 +4,49 @@
   "private": true,
   "type": "module",
   "description": "Terminal coding agent powered by GitHub Copilot models, with shell and file-editing tools.",
-  "bin": { "ankita": "chat.mjs", "ankita-chat": "chat.mjs" },
-  "main": "chat.mjs",
-  "engines": { "node": ">=18" },
+  "author": "Ankita",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/akyourowngames/A.N.K.I.T.A.git"
+  },
+  "bin": {
+    "ankita": "chat.mjs",
+    "ankita-chat": "chat.mjs"
+  },
+  "main": "desktop/electron/main.mjs",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
     "test": "node --test \"test/*.test.mjs\"",
     "start": "node chat.mjs",
     "models": "node chat.mjs --list-models",
     "config": "node chat.mjs --config",
-    "bench": "node scripts/bench-latency.mjs"
+    "bench": "node scripts/bench-latency.mjs",
+    "desktop:dev": "node desktop/scripts/dev.mjs",
+    "desktop:build": "tsc --noEmit -p desktop/tsconfig.json && vite build --config desktop/vite.config.ts",
+    "desktop:start": "electron .",
+    "desktop:icon": "node desktop/scripts/make-icon.mjs",
+    "desktop:pack": "npm run desktop:build && electron-builder --dir",
+    "desktop:package": "npm run desktop:build && electron-builder --publish never",
+    "desktop:package:win": "npm run desktop:build && electron-builder --win --publish never",
+    "desktop:release": "npm run desktop:build && electron-builder --win --publish always"
+  },
+  "devDependencies": {
+    "@fontsource-variable/instrument-sans": "5.3.0",
+    "@fontsource/instrument-serif": "5.3.0",
+    "@types/react": "19.3.0",
+    "@types/react-dom": "19.3.0",
+    "electron": "44.4.5",
+    "electron-builder": "^26.15.3",
+    "react": "19.3.0",
+    "react-dom": "19.3.0",
+    "react-markdown": "10.1.0",
+    "remark-gfm": "4.0.1",
+    "typescript": "7.0.2",
+    "vite": "6.4.3"
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.9"
   }
 }

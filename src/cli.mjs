@@ -14,23 +14,27 @@ import {
   STATE_FILE,
   PROJECTS_FILE,
   MCP_FILE,
+  COMPOSIO_FILE,
   DAEMON_LOG,
   NOTIFY_QUEUE_FILE,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "./projects.mjs";
 import { McpManager } from "./mcp-manager.mjs";
 import { McpStore, describeServer, enableMessage, disableMessage } from "./mcp-store.mjs";
+import { ComposioStore } from "./composio-store.mjs";
+import * as composioTool from "../tools/composio.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "./routines.mjs";
 import { TelegramBot, parseChatIds } from "./telegram.mjs";
 import { Daemon } from "./daemon.mjs";
 import { describeCron } from "./cron.mjs";
-import { readAuth, writeAuth, deviceLogin, CopilotClient } from "./auth.mjs";
-import { pickModel, CompatibleClient, resolveProvider } from "./provider.mjs";
+import { pickModel, resolveProvider } from "./provider.mjs";
+import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
 import { LiveRenderer } from "./markdown.mjs";
-import { names as toolNames, cleanupJobs } from "../tools/index.mjs";
+import { names as toolNames, cleanupJobs, displayArgs } from "../tools/index.mjs";
+import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from './job-ui.mjs';
 import {
   voiceRuntimeCheck,
   audioDeps,
@@ -220,13 +224,6 @@ function parseArgs(argv) {
   return opts;
 }
 
-function resolveGithubToken() {
-  const auth = readAuth();
-  const token = process.env.GITHUB_TOKEN || auth.github_token;
-  if (token) return token;
-  return null;
-}
-
 function sessionPath(name) {
   const safe = String(name).replace(/[^a-z0-9._-]/gi, "_").slice(0, 60) || "session";
   return path.join(SESSIONS_DIR, `${safe}.json`);
@@ -258,13 +255,15 @@ function completePath(prefix) {
 }
 
 const COMMANDS = [
+  ...JOB_COMMANDS,
   "/help", "/config", "/reload", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
   "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
-  "/project", "/projects", "/mcp", "/clear", "/exit", "/quit",
+  "/project", "/projects", "/mcp", "/composio", "/clear", "/exit", "/quit",
 ];
 
 const MCP_ACTIONS = ["list", "add", "remove", "enable", "disable", "reload"];
+const COMPOSIO_ACTIONS = ["status", "list", "accounts", "search", "connect", "disconnect", "reload"];
 
 function makeCompleter(models) {
   return (line) => {
@@ -299,6 +298,10 @@ function makeCompleter(models) {
             return [hits, line];
           }
           return [[], line];
+        }
+        if (cmd === "/composio") {
+          const hits = COMPOSIO_ACTIONS.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
+          return [hits, line];
         }
         if (cmd === "/load" || cmd === "/cd" || cmd === "/save") {
           const [hits, frag] = completePath(arg);
@@ -336,7 +339,7 @@ export async function main() {
 
   let config = loadConfig();
   if (opts.model) config.model = opts.model;
-  if (opts.maxTokens) config.maxTokens = opts.maxTokens;
+  if (opts.maxTokens) { config.maxTokens = opts.maxTokens; config.maxTokensExplicit = true; }
   if (opts.tools === false) config.tools = false;
   if (opts.yes) config.autoApprove = true;
   if (opts.apiBase) config.apiBase = opts.apiBase;
@@ -366,7 +369,7 @@ export async function main() {
       ["TOOLS", config.tools ? "on" : "off"],
       ["AUTO_APPROVE", config.autoApprove ? "on" : "off"],
       ["HISTORY_MESSAGES", config.historyMessages],
-      ["MAX_TOKENS", config.maxTokens],
+      ["MAX_TOKENS", config.maxTokensExplicit ? config.maxTokens : "(model default)"],
       ["MAX_TOOL_CHARS", config.maxToolChars],
       ["CONTEXT_WINDOW", config.contextWindow],
       ["PROVIDER", provider.name],
@@ -423,71 +426,15 @@ export async function main() {
     return;
   }
 
-  let client;
-  if (config.apiBase) {
-    if (!config.apiKey && !provider.keyless) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
-    client = new CompatibleClient({
-      apiBase: config.apiBase,
-      apiKey: config.apiKey,
-      model: config.model,
-      contextWindow: config.contextWindow,
-    });
-  } else {
-    let githubToken = resolveGithubToken();
-    if (!githubToken) {
-      console.log(c.dim("\n  no saved credentials - starting GitHub device login"));
-      githubToken = await deviceLogin();
-      writeAuth({ github_token: githubToken, saved_at: new Date().toISOString() });
-    }
-    client = new CopilotClient(githubToken);
-    await client.ensureToken();
-  }
-
-  // Optional tool-loop model: the primary handles chat and the first tool
-  // decision; once a turn uses a tool, this model runs the rest of the loop and
-  // the primary writes the reply. Opt in with TOOL_PROVIDER / TOOL_MODEL; empty
-  // keeps single-model behaviour.
-  let tool = null;
-  if (config.toolProvider || config.toolModel) {
-    const tp = resolveProvider(config.toolProvider || config.provider);
-    if (!tp) {
-      console.error(c.red(`  unknown TOOL_PROVIDER "${config.toolProvider}" (try copilot, kilo or groq)`));
-      process.exit(2);
-    }
-    const tModel = config.toolModel || tp.defaultModel || config.model;
-    const tApiBase = config.toolApiBase || tp.apiBase;
-    if (tApiBase) {
-      const tApiKey = config.toolApiKey || tp.apiKey || (tp.keyConfig && config[tp.keyConfig]) || "";
-      tool = {
-        client: new CompatibleClient({ apiBase: tApiBase, apiKey: tApiKey, model: tModel, contextWindow: config.contextWindow }),
-        model: tModel,
-      };
-    } else {
-      // Copilot exposes no base URL; reuse the primary Copilot client, or log in.
-      let tClient = client;
-      if (!(tClient instanceof CopilotClient)) {
-        const token = resolveGithubToken();
-        if (!token) {
-          console.error(c.red("  TOOL_PROVIDER copilot needs a GitHub login"));
-          process.exit(2);
-        }
-        tClient = new CopilotClient(token);
-        await tClient.ensureToken();
-      }
-      tool = { client: tClient, model: tModel };
-    }
-  }
-
-  let models;
+  if (config.apiBase && !config.apiKey && !provider.keyless) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
+  let session;
   try {
-    models = await client.models();
+    session = await createSession({ config });
   } catch (err) {
-    console.error(c.red(`  could not list models: ${err.message}`));
-    if (config.apiBase && !config.model) {
-      console.error(c.red("  set MODEL (or -m) when model discovery is unavailable."));
-    }
+    console.error(c.red(`  could not start the model: ${err.message}`));
     process.exit(1);
   }
+  const { client, tool, models, model, picked } = session;
 
   if (opts.listModels) {
     console.log(c.bold(`\n${models.length} models\n`));
@@ -505,19 +452,9 @@ export async function main() {
     console.log("");
     return;
   }
-  if (!models.length) throw new Error("No models returned for this account.");
-
-  let picked;
-  try {
-    picked = pickModel(models, config.model, config.tools);
-  } catch (err) {
-    console.error(c.red(`  ${err.message}`));
-    process.exit(1);
-  }
   if (config.model && !picked.matched) {
     console.log(c.yellow(`  unknown model "${config.model}", using ${picked.id} instead`));
   }
-  const model = picked.id;
 
   // Adopt the model's advertised context window unless CONTEXT_WINDOW was set
   // deliberately. The 32768 default is well below what a current model offers,
@@ -591,6 +528,14 @@ export async function main() {
       term.write("\r\x1b[K");
       agent.refreshPrompt();
     }
+    if (config.composioApiKey || config.composioBrokerUrl) {
+      try {
+        await mcp.ensureComposio(config, new ComposioStore(COMPOSIO_FILE).load());
+        agent.refreshPrompt();
+      } catch (err) {
+        term.line(c.red(`  connected apps: ${err.message}`));
+      }
+    }
   }
 
   const writeSession = (name) => {
@@ -659,6 +604,22 @@ export async function main() {
   const voice = { speak: Boolean(opts.speak || config.speak) };
 
   let busy = false;
+  const jobNotices = [];
+  const showJobNotices = () => {
+    for (const text of jobNotices.splice(0)) term.notify(c.dim(`  ${text}`));
+  };
+  agent.state.onJobEvent = event => {
+    if (opts.json || opts.prompt !== null || opts.daemon) return;
+    jobNotices.push(jobEventText(event));
+    if (!busy) showJobNotices();
+  };
+  // Job controls remain usable during model/tool work and do not become chat input.
+  term.interceptLine = line => {
+    if (!busy || !isJobCommand(line)) return false;
+    void runJobCommand(line, { state: agent.state, cwd: agent.cwd, config: agent.config })
+      .then(result => term.notify(result)).catch(err => term.notify(`Error: ${err.message}`));
+    return true;
+  };
   let voiceActive = false;
   let cancelHook = null;
   process.on("SIGINT", () => {
@@ -675,7 +636,10 @@ export async function main() {
     shutdown(0);
   });
 
-  const promptLabel = () => `${c.magenta(config.agentName)} ${c.dim("›")} `;
+  const promptLabel = () => {
+    const count = runningJobCount(agent.state);
+    return `${c.magenta(config.agentName)}${count ? c.dim(` [${count} running | /jobs]`) : ''} ${c.dim("›")} `;
+  };
 
   const runTurn = async (text) => {
     busy = true;
@@ -728,9 +692,10 @@ export async function main() {
           try {
             parsed = JSON.parse(call.function.arguments);
           } catch {}
+          parsed = displayArgs(call.function.name, parsed);
           outcome.toolCalls.push({ ref: call, name: call.function.name, args: parsed });
           if (!show) return;
-          term.line(c.cyan(`  → ${call.function.name}(${short(call.function.arguments, 140)})`));
+          term.line(c.cyan(`  → ${call.function.name}(${short(parsed, 140)})`));
         },
         onToolResult: (call, result) => {
           const entry = outcome.toolCalls.find((e) => e.ref === call);
@@ -766,6 +731,7 @@ export async function main() {
       }
     } finally {
       busy = false;
+      showJobNotices();
     }
     return outcome;
   };
@@ -826,7 +792,7 @@ export async function main() {
     // Re-read .env: adding a key should not require /reload or a restart.
     config = loadConfig();
     if (opts.model) config.model = opts.model;
-    if (opts.maxTokens) config.maxTokens = opts.maxTokens;
+    if (opts.maxTokens) { config.maxTokens = opts.maxTokens; config.maxTokensExplicit = true; }
     agent.config = config;
     if (!config.groqApiKey) {
       term.line(c.red("  voice needs GROQ_API_KEY in .env (free key at console.groq.com)."));
@@ -1295,6 +1261,11 @@ export async function main() {
     if (raw === null) break;
     const input = raw.trim();
     if (!input) continue;
+    if (isJobCommand(input)) {
+      try { term.line(await runJobCommand(input, { state: agent.state, cwd: agent.cwd, config: agent.config })); }
+      catch (err) { term.line(`Error: ${err.message}`); }
+      continue;
+    }
 
     if (!input.startsWith("/")) {
       const outcome = await runTurn(input);
@@ -1381,7 +1352,7 @@ export async function main() {
       case "/reload": {
         config = loadConfig();
         if (opts.model) config.model = opts.model;
-        if (opts.maxTokens) config.maxTokens = opts.maxTokens;
+        if (opts.maxTokens) { config.maxTokens = opts.maxTokens; config.maxTokensExplicit = true; }
         agent.config = config;
         agent.rebase();
         voice.speak = Boolean(opts.speak || config.speak);
@@ -1596,6 +1567,24 @@ export async function main() {
           term.line("");
         } catch (err) {
           term.line(c.red(`  briefing failed: ${err.message}`));
+        }
+        break;
+      }
+
+      case "/composio": {
+        const [action = "status", service, ...rest] = arg.split(/\s+/).filter(Boolean);
+        const options = { action, service };
+        if (action === "search") options.query = [service, ...rest].filter(Boolean).join(" ");
+        if (action === "connect") options.alias = rest.length ? rest.join(" ") : undefined;
+        if (action === "disconnect") options.accountId = rest[0];
+        try {
+          const result = await composioTool.run(options, { config, mcp });
+          term.line("");
+          term.line(String(result).replace(/^/gm, "  "));
+          term.line("");
+          agent.refreshPrompt();
+        } catch (err) {
+          term.line(c.red(`  connected apps: ${err.message}`));
         }
         break;
       }

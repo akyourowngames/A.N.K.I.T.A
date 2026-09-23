@@ -1,5 +1,7 @@
 .env
 node_modules/
+desktop/renderer/dist/
+desktop/release/
 *.log
 
 # Artifacts written into the working directory by tools we drive.

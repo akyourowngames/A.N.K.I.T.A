@@ -1,0 +1,180 @@
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import type { ChatMessage, DesktopPreferences, DesktopSettingsResult, MenuCommand, Model, Teammate, UpdateEvent } from '../../shared/wire';
+import { reducer, initialState } from './state/store';
+import { Sidebar } from './components/Sidebar';
+import { ChatPane } from './components/ChatPane';
+import { ApprovalDialog } from './components/ApprovalDialog';
+import { TeammateDialog } from './components/TeammateDialog';
+import { ConfirmDialog } from './components/ConfirmDialog';
+import { UpdateBanner } from './components/UpdateBanner';
+import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
+import { PluginsPage } from './components/PluginsPage';
+import { Icon } from './components/Icons';
+
+type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; chrome: string };
+type UiState = { selectedId?: string | null; sidebarWidth?: number; sidebarOpen?: boolean };
+
+const UI_KEY = 'ankita.ui';
+
+function loadUi(): UiState {
+  try { return JSON.parse(localStorage.getItem(UI_KEY) || '{}'); } catch { return {}; }
+}
+
+function saveUi(patch: UiState) {
+  try { localStorage.setItem(UI_KEY, JSON.stringify({ ...loadUi(), ...patch })); } catch { /* storage disabled */ }
+}
+
+export default function App() {
+  const [state, dispatch] = useReducer(reducer, initialState);
+  const initialUi = useMemo(loadUi, []);
+  const [search, setSearch] = useState('');
+  const [dialog, setDialog] = useState<'create' | 'edit' | null>(null);
+  const [confirm, setConfirm] = useState<{ action: 'clear' | 'delete'; id: string; name: string } | null>(null);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
+  const [view, setView] = useState<'chat' | 'plugins'>('chat');
+  const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'copilot', model: '', customApiBase: '', appearance: 'graphite', hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
+  const [version, setVersion] = useState('2.0.0');
+  const closeSettings = useCallback(() => setSettingsTab(null), []);
+  const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
+  const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
+  const [update, setUpdate] = useState<UpdateEvent | null>(null);
+  const manualCheck = useRef(false);
+
+  useEffect(() => { saveUi({ sidebarOpen }); }, [sidebarOpen]);
+  useEffect(() => { saveUi({ sidebarWidth }); }, [sidebarWidth]);
+  useEffect(() => { document.documentElement.dataset.theme = preferences.appearance; }, [preferences.appearance]);
+
+  useEffect(() => {
+    if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
+    const unsubscribe = window.ankita.onEvent(event => {
+      dispatch({ type: 'event', event });
+      if (event.type === 'settings-updated') setPreferences(event.preferences);
+      if (event.type === 'teammates-changed') void window.ankita.invoke<Teammate[]>('listTeammates').then(teammates => dispatch({ type: 'teammates-loaded', teammates }));
+    });
+    void window.ankita.invoke<Bootstrap>('initialize')
+      .then(data => { dispatch({ type: 'bootstrap', ...data, selectedId: loadUi().selectedId ?? null }); if (data.preferences) setPreferences(data.preferences); if (data.version) setVersion(data.version); })
+      .catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: null, message: err.message } }));
+    return unsubscribe;
+  }, []);
+
+  useEffect(() => {
+    if (!state.selectedId || !window.ankita) return;
+    const id = state.selectedId;
+    saveUi({ selectedId: id });
+    void window.ankita.invoke<ChatMessage[]>('loadThread', { id }).then(messages => dispatch({ type: 'thread-loaded', id, messages })).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: id, message: err.message } }));
+  }, [state.selectedId]);
+
+  useEffect(() => {
+    if (!state.error) return;
+    const timer = setTimeout(() => dispatch({ type: 'dismiss-error' }), 7000);
+    return () => clearTimeout(timer);
+  }, [state.error]);
+
+  useEffect(() => {
+    const unread = state.teammates.filter(t => state.unread[t.id] && t.id !== state.selectedId).length;
+    document.title = unread ? `(${unread}) Ankita` : 'Ankita';
+  }, [state.unread, state.selectedId, state.teammates]);
+
+  useEffect(() => {
+    if (!window.ankita?.onMenuCommand) return;
+    return window.ankita.onMenuCommand((command: MenuCommand) => {
+      if (command === 'new-teammate') setDialog('create');
+      else if (command === 'settings') setSettingsTab('model');
+      else if (command === 'about') setSettingsTab('about');
+      else if (command === 'toggle-sidebar') setSidebarOpen(open => !open);
+      else if (command === 'find') {
+        setSidebarOpen(true);
+        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.search-box input')?.focus());
+      }
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!window.ankita?.onUpdateEvent) return;
+    return window.ankita.onUpdateEvent(event => {
+      if (event.type === 'checking' && event.manual) manualCheck.current = true;
+      const manual = manualCheck.current;
+      // Background checks stay quiet unless there is something to act on.
+      if (!manual && (event.type === 'checking' || event.type === 'current' || event.type === 'unsupported' || event.type === 'error')) return;
+      if (event.type === 'current' || event.type === 'unsupported' || event.type === 'error' || event.type === 'downloaded') manualCheck.current = false;
+      setUpdate(event);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!update) return;
+    if (update.type === 'current' || update.type === 'unsupported' || update.type === 'error') {
+      const timer = setTimeout(() => setUpdate(null), 6000);
+      return () => clearTimeout(timer);
+    }
+  }, [update]);
+
+  useEffect(() => {
+    const key = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const name = event.key.toLowerCase();
+      if (name === 'n') { event.preventDefault(); setDialog('create'); }
+      if (name === 'k') { event.preventDefault(); if (view === 'plugins') requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.plugins-search input')?.focus()); else { setSidebarOpen(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()); } }
+      if (name === 'b') { event.preventDefault(); setSidebarOpen(open => !open); }
+      if (event.key === ',') { event.preventDefault(); setSettingsTab('model'); }
+    };
+    window.addEventListener('keydown', key);
+    return () => window.removeEventListener('keydown', key);
+  }, [view]);
+
+  const selected = state.teammates.find(t => t.id === state.selectedId) || null;
+  const send = useCallback((text: string) => {
+    if (!state.selectedId || !window.ankita) return;
+    void window.ankita.invoke('send', { id: state.selectedId, text }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: err.message } }));
+  }, [state.selectedId]);
+  const stop = () => { if (state.selectedId) void window.ankita.invoke('cancel', { id: state.selectedId }); };
+  const answer = useCallback((choice: 'yes' | 'no' | 'always') => {
+    const approval = state.approvals[0];
+    if (!approval) return;
+    void window.ankita.invoke('respondApproval', { requestId: approval.requestId, answer: choice })
+      .then(() => dispatch({ type: 'approval-dismissed', requestId: approval.requestId }))
+      .catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: approval.threadId, message: err.message } }));
+  }, [state.approvals]);
+  const saveTeammate = (input: { name: string; persona: string; color: string; emoji: string }) => {
+    const action = dialog === 'edit' && selected ? 'updateTeammate' : 'createTeammate';
+    const payload = action === 'updateTeammate' ? { id: selected?.id, patch: input } : input;
+    void window.ankita.invoke<Teammate>(action, payload).then(item => { dispatch({ type: 'select', id: item.id }); setView('chat'); setDialog(null); }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: null, message: err.message } }));
+  };
+  const clear = () => { if (selected) setConfirm({ action: 'clear', id: selected.id, name: selected.name }); };
+  const remove = () => { if (selected) setConfirm({ action: 'delete', id: selected.id, name: selected.name }); };
+  const confirmAction = () => {
+    if (!confirm) return;
+    const { action, id } = confirm;
+    setConfirm(null);
+    void window.ankita.invoke(action === 'clear' ? 'clearThread' : 'deleteTeammate', { id }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: id, message: err.message } }));
+  };
+  const model = (modelId: string) => { if (selected) void window.ankita.invoke('setModel', { id: selected.id, modelId }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: selected.id, message: err.message } })); };
+  const installUpdate = () => { void window.ankita.updateAction('install'); };
+  const dismissUpdate = () => setUpdate(null);
+
+  return <div className="app-shell">
+    {sidebarOpen && <Sidebar
+      teammates={state.teammates} selectedId={state.selectedId} search={search} onSearch={setSearch}
+      onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
+      onOpenPlugins={() => setView('plugins')} pluginsOpen={view === 'plugins'}
+      provider={state.settings?.provider || 'Copilot'} model={state.settings?.model || ''} phase={state.phase}
+      chrome={state.chrome} unread={state.unread} toolsCount={state.settings?.tools.length || 0}
+      width={sidebarWidth} onResize={setSidebarWidth}
+    />}
+    {view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} /> : <ChatPane
+      teammate={selected} messages={state.selectedId ? state.threads[state.selectedId] || [] : []}
+      running={Boolean(state.selectedId && state.running[state.selectedId])}
+      models={state.models} defaultModel={state.settings?.model || ''}
+      usage={state.selectedId ? state.usage[state.selectedId] : undefined}
+      chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)}
+      onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onClear={clear} onDelete={remove}
+    />}
+    {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} onSave={saveTeammate} onClose={() => setDialog(null)} />}
+    {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} />}
+    {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
+    {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
+    {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
+    {update && <UpdateBanner update={update} onInstall={installUpdate} onDismiss={dismissUpdate} />}
+    {state.error && <div className="error-toast" role="alert"><Icon name="alert" size={18} /><span>{state.error}</span><button onClick={() => dispatch({ type: 'dismiss-error' })} aria-label="Dismiss error"><Icon name="close" size={16} /></button></div>}
+  </div>;
+}

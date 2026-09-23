@@ -58,6 +58,8 @@ export function spinner(text) {
 
 export class Terminal {
   constructor({ input = process.stdin, output = process.stdout, completer } = {}) {
+    this.output = output;
+    this.promptText = '';
     this.queue = [];
     this.waiter = null;
     this.closed = false;
@@ -68,6 +70,7 @@ export class Terminal {
       ...(completer ? { completer } : {}),
     });
     this.rl.on("line", (line) => {
+      if (this.interceptLine?.(line)) return;
       if (this.waiter) {
         const w = this.waiter;
         this.waiter = null;
@@ -117,17 +120,29 @@ export class Terminal {
   }
 
   async ask(promptText) {
-    process.stdout.write(promptText);
+    this.promptText = promptText;
+    this.rl.setPrompt(promptText);
+    this.output.write(promptText);
     const line = await this.nextLine();
     return line === null ? null : line;
   }
 
   write(s) {
-    process.stdout.write(s);
+    this.output.write(s);
   }
 
   line(s = "") {
-    process.stdout.write(s + "\n");
+    this.output.write(s + "\n");
+  }
+
+  /** Print asynchronous job events without destroying the line being typed. */
+  notify(s) {
+    if (this.waiter && this.output.isTTY) {
+      readline.clearLine(this.output, 0);
+      readline.cursorTo(this.output, 0);
+      this.line(s);
+      this.rl.prompt(true);
+    } else this.line(s);
   }
 
   close() {
@@ -182,6 +197,13 @@ export function helpText({ agentName }) {
   ${c.cyan("/sessions")}          list saved conversations
   ${c.cyan("/paste")}             paste multiple lines (end with a single .)
   ${c.cyan("/usage")}             show token usage for this turn and session
+  ${c.cyan("/jobs")}              list running and completed commands
+  ${c.cyan("/job")} <id> [offset]  read new output (offset 0 replays retained output)
+  ${c.cyan("/input")} <id> <text>  send a line to a running command
+  ${c.cyan("/eof")} <id>           close a job's stdin
+  ${c.cyan("/stop")} <id>          stop a job and its child processes
+  ${c.cyan("/wait")} <id> [ms]     wait briefly for a job
+  ${c.cyan("/bg")} <command>       run a command in the background
   ${c.cyan("/project")} [name]    switch project (no name = show the active one)
   ${c.cyan("/projects")}          list the projects I know about
   ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you

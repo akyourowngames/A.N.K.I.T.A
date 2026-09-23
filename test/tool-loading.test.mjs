@@ -145,7 +145,7 @@ test('the history budget is materially larger before activation', () => {
   const build = () =>
     new Agent({
       client: {},
-      config: { tools: true, contextWindow: 30000, maxTokens: 100, historyMessages: 200 },
+      config: { tools: true, contextWindow: Buffer.byteLength(JSON.stringify(index.specs)) + 14000, maxTokens: 100, historyMessages: 200 },
       deferTools: true,
     });
   const fill = (agent) => {

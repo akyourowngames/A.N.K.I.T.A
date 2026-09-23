@@ -22,6 +22,35 @@ test("HTTP tool exposes method-sensitive approval and secret-safe display", () =
   for (const secret of ["secretquery", "secretbearer", "secretkey", "secretpassword", "secretbody"]) assert.ok(!shown.includes(secret), shown);
 });
 
+test("approval distinguishes operations while redacting nested and repeated secrets", () => {
+  const common = { method: "POST", url: "https://example.com/actions?mode=preview&token=query-secret", auth: { type: "bearer", token: "bearer-secret" }, headers: { "X-Access-Code": "header-secret" } };
+  const preview = tool.approval({ ...common, json: { action: "preview", nested: [{ password: "nested-secret", label: "bearer-secret" }], note: "header-secret" } });
+  const deletion = tool.approval({ ...common, url: common.url.replace("mode=preview", "mode=delete_all"), json: { action: "delete_all", confirm: true } });
+  assert.match(preview, /mode=preview/);
+  assert.match(preview, /"action": "preview"/);
+  assert.match(deletion, /mode=delete_all/);
+  assert.match(deletion, /"action": "delete_all"/);
+  for (const secret of ["query-secret", "bearer-secret", "header-secret", "nested-secret"]) assert.ok(!preview.includes(secret), preview);
+  const form = tool.approval({ ...common, form: { action: "delete_all", client_secret: "form-secret", nested: { access_code: "access-secret", count: 7 } } });
+  assert.match(form, /delete_all/);
+  assert.match(form, /"count": 7/);
+  assert.ok(!form.includes("form-secret"));
+  assert.ok(!form.includes("access-secret"));
+  const trace = JSON.stringify(tool.display({ ...common, json: { action: "delete_all" } }));
+  assert.ok(!trace.includes("delete_all"));
+  assert.ok(!trace.includes("mode=preview"));
+});
+
+test("raw approval preview reports byte size and truncation without exposing known credentials", () => {
+  const body = `action=delete_all token=raw-secret ${"é".repeat(5000)}`;
+  const shown = tool.approval({ url: "http://localhost/actions", method: "POST", body, auth: { type: "bearer", token: "raw-secret" } });
+  assert.match(shown, /action=delete_all/);
+  assert.ok(!shown.includes("raw-secret"));
+  assert.match(shown, new RegExp(`"bytes": ${Buffer.byteLength(body)}`));
+  assert.match(shown, /"truncated": true/);
+  assert.ok(shown.length < 6000);
+});
+
 test("POST sends JSON, raw and form bodies and bearer/basic authentication", async t => {
   const url = await server(t, async (req, res) => {
     let body = "";
@@ -63,14 +92,16 @@ test("redirect policies preserve manual response and strip credentials cross-ori
   assert.equal(manual.status, 302);
   assert.equal(manual.body, "redirect body");
   await assert.rejects(tool.run({ url: source, redirect: "error" }), /redirect/i);
-  const followed = JSON.parse(await tool.run({ url: source, headers: { authorization: "Bearer secret", cookie: "session=secret", "x-api-key": "secret", "x-auth": "secret", "subscription-key": "secret", "x-public": "public" } }));
+  const followed = JSON.parse(await tool.run({ url: source, headers: { authorization: "Bearer secret", cookie: "session=secret", "x-api-key": "secret", "x-auth": "secret", "subscription-key": "secret", "x-access-code": "secret", "x-public": "public", "accept-language": "en" } }));
   assert.equal(followed.body, "arrived");
   assert.equal(received.authorization, undefined);
   assert.equal(received.cookie, undefined);
   assert.equal(received["x-api-key"], undefined);
   assert.equal(received["x-auth"], undefined);
   assert.equal(received["subscription-key"], undefined);
-  assert.equal(received["x-public"], "public");
+  assert.equal(received["x-access-code"], undefined);
+  assert.equal(received["x-public"], undefined);
+  assert.equal(received["accept-language"], "en");
   await assert.rejects(tool.run({ url: source, max_redirects: 0 }), /redirect/i);
 });
 

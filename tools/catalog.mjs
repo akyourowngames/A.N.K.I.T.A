@@ -8,6 +8,7 @@ import * as schedule from "./schedule.mjs";
 import * as watch from "./watch.mjs";
 import * as githubNotifications from "./github-notifications.mjs";
 import * as mcpManage from "./mcp-manage.mjs";
+import * as composio from "./composio.mjs";
 import * as remember from "./remember.mjs";
 import * as recall from "./recall.mjs";
 import * as git from './git.mjs';
@@ -79,6 +80,12 @@ export const CATEGORIES = [
       "review request", "invitation", "inbox",
     ],
     tools: [githubNotifications],
+  },
+  {
+    id: "connectors",
+    summary: "connected apps: Gmail, Slack, Notion, Calendar, Drive, GitHub and more",
+    keywords: ["gmail", "email", "slack", "notion", "calendar", "drive", "sheets", "docs", "jira", "linear", "asana", "github", "twitter", "x", "connected apps", "my email", "send an email", "post to slack"],
+    tools: [composio],
   },
   {
     id: "mcp",

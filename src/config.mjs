@@ -17,6 +17,7 @@ export const EMBEDDINGS_DIR = path.join(CONFIG_DIR, "embeddings");
 export const JOURNAL_DIR = path.join(SESSIONS_DIR, "journal");
 export const NOTIFY_QUEUE_FILE = path.join(CONFIG_DIR, "notification-queue.json");
 export const MCP_FILE = path.join(CONFIG_DIR, "mcp.json");
+export const COMPOSIO_FILE = path.join(CONFIG_DIR, "composio.json");
 export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
 const DEFAULTS = {
@@ -200,6 +201,9 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
       return Number.isFinite(n) ? n : DEFAULTS.temperature;
     })(),
     maxTokens: posInt(pick("MAX_TOKENS"), DEFAULTS.maxTokens),
+    // Whether the output cap was chosen or just defaulted. When it is only the
+    // default, no max_tokens is sent and the model/provider decides the length.
+    maxTokensExplicit: pick("MAX_TOKENS") !== undefined,
     maxToolChars: posInt(pick("MAX_TOOL_CHARS"), DEFAULTS.maxToolChars),
     contextWindow: posInt(pick("CONTEXT_WINDOW"), DEFAULTS.contextWindow),
     // Whether that value was chosen or just defaulted. Providers advertise each
@@ -209,6 +213,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     provider: (pick("PROVIDER") || DEFAULTS.provider).trim().toLowerCase(),
     apiBase: pick("API_BASE") || DEFAULTS.apiBase,
     apiKey: pick("API_KEY") || DEFAULTS.apiKey,
+    composioApiKey: pick("COMPOSIO_API_KEY") || "",
+    composioBrokerUrl: pick("COMPOSIO_BROKER_URL") || "",
+    composioBrokerToken: pick("COMPOSIO_BROKER_TOKEN") || "",
+    composioApi: pick("COMPOSIO_API") || "",
+    composioToolkitsApi: pick("COMPOSIO_TOOLKITS_API") || "",
     // Optional tool-loop model. The primary model (above) handles chat and the
     // first tool decision; once a turn uses a tool, this model runs the rest of
     // the loop, and the primary writes the user-facing reply. Empty = one model.

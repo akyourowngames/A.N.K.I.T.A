@@ -1,6 +1,8 @@
 const REDIRECTS = new Set([301, 302, 303, 307, 308]);
 const SENSITIVE_HEADER = /auth|cookie|token|key|secret|credential|password|session/i;
 const DISPLAY_HEADERS = /^(accept|content-type|content-length|user-agent|cache-control|if-none-match|if-modified-since)$/i;
+const FORWARD_HEADERS = /^(accept|accept-language|user-agent|cache-control|if-none-match|if-modified-since|range)$/i;
+const SECRET_FIELD = /(?:auth|bearer|token|secret|passw|cookie|session|credential|api[_-]?key|access[_-]?code|private[_-]?key)/i;
 const TEXT_TYPE = /^(text\/|application\/(?:[\w.+-]*\+)?(?:json|xml)\b|application\/(?:javascript|x-www-form-urlencoded)\b)/i;
 
 export const name = "http_request";
@@ -48,8 +50,38 @@ export function display(args = {}) {
   return shown;
 }
 
+function redactKnown(text, args) {
+  const known = [args.auth?.token, args.auth?.password, ...Object.entries(args.headers || {}).filter(([key]) => !DISPLAY_HEADERS.test(key)).map(([, value]) => value)].filter(value => typeof value === 'string' && value.length);
+  return known.reduce((result, value) => result.split(value).join('[REDACTED]'), String(text));
+}
+
+function approvalUrl(value, args) {
+  try {
+    const url = new URL(value);
+    url.username = ''; url.password = ''; url.hash = '';
+    for (const [key, item] of [...url.searchParams.entries()]) {
+      if (SECRET_FIELD.test(key)) url.searchParams.set(key, '[REDACTED]');
+      else url.searchParams.set(key, redactKnown(item, args));
+    }
+    return url.toString();
+  } catch { return '[invalid URL]'; }
+}
+
+function approvalBody(value, args, key = '', depth = 0) {
+  if (SECRET_FIELD.test(key)) return '[REDACTED]';
+  if (depth > 12) return '[nested value omitted]';
+  if (typeof value === 'string') return redactKnown(value, args).slice(0, 4096);
+  if (Array.isArray(value)) return value.slice(0, 50).map(item => approvalBody(item, args, '', depth + 1));
+  if (value && typeof value === 'object') return Object.fromEntries(Object.entries(value).slice(0, 50).map(([field, item]) => [field, approvalBody(item, args, field, depth + 1)]));
+  return value;
+}
+
 export function approval(args = {}) {
-  return `HTTP ${methodOf(args)} ${safeUrl(args.url)}\n${JSON.stringify(display(args), null, 2)}`;
+  const detail = { method: methodOf(args), url: approvalUrl(args.url, args), headers: display(args).headers || {} };
+  if (Object.hasOwn(args, 'json')) detail.json = approvalBody(args.json, args);
+  if (Object.hasOwn(args, 'form')) detail.form = approvalBody(args.form, args);
+  if (Object.hasOwn(args, 'body')) detail.body = { preview: approvalBody(args.body, args), bytes: Buffer.byteLength(String(args.body)), truncated: Buffer.byteLength(String(args.body)) > 4096 };
+  return `HTTP ${detail.method} ${detail.url}\n${JSON.stringify(detail, null, 2)}`;
 }
 
 function boundedInt(value, fallback, min, max) {
@@ -145,7 +177,7 @@ export async function run(args = {}, ctx = {}) {
         for (const key of [...request.headers.keys()]) if (key.startsWith("content-")) request.headers.delete(key);
       }
       if (url.origin !== next.origin) {
-        for (const key of [...request.headers.keys()]) if (SENSITIVE_HEADER.test(key) || ["host", "referer", "origin"].includes(key)) request.headers.delete(key);
+        for (const key of [...request.headers.keys()]) if (!FORWARD_HEADERS.test(key)) request.headers.delete(key);
       }
       url = next;
     }

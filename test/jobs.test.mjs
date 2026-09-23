@@ -71,3 +71,39 @@ test('incremental truncation reports skipped bytes with absolute cursors', async
   assert.ok(tail.output.endsWith('END'));
   assert.equal(tail.next_offset, 3003);
 });
+
+test('incremental reads preserve UTF-8 characters split across data events', async () => {
+  const { JobOutput } = await import('../tools/_jobs.mjs');
+  const out = new JobOutput(1024);
+  const emoji = Buffer.from('🙂');
+  out.append(emoji.subarray(0, 2));
+  const first = out.read();
+  assert.equal(first.output, '');
+  assert.equal(first.next_offset, 0);
+  out.append(emoji.subarray(2));
+  assert.equal(out.read(first.next_offset).output, '🙂');
+});
+
+test('a yielded job survives cancellation of a later turn; job_wait cancellation does not kill it', async t => {
+  const { command, ctx } = fixture(t, "setInterval(()=>{}, 1000)");
+  const controller = new AbortController();
+  ctx.signal = controller.signal;
+  await run({ command, yield_ms: 50 }, ctx);
+  const job = [...ctx.state.jobs.values()][0];
+  controller.abort();
+  const { run: wait } = await import('../tools/job-wait.mjs');
+  const result = JSON.parse(await wait({ job_id: job.id, timeout_ms: 10000 }, ctx));
+  assert.equal(result.wait_cancelled, true);
+  assert.equal(job.stopped, false);
+  assert.equal(job.done, false);
+});
+
+test('optional execution timeout terminates a job rather than imposing a default server lifetime', async t => {
+  const { command, ctx } = fixture(t, "setInterval(()=>{}, 1000)");
+  await run({ command, background: true, timeout_ms: 500 }, ctx);
+  const job = [...ctx.state.jobs.values()][0];
+  const { run: wait } = await import('../tools/job-wait.mjs');
+  const result = JSON.parse(await wait({ job_id: job.id, timeout_ms: 8000 }, ctx));
+  assert.equal(result.timed_out, true);
+  assert.equal(job.done, true);
+});

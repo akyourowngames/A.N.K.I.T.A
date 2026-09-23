@@ -138,6 +138,10 @@ export function toolResultText(result) {
 export class McpClient {
   constructor({
     id,
+    transport = "stdio",
+    url,
+    headers = {},
+    fetchImpl = fetch,
     command,
     args = [],
     env = {},
@@ -150,6 +154,13 @@ export class McpClient {
     clientVersion = "2.0.0",
   } = {}) {
     this.id = id;
+    this.transport = transport;
+    this.url = url;
+    this.headers = headers;
+    this.fetchImpl = fetchImpl;
+    this.httpConnected = false;
+    this.mcpSessionId = null;
+    this.httpRequests = new Set();
     this.command = command;
     this.args = args;
     this.env = env;
@@ -174,6 +185,28 @@ export class McpClient {
 
   /** Spawn the server, negotiate, and fetch its tool list. */
   async connect() {
+    if (this.transport === "http") {
+      if (this.httpConnected) return this;
+      if (!this.url) throw new Error("HTTP MCP server needs a URL");
+      this.closed = false;
+      this.httpConnected = true;
+      try {
+        const init = await this.request("initialize", {
+          protocolVersion: LATEST_PROTOCOL,
+          capabilities: {},
+          clientInfo: { name: this.clientName, version: this.clientVersion },
+        }, { timeoutMs: this.initTimeoutMs });
+        this.serverInfo = init?.serverInfo ?? null;
+        this.protocolVersion = init?.protocolVersion ?? null;
+        await this.notify("notifications/initialized", {});
+        await this.refreshTools();
+        return this;
+      } catch (err) {
+        this.httpConnected = false;
+        this.mcpSessionId = null;
+        throw err;
+      }
+    }
     if (this.child) return this;
     const candidates = commandCandidates(this.command);
     if (!candidates.length) throw new Error("no command to run for this MCP server");
@@ -305,6 +338,19 @@ export class McpClient {
 
   /** Sends a request and waits for its matching id. */
   request(method, params = {}, { timeoutMs = this.requestTimeoutMs } = {}) {
+    if (this.transport === "http") {
+      if (!this.httpConnected) return Promise.reject(new Error("MCP server is not connected"));
+      const id = this.nextId++;
+      return this._httpPost({ jsonrpc: "2.0", id, method, params }, timeoutMs).then((message) => {
+        if (message?.error) {
+          const err = new Error(message.error.message || "MCP error");
+          err.code = message.error.code;
+          err.data = message.error.data;
+          throw err;
+        }
+        return message?.result;
+      });
+    }
     if (!this.child) return Promise.reject(new Error("MCP server is not connected"));
     const id = this.nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
@@ -326,10 +372,59 @@ export class McpClient {
 
   /** Fire-and-forget. Notifications have no id and expect no reply. */
   notify(method, params = {}) {
+    if (this.transport === "http") {
+      if (!this.httpConnected) return Promise.resolve();
+      return this._httpPost({ jsonrpc: "2.0", method, params }, this.requestTimeoutMs);
+    }
     if (!this.child) return;
     try {
       this.child.stdin.write(JSON.stringify({ jsonrpc: "2.0", method, params }) + "\n");
     } catch {}
+  }
+
+  async _httpPost(payload, timeoutMs) {
+    const controller = new AbortController();
+    this.httpRequests.add(controller);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await this.fetchImpl(this.url, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json, text/event-stream",
+          ...this.headers,
+          ...(this.mcpSessionId ? { "mcp-session-id": this.mcpSessionId } : {}),
+        },
+        body: JSON.stringify(payload),
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`MCP HTTP request failed (HTTP ${response.status})`);
+      const sessionId = response.headers.get("mcp-session-id");
+      if (sessionId) this.mcpSessionId = sessionId;
+      if (payload.id === undefined || response.status === 202 || response.status === 204) return null;
+      const text = await response.text();
+      const contentType = response.headers.get("content-type") || "";
+      let messages;
+      if (contentType.includes("text/event-stream")) {
+        messages = text.split(/\r?\n\r?\n/).flatMap((frame) => {
+          const data = frame.split(/\r?\n/).filter((line) => line.startsWith("data:")).map((line) => line.slice(5).trim()).join("\n");
+          if (!data || data === "[DONE]") return [];
+          try { return [JSON.parse(data)]; } catch { return []; }
+        });
+      } else {
+        const parsed = JSON.parse(text);
+        messages = Array.isArray(parsed) ? parsed : [parsed];
+      }
+      const match = messages.find((message) => message?.id === payload.id);
+      if (!match) throw new Error(`MCP HTTP response omitted request id ${payload.id}`);
+      return match;
+    } catch (err) {
+      if (controller.signal.aborted && !this.closed) throw new Error(`MCP request "${payload.method}" timed out after ${timeoutMs}ms`);
+      throw err;
+    } finally {
+      clearTimeout(timer);
+      this.httpRequests.delete(controller);
+    }
   }
 
   async refreshTools() {
@@ -352,6 +447,13 @@ export class McpClient {
     this.closed = true;
     for (const entry of this.pending.values()) clearTimeout(entry.timer);
     this.pending.clear();
+    if (this.transport === "http") {
+      for (const controller of this.httpRequests) controller.abort();
+      this.httpRequests.clear();
+      this.httpConnected = false;
+      this.mcpSessionId = null;
+      return;
+    }
     if (!this.child) return;
     try {
       this.child.stdin.end();

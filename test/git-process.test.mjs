@@ -95,6 +95,25 @@ test("git can unstage files before the first commit without deleting the working
   assert.equal(await fs.readFile(path.join(cwd, "first.txt"), "utf8"), "keep me\n");
 });
 
+test("read-only git actions do not execute configured fsmonitor or textconv helpers", async (t) => {
+  const toolGit = await tool("git");
+  const { cwd, git } = await repo(t);
+  const monitorMarker = path.join(cwd, "monitor-ran");
+  const textconvMarker = path.join(cwd, "textconv-ran");
+  await fs.writeFile(path.join(cwd, "monitor.cjs"), `require('node:fs').writeFileSync(${JSON.stringify(monitorMarker)}, 'yes');\n`);
+  await fs.writeFile(path.join(cwd, "textconv.cjs"), `require('node:fs').writeFileSync(${JSON.stringify(textconvMarker)}, 'yes');\n`);
+  await fs.writeFile(path.join(cwd, ".gitattributes"), "hello.txt diff=custom\n");
+  git("config", "core.fsmonitor", "node monitor.cjs");
+  git("config", "diff.custom.textconv", "node textconv.cjs");
+  await fs.writeFile(path.join(cwd, "hello.txt"), "changed\n");
+  const ctx = { cwd };
+  for (const action of [{ action: "status" }, { action: "diff" }, { action: "show" }, { action: "blame", paths: ["hello.txt"] }]) {
+    await toolGit.run(action, ctx);
+  }
+  await assert.rejects(fs.access(monitorMarker), { code: "ENOENT" });
+  await assert.rejects(fs.access(textconvMarker), { code: "ENOENT" });
+});
+
 async function server(t, requestedPort = 0) {
   const child = spawn(process.execPath, ["-e", `require('node:net').createServer().listen(${requestedPort},'127.0.0.1',function(){console.log(this.address().port)})`], { windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   t.after(() => { if (child.exitCode === null) child.kill(); });

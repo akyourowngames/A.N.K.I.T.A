@@ -1,4 +1,5 @@
 import { McpClient, formatToolResult } from "./mcp-client.mjs";
+import { connectionMode, mcpEndpoint } from "./composio.mjs";
 
 /**
  * Owns every live MCP connection for the process.
@@ -90,17 +91,21 @@ export class McpManager {
   }
 
   /** Connects a server and returns its record. Idempotent per id. */
-  async connect({ id, command, args = [], env = {}, cwd, transport = "stdio", requestTimeoutMs, initTimeoutMs }) {
-    const serverId = slug(id || command);
+  async connect({ id, command, args = [], env = {}, cwd, transport = "stdio", url, headers = {}, trusted = false, alwaysOn = false, synthetic = false, requestTimeoutMs, initTimeoutMs, fetchImpl }) {
+    const serverId = slug(id || command || url);
     if (!serverId) throw new Error("an MCP server needs an id or a command");
-    if (transport !== "stdio") {
-      throw new Error(`transport "${transport}" is not supported yet (stdio only)`);
+    if (transport !== "stdio" && transport !== "http") {
+      throw new Error(`transport "${transport}" is not supported`);
     }
     const existing = this.servers.get(serverId);
     if (existing) return existing;
 
     const client = new McpClient({
       id: serverId,
+      transport,
+      url,
+      headers,
+      fetchImpl,
       command,
       args,
       env,
@@ -116,7 +121,7 @@ export class McpManager {
 
     await client.connect();
 
-    const record = { id: serverId, command, args, env, transport, client, tools: client.tools };
+    const record = { id: serverId, command, args, env, transport, url, headers, trusted, alwaysOn, synthetic, client, tools: client.tools };
     this.servers.set(serverId, record);
     this._clients.add(client);
     this.log(`connected ${serverId} (${client.tools.length} tool(s))`);
@@ -136,6 +141,22 @@ export class McpManager {
     return true;
   }
 
+  async ensureComposio(config, store, fetchImpl = fetch) {
+    if (connectionMode(config) === "unavailable") {
+      if (this.has("composio")) await this.disconnect("composio");
+      return null;
+    }
+    const endpoint = await mcpEndpoint({ ...config, composioStore: store }, fetchImpl);
+    const existing = this.servers.get("composio");
+    if (existing?.url === endpoint.url && JSON.stringify(existing.headers) === JSON.stringify(endpoint.headers)) return existing;
+    if (existing) await this.disconnect("composio");
+    return this.connect({
+      id: "composio", transport: "http", url: endpoint.url, headers: endpoint.headers,
+      trusted: true, alwaysOn: true, synthetic: true, requestTimeoutMs: 120000,
+      initTimeoutMs: 120000, fetchImpl,
+    });
+  }
+
   findTool(fullName) {
     const parsed = parseToolName(fullName);
     if (!parsed) return null;
@@ -148,7 +169,7 @@ export class McpManager {
 
   needsApproval(fullName) {
     const found = this.findTool(fullName);
-    return found ? needsApprovalFor(found.tool) : false;
+    return found ? !found.record.trusted && needsApprovalFor(found.tool) : false;
   }
 
   /** Human-readable description of what a call will actually do. */
@@ -165,7 +186,7 @@ export class McpManager {
     return (
       `${tool.name} on MCP server "${record.id}"` +
       (flags.length ? `  [${flags.join(", ")}]` : "") +
-      `\n  command: ${record.command} ${record.args.join(" ")}\n\n` +
+      (record.transport === "http" ? `\n  URL: ${record.url}\n\n` : `\n  command: ${record.command} ${record.args.join(" ")}\n\n`) +
       JSON.stringify(args, null, 2)
     );
   }
@@ -194,7 +215,7 @@ export class McpManager {
 
     let changed = false;
     for (const id of [...this.servers.keys()]) {
-      if (!wanted.has(id)) {
+      if (!wanted.has(id) && !this.servers.get(id)?.synthetic) {
         await this.disconnect(id).catch(() => {});
         changed = true;
       }
@@ -250,11 +271,11 @@ export class McpManager {
    * window and fail it outright. Those load on demand through find_tools.
    */
   alwaysOnIds() {
-    return [...this.servers.keys()].filter((id) => this.estimatedTokens(id) <= ALWAYS_ON_TOKENS);
+    return [...this.servers.keys()].filter((id) => this.servers.get(id)?.alwaysOn || this.estimatedTokens(id) <= ALWAYS_ON_TOKENS);
   }
 
   deferredIds() {
-    return [...this.servers.keys()].filter((id) => this.estimatedTokens(id) > ALWAYS_ON_TOKENS);
+    return [...this.servers.keys()].filter((id) => !this.servers.get(id)?.alwaysOn && this.estimatedTokens(id) > ALWAYS_ON_TOKENS);
   }
 
   /** One line per server, for find_tools and the system prompt. */
@@ -263,7 +284,7 @@ export class McpManager {
       id: r.id,
       tools: r.tools.map((t) => t.name),
       summary: `${r.tools.length} tool(s) from MCP server "${r.id}"`,
-      deferred: this.estimatedTokens(r.id) > ALWAYS_ON_TOKENS,
+      deferred: !r.alwaysOn && this.estimatedTokens(r.id) > ALWAYS_ON_TOKENS,
     }));
   }
 

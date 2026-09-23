@@ -143,3 +143,27 @@ export async function processIdentity(pid, ctx = {}) {
   if (result.code !== 0 || !match) throw new Error(`PID ${pid} is no longer running or its identity is unavailable.`);
   return { pid, parent: Number(match[1]), identity: match[2], name: match[3] };
 }
+
+/** One read of the live process table, used to preview full kill trees. */
+export async function processTable(ctx = {}) {
+  const options = { signal: ctx.signal, timeout_ms: 15000, max_output_bytes: 4 * 1024 * 1024 };
+  if (process.platform === 'win32') {
+    const script = 'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,CreationDate,Name | ConvertTo-Json -Compress';
+    const result = await execute('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', script], options);
+    if (result.code !== 0 || result.truncated) throw new Error('Could not inspect process tree.');
+    const values = JSON.parse(result.output || '[]');
+    return (Array.isArray(values) ? values : [values]).map(value => ({ pid: Number(value.ProcessId), parent: Number(value.ParentProcessId), name: value.Name, identity: String(value.CreationDate) }));
+  }
+  if (process.platform === 'linux') {
+    const entries = await fs.readdir('/proc', { withFileTypes: true });
+    const rows = await Promise.all(entries.filter(entry => /^\d+$/.test(entry.name)).map(async entry => {
+      const pid = Number(entry.name);
+      try { return await processIdentity(pid, ctx); } catch { return null; }
+    }));
+    return rows.filter(Boolean);
+  }
+  const result = await execute('ps', ['-axo', 'pid=,ppid=,lstart=,comm='], options);
+  if (result.code !== 0 || result.truncated) throw new Error('Could not inspect process tree.');
+  return result.output.split(/\r?\n/).map(line => line.trim().match(/^(\d+)\s+(\d+)\s+(.{24})\s+(.+)$/)).filter(Boolean)
+    .map(match => ({ pid: Number(match[1]), parent: Number(match[2]), identity: match[3], name: match[4] }));
+}

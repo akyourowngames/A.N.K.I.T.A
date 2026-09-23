@@ -1,8 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
-import { SESSIONS_DIR, MCP_FILE, PROJECTS_FILE } from "./config.mjs";
+import { SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, PROJECTS_FILE } from "./config.mjs";
 import { ProjectStore } from './projects.mjs';
 import { McpStore } from "./mcp-store.mjs";
+import { ComposioStore } from "./composio-store.mjs";
 import { Agent } from "./agent.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { checkWatch } from "./watcher.mjs";
@@ -634,6 +635,9 @@ export class Daemon {
     if (this.mcp) {
       try {
         await this.mcp.reconcile(new McpStore(MCP_FILE).load());
+        if (this.config.composioApiKey || this.config.composioBrokerUrl) {
+          await this.mcp.ensureComposio(this.config, new ComposioStore(COMPOSIO_FILE).load());
+        }
       } catch (err) {
         this.log(`mcp reconcile failed: ${err.message}`);
       }

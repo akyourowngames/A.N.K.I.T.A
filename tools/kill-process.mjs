@@ -1,4 +1,4 @@
-import { commandText, execute, integer, portOwners, processIdentity } from "./_process.mjs";
+import { commandText, execute, integer, portOwners, processIdentity, processTable } from "./_process.mjs";
 
 export const name = "kill_process";
 export const description = "Terminate an explicitly approved PID or the processes listening on a port. Previews commands and process identities; verifies the same owners immediately before termination. Windows uses taskkill /T; force:true adds /F (POSIX SIGKILL instead of SIGTERM).";
@@ -10,6 +10,10 @@ export const parameters = { type: "object", properties: {
   force: { type: "boolean", description: "Force termination. Default false." },
 }, additionalProperties: false };
 const approvals = new WeakMap();
+const bornAt = identity => {
+  const match = String(identity).match(/^\/Date\((\d+)/);
+  return match ? Number(match[1]) : Date.parse(identity);
+};
 
 function target(args) {
   if ((args.pid !== undefined) === (args.port !== undefined)) throw new Error("Specify exactly one of pid or port.");
@@ -23,10 +27,31 @@ async function identities(args, ctx) {
   const owners = args.port !== undefined ? await portOwners(args.port, ctx) : [{ pid: args.pid }];
   if (!owners.length) throw new Error(`No listener found on port ${args.port}.`);
   const pids = [...new Set(owners.map((owner) => owner.pid))].sort((a, b) => a - b);
-  for (const pid of pids) {
-    if (!Number.isInteger(pid) || pid <= 1 || pid === process.pid || pid === process.ppid) throw new Error("Refusing to terminate a protected or unidentified process.");
+  const table = await processTable(ctx);
+  const byId = new Map(table.map(row => [row.pid, row]));
+  const protectedPids = new Set();
+  let ancestor = process.pid;
+  while (ancestor > 1 && !protectedPids.has(ancestor)) {
+    protectedPids.add(ancestor);
+    ancestor = byId.get(ancestor)?.parent || 0;
   }
-  return Promise.all(pids.map((pid) => processIdentity(pid, ctx)));
+  const children = new Map();
+  for (const row of table) {
+    if (!children.has(row.parent)) children.set(row.parent, []);
+    children.get(row.parent).push(row);
+  }
+  const selected = [], seen = new Set();
+  const visit = (pid, parentBorn = 0) => {
+    const row = byId.get(pid), born = row && bornAt(row.identity);
+    if (!row || !Number.isFinite(born) || born < parentBorn) throw new Error(`Cannot verify process PID ${pid}.`);
+    if (protectedPids.has(pid) || pid <= 1) throw new Error('Refusing to terminate this agent or an ancestor process.');
+    if (seen.has(pid)) return;
+    seen.add(pid);
+    for (const child of children.get(pid) || []) visit(child.pid, born);
+    selected.push(row); // descendants first, root last
+  };
+  for (const pid of pids) visit(pid);
+  return selected;
 }
 function killCommand(pid, force) {
   return process.platform === "win32"
@@ -52,7 +77,9 @@ export async function run(args, ctx = {}) {
   for (const p of current) {
     if (ctx.signal?.aborted) throw new Error("Termination cancelled.");
     // Check again immediately before each kill to narrow the PID-reuse race.
-    const latest = await processIdentity(p.pid, ctx);
+    let latest;
+    try { latest = await processIdentity(p.pid, ctx); }
+    catch { results.push(`PID ${p.pid} already exited.`); continue; }
     if (latest.identity !== p.identity || latest.name !== p.name) throw new Error(`PID ${p.pid} changed since approval; refusing termination.`);
     const [exe, argv] = killCommand(p.pid, args.force);
     if (process.platform === "win32") {

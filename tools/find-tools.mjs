@@ -3,7 +3,7 @@ import { CATEGORIES, CATEGORIES as ALL, findCategory } from "./catalog.mjs";
 export const name = "find_tools";
 export const description =
   "Load extra tools that are not in your default set: searching the internet and scraping pages, " +
-  "scheduled routines and page watches, project management and memory, GitHub notifications, and " +
+  "Git, port/process management, scheduled routines and page watches, project management and memory, GitHub notifications, and " +
   "directory creation. Call this first whenever a task needs one of those; the tools become callable " +
   "immediately afterwards.";
 
@@ -28,11 +28,15 @@ export function matchCategories(query) {
   const q = String(query ?? "").toLowerCase().trim();
   if (!q) return [];
   const hits = new Set();
+  const contains = key => new RegExp(`(^|[^a-z0-9])${key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}($|[^a-z0-9])`).test(q);
   for (const category of ALL) {
+    // The built-in GitHub inbox owns notification queries; loading the connected
+    // app manager as well would add an unrelated schema to that request.
+    if (category.id === "connectors" && /\bnotifications?\b/.test(q) && /\bgithub\b/.test(q)) continue;
     if (category.id.toLowerCase() === q) hits.add(category.id);
-    else if (category.keywords.some((k) => q.includes(k))) hits.add(category.id);
+    else if (category.keywords.some(contains)) hits.add(category.id);
     // Tool names too, so "web_search" or "project_memory" also works.
-    else if (category.tools.some((t) => q.includes(t.name.toLowerCase()))) hits.add(category.id);
+    else if (category.tools.some((t) => contains(t.name.toLowerCase()))) hits.add(category.id);
   }
   return [...hits];
 }
@@ -104,9 +108,10 @@ export function run(args = {}, ctx = {}) {
     return (
       `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held)}\n\n` +
       "If instead you need a whole capability that is not in that list - driving a browser, " +
-      "a specific database, a design tool - load the `mcp` group and search the MCP registry " +
-      'with mcp_manage action="search" before trying to do it by shelling out. Ask the user ' +
-      "before installing anything."
+      "a specific database or design tool - load the `mcp` group and search the MCP registry " +
+      'with mcp_manage action="search". For Gmail, Slack, Notion and other connected apps, ' +
+      "load `connectors` and use `/composio connect <app>`. Ask the user before installing " +
+      "an MCP server."
     );
   }
 

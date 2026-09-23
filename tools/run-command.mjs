@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { JobOutput, clamp, jobsOf, jobSnapshot, notifyJob, waitForExit } from './_jobs.mjs';
+import { trackJobTree, terminateTrackedDescendants } from './_job-tree.mjs';
 export { waitForExit } from './_jobs.mjs';
 
 export const name = 'run_command';
@@ -27,8 +28,10 @@ function argvFor(command) {
 }
 /** Terminate descendants before their parent; every POSIX command owns a group. */
 export async function killTree(child) {
-  if (!child?.pid || child.exitCode !== null || child.signalCode !== null) return;
+  if (!child?.pid) return;
   if (process.platform === 'win32') {
+    await terminateTrackedDescendants(child);
+    if (child.exitCode !== null || child.signalCode !== null) return;
     await new Promise(resolve => {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
       const timer = setTimeout(() => { killer.kill(); resolve(); }, 5000);
@@ -58,6 +61,7 @@ export async function run(args, ctx = {}) {
   const job = { id, command: args.command, cwd, child, out: new JobOutput(clamp(args.max_output_bytes, 65536, 1024, 4 * 1024 * 1024)),
     startedAt: Date.now(), done: false, stopped: false, code: null, readOffset: 0, background: !!args.background };
   jobs.set(id, job);
+  if (process.platform === 'win32') void trackJobTree(child);
   child.stdout.on('data', d => job.out.append(d)); child.stderr.on('data', d => job.out.append(d));
   child.stdin.on('error', () => {});
   let deadline;

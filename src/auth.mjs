@@ -27,6 +27,10 @@ export function readAuth() {
   }
 }
 
+export function resolveGithubToken() {
+  return process.env.GITHUB_TOKEN || readAuth().github_token || null;
+}
+
 export function writeAuth(data) {
   fs.mkdirSync(path.dirname(AUTH_FILE), { recursive: true });
   fs.writeFileSync(AUTH_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
@@ -46,21 +50,22 @@ async function postForm(url, body) {
   }
 }
 
-export async function deviceLogin({ log = console.log, write = (s) => process.stdout.write(s) } = {}) {
+export async function deviceLogin({ log = console.log, write = (s) => process.stdout.write(s), onDeviceCode = null } = {}) {
   const dc = await postForm(DEVICE_CODE_URL, { client_id: CLIENT_ID, scope: OAUTH_SCOPE });
 
   if (dc.error) throw new Error(`${dc.error}: ${dc.error_description || ""}`);
   if (!dc.device_code) throw new Error("Failed to start device flow: " + JSON.stringify(dc));
 
-  log("");
-  log("  Open:  " + dc.verification_uri);
-  log("  Code:  " + dc.user_code);
-  log("  (opening your browser...)");
-  log("");
-
-  try {
-    exec(`start "" "${dc.verification_uri}"`);
-  } catch {}
+  if (onDeviceCode) {
+    onDeviceCode({ user_code: dc.user_code, verification_uri: dc.verification_uri });
+  } else {
+    log("");
+    log("  Open:  " + dc.verification_uri);
+    log("  Code:  " + dc.user_code);
+    log("  (opening your browser...)");
+    log("");
+    try { exec(`start "" "${dc.verification_uri}"`); } catch {}
+  }
 
   const intervalMs = Math.max(1, dc.interval || 5) * 1000;
   const deadline = Date.now() + (dc.expires_in || 900) * 1000;
