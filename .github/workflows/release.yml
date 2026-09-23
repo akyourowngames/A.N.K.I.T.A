@@ -1,12 +1,23 @@
 name: Release desktop
+
+# Releases are created from the package.json version. Pushing to the default
+# branch (or running this by hand) creates the matching `v<version>` tag and
+# publishes it; pushing a `v*` tag publishes that tag directly. A version that
+# already has a release is skipped, so ordinary commits do not rebuild.
 on:
   push:
+    branches:
+      - ankita
     tags:
       - 'v*'
   workflow_dispatch:
 
 permissions:
   contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   windows:
@@ -27,6 +38,9 @@ jobs:
       CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Full history so the release tag can be created and pushed.
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -34,15 +48,54 @@ jobs:
       - run: npm ci
       - run: npm test
         continue-on-error: true
+
+      - name: Resolve the version to release
+        id: version
+        shell: bash
+        run: |
+          version=$(node -p "require('./package.json').version")
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Releasing v$version"
+
+      - name: Skip if this version is already released
+        id: check
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Require the auto-update manifest, not just the release: a release
+          # left behind by a failed upload must be rebuilt, not skipped.
+          if gh release view "${{ steps.version.outputs.tag }}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "${{ steps.version.outputs.tag }} is already published - nothing to do."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # A branch/dispatch run has no tag yet, so create one pointing at the
+      # commit being released. The tag push uses GITHUB_TOKEN, which does not
+      # re-trigger this workflow.
+      - name: Create and push the release tag
+        if: github.ref_type != 'tag' && steps.check.outputs.exists == 'false'
+        shell: bash
+        run: |
+          if git ls-remote --tags origin "${{ steps.version.outputs.tag }}" | grep -q "refs/tags/${{ steps.version.outputs.tag }}$"; then
+            echo "${{ steps.version.outputs.tag }} already exists."
+          else
+            git tag "${{ steps.version.outputs.tag }}"
+            git push origin "${{ steps.version.outputs.tag }}"
+          fi
+
       - name: Build and publish (Azure Trusted Signing)
-        if: env.AZURE_CLIENT_ID != ''
+        if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm run desktop:build
           npx electron-builder --win --publish always --config electron-builder.signing.yml
       - name: Build and publish (unsigned or pfx)
-        if: env.AZURE_CLIENT_ID == ''
+        if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID == ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
