@@ -6,7 +6,7 @@ import { ProjectStore } from './projects.mjs';
 import { randomUUID } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from './memory-context.mjs';
 import { warmRecall } from '../tools/recall.mjs';
-import { specs, coreSpecs, specsFor, get, needsApproval, isReadOnly, coreNames, CATEGORIES } from "../tools/index.mjs";
+import { specs, coreSpecs, specsFor, get, needsApproval, isReadOnly, coreNames, categoryOfTool, CATEGORIES } from "../tools/index.mjs";
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
 import { renderDiff } from "../tools/_diff.mjs";
@@ -17,6 +17,13 @@ const toolUi = { ...c, preview, short, clip };
 toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: toolUi, ...opts });
 
 const MAX_TOOL_STEPS = 100;
+export const MAX_WEB_SEARCHES_PER_TURN = 6;
+
+// Reserved per request on top of the output cap: protocol overhead plus a floor
+// of history. If even the core tools cannot fit inside this, the request is
+// genuinely impossible and trimHistory says so.
+const CONTEXT_OVERHEAD_BYTES = 1024;
+const MIN_HISTORY_BYTES = 512;
 
 /**
  * How connected MCP servers are described to the model.
@@ -121,6 +128,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       "use job_status for incremental output and job_input for stdin. Do not repeatedly wait for servers/watchers to exit. " +
       "Tell the user the job ID and let the conversation continue. Wait only when the next step needs that command's result.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",
+    `Use at most ${MAX_WEB_SEARCHES_PER_TURN} web_search calls per user request. Search broad terms first, read the strongest sources, then answer. The runtime enforces this limit.`,
     "",
     "You are also a personal assistant. You can set up your own recurring work and track pages " +
       "that should not change silently (numbers like signups or logins). When the user asks for " +
@@ -156,6 +164,7 @@ export class Agent {
     write = (s) => process.stdout.write(s),
     project = "",
     projectId = null,
+    workspacePath = null,
     deferTools = true,
     mcp = null,
     journal = null,
@@ -178,7 +187,8 @@ export class Agent {
     this.model = config.model || null;
     this.useTools = config.tools;
     this.autoApprove = config.autoApprove;
-    this.cwd = process.cwd();
+    this.workspacePath = workspacePath;
+    this.cwd = workspacePath || process.cwd();
     // Bounded block describing the active project, or "" when none is set.
     this.project = project || "";
     // Id of that project, so tools can tag what they create. Null when none.
@@ -186,6 +196,7 @@ export class Agent {
     this.abort = null;
     // activatedTools: deferred tool names find_tools has loaded this session.
     this.state = { todos: [], jobs: new Map(), activatedTools: new Set() };
+    this.searchesThisTurn = 0;
     // One-shot agents (routines, briefings, alerts) always send everything:
     // there is no session to amortise a discovery round trip across.
     this.deferTools = deferTools !== false;
@@ -213,7 +224,7 @@ export class Agent {
   }
 
   rebase() {
-    this.cwd = process.cwd();
+    this.cwd = this.workspacePath || process.cwd();
     this.messages[0] = {
       role: "system",
       content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()),
@@ -225,9 +236,10 @@ export class Agent {
    * `id` is the stable handle tools tag new routines/watches with; `block` is
    * the rendered text that goes into the system prompt.
    */
-  setProject(block, id = null) {
+  setProject(block, id = null, workspacePath = null) {
     this.project = block || "";
     this.projectId = this.project ? id || null : null;
+    this.workspacePath = workspacePath;
     if (this.projectId) this.turnProjects?.add(this.projectId);
     this.rebase();
     return this;
@@ -243,31 +255,95 @@ export class Agent {
    */
   currentSpecs() {
     if (!this.useTools) return [];
+    const { core, optional } = this.specParts();
+    const budget = this.toolBudgetBytes();
+    if (budget === Infinity) return [...core, ...optional.flatMap((group) => group.specs)];
 
-    // Which static branch applies is independent of MCP. A deferTools:false
-    // worker returns the whole static catalog without ever consulting
-    // activatedTools, so hanging MCP specs off that branch would make MCP
-    // invisible to daemon workers - the opposite of what is wanted.
-    let base;
-    if (!this.deferTools) {
-      base = specs;
-    } else {
-      const active = this.state?.activatedTools;
-      base = active && active.size ? [...coreSpecs, ...specsFor([...active])] : coreSpecs;
+    // Core always ships. Loaded groups are added whole while they fit; one that
+    // does not is skipped rather than half-sent, because the model was told the
+    // whole group is callable. Skipping is graceful degradation: a small window
+    // or a long memory recall costs some tools, never the whole turn.
+    let used = Buffer.byteLength(JSON.stringify(core));
+    const kept = [];
+    for (const group of optional) {
+      const size = Buffer.byteLength(JSON.stringify(group.specs));
+      if (used + size > budget) continue;
+      used += size;
+      kept.push(...group.specs);
+    }
+    return [...core, ...kept];
+  }
+
+  /**
+   * The tool set split into the part that always ships and the on-demand part,
+   * the latter grouped by category or MCP server so a group can be dropped
+   * whole. A deferTools:false worker keeps its full catalog in core.
+   */
+  specParts() {
+    if (!this.useTools) return { core: [], optional: [] };
+    const active = this.state?.activatedTools;
+    const names = active && active.size ? [...active] : [];
+
+    let core = this.deferTools ? coreSpecs : specs;
+    let optional = [];
+
+    if (this.deferTools && names.length) {
+      // specsFor() only knows deferred static names; group them by category so
+      // a family loads or drops together.
+      const groups = new Map();
+      for (const spec of specsFor(names)) {
+        const id = categoryOfTool.get(spec.function?.name) || spec.function?.name;
+        if (!groups.has(id)) groups.set(id, []);
+        groups.get(id).push(spec);
+      }
+      optional = [...groups].map(([id, groupSpecs]) => ({ id, specs: groupSpecs }));
+    }
+
+    if (this.searchesThisTurn >= MAX_WEB_SEARCHES_PER_TURN) {
+      const keep = (spec) => spec.function?.name !== 'web_search';
+      core = core.filter(keep);
+      optional = optional
+        .map((group) => ({ ...group, specs: group.specs.filter(keep) }))
+        .filter((group) => group.specs.length);
     }
 
     // MCP servers follow the same rule as the built-ins: small ones are always
     // in the request, large ones only once find_tools has loaded them by id.
-    // specsFor() above ignores these ids (it only knows deferred static names),
-    // so a server id sitting in activatedTools is inert until here.
-    if (!this.mcp) return base;
-    const active = this.state?.activatedTools;
-    const wanted = new Set(this.mcp.alwaysOnIds());
-    if (active && active.size) {
-      for (const entry of active) if (this.mcp.has(entry)) wanted.add(String(entry));
+    // specsFor() above ignores these ids, so a server id in activatedTools is
+    // inert until here.
+    if (this.mcp) {
+      const always = new Set(this.mcp.alwaysOnIds());
+      if (always.size) core = [...core, ...this.mcp.specs({ only: always })];
+      for (const entry of names) {
+        const id = String(entry);
+        if (!this.mcp.has(id) || always.has(id)) continue;
+        const groupSpecs = this.mcp.specs({ only: new Set([id]) });
+        if (groupSpecs.length) optional.push({ id, specs: groupSpecs });
+      }
     }
-    const mcp = wanted.size ? this.mcp.specs({ only: wanted }) : [];
-    return mcp.length ? [...base, ...mcp] : base;
+
+    return { core, optional };
+  }
+
+  /**
+   * How many bytes to hold back for the model's reply. An explicit MAX_TOKENS is
+   * a deliberate cap and wins. The default is only a guess - no max_tokens is
+   * even sent - so it must not starve a small window: reserve at most a quarter.
+   */
+  outputReserve() {
+    const cap = this.config?.maxTokens || 4096;
+    if (this.config?.maxTokensExplicit) return cap;
+    const window = Number(this.contextWindow);
+    if (!Number.isFinite(window) || window <= 0) return cap;
+    return Math.min(cap, Math.max(256, Math.floor(window / 4)));
+  }
+
+  /** Bytes left for tool schemas once output, overhead and memory are reserved. */
+  toolBudgetBytes() {
+    const window = Number(this.contextWindow);
+    if (!Number.isFinite(window) || window <= 0) return Infinity;
+    const memory = this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0;
+    return window - this.outputReserve() - CONTEXT_OVERHEAD_BYTES - MIN_HISTORY_BYTES - memory;
   }
 
   /** Rebuild messages[0] so the model sees the current tool groups. */
@@ -299,10 +375,12 @@ export class Agent {
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */
   trimHistory(max) {
     // UTF-8 bytes are a conservative token upper bound; reserve output + tools.
-    const available = this.contextWindow - (this.config.maxTokens || 4096) - 1024 -
+    // currentSpecs() has already shed on-demand groups that do not fit, so this
+    // only throws when even the core tools cannot share the window.
+    const available = this.contextWindow - this.outputReserve() - CONTEXT_OVERHEAD_BYTES -
       Buffer.byteLength(JSON.stringify(this.currentSpecs())) -
       (this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0);
-    if (available < 512) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
+    if (available < MIN_HISTORY_BYTES) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
     this.messages = trimMessages(this.messages, max, available);
   }
 
@@ -501,6 +579,13 @@ export class Agent {
       return `Error: arguments were not valid JSON (${err.message}).`;
     }
 
+    if (tool.name === 'web_search') {
+      if (this.searchesThisTurn >= MAX_WEB_SEARCHES_PER_TURN) {
+        return `Search limit reached (${MAX_WEB_SEARCHES_PER_TURN} web searches for this request). Use the results already gathered and answer the user; do not try another search tool for the same query.`;
+      }
+      this.searchesThisTurn++;
+    }
+
     const ctx = {
       cwd: this.cwd,
       config: this.config,
@@ -538,7 +623,8 @@ export class Agent {
           const current = projects.find(this.projectId);
           projects.data.active = current && !current.archived ? current.id : null;
         }
-        this.setProject(projects.promptBlock(), projects.activeId);
+        const workspacePath = projects.active?.path && fs.existsSync(projects.active.path) && fs.statSync(projects.active.path).isDirectory() ? projects.active.path : null;
+        this.setProject(projects.promptBlock(), projects.activeId, workspacePath);
       }
       return capOutput(result, budget);
     } catch (err) {
@@ -552,6 +638,7 @@ export class Agent {
    */
   async send(text, options = {}) {
     this.abort = new AbortController();
+    this.searchesThisTurn = 0;
     this.turnProjects = new Set(this.projectId ? [this.projectId] : []);
     this.memoryContext = this.useTools ? await personalMemoryContext(text, this.config, { signal: this.abort.signal }) : null;
     if (this.abort.signal.aborted) throw this.abort.signal.reason;

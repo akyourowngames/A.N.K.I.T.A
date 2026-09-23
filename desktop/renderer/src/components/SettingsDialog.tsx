@@ -23,12 +23,13 @@ const themes: { id: DesktopPreferences['appearance']; name: string; detail: stri
 ];
 
 type Secret = 'customApiKey' | 'groqApiKey' | 'kiloApiKey' | 'composioApiKey';
-type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance'] } & Record<Secret, string>;
+type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance']; contextWindow: string; maxTokens: string } & Record<Secret, string>;
 const savedFlag: Record<Secret, keyof DesktopPreferences> = {
   customApiKey: 'hasCustomApiKey', groqApiKey: 'hasGroqKey', kiloApiKey: 'hasKiloKey', composioApiKey: 'hasComposioKey',
 };
 function fromPreferences(value: DesktopPreferences): Draft {
   return { provider: value.provider, model: value.model, customApiBase: value.customApiBase, appearance: value.appearance,
+    contextWindow: value.contextWindow ? String(value.contextWindow) : '', maxTokens: value.maxTokens ? String(value.maxTokens) : '',
     customApiKey: '', groqApiKey: '', kiloApiKey: '', composioApiKey: '' };
 }
 
@@ -78,7 +79,13 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
 
   const save = async () => {
     const patch: DesktopSettingsUpdate = {};
-    if (tab === 'model' && draft.model !== preferences.model) patch.model = draft.model;
+    if (tab === 'model') {
+      if (draft.model !== preferences.model) patch.model = draft.model;
+      const contextWindow = Number(draft.contextWindow) || 0;
+      const maxTokens = Number(draft.maxTokens) || 0;
+      if (contextWindow !== preferences.contextWindow) patch.contextWindow = contextWindow;
+      if (maxTokens !== preferences.maxTokens) patch.maxTokens = maxTokens;
+    }
     if (tab === 'appearance' && draft.appearance !== preferences.appearance) patch.appearance = draft.appearance;
     if (tab === 'providers') {
       if (draft.provider !== preferences.provider) patch.provider = draft.provider;
@@ -126,7 +133,17 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
                 <option value="">{models.length ? 'Choose a model' : 'Connect a provider to see available models'}</option>
                 {models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
               </select><p className="settings-help">The composer can switch models for the active chat. Teammates with their own model keep it.</p>
-              <button type="button" className="settings-primary" onClick={save} disabled={busy || !models.length}>{busy ? 'Saving…' : 'Save default model'}</button>
+              <div className="settings-form-pair">
+                <div className="settings-field"><label htmlFor="settings-context-window">Context window (tokens)</label>
+                  <input id="settings-context-window" type="number" min="0" step="1024" inputMode="numeric" value={draft.contextWindow} onChange={event => set('contextWindow', event.target.value)} placeholder="e.g. 128000" />
+                  <small>Leave blank to use the model's advertised window, or the 32768 default. Some OpenAI-compatible endpoints report no window — set it here so tools and history have room.</small>
+                </div>
+                <div className="settings-field"><label htmlFor="settings-max-tokens">Max output tokens</label>
+                  <input id="settings-max-tokens" type="number" min="0" step="256" inputMode="numeric" value={draft.maxTokens} onChange={event => set('maxTokens', event.target.value)} placeholder="e.g. 4096" />
+                  <small>Leave blank to let the model decide. A pinned value is sent as <code>max_tokens</code> and reserved from the window.</small>
+                </div>
+              </div>
+              <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save model settings'}</button>
             </div>
             <div className="settings-note"><Icon name="info" size={15} />Need a different model list? Choose a provider in the Providers section.</div>
           </div>}

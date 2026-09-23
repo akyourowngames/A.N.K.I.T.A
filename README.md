@@ -59,6 +59,8 @@ Run these commands from the repository root. With Copilot selected and no cached
 
 Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
+Open **Projects** to record a working folder, conventions, decisions, and open tasks. Assign a project from the teammate header or when editing a teammate. That teammate uses the project's folder for file and command tools and receives a short project brief. The **Work review** button in chat opens Git changes with file diffs, recent artifacts, and command jobs with output and a stop action; file edits open it automatically. The agent allows at most six `web_search` calls per user request, then uses the sources already gathered.
+
 ```bash
 ankita -p "summarise what this repo does"        # one-shot
 ankita --voice                                   # hands-free conversation

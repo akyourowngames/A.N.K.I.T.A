@@ -17,6 +17,8 @@ import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
 import { DesktopSettingsStore, applyDesktopSettings, testCustomProvider } from './settings.mjs';
 import { DesktopPlugins } from './plugins.mjs';
+import { projectContext, projectSummary, projectWorkspace } from './projects.mjs';
+import { changedFiles, fileDiff, recentArtifacts, jobList, stopAgentJob, captureToolFiles, completedFileDiffs } from './workspace.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -61,6 +63,7 @@ export class DesktopEngine {
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
     composioFile = COMPOSIO_FILE,
     sessionsDir = SESSIONS_DIR,
+    projectsFile = PROJECTS_FILE,
     envPath = path.join(root, '.env'),
     config = null,
     bootstrap = createSession,
@@ -73,6 +76,7 @@ export class DesktopEngine {
     this.composioFile = composioFile;
     this.plugins = new DesktopPlugins({ getConfig: () => this.config || {}, storeFile: composioFile, isLive: () => Boolean(this.mcp?.has?.('composio')) });
     this.sessionsDir = sessionsDir;
+    this.projectsFile = projectsFile;
     this.envPath = envPath;
     this.config = config;
     this.bootstrap = bootstrap;
@@ -80,8 +84,12 @@ export class DesktopEngine {
     this.mcp = mcp || new McpManager({ onChange: () => this.emit({ type: 'tools-changed', connected: this.mcp?.connectedIds || [] }) });
     this.emit = emit;
     this.agents = new Map();
+    this.reviewChanges = new Map();
+    this.pendingFileEdits = new Map();
     this.turns = new Map();
     this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
+    this.projectFileVersion = null;
+    this.projectFileWatcher = null;
     this.ready = null;
   }
 
@@ -97,6 +105,7 @@ export class DesktopEngine {
     this.baseConfig = this.config || loadConfig(this.envPath);
     this.config = applyDesktopSettings(this.baseConfig, this.desktopSettings.data);
     this.teammates.load();
+    this.watchProjects();
     this.emit({ type: 'status', phase: 'authenticating' });
     try {
       const session = await this.bootstrap({ config: this.config, onDeviceCode: details => this.emit({ type: 'auth-device-code', ...details }) });
@@ -175,7 +184,8 @@ export class DesktopEngine {
       || (active === 'custom' && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
-    if ((reconnect || Object.hasOwn(patch, 'model')) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
+    const tune = ['contextWindow', 'maxTokens'].some(key => Object.hasOwn(patch, key));
+    if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
     if (reconnect) {
       const session = await this.bootstrap({ config: nextConfig, onDeviceCode: details => this.emit({ type: 'auth-device-code', ...details }) });
       this.desktopSettings.save(next);
@@ -198,6 +208,19 @@ export class DesktopEngine {
     } else {
       this.desktopSettings.save(next);
     }
+    // The context window and output cap are per-agent state, not a connection
+    // setting: apply them to live agents instead of tearing the session down.
+    if (tune) {
+      const window = {
+        contextWindow: nextConfig.contextWindow, contextWindowExplicit: nextConfig.contextWindowExplicit,
+        maxTokens: nextConfig.maxTokens, maxTokensExplicit: nextConfig.maxTokensExplicit,
+      };
+      Object.assign(this.config, window);
+      for (const agent of this.agents.values()) {
+        Object.assign(agent.config, window);
+        agent.contextWindow = nextConfig.contextWindow;
+      }
+    }
     if (Object.hasOwn(patch, 'composioApiKey')) {
       this.config.composioApiKey = nextConfig.composioApiKey;
       void this.connectTools();
@@ -218,15 +241,108 @@ export class DesktopEngine {
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
   listTeammates() { return this.teammates.load().list(); }
-  createTeammate(input) { const item = this.teammates.create(input); this.emit({ type: 'teammates-changed' }); return item; }
+  async workspaceSnapshot(id) {
+    const agent = this.agents.get(id);
+    const cwd = agent?.cwd || projectWorkspace(new ProjectStore(this.projectsFile).load().find(this.teammates.find(id)?.projectId)) || process.cwd();
+    const changes = await changedFiles(cwd);
+    const seen = new Set(changes.files.map(item => item.path));
+    for (const file of this.reviewChanges.get(id)?.keys() || []) {
+      const relative = path.relative(changes.root, file).split(path.sep).join('/');
+      if (!relative.startsWith('..') && !seen.has(relative)) changes.files.push({ path: relative, status: ' M', untracked: false, captured: true });
+    }
+    return { ...changes, cwd, artifacts: recentArtifacts(cwd, this.loadThread(id)), jobs: jobList(agent) };
+  }
+  async workspaceDiff(id, file) {
+    const snapshot = await this.workspaceSnapshot(id);
+    const captured = this.reviewChanges.get(id)?.get(path.resolve(snapshot.root, file));
+    if (captured && snapshot.files.find(item => item.path === file && item.captured)) return captured;
+    return fileDiff(snapshot.cwd, file);
+  }
+  stopWorkspaceJob(id, jobId) { return stopAgentJob(this.agents.get(id), jobId); }
+  listProjects() { return new ProjectStore(this.projectsFile).load().projects.map(projectSummary); }
+  watchProjects() {
+    if (this.projectFileWatcher) return;
+    const read = () => { try { return fs.readFileSync(this.projectsFile, 'utf8'); } catch (err) { if (err.code === 'ENOENT') return ''; throw err; } };
+    this.projectFileVersion = read();
+    this.projectFileWatcher = () => {
+      let next;
+      try { next = read(); } catch { return; }
+      if (next === this.projectFileVersion) return;
+      this.projectFileVersion = next;
+      try {
+        for (const projectId of new Set(this.teammates.list().map(item => item.projectId).filter(Boolean))) this.refreshProjectAgents(projectId);
+        this.emit({ type: 'projects-changed' });
+      } catch (err) { this.emit({ type: 'error', threadId: null, message: `Could not refresh projects: ${err.message}` }); }
+    };
+    fs.watchFile(this.projectsFile, { interval: 750, persistent: false }, this.projectFileWatcher);
+  }
+  createProject(input) {
+    const project = new ProjectStore(this.projectsFile).load().add(input);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(project);
+  }
+  updateProject(id, patch) {
+    const project = new ProjectStore(this.projectsFile).load().update(id, patch);
+    if (!project) throw new Error('Project not found');
+    this.refreshProjectAgents(id);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(project);
+  }
+  addProjectTodo(id, text) {
+    const project = new ProjectStore(this.projectsFile).load().addTodo(id, text);
+    if (!project || project.error) throw new Error(project?.error || 'Project not found');
+    this.refreshProjectAgents(id);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(project);
+  }
+  addProjectRecord(id, kind, text) {
+    if (!['note', 'decision'].includes(kind)) throw new Error('Choose note or decision');
+    const store = new ProjectStore(this.projectsFile).load();
+    const project = kind === 'note' ? store.addNote(id, text) : store.addDecision(id, text);
+    if (!project || project.error) throw new Error(project?.error || 'Project not found');
+    this.refreshProjectAgents(id);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(project);
+  }
+  completeProjectTodo(id, ref) {
+    const result = new ProjectStore(this.projectsFile).load().completeTodo(id, ref);
+    if (!result || result.error) throw new Error(result?.error || 'Project not found');
+    this.refreshProjectAgents(id);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(result.project);
+  }
+  refreshProjectAgents(id) {
+    const project = new ProjectStore(this.projectsFile).load().find(id);
+    for (const [threadId, agent] of this.agents) {
+      if (this.teammates.find(threadId)?.projectId !== id) continue;
+      agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+    }
+  }
+  assignProject(threadId, projectId) {
+    if (this.turns.has(threadId)) throw new Error('Wait for this reply to finish before switching projects');
+    const project = projectId ? new ProjectStore(this.projectsFile).load().find(projectId) : null;
+    if (projectId && (!project || project.archived)) throw new Error('Choose an available project');
+    const teammate = this.teammates.update(threadId, { projectId: project?.id || null });
+    this.agents.get(threadId)?.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+    this.emit({ type: 'teammates-changed' });
+    return teammate;
+  }
+  createTeammate(input) {
+    if (input?.projectId && !new ProjectStore(this.projectsFile).load().find(input.projectId)) throw new Error('Project not found');
+    const item = this.teammates.create(input); this.emit({ type: 'teammates-changed' }); return item;
+  }
   updateTeammate(id, patch) {
+    if (this.turns.has(id) && Object.hasOwn(patch, 'projectId')) throw new Error('Wait for this reply to finish before switching projects');
+    const project = patch.projectId ? new ProjectStore(this.projectsFile).load().find(patch.projectId) : null;
+    if (patch.projectId && !project) throw new Error('Project not found');
     const item = this.teammates.update(id, patch);
     const agent = this.agents.get(id);
     if (agent) {
       agent.config.agentName = item.name;
       agent.config.systemExtra = item.persona;
       if (item.model) agent.model = item.model;
-      agent.refreshPrompt?.();
+      if (Object.hasOwn(patch, 'projectId')) agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+      else agent.refreshPrompt?.();
     }
     this.emit({ type: 'teammates-changed' });
     return item;
@@ -264,23 +380,25 @@ export class DesktopEngine {
     if (!item) throw new Error('Teammate not found');
     if (this.agents.has(id)) return this.agents.get(id);
     const config = { ...this.config, agentName: item.name, systemExtra: item.persona };
-    let project = '', projectId = null;
+    let project = '', projectId = null, workspacePath = null;
     if (item.projectId) {
-      const projects = new ProjectStore(PROJECTS_FILE).load();
+      const projects = new ProjectStore(this.projectsFile).load();
       const selected = projects.find(item.projectId);
       if (selected) {
-        projects.data.active = selected.id;
-        project = projects.promptBlock();
+        project = projectContext(selected);
         projectId = selected.id;
+        workspacePath = projectWorkspace(selected);
       }
     }
     const agent = new this.AgentClass({
-      client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId,
+      client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId, workspacePath,
       journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
       confirm: (name, detail) => this.approvals.request(id, name, detail),
       print: () => {}, write: () => {},
     });
     agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+    agent.state ||= {};
+    agent.state.onJobEvent = () => this.emit({ type: 'workspace-changed', threadId: id });
     agent.messages.push(...this._rawThread(id));
     this.agents.set(id, agent);
     return agent;
@@ -304,9 +422,32 @@ export class DesktopEngine {
         const name = call.function?.name || 'tool';
         let args = {};
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
+        this.pendingFileEdits.set(`${id}:${call.id}`, captureToolFiles(name, args, agent.cwd));
         this.emit({ type: 'tool-call', threadId: id, callId: call.id, name, args: displayArgs(name, args) });
       },
-      onToolResult: (call, result) => this.emit({ type: 'tool-result', threadId: id, callId: call.id, text: String(result || ''), isError: /^Error\b/i.test(String(result || '')) }),
+      onToolResult: (call, result) => {
+        const pendingKey = `${id}:${call.id}`;
+        const pending = this.pendingFileEdits.get(pendingKey) || [];
+        this.pendingFileEdits.delete(pendingKey);
+        let didChange = false;
+        if (!/^(Error\b|Not run:|The user denied|Action cancelled)/i.test(String(result || ''))) {
+          const changes = completedFileDiffs(pending);
+          if (changes.length) {
+            didChange = true;
+            if (!this.reviewChanges.has(id)) this.reviewChanges.set(id, new Map());
+            for (const change of changes) this.reviewChanges.get(id).set(change.path, change);
+          }
+        }
+        this.emit({ type: 'tool-result', threadId: id, callId: call.id, text: String(result || ''), isError: /^Error\b/i.test(String(result || '')) });
+        if (['project', 'project_memory'].includes(call.function?.name) && !/^Error\b/i.test(String(result || ''))) {
+          const assigned = this.teammates.find(id)?.projectId;
+          if (call.function.name === 'project' && agent.projectId !== assigned) this.teammates.update(id, { projectId: agent.projectId });
+          if (agent.projectId) this.refreshProjectAgents(agent.projectId);
+          this.emit({ type: 'teammates-changed' });
+          this.emit({ type: 'projects-changed' });
+        }
+        if (['write_file', 'edit_file', 'edit_lines', 'apply_patch', 'move_file', 'delete_file', 'run_command', 'job_stop', 'git'].includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: id, open: didChange });
+      },
     };
     const work = Promise.resolve().then(() => agent.send(prompt, callbacks)).then(reply => {
       this.teammates.touch(id, reply || prompt);
@@ -320,6 +461,7 @@ export class DesktopEngine {
       this.turns.delete(id);
       this.approvals.cancelThread(id);
       this.emit({ type: 'turn-end', threadId: id, turnId });
+      this.emit({ type: 'workspace-changed', threadId: id });
     });
     this.turns.set(id, work);
     // IPC returns immediately; errors are delivered as events and observed here.
@@ -370,6 +512,7 @@ export class DesktopEngine {
   }
 
   async close() {
+    if (this.projectFileWatcher) { fs.unwatchFile(this.projectsFile, this.projectFileWatcher); this.projectFileWatcher = null; }
     this.approvals.cancelAll();
     for (const id of this.turns.keys()) this.agents.get(id)?.cancel();
     await this.mcp.closeAll();

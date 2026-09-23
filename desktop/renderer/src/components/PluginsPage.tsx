@@ -20,8 +20,8 @@ function PluginLogo({ slug, label }: { slug: string; label: string }) {
   return <span className="plugin-logo letter" style={{ '--plugin-hue': hue } as React.CSSProperties}>{label.slice(0, 1).toUpperCase()}</span>;
 }
 
-export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettings, hasComposioKey }: {
-  chrome: string; sidebarOpen: boolean; onToggleSidebar: () => void; onOpenSettings: () => void; hasComposioKey: boolean;
+export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettings, hasComposioKey, toolsRevision }: {
+  chrome: string; sidebarOpen: boolean; onToggleSidebar: () => void; onOpenSettings: () => void; hasComposioKey: boolean; toolsRevision: number;
 }) {
   const [overview, setOverview] = useState<PluginsOverview | null>(null);
   const [cards, setCards] = useState<PluginCard[]>([]);
@@ -51,7 +51,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
     finally { setLoading(false); setRefreshing(false); }
   }, []);
 
-  useEffect(() => { void loadOverview(); }, [loadOverview, hasComposioKey]);
+  useEffect(() => { void loadOverview(); }, [loadOverview, hasComposioKey, toolsRevision]);
 
   useEffect(() => {
     if (!overview || overview.mode === 'unavailable') { setCards([]); setCursor(null); return; }
@@ -166,7 +166,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
 
   return <main className="plugins-pane">
     <header className="plugins-header drag-region"><div className="plugins-header-left no-drag">
-      {!sidebarOpen && <>{chrome === 'custom' && <WindowControls />}<button type="button" className="icon-button" onClick={onToggleSidebar} aria-label="Show sidebar"><Icon name="panelLeft" size={18} /></button></>}
+      {!sidebarOpen && <>{chrome === 'custom' && <WindowControls />}<button type="button" className="icon-button" onClick={onToggleSidebar} aria-label="Show sidebar" aria-expanded={false}><Icon name="panelLeft" size={18} /></button></>}
       <span className="plugins-header-icon"><Icon name="plug" size={17} /></span><strong>Plugins</strong>
     </div><div className="plugins-header-actions no-drag"><button type="button" className="icon-button" onClick={() => void loadOverview(true)} disabled={refreshing} aria-label="Refresh connected apps" title="Refresh connected apps"><Icon name="refresh" size={17} /></button><button type="button" className="plugins-header-settings" onClick={onOpenSettings}><Icon name="settings" size={15} /> Settings</button></div></header>
 

@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom']);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
 export function normalizeApiBase(value) {
@@ -30,6 +30,13 @@ function validatePatch(patch) {
       clean.appearance = value;
     } else if (key === 'customApiBase') {
       clean.customApiBase = normalizeApiBase(value);
+    } else if (key === 'contextWindow' || key === 'maxTokens') {
+      // 0 (or blank) means "leave it to the default / the model". Any positive
+      // value is a token count the user typed; cap it so a typo cannot ask for
+      // a billion-token window.
+      const n = value === '' || value == null ? 0 : Number(value);
+      if (!Number.isFinite(n) || n < 0 || n > 10_000_000) throw new Error(`Enter a valid ${key === 'maxTokens' ? 'max output tokens' : 'context window'} value`);
+      clean[key] = Math.floor(n);
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
       const limit = key === 'model' ? 200 : 4096;
@@ -59,6 +66,17 @@ export function applyDesktopSettings(base, saved = {}) {
     config.apiKey = saved.kiloApiKey;
   }
   if (own(saved, 'model')) config.model = saved.model;
+  // A compatible endpoint often advertises no context window, so the app falls
+  // back to a small default and can run out of room for tools. Let the user
+  // declare the real numbers; an explicit value must win over the default.
+  if (own(saved, 'contextWindow') && saved.contextWindow > 0) {
+    config.contextWindow = saved.contextWindow;
+    config.contextWindowExplicit = true;
+  }
+  if (own(saved, 'maxTokens') && saved.maxTokens > 0) {
+    config.maxTokens = saved.maxTokens;
+    config.maxTokensExplicit = true;
+  }
   return config;
 }
 
@@ -101,6 +119,8 @@ export class DesktopSettingsStore {
       model: this.data.model || config.model || '',
       customApiBase: this.data.customApiBase || (provider === 'custom' ? config.apiBase || '' : ''),
       appearance: this.data.appearance || 'graphite',
+      contextWindow: this.data.contextWindow || 0,
+      maxTokens: this.data.maxTokens || 0,
       hasCustomApiKey: Boolean(this.data.customApiKey || (provider === 'custom' && config.apiKey)),
       hasGroqKey: Boolean(own(this.data, 'groqApiKey') ? this.data.groqApiKey : config.groqApiKey),
       hasKiloKey: Boolean(this.data.kiloApiKey || (provider === 'kilo' && config.apiKey)),

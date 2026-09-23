@@ -7,9 +7,10 @@ export type Teammate = {
 export type Model = { id: string; name?: string; vendor?: string; context?: number; tools?: boolean };
 export type DesktopPreferences = {
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
+  contextWindow: number; maxTokens: number;
   hasCustomApiKey: boolean; hasGroqKey: boolean; hasKiloKey: boolean; hasComposioKey: boolean;
 };
-export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance'>> & {
+export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens'>> & {
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
 };
 export type DesktopSettingsResult = {
@@ -18,6 +19,11 @@ export type DesktopSettingsResult = {
   models: Model[];
 };
 export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean };
+export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; lastUsedAt: string | null };
+export type ChangedFile = { path: string; status: string; untracked: boolean };
+export type WorkspaceJob = { id: string; state: string; command: string; cwd: string; exit_code: number | null; started_at: string; output: string };
+export type WorkspaceSnapshot = { root: string; cwd: string; files: ChangedFile[]; artifacts: { path: string; name: string }[]; jobs: WorkspaceJob[] };
+export type WorkspaceDiff = { path: string; diff: string; untracked?: boolean; truncated?: boolean; message?: string };
 export type PluginAccount = { id: string; alias: string; status: string };
 export type PluginService = { connected: boolean; pending: boolean; status: string; accounts: PluginAccount[] };
 export type PluginsOverview = { mode: 'direct' | 'broker' | 'unavailable'; live: boolean; services: Record<string, PluginService> };
@@ -42,6 +48,8 @@ export type EngineEvent =
   | ({ type: 'settings-updated' } & DesktopSettingsResult)
   | { type: 'auth-device-code'; user_code: string; verification_uri: string }
   | { type: 'teammates-changed' | 'tools-changed'; connected?: string[] }
+  | { type: 'projects-changed' }
+  | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
   | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string }
   | { type: 'turn-end'; threadId: string; turnId: string }

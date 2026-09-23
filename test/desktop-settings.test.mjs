@@ -39,6 +39,56 @@ test('desktop provider override replaces an incompatible project API base', () =
   assert.equal(inherited.apiKey, 'from-env');
 });
 
+test('context window and output cap are configurable and marked explicit', () => {
+  const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', contextWindow: 32768, maxTokens: 4096, contextWindowExplicit: false, maxTokensExplicit: false };
+  const tuned = applyDesktopSettings(base, { contextWindow: 200000, maxTokens: 8192 });
+  assert.equal(tuned.contextWindow, 200000);
+  assert.equal(tuned.contextWindowExplicit, true, 'a declared window must win over the default');
+  assert.equal(tuned.maxTokens, 8192);
+  assert.equal(tuned.maxTokensExplicit, true);
+  const cleared = applyDesktopSettings(base, { contextWindow: 0, maxTokens: 0 });
+  assert.equal(cleared.contextWindow, 32768, 'blank restores the base default');
+  assert.equal(cleared.contextWindowExplicit, false);
+});
+
+test('desktop settings reject a bad window value instead of persisting it', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-window-'));
+  try {
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    assert.throws(() => store.update({ contextWindow: 'lots' }), /valid context window/);
+    assert.throws(() => store.update({ maxTokens: -5 }), /valid max output tokens/);
+    store.update({ contextWindow: 128000, maxTokens: 4096 });
+    const view = new DesktopSettingsStore(store.file).load().publicView({});
+    assert.equal(view.contextWindow, 128000);
+    assert.equal(view.maxTokens, 4096);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('changing the window updates live agents without reconnecting', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-window-engine-'));
+  const client = { id: 'client' };
+  const bootstrap = async ({ config }) => ({ client, tool: null, models: [{ id: 'alpha', name: 'Alpha', tools: true }], model: 'alpha', provider: { name: config.provider } });
+  const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
+  try {
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), sessionsDir: dir,
+      config: { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768, maxTokens: 4096 },
+      bootstrap, mcp, emit: () => {},
+    });
+    await engine.init();
+    const agent = { config: { ...engine.config }, contextWindow: 32768 };
+    engine.agents.set('thread', agent);
+    await engine.saveDesktopSettings({ contextWindow: 200000, maxTokens: 8192 });
+    assert.equal(engine.client, client, 'the provider connection is reused');
+    assert.equal(engine.config.contextWindow, 200000);
+    assert.equal(engine.config.contextWindowExplicit, true);
+    assert.equal(agent.contextWindow, 200000, 'live agents pick up the new window');
+    assert.equal(agent.config.contextWindow, 200000);
+    assert.equal(agent.config.maxTokensExplicit, true);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('custom provider connection checks models with a bounded request and never echoes the key', async () => {
   let seen;
   const result = await testCustomProvider({ apiBase: 'https://models.example/v1', apiKey: 'private-token', fetchImpl: async (url, options) => {

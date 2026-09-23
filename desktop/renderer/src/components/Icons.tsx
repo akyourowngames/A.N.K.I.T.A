@@ -29,6 +29,9 @@ export function Icon({ name, size = 18, stroke = 1.8 }: { name: string; size?: n
     plug: <><path d="M8 3v5M16 3v5M6 8h12v4a6 6 0 0 1-5 5.9V21h-2v-3.1A6 6 0 0 1 6 12V8Z"/></>,
     refresh: <><path d="M20 7v5h-5M4 17v-5h5"/><path d="M5.7 9A7 7 0 0 1 18 7l2 5M4 12l2 5a7 7 0 0 0 12.3-2"/></>,
     arrowRight: <path d="M4 12h16m-6-6 6 6-6 6" />,
+    folder: <path d="M3 7a2 2 0 0 1 2-2h5l2 2h7a2 2 0 0 1 2 2v10H3V7Z" />,
+    file: <><path d="M6 2h8l5 5v15H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2Z"/><path d="M14 2v6h5M8 13h8M8 17h6"/></>,
+    code: <><path d="m8 7-5 5 5 5m8-10 5 5-5 5M14 4l-4 16"/></>,
   };
   return <svg {...shared}>{paths[name] || paths.sparkle}</svg>;
 }

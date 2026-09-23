@@ -168,6 +168,25 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
   await current.init();
   switch (action) {
     case 'listTeammates': return current.listTeammates();
+    case 'listProjects': return current.listProjects();
+    case 'createProject': return current.createProject(payload);
+    case 'updateProject': return current.updateProject(payload.id, payload.patch);
+    case 'assignProject': return current.assignProject(payload.id, payload.projectId);
+    case 'addProjectTodo': return current.addProjectTodo(payload.id, payload.text);
+    case 'addProjectRecord': return current.addProjectRecord(payload.id, payload.kind, payload.text);
+    case 'completeProjectTodo': return current.completeProjectTodo(payload.id, payload.ref);
+    case 'workspaceSnapshot': return current.workspaceSnapshot(payload.id);
+    case 'workspaceDiff': return current.workspaceDiff(payload.id, payload.path);
+    case 'stopWorkspaceJob': return current.stopWorkspaceJob(payload.id, payload.jobId);
+    case 'showWorkspaceFile': {
+      const snapshot = await current.workspaceSnapshot(payload.id);
+      const absolute = path.resolve(snapshot.root, payload.path);
+      const artifact = snapshot.artifacts.find(item => item.path === absolute);
+      const changed = snapshot.files.find(item => path.resolve(snapshot.root, item.path) === absolute);
+      if (!artifact && !changed) throw new Error('File is no longer available in this workspace');
+      shell.showItemInFolder(absolute);
+      return true;
+    }
     case 'createTeammate': return current.createTeammate(payload);
     case 'updateTeammate': return current.updateTeammate(payload.id, payload.patch);
     case 'deleteTeammate': return current.deleteTeammate(payload.id);

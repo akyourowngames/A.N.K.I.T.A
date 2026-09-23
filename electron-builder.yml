@@ -5,6 +5,7 @@ publish:
   provider: github
   owner: akyourowngames
   repo: A.N.K.I.T.A
+  releaseType: release
 directories:
   output: desktop/release
   buildResources: desktop/build
