@@ -2,8 +2,9 @@ name: Release desktop
 
 # Releases are created from the package.json version. Pushing to the default
 # branch (or running this by hand) creates the matching `v<version>` tag and
-# publishes it; pushing a `v*` tag publishes that tag directly. A version that
-# already has a release is skipped, so ordinary commits do not rebuild.
+# publishes it; pushing a `v*` tag publishes that tag directly. A version whose
+# release already has the auto-update manifest (latest.yml) is skipped, so
+# ordinary commits do not rebuild.
 on:
   push:
     branches:
@@ -65,7 +66,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Require the auto-update manifest, not just the release: a release
-          # left behind by a failed upload must be rebuilt, not skipped.
+          # left behind by a partial upload must be completed, not skipped.
           if gh release view "${{ steps.version.outputs.tag }}" --repo "${{ github.repository }}" --json assets --jq '.assets[].name' 2>/dev/null | grep -qx 'latest.yml'; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "${{ steps.version.outputs.tag }} is already published - nothing to do."
@@ -87,17 +88,48 @@ jobs:
             git push origin "${{ steps.version.outputs.tag }}"
           fi
 
-      - name: Build and publish (Azure Trusted Signing)
+      # Build only. Publishing is a separate, deterministic step below: letting
+      # electron-builder create the release races its own parallel target
+      # uploads and can 422 mid-way, leaving a release without latest.yml.
+      - name: Build (Azure Trusted Signing)
         if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID != ''
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           npm run desktop:build
-          npx electron-builder --win --publish always --config electron-builder.signing.yml
-      - name: Build and publish (unsigned or pfx)
+          npx electron-builder --win --publish never --config electron-builder.signing.yml
+      - name: Build (unsigned or pfx)
         if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID == ''
+        run: |
+          npm run desktop:build
+          npx electron-builder --win --publish never
+
+      - name: Publish release with auto-update artifacts
+        if: steps.check.outputs.exists == 'false'
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          npm run desktop:build
-          npx electron-builder --win --publish always
+          set -euo pipefail
+          tag="${{ steps.version.outputs.tag }}"
+          version="${{ steps.version.outputs.version }}"
+          manifest="desktop/release/latest.yml"
+          if [ ! -f "$manifest" ]; then
+            echo "latest.yml was not generated - auto-update would be broken." >&2
+            exit 1
+          fi
+          shopt -s nullglob
+          assets=(
+            desktop/release/Ankita-"$version"-*.exe
+            desktop/release/Ankita-"$version"-*.blockmap
+            "$manifest"
+          )
+          if [ ${#assets[@]} -eq 0 ]; then
+            echo "No build artifacts found in desktop/release." >&2
+            exit 1
+          fi
+          printf 'Publishing %s:\n' "$tag"
+          printf '  %s\n' "${assets[@]}"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+          else
+            gh release create "$tag" "${assets[@]}" --title "$version" --generate-notes --repo "$GITHUB_REPOSITORY"
+          fi
