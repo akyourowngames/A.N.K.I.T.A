@@ -45,6 +45,7 @@ export type UpdateEvent =
   | { type: 'checking'; manual?: boolean }
   | { type: 'available'; version?: string; releaseName?: string | null }
   | { type: 'progress'; percent: number }
+  | { type: 'stalled'; percent: number; version?: string }
   | { type: 'downloaded'; version?: string; releaseName?: string | null }
   | { type: 'current' }
   | { type: 'unsupported' }
@@ -77,7 +78,7 @@ export type DesktopApi = {
   onMenuCommand(callback: (command: MenuCommand) => void): () => void;
   onUpdateEvent(callback: (event: UpdateEvent) => void): () => void;
   updateAction(action: 'check' | 'install'): Promise<boolean>;
-  appAction(action: 'open-config-folder' | 'open-data-folder'): Promise<unknown>;
+  appAction(action: 'open-config-folder' | 'open-data-folder' | 'relaunch'): Promise<unknown>;
   windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<boolean>;
   openExternal(url: string): Promise<void>;
 };

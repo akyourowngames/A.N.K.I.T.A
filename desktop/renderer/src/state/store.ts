@@ -1,4 +1,5 @@
 import type { ChatMessage, EngineEvent, Model, Teammate } from '../../../shared/wire';
+import type { Compat } from '../../../shared/version.mjs';
 
 export type Approval = Extract<EngineEvent, { type: 'approval-request' }>;
 export type Usage = { prompt_tokens: number; completion_tokens: number; estimated_cost: number };
@@ -16,12 +17,14 @@ export type State = {
   approvals: Approval[];
   deviceCode: { user_code: string; verification_uri: string } | null;
   error: string | null;
+  compat: Compat | null;
+  compatDismissed: boolean;
 };
 
 export const initialState: State = {
   phase: 'starting', chrome: 'custom', teammates: [], models: [], settings: null,
   selectedId: null, threads: {}, running: {}, unread: {}, usage: {}, approvals: [],
-  deviceCode: null, error: null,
+  deviceCode: null, error: null, compat: null, compatDismissed: false,
 };
 
 type Action =
@@ -30,6 +33,8 @@ type Action =
   | { type: 'thread-loaded'; id: string; messages: ChatMessage[] }
   | { type: 'teammates-loaded'; teammates: Teammate[] }
   | { type: 'approval-dismissed'; requestId: string }
+  | { type: 'compat'; compat: Compat }
+  | { type: 'compat-dismissed' }
   | { type: 'dismiss-error' }
   | { type: 'event'; event: EngineEvent };
 
@@ -60,6 +65,8 @@ export function reducer(state: State, action: Action): State {
     ? state : patchThread(state, action.id, () => action.messages);
   if (action.type === 'dismiss-error') return { ...state, error: null };
   if (action.type === 'approval-dismissed') return { ...state, approvals: state.approvals.filter(item => item.requestId !== action.requestId) };
+  if (action.type === 'compat') return { ...state, compat: action.compat };
+  if (action.type === 'compat-dismissed') return { ...state, compatDismissed: true };
 
   const event = action.event;
   if (event.type === 'status') return { ...state, phase: event.phase, deviceCode: event.phase === 'ready' ? null : state.deviceCode };

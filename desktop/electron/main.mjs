@@ -6,6 +6,7 @@ import { windowChrome } from './window-chrome.mjs';
 import { loadWindowState, saveWindowState, visibleBounds } from './window-state.mjs';
 import { menuTemplate } from './menu.mjs';
 import { setupUpdater } from './updater.mjs';
+import { IPC_CONTRACT } from '../shared/version.mjs';
 import { CONFIG_DIR } from '../../src/config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -44,6 +45,7 @@ function dispatch(name) {
 }
 
 function checkForUpdates() {
+  if (updater?.isDownloading?.()) return;
   // Marked manual so the renderer reports "already up to date" and errors that
   // a silent background check would keep quiet. Sent before the usability check
   // so the "not supported in this build" message is shown too.
@@ -162,6 +164,7 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
       settings: current.getSettingsSummary(),
       preferences: current.getDesktopPreferences(),
       version: app.getVersion(),
+      contract: IPC_CONTRACT,
       chrome: windowChrome().controls,
     };
   }
@@ -210,7 +213,7 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'pluginsDisconnectAccount': return current.plugins.disconnectAccount(payload);
     case 'pluginsDisconnectService': return current.plugins.disconnectService(payload);
     case 'pluginsRefresh': return current.refreshPlugins();
-    case 'appInfo': return { version: app.getVersion() };
+    case 'appInfo': return { version: app.getVersion(), contract: IPC_CONTRACT };
     default: throw new Error('Unknown desktop action');
   }
 });
@@ -229,6 +232,13 @@ ipcMain.handle('open-external', (_event, value) => openExternal(value));
 ipcMain.handle('app:action', (_event, action) => {
   if (action === 'open-config-folder') return shell.openPath(CONFIG_DIR);
   if (action === 'open-data-folder') return shell.openPath(app.getPath('userData'));
+  // Recovery for a window/main version mismatch: relaunching picks up whatever
+  // is on disk now, so a half-applied update finishes instead of staying stuck.
+  if (action === 'relaunch') {
+    app.relaunch();
+    app.exit(0);
+    return true;
+  }
   return null;
 });
 

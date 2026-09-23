@@ -128,8 +128,23 @@ jobs:
           fi
           printf 'Publishing %s:\n' "$tag"
           printf '  %s\n' "${assets[@]}"
+
+          # Prefer the hand-written CHANGELOG section for this version; fall
+          # back to GitHub's generated notes when there is none.
+          notes="${RUNNER_TEMP:-/tmp}/release-notes.md"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { found = 1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > "$notes" || true
+
           if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
             gh release upload "$tag" "${assets[@]}" --clobber --repo "$GITHUB_REPOSITORY"
+            if [ -s "$notes" ]; then
+              gh release edit "$tag" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
+            fi
+          elif [ -s "$notes" ]; then
+            gh release create "$tag" "${assets[@]}" --title "$version" --notes-file "$notes" --repo "$GITHUB_REPOSITORY"
           else
             gh release create "$tag" "${assets[@]}" --title "$version" --generate-notes --repo "$GITHUB_REPOSITORY"
           fi

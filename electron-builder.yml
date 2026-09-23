@@ -12,6 +12,7 @@ directories:
 files:
   - package.json
   - desktop/electron/**/*
+  - desktop/shared/**/*
   - desktop/renderer/dist/**/*
   - src/**/*
   - tools/**/*

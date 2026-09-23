@@ -64,6 +64,19 @@ test('desktop settings reject a bad window value instead of persisting it', () =
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('an unknown settings key is ignored so a newer window can still save', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-unknown-'));
+  try {
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    // A newer renderer talking to this build would send a key it does not know.
+    // It must not block the save or persist the field.
+    store.update({ model: 'alpha', somethingFromTheFuture: true });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.model, 'alpha');
+    assert.equal(Object.hasOwn(fresh.data, 'somethingFromTheFuture'), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('changing the window updates live agents without reconnecting', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-window-engine-'));
   const client = { id: 'client' };
@@ -71,7 +84,7 @@ test('changing the window updates live agents without reconnecting', async () =>
   const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
   try {
     const engine = new DesktopEngine({
-      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), sessionsDir: dir,
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
       config: { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768, maxTokens: 4096 },
       bootstrap, mcp, emit: () => {},
     });
@@ -128,7 +141,7 @@ test('desktop engine applies provider changes and leaves failed changes unsaved'
   };
   try {
     const engine = new DesktopEngine({
-      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), sessionsDir: dir,
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
       config: { provider: 'groq', apiBase: 'https://api.groq.com/openai/v1', apiKey: 'from-env', model: '', groqApiKey: 'from-env', composioApiKey: '', tools: true },
       bootstrap, mcp, emit: event => events.push(event),
     });
@@ -161,7 +174,7 @@ test('appearance can be saved while a custom provider is unconfigured', async ()
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-appearance-'));
   try {
     const engine = new DesktopEngine({
-      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'settings.json'), sessionsDir: dir,
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
       config: { provider: 'custom', apiBase: '', apiKey: '', model: '', composioApiKey: '' },
       mcp: { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} },
     });

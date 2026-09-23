@@ -7,13 +7,15 @@ import { ApprovalDialog } from './components/ApprovalDialog';
 import { TeammateDialog } from './components/TeammateDialog';
 import { ConfirmDialog } from './components/ConfirmDialog';
 import { UpdateBanner } from './components/UpdateBanner';
+import { VersionMismatchNotice } from './components/VersionMismatchNotice';
 import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
 import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { Icon } from './components/Icons';
+import { IPC_CONTRACT, checkCompat } from '../../shared/version.mjs';
 
-type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; chrome: string };
+type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; contract?: number; chrome: string };
 type UiState = { selectedId?: string | null; sidebarWidth?: number; sidebarOpen?: boolean };
 
 const UI_KEY = 'ankita.ui';
@@ -39,12 +41,13 @@ export default function App() {
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'copilot', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
-  const [version, setVersion] = useState('2.1.1');
+  const [version, setVersion] = useState('2.2.0');
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
   const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
   const [update, setUpdate] = useState<UpdateEvent | null>(null);
   const manualCheck = useRef(false);
+  const downloadActive = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const projectsRequest = useRef(0);
   const refreshProjects = useCallback(async () => {
@@ -69,7 +72,15 @@ export default function App() {
       if (event.type === 'workspace-changed' && event.threadId === selectedIdRef.current) { setWorkspaceRevision(value => value + 1); if (event.open) setReviewOpen(true); }
     });
     void window.ankita.invoke<Bootstrap>('initialize')
-      .then(data => { dispatch({ type: 'bootstrap', ...data, selectedId: loadUi().selectedId ?? null }); if (data.preferences) setPreferences(data.preferences); if (data.version) setVersion(data.version); void refreshProjects(); })
+      .then(data => {
+        dispatch({ type: 'bootstrap', ...data, selectedId: loadUi().selectedId ?? null });
+        if (data.preferences) setPreferences(data.preferences);
+        if (data.version) setVersion(data.version);
+        // The window knows its own build; the main process just told us its own.
+        // If they disagree, say so instead of failing piecemeal later.
+        dispatch({ type: 'compat', compat: checkCompat({ version: data.version, contract: data.contract }, { version: __ANKITA_VERSION__, contract: IPC_CONTRACT }) });
+        void refreshProjects();
+      })
       .catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: null, message: err.message } }));
     return unsubscribe;
   }, [refreshProjects]);
@@ -110,17 +121,21 @@ export default function App() {
     if (!window.ankita?.onUpdateEvent) return;
     return window.ankita.onUpdateEvent(event => {
       if (event.type === 'checking' && event.manual) manualCheck.current = true;
-      const manual = manualCheck.current;
-      // Background checks stay quiet unless there is something to act on.
-      if (!manual && (event.type === 'checking' || event.type === 'current' || event.type === 'unsupported' || event.type === 'error')) return;
-      if (event.type === 'current' || event.type === 'unsupported' || event.type === 'error' || event.type === 'downloaded') manualCheck.current = false;
+      if (event.type === 'available' || event.type === 'progress' || event.type === 'stalled') downloadActive.current = true;
+      // Quiet background checks, but always surface a failure after a download starts.
+      const show = manualCheck.current || downloadActive.current;
+      if ((event.type === 'checking' || event.type === 'current' || event.type === 'unsupported' || event.type === 'error') && !show) return;
+      if (event.type === 'current' || event.type === 'unsupported' || event.type === 'error' || event.type === 'downloaded') {
+        manualCheck.current = false;
+        downloadActive.current = false;
+      }
       setUpdate(event);
     });
   }, []);
 
   useEffect(() => {
     if (!update) return;
-    if (update.type === 'current' || update.type === 'unsupported' || update.type === 'error') {
+    if (update.type === 'current' || update.type === 'unsupported') {
       const timer = setTimeout(() => setUpdate(null), 6000);
       return () => clearTimeout(timer);
     }
@@ -177,6 +192,12 @@ export default function App() {
   }, [state.selectedId]);
   const installUpdate = () => { void window.ankita.updateAction('install'); };
   const dismissUpdate = () => setUpdate(null);
+  // One recovery for a version mismatch: finish a downloaded update if there is
+  // one, otherwise just relaunch so the on-disk build is picked up.
+  const recoverFromMismatch = () => {
+    if (update?.type === 'downloaded') { void window.ankita.updateAction('install'); return; }
+    void window.ankita.appAction('relaunch');
+  };
 
   return <div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''}`}>
     <Sidebar
@@ -201,7 +222,8 @@ export default function App() {
     {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
     {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
     {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
-    {update && <UpdateBanner update={update} onInstall={installUpdate} onDismiss={dismissUpdate} />}
+    {update && <UpdateBanner update={update} onInstall={installUpdate} onOpenRelease={() => void window.ankita.openExternal('https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest')} onDismiss={dismissUpdate} />}
+    {state.compat && !state.compat.ok && !state.compatDismissed && <VersionMismatchNotice compat={state.compat} hasUpdate={update?.type === 'downloaded'} onRestart={recoverFromMismatch} onDismiss={() => dispatch({ type: 'compat-dismissed' })} />}
     {state.error && <div className="error-toast" role="alert"><Icon name="alert" size={18} /><span>{state.error}</span><button onClick={() => dispatch({ type: 'dismiss-error' })} aria-label="Dismiss error"><Icon name="close" size={16} /></button></div>}
   </div>;
 }

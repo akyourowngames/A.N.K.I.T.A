@@ -311,8 +311,7 @@ export class TelegramChannel {
     const chatId = String(job.chatId);
     try {
       await bot.sendTyping(job.chatId);
-      this.activeChat = chatId;
-      await this.runTurn(teammateId, text);
+      await this.runTurn(teammateId, text, chatId);
       const reply = await this.engine.waitForTurn(teammateId);
       const body = String(reply || '').trim() || '(no reply)';
       await bot.send(job.chatId, body, { replyTo: job.messageId });
@@ -326,9 +325,11 @@ export class TelegramChannel {
 
   /**
    * The teammate runs one turn at a time. A message that arrives mid-turn waits
-   * for the current reply and retries once rather than surfacing a race.
+   * for the current reply and retries once rather than surfacing a race. The
+   * chat claims the turn only once it actually starts, so an approval from the
+   * running turn is never routed to a chat that is still waiting.
    */
-  async runTurn(teammateId, text) {
+  async runTurn(teammateId, text, chatId) {
     try {
       await this.engine.send(teammateId, text);
     } catch (err) {
@@ -336,6 +337,7 @@ export class TelegramChannel {
       await this.engine.waitForTurn(teammateId);
       await this.engine.send(teammateId, text);
     }
+    this.activeChat = chatId;
   }
 
   async transcribe(job) {

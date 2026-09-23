@@ -21,7 +21,10 @@ function validatePatch(patch) {
   if (!patch || typeof patch !== 'object' || Array.isArray(patch)) throw new Error('Invalid settings update');
   const clean = {};
   for (const [key, value] of Object.entries(patch)) {
-    if (!keys.has(key)) throw new Error(`Unknown desktop setting: ${key}`);
+    // Ignore keys this build does not know. A newer window talking to an older
+    // main process used to hard-fail every save ("Unknown desktop setting");
+    // dropping the unknown field keeps the rest of the save working.
+    if (!keys.has(key)) continue;
     if (key === 'provider') {
       if (!providers.has(value)) throw new Error('Choose a supported provider');
       clean.provider = value;

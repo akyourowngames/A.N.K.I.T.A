@@ -59,6 +59,8 @@ Run these commands from the repository root. With Copilot selected and no cached
 
 Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
+**Settings → Channels** connects the app to a chat service so you can reach your agent from anywhere, starting with Telegram. Create a bot with [@BotFather](https://t.me/BotFather), paste its token, pick the teammate that should answer, and add the chat ids allowed to talk to it — an unknown chat is told its own id so you can add it. While enabled, the bridge runs with the app and routes each message to that teammate, sharing the same thread and history as the desktop; tool approvals are asked and answered in the chat. Voice notes are transcribed when a Groq key is set, and replies can be spoken back. Channel settings live in `~/.copilot-chat-cli/desktop-channels.json`. Only one process may poll a bot token at a time, so stop the CLI `--daemon` before enabling the same bot here.
+
 Open **Projects** to record a working folder, conventions, decisions, and open tasks. Assign a project from the teammate header or when editing a teammate. That teammate uses the project's folder for file and command tools and receives a short project brief. The **Work review** button in chat opens Git changes with file diffs, recent artifacts, and command jobs with output and a stop action; file edits open it automatically. The agent allows at most six `web_search` calls per user request, then uses the sources already gathered.
 
 ```bash

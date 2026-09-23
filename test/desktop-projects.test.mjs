@@ -13,7 +13,7 @@ test('desktop projects assign real workspace paths and carry decisions and tasks
   fs.mkdirSync(workspace);
   const engine = new DesktopEngine({
     teammateFile: path.join(dir, 'teammates.json'), projectsFile: path.join(dir, 'projects.json'),
-    settingsFile: path.join(dir, 'settings.json'), sessionsDir: dir,
+    settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
     config: { provider: 'test', tools: false, agentName: 'Ankita', username: 'User' },
     bootstrap: async () => ({ client: {}, tool: null, models: [], model: '', provider: { name: 'test' } }),
     mcp: { reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {}, summaries: () => [], connectedIds: [] },
@@ -45,7 +45,7 @@ test('external project edits refresh the desktop and assigned agent context', as
   const events = [];
   const engine = new DesktopEngine({
     teammateFile: path.join(dir, 'teammates.json'), projectsFile,
-    settingsFile: path.join(dir, 'settings.json'), sessionsDir: dir,
+    settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
     config: { provider: 'test', tools: false, agentName: 'Ankita', username: 'User' },
     bootstrap: async () => ({ client: {}, tool: null, models: [], model: '', provider: { name: 'test' } }),
     mcp: { reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {}, summaries: () => [], connectedIds: [] },

@@ -236,6 +236,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
                     <i />{channels.telegram.status.error ? 'Error' : channels.telegram.status.running ? (channels.telegram.status.account || 'Running') : 'Off'}
                   </span>
                 </div>
+                {channels.telegram.status.error && <p className="channel-error">{channels.telegram.status.error}</p>}
                 <p>Create a bot with <button type="button" className="settings-text-button channel-link" onClick={() => void window.ankita.openExternal('https://t.me/BotFather')}>@BotFather</button>, paste its token here, then message the bot and add the chat id it replies with.</p>
                 <label className="channel-toggle"><input type="checkbox" checked={channelDraft.enabled} onChange={event => setChannel('enabled', event.target.checked)} /><span>Run the Telegram bridge while Ankita is open</span></label>
                 <div className="settings-field">
