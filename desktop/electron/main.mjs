@@ -201,6 +201,9 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'getDesktopPreferences': return current.getDesktopPreferences();
     case 'saveDesktopSettings': return current.saveDesktopSettings(payload);
     case 'testCustomProvider': return current.testCustomProvider(payload);
+    case 'getChannels': return current.getChannels();
+    case 'saveChannelSettings': return current.saveChannelSettings(payload.channel, payload.patch);
+    case 'testTelegramChannel': return current.testTelegramChannel(payload);
     case 'pluginsOverview': return current.plugins.overview();
     case 'pluginsCatalog': return current.plugins.catalog(payload);
     case 'pluginsConnect': return current.plugins.connect(payload);

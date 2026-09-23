@@ -1,12 +1,13 @@
 import { useEffect, useRef, useState } from 'react';
-import type { DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model } from '../../../shared/wire';
+import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model, Teammate, TelegramChannelUpdate } from '../../../shared/wire';
 import { Icon } from './Icons';
 
-export type SettingsTab = 'model' | 'providers' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'channels' | 'appearance' | 'about';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
   { id: 'providers', label: 'Providers', icon: 'key' },
+  { id: 'channels', label: 'Channels', icon: 'broadcast' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'about', label: 'About', icon: 'info' },
 ];
@@ -33,9 +34,16 @@ function fromPreferences(value: DesktopPreferences): Draft {
     customApiKey: '', groqApiKey: '', kiloApiKey: '', composioApiKey: '' };
 }
 
-export function SettingsDialog({ tab, onTab, onClose, preferences, models, version, onSaved }: {
+type ChannelDraft = { enabled: boolean; token: string; allowedChatIds: string; ownerChatId: string; teammateId: string; voiceReply: boolean; confirmTimeout: string };
+function fromChannels(view: ChannelsView): ChannelDraft {
+  const tg = view.telegram;
+  return { enabled: tg.enabled, token: '', allowedChatIds: tg.allowedChatIds, ownerChatId: tg.ownerChatId,
+    teammateId: tg.teammateId || '', voiceReply: tg.voiceReply, confirmTimeout: String(tg.confirmTimeout || 300) };
+}
+
+export function SettingsDialog({ tab, onTab, onClose, preferences, models, teammates, version, onSaved }: {
   tab: SettingsTab; onTab: (tab: SettingsTab) => void; onClose: () => void;
-  preferences: DesktopPreferences; models: Model[]; version: string; onSaved: (result: DesktopSettingsResult) => void;
+  preferences: DesktopPreferences; models: Model[]; teammates: Teammate[]; version: string; onSaved: (result: DesktopSettingsResult) => void;
 }) {
   const [draft, setDraft] = useState(() => fromPreferences(preferences));
   const [removed, setRemoved] = useState<Secret[]>([]);
@@ -44,9 +52,23 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
   const [testing, setTesting] = useState(false);
   const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [testResult, setTestResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [channels, setChannels] = useState<ChannelsView | null>(null);
+  const [channelDraft, setChannelDraft] = useState<ChannelDraft | null>(null);
+  const [channelTokenVisible, setChannelTokenVisible] = useState(false);
+  const [channelRemoved, setChannelRemoved] = useState(false);
+  const [channelBusy, setChannelBusy] = useState(false);
+  const [channelTesting, setChannelTesting] = useState(false);
+  const [channelNotice, setChannelNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const [channelTestResult, setChannelTestResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
 
   useEffect(() => { setDraft(fromPreferences(preferences)); setRemoved([]); }, [preferences]);
+  useEffect(() => {
+    if (tab !== 'channels' || !window.ankita) return;
+    void window.ankita.invoke<ChannelsView>('getChannels')
+      .then(view => { setChannels(view); setChannelDraft(fromChannels(view)); setChannelRemoved(false); })
+      .catch(error => setChannelNotice({ tone: 'error', text: error.message }));
+  }, [tab]);
   useEffect(() => { dialog.current?.focus(); }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -81,10 +103,16 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
     const patch: DesktopSettingsUpdate = {};
     if (tab === 'model') {
       if (draft.model !== preferences.model) patch.model = draft.model;
-      const contextWindow = Number(draft.contextWindow) || 0;
-      const maxTokens = Number(draft.maxTokens) || 0;
-      if (contextWindow !== preferences.contextWindow) patch.contextWindow = contextWindow;
-      if (maxTokens !== preferences.maxTokens) patch.maxTokens = maxTokens;
+      // Only send these when the backend advertises them. An older main process
+      // would reject the unknown key and block the whole save.
+      if (typeof preferences.contextWindow === 'number') {
+        const contextWindow = Number(draft.contextWindow) || 0;
+        if (contextWindow !== preferences.contextWindow) patch.contextWindow = contextWindow;
+      }
+      if (typeof preferences.maxTokens === 'number') {
+        const maxTokens = Number(draft.maxTokens) || 0;
+        if (maxTokens !== preferences.maxTokens) patch.maxTokens = maxTokens;
+      }
     }
     if (tab === 'appearance' && draft.appearance !== preferences.appearance) patch.appearance = draft.appearance;
     if (tab === 'providers') {
@@ -115,6 +143,39 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
     } catch (error) { setTestResult({ tone: 'error', text: (error as Error).message }); }
     finally { setTesting(false); }
   };
+  const setChannel = <K extends keyof ChannelDraft>(key: K, value: ChannelDraft[K]) => setChannelDraft(current => current ? { ...current, [key]: value } : current);
+  const saveChannel = async () => {
+    if (!channelDraft || !channels) return;
+    const tg = channels.telegram;
+    const patch: TelegramChannelUpdate = {};
+    if (channelDraft.enabled !== tg.enabled) patch.enabled = channelDraft.enabled;
+    if (channelDraft.allowedChatIds !== tg.allowedChatIds) patch.allowedChatIds = channelDraft.allowedChatIds;
+    if (channelDraft.ownerChatId !== tg.ownerChatId) patch.ownerChatId = channelDraft.ownerChatId;
+    if ((channelDraft.teammateId || null) !== tg.teammateId) patch.teammateId = channelDraft.teammateId || null;
+    if (channelDraft.voiceReply !== tg.voiceReply) patch.voiceReply = channelDraft.voiceReply;
+    const confirmTimeout = Number(channelDraft.confirmTimeout) || 300;
+    if (confirmTimeout !== tg.confirmTimeout) patch.confirmTimeout = confirmTimeout;
+    if (channelDraft.token) patch.token = channelDraft.token;
+    else if (channelRemoved) patch.token = '';
+    if (!Object.keys(patch).length) { setChannelNotice({ tone: 'ok', text: 'Everything is up to date.' }); return; }
+    setChannelBusy(true); setChannelNotice(null);
+    try {
+      const view = await window.ankita.invoke<ChannelsView>('saveChannelSettings', { channel: 'telegram', patch });
+      setChannels(view); setChannelDraft(fromChannels(view)); setChannelRemoved(false); setChannelTokenVisible(false);
+      setChannelNotice({ tone: 'ok', text: view.telegram.status.running ? `Connected as ${view.telegram.status.account || 'your bot'}.` : 'Channel saved.' });
+    } catch (error) { setChannelNotice({ tone: 'error', text: (error as Error).message }); }
+    finally { setChannelBusy(false); }
+  };
+  const testChannel = async () => {
+    if (!channelDraft) return;
+    setChannelTesting(true); setChannelTestResult(null);
+    try {
+      const result = await window.ankita.invoke<{ username: string | null }>('testTelegramChannel', { token: channelDraft.token });
+      setChannelTestResult({ tone: 'ok', text: result.username ? `Connected as @${result.username}` : 'Bot reachable' });
+    } catch (error) { setChannelTestResult({ tone: 'error', text: (error as Error).message }); }
+    finally { setChannelTesting(false); }
+  };
+  const channelHasToken = Boolean(channels?.telegram.hasToken) && !channelRemoved;
 
   return <div className="settings-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="settings-window" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
@@ -164,6 +225,62 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, versi
             <h2 className="settings-section-title">Connected apps</h2>
             <div className="settings-panel"><h2>Composio</h2><p>Connect Gmail, Slack, Notion and other app tools with your Composio project key.</p>{secretField('composioApiKey', 'Project key', 'Enter your Composio key')}</div>
             <div className="settings-provider-actions"><button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save provider settings'}</button><span>Keys are saved on this device and never shown again.</span></div>
+          </div>}
+          {tab === 'channels' && <div className="settings-content">
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="broadcast" size={20} /></span><h1 id="settings-title">Channels</h1><p>Reach your agent from anywhere. Messages are routed to the teammate you choose.</p></div>
+            {!channelDraft || !channels ? <div className="settings-loading">Loading channels…</div> : <>
+              <div className="settings-panel">
+                <div className="channel-card-head">
+                  <span className="channel-brand"><Icon name="send" size={16} />Telegram</span>
+                  <span className={`channel-status ${channels.telegram.status.error ? 'error' : channels.telegram.status.running ? 'live' : ''}`}>
+                    <i />{channels.telegram.status.error ? 'Error' : channels.telegram.status.running ? (channels.telegram.status.account || 'Running') : 'Off'}
+                  </span>
+                </div>
+                <p>Create a bot with <button type="button" className="settings-text-button channel-link" onClick={() => void window.ankita.openExternal('https://t.me/BotFather')}>@BotFather</button>, paste its token here, then message the bot and add the chat id it replies with.</p>
+                <label className="channel-toggle"><input type="checkbox" checked={channelDraft.enabled} onChange={event => setChannel('enabled', event.target.checked)} /><span>Run the Telegram bridge while Ankita is open</span></label>
+                <div className="settings-field">
+                  <div className="settings-field-heading"><label htmlFor="setting-telegram-token">Bot token</label>{channelHasToken && <span className="settings-saved">Saved</span>}{channelRemoved && <span className="settings-removed">Will remove</span>}</div>
+                  <div className="settings-secret-control">
+                    <input id="setting-telegram-token" type={channelTokenVisible ? 'text' : 'password'} value={channelDraft.token}
+                      onChange={event => { setChannel('token', event.target.value); setChannelRemoved(false); setChannelTestResult(null); }}
+                      placeholder={channelHasToken ? 'Enter a new token to replace it' : '123456:ABC-DEF…'} autoComplete="off" spellCheck={false} />
+                    <button type="button" aria-label={channelTokenVisible ? 'Hide bot token' : 'Show bot token'} onClick={() => setChannelTokenVisible(value => !value)}><Icon name={channelTokenVisible ? 'eyeOff' : 'eye'} size={15} /></button>
+                  </div>
+                  <div className="settings-field-foot"><small>{channelHasToken ? 'Your saved token stays hidden.' : 'Stored on this device.'}</small>
+                    {channelHasToken && <button type="button" className="settings-text-button" onClick={() => { setChannel('token', ''); setChannelRemoved(true); }}>Remove token</button>}
+                    {channelRemoved && <button type="button" className="settings-text-button" onClick={() => setChannelRemoved(false)}>Undo</button>}
+                  </div>
+                </div>
+                <div className="settings-field"><label htmlFor="setting-telegram-allowed">Allowed chat ids</label>
+                  <input id="setting-telegram-allowed" value={channelDraft.allowedChatIds} onChange={event => setChannel('allowedChatIds', event.target.value)} placeholder="e.g. 123456789" spellCheck={false} />
+                  <small>Only these chats are answered. Message the bot first; an unknown chat gets its id back so you can add it here.</small>
+                </div>
+                <div className="settings-form-pair">
+                  <div className="settings-field"><label htmlFor="setting-telegram-owner">Owner chat id</label>
+                    <input id="setting-telegram-owner" value={channelDraft.ownerChatId} onChange={event => setChannel('ownerChatId', event.target.value)} placeholder="Optional" spellCheck={false} />
+                    <small>Where proactive alerts are sent. Defaults to the first allowed chat.</small>
+                  </div>
+                  <div className="settings-field"><label htmlFor="setting-telegram-timeout">Approval timeout (seconds)</label>
+                    <input id="setting-telegram-timeout" type="number" min="30" max="3600" inputMode="numeric" value={channelDraft.confirmTimeout} onChange={event => setChannel('confirmTimeout', event.target.value)} placeholder="300" />
+                    <small>How long a tool approval waits for a reply before it is skipped.</small>
+                  </div>
+                </div>
+                <div className="settings-field"><label htmlFor="setting-telegram-teammate">Route messages to</label>
+                  <select id="setting-telegram-teammate" className="settings-select" value={channelDraft.teammateId} onChange={event => setChannel('teammateId', event.target.value)}>
+                    <option value="">{teammates.length ? 'Choose a teammate' : 'Create a teammate first'}</option>
+                    {teammates.map(teammate => <option key={teammate.id} value={teammate.id}>{teammate.name}</option>)}
+                  </select>
+                  <p className="settings-help">Telegram and the desktop share this teammate's thread and history.</p>
+                </div>
+                <label className="channel-toggle"><input type="checkbox" checked={channelDraft.voiceReply} onChange={event => setChannel('voiceReply', event.target.checked)} /><span>Reply to voice notes with voice</span></label>
+                <div className="settings-provider-actions">
+                  <button type="button" className="settings-secondary" onClick={testChannel} disabled={channelTesting || (!channelDraft.token && !channelHasToken)}>{channelTesting ? 'Testing…' : 'Test connection'}</button>
+                  <button type="button" className="settings-primary" onClick={saveChannel} disabled={channelBusy}>{channelBusy ? 'Saving…' : 'Save channel'}</button>
+                  <span role="status" className={channelTestResult?.tone === 'error' ? 'settings-test-error' : 'settings-test-ok'}>{channelTestResult?.text || ''}</span>
+                </div>
+              </div>
+              <div className="settings-note"><Icon name="alert" size={15} />Only one process may poll a bot token at a time. If you run the CLI with <code>--daemon</code>, stop it before enabling Telegram here, or messages will be split between them.</div>
+            </>}
           </div>}
           {tab === 'appearance' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="palette" size={20} /></span><h1 id="settings-title">Appearance</h1><p>Set the tone of your workspace.</p></div>

@@ -16,6 +16,8 @@ import { displayArgs } from '../../tools/index.mjs';
 import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
 import { DesktopSettingsStore, applyDesktopSettings, testCustomProvider } from './settings.mjs';
+import { ChannelStore, ChannelManager } from './channels.mjs';
+import { TelegramBot } from '../../src/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
 import { projectContext, projectSummary, projectWorkspace } from './projects.mjs';
 import { changedFiles, fileDiff, recentArtifacts, jobList, stopAgentJob, captureToolFiles, completedFileDiffs } from './workspace.mjs';
@@ -61,6 +63,7 @@ export class DesktopEngine {
   constructor({
     teammateFile = path.join(CONFIG_DIR, 'desktop-teammates.json'),
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
+    channelsFile = path.join(CONFIG_DIR, 'desktop-channels.json'),
     composioFile = COMPOSIO_FILE,
     sessionsDir = SESSIONS_DIR,
     projectsFile = PROJECTS_FILE,
@@ -69,10 +72,13 @@ export class DesktopEngine {
     bootstrap = createSession,
     AgentClass = Agent,
     mcp = null,
+    telegramBotFactory = null,
     emit = () => {},
   } = {}) {
     this.teammates = new TeammateStore(teammateFile);
     this.desktopSettings = new DesktopSettingsStore(settingsFile);
+    this.channelsFile = channelsFile;
+    this.telegramBotFactory = telegramBotFactory;
     this.composioFile = composioFile;
     this.plugins = new DesktopPlugins({ getConfig: () => this.config || {}, storeFile: composioFile, isLive: () => Boolean(this.mcp?.has?.('composio')) });
     this.sessionsDir = sessionsDir;
@@ -82,12 +88,26 @@ export class DesktopEngine {
     this.bootstrap = bootstrap;
     this.AgentClass = AgentClass;
     this.mcp = mcp || new McpManager({ onChange: () => this.emit({ type: 'tools-changed', connected: this.mcp?.connectedIds || [] }) });
-    this.emit = emit;
+    // Keep the raw sink separate so the channel bridge can observe every event
+    // (approvals included) without the emit path calling back into itself.
+    this._emit = emit;
+    this.emit = (event) => {
+      try { this._emit(event); } catch {}
+      try { this.channels?.handleEngineEvent(event); } catch {}
+    };
     this.agents = new Map();
     this.reviewChanges = new Map();
     this.pendingFileEdits = new Map();
     this.turns = new Map();
     this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
+    this.channels = new ChannelManager({
+      store: new ChannelStore(channelsFile),
+      engine: this,
+      getConfig: () => this.config || {},
+      emit: event => this.emit(event),
+      log: message => { try { console.error('[channels]', message); } catch {} },
+      ...(telegramBotFactory ? { botFactory: telegramBotFactory } : {}),
+    });
     this.projectFileVersion = null;
     this.projectFileWatcher = null;
     this.ready = null;
@@ -105,6 +125,7 @@ export class DesktopEngine {
     this.baseConfig = this.config || loadConfig(this.envPath);
     this.config = applyDesktopSettings(this.baseConfig, this.desktopSettings.data);
     this.teammates.load();
+    this.channels.load();
     this.watchProjects();
     this.emit({ type: 'status', phase: 'authenticating' });
     try {
@@ -126,6 +147,8 @@ export class DesktopEngine {
     }
     // External servers may be slow to start. Make chat usable as soon as the model is ready.
     void this.connectTools();
+    // Channels are opt-in: only an enabled, configured one opens its inbox.
+    void this.channels.startEnabled().catch(err => this.emit({ type: 'error', threadId: null, message: `Could not start channels: ${err.message}` }));
     return this;
   }
 
@@ -237,6 +260,25 @@ export class DesktopEngine {
     const savedKey = apiBase === activeBase ? this.desktopSettings.data.customApiKey || (this.provider?.name === 'custom' ? this.config.apiKey : '') : '';
     const apiKey = Object.hasOwn(input, 'apiKey') ? input.apiKey : savedKey;
     return testCustomProvider({ apiBase, apiKey });
+  }
+
+  getChannels() { return this.channels.publicView(); }
+
+  async saveChannelSettings(channel, patch) {
+    if (channel !== 'telegram') throw new Error('Unknown channel');
+    const next = this.channels.store.preview(patch).telegram;
+    if (next.teammateId && !this.teammates.find(next.teammateId)) throw new Error('Choose an available teammate');
+    const view = await this.channels.save(patch);
+    return view;
+  }
+
+  /** Verifies a bot token without persisting it or starting the bridge. */
+  async testTelegramChannel(input = {}) {
+    const token = String(input.token || '').trim() || this.channels.store.telegram().token;
+    if (!token) throw new Error('Enter a bot token first');
+    const bot = (this.telegramBotFactory || (options => new TelegramBot(options)))({ token });
+    const me = await bot.whoami();
+    return { username: me?.username || null, name: [me?.first_name, me?.last_name].filter(Boolean).join(' ') || null };
   }
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
@@ -513,6 +555,7 @@ export class DesktopEngine {
 
   async close() {
     if (this.projectFileWatcher) { fs.unwatchFile(this.projectsFile, this.projectFileWatcher); this.projectFileWatcher = null; }
+    await this.channels.stopAll().catch(() => {});
     this.approvals.cancelAll();
     for (const id of this.turns.keys()) this.agents.get(id)?.cancel();
     await this.mcp.closeAll();

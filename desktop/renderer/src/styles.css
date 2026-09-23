@@ -441,6 +441,19 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .settings-about > p:not(.settings-about-version) { max-width: 425px; margin: 0 auto; color: #a4aaa5; font-size: 13px; line-height: 1.7; }
 .settings-about-meta { display: flex; justify-content: center; gap: 16px; margin-top: 42px; color: #818782; font-size: 10.5px; }
 .settings-about-meta span + span::before { content: '·'; margin-right: 16px; }
+.settings-loading { padding: 30px 0; color: #929a94; font-size: 12px; }
+.channel-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
+.channel-brand { display: inline-flex; align-items: center; gap: 9px; color: #e6e7e2; font-size: 13px; font-weight: 650; }
+.channel-brand svg { color: var(--gold-light); }
+.channel-status { display: inline-flex; align-items: center; gap: 7px; color: #8d938e; font-size: 10.5px; font-weight: 600; }
+.channel-status i { width: 7px; height: 7px; border-radius: 50%; background: #5b605c; }
+.channel-status.live { color: #a4cbb1; }
+.channel-status.live i { background: #6fbf8c; box-shadow: 0 0 0 3px rgba(111,191,140,.15); }
+.channel-status.error { color: #e0b7ab; }
+.channel-status.error i { background: #d98b7e; }
+.channel-toggle { display: flex; align-items: center; gap: 10px; margin: 4px 0 2px; color: #d6d8d3; font-size: 12px; cursor: pointer; }
+.channel-toggle input { width: 15px; height: 15px; accent-color: var(--gold-light); }
+.channel-link { margin: 0 !important; padding: 0; vertical-align: baseline; }
 
 html[data-theme="mono"] { --canvas: #191919; --sidebar: #121212; --surface: #252525; --surface-hover: #303030; --gold: #d2d2ce; --gold-light: #ecece9; }
 html[data-theme="mono"] .composer-shell, html[data-theme="mono"] .teammate-row.active, html[data-theme="mono"] .settings-window { background: #252525; }

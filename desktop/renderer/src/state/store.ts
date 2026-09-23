@@ -67,6 +67,7 @@ export function reducer(state: State, action: Action): State {
   if (event.type === 'auth-device-code') return { ...state, deviceCode: event };
   if (event.type === 'error') return { ...state, error: event.message, phase: state.phase === 'starting' ? 'error' : state.phase };
   if (event.type === 'approval-request') return { ...state, approvals: [...state.approvals, event] };
+  if (event.type === 'approval-resolved') return { ...state, approvals: state.approvals.filter(item => item.requestId !== event.requestId) };
   if (event.type === 'thread-cleared') return {
     ...state, threads: { ...state.threads, [event.threadId]: [] },
     usage: { ...state.usage, [event.threadId]: { prompt_tokens: 0, completion_tokens: 0, estimated_cost: 0 } },

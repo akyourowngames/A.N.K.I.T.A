@@ -86,10 +86,15 @@ export class TelegramBot {
     return this.allowed.has(String(chatId));
   }
 
-  async call(method, params = {}, { timeoutMs = 30000 } = {}) {
+  async call(method, params = {}, { timeoutMs = 30000, signal = null } = {}) {
     if (!this.enabled) throw new Error("TELEGRAM_BOT_TOKEN is not set");
     const ctrl = new AbortController();
     const timer = setTimeout(() => ctrl.abort(new Error("telegram timeout")), timeoutMs);
+    const onAbort = () => ctrl.abort(signal.reason || new Error("telegram aborted"));
+    if (signal) {
+      if (signal.aborted) onAbort();
+      else signal.addEventListener("abort", onAbort, { once: true });
+    }
     try {
       const res = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
         method: "POST",
@@ -104,6 +109,7 @@ export class TelegramBot {
       return data.result;
     } finally {
       clearTimeout(timer);
+      if (signal) signal.removeEventListener("abort", onAbort);
     }
   }
 
@@ -113,10 +119,10 @@ export class TelegramBot {
   }
 
   /** One long-poll round. Returns normalised jobs (never throws on transient errors). */
-  async poll(offset, { timeoutSec = 25 } = {}) {
+  async poll(offset, { timeoutSec = 25, signal = null } = {}) {
     let updates;
     try {
-      updates = await this.call("getUpdates", { offset, timeout: timeoutSec }, { timeoutMs: (timeoutSec + 15) * 1000 });
+      updates = await this.call("getUpdates", { offset, timeout: timeoutSec }, { timeoutMs: (timeoutSec + 15) * 1000, signal });
     } catch (err) {
       return { jobs: [], offset, error: err.message };
     }

@@ -39,7 +39,7 @@ export default function App() {
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'copilot', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
-  const [version, setVersion] = useState('2.1.0');
+  const [version, setVersion] = useState('2.1.1');
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
   const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
@@ -198,7 +198,7 @@ export default function App() {
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}
     {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} />}
-    {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
+    {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
     {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
     {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
     {update && <UpdateBanner update={update} onInstall={installUpdate} onDismiss={dismissUpdate} />}
