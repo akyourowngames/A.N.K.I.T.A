@@ -450,9 +450,16 @@ export class DesktopEngine {
     // Assistant Markdown commonly uses an absolute Windows path while the
     // image tools return workspace-relative paths. Accept both, then enforce
     // the same realpath containment check for either form.
-    const candidate = path.isAbsolute(requestedPath) ? path.resolve(requestedPath) : path.resolve(root, requestedPath);
-    const lexical = path.relative(root, candidate);
-    if (!lexical || lexical === '..' || lexical.startsWith(`..${path.sep}`) || path.isAbsolute(lexical)) throw new Error('Image must be inside the workspace');
+    const workspacePath = path.resolve(cwd);
+    const candidate = path.isAbsolute(requestedPath) ? path.resolve(requestedPath) : path.resolve(workspacePath, requestedPath);
+    // A workspace can be reached through a junction or symlink. Check the
+    // path the agent used as well as its canonical path before resolving the
+    // image; then enforce canonical containment below for symlink safety.
+    const inside = base => {
+      const relative = path.relative(base, candidate);
+      return Boolean(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`) && !path.isAbsolute(relative);
+    };
+    if (!inside(workspacePath) && !inside(root)) throw new Error('Image must be inside the workspace');
     const absolute = await fs.promises.realpath(candidate);
     const contained = path.relative(root, absolute);
     if (contained === '..' || contained.startsWith(`..${path.sep}`) || path.isAbsolute(contained)) throw new Error('Image must be inside the workspace');

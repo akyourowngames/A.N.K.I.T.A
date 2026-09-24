@@ -17,6 +17,9 @@ async function repo(t) {
   t.after(() => fs.rm(cwd, { recursive: true, force: true }));
   const git = (...args) => execFileSync("git", args, { cwd, windowsHide: true, encoding: "utf8" });
   git("init", "-b", "main");
+  // The fixture asserts exact LF bytes after restore. CI runners may inherit
+  // core.autocrlf=true, which would rewrite the checkout to CRLF.
+  git("config", "core.autocrlf", "false");
   git("config", "user.name", "Tool Test");
   git("config", "user.email", "tool@example.invalid");
   await fs.writeFile(path.join(cwd, "hello.txt"), "first\n");

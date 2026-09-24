@@ -7,6 +7,15 @@ continuously updated narrative lives in [docs/changelog.md](docs/changelog.md).
 
 ## [Unreleased]
 
+## [2.4.1] - 2026-09-24
+
+### Fixed
+
+- Image previews work when a Windows workspace is reached through a junction,
+  while canonical path checks still keep previews inside the workspace.
+- The Windows release checks now use a deterministic Git line-ending fixture,
+  and a failing test suite stops publication.
+
 ## [2.4.0] - 2026-09-24
 
 ### Added

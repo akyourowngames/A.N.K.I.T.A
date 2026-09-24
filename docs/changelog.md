@@ -7,6 +7,18 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.4.1 — 2026-09-24
+
+### Fixed
+
+- **Image previews through workspace aliases.** A Windows junction could give
+  the same workspace a different path spelling and cause a valid generated
+  image to be rejected. The preview accepts paths under either spelling and
+  still checks the resolved file against the canonical workspace directory.
+- **Windows release gate.** Git test fixtures now fix their own line-ending
+  setting instead of inheriting the runner's global configuration. Tests are a
+  required release step, so failures stop publication.
+
 ## 2.4.0 — 2026-09-24
 
 ### Added

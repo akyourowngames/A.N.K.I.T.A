@@ -138,3 +138,19 @@ test('desktop image preview only reads images within the teammate workspace', as
   await assert.rejects(engine.readGeneratedImage('chief', '../outside.png'), /workspace/);
   await assert.rejects(engine.readGeneratedImage('missing', 'generated-images/preview.png'), /Teammate not found/);
 });
+
+test('desktop image preview accepts paths through a workspace junction', async t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-image-alias-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const workspace = path.join(base, 'workspace');
+  const alias = path.join(base, 'alias');
+  fs.mkdirSync(path.join(workspace, 'generated-images'), { recursive: true });
+  fs.writeFileSync(path.join(workspace, 'generated-images', 'preview.png'), Buffer.from('image-bytes'));
+  fs.symlinkSync(workspace, alias, process.platform === 'win32' ? 'junction' : 'dir');
+  const engine = Object.create(DesktopEngine.prototype);
+  engine.agents = new Map([['chief', { cwd: alias }]]);
+  engine.teammates = { find: id => id === 'chief' ? { id, projectId: null } : null };
+  const expected = `data:image/png;base64,${Buffer.from('image-bytes').toString('base64')}`;
+  assert.equal((await engine.readGeneratedImage('chief', 'generated-images/preview.png')).dataUrl, expected);
+  assert.equal((await engine.readGeneratedImage('chief', path.join(alias, 'generated-images', 'preview.png'))).dataUrl, expected);
+});
