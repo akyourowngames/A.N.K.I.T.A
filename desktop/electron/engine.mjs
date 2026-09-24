@@ -15,7 +15,7 @@ import { sanitizeMessages, estimateImageBytes } from '../../src/history.mjs';
 import { displayArgs } from '../../tools/index.mjs';
 import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
-import { DesktopSettingsStore, applyDesktopSettings, testCustomProvider } from './settings.mjs';
+import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider } from './settings.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
 import { TelegramBot } from '../../src/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
@@ -262,7 +262,9 @@ export class DesktopEngine {
   async _init() {
     ensureDirs();
     this.desktopSettings.load();
+    const injectedConfig = Boolean(this.config);
     this.baseConfig = this.config || loadConfig(this.envPath);
+    seedFreshDesktopProvider(this.desktopSettings, this.teammates.file, this.baseConfig, injectedConfig);
     this.config = applyDesktopSettings(this.baseConfig, this.desktopSettings.data);
     this.teammates.load();
     this.channels.load();

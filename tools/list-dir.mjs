@@ -43,10 +43,14 @@ export function run(args, ctx) {
 
   if (args.recursive) {
     const hits = [];
-    const stack = [p];
+    const stack = [[p, 0]];
     const seen = new Set();
+    const deadline = Date.now() + 3000;
+    let inspected = 0;
+    let incomplete = false;
     while (stack.length && hits.length < max) {
-      const dir = stack.pop();
+      if (Date.now() > deadline || inspected >= 30000) { incomplete = true; break; }
+      const [dir, depth] = stack.pop();
       let dirEntries;
       try {
         dirEntries = fs.readdirSync(dir, { withFileTypes: true });
@@ -54,20 +58,25 @@ export function run(args, ctx) {
         continue;
       }
       for (const entry of dirEntries) {
+        inspected++;
+        if (Date.now() > deadline || inspected >= 30000) { incomplete = true; break; }
         if (hits.length >= max) break;
         const full = path.join(dir, entry.name);
         if (seen.has(full)) continue;
         seen.add(full);
         if (entry.isDirectory()) {
           hits.push(displayPath(ctx.cwd, full) + "/");
-          if (!SKIP.has(entry.name)) stack.push(full);
+          if (!SKIP.has(entry.name)) {
+            if (depth < 20) stack.push([full, depth + 1]);
+            else incomplete = true;
+          }
         } else if (entry.isFile()) {
           hits.push(displayPath(ctx.cwd, full));
         }
       }
     }
     hits.sort();
-    const more = hits.length >= max ? `\n... reached ${max} entries` : "";
+    const more = hits.length >= max ? `\n... reached ${max} entries` : incomplete ? '\n... inspection incomplete: time or entry limit reached' : "";
     return `${p}\n${hits.join("\n")}${more}`;
   }
 

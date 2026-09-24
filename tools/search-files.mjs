@@ -1,5 +1,5 @@
 import fs from "node:fs";
-import { resolvePath, walkFiles, relativeTo, displayPath, globToRegExp, isBinary } from "./_shared.mjs";
+import { resolvePath, walkProjectFiles, relativeTo, displayPath, globToRegExp, isBinary } from "./_shared.mjs";
 
 export const name = "search_files";
 export const description =
@@ -28,10 +28,10 @@ export const parameters = {
 export const readOnly = true;
 export const needsApproval = false;
 
-function collectFiles(target) {
+function collectFiles(target, onIncomplete) {
   const stat = fs.statSync(target);
   if (stat.isFile()) return [target];
-  return [...walkFiles(target)].sort();
+  return [...walkProjectFiles(target, { onIncomplete })].sort();
 }
 
 function matchesAny(res, rel, base) {
@@ -56,8 +56,12 @@ export function run(args, ctx) {
 
   const matches = [];
   let scanned = 0;
+  let incomplete = false;
+  let bytesRead = 0;
+  const deadline = Date.now() + 3000;
 
-  for (const file of collectFiles(target)) {
+  for (const file of collectFiles(target, () => { incomplete = true; })) {
+    if (Date.now() > deadline || bytesRead >= 32_000_000) { incomplete = true; break; }
     const rel = relativeTo(root, file);
     const base = file.split(/[/\\]/).pop();
     if (include.length && !matchesAny(include, rel, base)) continue;
@@ -65,11 +69,15 @@ export function run(args, ctx) {
 
     let buf;
     try {
+      const size = fs.statSync(file).size;
+      if (size > 2_000_000) continue;
+      if (bytesRead + size > 32_000_000) { incomplete = true; break; }
       buf = fs.readFileSync(file);
     } catch {
       continue;
     }
-    if (buf.length > 2_000_000 || isBinary(buf)) continue;
+    bytesRead += buf.length;
+    if (isBinary(buf)) continue;
     scanned++;
 
     const lines = buf.toString("utf8").split(/\r?\n/);
@@ -84,6 +92,7 @@ export function run(args, ctx) {
     }
   }
 
-  if (!matches.length) return `No matches for /${args.pattern}/ in ${scanned} file(s).`;
-  return `${matches.join("\n")}\n\n[${matches.length} match${matches.length === 1 ? "" : "es"} in ${scanned} file(s)]`;
+  const partial = incomplete ? ' [inspection incomplete: limit reached]' : '';
+  if (!matches.length) return `No matches for /${args.pattern}/ in ${scanned} file(s).${partial}`;
+  return `${matches.join("\n")}\n\n[${matches.length} match${matches.length === 1 ? "" : "es"} in ${scanned} file(s)]${partial}`;
 }

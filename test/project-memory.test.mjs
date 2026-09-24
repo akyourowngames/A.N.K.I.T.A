@@ -159,6 +159,16 @@ test('brief on an empty project is honest rather than padded', () => {
   assert.match(brief, /say so plainly instead of padding/);
 });
 
+test('brief labels stored work as recorded and leaves current deployment health unknown', () => {
+  const name = project();
+  mem.run({ action: 'note', name, text: 'deployed to production last month' }, ctx);
+  mem.run({ action: 'todo', name, text: 'check production health' }, ctx);
+  const brief = mem.run({ action: 'brief', name }, ctx);
+  assert.match(brief, /^RECORDED$/m);
+  assert.match(brief, /^UNKNOWN\n[^\n]*production health/im);
+  assert.doesNotMatch(brief, /CONFIRMED[\s\S]*production is healthy/i);
+});
+
 /* ------------------------- project resolution --------------------------- */
 
 test('the memory tool defaults to the active project', () => {

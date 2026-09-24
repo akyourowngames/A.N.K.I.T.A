@@ -140,6 +140,52 @@ test('a write from a second store instance is not clobbered', (t) => {
   assert.equal(final.find('zumba').summary, 'summary from the first instance');
 });
 
+test('duplicate open project tasks are rejected without changing IDs or history', t => {
+  const { store, file } = tmpStore(t);
+  store.add({ name: 'Work' });
+  const first = store.addTodo('Work', 'Fix desktop freeze');
+  const id = first.todos[0].id;
+  assert.equal(store.addTodo('Work', '  fix   DESKTOP freeze  ').error, 'an open todo with the same text already exists');
+  store.addTodo('Work', 'Resolve merge conflict');
+  store.completeTodo('Work', id);
+  const todos = new ProjectStore(file).load().find('Work').todos;
+  assert.equal(todos.length, 2);
+  assert.equal(todos[0].id, id);
+  assert.ok(todos[0].doneAt);
+  assert.equal(todos[1].text, 'Resolve merge conflict');
+});
+
+test('a full project task list reports a conflict instead of deleting completion history', t => {
+  const { store, file } = tmpStore(t);
+  store.add({ name: 'Work' });
+  for (let i = 0; i < 100; i++) store.addTodo('Work', `Task ${i}`);
+  assert.match(store.addTodo('Work', 'One more').error, /limit/);
+  const todos = new ProjectStore(file).load().find('Work').todos;
+  assert.equal(todos.length, 100);
+  assert.equal(todos[0].text, 'Task 0');
+});
+
+test('a malformed existing project file is never overwritten by a task update', t => {
+  const { store, file } = tmpStore(t);
+  store.add({ name: 'Work' });
+  fs.writeFileSync(file, '{broken');
+  assert.throws(() => store.addTodo('Work', 'New task'), /malformed/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
+});
+
+test('contradictory active tasks already on disk are reported before another write', t => {
+  const { store, file } = tmpStore(t);
+  store.add({ name: 'Work' });
+  store.addTodo('Work', 'Fix freeze');
+  const disk = JSON.parse(fs.readFileSync(file, 'utf8'));
+  disk.projects[0].todos.push({ id: 't2', at: '2026-01-01T00:00:00Z', text: 'fix freeze', done: false });
+  fs.writeFileSync(file, JSON.stringify(disk));
+  const loaded = new ProjectStore(file).load();
+  assert.match(loaded.conflicts.join('\n'), /duplicate active todo/i);
+  assert.throws(() => loaded.addTodo('Work', 'Another task'), /conflict/i);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).projects[0].todos.length, 2);
+});
+
 test('missingFor lists what is still unknown, most useful first', (t) => {
   const { store } = tmpStore(t);
   const bare = store.add({ name: 'zumba' });

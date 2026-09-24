@@ -31,6 +31,9 @@ const DEFAULTS = {
   temperature: null,
   maxTokens: 4096,
   maxToolChars: 65536,
+  maxToolSteps: 24,
+  maxToolCalls: 60,
+  agentDebug: false,
   contextWindow: 32768,
   provider: "",
   apiBase: "",
@@ -210,6 +213,12 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     // default, no max_tokens is sent and the model/provider decides the length.
     maxTokensExplicit: pick("MAX_TOKENS") !== undefined,
     maxToolChars: posInt(pick("MAX_TOOL_CHARS"), DEFAULTS.maxToolChars),
+    // Rounds of tool calling per request before the runtime stops the loop and
+    // asks for a summary. Clamped, with no "unlimited": an unbounded loop is the
+    // bug this bound exists to prevent, so garbage falls back to the default.
+    maxToolSteps: clampInt(pick("MAX_TOOL_STEPS"), 1, 200, DEFAULTS.maxToolSteps),
+    maxToolCalls: clampInt(pick("MAX_TOOL_CALLS"), 1, 500, DEFAULTS.maxToolCalls),
+    agentDebug: onOff(pick("ANKITA_AGENT_DEBUG"), DEFAULTS.agentDebug),
     contextWindow: posInt(pick("CONTEXT_WINDOW"), DEFAULTS.contextWindow),
     // Whether that value was chosen or just defaulted. Providers advertise each
     // model's real window, and it is usually far above the default - but an

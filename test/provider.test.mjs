@@ -9,6 +9,7 @@ const provider = await import('../src/provider.mjs').catch(() => ({}));
 const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'provider-test-'));
 process.env.CONFIG_DIR = path.join(temp, 'config');
 const { loadConfig, CONFIG_DIR } = await import('../src/config.mjs');
+const { createSession } = await import('../src/bootstrap.mjs');
 test.after(() => fs.rmSync(temp, { recursive: true, force: true }));
 
 test('configuration layers project over global settings and retains message alias', () => {
@@ -69,7 +70,7 @@ test('named providers resolve to a keyless gateway or fail loudly', () => {
   const kilo = provider.resolveProvider('kilo');
   assert.equal(kilo.apiBase, 'https://api.kilo.ai/api/gateway');
   assert.equal(kilo.keyless, true);
-  assert.equal(kilo.defaultModel, 'nex-agi/nex-n2.5-mini:free');
+  assert.equal(kilo.defaultModel, 'poolside/laguna-s-2.1:free');
   assert.equal(provider.resolveProvider('KILO').name, 'kilo');
   const groq = provider.resolveProvider('groq');
   assert.equal(groq.apiBase, 'https://api.groq.com/openai/v1');
@@ -77,6 +78,21 @@ test('named providers resolve to a keyless gateway or fail loudly', () => {
   assert.equal(groq.keyConfig, 'groqApiKey');
   assert.equal(groq.keyless, false);
   assert.equal(provider.resolveProvider('nope'), null);
+});
+
+test('Kilo bootstrap selects the free Laguna model even when the gateway marks another as default', async () => {
+  let connected;
+  class FakeClient {
+    constructor(options) { connected = options; }
+    async models() { return [
+      { id: 'poolside/laguna-s-2.1', tools: true, default: true },
+      { id: 'poolside/laguna-s-2.1:free', tools: true },
+    ]; }
+  }
+  const config = { provider: 'kilo', apiBase: '', apiKey: '', model: '', tools: true, contextWindow: 32768 };
+  const session = await createSession({ config, CompatibleClientClass: FakeClient });
+  assert.equal(connected.apiKey, '');
+  assert.equal(session.model, 'poolside/laguna-s-2.1:free');
 });
 
 test('PROVIDER is read from config and normalized', () => {

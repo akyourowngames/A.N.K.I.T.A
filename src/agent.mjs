@@ -1,9 +1,10 @@
 import os from "node:os";
+import path from 'node:path';
 import { ProfileStore } from './profile.mjs';
 import fs from 'node:fs';
 import { PROFILE_FILE, PROJECTS_FILE } from './config.mjs';
 import { ProjectStore } from './projects.mjs';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from './memory-context.mjs';
 import { warmRecall } from '../tools/recall.mjs';
 import { specs, coreSpecs, specsFor, get, needsApproval, isReadOnly, coreNames, categoryOfTool, CATEGORIES } from "../tools/index.mjs";
@@ -12,18 +13,61 @@ import { c, preview, short, clip } from "./ui.mjs";
 import { renderDiff } from "../tools/_diff.mjs";
 import { capOutput } from "../tools/_shared.mjs";
 import { trimMessages } from "./history.mjs";
+import { runFileToolInWorker } from './tool-worker.mjs';
 
 const toolUi = { ...c, preview, short, clip };
 toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: toolUi, ...opts });
 
-const MAX_TOOL_STEPS = 100;
+// Consecutive tool rounds allowed for one user request before the runtime stops
+// asking and has the model answer with what it has. This is a control-flow
+// bound, not advice: the loop's own exit condition is "the model stopped asking
+// for tools", so a model that never feels finished otherwise keeps researching
+// until the budget is gone - observed live, which is what this exists to stop.
+// Override per install with MAX_TOOL_STEPS.
+export const MAX_TOOL_STEPS = 24;
+export const MAX_TOOL_CALLS = 60;
 export const MAX_WEB_SEARCHES_PER_TURN = 6;
+// How many rounds may repeat one identical call (same tool, same arguments)
+// before that repetition counts as no progress and the loop stops. Three allows
+// a legitimate re-read after a file changed; it does not allow a cycle. Counted
+// once per round, so several identical parallel calls are a batching choice and
+// not a loop.
+export const MAX_REPEAT_CALLS = 3;
 
 // Reserved per request on top of the output cap: protocol overhead plus a floor
 // of history. If even the core tools cannot fit inside this, the request is
 // genuinely impossible and trimHistory says so.
 const CONTEXT_OVERHEAD_BYTES = 1024;
 const MIN_HISTORY_BYTES = 512;
+
+/**
+ * Argument identity for the repeat guard. Key order is not a change, so the
+ * arguments are re-serialised in sorted key order; anything unparseable falls
+ * back to the raw string, which still catches a verbatim repeat.
+ */
+function normalizeArgs(raw) {
+  try {
+    const value = JSON.parse(raw || '{}');
+    const stable = (item, field = '') => {
+      if (Array.isArray(item)) return item.map(value => stable(value));
+      if (item && typeof item === 'object') return Object.fromEntries(Object.keys(item).sort().map(key => [key, stable(item[key], key)]));
+      if (typeof item === 'string' && ['path', 'directory', 'destination'].includes(field)) return path.normalize(item);
+      return item;
+    };
+    return JSON.stringify(stable(value));
+  } catch {
+    return String(raw ?? '');
+  }
+}
+
+/** One tool call's identity: the same tool with the same arguments. */
+function callSignature(call) {
+  return `${call?.function?.name || ''}(${normalizeArgs(call?.function?.arguments)})`;
+}
+
+function traceAgent(event, config) {
+  if (config?.agentDebug || process.env.ANKITA_AGENT_DEBUG === '1') console.error(JSON.stringify({ at: new Date().toISOString(), ...event }));
+}
 
 /**
  * Turn a prompt and its attachments into the content an OpenAI-compatible
@@ -120,6 +164,9 @@ export function mcpPromptLines(mcpServers = []) {
 
 export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], personal = '') {
   const today = new Date().toISOString().slice(0, 10);
+  // The prompt states the same bound the loop enforces, so a model that is about
+  // to be cut off knows to summarise rather than stall mid-investigation.
+  const toolRounds = config?.maxToolSteps > 0 ? config.maxToolSteps : MAX_TOOL_STEPS;
   const shell =
     process.platform === "win32" ? "PowerShell 5.1 (so: no && chaining, use ; instead)" : "/bin/sh";
 
@@ -165,6 +212,22 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       "Tell the user the job ID and let the conversation continue. Wait only when the next step needs that command's result.",
     "Chain several tool calls when a task needs them, then summarise in one or two sentences.",
     `Use at most ${MAX_WEB_SEARCHES_PER_TURN} web_search calls per user request. Search broad terms first, read the strongest sources, then answer. The runtime enforces this limit.`,
+    "",
+    "TOOL EXECUTION POLICY",
+    "You are an action-oriented assistant, not an autonomous researcher. Before every tool call, ask yourself: " +
+      "(1) is this necessary to answer the request, (2) do I already have enough information, (3) will the result " +
+      "materially change my answer. If you already have enough, stop calling tools and answer now.",
+    "Once the thing the user asked for is done, summarise it and stop. Do not keep looking for more context after " +
+      "the task is complete, do not investigate your own investigation, and never re-run a call with the same " +
+      "arguments expecting a different result - if a call did not produce what you needed, change the approach or " +
+      "report the limitation.",
+    "Do not inspect editor, agent or operating-system state that the request did not ask about, and do not wander " +
+      "into unrelated files or projects. Investigate what the request implies, not whatever else happens to be reachable.",
+    "If you cannot determine something, say so plainly rather than investigating indefinitely, and name what remains " +
+      "uncertain when you stop.",
+    `The runtime stops the loop after ${toolRounds} consecutive tool rounds in one request, and sooner if you repeat an ` +
+      "identical call. When that happens you are asked to answer anyway: report what you completed and what is still " +
+      "unknown, instead of starting more research.",
     "",
     "You are also a personal assistant. You can set up your own recurring work and track pages " +
       "that should not change silently (numbers like signups or logins). When the user asks for " +
@@ -233,6 +296,11 @@ export class Agent {
     // activatedTools: deferred tool names find_tools has loaded this session.
     this.state = { todos: [], jobs: new Map(), activatedTools: new Set() };
     this.searchesThisTurn = 0;
+    // Signatures of this request's tool calls, for the no-progress guard. Keyed
+    // by callSignature(), valued { name, count }.
+    this.repeatsThisTurn = new Map();
+    // Distinct tools run this request, so a stopped turn can say what it did.
+    this.ranThisTurn = [];
     // One-shot agents (routines, briefings, alerts) always send everything:
     // there is no session to amortise a discovery round trip across.
     this.deferTools = deferTools !== false;
@@ -428,6 +496,22 @@ export class Agent {
     if (!this.abort) return false;
     this.abort.abort();
     return true;
+  }
+
+  /**
+   * Records one tool call and returns its running count for this request.
+   *
+   * The guard lives on the loop, not on runToolCall, because runToolCall is the
+   * seam callers and tests replace - a guard there could be stubbed away. This is
+   * the single counter both the advisory note and the hard stop read.
+   */
+  noteRepeat(call) {
+    const signature = callSignature(call);
+    const entry = this.repeatsThisTurn.get(signature) ||
+      { name: call?.function?.name || 'tool', signature, count: 0 };
+    entry.count += 1;
+    this.repeatsThisTurn.set(signature, entry);
+    return entry;
   }
 
   recordUsage(usage, onUsage) {
@@ -650,7 +734,9 @@ export class Agent {
         }
       }
       if (this.cancelled()) return 'Action cancelled by user.';
-      const result = await tool.run(args, ctx);
+      const result = ['search_files', 'glob', 'list_dir', 'read_file'].includes(tool.name)
+        ? await runFileToolInWorker(tool.name, args, ctx)
+        : await tool.run(args, ctx);
       if (tool.name === 'remember' && args.action !== 'list' && !String(result).startsWith('Error:')) this.memoryContext = null;
       if (['remember', 'project_memory', 'project'].includes(tool.name) && !String(result).startsWith('Error:')) void warmRecall(ctx);
       if (tool.name === 'project' && ['add', 'use', 'archive', 'forget', 'update'].includes(args.action) && !String(result).startsWith('Error:')) {
@@ -674,7 +760,14 @@ export class Agent {
    */
   async send(text, options = {}) {
     this.abort = new AbortController();
+    this.requestId = randomUUID();
+    this.requestStarted = Date.now();
+    this.totalToolCalls = 0;
+    this.terminationReason = null;
+    traceAgent({ event: 'request', request_id: this.requestId }, this.config);
     this.searchesThisTurn = 0;
+    this.repeatsThisTurn = new Map();
+    this.ranThisTurn = [];
     this.turnProjects = new Set(this.projectId ? [this.projectId] : []);
     this.memoryContext = this.useTools ? await personalMemoryContext(text, this.config, { signal: this.abort.signal }) : null;
     if (this.abort.signal.aborted) throw this.abort.signal.reason;
@@ -684,7 +777,11 @@ export class Agent {
     }
     let reply;
     try { reply = await this.sendTurn(text, options); }
-    catch (err) { this.journalComplete = false; throw err; }
+    catch (err) {
+      this.journalComplete = false;
+      traceAgent({ event: 'final', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: this.cancelled() ? 'cancelled' : 'error' }, this.config);
+      throw err;
+    }
     if (this.useTools) void warmRecall({ config: this.config });
     if (this.config.memoryConsolidation === false) this.journalComplete = false;
     if (this.journal && text !== null && this.config.memoryConsolidation !== false) {
@@ -692,6 +789,7 @@ export class Agent {
       try { this.journal({ text, reply, projectId, sessionId: this.sessionId }); }
       catch (err) { this.journalComplete = false; this.print(`Could not journal this turn: ${err.message}`); }
     }
+    traceAgent({ event: 'final', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: this.cancelled() ? 'cancelled' : this.terminationReason || 'model_answer' }, this.config);
     return reply;
   }
 
@@ -726,6 +824,51 @@ export class Agent {
     }
   }
 
+  /**
+   * Ends a turn the runtime stopped, instead of letting the loop run until the
+   * model declares itself finished.
+   *
+   * A stopped turn still owes the user an answer, so the model gets one
+   * tools-free turn to say what it completed, what is uncertain and what is
+   * left. Tools are withheld so it writes instead of investigating again, and
+   * the model that was running the loop answers - the same reason writeReply
+   * keeps the reply there: the context is now large. If even that call fails,
+   * the turn returns plain text naming why it stopped, so a limit never costs
+   * the user their reply.
+   */
+  async finishForced(reason, { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd } = {}) {
+    this.terminationReason = reason;
+    traceAgent({ event: 'termination', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: reason }, this.config);
+    // A bracketed synthetic note, like the cancellation notice below: the
+    // instruction has to reach the model, and this is not a real user turn.
+    this.messages.push({
+      role: 'user',
+      content: `(the runtime stopped the tool loop: ${reason}. Do not call more tools. Answer now with what you completed, what is still uncertain or unfinished, and the single next step.)`,
+    });
+    const onToolModel = this.toolLoopUsed && this.tool;
+    const client = onToolModel ? this.tool.client : this.client;
+    const model = onToolModel ? this.tool.model : this.model;
+    const ran = this.ranThisTurn.length ? ` after using ${this.ranThisTurn.join(', ')}` : '';
+    const fallback = `I stopped there${ran} because ${reason}. The available tool results are in the conversation; any unverified work remains uncertain. Ask me to continue if you want another bounded request.`;
+    onMessageStart?.();
+    try {
+      const result = await this.streamTurn({ client, model, useTools: false, onDelta, onReasoning, onUsage });
+      this.replyModel = result.model || model;
+      const content = result.content || fallback;
+      if (!result.content) onDelta?.(fallback);
+      this.messages.push({ role: 'assistant', content });
+      this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+      return content;
+    } catch {
+      onDelta?.(fallback);
+      this.messages.push({ role: 'assistant', content: fallback });
+      this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+      return fallback;
+    } finally {
+      onMessageEnd?.();
+    }
+  }
+
   async sendTurn(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd, attachments = null } = {}) {
     this.abort ??= new AbortController();
     this.turnUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
@@ -737,7 +880,12 @@ export class Agent {
     // tool model's own text is intermediate, so it is withheld from the UI.
     let usedTools = false;
 
-    for (let step = 0; step < MAX_TOOL_STEPS; step++) {
+    // A bound on the loop itself, not advice to the model. Config may raise it
+    // (MAX_TOOL_STEPS); nothing may remove it, because the loop's only other exit
+    // is the model deciding it has finished.
+    const maxSteps = this.config.maxToolSteps > 0 ? this.config.maxToolSteps : MAX_TOOL_STEPS;
+    const maxCalls = this.config.maxToolCalls > 0 ? this.config.maxToolCalls : MAX_TOOL_CALLS;
+    for (let step = 0; step < maxSteps; step++) {
       const onToolModel = usedTools && this.tool;
       if (onToolModel) this.toolLoopUsed = true;
       const callClient = onToolModel ? this.tool.client : this.client;
@@ -783,6 +931,29 @@ export class Agent {
       }
 
       usedTools = true;
+      traceAgent({ event: 'model_decision', request_id: this.requestId, tool_round: step + 1, total_tool_calls: this.totalToolCalls, requested_tool_calls: toolCalls.length, elapsed_time: Date.now() - this.requestStarted }, this.config);
+      for (const call of toolCalls) {
+        const name = call?.function?.name;
+        if (name && !this.ranThisTurn.includes(name)) this.ranThisTurn.push(name);
+      }
+
+      // A call repeated with identical arguments is a loop symptom: the model is
+      // asking a question it already has the answer to. One round counts a
+      // signature once, so several identical parallel calls stay a batching
+      // choice rather than being read as a cycle.
+      const repeatCounts = new Map();
+      const countedThisRound = new Map();
+      let noProgress = null;
+      for (const call of toolCalls) {
+        const signature = callSignature(call);
+        let entry = countedThisRound.get(signature);
+        if (!entry) {
+          entry = this.noteRepeat(call);
+          countedThisRound.set(signature, entry);
+          if (entry.count >= MAX_REPEAT_CALLS && !noProgress) noProgress = entry;
+        }
+        repeatCounts.set(call.id, entry.count);
+      }
 
       const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : 65536;
 
@@ -794,6 +965,9 @@ export class Agent {
       const reply = (call, content) => ({ role: "tool", tool_call_id: call.id, content });
 
       const run = async (call) => {
+        const started = Date.now();
+        const metadata = { request_id: this.requestId, tool_round: step + 1, total_tool_calls: this.totalToolCalls, tool_name: call?.function?.name || 'tool', normalized_arguments_hash: createHash('sha256').update(callSignature(call)).digest('hex').slice(0, 16) };
+        traceAgent({ event: 'tool_call', ...metadata, elapsed_time: started - this.requestStarted }, this.config);
         try {
           onToolCall?.(call);
         } catch {}
@@ -806,8 +980,15 @@ export class Agent {
         try {
           onToolResult?.(call, result);
         } catch {}
+        traceAgent({ event: 'tool_result', ...metadata, duration_ms: Date.now() - started, success: !/^(Error\b|Not run:|The user denied|Action cancelled)/i.test(String(result)), error: /^(Error\b|Not run:)/i.test(String(result)) ? 'tool_error' : undefined }, this.config);
         try {
-          return reply(call, capOutput(result, budget));
+          // The advisory rides in the tool result, where the model actually reads
+          // it; the hard stop is the loop-level check below.
+          const count = repeatCounts.get(call.id) || 1;
+          const note = count > 1
+            ? `Repeated call: this exact call already ran ${count - 1} time(s) in this request. Its result is above - use it, or change the approach.\n\n`
+            : '';
+          return reply(call, note + capOutput(result, budget));
         } catch (err) {
           return reply(call, `Error: the result could not be formatted (${err.message}).`);
         }
@@ -815,6 +996,10 @@ export class Agent {
 
       // Mutations are barriers: only contiguous read-only calls overlap.
       for (let i = 0; i < toolCalls.length;) {
+        if (this.totalToolCalls >= maxCalls) {
+          for (; i < toolCalls.length; i++) this.messages.push(reply(toolCalls[i], `Not run: the ${maxCalls}-call budget for this request is exhausted.`));
+          break;
+        }
         if (this.cancelled()) {
           // Cancelling must stop the remaining work, and still answer every
           // call the assistant already declared, or the next turn is invalid.
@@ -828,9 +1013,13 @@ export class Agent {
         };
         if (canOverlap(toolCalls[i])) {
           const batch = [];
-          while (i < toolCalls.length && canOverlap(toolCalls[i])) batch.push(toolCalls[i++]);
+          while (i < toolCalls.length && canOverlap(toolCalls[i]) && this.totalToolCalls < maxCalls) {
+            batch.push(toolCalls[i++]);
+            this.totalToolCalls++;
+          }
           this.messages.push(...await Promise.all(batch.map(run)));
         } else {
+          this.totalToolCalls++;
           this.messages.push(await run(toolCalls[i++]));
         }
       }
@@ -839,12 +1028,27 @@ export class Agent {
         this.messages.push({ role: "user", content: "(previous action was cancelled by the user)" });
         return null;
       }
+      if (this.totalToolCalls >= maxCalls) {
+        return await this.finishForced(`the ${maxCalls}-call budget for this request is spent`, { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd });
+      }
+
+      // Stopping is the runtime's call once a call stops making progress. Its
+      // results are already in context, so what follows is a summary, not
+      // another round of investigation.
+      if (noProgress) {
+        return await this.finishForced(
+          `it kept repeating ${noProgress.name} with identical arguments (${noProgress.count} times this request)`,
+          { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd }
+        );
+      }
     }
 
-    const stopped = '(stopped: too many tool calls in a row)';
-    this.messages.push({ role: 'assistant', content: stopped });
-    onDelta?.(stopped);
-    this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
-    return stopped;
+    // Reaching here means the round budget was spent - every other exit above
+    // returns. One tools-free turn answers with what it has, rather than the
+    // canned string this used to end on.
+    return await this.finishForced(
+      `the tool budget for this request is spent (${maxSteps} rounds)`,
+      { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd }
+    );
   }
 }

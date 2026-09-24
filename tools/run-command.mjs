@@ -30,14 +30,20 @@ function argvFor(command) {
 export async function killTree(child) {
   if (!child?.pid) return;
   if (process.platform === 'win32') {
-    await terminateTrackedDescendants(child);
-    if (child.exitCode !== null || child.signalCode !== null) return;
-    await new Promise(resolve => {
+    // taskkill /T already walks a live process's descendants. The expensive
+    // full process-table lookup is needed only after the root has exited.
+    if (child.exitCode !== null || child.signalCode !== null) {
+      await terminateTrackedDescendants(child);
+      return;
+    }
+    const killedTree = await new Promise(resolve => {
       const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      const timer = setTimeout(() => { killer.kill(); resolve(); }, 5000);
-      const done = () => { clearTimeout(timer); resolve(); };
-      killer.once('error', done); killer.once('close', done);
+      const timer = setTimeout(() => { killer.kill(); resolve(false); }, 5000);
+      const done = code => { clearTimeout(timer); resolve(code === 0); };
+      killer.once('error', () => done(null));
+      killer.once('close', done);
     });
+    if (!killedTree) await terminateTrackedDescendants(child);
   } else { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
   try { child.kill('SIGKILL'); } catch {}
 }

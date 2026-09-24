@@ -88,6 +88,12 @@ test('file verbs protect workspace root, reject overwrites, and update todos ato
   assert.ok(!fs.existsSync(path.join(ctx.cwd,'new/a')));
   registry.get('write_todos').run({todos:[{content:'Verify',status:'in_progress'}]},ctx);
   assert.equal(ctx.state.todos[0].content,'Verify');
+  const originalId = ctx.state.todos[0].id;
+  registry.get('write_todos').run({ updates: [{ id: originalId, status: 'completed' }] }, ctx);
+  assert.equal(ctx.state.todos[0].id, originalId);
+  assert.equal(ctx.state.todos[0].status, 'completed');
+  assert.throws(() => registry.get('write_todos').run({ todos: [{ content: 'Different task', status: 'pending' }] }, ctx), /replace|remove/i);
+  assert.equal(ctx.state.todos[0].content, 'Verify');
   assert.throws(() => registry.get('write_todos').run({todos:[{content:'Bad',status:'invalid'}]},ctx));
   assert.equal(ctx.state.todos[0].content,'Verify');
 });

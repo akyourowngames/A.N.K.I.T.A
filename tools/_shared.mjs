@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { execFileSync } from 'node:child_process';
 import path from "node:path";
 
 /** Keeps UTF-8 output bounded without losing the start or final diagnostics. */
@@ -123,14 +124,20 @@ export const SKIP_DIRS = new Set([
   "__pycache__",
   ".venv",
   "venv",
+  "coverage",
+  ".turbo",
+  "target",
 ]);
 
 /** Depth-first file walk that skips noise directories. */
-export function* walkFiles(root, { maxFiles = 20000, skip = SKIP_DIRS } = {}) {
+export function* walkFiles(root, { maxFiles = 10000, maxEntries = 30000, maxDepth = 20, maxMs = 3000, skip = SKIP_DIRS, onIncomplete = () => {} } = {}) {
   let seen = 0;
-  const stack = [root];
+  let entriesSeen = 0;
+  const deadline = Date.now() + maxMs;
+  const stack = [[root, 0]];
   while (stack.length) {
-    const dir = stack.pop();
+    if (Date.now() > deadline || entriesSeen >= maxEntries) { onIncomplete('time or entry budget'); return; }
+    const [dir, depth] = stack.pop();
     let entries;
     try {
       entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -138,14 +145,55 @@ export function* walkFiles(root, { maxFiles = 20000, skip = SKIP_DIRS } = {}) {
       continue;
     }
     for (const entry of entries) {
+      if (++entriesSeen > maxEntries || Date.now() > deadline) { onIncomplete('time or entry budget'); return; }
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (!skip.has(entry.name)) stack.push(full);
+        if (!skip.has(entry.name)) {
+          if (depth < maxDepth) stack.push([full, depth + 1]);
+          else onIncomplete('depth budget');
+        }
       } else if (entry.isFile()) {
         yield full;
-        if (++seen >= maxFiles) return;
+        if (++seen >= maxFiles) { onIncomplete('file budget'); return; }
       }
     }
+  }
+}
+
+/** Git gives exact project ignore semantics; outside repositories use bounded traversal. */
+export function* walkProjectFiles(root, options = {}) {
+  const { maxFiles = 10000, maxDepth = 20, maxMs = 3000, onIncomplete = () => {} } = options;
+  let ancestor = path.resolve(root);
+  let gitProject = false;
+  while (true) {
+    if (fs.existsSync(path.join(ancestor, '.git'))) { gitProject = true; break; }
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    ancestor = parent;
+  }
+  if (!gitProject) { yield* walkFiles(root, options); return; }
+  let raw;
+  try {
+    raw = execFileSync('git', ['-c', 'core.fsmonitor=false', 'ls-files', '--cached', '--others', '--exclude-standard', '-z'], {
+      cwd: root, encoding: 'utf8', timeout: maxMs, maxBuffer: 4_000_000,
+      windowsHide: true, stdio: ['ignore', 'pipe', 'ignore'],
+      env: { ...process.env, GIT_OPTIONAL_LOCKS: '0' },
+    });
+  } catch (error) {
+    if (error.status === 128 || error.code === 'ENOENT') { yield* walkFiles(root, options); return; }
+    onIncomplete('git inventory budget');
+    return;
+  }
+  let count = 0;
+  const deadline = Date.now() + maxMs;
+  for (const relative of raw.split('\0')) {
+    if (!relative) continue;
+    if (Date.now() > deadline || count >= maxFiles) { onIncomplete('time or file budget'); return; }
+    const parts = relative.split(/[/\\]/);
+    if (parts.some(part => SKIP_DIRS.has(part))) continue;
+    if (parts.length > maxDepth + 1) { onIncomplete('depth budget'); continue; }
+    const file = path.join(root, relative);
+    try { if (fs.statSync(file).isFile()) { count++; yield file; } } catch {}
   }
 }
 

@@ -79,6 +79,7 @@ function taggedItems(projectId) {
 
 export function run(args = {}, ctx = {}) {
   const s = store(ctx);
+  if (s.conflicts.length) return `Error: project state conflict: ${s.conflicts.join('; ')}`;
   const action = String(args.action || "log").toLowerCase();
   const found = pickProject(s, args, ctx);
   if (found.error) return `Error: ${found.error}`;
@@ -161,7 +162,9 @@ export function run(args = {}, ctx = {}) {
 
     const blocks = [
       `Write ${ctx.config?.username || "the user"} a short brief on the project "${project.name}", catching them up as if you had been working on it together. Use only what is below; invent nothing.`,
+      'Keep the evidence labels: stored project records are RECORDED, not CONFIRMED current facts. Only current file, git, test, or tool observations may be called CONFIRMED; otherwise say UNKNOWN. Do not infer deployment health from notes.',
       "",
+      "RECORDED",
       "WHAT IT IS",
       `  summary  ${project.summary || "(not recorded yet)"}`,
       project.path ? `  path     ${project.path}` : null,
@@ -198,6 +201,9 @@ export function run(args = {}, ctx = {}) {
     }
 
     blocks.push(
+      'UNKNOWN',
+      '  current production health and whether recorded tasks remain unfinished without a fresh check',
+      '',
       "Write 3-6 sentences, or a few short bullets. Cover where it stands, what is open, and one thing worth doing next.",
       "Name the project once. Address the user by name once, naturally. If there is little recorded yet, say so plainly instead of padding."
     );

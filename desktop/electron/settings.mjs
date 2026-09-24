@@ -122,6 +122,14 @@ export function applyDesktopSettings(base, saved = {}) {
   return config;
 }
 
+/** Persist the keyless starter provider only before the first desktop launch. */
+export function seedFreshDesktopProvider(settings, teammatesFile, baseConfig, injectedConfig = false) {
+  if (injectedConfig || fs.existsSync(settings.file) || fs.existsSync(teammatesFile)) return false;
+  if (['provider', 'apiBase', 'apiKey', 'model'].some(key => baseConfig?.[key])) return false;
+  settings.update({ provider: 'kilo' });
+  return true;
+}
+
 export class DesktopSettingsStore {
   constructor(file) { this.file = file; this.data = {}; }
 

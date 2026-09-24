@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Model } from '../../../shared/wire';
+import type { ChatMessage, Model } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { ModelPicker } from './ModelPicker';
+import { TodoProgress } from './TodoProgress';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
 const MAX_TEXT_BYTES = 200 * 1024;
@@ -195,8 +196,8 @@ async function readFile(file: File): Promise<Attachment> {
   return { name: file.name, image: false, data: toBase64(new TextEncoder().encode(new TextDecoder().decode(bytes))) };
 }
 
-export function Composer({ threadId, name, running, models, model, onModel, onSend, onStop }: {
-  threadId: string; name: string; running: boolean; models: Model[]; model: string;
+export function Composer({ threadId, name, messages, running, models, model, onModel, onSend, onStop }: {
+  threadId: string; name: string; messages: ChatMessage[]; running: boolean; models: Model[]; model: string;
   onModel: (id: string) => void; onSend: (text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => void; onStop: () => void;
 }) {
   const [text, setText] = useState('');
@@ -245,7 +246,7 @@ export function Composer({ threadId, name, running, models, model, onModel, onSe
     setText(''); setAttachments([]); setNotice(''); input.current?.focus();
   };
 
-  return <div className="composer-area"><div className="composer-shell"
+  return <div className="composer-area"><TodoProgress key={threadId} messages={messages} /><div className="composer-shell"
     onDragOver={event => { event.preventDefault(); }}
     onDrop={event => { event.preventDefault(); void addFiles(event.dataTransfer?.files || null); }}>
     <textarea ref={input} rows={1} value={text} onChange={event => setText(event.target.value)} onKeyDown={event => {

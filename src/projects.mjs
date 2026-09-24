@@ -117,25 +117,46 @@ function normalizeConventions(value) {
 export class ProjectStore {
   constructor(file) {
     this.file = file;
+    this.loadError = null;
+    this.conflicts = [];
     this.data = { version: PROJECTS_VERSION, active: null, projects: [] };
   }
 
   load() {
+    this.loadError = null;
+    this.conflicts = [];
     try {
       const parsed = JSON.parse(fs.readFileSync(this.file, "utf8"));
+      if (!parsed || !Array.isArray(parsed.projects)) throw new Error('Invalid project structure');
       this.data = {
         version: PROJECTS_VERSION,
         active: typeof parsed.active === "string" ? parsed.active : null,
         projects: Array.isArray(parsed.projects) ? parsed.projects.filter((p) => p && p.id) : [],
       };
-    } catch {
+      for (const project of this.data.projects) {
+        const ids = new Set();
+        const active = new Set();
+        for (const todo of project.todos || []) {
+          if (ids.has(todo.id)) this.conflicts.push(`${project.id}: duplicate todo ID ${todo.id}`);
+          ids.add(todo.id);
+          if (!todo.done) {
+            const text = String(todo.text || '').trim().replace(/\s+/g, ' ').toLocaleLowerCase();
+            if (active.has(text)) this.conflicts.push(`${project.id}: duplicate active todo ${todo.text}`);
+            active.add(text);
+          }
+        }
+      }
+    } catch (error) {
       // Missing or malformed: start empty rather than crashing the CLI on boot.
+      if (error.code !== 'ENOENT') this.loadError = error;
       this.data = { version: PROJECTS_VERSION, active: null, projects: [] };
     }
     return this;
   }
 
   save() {
+    if (this.loadError) throw new Error(`Existing project state is malformed or unreadable: ${this.loadError.message}`);
+    if (this.conflicts.length) throw new Error(`Project state conflict: ${this.conflicts.join('; ')}`);
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     writeTextFile(this.file, JSON.stringify(this.data, null, 2), "\n");
     return this;
@@ -144,6 +165,8 @@ export class ProjectStore {
   /** Re-read before every write: the tool, the CLI and the daemon each hold one. */
   _fresh() {
     this.load();
+    if (this.loadError) throw new Error(`Existing project state is malformed or unreadable: ${this.loadError.message}`);
+    if (this.conflicts.length) throw new Error(`Project state conflict: ${this.conflicts.join('; ')}`);
     return this;
   }
 
@@ -352,10 +375,15 @@ export class ProjectStore {
     const value = String(text ?? "").trim();
     if (!project) return null;
     if (!value) return { error: "a todo needs some text" };
+    const normalized = value.replace(/\s+/g, ' ').toLocaleLowerCase();
+    if ((project.todos || []).some(todo => !todo.done && String(todo.text).trim().replace(/\s+/g, ' ').toLocaleLowerCase() === normalized)) {
+      return { error: 'an open todo with the same text already exists' };
+    }
+    if ((project.todos || []).length >= MAX_TODOS) return { error: `todo limit (${MAX_TODOS}) reached; archive history before adding more` };
     project.todos = [
       ...(project.todos || []),
       { id: nextTodoId(project.todos), at: new Date().toISOString(), text: value, done: false, doneAt: null, ...(source ? { source } : {}) },
-    ].slice(-MAX_TODOS);
+    ];
     this.save();
     return project;
   }

@@ -58,7 +58,11 @@ test('mid-task history is bounded before each subsequent request', async () => {
   agent.runToolCall = async () => 'x';
   agent.streamTurn = async () => {
     assert.ok(agent.messages.length <= 9);
-    return ++turns < 12 ? { content: '', toolCalls: [call(String(turns), 'read_file', {})] } : { content: 'done', toolCalls: [] };
+    // Each round reads a different file: an agent asking the identical question
+    // round after round is a loop, and the runtime now stops that deliberately.
+    return ++turns < 12
+      ? { content: '', toolCalls: [call(String(turns), 'read_file', { path: `f${turns}.txt` })] }
+      : { content: 'done', toolCalls: [] };
   };
   assert.equal(await agent.send('work'), 'done');
 });

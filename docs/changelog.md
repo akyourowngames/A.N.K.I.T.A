@@ -7,6 +7,50 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.4.0 — 2026-09-24
+
+### Added
+
+- **Kilo starter model.** On a genuinely fresh desktop install, Ankita saves
+  Kilo as the provider and selects `poolside/laguna-s-2.1:free`. The model
+  advertises tool support and needs no key; free access remains subject to
+  provider availability and rate limits. Existing teammate data, saved desktop
+  settings, and explicit provider settings prevent automatic migration.
+- **Conversation plan at the input.** Successful `write_todos` calls drive a
+  compact, expandable checklist above the composer. The row shows completion
+  count and active step, updates live, and reconstructs from saved thread
+  messages. New user turns clear stale plans until the agent updates them.
+
+### Changed
+
+- **Bounded file inspection.** Search and glob use Git's tracked/unignored file
+  inventory where available, skip generated folders, and report incomplete
+  results when a file, depth, byte, or time budget is reached. Blocking file
+  inspection runs in a cancellable worker so the app can still respond.
+
+### Fixed
+
+- **The agent loop stops itself now.** A request could run up to 100 consecutive
+  tool rounds, and the only thing that ended a turn was the model deciding it was
+  finished; running out of rounds ended the request with the literal string
+  `(stopped: too many tool calls in a row)` written into the conversation. The
+  loop is bounded by `MAX_TOOL_STEPS` (default 24, clamped 1-200, so it stays
+  configurable but never unlimited), and it stops early when one call repeats with
+  identical arguments in three separate rounds - the shape of a model asking a
+  question it already has the answer to. Repetition is counted once per round so
+  three identical parallel reads remain a batch. When either limit trips, the
+  model gets one last tools-free turn to say what it completed, what is uncertain
+  and what the next step is; if even that call fails the turn still returns honest
+  text naming what it ran and why it stopped. The system prompt carries the
+  matching policy - answer once you have enough instead of researching on, and do
+  not wander into state the request never asked about.
+- **Project state is safer.** Duplicate open tasks are rejected, todo history is
+  retained until the limit is reached, and malformed or conflicting stored
+  project data is not overwritten by later writes. Stored notes are labelled
+  as records rather than proof of current production state.
+- **Windows command cancellation.** If the command root has already exited,
+  descendant cleanup still runs; if `taskkill /T` fails, the fallback runs.
+
 ## 2.3.0 — 2026-09-24
 
 ### Added

@@ -3,7 +3,27 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { DesktopSettingsStore, applyDesktopSettings, testCustomProvider } from '../desktop/electron/settings.mjs';
+import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider } from '../desktop/electron/settings.mjs';
+
+test('fresh desktop installs select Kilo while existing users and explicit settings keep their provider', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-fresh-provider-'));
+  try {
+    const settingsFile = path.join(dir, 'desktop-settings.json');
+    const teammatesFile = path.join(dir, 'desktop-teammates.json');
+    const fresh = new DesktopSettingsStore(settingsFile).load();
+    assert.equal(seedFreshDesktopProvider(fresh, teammatesFile, { provider: '', apiBase: '', apiKey: '', model: '' }), true);
+    assert.equal(new DesktopSettingsStore(settingsFile).load().data.provider, 'kilo');
+    assert.equal(seedFreshDesktopProvider(fresh, teammatesFile, { provider: '', apiBase: '', apiKey: '', model: '' }), false);
+
+    const existing = new DesktopSettingsStore(path.join(dir, 'existing-settings.json')).load();
+    fs.writeFileSync(teammatesFile, '{}');
+    assert.equal(seedFreshDesktopProvider(existing, teammatesFile, { provider: '', apiBase: '', apiKey: '', model: '' }), false);
+    assert.equal(existing.data.provider, undefined);
+    fs.rmSync(teammatesFile);
+    assert.equal(seedFreshDesktopProvider(existing, teammatesFile, { provider: 'copilot', apiBase: '', apiKey: '', model: '' }), false);
+    assert.equal(seedFreshDesktopProvider(existing, teammatesFile, { provider: '', apiBase: '', apiKey: '', model: 'gpt-4o' }), false);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
 import { createSession } from '../src/bootstrap.mjs';
 import { DesktopEngine } from '../desktop/electron/engine.mjs';
 

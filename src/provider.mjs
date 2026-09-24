@@ -87,9 +87,9 @@ export const PROVIDERS = {
   kilo: {
     label: "Kilo AI Gateway",
     apiBase: "https://api.kilo.ai/api/gateway",
-    // Fastest free model that streams normal content (not reasoning-only) and
-    // supports tool calls - measured, see docs/benchmark notes in the PR.
-    defaultModel: "nex-agi/nex-n2.5-mini:free",
+    // Keyless free coding model with tool support. Availability is subject to
+    // the gateway's free-tier rate limits.
+    defaultModel: "poolside/laguna-s-2.1:free",
     keyless: true,
   },
   groq: {

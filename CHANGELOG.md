@@ -7,6 +7,43 @@ continuously updated narrative lives in [docs/changelog.md](docs/changelog.md).
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-24
+
+### Added
+
+- **A free model for new desktop installs.** First-time users start with Kilo's
+  keyless `poolside/laguna-s-2.1:free`. Existing desktop settings and explicit
+  provider configuration keep their chosen provider. Kilo's free endpoint is
+  subject to availability and rate limits.
+- **Live plan near the composer.** The agent's `write_todos` checklist appears
+  above the message box with a progress count and current step. Expand it to see
+  each status; updates arrive with the conversation and restore when reopened.
+
+### Changed
+
+- File search and glob respect Git ignore rules and bound the amount of work in
+  large folders. Inspection runs off the main agent loop, and partial results
+  say when a limit was reached.
+
+### Fixed
+
+- **A tool loop can no longer run away with a request.** The loop's only exit was
+  the model choosing to stop, so a model that kept declaring calls was allowed 100
+  consecutive tool rounds, and spending that budget wrote the string
+  `(stopped: too many tool calls in a row)` into the transcript as if the assistant
+  had said it. The loop is now bounded by `MAX_TOOL_STEPS` (default 24, clamped
+  1-200) and stops early when the same call repeats with identical arguments in
+  three separate rounds - counted once per round, so identical parallel calls still
+  batch. Either way the model gets one final tools-free turn to report what it
+  completed, what is uncertain and what is left, so a stopped request ends with an
+  answer instead of a canned failure. The system prompt states the matching policy:
+  stop once the request is answered rather than continuing to research.
+- Project tasks no longer silently discard older items or accept duplicate open
+  tasks. Malformed or conflicting project state is left intact instead of being
+  overwritten.
+- Cancelling a Windows command stops its child processes even when the root
+  process has already exited.
+
 ## [2.3.0] - 2026-09-24
 
 ### Added

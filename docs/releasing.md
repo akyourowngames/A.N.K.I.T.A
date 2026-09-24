@@ -47,7 +47,7 @@ its `.blockmap`, and `latest.yml` (all produced automatically).
    `electron-builder --win --publish always` with `GITHUB_TOKEN`. The release
    appears under **Releases** with the installer and update metadata.
 
-Keep the tag and `package.json` version in sync (`v2.1.0` ↔ `2.0.1`… use the
+Keep the tag and `package.json` version in sync (`v2.1.0` ↔ `2.1.0`… use the
 same number). electron-builder names artifacts from `package.json`.
 
 ### Option B — publish from your machine

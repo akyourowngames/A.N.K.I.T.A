@@ -77,6 +77,6 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
       <div />
     </div></div>
     {!atBottom && <button className="jump-to-bottom" onClick={jump} aria-label="Jump to latest"><Icon name="chevron" size={17} /><span>Latest</span></button>}
-    <Composer threadId={teammate.id} name={teammate.name} running={running} models={models} model={teammate.model || defaultModel} onModel={onModel} onSend={onSend} onStop={onStop} />
+    <Composer threadId={teammate.id} name={teammate.name} messages={messages} running={running} models={models} model={teammate.model || defaultModel} onModel={onModel} onSend={onSend} onStop={onStop} />
   </main>;
 }

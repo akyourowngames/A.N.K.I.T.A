@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { resolvePath, walkFiles, relativeTo, displayPath, globToRegExp } from "./_shared.mjs";
+import { resolvePath, walkProjectFiles, relativeTo, displayPath, globToRegExp } from "./_shared.mjs";
 
 export const name = "glob";
 export const description =
@@ -33,8 +33,9 @@ export function run(args, ctx) {
   const re = globToRegExp(args.pattern);
   const exclude = args.exclude ? globToRegExp(args.exclude) : null;
   const hits = [];
+  let incomplete = false;
 
-  for (const file of walkFiles(root)) {
+  for (const file of walkProjectFiles(root, { onIncomplete: () => { incomplete = true; } })) {
     const rel = relativeTo(root, file);
     const base = path.basename(file);
     if (!re.test(rel) && !re.test(base)) continue;
@@ -45,6 +46,7 @@ export function run(args, ctx) {
     }
   }
 
-  if (!hits.length) return `No files matching "${args.pattern}" under ${root}.`;
-  return `${hits.sort().join("\n")}\n\n[${hits.length} file${hits.length === 1 ? "" : "s"}]`;
+  const partial = incomplete ? ' [inspection incomplete: limit reached]' : '';
+  if (!hits.length) return `No files matching "${args.pattern}" under ${root}.${partial}`;
+  return `${hits.sort().join("\n")}\n\n[${hits.length} file${hits.length === 1 ? "" : "s"}]${partial}`;
 }
