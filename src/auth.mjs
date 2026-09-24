@@ -64,7 +64,10 @@ export async function deviceLogin({ log = console.log, write = (s) => process.st
     log("  Code:  " + dc.user_code);
     log("  (opening your browser...)");
     log("");
-    try { exec(`start "" "${dc.verification_uri}"`); } catch {}
+    // Opening the system browser must not leave a visible cmd.exe window beside
+    // the app on Windows. Desktop login uses the device-code dialog; this path
+    // is for the CLI/browser fallback.
+    try { exec(`start "" "${dc.verification_uri}"`, { windowsHide: true }); } catch {}
   }
 
   const intervalMs = Math.max(1, dc.interval || 5) * 1000;

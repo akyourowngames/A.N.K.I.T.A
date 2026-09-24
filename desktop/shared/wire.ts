@@ -8,10 +8,14 @@ export type Model = { id: string; name?: string; vendor?: string; context?: numb
 export type DesktopPreferences = {
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
+  imageApiBase: string; imageModel: string;
+  username: string; timeZone: string; profileSetupDone: boolean;
   hasCustomApiKey: boolean; hasGroqKey: boolean; hasKiloKey: boolean; hasComposioKey: boolean;
+  hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
-export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens'>> & {
+export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
+  imageApiKey?: string; unsplashAccessKey?: string; pixabayApiKey?: string;
 };
 export type DesktopSettingsResult = {
   preferences: DesktopPreferences;
@@ -36,7 +40,7 @@ export type PluginService = { connected: boolean; pending: boolean; status: stri
 export type PluginsOverview = { mode: 'direct' | 'broker' | 'unavailable'; live: boolean; services: Record<string, PluginService> };
 export type PluginsCatalogPage = { cards: PluginCard[]; nextCursor: string | null };
 export type ChatMessage =
-  | { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string }
+  | { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number };
 
 export type MenuCommand = 'new-teammate' | 'find' | 'toggle-sidebar' | 'settings' | 'about';
@@ -61,7 +65,7 @@ export type EngineEvent =
   | { type: 'approval-resolved'; requestId: string }
   | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
-  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string }
+  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string }
   | { type: 'message-start' | 'message-end'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }

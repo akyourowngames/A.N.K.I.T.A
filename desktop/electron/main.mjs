@@ -6,6 +6,7 @@ import { windowChrome } from './window-chrome.mjs';
 import { loadWindowState, saveWindowState, visibleBounds } from './window-state.mjs';
 import { menuTemplate } from './menu.mjs';
 import { setupUpdater } from './updater.mjs';
+import { renderPdfPages } from './pdf-render.mjs';
 import { IPC_CONTRACT } from '../shared/version.mjs';
 import { CONFIG_DIR } from '../../src/config.mjs';
 
@@ -179,6 +180,7 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'addProjectRecord': return current.addProjectRecord(payload.id, payload.kind, payload.text);
     case 'completeProjectTodo': return current.completeProjectTodo(payload.id, payload.ref);
     case 'workspaceSnapshot': return current.workspaceSnapshot(payload.id);
+    case 'readGeneratedImage': return current.readGeneratedImage(payload.id, payload.path);
     case 'workspaceDiff': return current.workspaceDiff(payload.id, payload.path);
     case 'stopWorkspaceJob': return current.stopWorkspaceJob(payload.id, payload.jobId);
     case 'showWorkspaceFile': {
@@ -195,7 +197,8 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'deleteTeammate': return current.deleteTeammate(payload.id);
     case 'loadThread': return current.loadThread(payload.id);
     case 'clearThread': return current.clearThread(payload.id);
-    case 'send': return current.send(payload.id, payload.text);
+    case 'send': return current.send(payload.id, payload.text, payload.attachments);
+    case 'renderPdfPages': return renderPdfPages(payload?.data);
     case 'cancel': return current.cancel(payload.id);
     case 'respondApproval': return current.respondApproval(payload.requestId, payload.answer);
     case 'listModels': return current.listModels();

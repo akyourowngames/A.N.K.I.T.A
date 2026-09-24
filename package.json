@@ -1,6 +1,6 @@
 {
   "name": "ankita",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "private": true,
   "type": "module",
   "description": "Terminal coding agent powered by GitHub Copilot models, with shell and file-editing tools.",

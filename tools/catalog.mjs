@@ -14,6 +14,10 @@ import * as recall from "./recall.mjs";
 import * as git from './git.mjs';
 import * as portStatus from './port-status.mjs';
 import * as killProcess from './kill-process.mjs';
+import * as imageGenerate from './image-generate.mjs';
+import * as unsplashSearch from './unsplash-search.mjs';
+import * as pixabaySearch from './pixabay-search.mjs';
+import * as imageDownload from './image-download.mjs';
 
 /**
  * Grouped tools: most schemas are deferred so discovery loads a whole family.
@@ -110,6 +114,12 @@ export const CATEGORIES = [
     summary: "create directories",
     keywords: ["mkdir", "directory", "folder", "create dir", "new dir"],
     tools: [createDir],
+  },
+  {
+    id: "images",
+    summary: "create original images or search stock photos on Unsplash and Pixabay",
+    keywords: ["image generation", "generate image", "create image", "make an image", "picture", "illustration", "unsplash", "pixabay", "stock photo", "stock image", "photo search"],
+    tools: [imageGenerate, unsplashSearch, pixabaySearch, imageDownload],
   },
 ];
 

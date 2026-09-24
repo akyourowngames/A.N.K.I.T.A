@@ -57,6 +57,12 @@ npm run desktop:start
 
 Run these commands from the repository root. With Copilot selected and no cached login, the desktop window shows a GitHub device code; open the verification page and enter it to sign in. Open **Settings** from the sidebar gear or with `Ctrl+,` (`Cmd+,` on macOS) to choose a model or provider, add a Composio key, test a custom OpenAI-compatible endpoint, and change the appearance. Desktop settings are saved in `~/.copilot-chat-cli/desktop-settings.json` and take priority over `.env` in the desktop app. The CLI continues to use `.env` or its global fallback.
 
+**Images are three separate tools.** Ask the agent to generate an image, search Unsplash, or search Pixabay; it loads the image tools on demand. Generated images are saved under `generated-images/` in the current workspace, and a chosen stock photo can be downloaded to `downloaded-images/`; both preview inline. Unsplash and Pixabay searches return separate attributed preview galleries. Configure the image-generation endpoint/model and the two stock-search keys in **Settings → Images**, or use `IMAGE_API_BASE`, `IMAGE_API_KEY`, `IMAGE_MODEL`, `UNSPLASH_ACCESS_KEY`, and `PIXABAY_API_KEY` in `config.env`. Generation uses the configured image endpoint (or falls back to the current model provider) and may incur provider charges. Both folders are git-ignored — they are content, not source.
+
+### Launch film
+
+Open [`docs/ankita-launch-film.html`](docs/ankita-launch-film.html) in a browser to play the self-contained, 30-second Canvas 2D A.N.K.I.T.A. launch film. Use **Space** to pause/play, **R** to restart, and **F** or the fullscreen control to toggle fullscreen. The memory-search sequence animates a typed prompt, a flying send arrow, and contextual results. Add `?seed=your-seed` to the URL for a repeatable particle arrangement.
+
 Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
 **Settings → Channels** connects the app to a chat service so you can reach your agent from anywhere, starting with Telegram. Create a bot with [@BotFather](https://t.me/BotFather), paste its token, pick the teammate that should answer, and add the chat ids allowed to talk to it — an unknown chat is told its own id so you can add it. While enabled, the bridge runs with the app and routes each message to that teammate, sharing the same thread and history as the desktop; tool approvals are asked and answered in the chat. Voice notes are transcribed when a Groq key is set, and replies can be spoken back. Channel settings live in `~/.copilot-chat-cli/desktop-channels.json`. Only one process may poll a bot token at a time, so stop the CLI `--daemon` before enabling the same bot here.
@@ -73,6 +79,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 
 - **Chat** with streaming markdown replies (syntax-highlighted code boxes, tables) that re-render live without garbling, even on long answers
 - **Act** through 24 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
+- **Make and find images**: generate original pictures, search Unsplash and Pixabay stock photos, and download a chosen result — saved into the workspace and previewed inline in the desktop app
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
 - **Knows your projects**: tell her about one — a folder, a server, a client — and she keeps the details, the conventions and the open questions, and stops asking you the same things
@@ -120,6 +127,8 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `INPUT_COST_PER_MILLION` / `OUTPUT_COST_PER_MILLION` | unset | Enables `$` estimates in `/usage` |
 | `PROVIDER` | `copilot` | Backend: `copilot`, `groq` (low latency; reuses `GROQ_API_KEY`, defaults to `openai/gpt-oss-120b`), or `kilo` — the [Kilo AI Gateway](https://kilo.ai/docs/gateway) with free, keyless models (`nex-agi/nex-n2.5-mini:free` by default) |
 | `API_BASE` / `API_KEY` | unset | OpenAI-compatible endpoint instead of Copilot (always wins over `PROVIDER`) |
+| `IMAGE_API_BASE` / `IMAGE_API_KEY` / `IMAGE_MODEL` | model provider / provider key / `gpt-image-1` | `image_generate` uses the OpenAI-compatible `/images/generations` endpoint; image settings are also available in Desktop → Settings → Images |
+| `UNSPLASH_ACCESS_KEY` / `PIXABAY_API_KEY` | unset | Enables the separate `unsplash_search` and `pixabay_search` stock-photo tools |
 | `TOOL_PROVIDER` / `TOOL_MODEL` | unset | Split the turn: the main model handles chat and the first tool decision, and once a turn uses a tool this model runs the rest of the loop (e.g. `kilo` + `nex-agi/nex-n2.5-mini:free`) while the main model writes the reply. Blank = one model for everything |
 | `GROQ_API_KEY` / `STT_MODEL` | unset / `whisper-large-v3-turbo` | Mic transcription (free key at console.groq.com) |
 | `TTS_PROVIDER` | `edge` | `edge`, `groq`, or `auto` (groq when a key exists) |

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ChatMessage, Model, Project, Teammate } from '../../../shared/wire';
 import type { Usage } from '../state/store';
 import { Composer } from './Composer';
@@ -10,24 +10,43 @@ import { formatTokens } from '../lib/format';
 export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, onToggleSidebar, onToggleReview, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onClear, onDelete }: {
   teammate: Teammate | null; messages: ChatMessage[]; running: boolean; models: Model[]; defaultModel: string;
   projects: Project[]; usage?: Usage; chrome: string; sidebarOpen: boolean; reviewOpen: boolean; onToggleSidebar: () => void; onToggleReview: () => void; onProject: (id: string | null) => void; onOpenProjects: () => void;
-  onSend: (text: string) => void; onStop: () => void; onModel: (id: string) => void;
+  onSend: (text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => void; onStop: () => void; onModel: (id: string) => void;
   onEdit: () => void; onClear: () => void; onDelete: () => void;
 }) {
   const [menu, setMenu] = useState(false);
   const [projectMenu, setProjectMenu] = useState(false);
   const [atBottom, setAtBottom] = useState(true);
-  const bottom = useRef<HTMLDivElement>(null);
   const scroll = useRef<HTMLDivElement>(null);
+  // A ref, not state: the follow decision must be read synchronously by the
+  // layout effect, or a streaming delta arriving right after the user scrolls
+  // up still sees the previous "at bottom" value and yanks the view back down.
+  const stick = useRef(true);
 
-  useEffect(() => { if (atBottom) bottom.current?.scrollIntoView({ behavior: running ? 'instant' : 'smooth', block: 'end' }); }, [messages, running, atBottom]);
-  useEffect(() => { setMenu(false); setProjectMenu(false); setAtBottom(true); }, [teammate?.id]);
+  const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
+    const element = scroll.current;
+    if (!element) return;
+    element.scrollTo({ top: element.scrollHeight, behavior });
+    stick.current = true;
+    setAtBottom(true);
+  }, []);
+
+  // Follow only while parked at the bottom; reading history is never interrupted.
+  useLayoutEffect(() => {
+    if (!stick.current) return;
+    const element = scroll.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [messages, running]);
+
+  useLayoutEffect(() => { setMenu(false); setProjectMenu(false); stick.current = true; setAtBottom(true); const element = scroll.current; if (element) element.scrollTop = element.scrollHeight; }, [teammate?.id]);
 
   const onScroll = () => {
     const element = scroll.current;
     if (!element) return;
-    setAtBottom(element.scrollHeight - element.scrollTop - element.clientHeight < 90);
+    const near = element.scrollHeight - element.scrollTop - element.clientHeight < 90;
+    stick.current = near;
+    setAtBottom(near);
   };
-  const jump = () => { bottom.current?.scrollIntoView({ behavior: 'smooth', block: 'end' }); setAtBottom(true); };
+  const jump = () => scrollToBottom('smooth');
 
   if (!teammate) return <main className="chat-pane">
     {!sidebarOpen && <div className="chat-header drag-region standalone"><div className="no-drag header-left">{chrome === 'custom' && <WindowControls />}<button className="icon-button" onClick={onToggleSidebar} aria-label="Show sidebar" title="Show sidebar (Ctrl+B)" aria-expanded={false}><Icon name="panelLeft" size={18} /></button></div></div>}
@@ -53,9 +72,9 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
       </div>
     </header>
     <div className="chat-scroll" ref={scroll} onScroll={onScroll} aria-label={`${teammate.name} conversation`}><div className="transcript">
-      {!messages.length && !running ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} />)}
+       {!messages.length && !running ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} threadId={teammate.id} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} />)}
       {showThinking && <div className="thinking-row"><span className="message-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span><span className="thinking-dots"><i /><i /><i /></span><span>{teammate.name} is thinking</span></div>}
-      <div ref={bottom} />
+      <div />
     </div></div>
     {!atBottom && <button className="jump-to-bottom" onClick={jump} aria-label="Jump to latest"><Icon name="chevron" size={17} /><span>Latest</span></button>}
     <Composer threadId={teammate.id} name={teammate.name} running={running} models={models} model={teammate.model || defaultModel} onModel={onModel} onSend={onSend} onStop={onStop} />

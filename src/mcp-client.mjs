@@ -39,9 +39,14 @@ function npmRoots() {
   return roots;
 }
 
+/** The final path segment of a command, so `C:\...\npx.cmd` matches `npx`. */
+function commandBase(command) {
+  return String(command || "").trim().split(/[\\/]/).pop();
+}
+
 /** The .js a `npx`/`npm` command really runs, or null if we cannot find it. */
 function shimScript(command) {
-  const key = String(command || "").trim().toLowerCase().replace(/\.(cmd|bat)$/, "");
+  const key = commandBase(command).toLowerCase().replace(/\.(cmd|bat)$/, "");
   const rel = NODE_SHIMS[key];
   if (!rel) return null;
   for (const root of npmRoots()) {
@@ -88,10 +93,164 @@ export function commandCandidates(command) {
   ];
 }
 
+function npxCacheRoots() {
+  const roots = [];
+  if (process.env.LOCALAPPDATA) roots.push(path.join(process.env.LOCALAPPDATA, "npm-cache", "_npx"));
+  if (process.env.APPDATA) roots.push(path.join(process.env.APPDATA, "npm-cache", "_npx"));
+  return roots;
+}
+
+function parsePackageSpec(spec) {
+  const value = String(spec || "").trim();
+  if (!value) return null;
+  const at = value.lastIndexOf("@");
+  return at > 0 ? { name: value.slice(0, at), version: value.slice(at + 1) } : { name: value, version: "" };
+}
+
+/**
+ * The entry script of a package already in the npx cache, or null.
+ *
+ * Running `npx` on Windows goes through npm's spawner, which does not set
+ * windowsHide - so every npx MCP server flashes a console window. npx has
+ * already installed the package by the time a server reconnects, so we run the
+ * cached entry script with node directly and no shell is involved at all.
+ */
+export function resolveNpxBin(spec) {
+  const parsed = parsePackageSpec(spec);
+  if (!parsed?.name) return null;
+  for (const root of npxCacheRoots()) {
+    let entries;
+    try {
+      entries = fs.readdirSync(root, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const packageDir = path.join(root, entry.name, "node_modules", ...parsed.name.split("/"));
+      let manifest;
+      try {
+        manifest = JSON.parse(fs.readFileSync(path.join(packageDir, "package.json"), "utf8"));
+      } catch {
+        continue;
+      }
+      if (manifest.name !== parsed.name) continue;
+      if (parsed.version && !String(manifest.version || "").startsWith(parsed.version.replace(/^[\^~]/, ""))) continue;
+      const bin = manifest.bin;
+      const relative = typeof bin === "string" ? bin : bin && (bin[parsed.name.split("/").pop()] || Object.values(bin)[0]);
+      if (!relative) continue;
+      const file = path.join(packageDir, relative);
+      try {
+        if (fs.statSync(file).isFile()) return file;
+      } catch {}
+    }
+  }
+  return null;
+}
+
+/**
+ * Rewrite an `npx <pkg> ...` launch into `node <cached entry> ...` when the
+ * package is cached, dropping npx's own flags. Anything else is returned as-is.
+ */
+export function resolveLaunch(command, args = []) {
+  // Match on the basename: a server configured with a full path such as
+  // `C:\Program Files\nodejs\npx.cmd` is still npx. The original command is
+  // returned untouched when nothing is rewritten.
+  const key = commandBase(command).toLowerCase().replace(/\.(cmd|bat|exe)$/, "");
+  if (key === "uvx" || key === "uv") return resolveUvxLaunch(command, args);
+  if (key !== "npx") return { command, args };
+  const list = [...args];
+  const index = list.findIndex((arg) => typeof arg === "string" && !arg.startsWith("-"));
+  if (index < 0) return { command, args };
+  const bin = resolveNpxBin(list[index]);
+  return bin ? { command: process.execPath || "node", args: [bin, ...list.slice(index + 1)] } : { command, args };
+}
+
+const UV_CACHE_ROOT = () => (process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "uv", "cache", "archive-v0") : null);
+
+function uvxPackageName(spec) {
+  return String(spec || "").trim().split(/[=<>~!]/)[0].trim();
+}
+
+/**
+ * The module a cached uv console script runs, read from the launcher's own
+ * embedded source (`from <module> import main`). Null when it cannot be read.
+ */
+function moduleOfConsoleScript(exe) {
+  try {
+    const bytes = fs.readFileSync(exe);
+    const text = bytes.toString("utf8");
+    const match = /from\s+([A-Za-z0-9_.]+)\s+import\s+main/.exec(text);
+    return match ? match[1] : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * A cached uv entry point for `uvx <pkg>`, or null.
+ *
+ * `uvx` is `uv tool run`: on Windows it always allocates a console (verified: a
+ * conhost.exe child appears regardless of windowsHide or detached) because uv is
+ * a console application. The package's own launcher is also a console exe, so
+ * neither can be spawned without a window. The fix is to skip both: run the
+ * launcher's module with the same venv's `pythonw.exe`, the windowless
+ * interpreter, which starts no console at all.
+ */
+export function resolveUvxTool(spec) {
+  const name = uvxPackageName(spec);
+  if (!name) return null;
+  const root = UV_CACHE_ROOT();
+  if (!root) return null;
+  let entries;
+  try {
+    entries = fs.readdirSync(root, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  let best = null;
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const scripts = path.join(root, entry.name, "Scripts");
+    let files;
+    try {
+      files = fs.readdirSync(scripts);
+    } catch {
+      continue;
+    }
+    const exe = files.includes(`${name}.exe`)
+      ? path.join(scripts, `${name}.exe`)
+      : null;
+    const pythonw = files.includes("pythonw.exe") ? path.join(scripts, "pythonw.exe") : null;
+    if (!exe) continue;
+    try {
+      if (!fs.statSync(exe).isFile()) continue;
+      const stat = fs.statSync(exe);
+      // The newest archive wins: the uv cache is append-only across versions.
+      if (best && stat.mtimeMs < best.mtimeMs) continue;
+      best = { exe, pythonw, module: pythonw ? moduleOfConsoleScript(exe) : null, mtimeMs: stat.mtimeMs };
+    } catch {}
+  }
+  return best;
+}
+
+function resolveUvxLaunch(command, args = []) {
+  const list = [...args];
+  const index = list.findIndex((arg) => typeof arg === "string" && !arg.startsWith("-"));
+  if (index < 0) return { command, args: list };
+  const tool = resolveUvxTool(list[index]);
+  if (!tool) return { command, args: list };
+  const module = tool.module ? ["-m", tool.module] : [tool.exe];
+  return { command: tool.pythonw || tool.exe, args: [...module, ...list.slice(index + 1)] };
+}
+
 /** Environment a spawned server is allowed to see. Not the whole process env. */
 export function serverEnv(extra = {}) {
   const keep = ["PATH", "PATHEXT", "SystemRoot", "windir", "TEMP", "TMP", "HOME", "USERPROFILE", "LANG"];
-  const env = {};
+  // MCP servers are background services, not interactive command-line apps.
+  // CI discourages launchers and descendants from opening prompts or terminal
+  // UI windows alongside the desktop app.
+  const env = { CI: '1', NO_COLOR: '1', UV_NO_PROGRESS: '1' };
   for (const key of keep) {
     if (process.env[key] !== undefined) env[key] = process.env[key];
   }
@@ -208,6 +367,9 @@ export class McpClient {
       }
     }
     if (this.child) return this;
+    const resolved = resolveLaunch(this.command, this.args);
+    this.command = resolved.command;
+    this.args = resolved.args;
     const candidates = commandCandidates(this.command);
     if (!candidates.length) throw new Error("no command to run for this MCP server");
 
@@ -224,7 +386,12 @@ export class McpClient {
         this.child = spawn(exe, argv, {
           cwd: this.cwd || process.cwd(),
           env: serverEnv(this.env),
+          shell: false,
           windowsHide: true,
+          // A console-subsystem server (uv's mcp-server-*.exe, a python exe)
+          // still allocates a console under windowsHide alone. Detached gives
+          // it no console at all on Windows, which is what stops the window.
+          detached: process.platform === "win32",
           stdio: ["pipe", "pipe", "pipe"],
         });
       } catch (err) {

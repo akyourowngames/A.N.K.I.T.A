@@ -9,6 +9,7 @@ import { ConfirmDialog } from './components/ConfirmDialog';
 import { UpdateBanner } from './components/UpdateBanner';
 import { VersionMismatchNotice } from './components/VersionMismatchNotice';
 import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
+import { OnboardingDialog } from './components/OnboardingDialog';
 import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
@@ -40,12 +41,13 @@ export default function App() {
   const [reviewOpen, setReviewOpen] = useState(false);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
-  const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'copilot', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
-  const [version, setVersion] = useState('2.2.0');
+  const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'copilot', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
+  const [version, setVersion] = useState('2.3.0');
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
   const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
   const [update, setUpdate] = useState<UpdateEvent | null>(null);
+  const [onboardingClosed, setOnboardingClosed] = useState(false);
   const manualCheck = useRef(false);
   const downloadActive = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
@@ -155,11 +157,25 @@ export default function App() {
   }, [view]);
 
   const selected = state.teammates.find(t => t.id === state.selectedId) || null;
-  const send = useCallback((text: string) => {
+  const send = useCallback((text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => {
     if (!state.selectedId || !window.ankita) return;
-    void window.ankita.invoke('send', { id: state.selectedId, text }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: err.message } }));
+    void window.ankita.invoke('send', { id: state.selectedId, text, attachments }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: err.message } }));
   }, [state.selectedId]);
   const stop = () => { if (state.selectedId) void window.ankita.invoke('cancel', { id: state.selectedId }); };
+  // First-launch profile step: only after a provider connected (models listed)
+  // and only until it is saved or skipped. A failure toast means no models, so
+  // no onboarding - the user must fix the connection first.
+  const showOnboarding = Boolean(state.settings) && state.models.length > 0 && !preferences.profileSetupDone && !onboardingClosed;
+  const saveOnboarding = useCallback(async (patch: { username: string; timeZone: string }) => {
+    if (!window.ankita) return;
+    await window.ankita.invoke('saveDesktopSettings', { ...patch, profileSetupDone: true });
+    setOnboardingClosed(true);
+  }, []);
+  const skipOnboarding = useCallback(async () => {
+    if (!window.ankita) return;
+    await window.ankita.invoke('saveDesktopSettings', { profileSetupDone: true });
+    setOnboardingClosed(true);
+  }, []);
   const answer = useCallback((choice: 'yes' | 'no' | 'always') => {
     const approval = state.approvals[0];
     if (!approval) return;
@@ -222,6 +238,7 @@ export default function App() {
     {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
     {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
     {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
+    {showOnboarding && <OnboardingDialog initialName={preferences.username} initialTimeZone={preferences.timeZone} onSave={saveOnboarding} onSkip={skipOnboarding} />}
     {update && <UpdateBanner update={update} onInstall={installUpdate} onOpenRelease={() => void window.ankita.openExternal('https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest')} onDismiss={dismissUpdate} />}
     {state.compat && !state.compat.ok && !state.compatDismissed && <VersionMismatchNotice compat={state.compat} hasUpdate={update?.type === 'downloaded'} onRestart={recoverFromMismatch} onDismiss={() => dispatch({ type: 'compat-dismissed' })} />}
     {state.error && <div className="error-toast" role="alert"><Icon name="alert" size={18} /><span>{state.error}</span><button onClick={() => dispatch({ type: 'dismiss-error' })} aria-label="Dismiss error"><Icon name="close" size={16} /></button></div>}

@@ -26,6 +26,42 @@ const CONTEXT_OVERHEAD_BYTES = 1024;
 const MIN_HISTORY_BYTES = 512;
 
 /**
+ * Turn a prompt and its attachments into the content an OpenAI-compatible
+ * provider expects.
+ *
+ * Images become `image_url` parts (the shape every multimodal provider
+ * understands). Documents and text are folded into the prompt as labelled
+ * blocks, so any model can read a file the user dropped in even without native
+ * document support. With no attachments the plain string form is kept, because
+ * some providers reject the array shape even for a single text part.
+ */
+export function buildUserContent(text, attachments) {
+  const items = Array.isArray(attachments) ? attachments.filter(Boolean) : [];
+  if (!items.length) return text;
+  const parts = [];
+  const body = String(text || '').trim();
+  if (body) parts.push({ type: 'text', text: body });
+  for (const file of items) {
+    // A document the window could not turn into text (a scan): send the pages
+    // it rendered as images so a vision model can read them directly.
+    for (const page of file?.images || []) {
+      if (/^data:image\//i.test(page)) parts.push({ type: 'image_url', image_url: { url: page } });
+    }
+    if (file?.dataUrl && /^data:image\//i.test(file.dataUrl)) {
+      parts.push({ type: 'image_url', image_url: { url: file.dataUrl } });
+      continue;
+    }
+    if (typeof file?.text === 'string' && file.text) {
+      const label = file.name ? `Attached file: ${file.name}` : 'Attached file';
+      const note = file.truncated ? '\n[truncated to fit the context window]' : '';
+      parts.push({ type: 'text', text: `${label}\n\`\`\`\n${file.text}${note}\n\`\`\`` });
+    }
+  }
+  if (!parts.length) return text;
+  return parts;
+}
+
+/**
  * How connected MCP servers are described to the model.
  *
  * A small server's tools are already in the request, so it just lists them. A
@@ -690,12 +726,12 @@ export class Agent {
     }
   }
 
-  async sendTurn(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd } = {}) {
+  async sendTurn(text, { onDelta, onReasoning, onUsage, onToolCall, onToolResult, onMessageStart, onMessageEnd, attachments = null } = {}) {
     this.abort ??= new AbortController();
     this.turnUsage = { prompt_tokens: 0, completion_tokens: 0, total_tokens: 0, estimated_cost: 0 };
     this.toolLoopUsed = false;
     this.replyModel = null;
-    if (text !== null) this.messages.push({ role: "user", content: text });
+    if (text !== null) this.messages.push({ role: "user", content: buildUserContent(text, attachments) });
     // The primary handles chat. Once a turn calls a tool, a configured tool
     // model takes over the loop and the primary writes the final reply; the
     // tool model's own text is intermediate, so it is withheld from the UI.

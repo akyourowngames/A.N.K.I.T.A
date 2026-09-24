@@ -61,8 +61,10 @@ export function reducer(state: State, action: Action): State {
     unread: { ...state.unread, [action.id]: false },
   };
   if (action.type === 'teammates-loaded') return { ...state, teammates: action.teammates, selectedId: keepSelection(state, action.teammates) };
-  if (action.type === 'thread-loaded') return state.threads[action.id]?.length
-    ? state : patchThread(state, action.id, () => action.messages);
+  // The backend transcript is authoritative. Previously a non-empty in-memory
+  // thread won, so a reload kept stale turns and old replies appeared to repeat;
+  // now the loaded history always replaces what is shown.
+  if (action.type === 'thread-loaded') return patchThread(state, action.id, () => action.messages);
   if (action.type === 'dismiss-error') return { ...state, error: null };
   if (action.type === 'approval-dismissed') return { ...state, approvals: state.approvals.filter(item => item.requestId !== action.requestId) };
   if (action.type === 'compat') return { ...state, compat: action.compat };
@@ -82,7 +84,7 @@ export function reducer(state: State, action: Action): State {
   if (event.type === 'turn-start') return {
     ...state,
     running: { ...state.running, [event.threadId]: true },
-    threads: { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: `user-${event.turnId}`, role: 'user', content: event.text }] },
+    threads: { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: `user-${event.turnId}`, role: 'user', content: event.text, attachments: event.attachments }] },
   };
   if (event.type === 'turn-end') return {
     ...state,

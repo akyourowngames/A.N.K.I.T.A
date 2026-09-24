@@ -11,7 +11,7 @@ import { ComposioStore } from '../../src/composio-store.mjs';
 import { ProjectStore } from '../../src/projects.mjs';
 import { PROJECTS_FILE } from '../../src/config.mjs';
 import { saveSession, recordTurn } from '../../src/sessions.mjs';
-import { sanitizeMessages } from '../../src/history.mjs';
+import { sanitizeMessages, estimateImageBytes } from '../../src/history.mjs';
 import { displayArgs } from '../../tools/index.mjs';
 import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
@@ -30,6 +30,125 @@ function messageText(value) {
   return '';
 }
 
+const ATTACHMENT_TEXT_LIMIT = 200_000;
+const ATTACHMENT_DOC_LIMIT = 1_000_000;
+const ATTACHMENT_IMAGE_LIMIT = 10 * 1024 * 1024;
+/**
+ * How much of the context window an attachment may occupy.
+ *
+ * A document can extract to hundreds of thousands of characters, and the tool
+ * schemas plus history already use much of the window. Without a ceiling one
+ * attachment blows the whole budget and the turn fails before it is sent.
+ * UTF-8 bytes bound tokens conservatively, so a share of the window in bytes is
+ * a safe cap. The agent trims the attachment further to whatever is really left.
+ */
+const ATTACHMENT_WINDOW_SHARE = 0.35;
+const ATTACHMENT_WINDOW_FLOOR = 16_000;
+export function attachmentBudgetBytes(contextWindow) {
+  const window = Number(contextWindow);
+  if (!Number.isFinite(window) || window <= 0) return 240_000;
+  return Math.max(ATTACHMENT_WINDOW_FLOOR, Math.floor(window * ATTACHMENT_WINDOW_SHARE));
+}
+const IMAGE_MIME = { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' };
+const TEXT_EXTENSIONS = new Set(['.txt', '.md', '.markdown', '.json', '.jsonc', '.js', '.mjs', '.cjs', '.ts', '.tsx', '.jsx', '.py', '.rb', '.go', '.rs', '.java', '.cs', '.c', '.h', '.cpp', '.hpp', '.css', '.scss', '.html', '.htm', '.xml', '.yml', '.yaml', '.toml', '.ini', '.cfg', '.env', '.sh', '.bash', '.ps1', '.sql', '.csv', '.tsv', '.log']);
+
+/**
+ * Turn renderer-side file descriptors into what the agent can send.
+ *
+ * Files arrive as base64 from the window, are size-capped here, and become
+ * either an inline image part or a decoded text block. The name is sanitised
+ * before it reaches a prompt so a crafted filename cannot break out of the
+ * labelled block.
+ */
+export function attachmentPayload(files = [], { contextWindow } = {}) {
+  const out = [];
+  // A single message's attachments share one slice of the window.
+  const budget = attachmentBudgetBytes(contextWindow);
+  let used = 0;
+  for (const file of Array.isArray(files) ? files : []) {
+    const rawName = String(file?.name || 'file').replace(/[\r\n\t]/g, ' ').slice(0, 200);
+    const ext = path.extname(rawName).toLowerCase();
+    const data = String(file?.data || '');
+    if (!data) continue;
+    let bytes;
+    try { bytes = Buffer.from(data, 'base64'); } catch { continue; }
+    if (IMAGE_MIME[ext]) {
+      if (bytes.length > ATTACHMENT_IMAGE_LIMIT) throw new Error(`${rawName} is larger than 10 MB`);
+      const dataUrl = `data:${IMAGE_MIME[ext]};base64,${bytes.toString('base64')}`;
+      // Direct images are billed as visual tokens, not upload bytes. A sharp
+      // screenshot can be megabytes on the wire while costing roughly a
+      // thousand tokens; measuring pixels keeps it in the request.
+      const imageCost = estimateImageBytes(dataUrl);
+      if (used + imageCost > budget) throw new Error(`${rawName} does not fit the model's context budget; use a larger context window or attach a smaller image`);
+      used += imageCost;
+      out.push({ name: rawName, dataUrl });
+      continue;
+    }
+    // Documents (pdf/docx/xlsx/pptx) arrive already extracted to text by the
+    // window, flagged so the extension check does not reject them here.
+    const kind = file?.kind === 'document' ? 'document' : 'text';
+    const limit = kind === 'document' ? ATTACHMENT_DOC_LIMIT : ATTACHMENT_TEXT_LIMIT;
+    if (bytes.length > limit) throw new Error(`${rawName} is larger than ${kind === 'document' ? '1 MB' : '200 KB'}`);
+    if (!TEXT_EXTENSIONS.has(ext) && kind !== 'document') throw new Error(`${rawName} is not a supported file type`);
+    // A document is already text by this point, so the NUL check - which is
+    // there to reject an accidentally-attached raw binary - must not apply:
+    // a PDF extractor can legitimately emit control bytes. Strip them instead.
+    if (kind !== 'document' && bytes.includes(0)) throw new Error(`${rawName} looks binary; only text and images can be attached`);
+    // Page renders are reserved first: unlike text they cannot be clipped. They
+    // are billed as visual tokens, not upload bytes, and only as many leading
+    // pages as fit are kept. Rejecting the whole document because page ten did
+    // not fit would discard pages the model could have read.
+    const images = Array.isArray(file?.images) ? file.images.filter(part => typeof part === 'string' && /^data:image\//i.test(part)) : [];
+    const keptImages = [];
+    let imageBytes = 0;
+    for (const image of images) {
+      const cost = estimateImageBytes(image);
+      if (used + imageBytes + cost > budget) break;
+      keptImages.push(image);
+      imageBytes += cost;
+    }
+    if (images.length && !keptImages.length) throw new Error(`${rawName} with its page images exceeds the model's context budget; use a larger context window or attach fewer pages`);
+    used += imageBytes;
+    // Trim to what is left of the window, keeping the head and tail so the
+    // model still sees how the document starts and ends.
+    let text = sanitizeExtracted(bytes.toString('utf8'));
+    const room = budget - used;
+    if (room <= 0) throw new Error(`${rawName} does not fit the model's context budget; use a larger context window or a smaller file`);
+    if (Buffer.byteLength(text) > room) text = clipAttachment(text, room, rawName);
+    if (keptImages.length < images.length) {
+      text += `\n\n[attached pages 1-${keptImages.length} of ${images.length} as images to fit the context window]`;
+    }
+    used += Buffer.byteLength(text);
+    out.push({ name: rawName, text, ...(keptImages.length ? { images: keptImages } : {}) });
+  }
+  return out;
+}
+
+/**
+ * Make extracted document text safe to embed: drop NULs and stray control
+ * bytes a PDF parser can emit, and collapse the runs of blank space that
+ * usually accompany them.
+ */
+function sanitizeExtracted(text) {
+  return text
+    .replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g, ' ')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+}
+
+/** Keep the start and end of an over-long attachment, marking what was cut. */
+function clipAttachment(text, maxBytes, name) {
+  const marker = `\n\n[... ${name} truncated to fit the context window ...]\n\n`;
+  const room = Math.max(0, maxBytes - Buffer.byteLength(marker));
+  const head = Math.floor(room * 0.7);
+  const tail = room - head;
+  const buffer = Buffer.from(text);
+  const start = buffer.subarray(0, head).toString('utf8').replace(/\uFFFD$/u, '');
+  const end = buffer.subarray(buffer.length - tail).toString('utf8').replace(/^\uFFFD+/u, '');
+  return start + marker + end;
+}
+
 /** Map provider history into a transcript without passing system prompts to the renderer. */
 export function threadMessages(messages = []) {
   const out = [];
@@ -39,7 +158,8 @@ export function threadMessages(messages = []) {
     if (entry.role === 'system') continue;
     if (entry.role === 'user' || entry.role === 'assistant') {
       const content = messageText(entry.content);
-      if (content) out.push({ id: `message-${i}`, role: entry.role, content });
+      const attachments = attachmentNames(entry.content);
+      if (content || attachments.length) out.push({ id: `message-${i}`, role: entry.role, content, attachments: attachments.length ? attachments : undefined });
       for (const call of entry.tool_calls || []) {
         let args = {};
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
@@ -48,7 +168,9 @@ export function threadMessages(messages = []) {
         byCall.set(call.id, tool);
         out.push(tool);
       }
-    } else if (entry.role === 'tool') {
+      continue;
+    }
+    if (entry.role === 'tool') {
       const tool = byCall.get(entry.tool_call_id);
       if (tool) {
         tool.result = messageText(entry.content);
@@ -57,6 +179,24 @@ export function threadMessages(messages = []) {
     }
   }
   return out;
+}
+
+/**
+ * The names of files in a multimodal user turn, recovered from the prompt text.
+ *
+ * Attachments are folded into the message as `Attached file: <name>` blocks (or
+ * image parts), so the transcript can show chips again after a reload without
+ * storing the file bytes a second time.
+ */
+function attachmentNames(content) {
+  if (!Array.isArray(content)) return [];
+  const names = [];
+  for (const part of content) {
+    if (part?.type === 'image_url') { names.push({ name: 'image', image: true }); continue; }
+    if (part?.type !== 'text' || typeof part.text !== 'string') continue;
+    for (const match of part.text.matchAll(/^Attached file:\s*(.+)$/gm)) names.push({ name: match[1].trim().slice(0, 200) });
+  }
+  return names;
 }
 
 export class DesktopEngine {
@@ -207,7 +347,7 @@ export class DesktopEngine {
       || (active === 'custom' && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
-    const tune = ['contextWindow', 'maxTokens'].some(key => Object.hasOwn(patch, key));
+    const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
     if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
     if (reconnect) {
       const session = await this.bootstrap({ config: nextConfig, onDeviceCode: details => this.emit({ type: 'auth-device-code', ...details }) });
@@ -237,6 +377,9 @@ export class DesktopEngine {
       const window = {
         contextWindow: nextConfig.contextWindow, contextWindowExplicit: nextConfig.contextWindowExplicit,
         maxTokens: nextConfig.maxTokens, maxTokensExplicit: nextConfig.maxTokensExplicit,
+        imageApiBase: nextConfig.imageApiBase, imageApiKey: nextConfig.imageApiKey, imageModel: nextConfig.imageModel,
+        unsplashAccessKey: nextConfig.unsplashAccessKey, pixabayApiKey: nextConfig.pixabayApiKey,
+        username: nextConfig.username, timeZone: nextConfig.timeZone,
       };
       Object.assign(this.config, window);
       for (const agent of this.agents.values()) {
@@ -293,6 +436,32 @@ export class DesktopEngine {
       if (!relative.startsWith('..') && !seen.has(relative)) changes.files.push({ path: relative, status: ' M', untracked: false, captured: true });
     }
     return { ...changes, cwd, artifacts: recentArtifacts(cwd, this.loadThread(id)), jobs: jobList(agent) };
+  }
+  async readGeneratedImage(id, requested) {
+    const agent = this.agents.get(id);
+    const teammate = this.teammates.find(id);
+    if (!teammate) throw new Error('Teammate not found');
+    const cwd = agent?.cwd || projectWorkspace(new ProjectStore(this.projectsFile).load().find(teammate.projectId)) || process.cwd();
+    const requestedPath = String(requested || '');
+    if (!requestedPath) throw new Error('Image path is required');
+    const root = await fs.promises.realpath(cwd);
+    // Assistant Markdown commonly uses an absolute Windows path while the
+    // image tools return workspace-relative paths. Accept both, then enforce
+    // the same realpath containment check for either form.
+    const candidate = path.isAbsolute(requestedPath) ? path.resolve(requestedPath) : path.resolve(root, requestedPath);
+    const lexical = path.relative(root, candidate);
+    if (!lexical || lexical === '..' || lexical.startsWith(`..${path.sep}`) || path.isAbsolute(lexical)) throw new Error('Image must be inside the workspace');
+    const absolute = await fs.promises.realpath(candidate);
+    const contained = path.relative(root, absolute);
+    if (contained === '..' || contained.startsWith(`..${path.sep}`) || path.isAbsolute(contained)) throw new Error('Image must be inside the workspace');
+    const folder = contained.split(path.sep)[0];
+    if (!['generated-images', 'downloaded-images'].includes(folder)) throw new Error('Image preview is restricted to generated-images and downloaded-images in the workspace');
+    const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' })[path.extname(absolute).toLowerCase()];
+    if (!mime) throw new Error('Unsupported image format');
+    const stat = await fs.promises.stat(absolute);
+    if (!stat.isFile() || stat.size > 15 * 1024 * 1024) throw new Error('Image is unavailable or larger than 15 MB');
+    const data = await fs.promises.readFile(absolute);
+    return { dataUrl: `data:${mime};base64,${data.toString('base64')}` };
   }
   async workspaceDiff(id, file) {
     const snapshot = await this.workspaceSnapshot(id);
@@ -446,13 +615,15 @@ export class DesktopEngine {
     return agent;
   }
 
-  async send(id, text) {
+  async send(id, text, attachments = null) {
     const prompt = String(text || '').trim();
-    if (!prompt) throw new Error('Write a message first');
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
     const agent = this.agentFor(id);
+    // Cap attachments against this teammate's window, not a fixed number.
+    const files = attachmentPayload(attachments, { contextWindow: agent.contextWindow || this.config.contextWindow });
+    if (!prompt && !files.length) throw new Error('Write a message or attach a file first');
     const turnId = randomUUID();
-    this.emit({ type: 'turn-start', threadId: id, turnId, model: agent.model, text: prompt });
+    this.emit({ type: 'turn-start', threadId: id, turnId, model: agent.model, text: prompt, attachments: files.map(file => ({ name: file.name, image: Boolean(file.dataUrl) })) });
     let currentMessageId = null;
     const callbacks = {
       onMessageStart: () => { currentMessageId = randomUUID(); this.emit({ type: 'message-start', threadId: id, messageId: currentMessageId }); },
@@ -488,10 +659,10 @@ export class DesktopEngine {
           this.emit({ type: 'teammates-changed' });
           this.emit({ type: 'projects-changed' });
         }
-        if (['write_file', 'edit_file', 'edit_lines', 'apply_patch', 'move_file', 'delete_file', 'run_command', 'job_stop', 'git'].includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: id, open: didChange });
+        if (['write_file', 'edit_file', 'edit_lines', 'apply_patch', 'move_file', 'delete_file', 'run_command', 'job_stop', 'git', 'image_generate', 'image_download'].includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: id, open: didChange || ['image_generate', 'image_download'].includes(call.function?.name) });
       },
     };
-    const work = Promise.resolve().then(() => agent.send(prompt, callbacks)).then(reply => {
+    const work = Promise.resolve().then(() => agent.send(prompt, { ...callbacks, attachments: files })).then(reply => {
       this.teammates.touch(id, reply || prompt);
       this.emit({ type: 'teammates-changed' });
       return reply;

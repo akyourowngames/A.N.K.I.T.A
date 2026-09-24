@@ -3,8 +3,20 @@ import path from 'node:path';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom']);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+
+/** An IANA zone the runtime accepts, or null. */
+function validTimeZone(value) {
+  const zone = String(value || '').trim();
+  if (!zone || zone.length > 100) return null;
+  try {
+    new Intl.DateTimeFormat('en', { timeZone: zone });
+    return zone;
+  } catch {
+    return null;
+  }
+}
 
 export function normalizeApiBase(value) {
   const raw = String(value || '').trim().replace(/\/+$/, '');
@@ -33,6 +45,8 @@ function validatePatch(patch) {
       clean.appearance = value;
     } else if (key === 'customApiBase') {
       clean.customApiBase = normalizeApiBase(value);
+    } else if (key === 'imageApiBase') {
+      clean.imageApiBase = normalizeApiBase(value);
     } else if (key === 'contextWindow' || key === 'maxTokens') {
       // 0 (or blank) means "leave it to the default / the model". Any positive
       // value is a token count the user typed; cap it so a typo cannot ask for
@@ -40,9 +54,25 @@ function validatePatch(patch) {
       const n = value === '' || value == null ? 0 : Number(value);
       if (!Number.isFinite(n) || n < 0 || n > 10_000_000) throw new Error(`Enter a valid ${key === 'maxTokens' ? 'max output tokens' : 'context window'} value`);
       clean[key] = Math.floor(n);
+    } else if (key === 'username') {
+      if (typeof value !== 'string') throw new Error('Invalid name value');
+      const name = value.trim();
+      if (name.length > 100) throw new Error('Keep the display name under 100 characters');
+      clean[key] = name;
+    } else if (key === 'timeZone') {
+      // Blank means "system local". Anything else must be a real IANA zone or
+      // journaling, quiet hours and routine scheduling silently misbehave.
+      if (value === '' || value == null) clean[key] = '';
+      else {
+        const zone = validTimeZone(value);
+        if (!zone) throw new Error('Enter a valid timezone, e.g. Asia/Kolkata');
+        clean[key] = zone;
+      }
+    } else if (key === 'profileSetupDone') {
+      clean[key] = value === true || value === 'true';
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
-      const limit = key === 'model' ? 200 : 4096;
+      const limit = key === 'model' || key === 'imageModel' ? 200 : 4096;
       const text = value.trim();
       if (text.length > limit) throw new Error(`${key} is too long`);
       clean[key] = text;
@@ -62,6 +92,11 @@ export function applyDesktopSettings(base, saved = {}) {
   }
   if (own(saved, 'groqApiKey')) config.groqApiKey = saved.groqApiKey;
   if (own(saved, 'composioApiKey')) config.composioApiKey = saved.composioApiKey;
+  for (const key of ['imageApiKey', 'unsplashAccessKey', 'pixabayApiKey']) {
+    if (own(saved, key)) config[key] = saved[key];
+  }
+  if (own(saved, 'imageApiBase')) config.imageApiBase = saved.imageApiBase || base.imageApiBase || '';
+  if (own(saved, 'imageModel')) config.imageModel = saved.imageModel || base.imageModel || 'gpt-image-1';
   if (config.provider === 'custom') {
     if (own(saved, 'customApiBase')) config.apiBase = saved.customApiBase;
     if (own(saved, 'customApiKey')) config.apiKey = saved.customApiKey;
@@ -69,6 +104,10 @@ export function applyDesktopSettings(base, saved = {}) {
     config.apiKey = saved.kiloApiKey;
   }
   if (own(saved, 'model')) config.model = saved.model;
+  // A name or timezone set in the app wins over the env/config-file values, so
+  // the onboarding step and Profile tab actually take effect without a restart.
+  if (own(saved, 'username') && saved.username) config.username = saved.username;
+  if (own(saved, 'timeZone') && saved.timeZone) config.timeZone = saved.timeZone;
   // A compatible endpoint often advertises no context window, so the app falls
   // back to a small default and can run out of room for tools. Let the user
   // declare the real numbers; an explicit value must win over the default.
@@ -120,10 +159,18 @@ export class DesktopSettingsStore {
     return {
       provider,
       model: this.data.model || config.model || '',
+      username: this.data.username || config.username || '',
+      timeZone: this.data.timeZone || config.timeZone || '',
+      profileSetupDone: Boolean(this.data.profileSetupDone),
       customApiBase: this.data.customApiBase || (provider === 'custom' ? config.apiBase || '' : ''),
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,
       maxTokens: this.data.maxTokens || 0,
+      imageApiBase: this.data.imageApiBase || config.imageApiBase || '',
+      imageModel: this.data.imageModel || config.imageModel || 'gpt-image-1',
+      hasImageApiKey: Boolean(this.data.imageApiKey || config.imageApiKey),
+      hasUnsplashAccessKey: Boolean(this.data.unsplashAccessKey || config.unsplashAccessKey),
+      hasPixabayApiKey: Boolean(this.data.pixabayApiKey || config.pixabayApiKey),
       hasCustomApiKey: Boolean(this.data.customApiKey || (provider === 'custom' && config.apiKey)),
       hasGroqKey: Boolean(own(this.data, 'groqApiKey') ? this.data.groqApiKey : config.groqApiKey),
       hasKiloKey: Boolean(this.data.kiloApiKey || (provider === 'kilo' && config.apiKey)),

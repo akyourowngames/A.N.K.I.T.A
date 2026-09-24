@@ -113,6 +113,16 @@ export function recentArtifacts(cwd, messages = []) {
   const found = new Map();
   for (const message of messages) {
     if (message.role !== 'tool' || message.isError || !message.result || /^(Error|Not run:|No change:|The user denied|Action cancelled)/i.test(message.result)) continue;
+    if (['image_generate', 'image_download'].includes(message.name)) {
+      try {
+        const image = JSON.parse(message.result);
+        if (['generated_image', 'downloaded_image'].includes(image.type) && typeof image.path === 'string') {
+          const absolute = safeFile(cwd, image.path);
+          if (absolute) found.set(absolute, { path: absolute, name: path.basename(absolute) });
+        }
+      } catch {}
+      continue;
+    }
     if (!['write_file', 'edit_file', 'edit_lines', 'move_file', 'apply_patch'].includes(message.name)) continue;
     const args = message.args && typeof message.args === 'object' ? message.args : {};
     const names = [args.path, args.destination, args.to];

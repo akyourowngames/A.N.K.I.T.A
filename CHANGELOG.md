@@ -2,7 +2,62 @@
 
 All notable changes to Ankita are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/), and releases are cut from the
-version in `package.json` (see [docs/releasing.md](docs/releasing.md)).
+version in `package.json` (see [docs/releasing.md](docs/releasing.md)). A fuller,
+continuously updated narrative lives in [docs/changelog.md](docs/changelog.md).
+
+## [Unreleased]
+
+## [2.3.0] - 2026-09-24
+
+### Added
+
+- **Attachments in the composer.** The `+` button now attaches images and files
+  (click, drag-and-drop, or paste). Images go to vision-capable models as image
+  parts; text and code files are folded into the prompt as labelled blocks. Up
+  to 8 files per message, 10 MB per image, 200 KB per text file.
+- **Documents and scans actually reach the model.** PDFs, Word, Excel, and
+  PowerPoint files attach as extracted text; PDF parsing now decodes
+  hex-encoded and UTF-16 strings, so documents that previously came back empty
+  yield their text. A scanned PDF (no text layer) is rendered to page images in
+  the main process and sent to a vision model, with on-demand OCR as the
+  fallback when reading fails. Page images count against the same context
+  budget as text, and history trimming drops image parts before a turn can
+  overrun the window.
+- **Image tools.** `image_generate` creates original images, `unsplash_search`
+  and `pixabay_search` find stock photos, and `image_download` saves a chosen
+  result. Generated and downloaded images preview inline and appear in Work
+  review → Artifacts. Configure in **Settings → Images**.
+- **First-launch profile setup.** After the provider connects, new users are
+  asked for a display name and timezone (skippable). The name feeds the
+  assistant's instructions and the timezone drives journaling, reminders and
+  quiet hours; both live on in a new **Settings → Profile** tab and apply to
+  live chats without reconnecting.
+
+### Fixed
+
+- **MCP servers configured with a full shim path now start.** A server whose
+  command is an absolute path such as `C:\Program Files\nodejs\npx.cmd`
+  (the Playwright reload failure) is matched by basename and launched via
+  `node` + the underlying script, instead of being rejected as an
+  unspawnable batch shim. Uncached `uvx` tools likewise keep their configured
+  command instead of being rewritten to bare `uvx`.
+- **Uploaded images are actually sent to the model.** Image attachments are
+  normalized before sending, budgeted by estimated vision tokens instead of
+  raw upload bytes, and preserved through history trimming. Scanned-PDF page
+  images use compressed JPEGs; when pages do not all fit, the leading pages
+  are kept with an explicit omission note instead of rejecting the document.
+- **PDF attachments no longer forward binary gibberish.** Compressed and
+  binary streams are excluded from text-operator scanning, raw PDF source is
+  no longer used as fallback text, and long non-prose output is treated as a
+  missing text layer. Unreadable PDFs use rendered page images or OCR instead.
+- MCP servers no longer flash console windows on launch: `npx` packages run via
+  their cached entry script and `uvx` packages via the venv's windowless
+  `pythonw.exe`.
+- The chat no longer scrolls back up while you read history during a stream.
+- Inline image previews render, including absolute Windows paths with spaces.
+- Multimodal history no longer throws "exceeds the model context budget" when
+  an attachment's image parts push a turn past the window: images are counted
+  at attach time and dropped (after text is clipped) when trimming.
 
 ## [2.2.0] - 2026-09-23
 

@@ -1,12 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
 import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model, Teammate, TelegramChannelUpdate } from '../../../shared/wire';
 import { Icon } from './Icons';
+import { detectTimezone, timezoneSuggestions } from '../lib/timezones';
 
-export type SettingsTab = 'model' | 'providers' | 'channels' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'appearance' | 'about';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
   { id: 'providers', label: 'Providers', icon: 'key' },
+  { id: 'profile', label: 'Profile', icon: 'user' },
+  { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'about', label: 'About', icon: 'info' },
@@ -23,15 +26,18 @@ const themes: { id: DesktopPreferences['appearance']; name: string; detail: stri
   { id: 'slate', name: 'Slate', detail: 'Cool blue greys' },
 ];
 
-type Secret = 'customApiKey' | 'groqApiKey' | 'kiloApiKey' | 'composioApiKey';
-type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance']; contextWindow: string; maxTokens: string } & Record<Secret, string>;
+type Secret = 'customApiKey' | 'groqApiKey' | 'kiloApiKey' | 'composioApiKey' | 'imageApiKey' | 'unsplashAccessKey' | 'pixabayApiKey';
+type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance']; contextWindow: string; maxTokens: string; imageApiBase: string; imageModel: string; username: string; timeZone: string } & Record<Secret, string>;
 const savedFlag: Record<Secret, keyof DesktopPreferences> = {
   customApiKey: 'hasCustomApiKey', groqApiKey: 'hasGroqKey', kiloApiKey: 'hasKiloKey', composioApiKey: 'hasComposioKey',
+  imageApiKey: 'hasImageApiKey', unsplashAccessKey: 'hasUnsplashAccessKey', pixabayApiKey: 'hasPixabayApiKey',
 };
 function fromPreferences(value: DesktopPreferences): Draft {
   return { provider: value.provider, model: value.model, customApiBase: value.customApiBase, appearance: value.appearance,
     contextWindow: value.contextWindow ? String(value.contextWindow) : '', maxTokens: value.maxTokens ? String(value.maxTokens) : '',
-    customApiKey: '', groqApiKey: '', kiloApiKey: '', composioApiKey: '' };
+    imageApiBase: value.imageApiBase || '', imageModel: value.imageModel || 'gpt-image-1',
+    username: value.username || '', timeZone: value.timeZone || '',
+    customApiKey: '', groqApiKey: '', kiloApiKey: '', composioApiKey: '', imageApiKey: '', unsplashAccessKey: '', pixabayApiKey: '' };
 }
 
 type ChannelDraft = { enabled: boolean; token: string; allowedChatIds: string; ownerChatId: string; teammateId: string; voiceReply: boolean; confirmTimeout: string };
@@ -115,10 +121,24 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
       }
     }
     if (tab === 'appearance' && draft.appearance !== preferences.appearance) patch.appearance = draft.appearance;
+    if (tab === 'profile') {
+      // Guarded like the model numbers: an older main process drops unknown
+      // keys instead of failing, so these checks only gate what we send.
+      if (typeof preferences.username === 'string' && draft.username.trim() !== (preferences.username || '')) patch.username = draft.username.trim();
+      if (typeof preferences.timeZone === 'string' && draft.timeZone.trim() !== (preferences.timeZone || '')) patch.timeZone = draft.timeZone.trim();
+    }
     if (tab === 'providers') {
       if (draft.provider !== preferences.provider) patch.provider = draft.provider;
       if (draft.customApiBase !== preferences.customApiBase) patch.customApiBase = draft.customApiBase;
       for (const key of Object.keys(savedFlag) as Secret[]) {
+        if (draft[key]) patch[key] = draft[key];
+        else if (removed.includes(key)) patch[key] = '';
+      }
+    }
+    if (tab === 'images') {
+      if (draft.imageApiBase !== preferences.imageApiBase) patch.imageApiBase = draft.imageApiBase;
+      if (draft.imageModel !== preferences.imageModel) patch.imageModel = draft.imageModel;
+      for (const key of ['imageApiKey', 'unsplashAccessKey', 'pixabayApiKey'] as const) {
         if (draft[key]) patch[key] = draft[key];
         else if (removed.includes(key)) patch[key] = '';
       }
@@ -226,6 +246,25 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
             <div className="settings-panel"><h2>Composio</h2><p>Connect Gmail, Slack, Notion and other app tools with your Composio project key.</p>{secretField('composioApiKey', 'Project key', 'Enter your Composio key')}</div>
             <div className="settings-provider-actions"><button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save provider settings'}</button><span>Keys are saved on this device and never shown again.</span></div>
           </div>}
+          {tab === 'images' && <div className="settings-content">
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="sparkle" size={20} /></span><h1 id="settings-title">Images</h1><p>Configure three separate image tools: original generation, Unsplash photos, and Pixabay photos or illustrations.</p></div>
+            <h2 className="settings-section-title">Generate original images</h2>
+            <div className="settings-panel">
+              <p>Uses an OpenAI-compatible <code>/images/generations</code> endpoint. It saves generated files in <code>generated-images</code> in the current workspace.</p>
+              <div className="settings-field"><label htmlFor="settings-image-api-base">Image API base URL</label><input id="settings-image-api-base" value={draft.imageApiBase} onChange={event => set('imageApiBase', event.target.value)} placeholder="Leave blank to use the current model provider (e.g. https://api.openai.com/v1)" spellCheck={false} /></div>
+              <div className="settings-form-pair">
+                <div className="settings-field"><label htmlFor="settings-image-model">Image model</label><input id="settings-image-model" value={draft.imageModel} onChange={event => set('imageModel', event.target.value)} placeholder="gpt-image-1" spellCheck={false} /></div>
+                {secretField('imageApiKey', 'Image API key', 'Optional; falls back to the model provider key')}
+              </div>
+            </div>
+            <h2 className="settings-section-title">Stock image search</h2>
+            <div className="settings-panel">
+              <p>These are separate search tools. Add each service's API key to enable its tool; search results include previews and attribution.</p>
+              {secretField('unsplashAccessKey', 'Unsplash access key', 'Create an Unsplash developer app to get a key')}
+              {secretField('pixabayApiKey', 'Pixabay API key', 'Get an API key from Pixabay')}
+            </div>
+            <div className="settings-provider-actions"><button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save image settings'}</button><span>Keys stay on this device. You can also set IMAGE_API_BASE, IMAGE_API_KEY, IMAGE_MODEL, UNSPLASH_ACCESS_KEY, and PIXABAY_API_KEY in config.env.</span></div>
+          </div>}
           {tab === 'channels' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="broadcast" size={20} /></span><h1 id="settings-title">Channels</h1><p>Reach your agent from anywhere. Messages are routed to the teammate you choose.</p></div>
             {!channelDraft || !channels ? <div className="settings-loading">Loading channels…</div> : <>
@@ -282,6 +321,23 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               </div>
               <div className="settings-note"><Icon name="alert" size={15} />Only one process may poll a bot token at a time. If you run the CLI with <code>--daemon</code>, stop it before enabling Telegram here, or messages will be split between them.</div>
             </>}
+          </div>}
+          {tab === 'profile' && <div className="settings-content">
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="user" size={20} /></span><h1 id="settings-title">Profile</h1><p>How Ankita addresses you, and which clock it keeps.</p></div>
+            <div className="settings-panel"><h2>About you</h2>
+              <p>Your name appears in the assistant&apos;s instructions; your timezone drives journaling, reminders and quiet hours.</p>
+              <div className="settings-field"><label htmlFor="setting-username">Display name</label>
+                <input id="setting-username" value={draft.username} onChange={event => set('username', event.target.value)}
+                  placeholder="e.g. Krish" maxLength={100} autoComplete="off" spellCheck={false} />
+              </div>
+              <div className="settings-field"><label htmlFor="setting-timezone">Timezone</label>
+                <input id="setting-timezone" value={draft.timeZone} onChange={event => set('timeZone', event.target.value)}
+                  list="settings-timezones" placeholder="e.g. Asia/Kolkata" autoComplete="off" spellCheck={false} />
+                <datalist id="settings-timezones">{timezoneSuggestions(detectTimezone()).map(zone => <option key={zone} value={zone} />)}</datalist>
+                <small>Blank means system local time. Any valid IANA zone works.</small>
+              </div>
+              <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
+            </div>
           </div>}
           {tab === 'appearance' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="palette" size={20} /></span><h1 id="settings-title">Appearance</h1><p>Set the tone of your workspace.</p></div>

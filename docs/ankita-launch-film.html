@@ -1,0 +1,1002 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#050606">
+  <meta name="description" content="A generative Canvas 2D launch film for A.N.K.I.T.A.">
+  <title>A.N.K.I.T.A. — Your AI. Your context. Your control.</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: "Segoe UI", Inter, system-ui, sans-serif;
+      background: #050606;
+      color: #eceeea;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+    }
+    * { box-sizing: border-box; }
+    html, body { width: 100%; height: 100%; margin: 0; overflow: hidden; }
+    body { background: #050606; }
+    .player { position: relative; width: 100%; height: 100%; isolation: isolate; }
+    canvas#film {
+      display: block;
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      background: #050606;
+    }
+    .chrome {
+      position: absolute;
+      z-index: 2;
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      top: max(22px, env(safe-area-inset-top));
+      left: max(25px, env(safe-area-inset-left));
+      color: rgba(227, 232, 226, .56);
+      font: 600 10px/1.2 "Segoe UI", sans-serif;
+      letter-spacing: .19em;
+      text-transform: uppercase;
+      pointer-events: none;
+      transition: opacity .5s ease;
+    }
+    .chrome-mark { width: 5px; height: 5px; border-radius: 50%; background: #dce4dc; box-shadow: 0 0 10px #dce4dc66; }
+    .controls {
+      position: absolute;
+      z-index: 3;
+      left: 50%;
+      bottom: max(26px, env(safe-area-inset-bottom));
+      display: flex;
+      align-items: center;
+      gap: 15px;
+      padding: 9px 12px;
+      border: 1px solid rgba(236, 241, 234, .13);
+      border-radius: 999px;
+      background: rgba(8, 10, 9, .66);
+      backdrop-filter: blur(14px);
+      transform: translateX(-50%);
+      transition: opacity .45s ease, border-color .2s ease;
+    }
+    .controls:hover { border-color: rgba(236, 241, 234, .26); }
+    .controls button {
+      display: inline-grid;
+      width: 32px;
+      height: 32px;
+      place-items: center;
+      padding: 0;
+      border: 0;
+      border-radius: 50%;
+      color: #e8ebe6;
+      background: transparent;
+      cursor: pointer;
+    }
+    .controls button:hover { background: rgba(255,255,255,.1); }
+    .controls button:focus-visible { outline: 1px solid #dce4dc; outline-offset: 3px; }
+    .controls svg { width: 15px; height: 15px; fill: currentColor; }
+    .time {
+      min-width: 87px;
+      color: rgba(235, 238, 232, .72);
+      font: 500 10px/1 ui-monospace, SFMono-Regular, Consolas, monospace;
+      letter-spacing: .05em;
+      font-variant-numeric: tabular-nums;
+    }
+    .track {
+      position: relative;
+      width: min(27vw, 220px);
+      height: 18px;
+      padding: 8px 0;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+    .track::before, .track-fill {
+      position: absolute;
+      top: 8px;
+      left: 0;
+      width: 100%;
+      height: 2px;
+      border-radius: 2px;
+      content: "";
+    }
+    .track::before { background: rgba(236,241,234,.2); }
+    .track-fill { width: 0; background: #e1e6df; box-shadow: 0 0 8px #fff6; }
+    .track:focus-visible { outline: 1px solid #dce4dc; outline-offset: 4px; }
+    .hint {
+      position: absolute;
+      right: max(25px, env(safe-area-inset-right));
+      bottom: max(35px, env(safe-area-inset-bottom));
+      color: rgba(227, 232, 226, .37);
+      font: 500 9px/1.3 "Segoe UI", sans-serif;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+      pointer-events: none;
+      transition: opacity .45s ease;
+    }
+    .player.idle .chrome, .player.idle .controls, .player.idle .hint { opacity: 0; }
+    .player.idle .controls { pointer-events: none; }
+    @media (max-width: 600px) {
+      .chrome { top: 17px; left: 17px; font-size: 8px; }
+      .controls { bottom: max(16px, env(safe-area-inset-bottom)); gap: 6px; padding: 7px 8px; }
+      .controls button { width: 28px; height: 28px; }
+      .time { min-width: 74px; font-size: 9px; }
+      .track { width: 17vw; min-width: 50px; }
+      .hint { display: none; }
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; }
+    }
+  </style>
+</head>
+<body>
+  <main class="player" id="player" aria-label="A.N.K.I.T.A. launch film player">
+    <canvas id="film" aria-label="Generative A.N.K.I.T.A. launch film"></canvas>
+    <div class="chrome"><span class="chrome-mark"></span><span>A.N.K.I.T.A.</span><span>/</span><span>Launch film</span></div>
+    <div class="controls" role="group" aria-label="Film controls">
+      <button id="play" type="button" aria-label="Pause film" title="Pause / play (Space)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zm5 0h3v11H9z"/></svg>
+      </button>
+      <button id="restart" type="button" aria-label="Restart film" title="Restart (R)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 4.1V1.8L.8 4.2l2.4 2.4V4.9a5 5 0 1 1-1 3H.5a6.5 6.5 0 1 0 2.7-5.3z"/></svg>
+      </button>
+      <span class="time" id="time" aria-live="off">00:00 / 00:30</span>
+      <button class="track" id="track" type="button" aria-label="Seek through film" title="Seek">
+        <span class="track-fill" id="trackFill"></span>
+      </button>
+      <button id="fullscreen" type="button" aria-label="Enter fullscreen" title="Fullscreen (F)">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h5v1.7H3.7V7H2zm7 0h5v5h-1.7V3.7H9zM2 9h1.7v3.3H7V14H2zm10.3 0H14v5H9v-1.7h3.3z"/></svg>
+      </button>
+    </div>
+    <div class="hint">Space pause&nbsp;&nbsp;·&nbsp;&nbsp;R restart&nbsp;&nbsp;·&nbsp;&nbsp;F fullscreen</div>
+  </main>
+  <script>
+    (() => {
+      "use strict";
+
+      const WIDTH = 1920;
+      const HEIGHT = 1080;
+      const DURATION = 30;
+      const TAU = Math.PI * 2;
+      const filmCanvas = document.querySelector("#film");
+      const filmContext = filmCanvas.getContext("2d", { alpha: false });
+      const player = document.querySelector("#player");
+      const timeReadout = document.querySelector("#time");
+      const track = document.querySelector("#track");
+      const trackFill = document.querySelector("#trackFill");
+      const playButton = document.querySelector("#play");
+      const fullscreenButton = document.querySelector("#fullscreen");
+      const prefersReducedMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+      function hashSeed(value) {
+        let hash = 2166136261;
+        for (const char of String(value)) hash = Math.imul(hash ^ char.charCodeAt(0), 16777619);
+        return hash >>> 0 || 1;
+      }
+
+      class SeededRandom {
+        constructor(seed) { this.state = seed >>> 0 || 1; }
+        next() {
+          let x = this.state;
+          x ^= x << 13; x ^= x >>> 17; x ^= x << 5;
+          this.state = x >>> 0;
+          return this.state / 4294967296;
+        }
+        range(min, max) { return min + this.next() * (max - min); }
+      }
+
+      const lerp = (a, b, amount) => a + (b - a) * amount;
+      const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+      const smoothstep = (edge0, edge1, value) => {
+        const x = clamp((value - edge0) / (edge1 - edge0), 0, 1);
+        return x * x * (3 - 2 * x);
+      };
+      const formatTime = (seconds) => {
+        const value = Math.floor(seconds);
+        return `${String(Math.floor(value / 60)).padStart(2, "0")}:${String(value % 60).padStart(2, "0")}`;
+      };
+
+      const CUES = [
+        { start: 0, end: 3, text: "A.N.K.I.T.A.", size: 222, density: 6, characters: true, noise: .1, glitch: .06, scene: "field" },
+        { start: 3, end: 3.95, text: "WE\nREMEMBER", size: 146, density: 7, noise: .1, glitch: .08, scene: "field" },
+        { start: 3.95, end: 4.9, text: "WE\nREASON", size: 146, density: 7, noise: .1, glitch: .08, scene: "field" },
+        { start: 4.9, end: 6, text: "WE\nACT", size: 146, density: 7, noise: .16, glitch: .13, scene: "field" },
+        { start: 6, end: 10, text: "AN AI THAT\nKNOWS YOUR CONTEXT.", size: 112, density: 6, noise: .68, glitch: .5, scene: "field", caption: "INTELLIGENCE, WITH CONTINUITY" },
+        { start: 10, end: 13.2, text: "", size: 64, density: 6, noise: .1, glitch: .03, scene: "query" },
+        { start: 13.2, end: 16, text: "FOUND", size: 184, density: 6, noise: .14, glitch: .08, scene: "results", caption: "17 RELEVANT MEMORIES", centerY: 454 },
+        { start: 16, end: 17.2, text: "REMEMBER", size: 166, density: 6, noise: .18, glitch: .12, scene: "field" },
+        { start: 17.2, end: 18.4, text: "SEARCH", size: 166, density: 6, noise: .26, glitch: .32, scene: "field" },
+        { start: 18.4, end: 19.6, text: "CODE", size: 190, density: 6, noise: .3, glitch: .19, scene: "field", characters: true },
+        { start: 19.6, end: 20.8, text: "CREATE", size: 166, density: 6, noise: .24, glitch: .12, scene: "field" },
+        { start: 20.8, end: 22, text: "EXECUTE", size: 150, density: 6, noise: .34, glitch: .3, scene: "field" },
+        { start: 22, end: 27, text: "A.N.K.I.T.A.", size: 222, density: 6, characters: true, noise: .1, glitch: .06, scene: "field" },
+        { start: 27, end: 30, text: "A.N.K.I.T.A.", size: 208, density: 6, characters: true, noise: .07, glitch: .03, scene: "field", final: true }
+      ];
+
+      class ParticleText {
+        constructor(seed) {
+          this.random = new SeededRandom(seed ^ 0x9e3779b9);
+          this.mask = document.createElement("canvas");
+          this.mask.width = WIDTH;
+          this.mask.height = HEIGHT;
+          this.maskContext = this.mask.getContext("2d", { willReadFrequently: true });
+          this.particles = [];
+          this.activeCount = 0;
+          this.characters = false;
+          this.phase = 0;
+        }
+
+        setText(text, options = {}) {
+          const { size = 160, density = 7, centerY = HEIGHT / 2, characters = false } = options;
+          const context = this.maskContext;
+          context.clearRect(0, 0, WIDTH, HEIGHT);
+          let fontSize = size;
+          const lines = text.split("\n");
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.font = `600 ${fontSize}px "Segoe UI", Arial, sans-serif`;
+          const widest = Math.max(...lines.map((line) => context.measureText(line).width));
+          if (widest > WIDTH * .84) {
+            fontSize *= WIDTH * .84 / widest;
+            context.font = `600 ${fontSize}px "Segoe UI", Arial, sans-serif`;
+          }
+          const lineHeight = fontSize * 1.2;
+          const firstY = centerY - ((lines.length - 1) * lineHeight) / 2;
+          context.fillStyle = "#fff";
+          lines.forEach((line, index) => context.fillText(line, WIDTH / 2, firstY + index * lineHeight));
+
+          const pixels = context.getImageData(0, 0, WIDTH, HEIGHT).data;
+          const stride = Math.max(density, Math.ceil(Math.sqrt((WIDTH * HEIGHT) / 360000)));
+          const targets = [];
+          for (let y = 0; y < HEIGHT; y += stride) {
+            for (let x = 0; x < WIDTH; x += stride) {
+              if (pixels[(y * WIDTH + x) * 4 + 3] > 100) {
+                targets.push({ x: x + this.random.range(-1.5, 1.5), y: y + this.random.range(-1.5, 1.5) });
+              }
+            }
+          }
+
+          this.activeCount = targets.length;
+          this.characters = characters;
+          this.phase++;
+          while (this.particles.length < targets.length) {
+            this.particles.push({
+              x: this.random.range(0, WIDTH), y: this.random.range(0, HEIGHT), vx: 0, vy: 0,
+              px: 0, py: 0,
+              tx: WIDTH / 2, ty: HEIGHT / 2, size: this.random.range(1.1, 2.8),
+              alpha: this.random.range(.48, .95), glyph: this.random.next() < .5 ? "." : ":",
+              offset: this.random.range(0, TAU),
+            });
+            const particle = this.particles.at(-1);
+            particle.px = particle.x;
+            particle.py = particle.y;
+          }
+          for (let index = 0; index < targets.length; index++) {
+            this.particles[index].tx = targets[index].x;
+            this.particles[index].ty = targets[index].y;
+          }
+        }
+
+        update(dt, time, disturbance = 0) {
+          const damping = Math.pow(.91, dt * 60);
+          const force = 24 * dt * dt;
+          for (let index = 0; index < this.activeCount; index++) {
+            const particle = this.particles[index];
+            particle.px = particle.x;
+            particle.py = particle.y;
+            const drift = disturbance * Math.sin(time * 2.7 + particle.offset);
+            particle.vx = (particle.vx + (particle.tx - particle.x) * force + drift * dt) * damping;
+            particle.vy = (particle.vy + (particle.ty - particle.y) * force + Math.cos(time * 2 + particle.offset) * disturbance * dt) * damping;
+            particle.x += particle.vx * dt * 60;
+            particle.y += particle.vy * dt * 60;
+          }
+        }
+
+        draw(context, time, amount = 1) {
+          if (amount <= .001) return;
+          const buckets = [[], [], [], []];
+          const glyphs = [];
+          for (let index = 0; index < this.activeCount; index++) {
+            const particle = this.particles[index];
+            const flicker = .82 + .18 * Math.sin(time * 5.5 + particle.offset);
+            const bucket = Math.min(3, Math.floor(particle.alpha * flicker * 4));
+            buckets[bucket].push(particle);
+            if (this.characters && index % 7 === 0) glyphs.push(particle);
+          }
+          const shades = [
+            `rgba(178,188,179,${.37 * amount})`, `rgba(211,218,210,${.58 * amount})`,
+            `rgba(232,236,229,${.78 * amount})`, `rgba(248,249,245,${.96 * amount})`,
+          ];
+          context.save();
+          context.lineCap = "round";
+          context.lineWidth = 1.1;
+          for (let bucket = 0; bucket < buckets.length; bucket++) {
+            context.strokeStyle = `rgba(218,229,218,${.09 * amount * (bucket + 1) / 4})`;
+            context.beginPath();
+            for (const particle of buckets[bucket]) {
+              const dx = particle.x - particle.px, dy = particle.y - particle.py;
+              if (dx * dx + dy * dy < 1.8) continue;
+              context.moveTo(particle.px, particle.py);
+              context.lineTo(particle.x, particle.y);
+            }
+            context.stroke();
+          }
+          context.restore();
+          for (let bucket = 0; bucket < buckets.length; bucket++) {
+            context.fillStyle = shades[bucket];
+            context.beginPath();
+            for (const particle of buckets[bucket]) {
+              context.rect(particle.x, particle.y, particle.size, particle.size);
+            }
+            context.fill();
+          }
+          if (this.characters) {
+            context.save();
+            context.font = "10px ui-monospace, Consolas, monospace";
+            context.textAlign = "center";
+            context.textBaseline = "middle";
+            context.fillStyle = `rgba(237,241,234,${.6 * amount})`;
+            for (let index = 0; index < glyphs.length; index++) {
+              const particle = glyphs[index];
+              context.fillText(particle.glyph, particle.x, particle.y);
+            }
+            context.restore();
+          }
+        }
+      }
+
+      class ParticleSystem extends ParticleText {}
+
+      class ParticleField {
+        constructor(seed, count = 1450) {
+          const random = new SeededRandom(seed ^ 0x85ebca6b);
+          this.points = Array.from({ length: count }, () => ({
+            x: random.range(0, WIDTH), y: random.range(0, HEIGHT),
+            vx: random.range(-5, 5), vy: random.range(-4, 4),
+            radius: random.range(.45, 1.45), alpha: random.range(.12, .48),
+            phase: random.range(0, TAU),
+          }));
+        }
+
+        update(dt, time, intensity) {
+          const wrap = (value, max) => (value + max) % max;
+          for (const point of this.points) {
+            const flow = intensity * 17;
+            point.x = wrap(point.x + (point.vx + Math.sin(time * .38 + point.phase) * flow) * dt, WIDTH);
+            point.y = wrap(point.y + (point.vy + Math.cos(time * .32 + point.phase) * flow) * dt, HEIGHT);
+          }
+        }
+
+        draw(context, time, opacity = 1) {
+          context.save();
+          context.fillStyle = "#dce4dd";
+          for (const point of this.points) {
+            const flicker = .72 + .28 * Math.sin(time * 1.3 + point.phase);
+            context.globalAlpha = point.alpha * opacity * flicker;
+            context.fillRect(point.x, point.y, point.radius, point.radius);
+          }
+          context.restore();
+        }
+      }
+
+      class NoiseEffect {
+        constructor(seed) {
+          this.random = new SeededRandom(seed ^ 0xc2b2ae35);
+          this.canvas = document.createElement("canvas");
+          this.canvas.width = 240;
+          this.canvas.height = 135;
+          this.context = this.canvas.getContext("2d", { alpha: true });
+          this.image = this.context.createImageData(this.canvas.width, this.canvas.height);
+          this.lastUpdate = -1;
+        }
+
+        render(context, time, intensity) {
+          if (intensity <= .005) return;
+          if (time - this.lastUpdate > .075) {
+            const data = this.image.data;
+            for (let index = 0; index < data.length; index += 4) {
+              const value = this.random.next() > .5 ? 235 : 18;
+              data[index] = value; data[index + 1] = value + (value < 100 ? 2 : 0); data[index + 2] = value;
+              data[index + 3] = Math.floor(this.random.next() * 54);
+            }
+            this.context.putImageData(this.image, 0, 0);
+            this.lastUpdate = time;
+          }
+          context.save();
+          context.globalAlpha = Math.min(.1, intensity * .085);
+          context.globalCompositeOperation = "screen";
+          context.imageSmoothingEnabled = false;
+          context.drawImage(this.canvas, 0, 0, WIDTH, HEIGHT);
+          context.restore();
+        }
+      }
+
+      class ScanlineEffect {
+        constructor() {
+          this.canvas = document.createElement("canvas");
+          this.canvas.width = WIDTH;
+          this.canvas.height = HEIGHT;
+          const context = this.canvas.getContext("2d");
+          context.fillStyle = "rgba(0,0,0,.17)";
+          for (let y = 1; y < HEIGHT; y += 4) context.fillRect(0, y, WIDTH, 1);
+          const vignette = context.createRadialGradient(WIDTH / 2, HEIGHT / 2, HEIGHT * .22, WIDTH / 2, HEIGHT / 2, WIDTH * .68);
+          vignette.addColorStop(0, "rgba(0,0,0,0)");
+          vignette.addColorStop(1, "rgba(0,0,0,.42)");
+          context.fillStyle = vignette;
+          context.fillRect(0, 0, WIDTH, HEIGHT);
+        }
+
+        render(context, intensity = 1) {
+          context.save();
+          context.globalAlpha = intensity;
+          context.drawImage(this.canvas, 0, 0);
+          context.restore();
+        }
+      }
+
+      class GlitchEffect {
+        constructor(seed) { this.seed = seed; }
+
+        render(context, source, time, intensity) {
+          context.drawImage(source, 0, 0);
+          const beat = time * 2.35;
+          const interval = Math.floor(beat);
+          const local = beat - interval;
+          const chance = ((Math.imul(interval + this.seed, 1664525) + 1013904223) >>> 0) / 4294967296;
+          if (local > .1 || chance > intensity * .22 || intensity < .12) return;
+          const strength = (1 - local / .1) * intensity;
+          const slices = 2 + Math.floor(chance * 4);
+          for (let index = 0; index < slices; index++) {
+            const selector = ((Math.imul(interval + index + this.seed, 22695477) + 1) >>> 0) / 4294967296;
+            const height = 3 + selector * 25 * strength;
+            const y = selector * (HEIGHT - height);
+            const shift = (selector - .5) * 110 * strength;
+            context.drawImage(source, 0, y, WIDTH, height, shift, y, WIDTH, height);
+            context.fillStyle = `rgba(218,230,221,${.13 * strength})`;
+            context.fillRect(0, y, WIDTH, Math.max(1, height * .035));
+          }
+        }
+      }
+
+      class GlowEffect {
+        constructor() {
+          this.layer = document.createElement("canvas");
+          this.layer.width = WIDTH;
+          this.layer.height = HEIGHT;
+          this.context = this.layer.getContext("2d");
+        }
+
+        clear() { this.context.clearRect(0, 0, WIDTH, HEIGHT); }
+
+        composite(context) {
+          context.save();
+          context.globalCompositeOperation = "screen";
+          context.globalAlpha = .19;
+          context.filter = "blur(9px)";
+          context.drawImage(this.layer, 0, 0);
+          context.filter = "none";
+          context.globalAlpha = .96;
+          context.drawImage(this.layer, 0, 0);
+          context.restore();
+        }
+      }
+
+      class TypographyRenderer {
+        caption(context, text, y, alpha = 1, size = 16) {
+          if (!text || alpha <= .001) return;
+          context.save();
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.font = `500 ${size}px "Segoe UI", Arial, sans-serif`;
+          context.letterSpacing = "0.24em";
+          context.fillStyle = `rgba(205,214,205,${.68 * alpha})`;
+          context.fillText(text, WIDTH / 2, y);
+          context.restore();
+        }
+
+        final(context, alpha) {
+          if (alpha <= .001) return;
+          context.save();
+          context.textAlign = "center";
+          context.textBaseline = "middle";
+          context.font = "400 23px 'Segoe UI', Arial, sans-serif";
+          context.fillStyle = `rgba(225,230,223,${.78 * alpha})`;
+          context.letterSpacing = ".08em";
+          context.fillText("Your AI.     Your context.     Your control.", WIDTH / 2, 699);
+          context.restore();
+        }
+      }
+
+      class ProductInterface {
+        constructor() {
+          this.query = "what was I building last week?";
+          this.cards = [
+            { group: "PROJECT  /  COPILOT CHAT", title: "Developer tools", detail: "A safer workflow for agent edits", meta: "PROJECT MEMORY  ·  LAST WEEK", mark: "D" },
+            { group: "PERSONAL ASSISTANT", title: "Memory & context", detail: "Decisions carried across sessions", meta: "PROJECT NOTES  ·  6 DAYS AGO", mark: "M" },
+            { group: "GENERATIVE DESIGN", title: "Launch film", detail: "A particle renderer in Canvas 2D", meta: "RECENT ACTIVITY  ·  2 DAYS AGO", mark: "A" },
+          ];
+        }
+
+        roundedRect(context, x, y, width, height, radius) {
+          context.beginPath();
+          context.roundRect(x, y, width, height, radius);
+        }
+
+        bezier(points, progress) {
+          const [a, b, c, d] = points;
+          const inverse = 1 - progress;
+          return {
+            x: inverse ** 3 * a.x + 3 * inverse ** 2 * progress * b.x + 3 * inverse * progress ** 2 * c.x + progress ** 3 * d.x,
+            y: inverse ** 3 * a.y + 3 * inverse ** 2 * progress * b.y + 3 * inverse * progress ** 2 * c.y + progress ** 3 * d.y,
+          };
+        }
+
+        strokeFlight(context, points, progress, alpha) {
+          if (progress <= 0 || alpha <= 0) return;
+          context.save();
+          context.beginPath();
+          context.moveTo(points[0].x, points[0].y);
+          const samples = Math.max(2, Math.ceil(progress * 32));
+          for (let step = 1; step <= samples; step++) {
+            const point = this.bezier(points, progress * step / samples);
+            context.lineTo(point.x, point.y);
+          }
+          context.strokeStyle = `rgba(223,235,222,${alpha})`;
+          context.lineWidth = 1.4;
+          context.shadowColor = "rgba(222,239,223,.7)";
+          context.shadowBlur = 9;
+          context.stroke();
+          context.restore();
+        }
+
+        drawCursor(context, x, y, alpha, scale = 1) {
+          context.save();
+          context.translate(x, y);
+          context.scale(scale, scale);
+          context.shadowColor = "rgba(227,239,228,.65)";
+          context.shadowBlur = 12;
+          context.beginPath();
+          context.moveTo(0, 0);
+          context.lineTo(1, 34);
+          context.lineTo(10, 25);
+          context.lineTo(18, 42);
+          context.lineTo(24, 39);
+          context.lineTo(16, 22);
+          context.lineTo(30, 22);
+          context.closePath();
+          context.fillStyle = `rgba(242,246,239,${alpha})`;
+          context.strokeStyle = `rgba(10,13,11,${alpha})`;
+          context.lineWidth = 2.5;
+          context.fill();
+          context.stroke();
+          context.restore();
+        }
+
+        drawArrow(context, x, y, angle, alpha, scale = 1) {
+          context.save();
+          context.translate(x, y);
+          context.rotate(angle);
+          context.scale(scale, scale);
+          context.shadowColor = "rgba(230,240,230,.75)";
+          context.shadowBlur = 15;
+          context.beginPath();
+          context.moveTo(-15, -6);
+          context.lineTo(2, -6);
+          context.lineTo(2, -14);
+          context.lineTo(17, 0);
+          context.lineTo(2, 14);
+          context.lineTo(2, 6);
+          context.lineTo(-15, 6);
+          context.closePath();
+          context.fillStyle = `rgba(239,244,236,${alpha})`;
+          context.fill();
+          context.restore();
+        }
+
+        drawQuery(context, time, local, alpha) {
+          const appear = smoothstep(0, .2, local) * alpha;
+          if (appear <= .001) return;
+          const x = 302;
+          const y = 393 + (1 - smoothstep(0, .24, local)) * 24;
+          const width = 1316;
+          const height = 248;
+          context.save();
+          context.globalAlpha = appear;
+          context.shadowColor = "rgba(0,0,0,.7)";
+          context.shadowBlur = 44;
+          this.roundedRect(context, x, y, width, height, 21);
+          const panel = context.createLinearGradient(x, y, x + width, y + height);
+          panel.addColorStop(0, "rgba(13,17,14,.96)");
+          panel.addColorStop(.55, "rgba(9,12,10,.96)");
+          panel.addColorStop(1, "rgba(12,16,13,.96)");
+          context.fillStyle = panel;
+          context.fill();
+          context.shadowBlur = 0;
+          context.strokeStyle = "rgba(218,230,218,.17)";
+          context.lineWidth = 1;
+          context.stroke();
+
+          context.beginPath(); context.arc(x + 45, y + 43, 12, 0, TAU);
+          context.fillStyle = "rgba(216,229,216,.09)"; context.fill();
+          context.beginPath(); context.arc(x + 45, y + 43, 4, 0, TAU);
+          context.fillStyle = "rgba(225,236,223,.9)"; context.fill();
+          context.textAlign = "left";
+          context.textBaseline = "middle";
+          context.font = "600 13px 'Segoe UI', Arial, sans-serif";
+          context.letterSpacing = ".16em";
+          context.fillStyle = "rgba(231,237,229,.85)";
+          context.fillText("PROJECT MEMORY", x + 69, y + 43);
+          context.textAlign = "right";
+          context.font = "500 10px ui-monospace, Consolas, monospace";
+          context.letterSpacing = ".08em";
+          context.fillStyle = "rgba(184,197,184,.55)";
+          context.fillText("SEMANTIC SEARCH  /  READY", x + width - 34, y + 43);
+
+          const inputX = x + 32, inputY = y + 72, inputW = width - 64, inputH = 105;
+          this.roundedRect(context, inputX, inputY, inputW, inputH, 12);
+          context.fillStyle = "rgba(3,5,4,.78)";
+          context.fill();
+          context.strokeStyle = `rgba(211,225,211,${.19 + smoothstep(.28, .38, local) * .21})`;
+          context.stroke();
+
+          const searchX = inputX + 30, searchY = inputY + 51;
+          context.beginPath(); context.arc(searchX, searchY - 2, 8, 0, TAU);
+          context.strokeStyle = "rgba(181,197,181,.68)"; context.lineWidth = 1.6; context.stroke();
+          context.beginPath(); context.moveTo(searchX + 6, searchY + 4); context.lineTo(searchX + 13, searchY + 11); context.stroke();
+
+          const typed = Math.floor(this.query.length * clamp((local - .37) / .45, 0, 1));
+          const visibleText = this.query.slice(0, typed);
+          const textX = inputX + 62, textY = searchY;
+          context.textAlign = "left";
+          context.textBaseline = "middle";
+          context.font = "400 27px 'Segoe UI', Arial, sans-serif";
+          context.letterSpacing = "0";
+          context.fillStyle = "rgba(242,245,239,.94)";
+          context.fillText(visibleText, textX, textY);
+          const cursorX = textX + context.measureText(visibleText).width + 3;
+          if (local > .37 && local < .82 && Math.floor(time * 2.8) % 2 === 0) {
+            context.fillStyle = "rgba(238,244,236,.9)";
+            context.fillRect(cursorX, textY - 16, 1.5, 32);
+          }
+
+          const buttonX = inputX + inputW - 46, buttonY = searchY;
+          context.beginPath(); context.arc(buttonX, buttonY, 27, 0, TAU);
+          context.fillStyle = `rgba(225,233,222,${.1 + smoothstep(.73, .82, local) * .12})`;
+          context.fill();
+          context.strokeStyle = "rgba(229,238,227,.17)"; context.stroke();
+          context.save();
+          context.translate(buttonX, buttonY);
+          context.rotate(-Math.PI / 4);
+          context.fillStyle = "rgba(229,237,226,.9)";
+          context.beginPath(); context.moveTo(-8, -1); context.lineTo(7, -1); context.lineTo(3, -6); context.lineTo(5, -8); context.lineTo(13, 2); context.lineTo(5, 11); context.lineTo(3, 9); context.lineTo(7, 4); context.lineTo(-8, 4); context.closePath(); context.fill();
+          context.restore();
+
+          context.font = "500 10px 'Segoe UI', Arial, sans-serif";
+          context.letterSpacing = ".11em";
+          context.fillStyle = "rgba(165,179,165,.55)";
+          context.textAlign = "left";
+          context.fillText("ASK IN YOUR OWN WORDS", inputX + 2, y + 211);
+          context.textAlign = "right";
+          context.fillText("PROJECTS  ·  NOTES  ·  DECISIONS", inputX + inputW - 2, y + 211);
+
+          const cursorPath = [
+            { x: 245, y: 806 }, { x: 415, y: 774 }, { x: 357, y: 550 }, { x: textX + 13, y: textY },
+          ];
+          const cursorProgress = smoothstep(.055, .31, local);
+          if (local < .39) {
+            this.strokeFlight(context, cursorPath, cursorProgress, .19 * (1 - smoothstep(.29, .39, local)));
+            const cursor = this.bezier(cursorPath, cursorProgress);
+            this.drawCursor(context, cursor.x, cursor.y, 1 - smoothstep(.31, .39, local), .86);
+          }
+          const clickProgress = smoothstep(.3, .39, local) * (1 - smoothstep(.42, .53, local));
+          if (clickProgress > .001) {
+            context.beginPath(); context.arc(textX + 13, textY, 10 + (1 - clickProgress) * 18, 0, TAU);
+            context.strokeStyle = `rgba(225,237,222,${.5 * clickProgress})`;
+            context.lineWidth = 1; context.stroke();
+          }
+
+          const flightProgress = smoothstep(.79, .98, local);
+          if (flightProgress > .001 && local < .995) {
+            const flightPath = [
+              { x: buttonX + 2, y: buttonY }, { x: 1585, y: 503 },
+              { x: 1581, y: 302 }, { x: 1450, y: 247 },
+            ];
+            this.strokeFlight(context, flightPath, flightProgress, .32 * (1 - flightProgress * .45));
+            const point = this.bezier(flightPath, flightProgress);
+            const ahead = this.bezier(flightPath, Math.min(1, flightProgress + .01));
+            this.drawArrow(context, point.x, point.y, Math.atan2(ahead.y - point.y, ahead.x - point.x), 1 - flightProgress * .25, .8);
+            const ripple = (time - 12.95) * 36;
+            if (ripple > 0 && ripple < 66) {
+              context.beginPath(); context.arc(1450, 247, ripple, 0, TAU);
+              context.strokeStyle = `rgba(216,233,215,${.28 * (1 - ripple / 66)})`;
+              context.lineWidth = 1; context.stroke();
+            }
+          }
+          context.restore();
+        }
+
+        drawResults(context, time, local, alpha) {
+          const cardWidth = 352, cardHeight = 142, gap = 24;
+          const firstX = (WIDTH - (cardWidth * 3 + gap * 2)) / 2;
+          const y = 677;
+          this.cards.forEach((card, index) => {
+            const progress = smoothstep(index * .055, index * .055 + .24, local) * alpha;
+            if (progress <= .001) return;
+            const x = firstX + index * (cardWidth + gap);
+            const offsetY = (1 - smoothstep(index * .055, index * .055 + .24, local)) * 18;
+            context.save();
+            context.globalAlpha = progress;
+            this.roundedRect(context, x, y + offsetY, cardWidth, cardHeight, 13);
+            const fill = context.createLinearGradient(x, y, x + cardWidth, y + cardHeight);
+            fill.addColorStop(0, "rgba(17,21,18,.92)");
+            fill.addColorStop(1, "rgba(9,12,10,.92)");
+            context.fillStyle = fill; context.fill();
+            context.strokeStyle = "rgba(215,228,214,.16)"; context.lineWidth = 1; context.stroke();
+
+            context.beginPath(); context.arc(x + 27, y + offsetY + 28, 12, 0, TAU);
+            context.fillStyle = "rgba(224,235,222,.11)"; context.fill();
+            context.fillStyle = "rgba(225,237,222,.9)";
+            context.textAlign = "center"; context.textBaseline = "middle";
+            context.font = "600 10px ui-monospace, Consolas, monospace";
+            context.fillText(card.mark, x + 27, y + offsetY + 28);
+
+            context.textAlign = "left";
+            context.font = "500 9px 'Segoe UI', Arial, sans-serif";
+            context.letterSpacing = ".13em";
+            context.fillStyle = "rgba(169,186,169,.67)";
+            context.fillText(card.group, x + 48, y + offsetY + 28);
+            context.font = "500 18px 'Segoe UI', Arial, sans-serif";
+            context.letterSpacing = "0";
+            context.fillStyle = "rgba(237,241,234,.93)";
+            context.fillText(card.title, x + 21, y + offsetY + 66);
+            context.font = "400 12px 'Segoe UI', Arial, sans-serif";
+            context.fillStyle = "rgba(188,198,187,.75)";
+            context.fillText(card.detail, x + 21, y + offsetY + 91);
+
+            context.strokeStyle = "rgba(210,222,208,.11)";
+            context.beginPath(); context.moveTo(x + 20, y + offsetY + 110); context.lineTo(x + cardWidth - 20, y + offsetY + 110); context.stroke();
+            context.font = "500 8px ui-monospace, Consolas, monospace";
+            context.letterSpacing = ".06em";
+            context.fillStyle = "rgba(160,176,160,.59)";
+            context.fillText(card.meta, x + 21, y + offsetY + 127);
+            context.restore();
+          });
+        }
+      }
+
+      class TransitionManager {
+        amount(cue, time) {
+          const local = time - cue.start;
+          const remaining = cue.end - time;
+          return smoothstep(0, .22, local) * (1 - smoothstep(0, .18, .18 - remaining));
+        }
+
+        intensity(base, cue, time) {
+          const enter = smoothstep(cue.start, cue.start + .28, time);
+          const leave = 1 - smoothstep(cue.end - .18, cue.end, time);
+          return base * enter * leave;
+        }
+      }
+
+      class MemoryNetwork {
+        constructor(seed, count = 175) {
+          const random = new SeededRandom(seed ^ 0x27d4eb2f);
+          this.nodes = Array.from({ length: count }, (_, index) => ({
+            x: random.range(180, WIDTH - 180), y: random.range(165, HEIGHT - 150),
+            ox: 0, oy: 0, vx: random.range(-8, 8), vy: random.range(-7, 7),
+            phase: random.range(0, TAU), radius: random.range(1, 2.8), index,
+          }));
+          for (const node of this.nodes) { node.ox = node.x; node.oy = node.y; }
+        }
+
+        draw(context, time, active) {
+          const visibility = smoothstep(0, .6, active) * (1 - smoothstep(.88, 1, active));
+          if (visibility <= .001) return;
+          const query = active < .58;
+          const travel = smoothstep(.12, .68, active);
+          for (let i = 0; i < this.nodes.length; i++) {
+            const a = this.nodes[i];
+            for (let j = i + 1; j < this.nodes.length; j++) {
+              const b = this.nodes[j];
+              const dx = a.x - b.x, dy = a.y - b.y;
+              const distanceSquared = dx * dx + dy * dy;
+              if (distanceSquared > 112 * 112) continue;
+              const distance = Math.sqrt(distanceSquared);
+              const pulse = .5 + .5 * Math.sin(time * 1.8 + a.phase + b.phase);
+              context.strokeStyle = `rgba(189,207,191,${(.045 + pulse * .09) * visibility * (1 - distance / 112)})`;
+              context.lineWidth = .75;
+              context.beginPath(); context.moveTo(a.x, a.y); context.lineTo(b.x, b.y); context.stroke();
+            }
+          }
+          for (const node of this.nodes) {
+            const pulse = .55 + .45 * Math.sin(time * 2.1 + node.phase);
+            context.fillStyle = `rgba(216,229,215,${(.28 + pulse * .55) * visibility})`;
+            context.beginPath(); context.arc(node.x, node.y, node.radius * (query ? 1 : 1.15), 0, TAU); context.fill();
+            const streamTick = Math.floor(time * 5);
+            if (!query && ((streamTick + node.index * 17) % 29 === 0)) {
+              const tx = lerp(node.ox, WIDTH / 2 + Math.sin(time + node.phase) * 300, travel);
+              const ty = lerp(node.oy, HEIGHT / 2 + Math.cos(time * .8 + node.phase) * 200, travel);
+              context.strokeStyle = `rgba(224,235,222,${.25 * visibility})`;
+              context.lineWidth = 1;
+              context.beginPath(); context.moveTo(node.x, node.y); context.lineTo(tx, ty); context.stroke();
+            }
+          }
+        }
+      }
+
+      class SceneManager {
+        constructor(seed) {
+          this.seed = seed;
+          this.canvas = document.createElement("canvas");
+          this.canvas.width = WIDTH;
+          this.canvas.height = HEIGHT;
+          this.context = this.canvas.getContext("2d");
+          this.particleText = new ParticleSystem(seed);
+          this.field = new ParticleField(seed);
+          this.noise = new NoiseEffect(seed);
+          this.scanlines = new ScanlineEffect();
+          this.glitch = new GlitchEffect(seed);
+          this.glow = new GlowEffect();
+          this.type = new TypographyRenderer();
+          this.product = new ProductInterface();
+          this.transitions = new TransitionManager();
+          this.network = new MemoryNetwork(seed);
+          this.currentIndex = -1;
+          this.currentCue = CUES[0];
+        }
+
+        enter(index) {
+          this.currentIndex = index;
+          this.currentCue = CUES[index];
+          this.particleText.setText(this.currentCue.text, this.currentCue);
+        }
+
+        render(outputContext, time, dt) {
+          const index = CUES.findIndex((cue) => time >= cue.start && time < cue.end);
+          const cueIndex = index < 0 ? CUES.length - 1 : index;
+          if (cueIndex !== this.currentIndex) this.enter(cueIndex);
+          const cue = this.currentCue;
+          const local = clamp((time - cue.start) / (cue.end - cue.start), 0, 1);
+          const amount = this.transitions.amount(cue, time);
+
+          this.particleText.update(dt, time, cue.noise * 1.8);
+          this.field.update(dt, time, cue.noise);
+          const context = this.context;
+          context.fillStyle = "#050606";
+          context.fillRect(0, 0, WIDTH, HEIGHT);
+          const isProductScene = cue.scene === "query" || cue.scene === "results";
+          const fieldOpacity = isProductScene ? .25 : .9;
+          this.field.draw(context, time, fieldOpacity);
+          if (cue.scene === "query") {
+            const networkProgress = .58 * smoothstep(.29, .64, local);
+            this.network.draw(context, time, networkProgress);
+            this.product.drawQuery(context, time, local, amount);
+          } else if (cue.scene === "results") {
+            this.network.draw(context, time, .68 + .08 * local);
+          }
+
+          this.glow.clear();
+          this.particleText.draw(this.glow.context, time, amount);
+          this.glow.composite(context);
+
+          const captionAlpha = amount * (cue.final ? .3 : 1);
+          if (cue.caption) this.type.caption(context, cue.caption, cue.centerY ? cue.centerY + 175 : 738, captionAlpha, cue.scene === "network" ? 14 : 13);
+          if (cue.scene === "results") this.product.drawResults(context, time, local, amount);
+          if (cue.final) this.type.final(context, smoothstep(27.3, 28.2, time) * (1 - smoothstep(29.55, 30, time)));
+
+          const fadeOut = cue.final ? 1 - smoothstep(29.35, 30, time) : 1;
+          const glitchIntensity = this.transitions.intensity(cue.glitch, cue, time);
+          this.glitch.render(outputContext, this.canvas, time, glitchIntensity);
+          this.noise.render(outputContext, time, this.transitions.intensity(cue.noise, cue, time));
+          this.scanlines.render(outputContext, .75);
+          if (fadeOut < 1) {
+            outputContext.fillStyle = `rgba(0,0,0,${1 - fadeOut})`;
+            outputContext.fillRect(0, 0, WIDTH, HEIGHT);
+          }
+        }
+      }
+
+      const urlSeed = new URLSearchParams(location.search).get("seed") || "ankita-launch-film-2026";
+      const seed = hashSeed(urlSeed);
+      let scene = new SceneManager(seed);
+      let elapsed = 0;
+      let playing = !prefersReducedMotion;
+      let previousFrame = performance.now();
+      let idleTimer;
+      let view = { scale: 1, x: 0, y: 0, dpr: 1 };
+
+      function resize() {
+        const width = window.innerWidth;
+        const height = window.innerHeight;
+        const dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+        filmCanvas.width = Math.max(1, Math.round(width * dpr));
+        filmCanvas.height = Math.max(1, Math.round(height * dpr));
+        const scale = Math.min(width / WIDTH, height / HEIGHT);
+        view = { scale, x: (width - WIDTH * scale) / 2, y: (height - HEIGHT * scale) / 2, dpr };
+      }
+
+      function drawFrame(now) {
+        const dt = Math.min((now - previousFrame) / 1000, .05);
+        previousFrame = now;
+        if (playing) elapsed = Math.min(DURATION, elapsed + dt);
+        filmContext.setTransform(view.dpr, 0, 0, view.dpr, 0, 0);
+        filmContext.fillStyle = "#050606";
+        filmContext.fillRect(0, 0, window.innerWidth, window.innerHeight);
+        filmContext.setTransform(view.scale * view.dpr, 0, 0, view.scale * view.dpr, view.x * view.dpr, view.y * view.dpr);
+        scene.render(filmContext, elapsed, playing ? dt : 0);
+        updateControls();
+        if (elapsed >= DURATION && playing) setPlaying(false);
+        requestAnimationFrame(drawFrame);
+      }
+
+      function updateControls() {
+        timeReadout.textContent = `${formatTime(elapsed)} / 00:30`;
+        trackFill.style.width = `${(elapsed / DURATION) * 100}%`;
+        track.setAttribute("aria-valuenow", String(Math.round(elapsed)));
+        track.setAttribute("aria-valuetext", `${formatTime(elapsed)} of 00:30`);
+      }
+
+      function setPlaying(value) {
+        playing = value && elapsed < DURATION;
+        playButton.setAttribute("aria-label", playing ? "Pause film" : "Play film");
+        playButton.innerHTML = playing
+          ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.5h3v11H4zm5 0h3v11H9z"/></svg>'
+          : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 2.1v11.8L13.2 8z"/></svg>';
+      }
+
+      function showControls() {
+        player.classList.remove("idle");
+        clearTimeout(idleTimer);
+        if (playing) idleTimer = setTimeout(() => player.classList.add("idle"), 2400);
+      }
+
+      function restart() {
+        elapsed = 0;
+        scene = new SceneManager(seed);
+        setPlaying(true);
+        showControls();
+      }
+
+      async function toggleFullscreen() {
+        try {
+          if (document.fullscreenElement) await document.exitFullscreen();
+          else await player.requestFullscreen();
+        } catch {
+          showControls();
+        }
+      }
+
+      function updateFullscreenButton() {
+        const isFullscreen = Boolean(document.fullscreenElement);
+        fullscreenButton.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+        fullscreenButton.title = isFullscreen ? "Exit fullscreen (F)" : "Fullscreen (F)";
+        fullscreenButton.innerHTML = isFullscreen
+          ? '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h5v1.7H3.7V7H2zm7 0h5v5h-1.7V3.7H9zM2 9h1.7v3.3H7V14H2zm10.3 0H14v5H9v-1.7h3.3z" transform="rotate(180 8 8)"/></svg>'
+          : '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h5v1.7H3.7V7H2zm7 0h5v5h-1.7V3.7H9zM2 9h1.7v3.3H7V14H2zm10.3 0H14v5H9v-1.7h3.3z"/></svg>';
+      }
+
+      playButton.addEventListener("click", () => { setPlaying(!playing); showControls(); });
+      document.querySelector("#restart").addEventListener("click", restart);
+      fullscreenButton.addEventListener("click", () => { void toggleFullscreen(); showControls(); });
+      document.addEventListener("fullscreenchange", () => { updateFullscreenButton(); resize(); showControls(); });
+      track.addEventListener("click", (event) => {
+        const bounds = track.getBoundingClientRect();
+        elapsed = clamp((event.clientX - bounds.left) / bounds.width, 0, 1) * DURATION;
+        scene = new SceneManager(seed);
+        showControls();
+      });
+      window.addEventListener("keydown", (event) => {
+        if (event.code === "Space" && !event.repeat) { event.preventDefault(); setPlaying(!playing); showControls(); }
+        if (event.key.toLowerCase() === "r") restart();
+        if (event.key.toLowerCase() === "f") { event.preventDefault(); void toggleFullscreen(); showControls(); }
+      });
+      window.addEventListener("pointermove", showControls, { passive: true });
+      window.addEventListener("resize", resize, { passive: true });
+      resize();
+      setPlaying(playing);
+      if (prefersReducedMotion) player.classList.remove("idle");
+      requestAnimationFrame(drawFrame);
+    })();
+  </script>
+</body>
+</html>

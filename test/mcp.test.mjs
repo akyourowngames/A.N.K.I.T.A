@@ -12,6 +12,7 @@ test.after(() => fs.rmSync(SANDBOX, { recursive: true, force: true }));
 const {
   commandCandidates,
   serverEnv,
+  resolveLaunch,
   formatToolResult,
   toolResultText,
   McpClient,
@@ -62,6 +63,57 @@ test('command candidates handle the Windows shim problem', () => {
   assert.match(batch[0].problem || '', /command shell/);
 });
 
+test('a cached npx package is launched directly so no console window opens', () => {
+  const resolved = resolveLaunch('npx', ['-y', 'some-package@1.0.0']);
+  if (process.platform === 'win32' && /_npx/.test(resolved.command)) {
+    assert.notEqual(resolved.command, 'npx', 'never shells out to npx on Windows');
+    assert.match(resolved.args[0], /_npx[\\/].*\.(js|cjs|mjs)$/i, 'runs the cached entry script with node');
+    assert.equal(resolved.args.includes('-y'), false, 'npx flags are dropped');
+  }
+  // Anything that is not an npx launch is left exactly as configured.
+  assert.deepEqual(resolveLaunch('uvx', ['some-uninstalled-tool']), { command: 'uvx', args: ['some-uninstalled-tool'] });
+  assert.deepEqual(resolveLaunch('node', ['server.js']), { command: 'node', args: ['server.js'] });
+});
+
+test('a full Windows path to npx is still launched without a shell', () => {
+  const full = 'C:\\Program Files\\nodejs\\npx.cmd';
+  if (process.platform === 'win32') {
+    // Server configs often carry the absolute shim path (the Playwright reload
+    // failure). Basename matching must rewrite it to node + npx-cli.js instead
+    // of reporting an unspawnable batch shim.
+    const c = commandCandidates(full);
+    assert.equal(c.length, 1);
+    assert.equal(c[0].command, process.execPath, 'runs under the same node');
+    assert.match(c[0].args[0].replace(/\\/g, '/'), /npm\/bin\/npx-cli\.js$/);
+    assert.equal(c[0].problem, undefined, 'no batch-shim complaint');
+    // An uncached package keeps the original command; candidates handle it.
+    const passthrough = resolveLaunch(full, ['-y', 'some-package-that-is-not-cached-xyz']);
+    assert.equal(passthrough.command, full);
+    assert.deepEqual(passthrough.args, ['-y', 'some-package-that-is-not-cached-xyz']);
+  } else {
+    assert.deepEqual(commandCandidates(full), [{ command: full, args: [] }]);
+  }
+});
+
+test('a full path to uvx keeps its command when the tool is not cached', () => {
+  const full = 'C:\\tools\\uv\\uvx.exe';
+  const resolved = resolveLaunch(full, ['some-uninstalled-tool']);
+  assert.equal(resolved.command, full, 'the configured path must survive, not become bare uvx');
+  assert.deepEqual(resolved.args, ['some-uninstalled-tool']);
+});
+
+test('a cached uvx tool is launched without the uvx console intermediary', () => {
+  const resolved = resolveLaunch('uvx', ['mcp-server-time']);
+  if (process.platform === 'win32' && /uv[\\/]cache/.test(resolved.command)) {
+    // uvx is `uv tool run`: it always allocates a console. Running the cached
+    // entry point directly (through python rather than the .exe, which would
+    // also draw a console) is what keeps the window from appearing.
+    assert.doesNotMatch(resolved.command, /\buvx?\.exe$/i, 'never spawns uvx/uv itself');
+    assert.ok(/\.(exe|cmd)$/i.test(resolved.command), 'runs a concrete cached launcher');
+    assert.equal(resolved.args.includes('mcp-server-time'), false, 'the package spec is consumed');
+  }
+});
+
 test('spawned servers get a stripped environment, not the whole process', () => {
   const previous = process.env.SECRET_THING;
   process.env.SECRET_THING = 'super-secret-value';
@@ -70,6 +122,8 @@ test('spawned servers get a stripped environment, not the whole process', () => 
     assert.equal(env.SECRET_THING, undefined, 'secrets must not be inherited');
     assert.equal(env.MCP_FIXTURE_LOG, 'x', 'an explicit server env is applied');
     assert.equal(env.PATH, process.env.PATH, 'PATH is kept');
+    assert.equal(env.CI, '1', 'MCP servers run as non-interactive background processes');
+    assert.equal(env.NO_COLOR, '1', 'server output is not a terminal UI');
   } finally {
     if (previous === undefined) delete process.env.SECRET_THING;
     else process.env.SECRET_THING = previous;

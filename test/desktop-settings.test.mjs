@@ -39,6 +39,29 @@ test('desktop provider override replaces an incompatible project API base', () =
   assert.equal(inherited.apiKey, 'from-env');
 });
 
+test('desktop image settings override env config without exposing API keys', () => {
+  const base = {
+    provider: 'custom', apiBase: 'https://chat.example/v1', apiKey: 'chat-secret',
+    imageApiBase: '', imageApiKey: '', imageModel: 'gpt-image-1', unsplashAccessKey: '', pixabayApiKey: '',
+  };
+  const configured = applyDesktopSettings(base, {
+    imageApiBase: 'https://images.example/v1', imageApiKey: 'image-secret', imageModel: 'image-model',
+    unsplashAccessKey: 'unsplash-secret', pixabayApiKey: 'pixabay-secret',
+  });
+  assert.equal(configured.imageApiBase, 'https://images.example/v1');
+  assert.equal(configured.imageApiKey, 'image-secret');
+  assert.equal(configured.imageModel, 'image-model');
+  const view = new DesktopSettingsStore(path.join(os.tmpdir(), 'not-loaded-image-settings.json'));
+  view.data = { imageApiBase: configured.imageApiBase, imageModel: configured.imageModel, imageApiKey: configured.imageApiKey, unsplashAccessKey: configured.unsplashAccessKey, pixabayApiKey: configured.pixabayApiKey };
+  const safe = view.publicView(configured);
+  assert.equal(safe.hasImageApiKey, true);
+  assert.equal(safe.hasUnsplashAccessKey, true);
+  assert.equal(safe.hasPixabayApiKey, true);
+  assert.equal(JSON.stringify(safe).includes('image-secret'), false);
+  assert.equal(JSON.stringify(safe).includes('unsplash-secret'), false);
+  assert.equal(JSON.stringify(safe).includes('pixabay-secret'), false);
+});
+
 test('context window and output cap are configurable and marked explicit', () => {
   const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', contextWindow: 32768, maxTokens: 4096, contextWindowExplicit: false, maxTokensExplicit: false };
   const tuned = applyDesktopSettings(base, { contextWindow: 200000, maxTokens: 8192 });
@@ -183,6 +206,62 @@ test('appearance can be saved while a custom provider is unconfigured', async ()
     const result = await engine.saveDesktopSettings({ appearance: 'slate' });
     assert.equal(result.preferences.appearance, 'slate');
     assert.equal(engine.client, null);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('profile name, timezone and setup flag persist and reach the renderer', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-profile-'));
+  try {
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    store.update({ username: '  Krish  ', timeZone: 'Asia/Kolkata', profileSetupDone: true });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.username, 'Krish', 'names are trimmed');
+    assert.equal(fresh.data.timeZone, 'Asia/Kolkata');
+    assert.equal(fresh.data.profileSetupDone, true);
+    const view = fresh.publicView({ username: 'user', timeZone: '' });
+    assert.equal(view.username, 'Krish');
+    assert.equal(view.timeZone, 'Asia/Kolkata');
+    assert.equal(view.profileSetupDone, true);
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('profile settings reject bad values instead of persisting them', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-profile-bad-'));
+  try {
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    assert.throws(() => store.update({ username: 42 }), /Invalid name/);
+    assert.throws(() => store.update({ username: 'x'.repeat(101) }), /under 100 characters/);
+    assert.throws(() => store.update({ timeZone: 'Mars/Olympus' }), /valid timezone/);
+    store.update({ timeZone: '' });
+    assert.equal(new DesktopSettingsStore(store.file).load().data.timeZone, '', 'blank stays system-local');
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('profile settings override env config without a reconnect', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-profile-engine-'));
+  const client = { id: 'client' };
+  const bootstrap = async ({ config }) => ({ client, tool: null, models: [{ id: 'alpha', name: 'Alpha', tools: true }], model: 'alpha', provider: { name: config.provider } });
+  const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
+  try {
+    const base = { provider: 'copilot', username: 'user', timeZone: '', tools: true, contextWindow: 32768 };
+    const converted = applyDesktopSettings(base, { username: 'Krish', timeZone: 'Asia/Kolkata' });
+    assert.equal(converted.username, 'Krish', 'the app value wins over env');
+    assert.equal(converted.timeZone, 'Asia/Kolkata');
+    assert.equal(applyDesktopSettings(base, {}).username, 'user', 'env survives when the app has nothing saved');
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+      config: { ...base }, bootstrap, mcp, emit: () => {},
+    });
+    await engine.init();
+    const agent = { config: { ...engine.config }, contextWindow: 32768 };
+    engine.agents.set('thread', agent);
+    const result = await engine.saveDesktopSettings({ username: 'Krish', timeZone: 'Asia/Kolkata', profileSetupDone: true });
+    assert.equal(engine.client, client, 'the provider connection is reused');
+    assert.equal(engine.config.username, 'Krish');
+    assert.equal(agent.config.timeZone, 'Asia/Kolkata', 'live agents pick up the profile');
+    assert.equal(result.preferences.username, 'Krish');
+    assert.equal(result.preferences.profileSetupDone, true);
     await engine.close();
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

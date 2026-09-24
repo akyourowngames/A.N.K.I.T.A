@@ -4,6 +4,10 @@ desktop/renderer/dist/
 desktop/release/
 *.log
 
+# Images produced by the image tools; they are user content, not source.
+generated-images/
+downloaded-images/
+
 # Artifacts written into the working directory by tools we drive.
 .playwright-mcp/
 .kilo/
