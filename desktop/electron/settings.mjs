@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom']);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 
 /** An IANA zone the runtime accepts, or null. */
@@ -70,6 +70,11 @@ function validatePatch(patch) {
       }
     } else if (key === 'profileSetupDone') {
       clean[key] = value === true || value === 'true';
+    } else if (key === 'disabledSkills') {
+      if (!Array.isArray(value) || value.length > 100 || value.some(name => typeof name !== 'string' || !/^[a-z0-9-]{1,64}$/.test(name))) {
+        throw new Error('Invalid disabled skills list');
+      }
+      clean[key] = [...new Set(value)];
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
       const limit = key === 'model' || key === 'imageModel' ? 200 : 4096;

@@ -2,10 +2,30 @@
 
 All notable changes to Ankita are documented here. This project adheres to
 [Semantic Versioning](https://semver.org/), and releases are cut from the
-version in `package.json` (see [docs/releasing.md](docs/releasing.md)). A fuller,
-continuously updated narrative lives in [docs/changelog.md](docs/changelog.md).
+version in `package.json` (see [docs/guides/releasing.md](docs/guides/releasing.md)). A fuller,
+continuously updated narrative lives in [docs/reference/changelog.md](docs/reference/changelog.md).
 
 ## [Unreleased]
+
+## [2.4.2] - 2026-09-25
+
+### Added
+
+- **Skills in Plugins.** Browse installed workflows, read their instructions, and
+  enable or disable each skill. Choices persist across desktop restarts and update
+  active chats before their next reply.
+
+### Fixed
+
+- Desktop chats now load packaged skills. Disabled skills are absent from the
+  model's skill catalogue and cannot be run through the skill tool.
+- Session checklists remain visible between turns and after reopening a chat;
+  the agent is reminded to update their statuses before finishing work.
+
+### Changed
+
+- Reorganized source, tools, tests, scripts, and documentation into focused
+  directories, with imports and release packaging updated for the new paths.
 
 ## [2.4.1] - 2026-09-24
 

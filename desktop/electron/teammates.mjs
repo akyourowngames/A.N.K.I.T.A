@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
-import { writeTextFile } from '../../tools/_shared.mjs';
+import { writeTextFile } from '../../tools/shared/_shared.mjs';
 
 const defaults = () => ({ version: 1, teammates: [
   { id: 'chief', name: 'Chief', color: '#b9a27c', emoji: '✦', persona: 'Coordinate the work. Be clear, decisive, and thoughtful.', projectId: null, model: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastMessage: '', lastMessageAt: null },

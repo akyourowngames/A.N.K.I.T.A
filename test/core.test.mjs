@@ -4,9 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { PassThrough } from 'node:stream';
-import { Agent } from '../src/agent.mjs';
-import * as shared from '../tools/_shared.mjs';
-import { Terminal } from '../src/ui.mjs';
+import { Agent } from '../src/core/agent.mjs';
+import * as shared from '../tools/shared/_shared.mjs';
+import { Terminal } from '../src/core/ui.mjs';
 
 const config = { tools: true, autoApprove: true, historyMessages: 8, historyLines: 8, maxTokens: 1000, temperature: null };
 const makeAgent = (extra = {}) => new Agent({ client: {}, config: { ...config }, ...extra });

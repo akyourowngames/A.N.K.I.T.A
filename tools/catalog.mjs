@@ -1,24 +1,24 @@
-import * as createDir from "./create-dir.mjs";
-import * as webSearch from "./web-search.mjs";
-import * as webFetch from "./web-fetch.mjs";
-import * as scrape from "./scrape.mjs";
-import * as project from "./project.mjs";
-import * as projectMemory from "./project-memory.mjs";
-import * as schedule from "./schedule.mjs";
-import * as watch from "./watch.mjs";
-import * as githubNotifications from "./github-notifications.mjs";
-import * as mcpManage from "./mcp-manage.mjs";
-import * as composio from "./composio.mjs";
-import * as remember from "./remember.mjs";
-import * as recall from "./recall.mjs";
-import * as skill from './skill.mjs';
-import * as git from './git.mjs';
-import * as portStatus from './port-status.mjs';
-import * as killProcess from './kill-process.mjs';
-import * as imageGenerate from './image-generate.mjs';
-import * as unsplashSearch from './unsplash-search.mjs';
-import * as pixabaySearch from './pixabay-search.mjs';
-import * as imageDownload from './image-download.mjs';
+import * as createDir from "./filesystem/create-dir.mjs";
+import * as webSearch from "./web/web-search.mjs";
+import * as webFetch from "./web/web-fetch.mjs";
+import * as scrape from "./web/scrape.mjs";
+import * as project from "./project/project.mjs";
+import * as projectMemory from "./project/project-memory.mjs";
+import * as schedule from "./automation/schedule.mjs";
+import * as watch from "./automation/watch.mjs";
+import * as githubNotifications from "./github/github-notifications.mjs";
+import * as mcpManage from "./mcp/mcp-manage.mjs";
+import * as composio from "./connectors/composio.mjs";
+import * as remember from "./personal/remember.mjs";
+import * as recall from "./personal/recall.mjs";
+import * as skill from './skills/skill.mjs';
+import * as git from './git/git.mjs';
+import * as portStatus from './process/port-status.mjs';
+import * as killProcess from './process/kill-process.mjs';
+import * as imageGenerate from './images/image-generate.mjs';
+import * as unsplashSearch from './images/unsplash-search.mjs';
+import * as pixabaySearch from './images/pixabay-search.mjs';
+import * as imageDownload from './images/image-download.mjs';
 
 /**
  * Grouped tools: most schemas are deferred so discovery loads a whole family.

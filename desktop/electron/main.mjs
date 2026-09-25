@@ -8,7 +8,7 @@ import { menuTemplate } from './menu.mjs';
 import { setupUpdater } from './updater.mjs';
 import { renderPdfPages } from './pdf-render.mjs';
 import { IPC_CONTRACT } from '../shared/version.mjs';
-import { CONFIG_DIR } from '../../src/config.mjs';
+import { CONFIG_DIR } from '../../src/core/config.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -202,6 +202,8 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'cancel': return current.cancel(payload.id);
     case 'respondApproval': return current.respondApproval(payload.requestId, payload.answer);
     case 'listModels': return current.listModels();
+      case 'listSkills': return current.listSkills();
+      case 'setSkillEnabled': return current.setSkillEnabled(payload.name, payload.enabled);
     case 'setModel': return current.setModel(payload.id, payload.modelId);
     case 'settingsSummary': return current.getSettingsSummary();
     case 'getDesktopPreferences': return current.getDesktopPreferences();

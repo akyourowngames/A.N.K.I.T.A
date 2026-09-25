@@ -552,6 +552,11 @@ html[data-theme="slate"] .search-box { background: #1e2931; }
 .plugins-header-settings:hover { background: #303334; color: #fff; }
 .plugins-scroll { flex: 1; min-height: 0; overflow-y: auto; }
 .plugins-content { max-width: 1050px; margin: 0 auto; padding: 46px clamp(26px, 5vw, 68px) 80px; }
+.plugins-sections { display: inline-flex; gap: 4px; margin: 0 0 38px; padding: 4px; border: 1px solid var(--edge-strong); border-radius: 10px; background: #222525; }
+.plugins-sections button { display: inline-flex; align-items: center; gap: 8px; min-width: 103px; justify-content: center; padding: 9px 15px; border: 0; border-radius: 7px; background: transparent; color: #9ca59d; font-size: 11.5px; font-weight: 650; }
+.plugins-sections button:hover { color: #eeeae0; }
+.plugins-sections button.active { background: #343634; color: var(--gold-light); box-shadow: 0 1px 4px rgba(0,0,0,.19); }
+.plugins-sections button:focus-visible, .skill-toggle:focus-visible { outline: 2px solid var(--gold-light); outline-offset: 2px; }
 .plugins-intro { position: relative; margin: 0 0 38px; }
 .plugins-eyebrow { display: flex; align-items: center; gap: 8px; margin-bottom: 17px; color: #b3a284; font-size: 9px; font-weight: 700; letter-spacing: 2px; }
 .plugins-eyebrow > span { width: 5px; height: 5px; border-radius: 50%; background: var(--gold); box-shadow: 0 0 0 4px rgba(199,170,121,.1); }
@@ -574,6 +579,8 @@ html[data-theme="slate"] .search-box { background: #1e2931; }
 .plugins-tabs button.active { color: #e9e9e3; }
 .plugins-tabs button.active::after { position: absolute; right: 0; bottom: -1px; left: 0; height: 2px; background: var(--gold); content: ''; }
 .plugins-tabs button span { margin-left: 4px; color: #777f79; font-size: 10px; }
+.skills-tab-label { display: inline-flex; align-items: baseline; gap: 7px; padding-bottom: 12px; color: #e9e9e3; font-size: 12px; font-weight: 650; }
+.skills-tab-label small { color: #858d87; font-size: 10px; }
 .plugins-connection { display: flex; align-items: center; gap: 7px; padding-bottom: 9px; color: #939a94; font-size: 10.5px; }
 .plugins-connection i, .plugins-detail-status i { display: block; width: 6px; height: 6px; border-radius: 50%; background: #c6aa72; }
 .plugins-connection.live i, .plugins-detail-status.connected i { background: #8fbd9a; box-shadow: 0 0 0 3px rgba(143,189,154,.1); }
@@ -604,6 +611,19 @@ html[data-theme="slate"] .search-box { background: #1e2931; }
 .plugin-row-action { display: grid; flex: 0 0 29px; place-items: center; width: 29px; height: 29px; border: 0; border-radius: 7px; background: transparent; color: #b6beb7; }
 .plugin-row-action:hover { color: #fff; background: #343737; }
 .plugin-row-action:disabled { opacity: .45; }
+.skill-logo { color: var(--gold-light); background: #2d2c28; }
+.skill-logo svg { width: 20px; height: 20px; }
+.skill-row .plugin-row-copy small { white-space: nowrap; }
+.skill-toggle { display: inline-flex; flex: 0 0 33px; align-items: center; width: 33px; height: 20px; padding: 2px; border: 1px solid #5a6059; border-radius: 20px; background: #373b38; cursor: pointer; }
+.skill-toggle span { width: 14px; height: 14px; border-radius: 50%; background: #aeb4ae; transition: transform .15s ease; }
+.skill-toggle.on { border-color: #c3a978; background: #8b7653; }
+.skill-toggle.on span { background: #fff0cf; transform: translateX(13px); }
+.skill-toggle:disabled { opacity: .5; cursor: wait; }
+.skill-detail-action { width: 100%; margin: 0 0 25px; }
+.skill-detail-tools, .skill-detail-instructions { padding: 21px 0; border-top: 1px solid var(--edge); }
+.skill-detail-tools h3, .skill-detail-instructions h3 { margin: 0 0 10px; color: #e2e5dd; font-size: 12px; }
+.skill-detail-tools p { margin: 0; color: #a4aca4; font-size: 11.5px; line-height: 1.6; }
+.skill-detail-instructions pre { max-height: 370px; overflow: auto; margin: 0; padding: 15px; border: 1px solid var(--edge); border-radius: 8px; background: #191c1c; color: #b8c1b8; font: 10.5px/1.6 Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
 .plugins-more { display: flex; align-items: center; gap: 7px; margin: 7px auto 0; padding: 9px 13px; border: 1px solid var(--edge-strong); border-radius: 7px; background: #292c2d; color: #d6d9d3; font-size: 11px; }
 .plugins-more:hover { background: #343737; }
 .plugins-empty { display: flex; flex-direction: column; align-items: center; padding: 58px 15px; color: #929b93; text-align: center; }

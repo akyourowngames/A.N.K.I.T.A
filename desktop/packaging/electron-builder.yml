@@ -1,0 +1,54 @@
+appId: com.ankita.desktop
+productName: Ankita
+copyright: Copyright © 2026 Ankita
+publish:
+  provider: github
+  owner: akyourowngames
+  repo: A.N.K.I.T.A
+  releaseType: release
+directories:
+  output: desktop/release
+  buildResources: desktop/build
+files:
+  - package.json
+  - desktop/electron/**/*
+  - desktop/shared/**/*
+  - desktop/renderer/dist/**/*
+  - src/**/*
+  - tools/**/*
+  - skills/**/*
+  - '!**/*.test.*'
+  - '!desktop/renderer/src/**'
+  - '!desktop/build/**'
+  - '!desktop/scripts/**'
+  - '!test/**'
+  - '!docs/**'
+  - '!scripts/**'
+  - '!.github/**'
+asar: true
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+    - target: portable
+      arch: [x64]
+  icon: desktop/build/icon.ico
+nsis:
+  artifactName: ${productName}-${version}-setup-${arch}.${ext}
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Ankita
+  uninstallDisplayName: Ankita
+portable:
+  artifactName: ${productName}-${version}-portable-${arch}.${ext}
+mac:
+  target: dmg
+  category: public.app-category.productivity
+  icon: desktop/build/icon.png
+linux:
+  target: AppImage
+  category: Utility
+  icon: desktop/build/icon.png

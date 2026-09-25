@@ -11,7 +11,7 @@
  * leave both halves reporting the same package.json version while their code
  * differs, so the contract is what actually detects it.
  */
-export const IPC_CONTRACT = 2;
+export const IPC_CONTRACT = 4;
 
 /**
  * Compare the window's build identity with the background service's.

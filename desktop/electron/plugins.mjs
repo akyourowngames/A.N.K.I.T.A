@@ -1,6 +1,6 @@
-import { COMPOSIO_FILE } from '../../src/config.mjs';
-import { ComposioStore } from '../../src/composio-store.mjs';
-import { authorize, canonicalSlug, connectedServices, connectionMode, listToolkits, removeAccount, removeService } from '../../src/composio.mjs';
+import { COMPOSIO_FILE } from '../../src/core/config.mjs';
+import { ComposioStore } from '../../src/integrations/composio-store.mjs';
+import { authorize, canonicalSlug, connectedServices, connectionMode, listToolkits, removeAccount, removeService } from '../../src/integrations/composio.mjs';
 
 const cleanText = (value, max = 200) => String(value || '').slice(0, max);
 

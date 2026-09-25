@@ -61,7 +61,7 @@ function WorkspaceImage({ src, alt, threadId }: { src?: string; alt?: string; th
 }
 
 export function Message({ message, teammate, threadId, streaming }: { message: ChatMessage; teammate: Teammate; threadId: string; streaming: boolean }) {
-  if (message.role === 'tool') return <ToolCallCard message={message} threadId={threadId} />;
+  if (message.role === 'tool') return message.hidden ? null : <ToolCallCard message={message} threadId={threadId} />;
   if (message.role === 'user') return <div className="message user-message">
     <div className="user-bubble">
       {message.attachments?.length ? <div className="user-attachments">{message.attachments.map((file, index) => <span className="user-attachment" key={`${file.name}-${index}`}><Icon name="file" size={13} />{file.name}</span>)}</div> : null}

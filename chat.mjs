@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { main } from "./src/cli.mjs";
+import { main } from "./src/core/cli.mjs";
 
 main().catch((err) => {
   console.error("\n  fatal: " + err.message);

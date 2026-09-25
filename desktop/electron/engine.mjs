@@ -2,22 +2,24 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Agent } from '../../src/agent.mjs';
-import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE } from '../../src/config.mjs';
-import { createSession } from '../../src/bootstrap.mjs';
-import { McpManager } from '../../src/mcp-manager.mjs';
-import { McpStore } from '../../src/mcp-store.mjs';
-import { ComposioStore } from '../../src/composio-store.mjs';
-import { ProjectStore } from '../../src/projects.mjs';
-import { PROJECTS_FILE } from '../../src/config.mjs';
-import { saveSession, recordTurn } from '../../src/sessions.mjs';
-import { sanitizeMessages, estimateImageBytes } from '../../src/history.mjs';
+import { Agent } from '../../src/core/agent.mjs';
+import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE } from '../../src/core/config.mjs';
+import { createSession } from '../../src/core/bootstrap.mjs';
+import { McpManager } from '../../src/integrations/mcp-manager.mjs';
+import { McpStore } from '../../src/integrations/mcp-store.mjs';
+import { ComposioStore } from '../../src/integrations/composio-store.mjs';
+import { ProjectStore } from '../../src/memory/projects.mjs';
+import { PROJECTS_FILE } from '../../src/core/config.mjs';
+import { saveSession, recordTurn } from '../../src/core/sessions.mjs';
+import { sanitizeMessages, estimateImageBytes } from '../../src/core/history.mjs';
+import { loadSkills } from '../../src/core/skills.mjs';
+import { todoProgress } from '../shared/todo-progress.mjs';
 import { displayArgs } from '../../tools/index.mjs';
 import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
 import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider } from './settings.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
-import { TelegramBot } from '../../src/telegram.mjs';
+import { TelegramBot } from '../../src/channels/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
 import { projectContext, projectSummary, projectWorkspace } from './projects.mjs';
 import { changedFiles, fileDiff, recentArtifacts, jobList, stopAgentJob, captureToolFiles, completedFileDiffs } from './workspace.mjs';
@@ -427,6 +429,28 @@ export class DesktopEngine {
   }
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
+  listSkills() {
+    const disabled = new Set(this.desktopSettings.data.disabledSkills || []);
+    return loadSkills().map(({ name, description, suggestedTools, body }) => ({ name, description, suggestedTools, body, enabled: !disabled.has(name) }));
+  }
+
+  setSkillEnabled(name, enabled) {
+    const skill = loadSkills().find(item => item.name === name);
+    if (!skill) throw new Error('Skill not found');
+    if (typeof enabled !== 'boolean') throw new Error('Choose whether to enable this skill');
+    if (this.turns.size) throw new Error('Wait for active replies to finish before changing skills');
+    const disabled = new Set(this.desktopSettings.data.disabledSkills || []);
+    if (enabled) disabled.delete(name);
+    else disabled.add(name);
+    this.desktopSettings.update({ disabledSkills: [...disabled] });
+    for (const agent of this.agents.values()) {
+      if (agent.disabledSkills instanceof Set) {
+        agent.disabledSkills = new Set(disabled);
+        agent.refreshPrompt?.();
+      }
+    }
+    return this.listSkills();
+  }
   listTeammates() { return this.teammates.load().list(); }
   async workspaceSnapshot(id) {
     const agent = this.agents.get(id);
@@ -578,20 +602,32 @@ export class DesktopEngine {
 
   sessionFile(id) { return path.join(this.sessionsDir, `teammate-${id}.json`); }
 
-  _rawThread(id) {
+  _savedThread(id) {
     if (!this.teammates.find(id)) throw new Error('Teammate not found');
     try {
       const saved = JSON.parse(fs.readFileSync(this.sessionFile(id), 'utf8'));
-      return sanitizeMessages((saved.messages || []).filter(message => message.role !== 'system'));
+      const messages = sanitizeMessages((saved.messages || []).filter(message => message.role !== 'system'));
+      const todos = Array.isArray(saved.todos) ? saved.todos : todoProgress(threadMessages(messages));
+      return { messages, todos };
     } catch (err) {
-      if (err.code === 'ENOENT') return [];
+      if (err.code === 'ENOENT') return { messages: [], todos: [] };
       throw err;
     }
   }
 
+  _rawThread(id) { return this._savedThread(id).messages; }
+
   loadThread(id) {
     const agent = this.agents.get(id);
-    return threadMessages(agent ? agent.messages : this._rawThread(id));
+    const { messages, todos } = agent
+      ? { messages: agent.messages, todos: agent.state?.todos || [] }
+      : this._savedThread(id);
+    const transcript = threadMessages(messages);
+    if (todos.length) transcript.push({
+      id: 'todo-snapshot', role: 'tool', callId: 'todo-snapshot', name: 'write_todos',
+      args: { todos }, result: 'Saved checklist', isError: false, hidden: true,
+    });
+    return transcript;
   }
 
   agentFor(id) {
@@ -612,6 +648,8 @@ export class DesktopEngine {
     }
     const agent = new this.AgentClass({
       client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId, workspacePath,
+      skillsEnabled: true,
+      disabledSkills: this.desktopSettings.data.disabledSkills || [],
       journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
       confirm: (name, detail) => this.approvals.request(id, name, detail),
       print: () => {}, write: () => {},
@@ -619,7 +657,9 @@ export class DesktopEngine {
     agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
     agent.state ||= {};
     agent.state.onJobEvent = () => this.emit({ type: 'workspace-changed', threadId: id });
-    agent.messages.push(...this._rawThread(id));
+    const saved = this._savedThread(id);
+    agent.messages.push(...saved.messages);
+    agent.state.todos = saved.todos;
     this.agents.set(id, agent);
     return agent;
   }
@@ -679,7 +719,7 @@ export class DesktopEngine {
       this.emit({ type: 'error', threadId: id, message: err.message || String(err) });
       throw err;
     }).finally(() => {
-      saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, projectId: agent.projectId, journaled: agent.journalComplete });
+      saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, todos: agent.state?.todos || [], projectId: agent.projectId, journaled: agent.journalComplete });
       this.turns.delete(id);
       this.approvals.cancelThread(id);
       this.emit({ type: 'turn-end', threadId: id, turnId });
@@ -712,6 +752,7 @@ export class DesktopEngine {
     if (this.turns.has(id)) throw new Error('Stop the reply before clearing this thread');
     const agent = this.agents.get(id);
     agent?.clear();
+    if (agent?.state) agent.state.todos = [];
     try { fs.unlinkSync(this.sessionFile(id)); } catch (err) { if (err.code !== 'ENOENT') throw err; }
     this.teammates.touch(id, '');
     this.emit({ type: 'thread-cleared', threadId: id });

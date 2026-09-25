@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { PluginCard, PluginService, PluginsCatalogPage, PluginsOverview } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
+import { SkillsSection } from './SkillsSection';
 
 const PAGE_SIZE = 24;
 const featured = ['gmail', 'google_drive', 'googledrive', 'github', 'slack', 'notion', 'outlook', 'outlookemail'];
@@ -28,6 +29,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
   const [cursor, setCursor] = useState<string | null>(null);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [tab, setTab] = useState<'discover' | 'installed'>('discover');
+  const [section, setSection] = useState<'apps' | 'skills'>('apps');
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
   const [catalogBusy, setCatalogBusy] = useState(false);
@@ -171,6 +173,8 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
     </div><div className="plugins-header-actions no-drag"><button type="button" className="icon-button" onClick={() => void loadOverview(true)} disabled={refreshing} aria-label="Refresh connected apps" title="Refresh connected apps"><Icon name="refresh" size={17} /></button><button type="button" className="plugins-header-settings" onClick={onOpenSettings}><Icon name="settings" size={15} /> Settings</button></div></header>
 
     <div className="plugins-scroll"><div className="plugins-content">
+      <nav className="plugins-sections" aria-label="Plugin sections"><button type="button" className={section === 'apps' ? 'active' : ''} aria-current={section === 'apps' ? 'page' : undefined} onClick={() => setSection('apps')}><Icon name="plug" size={16} /> Apps</button><button type="button" className={section === 'skills' ? 'active' : ''} aria-current={section === 'skills' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('skills'); }}><Icon name="file" size={16} /> Skills</button></nav>
+      {section === 'skills' ? <SkillsSection /> : <>
       <div className="plugins-intro"><div className="plugins-eyebrow"><span /> CONNECTED WORKSPACE</div><h1>Give Ankita more<br /><em>to work with.</em></h1><p>Bring the apps you already use into the conversation. Connect once, then manage every account from here.</p></div>
       {error && <div className="plugins-alert" role="alert"><Icon name="alert" size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div>}
       {notice && <div className="plugins-notice" role="status"><Icon name="check" size={16} /><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice"><Icon name="close" size={15} /></button></div>}
@@ -186,6 +190,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
             {(visible < cards.length || cursor) && <button type="button" className="plugins-more" onClick={() => void loadMore()} disabled={catalogBusy}>{catalogBusy ? 'Loading…' : query ? 'Search more apps' : 'Show more apps'} <Icon name="chevron" size={15} /></button>}
           </>}
         </> : <section className="plugins-section installed"><div className="plugins-section-head"><h2>Your apps</h2><span>{installedCount} connected</span></div>{installed.length ? <div className="plugin-grid">{installed.map(([slug]) => renderRow(lookup(slug)))}</div> : <div className="plugins-empty"><Icon name="plug" size={23} /><h2>Nothing connected yet</h2><p>Find an app in Discover and connect an account to get started.</p><button type="button" className="settings-secondary" onClick={() => setTab('discover')}>Explore plugins</button></div>}</section>}
+      </>}
       </>}
     </div></div>
 

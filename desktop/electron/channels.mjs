@@ -1,8 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TelegramBot, parseChatIds } from '../../src/telegram.mjs';
-import { parseApproval, isBareApproval, stripAnsi } from '../../src/daemon.mjs';
+import { TelegramBot, parseChatIds } from '../../src/channels/telegram.mjs';
+import { parseApproval, isBareApproval, stripAnsi } from '../../src/automation/daemon.mjs';
 import {
   transcribeGroq,
   convertAudio,
@@ -10,7 +10,7 @@ import {
   resolveTtsVoice,
   synthesizeGroq,
   synthesizeEdge,
-} from '../../src/voice.mjs';
+} from '../../src/channels/voice.mjs';
 
 /**
  * Desktop channels: a long-lived bridge between an external chat service and a

@@ -24,7 +24,7 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      # Azure Trusted Signing (see docs/code-signing.md). Empty secrets just
+      # Azure Trusted Signing (see docs/guides/code-signing.md). Empty secrets just
       # mean the build is published unsigned.
       AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
       AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
@@ -94,12 +94,12 @@ jobs:
         if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID != ''
         run: |
           npm run desktop:build
-          npx electron-builder --win --publish never --config electron-builder.signing.yml
+          npx electron-builder --win --publish never --config desktop/packaging/electron-builder.signing.yml
       - name: Build (unsigned or pfx)
         if: steps.check.outputs.exists == 'false' && env.AZURE_CLIENT_ID == ''
         run: |
           npm run desktop:build
-          npx electron-builder --win --publish never
+          npx electron-builder --win --publish never --config desktop/packaging/electron-builder.yml
 
       - name: Publish release with auto-update artifacts
         if: steps.check.outputs.exists == 'false'

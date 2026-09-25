@@ -61,7 +61,7 @@ Run these commands from the repository root. A fresh desktop install starts with
 
 ### Launch film
 
-Open [`docs/ankita-launch-film.html`](docs/ankita-launch-film.html) in a browser to play the self-contained, 30-second Canvas 2D A.N.K.I.T.A. launch film. Use **Space** to pause/play, **R** to restart, and **F** or the fullscreen control to toggle fullscreen. The memory-search sequence animates a typed prompt, a flying send arrow, and contextual results. Add `?seed=your-seed` to the URL for a repeatable particle arrangement.
+Open [`docs/media/ankita-launch-film.html`](docs/media/ankita-launch-film.html) in a browser to play the self-contained, 30-second Canvas 2D A.N.K.I.T.A. launch film. Use **Space** to pause/play, **R** to restart, and **F** or the fullscreen control to toggle fullscreen. The memory-search sequence animates a typed prompt, a flying send arrow, and contextual results. Add `?seed=your-seed` to the URL for a repeatable particle arrangement.
 
 Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
@@ -228,33 +228,22 @@ When a tool fails the agent diagnoses and retries with a corrected path, quoting
 ## Architecture
 
 ```
-chat.mjs              thin entry (arg parsing lives in cli)
+chat.mjs              thin CLI entry
 src/
-  cli.mjs             REPL, slash commands, sessions, --json/--plain, voice loop
-  agent.mjs           tool-calling loop: stream → tool_calls → execute → repeat
-  provider.mjs        model picking + CompatibleClient (any OpenAI-style API)
-  auth.mjs            GitHub device flow → short-lived Copilot token
-  config.mjs          layered .env (project > global > env > defaults)
-  history.mjs         sanitize + budget-aware trimming (never splits tool pairs)
-  markdown.mjs        streaming markdown renderer (LiveRenderer commits scrollback)
-  net.mjs             fetch with selective retry (429/5xx + transient sockets only)
-  ui.mjs              terminal I/O, colors, banner, completion
-  voice.mjs           mic record, Groq STT, Edge/Groq TTS, audio conversion
-  cron.mjs            cron parsing/matching plus "every 30m" / "daily 08:00" shorthands
-  routines.mjs        durable store: schedules, watches, readings, change detection
-  watcher.mjs         page fetch + value extraction, shared by tool and daemon
-  telegram.mjs        Bot API long-polling, allowlist, message splitting
-  daemon.mjs          the proactive loop: routines + watches + inbox → agent
-scripts/
-  scrape_bridge.py    stdlib Python bridge to Scrapling (JSON argv → JSON stdout)
+  core/               CLI, agent loop, provider, config, history, UI
+  automation/         daemon, schedules, watches, alerts, notifications
+  channels/           Telegram and voice
+  integrations/       MCP and Composio clients and stores
+  memory/             personal and project memory, embeddings
+  tooling/            tool workers and job UI
+scripts/              bench/, bridges/, demo/, fixtures/, verify/
 tools/
-  index.mjs           registry (specs/get/names) + job cleanup
-  _shared.mjs         paths, atomic writes, bounded output, globbing
-  _diff.mjs           LCS diff → hunks → colored unified diff
-  _web.mjs            SSRF guard, TTL cache, retrying HTTP, HTML entities, bridge spawn
-  *.mjs               one self-contained module per tool (name / description /
-                      parameters / approval / run)
-test/                 node:test suite — core, provider, tools, voice, web
+  index.mjs           core tool registry
+  catalog.mjs         deferred tool families
+  shared/             output, diff, web, job, and image helpers
+  filesystem/, git/, web/, process/, personal/, skills/
+  automation/, project/, github/, connectors/, mcp/, images/
+test/                 node:test suites grouped by subsystem
 ```
 
 ## How it works
@@ -269,7 +258,7 @@ test/                 node:test suite — core, provider, tools, voice, web
 
 **Web.** `web_search` fans out to DuckDuckGo (with a lite fallback when the HTML endpoint 202s), Google News RSS, Wikipedia, Hacker News and Reddit, then fuses and de-dupes by normalized URL. `web_fetch` extracts readable text without a DOM, drops comments/CDATA/declarations, and falls back to `r.jina.ai` when the page is a script shell. Both share a TTL cache keyed on normalized URL.
 
-**Scraping.** Tiers mirror what the task needs: `scrape_low` is a fast static fetch with Chrome impersonation, `scrape_mid` escalates to a headless stealth browser on block signals (403/429/503 or a thin body) or extracts named fields via CSS/`xpath:`, `scrape_high` runs a bounded BFS crawl reusing per-page escalation. Node drives Scrapling through `scripts/scrape_bridge.py` — one JSON argument in, one JSON document out, UTF-8 forced on both ends so non-ASCII page content (Wikipedia's zero-width spaces) can't kill the process on a Windows codepage.
+**Scraping.** Tiers mirror what the task needs: `scrape_low` is a fast static fetch with Chrome impersonation, `scrape_mid` escalates to a headless stealth browser on block signals (403/429/503 or a thin body) or extracts named fields via CSS/`xpath:`, `scrape_high` runs a bounded BFS crawl reusing per-page escalation. Node drives Scrapling through `scripts/bridges/scrape_bridge.py` — one JSON argument in, one JSON document out, UTF-8 forced on both ends so non-ASCII page content (Wikipedia's zero-width spaces) can't kill the process on a Windows codepage.
 
 **SSRF guard.** Every web tool resolves the host and refuses loopback, private, link-local and other non-global addresses, failing closed when DNS doesn't resolve. Redirect chains are re-checked hop by hop, on both the Node and Python sides.
 
@@ -377,7 +366,7 @@ Document vectors are cached atomically under `~/.copilot-chat-cli/embeddings/`, 
 
 Configuring Cloudflare sends memory text and search queries to Cloudflare for embedding. This does not upload raw session transcripts. The vector cache contains derived vectors and hashes, not plaintext memories, queries, or credentials. Old vector cache files can remain after edits/deletions but cannot participate in recall without a current source record; deleting the `embeddings/` directory safely rebuilds them. `EMBEDDINGS=off` disables all embedding requests and uses local recall. `--config` redacts the API token. No new dependencies are required.
 
-Live semantic verification with synthetic memories: `node scripts/verify-embeddings.mjs --live --timeout-ms=15000`. The longer verification deadline measures actual provider latency; normal chat retains its configured foreground deadline.
+Live semantic verification with synthetic memories: `node scripts/verify/verify-embeddings.mjs --live --timeout-ms=15000`. The longer verification deadline measures actual provider latency; normal chat retains its configured foreground deadline.
 
 With `ankita --daemon`, `MEMORY_CONSOLIDATION=on` (default) processes yesterday and older unprocessed transcripts after `MEMORY_CONSOLIDATION_HOUR` (default **03:00**, in `TIMEZONE` or system local time). New CLI and Telegram turns are journaled under `sessions/journal/`; old saved sessions and autosaves are also read. A journal preserves completed user/final-assistant exchanges before autosave replacement or history trimming. Existing legacy autosaves are archived on the first journaled replacement.
 
@@ -393,7 +382,7 @@ Windows uses an existing `New-BurntToastNotification` command when available, ot
 
 `QUIET_HOURS=22:00-08:00` holds proactive messages in `notification-queue.json`, including across restarts; `TIMEZONE=Asia/Kolkata` is an example IANA timezone, not a hardcoded user preference. After quiet hours, pending messages are combined into digests. Completed routine/watch messages batch at daemon ticks; large digests split to channel limits. Telegram chat replies and approval questions stay immediate. The daemon must be running to flush queued notifications. Equal quiet-hour endpoints disable the quiet interval.
 
-Run `node --test "test/*.test.mjs"` for automated checks. `node scripts/verify-personal-memory.mjs --live` also checks real model tool selection, fresh-session memory, extraction, recall and replay using synthetic data in a temporary config directory and your configured provider credentials.
+Run `npm test` for automated checks. `node scripts/verify/verify-personal-memory.mjs --live` also checks real model tool selection, fresh-session memory, extraction, recall and replay using synthetic data in a temporary config directory and your configured provider credentials.
 
 ## Connected apps (Composio)
 
@@ -528,7 +517,7 @@ Two knobs worth knowing:
 A dashboard to practise against ships in the repo — it serves numbers that wander up and down:
 
 ```bash
-node scripts/demo-dashboard.mjs 4173
+node scripts/demo/demo-dashboard.mjs 4173
 # then, with ALLOW_PRIVATE_HOSTS=1
 ankita › watch http://127.0.0.1:4173, grab "Active users: ([\d,]+)", alert me at most every 10m
 ```
@@ -559,14 +548,14 @@ A Telegram **bot** only receives messages sent *to it*, plus posts in groups and
 ## Tests
 
 ```bash
-npm test   # node --test "test/*.test.mjs"
+npm test
 ```
 
 Tests cover `core`, `provider`, `tools`, `voice`, `web`, `proactive`, `projects`, personal memory, consolidation, notifications, `mcp`, `registry` and `tool-loop`. The web suite runs pure parsers and guards against fixtures, stubs DNS for the SSRF checks, and skips the two live bridge tests automatically when Python/Scrapling aren't installed. The MCP suite drives a real stdio server fixture, and skips cleanly when Python `mcp` isn't importable. The registry suite runs entirely against recorded response shapes, so it never touches the network or the user's real config.
 
 ## Benchmarking latency
 
-When replies feel slow, measure instead of guessing. `scripts/bench-latency.mjs` drives the real agent loop and splits each turn into the phases a user actually waits on:
+When replies feel slow, measure instead of guessing. `scripts/bench/bench-latency.mjs` drives the real agent loop and splits each turn into the phases a user actually waits on:
 
 ```bash
 npm run bench                                    # configured model, 3 runs

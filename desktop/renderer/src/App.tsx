@@ -42,7 +42,7 @@ export default function App() {
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'kilo', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
-  const [version, setVersion] = useState('2.4.1');
+  const [version, setVersion] = useState(__ANKITA_VERSION__);
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
   const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);

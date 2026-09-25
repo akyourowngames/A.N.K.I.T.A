@@ -2,9 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { execFile } from 'node:child_process';
-import { jobInfo } from '../../tools/_jobs.mjs';
-import { run as stopJob } from '../../tools/job-stop.mjs';
-import { diffText, toHunks } from '../../tools/_diff.mjs';
+import { jobInfo } from '../../tools/shared/_jobs.mjs';
+import { run as stopJob } from '../../tools/process/job-stop.mjs';
+import { diffText, toHunks } from '../../tools/shared/_diff.mjs';
 
 const exec = promisify(execFile);
 const MAX_FILES = 200;

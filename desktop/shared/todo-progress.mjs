@@ -12,14 +12,6 @@ function fromResult(result) {
 export function todoProgress(messages) {
   let todos = [];
   for (const message of messages) {
-    if (message.role === 'user') {
-      const controlNote = typeof message.content === 'string' && (
-        message.content.startsWith('(the runtime stopped the tool loop:') ||
-        message.content === '(previous action was cancelled by the user)'
-      );
-      if (!controlNote) todos = [];
-      continue;
-    }
     if (message.role !== 'tool' || message.name !== 'write_todos' || message.isError || !message.result?.trim()) continue;
     const args = message.args;
     if (Array.isArray(args?.todos)) {

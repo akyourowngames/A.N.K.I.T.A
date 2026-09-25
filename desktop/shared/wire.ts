@@ -5,6 +5,7 @@ export type Teammate = {
 };
 
 export type Model = { id: string; name?: string; vendor?: string; context?: number; tools?: boolean };
+export type DesktopSkill = { name: string; description: string; suggestedTools: string; body: string; enabled: boolean };
 export type DesktopPreferences = {
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
@@ -41,7 +42,7 @@ export type PluginsOverview = { mode: 'direct' | 'broker' | 'unavailable'; live:
 export type PluginsCatalogPage = { cards: PluginCard[]; nextCursor: string | null };
 export type ChatMessage =
   | { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
-  | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number };
+  | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
 
 export type MenuCommand = 'new-teammate' | 'find' | 'toggle-sidebar' | 'settings' | 'about';
 
