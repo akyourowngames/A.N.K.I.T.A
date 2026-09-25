@@ -31,6 +31,7 @@ import { pickModel, resolveProvider } from "./provider.mjs";
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
+import { loadSkills, reloadSkills } from './skills.mjs';
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
 import { LiveRenderer } from "./markdown.mjs";
 import { names as toolNames, cleanupJobs, displayArgs } from "../tools/index.mjs";
@@ -256,11 +257,18 @@ function completePath(prefix) {
 
 const COMMANDS = [
   ...JOB_COMMANDS,
-  "/help", "/config", "/reload", "/models", "/model", "/tools", "/auto", "/cd",
+  "/help", "/config", "/reload", "/skills", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
   "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
   "/project", "/projects", "/mcp", "/composio", "/clear", "/exit", "/quit",
 ];
+
+function skillsListText() {
+  const skills = loadSkills();
+  return skills.length
+    ? skills.map(skill => `  ${skill.name} — ${skill.description}`).join('\n')
+    : '  No built-in skills installed.';
+}
 
 const MCP_ACTIONS = ["list", "add", "remove", "enable", "disable", "reload"];
 const COMPOSIO_ACTIONS = ["status", "list", "accounts", "search", "connect", "disconnect", "reload"];
@@ -330,6 +338,10 @@ export async function main() {
   if (opts.json && opts.prompt === null) {
     console.error("--json requires -p/--prompt");
     process.exit(2);
+  }
+  if (opts.prompt?.trim() === '/skills' && !opts.json) {
+    console.log(skillsListText());
+    return;
   }
 
   const plain = opts.plain || opts.json || (opts.prompt !== null && !process.stdout.isTTY);
@@ -482,6 +494,7 @@ export async function main() {
 
   const agent = new Agent({
     client,
+    skillsEnabled: !opts.daemon,
     tool,
     config,
     journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
@@ -1166,6 +1179,7 @@ export async function main() {
   const freshAgent = (purpose) =>
     new Agent({
       client,
+      skillsEnabled: false,
       tool,
       config,
       // One-shot agents for routines, briefings and alerts always carry every
@@ -1350,6 +1364,7 @@ export async function main() {
       }
 
       case "/reload": {
+        reloadSkills();
         config = loadConfig();
         if (opts.model) config.model = opts.model;
         if (opts.maxTokens) { config.maxTokens = opts.maxTokens; config.maxTokensExplicit = true; }
@@ -1362,6 +1377,13 @@ export async function main() {
               (config.envPath || config.globalEnvPath ? "" : "  (no .env found)")
           )
         );
+        break;
+      }
+
+      case "/skills": {
+        term.line("");
+        term.line(skillsListText());
+        term.line("");
         break;
       }
 

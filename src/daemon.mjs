@@ -145,6 +145,7 @@ export class Daemon {
 
     const agent = new Agent({
       client: this.client,
+      skillsEnabled: false,
       tool: this.tool,
       config: this.config,
       journal: turn => recordTurn(turn, { timeZone: this.config.timeZone }),

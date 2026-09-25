@@ -10,10 +10,29 @@ export function capOutput(value, maxBytes = 65536) {
   if (bytes.length <= limit) return text;
   const marker = `\n[output truncated: ${bytes.length} bytes total]\n`;
   if (limit <= Buffer.byteLength(marker)) return bytes.subarray(0, limit).toString('utf8').replace(/\uFFFD$/u, '');
-  const room = limit - Buffer.byteLength(marker);
+  // Preserve only structural verdict fields from the cut middle. Never copy
+  // adjacent values such as tokens or API keys into this summary.
+  const evidence = [];
+  for (const key of ['error_count', 'success_count', 'isError', 'ok']) {
+    const values = [...text.matchAll(new RegExp(`"${key}"\\s*:\\s*(\\d+|true|false)`, 'ig'))].map(match => match[1]);
+    if (values.length) {
+      const value = key === 'error_count' || key === 'success_count'
+        ? values.reduce((max, entry) => Math.max(max, Number(entry)), 0)
+        : key === 'isError' ? values.includes('true') : !values.includes('false');
+      evidence.push(`${key}=${value}`);
+    }
+  }
+  const attachments = [...text.matchAll(/"attachmentList"\s*:\s*\[\s*(\])?/ig)];
+  if (attachments.length) {
+    const empty = attachments.filter(match => Boolean(match[1])).length;
+    evidence.push(`attachmentList=${empty === attachments.length ? '[]' : empty ? '[mixed]' : '[non-empty]'}`);
+  }
+  let retained = evidence.length ? `[evidence: ${evidence.join('; ').slice(0, 450)}]\n` : '';
+  if (Buffer.byteLength(marker + retained) >= limit) retained = '';
+  const room = limit - Buffer.byteLength(marker + retained);
   const head = bytes.subarray(0, Math.ceil(room / 2)).toString('utf8').replace(/\uFFFD$/u, '');
   const tail = bytes.subarray(bytes.length - Math.floor(room / 2)).toString('utf8').replace(/^\uFFFD+/u, '');
-  return head + marker + tail;
+  return head + marker + retained + tail;
 }
 
 /** Bounded while collecting, not only after the child process exits. */

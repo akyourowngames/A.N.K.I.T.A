@@ -3,7 +3,7 @@ import { Agent } from './agent.mjs';
 /** One tools-disabled request: extraction cannot execute model-proposed actions. */
 export async function extractMemory(prompt, { client, config, model }) {
   await client.ensureToken?.();
-  const worker = new Agent({ client, config: { ...config, tools: false, maxTokens: Math.min(3000, config.maxTokens || 3000) }, print: () => {}, write: () => {} });
+  const worker = new Agent({ client, config: { ...config, tools: false, maxTokens: Math.min(3000, config.maxTokens || 3000) }, skillsEnabled: false, print: () => {}, write: () => {} });
   worker.model = model;
   worker.abort = new AbortController();
   worker.messages = [

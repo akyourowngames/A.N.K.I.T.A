@@ -187,6 +187,7 @@ export function helpText({ agentName }) {
   ${c.cyan("/help")}              this
   ${c.cyan("/config")}            show .env values and where they come from
   ${c.cyan("/reload")}            re-read .env without restarting
+  ${c.cyan("/skills")}            list built-in skills
   ${c.cyan("/models")}            list available models
   ${c.cyan("/model")} <id>        switch model
   ${c.cyan("/tools")} on|off      enable/disable tool use

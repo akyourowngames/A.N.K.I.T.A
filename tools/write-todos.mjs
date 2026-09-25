@@ -1,3 +1,5 @@
+import { capOutput } from './_shared.mjs';
+
 export const name = "write_todos";
 export const description =
   "Track a multi-step session plan. Start with todos, then update existing items by stable id. " +
@@ -47,7 +49,7 @@ export function run(args, ctx = {}) {
       seen.add(update.id);
       if (!STATUSES.has(update.status)) throw new Error('invalid todo status.');
       const target = next.find(item => item.id === update.id);
-      if (!target) throw new Error(`unknown todo ID: ${update.id}`);
+      if (!target) throw new Error(`unknown todo ID: ${update.id}. Available IDs: ${capOutput(current.map(item => item.id).join(', ') || '(none)', 2000)}.`);
       target.status = update.status;
       if (update.status === 'completed' && !target.completedAt) target.completedAt = new Date().toISOString();
     }
@@ -58,7 +60,7 @@ export function run(args, ctx = {}) {
   if (!Array.isArray(list) || !list.length) {
     throw new Error("todos must be a non-empty array.");
   }
-  if (list.length < current.length) throw new Error('cannot remove existing todos.');
+  if (list.length < current.length) throw new Error(`cannot remove existing todos. Use status: cancelled instead. Current list:\n${capOutput(render(current), 2000)}`);
   const next = list.map((item, i) => {
     if (!item || typeof item.content !== "string" || !item.content.trim()) {
       throw new Error(`todos[${i}].content must be a non-empty string.`);
@@ -68,7 +70,7 @@ export function run(args, ctx = {}) {
     }
     const prior = current[i];
     if (prior && (prior.content !== item.content || (item.id && item.id !== prior.id))) {
-      throw new Error('cannot replace or reorder existing todos; use updates with stable IDs.');
+      throw new Error(`cannot replace or reorder existing todos; use updates with stable IDs. Current list:\n${capOutput(render(current), 2000)}`);
     }
     return {
       ...prior,

@@ -74,8 +74,9 @@ export function matchMcpServers(query, servers = []) {
     .map((s) => s.id);
 }
 
-function catalogue(mcpServers = []) {
-  const builtIn = CATEGORIES.map((c) => `  ${c.id.padEnd(12)} ${c.summary}`);
+function catalogue(mcpServers = [], skillsEnabled = true) {
+  const builtIn = CATEGORIES.filter(c => skillsEnabled || c.id !== 'skills')
+    .map((c) => `  ${c.id.padEnd(12)} ${c.summary}`);
   const external = mcpServers.map(
     (s) => `  ${String(s.id).padEnd(12)} MCP server - ${s.tools.length} tool(s): ${s.tools.slice(0, 6).join(", ")}`
   );
@@ -92,21 +93,22 @@ function activated(state) {
 export function run(args = {}, ctx = {}) {
   const set = activated(ctx.state);
   const query = String(args.query ?? "").trim();
+  const skillsEnabled = ctx.skillsEnabled !== false;
   // Only held-back servers need loading; a small one is already in the request.
   const held = (ctx.mcp?.summaries() || []).filter((s) => s.deferred);
 
   if (!query) {
-    return `Tell me what you want to do and I will load the right tools.\nGroups you can load:\n${catalogue(held)}`;
+    return `Tell me what you want to do and I will load the right tools.\nGroups you can load:\n${catalogue(held, skillsEnabled)}`;
   }
 
-  const matched = matchCategories(query);
+  const matched = matchCategories(query).filter(id => skillsEnabled || id !== 'skills');
   const servers = matchMcpServers(query, held);
   if (!matched.length && !servers.length) {
     // Never guess which family was meant - show them all and ask again. But a
     // miss usually means the capability is not here at all, so point at the one
     // place it might be bought in from, rather than dead-ending.
     return (
-      `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held)}\n\n` +
+      `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held, skillsEnabled)}\n\n` +
       "If instead you need a whole capability that is not in that list - driving a browser, " +
       "a specific database or design tool - load the `mcp` group and search the MCP registry " +
       'with mcp_manage action="search". For Gmail, Slack, Notion and other connected apps, ' +

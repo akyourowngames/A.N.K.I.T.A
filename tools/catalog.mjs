@@ -11,6 +11,7 @@ import * as mcpManage from "./mcp-manage.mjs";
 import * as composio from "./composio.mjs";
 import * as remember from "./remember.mjs";
 import * as recall from "./recall.mjs";
+import * as skill from './skill.mjs';
 import * as git from './git.mjs';
 import * as portStatus from './port-status.mjs';
 import * as killProcess from './kill-process.mjs';
@@ -46,6 +47,13 @@ export const CATEGORIES = [
     summary: "personal preferences and facts across projects; recall memories and past sessions",
     keywords: ["personal", "memory", "remember", "recall", "preference", "about me", "timezone", "yesterday"],
     tools: [remember, recall],
+  },
+  {
+    id: 'skills',
+    alwaysOn: true,
+    summary: 'built-in workflow instructions loaded on demand',
+    keywords: ['skill', 'workflow', 'procedure'],
+    tools: [skill],
   },
   {
     id: "web",

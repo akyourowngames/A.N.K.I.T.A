@@ -98,7 +98,7 @@ test('loading twice is idempotent and says so', () => {
 /* ------------------------------- specs ---------------------------------- */
 
 test('an interactive agent starts core-only and grows only when asked', () => {
-  const agent = new Agent({ client: {}, config: { tools: true } });
+  const agent = new Agent({ client: {}, config: { tools: true }, skillsEnabled: true });
   const fresh = agent.currentSpecs();
   assert.equal(fresh.length, CORE.length);
   assert.equal(bytes(fresh), bytes(index.coreSpecs));
@@ -129,14 +129,15 @@ test('tools off means no specs at all, activated or not', () => {
 
 /* --------------------------- the daemon guard --------------------------- */
 
-test('a one-shot agent always carries every tool', () => {
+test('a one-shot agent carries every tool available outside the chat REPL', () => {
   const worker = new Agent({ client: {}, config: { tools: true }, deferTools: false });
-  assert.equal(worker.currentSpecs().length, index.tools.length, 'no discovery round trip for routines');
+  assert.equal(worker.currentSpecs().length, index.tools.length - 1, 'no discovery round trip for routines');
+  assert.ok(!worker.currentSpecs().some((s) => s.function.name === 'skill'));
   assert.ok(worker.currentSpecs().some((s) => s.function.name === 'github_notifications'));
   assert.ok(worker.currentSpecs().some((s) => s.function.name === 'watch'));
   // Loading more changes nothing for it.
   findTools.run({ query: 'search the web' }, worker);
-  assert.equal(worker.currentSpecs().length, index.tools.length);
+  assert.equal(worker.currentSpecs().length, index.tools.length - 1);
 });
 
 /* ------------------------- the budget, measured -------------------------- */
@@ -185,7 +186,7 @@ test('the system prompt never offers a deferred tool as directly available', () 
     assert.ok(!toolLine.includes(name), `${name} must NOT be listed as directly available`);
   }
   // They are still discoverable - named in the group list, behind find_tools.
-  for (const c of CATEGORIES) {
+  for (const c of CATEGORIES.filter(c => !c.alwaysOn)) {
     assert.ok(prompt.includes(c.id), `the prompt tells the model about ${c.id}`);
   }
   assert.match(prompt, /find_tools/);

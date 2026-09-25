@@ -14,6 +14,8 @@ import { renderDiff } from "../tools/_diff.mjs";
 import { capOutput } from "../tools/_shared.mjs";
 import { trimMessages } from "./history.mjs";
 import { runFileToolInWorker } from './tool-worker.mjs';
+import { loadSkills, skillPromptLines } from './skills.mjs';
+import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 
 const toolUi = { ...c, preview, short, clip };
 toolUi.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: toolUi, ...opts });
@@ -162,7 +164,7 @@ export function mcpPromptLines(mcpServers = []) {
   return lines;
 }
 
-export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], personal = '') {
+export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], personal = '', skillLines = [], includeSkills = true) {
   const today = new Date().toISOString().slice(0, 10);
   // The prompt states the same bound the loop enforces, so a model that is about
   // to be cut off knows to summarise rather than stall mid-investigation.
@@ -179,13 +181,14 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
     `Platform: ${process.platform} · shell: ${shell}`,
     `Today: ${today}`,
     "",
-    `You have these tools: ${coreNames().join(", ")}.`,
+    `You have these tools: ${coreNames().filter(name => includeSkills || name !== 'skill').join(", ")}.`,
     "More tools are available but not loaded yet, because every schema costs context on every turn. " +
       "Call find_tools to load them when a task needs them - they become callable straight away. Groups:",
     ...CATEGORIES.filter(group => !group.alwaysOn).map((group) => `  ${group.id}: ${group.tools.map((t) => t.name).join(", ")} - ${group.summary}`),
     "For anything time-sensitive or factual about the world, load `web` with find_tools and search " +
       "rather than guessing.",
     ...mcpPromptLines(mcpServers),
+    ...(skillLines.length ? ['', ...skillLines] : []),
     "",
     "You are NOT confined to the working directory. Any absolute path works, and every path a tool " +
       "prints (including search results outside the working directory) is directly usable in your next " +
@@ -202,6 +205,10 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       "confirm the result, rather than asserting success. When you need to know something " +
       "actually happened, prefer a tool whose result you can read (page content, a diff, a " +
       "returned value) over one that reports nothing.",
+    "A tool result marked [UNVERIFIED] means a side effect is unconfirmed. Do not tell the user it succeeded. " +
+      "Run a read-back check (fetch the sent message, open the created file, or list the directory) and confirm " +
+      "from that result, or say plainly what remains unconfirmed. An attachment, upload, or delivery claim " +
+      "requires that evidence even when the action call returned no error.",
     "If you need a capability you do not have - driving a browser, querying a specific service - " +
       'search the MCP registry (find_tools, then mcp_manage action="search") and ask the user ' +
       "before installing, instead of guessing at shell commands for an external program.",
@@ -265,6 +272,7 @@ export class Agent {
     projectId = null,
     workspacePath = null,
     deferTools = true,
+    skillsEnabled = false,
     mcp = null,
     journal = null,
     // Optional { client, model }: the primary handles chat and the first tool
@@ -304,6 +312,7 @@ export class Agent {
     // One-shot agents (routines, briefings, alerts) always send everything:
     // there is no session to amortise a discovery round trip across.
     this.deferTools = deferTools !== false;
+    this.skillsEnabled = skillsEnabled !== false;
     // A reference, not ownership: the manager is process-level so every
     // freshAgent worker shares the same live server processes.
     this.mcp = mcp;
@@ -312,26 +321,29 @@ export class Agent {
     this.turnUsage = { ...this.sessionUsage };
     this.toolLoopUsed = false;
     this.replyModel = null;
+    this.skillLines = this.skillsEnabled ? skillPromptLines(loadSkills()) : [];
     this.messages = [
-      { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()) },
+      { role: "system", content: buildSystemPrompt(config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock(), this.skillLines, this.skillsEnabled) },
     ];
     if (this.useTools) void warmRecall({ config });
   }
 
   clear() {
+    this.skillLines = this.skillsEnabled ? skillPromptLines(loadSkills()) : [];
     this.messages = [
       {
         role: "system",
-        content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()),
+        content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock(), this.skillLines, this.skillsEnabled),
       },
     ];
   }
 
   rebase() {
     this.cwd = this.workspacePath || process.cwd();
+    this.skillLines = this.skillsEnabled ? skillPromptLines(loadSkills()) : [];
     this.messages[0] = {
       role: "system",
-      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock()),
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp?.summaries() || [], this.personalBlock(), this.skillLines, this.skillsEnabled),
     };
   }
 
@@ -389,6 +401,7 @@ export class Agent {
     const names = active && active.size ? [...active] : [];
 
     let core = this.deferTools ? coreSpecs : specs;
+    if (this.skillsEnabled === false) core = core.filter(spec => spec.function?.name !== 'skill');
     let optional = [];
 
     if (this.deferTools && names.length) {
@@ -453,9 +466,10 @@ export class Agent {
   /** Rebuild messages[0] so the model sees the current tool groups. */
   refreshPrompt() {
     if (!this.messages?.length) return this;
+    this.skillLines = this.skillsEnabled ? skillPromptLines(loadSkills()) : [];
     this.messages[0] = {
       role: "system",
-      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp ? this.mcp.summaries() : [], this.personalBlock()),
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcp ? this.mcp.summaries() : [], this.personalBlock(), this.skillLines, this.skillsEnabled),
     };
     return this;
   }
@@ -661,14 +675,14 @@ export class Agent {
    * approved according to the server's own hints. Routed here before the local
    * registry is consulted, since no local tool starts with the prefix.
    */
-  async runMcpToolCall(call) {
+  async runMcpToolCall(call, parsedArgs) {
     const name = call.function.name;
     const found = this.mcp?.findTool(name);
     if (!found) return `Error: no connected MCP server provides "${name}".`;
 
-    let args;
+    let args = parsedArgs;
     try {
-      args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      args ??= call.function.arguments ? JSON.parse(call.function.arguments) : {};
     } catch (err) {
       return `Error: arguments were not valid JSON (${err.message}).`;
     }
@@ -686,15 +700,17 @@ export class Agent {
     }
   }
 
-  async runToolCall(call) {
-    if (String(call.function.name || "").startsWith("mcp__")) return this.runMcpToolCall(call);
+  async runToolCall(call, parsedArgs) {
+    if (String(call.function.name || "").startsWith("mcp__")) return this.runMcpToolCall(call, parsedArgs);
+
+    if (call.function.name === 'skill' && !this.skillsEnabled) return 'Error: skills are available only in the chat REPL.';
 
     const tool = get(call.function.name);
     if (!tool) return `Error: unknown tool "${call.function.name}".`;
 
-    let args;
+    let args = parsedArgs;
     try {
-      args = call.function.arguments ? JSON.parse(call.function.arguments) : {};
+      args ??= call.function.arguments ? JSON.parse(call.function.arguments) : {};
     } catch (err) {
       return `Error: arguments were not valid JSON (${err.message}).`;
     }
@@ -713,6 +729,7 @@ export class Agent {
       width: process.stdout.columns || 80,
       signal: this.abort?.signal,
       state: this.state,
+      skillsEnabled: this.skillsEnabled,
       // Lets the schedule/watch tools default a new entry to the active project.
       projectId: this.projectId,
       // mcp_manage reloads through this, and find_tools loads a big server's
@@ -972,15 +989,19 @@ export class Agent {
           onToolCall?.(call);
         } catch {}
         let result;
+        let args;
+        try { args = call.function.arguments ? JSON.parse(call.function.arguments) : {}; } catch {}
         try {
-          result = await this.runToolCall(call);
+          result = await this.runToolCall(call, args);
         } catch (err) {
           result = `Error while running ${call?.function?.name || "tool"}: ${err.message}`;
         }
+        const verdict = verdictFor(call?.function?.name, args || {}, result, this.mcp);
+        const footer = verificationFooter(verdict);
         try {
           onToolResult?.(call, result);
         } catch {}
-        traceAgent({ event: 'tool_result', ...metadata, duration_ms: Date.now() - started, success: !/^(Error\b|Not run:|The user denied|Action cancelled)/i.test(String(result)), error: /^(Error\b|Not run:)/i.test(String(result)) ? 'tool_error' : undefined }, this.config);
+        traceAgent({ event: 'tool_result', ...metadata, duration_ms: Date.now() - started, success: verdict?.ok === false ? false : !isToolFailure(result), verified: verdict?.ok ?? null, error: verdict?.ok === false || isToolFailure(result) ? 'tool_error' : undefined }, this.config);
         try {
           // The advisory rides in the tool result, where the model actually reads
           // it; the hard stop is the loop-level check below.
@@ -988,7 +1009,9 @@ export class Agent {
           const note = count > 1
             ? `Repeated call: this exact call already ran ${count - 1} time(s) in this request. Its result is above - use it, or change the approach.\n\n`
             : '';
-          return reply(call, note + capOutput(result, budget));
+          const fittedFooter = Buffer.byteLength(footer) <= budget ? footer
+            : capOutput(verdict?.ok === true ? '\n[verified: receipt]' : '\n[UNVERIFIED]', budget);
+          return reply(call, capOutput(note + result, Math.max(0, budget - Buffer.byteLength(fittedFooter))) + fittedFooter);
         } catch (err) {
           return reply(call, `Error: the result could not be formatted (${err.message}).`);
         }
