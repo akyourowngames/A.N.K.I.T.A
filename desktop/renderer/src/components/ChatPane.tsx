@@ -1,15 +1,17 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { ChatMessage, Model, Project, Teammate } from '../../../shared/wire';
+import type { BrowserSessionView, ChatMessage, Model, Project, Teammate } from '../../../shared/wire';
 import type { Usage } from '../state/store';
 import { Composer } from './Composer';
 import { Icon } from './Icons';
 import { Message } from './Message';
 import { WindowControls } from './WindowControls';
 import { formatTokens } from '../lib/format';
+import { BrowserRunCard } from './BrowserStage';
 
-export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, onToggleSidebar, onToggleReview, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onClear, onDelete }: {
+export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onClear, onDelete }: {
   teammate: Teammate | null; messages: ChatMessage[]; running: boolean; models: Model[]; defaultModel: string;
   projects: Project[]; usage?: Usage; chrome: string; sidebarOpen: boolean; reviewOpen: boolean; onToggleSidebar: () => void; onToggleReview: () => void; onProject: (id: string | null) => void; onOpenProjects: () => void;
+  browserRun?: BrowserSessionView | null; onOpenBrowser: () => void; onOpenBrowserPlugins?: () => void;
   onSend: (text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => void; onStop: () => void; onModel: (id: string) => void;
   onEdit: () => void; onClear: () => void; onDelete: () => void;
 }) {
@@ -72,8 +74,9 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
       </div>
     </header>
     <div className="chat-scroll" ref={scroll} onScroll={onScroll} aria-label={`${teammate.name} conversation`}><div className="transcript">
-       {!messages.length && !running ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} threadId={teammate.id} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} />)}
+       {!messages.length && !running ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} threadId={teammate.id} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} onOpenBrowserPlugins={onOpenBrowserPlugins} />)}
       {showThinking && <div className="thinking-row"><span className="message-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span><span className="thinking-dots"><i /><i /><i /></span><span>{teammate.name} is thinking</span></div>}
+      {browserRun?.mode && browserRun.tabs.length > 0 && <BrowserRunCard view={browserRun} onOpen={onOpenBrowser} />}
       <div />
     </div></div>
     {!atBottom && <button className="jump-to-bottom" onClick={jump} aria-label="Jump to latest"><Icon name="chevron" size={17} /><span>Latest</span></button>}

@@ -89,6 +89,7 @@ test('a browser server gets guidance on the failure modes that are not bugs', ()
   assert.match(lines, /go stale on navigation/);
   assert.match(lines, /never retry a ref that just failed/);
   assert.match(lines, /browser_evaluate with one small expression/);
+  assert.match(lines, /Prefer the built-in `browser` tool/, 'steers toward the preview-backed tool');
 });
 
 test('a non-browser server gets no browser advice', () => {
@@ -135,7 +136,7 @@ test('loading a server by id makes its tools callable', async () => {
   const state = {};
   const out = await findTools.run({ query: 'playwright browser' }, { state, mcp });
 
-  assert.ok(state.activatedTools.has('browser'), 'the server id is remembered');
+  assert.ok(state.activatedTools.has('mcp:browser'), 'the server id is remembered separately from built-in groups');
   assert.match(out, /Now callable: mcp__browser__tool_0/);
 });
 
@@ -156,7 +157,7 @@ test('an activated server id adds exactly that server\u2019s specs', async () =>
   assert.equal(mcpOnly.length, 2, 'only the small server is in the request');
   assert.equal(mcpOnly[0].function.name, 'mcp__time__tool_0');
 
-  agent.state.activatedTools.add('browser');
+  agent.state.activatedTools.add('mcp:browser');
   const after = agent.currentSpecs();
   assert.equal(after.length, before.length + 25, 'and now the whole browser server too');
   assert.ok(after.some((s) => s.function.name === 'mcp__browser__tool_24'));
@@ -181,7 +182,7 @@ test('an id in activatedTools that is not a server is ignored, not crashed on', 
   agent.useTools = true;
   agent.deferTools = true;
   agent.mcp = mcp;
-  agent.state = { activatedTools: new Set(['browser', 'web_search', 'nonsense']) };
+  agent.state = { activatedTools: new Set(['mcp:browser', 'web_search', 'nonsense']) };
   // specsFor() resolves web_search; the other two are inert here.
   const names = agent.currentSpecs().map((s) => s.function.name);
   assert.ok(names.some((n) => n.startsWith('mcp__time__')));

@@ -1,6 +1,8 @@
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { StringDecoder } from 'node:string_decoder';
+import { configuredSecrets, redactText } from '../core/redact.mjs';
 import { killTree, waitForExit } from "../../tools/process/run-command.mjs";
 
 /**
@@ -16,6 +18,8 @@ import { killTree, waitForExit } from "../../tools/process/run-command.mjs";
  */
 
 export const LATEST_PROTOCOL = "2025-11-25";
+export const MAX_MCP_MESSAGE_BYTES = 16 * 1024 * 1024;
+export const MAX_MCP_STDERR_LINE_BYTES = 16 * 1024;
 
 /**
  * The Node tool shims, and the script each one wraps.
@@ -246,7 +250,9 @@ function resolveUvxLaunch(command, args = []) {
 
 /** Environment a spawned server is allowed to see. Not the whole process env. */
 export function serverEnv(extra = {}) {
-  const keep = ["PATH", "PATHEXT", "SystemRoot", "windir", "TEMP", "TMP", "HOME", "USERPROFILE", "LANG"];
+  // APPDATA/LOCALAPPDATA locate npm/npx caches on Windows; without them a
+  // spawned npx server cannot resolve its own package cache on first run.
+  const keep = ["PATH", "PATHEXT", "SystemRoot", "windir", "TEMP", "TMP", "HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA", "LANG"];
   // MCP servers are background services, not interactive command-line apps.
   // CI discourages launchers and descendants from opening prompts or terminal
   // UI windows alongside the desktop app.
@@ -309,8 +315,15 @@ export class McpClient {
     initTimeoutMs = 90000,
     onToolsChanged = null,
     onStderr = null,
+    // Fired with the exit code when a stdio server's child process ends, so
+    // owners can drop the dead record instead of reporting it as connected.
+    onExit = null,
+    // Injectable process-tree teardown; awaiting it also observes asynchronous failures.
+    terminateProcess = killTree,
     clientName = "ankita",
     clientVersion = "2.0.0",
+    maxMessageBytes = MAX_MCP_MESSAGE_BYTES,
+    maxStderrLineBytes = MAX_MCP_STDERR_LINE_BYTES,
   } = {}) {
     this.id = id;
     this.transport = transport;
@@ -328,6 +341,8 @@ export class McpClient {
     this.initTimeoutMs = initTimeoutMs;
     this.onToolsChanged = onToolsChanged;
     this.onStderr = onStderr;
+    this.onExit = onExit;
+    this.terminateProcess = terminateProcess;
     this.clientName = clientName;
     this.clientVersion = clientVersion;
 
@@ -335,6 +350,15 @@ export class McpClient {
     this.nextId = 1;
     this.pending = new Map();
     this.buffer = "";
+    this.bufferBytes = 0;
+    this.stdoutDecoder = new StringDecoder('utf8');
+    this.maxMessageBytes = maxMessageBytes;
+    this.maxStderrLineBytes = maxStderrLineBytes;
+    this.stderrBuffer = '';
+    this.stderrBytes = 0;
+    this.stderrDropping = false;
+    this.stderrDecoder = new StringDecoder('utf8');
+    this.secrets = configuredSecrets(env, headers);
     this.tools = [];
     this.serverInfo = null;
     this.protocolVersion = null;
@@ -426,8 +450,11 @@ export class McpClient {
       throw new Error(`could not start the MCP server (${errors.join("; ") || "no candidates"})`);
     }
 
+    if (this.closed) throw new Error('MCP connection closed during startup');
+
     this.job = { child: this.child, done: false, code: null };
     this.child.on("close", (code) => {
+      this._flushStderr();
       this.job.done = true;
       this.job.code = code;
       // Anything still waiting will never be answered.
@@ -436,13 +463,11 @@ export class McpClient {
         entry.reject(new Error(`MCP server exited (code ${code}) while waiting for ${entry.method}`));
         this.pending.delete(id);
       }
+      this.onExit?.(code);
     });
 
     this.child.stdout.on("data", (chunk) => this._onStdout(chunk));
-    this.child.stderr.on("data", (chunk) => {
-      const text = chunk.toString("utf8");
-      this.onStderr?.(text);
-    });
+    this.child.stderr.on("data", (chunk) => this._onStderr(chunk));
 
     const init = await this.request(
       "initialize",
@@ -464,11 +489,26 @@ export class McpClient {
   }
 
   _onStdout(chunk) {
-    this.buffer += chunk.toString("utf8");
-    let index;
-    while ((index = this.buffer.indexOf("\n")) >= 0) {
-      const line = this.buffer.slice(0, index).trim();
-      this.buffer = this.buffer.slice(index + 1);
+    if (this.closed) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const index = bytes.indexOf(10, offset);
+      const end = index < 0 ? bytes.length : index;
+      this.bufferBytes += end - offset;
+      if (this.bufferBytes > this.maxMessageBytes) {
+        const error = new Error(`MCP message exceeded ${this.maxMessageBytes} bytes; connection closed`);
+        this.buffer = ''; this.bufferBytes = 0;
+        for (const entry of this.pending.values()) entry.reject(error);
+        this.pending.clear();
+        void this.close().catch(() => {});
+        return;
+      }
+      this.buffer += this.stdoutDecoder.write(bytes.subarray(offset, end));
+      if (index < 0) return;
+      const line = (this.buffer + this.stdoutDecoder.end()).trim();
+      this.buffer = ''; this.bufferBytes = 0; this.stdoutDecoder = new StringDecoder('utf8');
+      offset = index + 1;
       if (!line) continue;
       let message;
       try {
@@ -480,6 +520,34 @@ export class McpClient {
       }
       this._dispatch(message);
     }
+  }
+
+  _onStderr(chunk) {
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const index = bytes.indexOf(10, offset);
+      const end = index < 0 ? bytes.length : index;
+      this.stderrBytes += end - offset;
+      if (this.stderrBytes > this.maxStderrLineBytes) {
+        this.stderrDropping = true;
+        this.stderrBuffer = '';
+      }
+      if (!this.stderrDropping) this.stderrBuffer += this.stderrDecoder.write(bytes.subarray(offset, end));
+      if (index < 0) return;
+      this._flushStderr();
+      offset = index + 1;
+    }
+  }
+
+  _flushStderr() {
+    if (this.stderrDropping) this.onStderr?.('[MCP stderr line discarded: size limit exceeded]');
+    else {
+      const line = (this.stderrBuffer + this.stderrDecoder.end()).trim();
+      if (line) this.onStderr?.(redactText(line, { secrets: this.secrets }));
+    }
+    this.stderrBuffer = ''; this.stderrBytes = 0; this.stderrDropping = false;
+    this.stderrDecoder = new StringDecoder('utf8');
   }
 
   _dispatch(message) {
@@ -504,11 +572,12 @@ export class McpClient {
   }
 
   /** Sends a request and waits for its matching id. */
-  request(method, params = {}, { timeoutMs = this.requestTimeoutMs } = {}) {
+  request(method, params = {}, { timeoutMs = this.requestTimeoutMs, signal } = {}) {
+    if (signal?.aborted) return Promise.reject(signal.reason || new Error('MCP request cancelled'));
     if (this.transport === "http") {
       if (!this.httpConnected) return Promise.reject(new Error("MCP server is not connected"));
       const id = this.nextId++;
-      return this._httpPost({ jsonrpc: "2.0", id, method, params }, timeoutMs).then((message) => {
+      return this._httpPost({ jsonrpc: "2.0", id, method, params }, timeoutMs, signal).then((message) => {
         if (message?.error) {
           const err = new Error(message.error.message || "MCP error");
           err.code = message.error.code;
@@ -522,16 +591,23 @@ export class McpClient {
     const id = this.nextId++;
     const payload = { jsonrpc: "2.0", id, method, params };
     return new Promise((resolve, reject) => {
+      const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); this.pending.delete(id); };
+      const cancel = () => {
+        cleanup();
+        this.notify('notifications/cancelled', { requestId: id, reason: 'User stopped the request' });
+        reject(signal.reason || new Error('MCP request cancelled'));
+      };
       const timer = setTimeout(() => {
-        this.pending.delete(id);
+        cleanup();
+        this.notify('notifications/cancelled', { requestId: id, reason: 'Request timed out' });
         reject(new Error(`MCP request "${method}" timed out after ${timeoutMs}ms`));
       }, timeoutMs);
-      this.pending.set(id, { resolve, reject, timer, method });
+      this.pending.set(id, { resolve: value => { cleanup(); resolve(value); }, reject: error => { cleanup(); reject(error); }, timer, method });
+      signal?.addEventListener('abort', cancel, { once: true });
       try {
         this.child.stdin.write(JSON.stringify(payload) + "\n");
       } catch (err) {
-        clearTimeout(timer);
-        this.pending.delete(id);
+        cleanup();
         reject(err);
       }
     });
@@ -549,8 +625,11 @@ export class McpClient {
     } catch {}
   }
 
-  async _httpPost(payload, timeoutMs) {
+  async _httpPost(payload, timeoutMs, signal) {
     const controller = new AbortController();
+    const cancel = () => controller.abort(signal.reason);
+    signal?.addEventListener('abort', cancel, { once: true });
+    if (signal?.aborted) cancel();
     this.httpRequests.add(controller);
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
@@ -586,10 +665,12 @@ export class McpClient {
       if (!match) throw new Error(`MCP HTTP response omitted request id ${payload.id}`);
       return match;
     } catch (err) {
+      if (signal?.aborted) throw signal.reason || new Error('MCP request cancelled');
       if (controller.signal.aborted && !this.closed) throw new Error(`MCP request "${payload.method}" timed out after ${timeoutMs}ms`);
       throw err;
     } finally {
       clearTimeout(timer);
+      signal?.removeEventListener('abort', cancel);
       this.httpRequests.delete(controller);
     }
   }
@@ -600,8 +681,8 @@ export class McpClient {
     return this.tools;
   }
 
-  async callTool(name, args = {}) {
-    const result = await this.request("tools/call", { name, arguments: args });
+  async callTool(name, args = {}, options = {}) {
+    const result = await this.request("tools/call", { name, arguments: args }, options);
     return {
       text: toolResultText(result),
       isError: Boolean(result?.isError),
@@ -612,7 +693,7 @@ export class McpClient {
   async close() {
     if (this.closed) return;
     this.closed = true;
-    for (const entry of this.pending.values()) clearTimeout(entry.timer);
+    for (const entry of this.pending.values()) entry.reject(new Error('MCP connection closed'));
     this.pending.clear();
     if (this.transport === "http") {
       for (const controller of this.httpRequests) controller.abort();
@@ -625,7 +706,10 @@ export class McpClient {
     try {
       this.child.stdin.end();
     } catch {}
-    killTree(this.child);
+    try { await this.terminateProcess(this.child); }
+    catch (error) {
+      try { this.onStderr?.(redactText(`MCP process teardown failed: ${error.message}`, { secrets: this.secrets })); } catch {}
+    }
     await waitForExit(this.job, 3000);
     this.child = null;
   }

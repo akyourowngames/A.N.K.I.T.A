@@ -598,6 +598,12 @@ test('remote DMs cannot approve mutations unless auto-approve is on', async (t) 
     .then((r) => { denied = /denied permission/.test(r); });
   assert.equal(denied, true, 'a DM must not silently delete files');
 
+  const malformed = await build('false').runToolCall({
+    id: 'malformed', type: 'function',
+    function: { name: 'delete_file', arguments: JSON.stringify({ path: 'x' }) },
+  });
+  assert.match(malformed, /denied permission/, 'a truthy string must not auto-approve');
+
   const permissive = await build(true).runToolCall({
     id: '2',
     type: 'function',

@@ -8,6 +8,7 @@ import { Agent } from "../core/agent.mjs";
 import { sanitizeMessages } from "../core/history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
+import { numericDelta } from "./routines.mjs";
 import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
 import { recordTurn, saveSession } from '../core/sessions.mjs';
 import {
@@ -18,6 +19,7 @@ import {
   voiceRuntimeCheck,
   resolveTtsProvider,
   resolveTtsVoice,
+  tmpVoiceFile,
 } from "../channels/voice.mjs";
 
 /**
@@ -30,6 +32,7 @@ import {
  */
 
 const ANSI = /\x1b\[[0-9;]*m/g;
+const MAX_ALERT_CHANGES = 100;
 
 /** Approval diffs come from the CLI renderer with colour codes; Telegram wants plain text. */
 export const stripAnsi = (s) => String(s ?? "").replace(ANSI, "");
@@ -118,6 +121,9 @@ export class Daemon {
     this.runningWatches = new Set();
     // Changes collected during a tick, flushed as one composed message.
     this.alertQueue = [];
+    // Delivery can fail after composition. Keep that message intact for retry,
+    // while newer readings accumulate separately without more model calls.
+    this.pendingAlert = null;
     this.flushing = false;
     // Every routine scheduled for the same minute would otherwise start at
     // once and rate-limit the provider. Serialise the agent turns instead.
@@ -131,6 +137,11 @@ export class Daemon {
 
   stop() {
     this.stopping = true;
+    this.wake?.();
+    // Queued turns have no work to drain. Settle their permits as cancelled;
+    // active turns keep their slots until their own finally blocks release.
+    for (const resolve of this.waiting.splice(0)) resolve(false);
+    for (const pending of this.pending.values()) pending.settle("no");
   }
 
   /* ------------------------- conversation per chat ------------------------ */
@@ -179,7 +190,7 @@ export class Daemon {
   confirmOwner(toolName, detail) {
     const chatId = this.config.telegramChatId || this.ownerFallbackChat();
     if (this.bot && chatId) return this.confirmFrom(String(chatId), toolName, detail);
-    return Promise.resolve(Boolean(this.config.autoApprove));
+    return Promise.resolve(this.config.autoApprove === true);
   }
 
   ownerFallbackChat() {
@@ -193,9 +204,10 @@ export class Daemon {
    * auto-approve for the rest of the session.
    */
   async confirmFrom(chatId, toolName, detail) {
+    if (this.stopping) return false;
     const key = String(chatId);
     const agent = this.chatAgents.get(key);
-    if (this.config.autoApprove || agent?.autoApprove) return true;
+    if (this.config.autoApprove === true || agent?.autoApprove === true) return true;
     if (!this.bot) return false;
 
     const body = stripAnsi(detail).trim();
@@ -204,6 +216,7 @@ export class Daemon {
       `Permission needed: ${toolName}\n\n${body}\n\nReply y = allow once, a = always, n = deny` +
         `\n(times out in ${Math.round(this.confirmTimeoutMs / 60000)} min)`
     );
+    if (this.stopping) return false;
 
     this.log(`waiting for ${toolName} approval in chat ${key}`);
     return new Promise((resolve) => {
@@ -269,6 +282,7 @@ export class Daemon {
    * this same loop. Blocking on it guarantees the approval times out.
    */
   dispatchRoutines() {
+    if (this.stopping) return 0;
     const due = this.store.dueRoutines(this.now());
     let queued = 0;
     for (const routine of due) {
@@ -277,7 +291,8 @@ export class Daemon {
       // Claim it now so the next tick cannot double-fire while it is in flight.
       this.store.claimRoutine(routine.id, this.now().toISOString());
       this.log(`routine ${routine.id} (${describeCron(routine.cron)}) firing`);
-      this.chain(`routine:${routine.id}`, () => this.executeRoutine(routine));
+      this.chain(`routine:${routine.id}`, () => this.executeRoutine(routine),
+        () => this.runningRoutines.delete(routine.id));
       queued++;
     }
     return queued;
@@ -318,19 +333,24 @@ export class Daemon {
 
   /** Queues due watch checks and returns immediately (same reason as routines). */
   dispatchWatches() {
+    if (this.stopping) return 0;
     const due = this.store.dueWatches(this.now());
     const pending = [];
     for (const watch of due) {
       if (this.runningWatches.has(watch.id)) continue;
       this.runningWatches.add(watch.id);
-      pending.push(this.chain(`watch:${watch.id}`, () => this.executeWatch(watch)));
+      pending.push(this.chain(`watch:${watch.id}`, () => this.executeWatch(watch),
+        () => this.runningWatches.delete(watch.id)));
     }
     // Once this tick's checks settle, report everything in one message. The
-    // flush is not awaited: the poll loop must stay free.
+    // flush is not awaited by the poll loop, but shutdown still drains it.
     if (pending.length) {
-      Promise.allSettled(pending)
-        .then(() => this.flushAlerts())
-        .catch((err) => this.log(`alert flush failed: ${err.message}`));
+      const key = Symbol("watch-alerts");
+      const work = Promise.allSettled(pending)
+        .then(() => this.stopping ? null : this.flushAlerts())
+        .catch((err) => this.log(`alert flush failed: ${err.message}`))
+        .finally(() => this.chains.delete(key));
+      this.chains.set(key, work);
     }
     return due.length;
   }
@@ -341,39 +361,54 @@ export class Daemon {
    * never silently dropped.
    */
   async flushAlerts() {
-    if (this.flushing || !this.alertQueue.length) return null;
-    const changes = this.alertQueue.splice(0, this.alertQueue.length);
+    if (this.flushing || (!this.pendingAlert && !this.alertQueue.length)) return null;
     this.flushing = true;
     try {
-      if (this.config.watchAlertLlm === false) {
-        await this.deliver(renderAlertFallback(changes), { watch: changes[0].watch });
-        return "fallback";
+      if (!this.pendingAlert) {
+        const changes = this.alertQueue.splice(0, MAX_ALERT_CHANGES);
+        // Install the plain fallback before composition, so even a composition
+        // error leaves a complete batch available for subsequent delivery.
+        const prepared = { changes, message: renderAlertFallback(changes), mode: "fallback" };
+        this.pendingAlert = prepared;
+        if (this.config.watchAlertLlm !== false) {
+          try {
+            const prompt = buildAlertPrompt({
+              username: this.config.username,
+              agentName: this.config.agentName,
+              changes,
+              template: this.config.watchAlertPrompt,
+            });
+            const text = String((await this.runPrompt(prompt, { purpose: "alert", changes })) || "").trim();
+            if (text) { prepared.message = text; prepared.mode = "composed"; }
+          } catch (err) {
+            this.log(`alert composition failed (${err.message}); sending plain text`);
+          }
+        }
+        this.log(
+          `alert (${prepared.mode}) covering ${changes.length} change(s): ${prepared.message.replace(/\s+/g, " ").slice(0, 120)}`
+        );
       }
-      const prompt = buildAlertPrompt({
-        username: this.config.username,
-        agentName: this.config.agentName,
-        changes,
-        template: this.config.watchAlertPrompt,
-      });
-      let text = "";
-      try {
-        text = String((await this.runPrompt(prompt, { purpose: "alert", changes })) || "").trim();
-      } catch (err) {
-        this.log(`alert composition failed (${err.message}); sending plain text`);
-      }
-      const message = text || renderAlertFallback(changes);
-      const mode = text ? "composed" : "fallback";
-      this.log(
-        `alert (${mode}) covering ${changes.length} change(s): ${message.replace(/\s+/g, " ").slice(0, 120)}`
-      );
-      await this.deliver(message, { watch: changes[0].watch });
-      return mode;
-    } catch (err) {
-      this.alertQueue.unshift(...changes);
-      throw err;
+      const prepared = this.pendingAlert;
+      await this.deliver(prepared.message, { watch: prepared.changes[0].watch });
+      this.pendingAlert = null;
+      return prepared.mode;
     } finally {
       this.flushing = false;
     }
+  }
+
+  queueAlert(change) {
+    const index = this.alertQueue.findIndex(entry => entry.watch.id === change.watch.id);
+    if (index !== -1) {
+      const previous = this.alertQueue[index].previous;
+      this.alertQueue[index] = { ...change, previous, delta: numericDelta(previous, change.value) };
+      return;
+    }
+    if (this.alertQueue.length >= MAX_ALERT_CHANGES) {
+      const dropped = this.alertQueue.shift();
+      this.log(`alert backlog full; replacing oldest pending change for ${dropped.watch.id}`);
+    }
+    this.alertQueue.push(change);
   }
 
   async executeWatch(watch) {
@@ -402,7 +437,7 @@ export class Daemon {
       this.stats.changesAlerted++;
       this.store.markAlerted(watch.id, this.now().toISOString());
       // Queue it: the tick reports every change in one message.
-      this.alertQueue.push({
+      this.queueAlert({
         watch: recorded.watched,
         previous: recorded.previous ?? null,
         value: recorded.value ?? null,
@@ -421,6 +456,7 @@ export class Daemon {
   /* -------------------------------- inbox -------------------------------- */
 
   async handleJob(job) {
+    if (this.stopping) return;
     const agent = this.chatAgent(job.chatId);
     let prompt = job.text || "";
     try {
@@ -428,13 +464,13 @@ export class Daemon {
         if (voiceRuntimeCheck()) throw new Error(voiceRuntimeCheck());
         if (!this.config.groqApiKey) throw new Error("set GROQ_API_KEY to transcribe voice notes");
         const ogg = await this.bot.download(job.fileId);
+        if (this.stopping) return;
         const wav = await convertAudio(ogg, { to: "wav" });
-        const wavPath = path.join(
-          process.env.TEMP || process.env.TMPDIR || "/tmp",
-          `ankita-tg-${Date.now()}.wav`
-        );
-        fs.writeFileSync(wavPath, wav);
+        if (this.stopping) return;
+        const wavPath = tmpVoiceFile('wav');
         try {
+          await fs.promises.writeFile(wavPath, wav);
+          if (this.stopping) return;
           prompt = await transcribeGroq({
             apiKey: this.config.groqApiKey,
             model: this.config.sttModel,
@@ -442,9 +478,10 @@ export class Daemon {
           });
         } finally {
           try {
-            fs.unlinkSync(wavPath);
+            await fs.promises.unlink(wavPath);
           } catch {}
         }
+        if (this.stopping) return;
         if (!prompt) {
           await this.bot.send(job.chatId, "I could not make out that voice note.");
           return;
@@ -452,6 +489,7 @@ export class Daemon {
       }
 
       await this.bot.sendTyping(job.chatId);
+      if (this.stopping) return;
       const reply = await agent.send(prompt, {});
       const text = String(reply || "").trim() || "(no reply)";
       await this.bot.send(job.chatId, text, { replyTo: job.messageId });
@@ -495,7 +533,7 @@ export class Daemon {
   }
 
   async pollInbox() {
-    if (!this.bot) return 0;
+    if (this.stopping || !this.bot) return 0;
 
     // First ever run: skip whatever backlog is sitting in the bot's queue
     // rather than answering week-old messages.
@@ -513,6 +551,7 @@ export class Daemon {
     }
 
     const { jobs, denied, offset, error } = await this.bot.poll(this.offset);
+    if (this.stopping) return 0;
     if (error) {
       this.log(`telegram poll: ${error}`);
       return 0;
@@ -555,11 +594,12 @@ export class Daemon {
 
   /** Global concurrency gate for agent turns. */
   async acquire() {
+    if (this.stopping) return false;
     if (this.active < this.maxConcurrent) {
       this.active++;
-      return;
+      return true;
     }
-    await new Promise((resolve) => this.waiting.push(resolve));
+    return new Promise((resolve) => this.waiting.push(resolve));
   }
 
   release() {
@@ -567,7 +607,7 @@ export class Daemon {
     const next = this.waiting.shift();
     if (next) {
       this.active++;
-      next();
+      next(true);
     }
   }
 
@@ -575,10 +615,18 @@ export class Daemon {
    * Serialises work per key without blocking the poll loop, and caps how many
    * keys run at once. The poll itself is never gated.
    */
-  chain(key, work) {
+  chain(key, work, cancelled = () => {}) {
     const gated = async () => {
-      await this.acquire();
+      if (!(await this.acquire())) {
+        cancelled();
+        return;
+      }
       try {
+        // Stop may arrive after acquiring a slot but before this continuation.
+        if (this.stopping) {
+          cancelled();
+          return;
+        }
         return await work();
       } finally {
         this.release();
@@ -623,6 +671,7 @@ export class Daemon {
 
   /** One pass of everything. Exposed so tests can step the loop deterministically. */
   async tickOnce() {
+    if (this.stopping) return { routines: 0, checked: 0, messages: 0 };
     // Re-read state first: routines and watches can be added from the REPL or
     // by the agent itself while this daemon is already running.
     try {
@@ -646,12 +695,12 @@ export class Daemon {
 
     const routines = this.dispatchRoutines();
     const checked = this.dispatchWatches();
-    if (!checked && this.alertQueue.length && !this.flushing && !this.chains.has('alert-retry')) {
+    if (!checked && (this.pendingAlert || this.alertQueue.length) && !this.flushing && !this.chains.has('alert-retry')) {
       this.chain('alert-retry', () => this.flushAlerts());
     }
     // Receive interactive work before deciding whether maintenance can start.
     const messages = await this.pollInbox();
-    if (this.consolidator?.due() && !this.chains.has('consolidation') && this.active === 0 && this.waiting.length === 0 &&
+    if (!this.stopping && this.consolidator?.due() && !this.chains.has('consolidation') && this.active === 0 && this.waiting.length === 0 &&
         ![...this.chains.keys()].some(key => key !== 'notifications')) {
       // Low-priority maintenance starts only while idle, without using a chat slot.
       const work = this.consolidator.run()
@@ -666,7 +715,7 @@ export class Daemon {
         .finally(() => this.chains.delete('consolidation'));
       this.chains.set('consolidation', work);
     }
-    if (this.flushNotifications && !this.chains.has('notifications')) {
+    if (!this.stopping && this.flushNotifications && !this.chains.has('notifications')) {
       const work = Promise.resolve().then(this.flushNotifications)
         .catch(err => this.log(`notification flush failed: ${err.message}`))
         .finally(() => this.chains.delete('notifications'));
@@ -705,9 +754,9 @@ export class Daemon {
 
       if (this.stopping) break;
       // A Telegram long-poll already waits ~25s; otherwise sleep the tick.
-      if (!this.bot) await new Promise((r) => setTimeout(r, this.tickMs));
+      if (!this.bot) await this.pause(this.tickMs);
       else if (result && result.routines === 0 && result.checked === 0 && result.messages === 0) {
-        await new Promise((r) => setTimeout(r, 2000));
+        await this.pause(2000);
       }
     }
     this.log("waiting for in-flight turns to finish");
@@ -715,5 +764,19 @@ export class Daemon {
     if (this.flushNotifications) await this.flushNotifications();
     for (const chatId of this.chatAgents.keys()) this.saveChat(chatId);
     this.log(`daemon stopping - ${JSON.stringify(this.stats)}`);
+  }
+
+  /** A tick delay that stop() can wake immediately. */
+  pause(ms) {
+    if (this.stopping) return Promise.resolve();
+    return new Promise(resolve => {
+      const wake = () => {
+        clearTimeout(timer);
+        if (this.wake === wake) this.wake = null;
+        resolve();
+      };
+      const timer = setTimeout(wake, ms);
+      this.wake = wake;
+    });
   }
 }

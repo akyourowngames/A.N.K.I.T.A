@@ -1,5 +1,6 @@
 import { McpClient, formatToolResult } from "./mcp-client.mjs";
 import { connectionMode, mcpEndpoint } from "./composio.mjs";
+import { configuredSecrets, redactText } from '../core/redact.mjs';
 
 /**
  * Owns every live MCP connection for the process.
@@ -91,7 +92,8 @@ export class McpManager {
   }
 
   /** Connects a server and returns its record. Idempotent per id. */
-  async connect({ id, command, args = [], env = {}, cwd, transport = "stdio", url, headers = {}, trusted = false, alwaysOn = false, synthetic = false, requestTimeoutMs, initTimeoutMs, fetchImpl }) {
+  async connect({ id, command, args = [], env = {}, cwd, transport = "stdio", url, headers = {}, trusted = false, alwaysOn = false, synthetic = false, hidden = false, requestTimeoutMs, initTimeoutMs, fetchImpl, signal }) {
+    signal?.throwIfAborted();
     const serverId = slug(id || command || url);
     if (!serverId) throw new Error("an MCP server needs an id or a command");
     if (transport !== "stdio" && transport !== "http") {
@@ -113,15 +115,35 @@ export class McpManager {
       requestTimeoutMs,
       initTimeoutMs,
       onStderr: (text) => this.log(`[${serverId}] ${text.trim().split("\n")[0]}`),
+      // A dead child stops being reported as connected: drop the record (only
+      // if it still points at this client, so a newer reconnect is never
+      // removed by an older child's exit) instead of serving stale `has()`.
+      onExit: () => {
+        if (this.servers.get(serverId)?.client === client) {
+          this.servers.delete(serverId);
+          this.onChange?.(this);
+        }
+      },
       onToolsChanged: () => {
         this.log(`${serverId} advertised a changed tool list`);
         this.onChange?.(this);
       },
     });
 
-    await client.connect();
+    const cancel = () => { void client.close(); };
+    this._clients.add(client);
+    signal?.addEventListener('abort', cancel, { once: true });
+    try {
+      await client.connect();
+      signal?.throwIfAborted();
+      if (client.closed) throw new Error('MCP connection closed during startup');
+    } catch (error) {
+      await client.close();
+      this._clients.delete(client);
+      throw error;
+    } finally { signal?.removeEventListener('abort', cancel); }
 
-    const record = { id: serverId, command, args, env, transport, url, headers, trusted, alwaysOn, synthetic, client, tools: client.tools };
+    const record = { id: serverId, command, args, env, transport, url, headers, trusted, alwaysOn, synthetic, hidden, client, tools: client.tools };
     this.servers.set(serverId, record);
     this._clients.add(client);
     this.log(`connected ${serverId} (${client.tools.length} tool(s))`);
@@ -183,18 +205,23 @@ export class McpManager {
       hints.destructiveHint ? "destructive" : null,
       hints.openWorldHint ? "open-world" : null,
     ].filter(Boolean);
-    return (
+    return redactText(
       `${tool.name} on MCP server "${record.id}"` +
       (flags.length ? `  [${flags.join(", ")}]` : "") +
       (record.transport === "http" ? `\n  URL: ${record.url}\n\n` : `\n  command: ${record.command} ${record.args.join(" ")}\n\n`) +
-      JSON.stringify(args, null, 2)
+      JSON.stringify(args, null, 2),
+      { secrets: configuredSecrets(record.env, record.headers) }
     );
   }
 
-  async callTool(fullName, args = {}) {
+  async callToolResult(fullName, args = {}, options = {}) {
     const found = this.findTool(fullName);
     if (!found) throw new Error(`no connected MCP server provides ${fullName}`);
-    const result = await found.record.client.callTool(found.toolName, args);
+    return found.record.client.callTool(found.toolName, args, options);
+  }
+
+  async callTool(fullName, args = {}, options = {}) {
+    const result = await this.callToolResult(fullName, args, options);
     return formatToolResult(result);
   }
 
@@ -209,7 +236,8 @@ export class McpManager {
     const wanted = new Map();
     const skipped = [];
     for (const record of store.enabled) {
-      if (store.isApproved(record)) wanted.set(record.id, record);
+      if (store.isApproved(record) && (!record.manualStart || this.has(record.id))) wanted.set(record.id, record);
+      else if (record.manualStart && store.isApproved(record)) continue;
       else skipped.push(record.id);
     }
 
@@ -230,6 +258,7 @@ export class McpManager {
           args: record.args,
           env: record.env,
           transport: record.transport,
+          hidden: record.hidden === true,
         });
         store.markConnected(id, true, null);
         changed = true;
@@ -250,6 +279,7 @@ export class McpManager {
   specs({ only = null } = {}) {
     const out = [];
     for (const [id, record] of this.servers) {
+      if (record.hidden) continue;
       if (only && !only.has(id)) continue;
       for (const tool of record.tools) out.push(toOpenAiSpec(id, tool));
     }
@@ -271,16 +301,16 @@ export class McpManager {
    * window and fail it outright. Those load on demand through find_tools.
    */
   alwaysOnIds() {
-    return [...this.servers.keys()].filter((id) => this.servers.get(id)?.alwaysOn || this.estimatedTokens(id) <= ALWAYS_ON_TOKENS);
+    return [...this.servers.keys()].filter((id) => !this.servers.get(id)?.hidden && (this.servers.get(id)?.alwaysOn || this.estimatedTokens(id) <= ALWAYS_ON_TOKENS));
   }
 
   deferredIds() {
-    return [...this.servers.keys()].filter((id) => !this.servers.get(id)?.alwaysOn && this.estimatedTokens(id) > ALWAYS_ON_TOKENS);
+    return [...this.servers.keys()].filter((id) => !this.servers.get(id)?.hidden && !this.servers.get(id)?.alwaysOn && this.estimatedTokens(id) > ALWAYS_ON_TOKENS);
   }
 
   /** One line per server, for find_tools and the system prompt. */
   summaries() {
-    return [...this.servers.values()].map((r) => ({
+    return [...this.servers.values()].filter(r => !r.hidden).map((r) => ({
       id: r.id,
       tools: r.tools.map((t) => t.name),
       summary: `${r.tools.length} tool(s) from MCP server "${r.id}"`,

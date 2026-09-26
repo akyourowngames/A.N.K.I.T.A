@@ -114,19 +114,27 @@ test('a cached uvx tool is launched without the uvx console intermediary', () =>
   }
 });
 
-test('spawned servers get a stripped environment, not the whole process', () => {
+  test('spawned servers get a stripped environment, not the whole process', () => {
   const previous = process.env.SECRET_THING;
   process.env.SECRET_THING = 'super-secret-value';
+  const previousAppData = process.env.APPDATA, previousLocal = process.env.LOCALAPPDATA;
+  process.env.APPDATA = 'C:\\fake-appdata'; process.env.LOCALAPPDATA = 'C:\\fake-local';
   try {
     const env = serverEnv({ MCP_FIXTURE_LOG: 'x' });
     assert.equal(env.SECRET_THING, undefined, 'secrets must not be inherited');
     assert.equal(env.MCP_FIXTURE_LOG, 'x', 'an explicit server env is applied');
     assert.equal(env.PATH, process.env.PATH, 'PATH is kept');
+    assert.equal(env.APPDATA, 'C:\\fake-appdata', 'npm/npx cache locations reach npx-spawned servers');
+    assert.equal(env.LOCALAPPDATA, 'C:\\fake-local', 'npm/npx cache locations reach npx-spawned servers');
     assert.equal(env.CI, '1', 'MCP servers run as non-interactive background processes');
     assert.equal(env.NO_COLOR, '1', 'server output is not a terminal UI');
   } finally {
     if (previous === undefined) delete process.env.SECRET_THING;
     else process.env.SECRET_THING = previous;
+    if (previousAppData === undefined) delete process.env.APPDATA;
+    else process.env.APPDATA = previousAppData;
+    if (previousLocal === undefined) delete process.env.LOCALAPPDATA;
+    else process.env.LOCALAPPDATA = previousLocal;
   }
 });
 
@@ -191,6 +199,27 @@ test('the manager tracks connections and disconnects cleanly', async () => {
 test('an unsupported transport is refused rather than silently ignored', async () => {
   const mcp = new McpManager();
   await assert.rejects(mcp.connect({ id: 'x', command: 'python', transport: 'websocket' }), /not supported/);
+});
+
+test('a server that exits after connecting stops being reported as connected', async () => {
+  // Minimal JSON-RPC stdio server: answers initialize + tools/list, then dies.
+  // No fixture dependency so this runs everywhere node runs.
+  const server = [
+    "const rl = require('readline').createInterface({ input: process.stdin });",
+    "rl.on('line', line => {",
+    "  let m; try { m = JSON.parse(line); } catch { return; }",
+    "  if (m.method === 'initialize') process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: { protocolVersion: '2025-11-25', serverInfo: { name: 'dying', version: '0' } } }) + '\\n');",
+    "  else if (m.method === 'notifications/initialized') setTimeout(() => process.exit(0), 200);",
+    "  else if (m.id !== undefined) process.stdout.write(JSON.stringify({ jsonrpc: '2.0', id: m.id, result: {} }) + '\\n');",
+    "});",
+  ].join('\n');
+  const mcp = new McpManager();
+  await mcp.connect({ id: 'dying', command: process.execPath, args: ['-e', server] });
+  assert.equal(mcp.has('dying'), true);
+  const deadline = Date.now() + 5000;
+  while (mcp.has('dying') && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(mcp.has('dying'), false, 'an exited server is pruned, not reported ready');
+  await mcp.closeAll();
 });
 
 /* ---------------------------- against the fixture ----------------------- */

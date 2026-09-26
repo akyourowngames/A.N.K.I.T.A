@@ -67,7 +67,7 @@ test('a large loaded server is dropped rather than starving the window', () => {
   // The real shape: an OpenAI-compatible provider advertises no context, so the
   // 32768 default applies, and the model has loaded Playwright's 25 tools.
   const mcp = managerWith({ time: 2, browser: 25 });
-  const agent = agentStub({ contextWindow: 32768, config: { maxTokens: 4096 }, mcp, activated: ['browser'] });
+  const agent = agentStub({ contextWindow: 32768, config: { maxTokens: 4096 }, mcp, activated: ['mcp:browser'] });
 
   const names = agent.currentSpecs().map((spec) => spec.function.name);
   assert.ok(names.some((name) => name.startsWith('mcp__time__')), 'the small always-on server still ships');
@@ -79,14 +79,14 @@ test('a large loaded server is dropped rather than starving the window', () => {
 
 test('the same loaded server is kept once the window is large enough', () => {
   const mcp = managerWith({ time: 2, browser: 25 });
-  const agent = agentStub({ contextWindow: 60000, config: { maxTokens: 4096 }, mcp, activated: ['browser'] });
+  const agent = agentStub({ contextWindow: 60000, config: { maxTokens: 4096 }, mcp, activated: ['mcp:browser'] });
   const names = agent.currentSpecs().map((spec) => spec.function.name);
   assert.ok(names.some((name) => name.startsWith('mcp__browser__')), 'with room to spare the whole group ships');
   assert.doesNotThrow(() => agent.trimHistory(8));
 });
 
 test('core tools always ship even when they alone exceed the budget', () => {
-  const agent = agentStub({ contextWindow: 32768, config: { maxTokens: 4096 }, mcp: managerWith({ browser: 25 }), activated: ['browser'] });
+  const agent = agentStub({ contextWindow: 32768, config: { maxTokens: 4096 }, mcp: managerWith({ browser: 25 }), activated: ['mcp:browser'] });
   const names = agent.currentSpecs().map((spec) => spec.function.name);
   for (const spec of coreSpecs.filter(spec => spec.function.name !== 'skill')) {
     assert.ok(names.includes(spec.function.name), `${spec.function.name} is core`);

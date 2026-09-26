@@ -75,7 +75,7 @@ export class McpStore {
     );
   }
 
-  add({ name, command, args = [], env = {}, transport = "stdio", id, source = null }) {
+  add({ name, command, args = [], env = {}, transport = "stdio", id, source = null, hidden = false, manualStart = false }) {
     this._fresh();
     const cmd = String(command ?? "").trim();
     if (!cmd) throw new Error("a command is required (e.g. 'npx' or 'python')");
@@ -92,6 +92,8 @@ export class McpStore {
       // Where this came from, when it was installed from the registry. Purely
       // provenance: it never influences what runs, only what we can tell you.
       source: source && typeof source === "object" ? source : null,
+      hidden: hidden === true,
+      manualStart: manualStart === true,
       enabled: true,
       // Nothing runs until the user approves this exact command.
       approvedAt: null,

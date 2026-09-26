@@ -1,4 +1,5 @@
 import { resolvePath, assertReadable, readTextFile, writeTextFile } from "../shared/_shared.mjs";
+import { rememberPlan, executionPlan } from '../shared/_approval-plan.mjs';
 import { diffText, stats, touchedRange } from "../shared/_diff.mjs";
 
 export const name = "edit_lines";
@@ -137,7 +138,7 @@ function describe(plan) {
 }
 
 export function approval(args, ctx, ui) {
-  const plan = prepare(args, ctx);
+  const plan = rememberPlan(name, args, ctx, prepare(args, ctx));
   if (plan.error) return `${resolvePath(args.path, ctx)}\n\n${ui.red(plan.error)}`;
   if (!plan.diff.changed) return `${ui.bold(plan.p)}\n\n${ui.dim("no change")}`;
   return `${ui.bold(plan.p)}  ${ui.dim(describe(plan))}\n\n${ui.diff(
@@ -148,7 +149,7 @@ export function approval(args, ctx, ui) {
 }
 
 export function run(args, ctx) {
-  const plan = prepare(args, ctx);
+  const plan = executionPlan(name, args, ctx, prepare);
   if (plan.error) return `Error: ${plan.error}`;
   if (!plan.diff.changed) return `No change: ${plan.p}`;
 

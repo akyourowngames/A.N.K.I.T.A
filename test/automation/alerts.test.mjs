@@ -197,12 +197,75 @@ test('failed alert enqueue retains changes and a later tick retries even without
   daemon.deliver = async text => { if (failed) throw Error('queue busy'); delivered.push(text); };
   daemon.alertQueue.push(CHANGE);
   await assert.rejects(daemon.flushAlerts(), /queue busy/);
-  assert.equal(daemon.alertQueue.length, 1);
+  assert.equal(daemon.pendingAlert.changes.length, 1);
   failed = false;
   await daemon.tickOnce();
   await daemon.drain();
   assert.equal(delivered.length, 1);
   assert.equal(daemon.alertQueue.length, 0);
+  assert.equal(daemon.pendingAlert, null);
+});
+
+test('delivery retries reuse the composed message without running the model again', async t => {
+  const { daemon, store, prompts, delivered } = daemonWith(t);
+  store.removeWatch('active-users'); store.removeWatch('signups');
+  let failed = true;
+  daemon.deliver = async text => { delivered.push(text); if (failed) throw Error('queue busy'); };
+  daemon.alertQueue.push(CHANGE);
+  await assert.rejects(daemon.flushAlerts(), /queue busy/);
+  await daemon.tickOnce();
+  await daemon.drain();
+  assert.equal(prompts.length, 1, 'a delivery failure must not regenerate an LLM answer');
+  failed = false;
+  await daemon.tickOnce();
+  await daemon.drain();
+  assert.equal(prompts.length, 1);
+  assert.equal(delivered.length, 3);
+  assert.deepEqual(delivered, Array(3).fill('Krish, active users dipped 7 to 1,298 - want me to dig in?'));
+  assert.equal(daemon.alertQueue.length, 0);
+});
+
+test('pending watch changes coalesce to the first baseline and latest reading', async t => {
+  const { daemon, store, prompts, delivered } = daemonWith(t, { config: { watchAlertLlm: false } });
+  const watch = store.findWatch('active-users');
+  store.recordWatchCheck(watch.id, { value: '10', text: 'users: 10' });
+  let value = 11;
+  daemon.checker = async () => ({ value: String(value++), text: 'reading' });
+  daemon.now = () => new Date(Date.now() + value * 3600000);
+  for (let i = 0; i < 150; i++) await daemon.executeWatch(watch);
+  assert.equal(daemon.alertQueue.length, 1, 'one retained change per watch, even throughout an outage');
+  await daemon.flushAlerts();
+  assert.equal(prompts.length, 0);
+  assert.match(delivered[0].text, /Active users: 10 \u2192 160 \(\+150\)/);
+});
+
+test('distinct watch changes cannot grow the pending alert backlog without limit', async t => {
+  const { daemon, store, delivered } = daemonWith(t, { config: { watchAlertLlm: false } });
+  daemon.checker = async () => ({ value: '2', text: 'reading' });
+  for (let i = 0; i < 125; i++) {
+    const watch = store.addWatch({ name: `Metric ${i}`, url: 'https://ex.test/', interval: '20s' });
+    store.recordWatchCheck(watch.id, { value: '1', text: 'baseline' });
+    await daemon.executeWatch(watch);
+  }
+  assert.ok(daemon.alertQueue.length <= 100, 'backlog has a finite cap across distinct watches');
+  await daemon.flushAlerts();
+  assert.match(delivered[0].text, /Metric 124: 1 \u2192 2 \(\+1\)/, 'overflow keeps the latest readings');
+});
+
+test('new changes during an outage wait behind the cached delivery', async t => {
+  const { daemon, prompts, delivered } = daemonWith(t);
+  let failed = true;
+  daemon.deliver = async text => { if (failed) throw Error('offline'); delivered.push(text); };
+  daemon.alertQueue.push(CHANGE);
+  await assert.rejects(daemon.flushAlerts(), /offline/);
+  daemon.alertQueue.push({ ...CHANGE, previous: '1,298', value: '1,300', delta: 2 });
+  failed = false;
+  await daemon.flushAlerts();
+  assert.equal(prompts.length, 1, 'retry only delivers the prepared older batch');
+  await daemon.flushAlerts();
+  assert.equal(prompts.length, 2, 'the new reading is composed after the retry succeeds');
+  assert.match(prompts[1].prompt, /1,298 -> now 1,300/);
+  assert.equal(delivered.length, 2);
 });
 
 test('alerts cannot mutate: mutations are declined, reads are allowed', async (t) => {

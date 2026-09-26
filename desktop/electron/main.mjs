@@ -9,6 +9,7 @@ import { setupUpdater } from './updater.mjs';
 import { renderPdfPages } from './pdf-render.mjs';
 import { IPC_CONTRACT } from '../shared/version.mjs';
 import { CONFIG_DIR } from '../../src/core/config.mjs';
+import { shutdownFileToolWorkers } from '../../src/tooling/tool-worker.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -218,6 +219,19 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'pluginsDisconnectAccount': return current.plugins.disconnectAccount(payload);
     case 'pluginsDisconnectService': return current.plugins.disconnectService(payload);
     case 'pluginsRefresh': return current.refreshPlugins();
+    case 'browserPluginsOverview': return current.browserPlugins.overview();
+    case 'browserPluginSetEnabled': return current.browserPlugins.setEnabled(payload);
+    case 'browserPluginSetHeadless': return current.browserPlugins.setHeadless(payload);
+    case 'browserPluginSiteRule': return current.browserPlugins.changeSiteRule(payload);
+    case 'browserPluginConfigureChrome': return current.browserPlugins.configureChrome(payload);
+    case 'browserPluginStartChrome': return current.browserPlugins.startChrome();
+    case 'browserPluginTestChromePort': return current.browserPlugins.testChromePort(payload);
+    case 'browserPluginInstallChromium': return current.browserPlugins.installChromium();
+    case 'browserSessionView': return current.browserManager.view();
+    case 'browserSessionStop': return current.browserManager.close();
+    case 'browserSessionTakeover': return current.browserManager.takeover(payload?.enabled === true);
+    case 'browserSessionInput': return current.browserManager.userInput(payload);
+    case 'browserSessionSelectTab': return current.browserManager.selectTab(payload?.tab);
     case 'appInfo': return { version: app.getVersion(), contract: IPC_CONTRACT };
     default: throw new Error('Unknown desktop action');
   }
@@ -261,6 +275,8 @@ const gotLock = app.requestSingleInstanceLock();
 if (!gotLock) {
   app.quit();
 } else {
+  // The resident filesystem-inspection worker must not outlive the app.
+  app.on('will-quit', shutdownFileToolWorkers);
   app.on('second-instance', () => {
     if (!window) return;
     if (window.isMinimized()) window.restore();

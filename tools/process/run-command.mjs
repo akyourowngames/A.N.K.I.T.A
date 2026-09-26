@@ -1,7 +1,9 @@
-import { spawn, spawnSync } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { JobOutput, clamp, jobsOf, jobSnapshot, notifyJob, waitForExit } from '../shared/_jobs.mjs';
-import { trackJobTree, terminateTrackedDescendants } from '../shared/_job-tree.mjs';
+import { killTree } from '../shared/_job-tree.mjs';
+import { spawnWindowsJob } from '../shared/_job-launcher.mjs';
 export { waitForExit } from '../shared/_jobs.mjs';
+export { killTree } from '../shared/_job-tree.mjs';
 
 export const name = 'run_command';
 export const description = 'Run a shell command. Returns after yield_ms (default 1000) with a job ID if still running, so the conversation can continue. Use background:true for servers; job_status lists/reads jobs, job_input sends stdin, job_wait waits briefly, job_stop ends them. ' +
@@ -16,36 +18,10 @@ export const parameters = { type: 'object', properties: {
   max_output_bytes: { type: 'integer', description: 'Retained output, default 65536, max 4 MiB.' },
 }, required: ['command'] };
 
-let shellExe;
-function shell() {
-  if (!shellExe) shellExe = process.platform === 'win32'
-    ? (spawnSync('where', ['pwsh'], { windowsHide: true, stdio: 'ignore' }).status === 0 ? 'pwsh' : 'powershell.exe') : '/bin/sh';
-  return shellExe;
-}
+const POSIX_SHELL = '/bin/sh'; // Existing POSIX command language, independent of the login shell.
 export function strictEnabled() { return String(process.env.PS_STRICT ?? '1') !== '0'; }
 function argvFor(command) {
   return process.platform === 'win32' ? ['-NoProfile', '-Command', (strictEnabled() ? "$ErrorActionPreference='Stop'; " : '') + command] : ['-c', command];
-}
-/** Terminate descendants before their parent; every POSIX command owns a group. */
-export async function killTree(child) {
-  if (!child?.pid) return;
-  if (process.platform === 'win32') {
-    // taskkill /T already walks a live process's descendants. The expensive
-    // full process-table lookup is needed only after the root has exited.
-    if (child.exitCode !== null || child.signalCode !== null) {
-      await terminateTrackedDescendants(child);
-      return;
-    }
-    const killedTree = await new Promise(resolve => {
-      const killer = spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true, stdio: 'ignore' });
-      const timer = setTimeout(() => { killer.kill(); resolve(false); }, 5000);
-      const done = code => { clearTimeout(timer); resolve(code === 0); };
-      killer.once('error', () => done(null));
-      killer.once('close', done);
-    });
-    if (!killedTree) await terminateTrackedDescendants(child);
-  } else { try { process.kill(-child.pid, 'SIGKILL'); } catch {} }
-  try { child.kill('SIGKILL'); } catch {}
 }
 export function jobSummary(job) {
   return `job ${job.id}: ${job.done ? `done (exit ${job.code ?? '?'})` : job.stopped ? 'stopping' : 'running'} after ${(((job.endedAt || Date.now()) - job.startedAt) / 1000).toFixed(1)}s\n$ ${job.command}`;
@@ -62,12 +38,17 @@ export async function run(args, ctx = {}) {
   const cwd = ctx.cwd || process.cwd();
   const env = { ...process.env, ...Object.fromEntries(Object.entries(args.env || {}).map(([k, v]) => [k, String(v)])) };
   let child;
-  try { child = spawn(shell(), argvFor(args.command), { cwd, env, windowsHide: true, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'] }); }
+  const windows = process.platform === 'win32';
+  try {
+    const commandArgs = argvFor(args.command);
+    child = windows
+      ? spawnWindowsJob(commandArgs, { cwd, env })
+      : spawn(POSIX_SHELL, commandArgs, { cwd, env, windowsHide: true, detached: true, stdio: ['pipe', 'pipe', 'pipe'] });
+  }
   catch (err) { return `Error: failed to spawn: ${err.message}`; }
   const job = { id, command: args.command, cwd, child, out: new JobOutput(clamp(args.max_output_bytes, 65536, 1024, 4 * 1024 * 1024)),
     startedAt: Date.now(), done: false, stopped: false, code: null, readOffset: 0, background: !!args.background };
   jobs.set(id, job);
-  if (process.platform === 'win32') void trackJobTree(child);
   child.stdout.on('data', d => job.out.append(d)); child.stderr.on('data', d => job.out.append(d));
   child.stdin.on('error', () => {});
   let deadline;

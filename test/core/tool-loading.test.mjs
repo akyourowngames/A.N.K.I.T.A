@@ -99,6 +99,10 @@ test('loading twice is idempotent and says so', () => {
 
 test('an interactive agent starts core-only and grows only when asked', () => {
   const agent = new Agent({ client: {}, config: { tools: true }, skillsEnabled: true });
+  // Bytes: isolate activation from machine-dependent installed skill prompt size.
+  // Budget shedding is exercised by tool-budget/context-budget, not this test.
+  const activationHeadroomBytes = 4096;
+  agent.contextWindow = bytes(index.specs) + bytes(agent.messages[0]) + agent.outputReserve() + activationHeadroomBytes;
   const fresh = agent.currentSpecs();
   assert.equal(fresh.length, CORE.length);
   assert.equal(bytes(fresh), bytes(index.coreSpecs));

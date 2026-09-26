@@ -18,7 +18,7 @@ function imagePayload(result: string): LocalImage | StockResults | null {
   return null;
 }
 
-export function ToolCallCard({ message, threadId }: { message: ToolMessage; threadId: string }) {
+export function ToolCallCard({ message, threadId, onOpenBrowserPlugins }: { message: ToolMessage; threadId: string; onOpenBrowserPlugins?: () => void }) {
   const [open, setOpen] = useState(message.isError);
   const [generatedPreview, setGeneratedPreview] = useState('');
   const [previewError, setPreviewError] = useState('');
@@ -32,6 +32,7 @@ export function ToolCallCard({ message, threadId }: { message: ToolMessage; thre
   const hint = summarizeArgs(message.args);
   const duration = message.startedAt && message.endedAt ? formatDuration(message.endedAt - message.startedAt) : '';
   const input = typeof message.args === 'string' ? message.args : JSON.stringify(message.args, null, 2);
+  const browserSetupNeeded = message.name === 'browser' && message.isError && /Enable (?:Chrome local|Playwright Browser)|Chrome is not connected|Playwright is missing|Chromium could not start/.test(message.result);
 
   useEffect(() => {
     setGeneratedPreview('');
@@ -72,6 +73,7 @@ export function ToolCallCard({ message, threadId }: { message: ToolMessage; thre
       <pre>{input}</pre>
       <div className="tool-card-toolbar"><span className="tool-section-label">Result</span>{message.result && <CopyButton text={message.result} compact />}</div>
       <pre>{message.result || (running ? 'Waiting for the tool…' : '(no output)')}</pre>
+      {browserSetupNeeded && onOpenBrowserPlugins && <button type="button" className="tool-browser-setup" onClick={onOpenBrowserPlugins}>Open browser setup <Icon name="arrowRight" size={14} /></button>}
     </div>}
   </div>;
 }

@@ -1,6 +1,6 @@
 {
   "name": "ankita",
-  "version": "2.4.2",
+  "version": "2.4.3",
   "private": true,
   "type": "module",
   "description": "Terminal coding agent powered by GitHub Copilot models, with shell and file-editing tools.",
@@ -15,10 +15,10 @@
   },
   "main": "desktop/electron/main.mjs",
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test --test-concurrency=1",
     "start": "node chat.mjs",
     "models": "node chat.mjs --list-models",
     "config": "node chat.mjs --config",
@@ -47,6 +47,7 @@
     "vite": "6.4.3"
   },
   "dependencies": {
-    "electron-updater": "^6.8.9"
+    "electron-updater": "^6.8.9",
+    "playwright": "1.63.0"
   }
 }

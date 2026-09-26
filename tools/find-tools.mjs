@@ -3,7 +3,7 @@ import { CATEGORIES, CATEGORIES as ALL, findCategory } from "./catalog.mjs";
 export const name = "find_tools";
 export const description =
   "Load extra tools that are not in your default set: searching the internet and scraping pages, " +
-  "Git, port/process management, scheduled routines and page watches, project management and memory, GitHub notifications, and " +
+  "a real browser, Git, port/process management, scheduled routines and page watches, project management and memory, GitHub notifications, and " +
   "directory creation. Call this first whenever a task needs one of those; the tools become callable " +
   "immediately afterwards.";
 
@@ -109,7 +109,9 @@ export function run(args = {}, ctx = {}) {
     // place it might be bought in from, rather than dead-ending.
     return (
       `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held, skillsEnabled)}\n\n` +
-      "If instead you need a whole capability that is not in that list - driving a browser, " +
+      "Tip: booking, shopping, and media playback can usually be done directly in " +
+      "a website - load the `browser` group with find_tools and drive the site. " +
+      "If instead you need a whole capability that is not in that list - " +
       "a specific database or design tool - load the `mcp` group and search the MCP registry " +
       'with mcp_manage action="search". For Gmail, Slack, Notion and other connected apps, ' +
       "load `connectors` and use `/composio connect <app>`. Ask the user before installing " +
@@ -135,8 +137,8 @@ export function run(args = {}, ctx = {}) {
   // into specs on the next request.
   const serversLoaded = [];
   for (const id of servers) {
-    if (set && !set.has(id)) {
-      set.add(id);
+    if (set && !set.has(`mcp:${id}`)) {
+      set.add(`mcp:${id}`);
       serversLoaded.push(id);
     } else {
       already.push(id);

@@ -27,19 +27,28 @@ test('paths handed to the model are usable: cwd-relative inside, absolute outsid
   assert.equal(shared.displayPath(cwd, path.join(cwd, '..', 'sibling', 'b.txt')), 'C:/work/sibling/b.txt');
 });
 
-test('search results outside the working directory come back absolute', (t) => {
+test('read_file redirects image files instead of calling them binary', t => {
+  const ctx = workspace(t);
+  const png = path.join(ctx.cwd, 'shot.png');
+  fs.writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0x01]));
+  const out = registry.get('read_file').run({ path: 'shot.png' }, ctx);
+  assert.match(out, /is an image file, not text/);
+  assert.match(out, /work-review artifacts/);
+  assert.doesNotMatch(out, /looks like a binary file/);
+  // Non-image binaries keep the original guard.
+  const bin = path.join(ctx.cwd, 'blob.dat');
+  fs.writeFileSync(bin, Buffer.from([0x00, 0x01, 0x02]));
+  assert.match(registry.get('read_file').run({ path: 'blob.dat' }, ctx), /looks like a binary file/);
+});
+
+test('search tools refuse paths outside the working directory', (t) => {
   const ctx = workspace(t);
   const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-outside-'));
   t.after(() => fs.rmSync(outside, { recursive: true, force: true }));
   fs.writeFileSync(path.join(outside, 'needle.txt'), 'haystack needle here');
 
-  const found = registry.get('glob').run({ pattern: 'needle.txt', path: outside }, ctx);
-  assert.ok(path.isAbsolute(found.split('\n')[0]), `expected absolute path, got ${found}`);
-
-  const hit = registry.get('search_files').run({ pattern: 'needle', path: outside }, ctx);
-  // "C:/path/file.txt:1: text" — lazy match so the drive colon is not mistaken for a separator.
-  const filePart = /^(.*?):\d+: /.exec(hit)?.[1] ?? '';
-  assert.ok(path.isAbsolute(filePart), `expected absolute path, got ${hit}`);
+  assert.throws(() => registry.get('glob').run({ pattern: 'needle.txt', path: outside }, ctx), /workspace boundary/);
+  assert.throws(() => registry.get('search_files').run({ pattern: 'needle', path: outside }, ctx), /workspace boundary/);
 });
 
 test('approval diff includes the last change and full long lines', () => {

@@ -96,6 +96,8 @@ export function reducer(state: State, action: Action): State {
     ...state,
     threads: { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: event.messageId, role: 'assistant', content: '', reasoning: '' }] },
   };
+  if (event.type === 'message-reset') return patchThread(state, event.threadId, messages => messages.map(message =>
+    message.id === event.messageId && message.role === 'assistant' ? { ...message, content: '', reasoning: '' } : message));
   if (event.type === 'assistant-delta') return patchThread(state, event.threadId, messages => messages.map(message =>
     message.id === event.messageId && message.role === 'assistant' ? { ...message, content: message.content + event.text } : message));
   if (event.type === 'reasoning-delta') {

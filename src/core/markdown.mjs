@@ -108,6 +108,12 @@ const LANGS = {
   },
 };
 
+// Language specs are module-local and stable across lines, blocks, and redraws.
+for (const spec of Object.values(LANGS)) {
+  spec.kw = new Set(spec.kw.split(/\s+/).filter(Boolean));
+  spec.types = new Set(spec.types.split(/\s+/).filter(Boolean));
+}
+
 const ALIASES = {
   javascript: "js",
   jsx: "js",
@@ -166,8 +172,8 @@ const ID_CHAR = /[A-Za-z0-9_$]/;
 function highlightLine(line, spec, state) {
   let out = "";
   let i = 0;
-  const kw = spec ? new Set(spec.kw.split(/\s+/).filter(Boolean)) : null;
-  const types = spec ? new Set(spec.types.split(/\s+/).filter(Boolean)) : null;
+  const kw = spec?.kw;
+  const types = spec?.types;
   const lineComments = spec ? spec.line : ["//", "#"];
 
   while (i < line.length) {
@@ -595,6 +601,8 @@ export class LiveRenderer {
     this.width = Math.max(24, width);
     this.buf = "";
     this.tty = Boolean(process.stdout.isTTY && process.stdout.rows);
+    this.drawTimer = null;
+    this.closed = false;
 
     // Lines above the cursor that are finished and never redrawn.
     this.committed = 0;
@@ -603,6 +611,7 @@ export class LiveRenderer {
     this.lastLines = [];
 
     this.onResize = () => {
+      if (this.closed) return;
       this.width = Math.max(24, process.stdout.columns || 80);
       if (this.tty) this.draw();
     };
@@ -626,6 +635,7 @@ export class LiveRenderer {
    * can never leave a stale line stranded in the scrollback.
    */
   draw() {
+    if (this.closed) return;
     const lines = this.lines();
 
     if (!this.tty) {
@@ -660,19 +670,34 @@ export class LiveRenderer {
   }
 
   push(delta) {
-    if (!delta) return;
+    if (this.closed || !delta) return;
     this.buf += delta;
-    if (this.tty) this.draw();
+    if (this.tty && this.drawTimer === null) {
+      // Keep a fixed frame deadline: continuous tokens must not postpone it.
+      this.drawTimer = setTimeout(() => {
+        this.drawTimer = null;
+        this.draw();
+      }, 20);
+    }
   }
 
   finish() {
+    if (this.closed) return this.buf;
+    if (this.drawTimer !== null) {
+      clearTimeout(this.drawTimer);
+      this.drawTimer = null;
+    }
     if (this.tty) process.stdout.removeListener("resize", this.onResize);
 
-    if (!this.tty) {
-      this.write(renderMarkdown(this.buf, { width: this.width }).join("\n") + "\n");
+    try {
+      if (!this.tty) {
+        this.write(renderMarkdown(this.buf, { width: this.width }).join("\n") + "\n");
+      } else if (this.buf) {
+        this.draw();
+      }
       return this.buf;
+    } finally {
+      this.closed = true;
     }
-    if (this.buf) this.draw();
-    return this.buf;
   }
 }

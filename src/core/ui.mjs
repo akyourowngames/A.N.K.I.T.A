@@ -210,6 +210,7 @@ export function helpText({ agentName }) {
   ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you
   ${c.cyan("/routines")}          scheduled prompts and their last result
   ${c.cyan("/watches")}           pages being watched and their last reading
+  ${c.cyan("/browser")}           list, enable, or disable browser plugins
   ${c.cyan("/mic")}               dictate one message (auto-sends on pause)
   ${c.cyan("/voice")}             hands-free loop: VAD, barge-in, spoken replies
   ${c.cyan("/say")} <text>        speak text aloud (Edge TTS)

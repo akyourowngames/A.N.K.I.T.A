@@ -123,6 +123,30 @@ export function recentArtifacts(cwd, messages = []) {
       } catch {}
       continue;
     }
+    if (message.name === 'browser') {
+      // Browser screenshot actions return a JSON receipt; surface the PNG so
+      // the user can see the capture in the work review.
+      try {
+        const shot = JSON.parse(message.result);
+        if (shot?.type === 'browser_screenshot' && typeof shot.path === 'string') {
+          const absolute = safeFile(cwd, shot.path);
+          if (absolute) found.set(absolute, { path: absolute, name: path.basename(absolute) });
+        }
+      } catch {}
+      continue;
+    }
+    if (/^mcp__.+__browser_(take_)?screenshot/.test(message.name || '')) {
+      // Raw browser MCP servers report captures as text (sometimes a bare
+      // path, sometimes a markdown link). Surface any workspace image they
+      // name so the capture is visible in the work review.
+      try {
+        for (const match of String(message.result || '').matchAll(/[\w\-./\\:]+?\.(png|jpe?g|webp)/gi)) {
+          const absolute = safeFile(cwd, match[0]);
+          if (absolute) found.set(absolute, { path: absolute, name: path.basename(absolute) });
+        }
+      } catch {}
+      continue;
+    }
     if (!['write_file', 'edit_file', 'edit_lines', 'move_file', 'apply_patch'].includes(message.name)) continue;
     const args = message.args && typeof message.args === 'object' ? message.args : {};
     const names = [args.path, args.destination, args.to];

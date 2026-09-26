@@ -40,6 +40,9 @@ export type PluginAccount = { id: string; alias: string; status: string };
 export type PluginService = { connected: boolean; pending: boolean; status: string; accounts: PluginAccount[] };
 export type PluginsOverview = { mode: 'direct' | 'broker' | 'unavailable'; live: boolean; services: Record<string, PluginService> };
 export type PluginsCatalogPage = { cards: PluginCard[]; nextCursor: string | null };
+export type BrowserPlugin = { id: string; name: string; description: string; mode: 'isolated' | 'local'; enabled: boolean; ready: boolean; reason: string; allowedSites: string[]; blockedSites: string[]; headless?: boolean; connection?: 'profile' | 'port' | 'active'; port?: number };
+export type BrowserPluginsOverview = { isolated: BrowserPlugin; local: BrowserPlugin };
+export type BrowserSessionView = { mode: 'isolated' | 'local' | 'external' | null; status: string; step: string; tabs: { id: string; url: string; title: string; active: boolean }[]; screenshot: string | null; notice?: import('../../src/integrations/browser-errors.mjs').BrowserNotice | null };
 export type ChatMessage =
   | { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
@@ -63,12 +66,15 @@ export type EngineEvent =
   | { type: 'teammates-changed' | 'tools-changed'; connected?: string[] }
   | { type: 'projects-changed' }
   | { type: 'channels-updated'; channels: ChannelsView }
+  | { type: 'browser-plugins-changed' }
+  | { type: 'browser-install-progress'; text: string }
+  | { type: 'browser-state'; threadId: string | null; state: BrowserSessionView }
   | { type: 'approval-resolved'; requestId: string }
   | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
   | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string }
-  | { type: 'message-start' | 'message-end'; threadId: string; messageId: string }
+  | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }
   | { type: 'tool-call'; threadId: string; callId: string; name: string; args: unknown }
   | { type: 'tool-result'; threadId: string; callId: string; text: string; isError: boolean }

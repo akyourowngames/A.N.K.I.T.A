@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { rememberPlan, executionPlan } from '../shared/_approval-plan.mjs';
 import { resolvePath, assertReadable, readTextFile, writeTextFile, restoreTrailing } from "../shared/_shared.mjs";
 import { diffText, renderDiff, stats, touchedRange } from "../shared/_diff.mjs";
 
@@ -156,14 +157,14 @@ function describe(plan) {
 }
 
 export function approval(args, ctx, ui) {
-  const plan = prepare(args, ctx);
+  const plan = rememberPlan(name, args, ctx, prepare(args, ctx));
   if (plan.error) return `${resolvePath(args.path, ctx)}\n\n${ui.red(plan.error)}`;
   const body = ui.diff(plan.file.text, plan.next);
   return `${ui.bold(plan.p)}  ${ui.dim(describe(plan))}\n\n${body}`;
 }
 
 export function run(args, ctx) {
-  const plan = prepare(args, ctx);
+  const plan = executionPlan(name, args, ctx, prepare);
   if (plan.error) return `Error: ${plan.error}`;
   if (!plan.diff.changed) return `No change: ${plan.p} already contains that text.`;
 

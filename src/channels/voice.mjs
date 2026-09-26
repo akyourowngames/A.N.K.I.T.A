@@ -375,7 +375,7 @@ export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent }
 
 export async function transcribeGroq({ apiKey, model = DEFAULT_STT_MODEL, wavPath, language = "en" }) {
   if (!apiKey) throw new Error("set GROQ_API_KEY in .env (free key at console.groq.com)");
-  const buf = fs.readFileSync(wavPath);
+  const buf = await fs.promises.readFile(wavPath);
   const form = new FormData();
   form.append("file", new Blob([buf], { type: "audio/wav" }), "mic.wav");
   form.append("model", model);
@@ -868,8 +868,10 @@ export async function synthesizeGroq({ apiKey, model = DEFAULT_TTS_MODEL, voice 
 /* ------------------------------------------------------------------ */
 
 let currentPlayer = null;
+let playbackGeneration = 0;
 
 export function stopPlayback() {
+  playbackGeneration++;
   try {
     currentPlayer?.kill("SIGKILL");
   } catch {}
@@ -878,9 +880,13 @@ export function stopPlayback() {
 
 export async function playMp3(mp3, { signal } = {}) {
   stopPlayback();
+  const generation = playbackGeneration;
+  if (signal?.aborted) return;
   const file = tmpVoiceFile("mp3");
-  fs.writeFileSync(file, mp3);
   try {
+    await fs.promises.writeFile(file, mp3, { signal });
+    // Stop or a newer playback may arrive while the audio is being written.
+    if (signal?.aborted || generation !== playbackGeneration) return;
     await new Promise((resolve) => {
       let child;
       try {
@@ -892,21 +898,25 @@ export async function playMp3(mp3, { signal } = {}) {
         return resolve();
       }
       currentPlayer = child;
+      const cancel = () => {
+        try {
+          child.kill("SIGKILL");
+        } catch {}
+      };
       const done = () => {
+        signal?.removeEventListener("abort", cancel);
         if (currentPlayer === child) currentPlayer = null;
         resolve();
       };
       child.on("error", done);
       child.on("close", done);
-      signal?.addEventListener("abort", () => {
-        try {
-          child.kill("SIGKILL");
-        } catch {}
-      }, { once: true });
+      signal?.addEventListener("abort", cancel, { once: true });
     });
+  } catch (error) {
+    if (!signal?.aborted) throw error;
   } finally {
     try {
-      fs.unlinkSync(file);
+      await fs.promises.unlink(file);
     } catch {}
   }
 }
@@ -928,7 +938,7 @@ export async function convertAudio(input, { to = "wav", timeoutMs = 60000 } = {}
       ? ["-hide_banner", "-loglevel", "error", "-i", src, "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", "-y", dst]
       : ["-hide_banner", "-loglevel", "error", "-i", src, "-c:a", "libopus", "-b:a", "32k", "-ar", "48000", "-ac", "1", "-y", dst];
   try {
-    fs.writeFileSync(src, input);
+    await fs.promises.writeFile(src, input);
     const { code, stderr } = await new Promise((resolve) => {
       const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["ignore", "ignore", "pipe"] });
       let err = "";
@@ -948,11 +958,11 @@ export async function convertAudio(input, { to = "wav", timeoutMs = 60000 } = {}
       });
     });
     if (code !== 0) throw new Error(`ffmpeg exited ${code}: ${stderr.slice(0, 200)}`);
-    return fs.readFileSync(dst);
+    return await fs.promises.readFile(dst);
   } finally {
     for (const f of [src, dst]) {
       try {
-        fs.unlinkSync(f);
+        await fs.promises.unlink(f);
       } catch {}
     }
   }

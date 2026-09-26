@@ -5,6 +5,16 @@ import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { changedFiles, fileDiff, recentArtifacts, captureToolFiles, completedFileDiffs } from '../../desktop/electron/workspace.mjs';
+import { isRawBrowserTool, rawBrowserStep } from '../../desktop/electron/engine.mjs';
+
+test('raw MCP browser tools are recognized without claiming the built-in tool', () => {
+  assert.equal(isRawBrowserTool('mcp__playwright__browser_navigate'), true);
+  assert.equal(isRawBrowserTool('mcp__playwright__browser_take_screenshot'), true);
+  assert.equal(isRawBrowserTool('browser'), false);
+  assert.equal(isRawBrowserTool('mcp__ankita-chrome__take_snapshot'), false);
+  assert.equal(isRawBrowserTool(''), false);
+  assert.equal(rawBrowserStep('mcp__playwright__browser_navigate'), 'browser navigate');
+});
 
 test('work review shows tracked and new files with real text diffs', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-review-'));
@@ -34,6 +44,31 @@ test('artifact list includes only successful files within the workspace', t => {
     { role: 'tool', name: 'write_file', args: { path: 'missing.txt' }, result: 'Error: failed', isError: true },
   ]);
   assert.deepEqual(items.map(item => item.name), ['created.txt']);
+});
+
+test('artifact list surfaces browser screenshot receipts as images', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-shot-artifacts-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, 'downloaded-images'), { recursive: true });
+  const shot = path.join(dir, 'downloaded-images', 'browser-1.png');
+  fs.writeFileSync(shot, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+  const items = recentArtifacts(dir, [
+    { role: 'tool', name: 'browser', args: { action: 'screenshot' }, result: JSON.stringify({ type: 'browser_screenshot', path: shot, bytes: 5, note: 'saved' }), isError: false },
+    { role: 'tool', name: 'browser', args: { action: 'snapshot' }, result: 'Example page', isError: false },
+  ]);
+  assert.deepEqual(items.map(item => item.name), ['browser-1.png']);
+});
+
+test('artifact list surfaces raw MCP browser screenshots named in result text', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-mcp-shot-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, '.playwright-mcp'), { recursive: true });
+  fs.writeFileSync(path.join(dir, '.playwright-mcp', 'shot-1.png'), Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00]));
+  const items = recentArtifacts(dir, [
+    { role: 'tool', name: 'mcp__playwright__browser_take_screenshot', args: {}, result: 'Screenshot saved to [.playwright-mcp/shot-1.png](.playwright-mcp/shot-1.png)', isError: false },
+    { role: 'tool', name: 'mcp__playwright__browser_snapshot', args: {}, result: 'no image here', isError: false },
+  ]);
+  assert.deepEqual(items.map(item => item.name), ['shot-1.png']);
 });
 
 test('file tool captures a readable diff even without Git', t => {

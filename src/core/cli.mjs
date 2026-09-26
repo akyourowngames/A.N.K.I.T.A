@@ -21,6 +21,7 @@ import {
 import { ProjectStore, describeProject, describeProjectFull } from "../memory/projects.mjs";
 import { McpManager } from "../integrations/mcp-manager.mjs";
 import { McpStore, describeServer, enableMessage, disableMessage } from "../integrations/mcp-store.mjs";
+import { BrowserPluginStore, CHROME_MCP_ID, browserPluginOverview } from '../integrations/browser-plugins.mjs';
 import { ComposioStore } from "../integrations/composio-store.mjs";
 import * as composioTool from "../../tools/connectors/composio.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "../automation/routines.mjs";
@@ -260,7 +261,7 @@ const COMMANDS = [
   "/help", "/config", "/reload", "/skills", "/models", "/model", "/tools", "/auto", "/cd",
   "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
   "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
-  "/project", "/projects", "/mcp", "/composio", "/clear", "/exit", "/quit",
+  "/project", "/projects", "/mcp", "/browser", "/composio", "/clear", "/exit", "/quit",
 ];
 
 function skillsListText() {
@@ -309,6 +310,10 @@ function makeCompleter(models) {
         }
         if (cmd === "/composio") {
           const hits = COMPOSIO_ACTIONS.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
+          return [hits, line];
+        }
+        if (cmd === "/browser") {
+          const hits = ['list', 'enable isolated', 'enable local', 'disable isolated', 'disable local'].map(a => `${cmd} ${a}`).filter(s => s.startsWith(line));
           return [hits, line];
         }
         if (cmd === "/load" || cmd === "/cd" || cmd === "/save") {
@@ -635,7 +640,7 @@ export async function main() {
   };
   let voiceActive = false;
   let cancelHook = null;
-  process.on("SIGINT", () => {
+  if (!opts.daemon) process.on("SIGINT", () => {
     if (busy || voiceActive) {
       agent.cancel();
       const hook = cancelHook;
@@ -667,7 +672,10 @@ export async function main() {
       await agent.send(text, {
         onMessageStart: () => {
           if (show && !spoke && !opts.prompt) spin = spinner("thinking");
-          if (!plain) renderer = new LiveRenderer({ write: (s) => term.write(s) });
+          if (!plain) {
+            renderer?.finish();
+            renderer = new LiveRenderer({ write: (s) => term.write(s) });
+          }
         },
         onDelta: (d) => {
           outcome.text += d;
@@ -729,6 +737,8 @@ export async function main() {
       }
     } catch (err) {
       spin?.stop();
+      renderer?.finish();
+      renderer = null;
       if (err.name === "AbortError") {
         if (show) term.line(c.dim("  (cancelled)"));
         outcome.error = "cancelled";
@@ -743,6 +753,9 @@ export async function main() {
         outcome.error = err.message;
       }
     } finally {
+      spin?.stop();
+      renderer?.finish();
+      renderer = null;
       busy = false;
       showJobNotices();
     }
@@ -1197,7 +1210,7 @@ export async function main() {
           : (toolName, detail) =>
               daemonRef
                 ? daemonRef.confirmOwner(toolName, detail)
-                : Promise.resolve(Boolean(config.autoApprove)),
+                : Promise.resolve(config.autoApprove === true),
       print: () => {},
       write: () => {},
     });
@@ -1590,6 +1603,34 @@ export async function main() {
         } catch (err) {
           term.line(c.red(`  briefing failed: ${err.message}`));
         }
+        break;
+      }
+
+      case "/browser": {
+        const [action = 'list', asked] = arg.split(/\s+/).filter(Boolean);
+        const store = new BrowserPluginStore().load();
+        if (action === 'list') {
+          const overview = await browserPluginOverview(store, mcp);
+          term.line('');
+          for (const mode of ['isolated', 'local']) {
+            const plugin = overview[mode];
+            term.line(`  ${plugin.enabled ? 'on ' : 'off'}  ${plugin.name}  ${plugin.ready ? 'ready' : plugin.reason}`);
+          }
+          term.line(c.dim('  Enable with /browser enable isolated or /browser enable local.'));
+          term.line('');
+        } else if (action === 'enable' || action === 'disable') {
+          const mode = asked === 'playwright' ? 'isolated' : asked === 'chrome' ? 'local' : asked;
+          if (!['isolated', 'local'].includes(mode)) { term.line(c.red('  usage: /browser enable|disable isolated|local')); break; }
+          const enabled = action === 'enable';
+          store.setEnabled(mode, enabled);
+          if (mode === 'local') {
+            const configured = new McpStore(MCP_FILE).load();
+            if (configured.find(CHROME_MCP_ID)) configured.setEnabled(CHROME_MCP_ID, enabled);
+            if (!enabled) await mcp.disconnect(CHROME_MCP_ID).catch(() => {});
+          }
+          term.line(c.dim(`  ${mode === 'local' ? 'Chrome local' : 'Playwright Browser'} ${enabled ? 'enabled' : 'disabled'}.`));
+          if (enabled && mode === 'local') term.line(c.dim('  Configure and start the Chrome connection in desktop Plugins → By Ankita.'));
+        } else term.line(c.red('  usage: /browser list|enable|disable [isolated|local]'));
         break;
       }
 

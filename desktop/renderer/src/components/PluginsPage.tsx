@@ -3,6 +3,7 @@ import type { PluginCard, PluginService, PluginsCatalogPage, PluginsOverview } f
 import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
 import { SkillsSection } from './SkillsSection';
+import { BrowserPluginsSection } from './BrowserPluginsSection';
 
 const PAGE_SIZE = 24;
 const featured = ['gmail', 'google_drive', 'googledrive', 'github', 'slack', 'notion', 'outlook', 'outlookemail'];
@@ -176,6 +177,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
       <nav className="plugins-sections" aria-label="Plugin sections"><button type="button" className={section === 'apps' ? 'active' : ''} aria-current={section === 'apps' ? 'page' : undefined} onClick={() => setSection('apps')}><Icon name="plug" size={16} /> Apps</button><button type="button" className={section === 'skills' ? 'active' : ''} aria-current={section === 'skills' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('skills'); }}><Icon name="file" size={16} /> Skills</button></nav>
       {section === 'skills' ? <SkillsSection /> : <>
       <div className="plugins-intro"><div className="plugins-eyebrow"><span /> CONNECTED WORKSPACE</div><h1>Give Ankita more<br /><em>to work with.</em></h1><p>Bring the apps you already use into the conversation. Connect once, then manage every account from here.</p></div>
+      <BrowserPluginsSection />
       {error && <div className="plugins-alert" role="alert"><Icon name="alert" size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div>}
       {notice && <div className="plugins-notice" role="status"><Icon name="check" size={16} /><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice"><Icon name="close" size={15} /></button></div>}
 

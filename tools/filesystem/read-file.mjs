@@ -23,6 +23,15 @@ export function run(args, ctx) {
   const stat = assertReadable(p);
   if (stat.size > 5_000_000) return `Error: file too large (${stat.size} bytes) to read in full.`;
 
+  // Raster images are never text: redirect before the binary sniff so the
+  // model gets an actionable next step instead of a dead-end error. Browser
+  // screenshots surface in the work-review artifacts; page text comes from
+  // browser snapshot/read.
+  if (/\.(png|jpe?g|gif|webp|bmp|ico)$/i.test(p)) {
+    return `Error: ${p} is an image file, not text, so it cannot be read line by line. ` +
+      `Browser screenshots appear in the work-review artifacts panel; use browser snapshot or read for the page text.`;
+  }
+
   const buf = fs.readFileSync(p);
   if (isBinary(buf)) return `Error: ${p} looks like a binary file.`;
 

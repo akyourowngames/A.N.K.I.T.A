@@ -1,4 +1,5 @@
 import fs from "node:fs";
+import { rememberPlan, executionPlan } from '../shared/_approval-plan.mjs';
 import path from "node:path";
 import { resolvePath, readTextFile, writeTextFile } from "../shared/_shared.mjs";
 import { diffText, stats } from "../shared/_diff.mjs";
@@ -22,13 +23,13 @@ function plan(args, ctx) {
   if (fs.existsSync(p)) {
     if (fs.statSync(p).isDirectory()) return { error: `${p} is a directory.` };
     const existing = readTextFile(p);
-    return { p, existed: true, previous: existing.text, created: args.content ?? "" };
+    return { p, existed: true, previous: existing.text, raw: existing.raw, created: args.content ?? "" };
   }
   return { p, existed: false, previous: "", created: args.content ?? "", parent: path.dirname(p) };
 }
 
 export function approval(args, ctx, ui) {
-  const info = plan(args, ctx);
+  const info = rememberPlan(name, args, ctx, plan(args, ctx));
   if (info.error) return `${resolvePath(args.path, ctx)}\n\n${ui.red(info.error)}`;
 
   if (!info.existed) {
@@ -45,7 +46,7 @@ export function approval(args, ctx, ui) {
 }
 
 export function run(args, ctx) {
-  const info = plan(args, ctx);
+  const info = executionPlan(name, args, ctx, plan);
   if (info.error) return `Error: ${info.error}`;
 
   if (info.parent) fs.mkdirSync(info.parent, { recursive: true });

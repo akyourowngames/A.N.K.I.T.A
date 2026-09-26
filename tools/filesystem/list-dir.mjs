@@ -84,9 +84,10 @@ export function run(args, ctx) {
     .sort((a, b) => Number(b.isDirectory()) - Number(a.isDirectory()) || a.name.localeCompare(b.name))
     .slice(0, max)
     .map((e) => {
+      if (e.isSymbolicLink()) return `${e.name}  (symlink)`;
       if (e.isDirectory()) return `${e.name}/`;
       try {
-        return `${e.name}  ${fs.statSync(path.join(p, e.name)).size}b`;
+        return `${e.name}  ${fs.lstatSync(resolvePath(path.join(p, e.name), ctx)).size}b`;
       } catch {
         return e.name;
       }

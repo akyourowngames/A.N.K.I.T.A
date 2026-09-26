@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import { execFileSync } from 'node:child_process';
 import path from "node:path";
+import { randomUUID } from 'node:crypto';
 
 /** Keeps UTF-8 output bounded without losing the start or final diagnostics. */
 export function capOutput(value, maxBytes = 65536) {
@@ -61,8 +62,41 @@ export class BoundedOutput {
 }
 
 export function resolvePath(p, ctx = {}) {
-  if (!p) return ctx.cwd || process.cwd();
-  return path.isAbsolute(p) ? path.normalize(p) : path.resolve(ctx.cwd || process.cwd(), p);
+  const cwd = path.resolve(ctx.cwd || process.cwd());
+  const root = path.resolve(ctx.workspacePath || cwd);
+  if (p != null && typeof p !== 'string') throw new Error('File path must be a string.');
+  const target = path.resolve(cwd, p || '.');
+  if (!within(root, cwd) || !within(root, target)) throw new Error('Path is outside the workspace boundary.');
+  const relative = path.relative(root, target);
+  const parts = relative ? relative.split(path.sep) : [];
+  // Reject Windows aliases/ADS even on other platforms, so a saved request
+  // cannot gain a different meaning when the workspace moves to Windows.
+  if (parts.some(part => /[\x00-\x1f<>:"|?*]/.test(part) || /[. ]$/.test(part) ||
+    /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i.test(part))) throw new Error('Unsafe workspace file path.');
+  const canonicalRoot = fs.realpathSync(root);
+  let current = root;
+  for (const [index, part] of parts.entries()) {
+    current = path.join(current, part);
+    let stat;
+    try { stat = fs.lstatSync(current); } catch (error) { if (error.code === 'ENOENT') break; throw error; }
+    if (stat.isSymbolicLink()) throw new Error('Workspace paths must not traverse a symlink or junction.');
+    if (index < parts.length - 1 && !stat.isDirectory()) throw new Error(`Not a directory: ${current}`);
+    if (!within(canonicalRoot, fs.realpathSync(current))) throw new Error('Path is outside the workspace boundary.');
+  }
+  return target;
+}
+
+function within(root, target) {
+  const relative = path.relative(root, target);
+  return !relative || (!path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`));
+}
+
+/** Protect roots after the same containment and alias checks as all file tools. */
+export function assertNotWorkspaceRoot(p, ctx = {}) {
+  const canonical = fs.realpathSync(p);
+  for (const root of [ctx.workspacePath, ctx.cwd || process.cwd()].filter(Boolean)) {
+    if (path.relative(fs.realpathSync(root), canonical) === '') throw new Error(`Refusing to change the working directory/workspace root: ${p}`);
+  }
 }
 
 export function numbered(content, offset, limit) {
@@ -112,15 +146,22 @@ export function readTextFile(p) {
  */
 export function writeTextFile(p, text, eol = "\n") {
   const out = eol === "\r\n" ? text.replace(/\r\n/g, "\n").replace(/\n/g, "\r\n") : text;
-  const tmp = path.join(path.dirname(p), `.${path.basename(p)}.${process.pid}.tmp`);
+  const tmp = path.join(path.dirname(p), `.${path.basename(p)}.${randomUUID()}.tmp`);
+  let created = false;
+  let mode;
   try {
-    fs.writeFileSync(tmp, out);
+    const stat = fs.lstatSync(p);
+    if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`Not a regular file: ${p}`);
+    mode = stat.mode & 0o7777;
+  } catch (error) { if (error.code !== 'ENOENT') throw error; }
+  try {
+    fs.writeFileSync(tmp, out, { flag: 'wx', mode });
+    created = true;
+    if (mode !== undefined) fs.chmodSync(tmp, mode);
     fs.renameSync(tmp, p);
-  } catch (err) {
-    try {
-      fs.unlinkSync(tmp);
-    } catch {}
-    fs.writeFileSync(p, out);
+  } finally {
+    // Never fall back to a direct write: it follows symlinks and loses atomicity.
+    if (created) { try { fs.unlinkSync(tmp); } catch {} }
   }
 }
 
@@ -211,7 +252,10 @@ export function* walkProjectFiles(root, options = {}) {
     const parts = relative.split(/[/\\]/);
     if (parts.some(part => SKIP_DIRS.has(part))) continue;
     if (parts.length > maxDepth + 1) { onIncomplete('depth budget'); continue; }
-    const file = path.join(root, relative);
+    let file;
+    // Git can report tracked symlinks or paths whose parents were replaced
+    // by junctions. Its inventory is not a containment guarantee.
+    try { file = resolvePath(relative, { cwd: root }); } catch { continue; }
     try { if (fs.statSync(file).isFile()) { count++; yield file; } } catch {}
   }
 }

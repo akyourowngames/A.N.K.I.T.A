@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage, Teammate } from '../../../shared/wire';
+import { formatAssistantMarkdown } from '../../../shared/assistant-markdown.mjs';
 import { ToolCallCard } from './ToolCallCard';
 import { ThinkingPanel } from './ThinkingPanel';
 import { CopyButton } from './CopyButton';
@@ -60,8 +61,8 @@ function WorkspaceImage({ src, alt, threadId }: { src?: string; alt?: string; th
   return <img src={defaultUrlTransform(src)} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" />;
 }
 
-export function Message({ message, teammate, threadId, streaming }: { message: ChatMessage; teammate: Teammate; threadId: string; streaming: boolean }) {
-  if (message.role === 'tool') return message.hidden ? null : <ToolCallCard message={message} threadId={threadId} />;
+export function Message({ message, teammate, threadId, streaming, onOpenBrowserPlugins }: { message: ChatMessage; teammate: Teammate; threadId: string; streaming: boolean; onOpenBrowserPlugins?: () => void }) {
+  if (message.role === 'tool') return message.hidden ? null : <ToolCallCard message={message} threadId={threadId} onOpenBrowserPlugins={onOpenBrowserPlugins} />;
   if (message.role === 'user') return <div className="message user-message">
     <div className="user-bubble">
       {message.attachments?.length ? <div className="user-attachments">{message.attachments.map((file, index) => <span className="user-attachment" key={`${file.name}-${index}`}><Icon name="file" size={13} />{file.name}</span>)}</div> : null}
@@ -69,6 +70,7 @@ export function Message({ message, teammate, threadId, streaming }: { message: C
     </div>
   </div>;
   const thinking = Boolean(message.reasoning?.trim()) && streaming && !message.content;
+  const displayedContent = streaming ? message.content : formatAssistantMarkdown(message.content);
   return <div className="message assistant-message">
     <span className="message-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span>
     <div className="assistant-content">
@@ -84,9 +86,9 @@ export function Message({ message, teammate, threadId, streaming }: { message: C
           // load a file:// URL (which Electron correctly blocks).
           if (/^file:/i.test(url) || /^[a-z]:[\\/]/i.test(url) || /(?:^|[\\/])(?:generated-images|downloaded-images)[\\/]/i.test(url) || /^data:image\/(?:png|jpeg|webp);base64,/i.test(url)) return url;
           return defaultUrlTransform(url);
-        }}>{normalizeWorkspaceImageMarkdown(message.content)}</ReactMarkdown>{streaming && <span className="stream-caret" aria-hidden="true" />}
+        }}>{normalizeWorkspaceImageMarkdown(displayedContent)}</ReactMarkdown>{streaming && <span className="stream-caret" aria-hidden="true" />}
       </div>
-      {!streaming && message.content && <div className="message-actions"><CopyButton text={message.content} /></div>}
+      {!streaming && message.content && <div className="message-actions"><CopyButton text={displayedContent} /></div>}
     </div>
   </div>;
 }

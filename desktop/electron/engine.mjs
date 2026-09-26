@@ -21,10 +21,29 @@ import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, t
 import { ChannelStore, ChannelManager } from './channels.mjs';
 import { TelegramBot } from '../../src/channels/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
+import { DesktopBrowserPlugins } from './browser-plugins.mjs';
+import { BrowserPluginStore, BROWSER_FILE } from '../../src/integrations/browser-plugins.mjs';
+import { BrowserSessionManager } from '../../tools/browser/session.mjs';
+import { ChromeBrowserAdapter } from '../../tools/browser/chrome.mjs';
+import { MAX_BROWSER_SCREENSHOT_BYTES } from '../../tools/browser/screenshots.mjs';
 import { projectContext, projectSummary, projectWorkspace } from './projects.mjs';
 import { changedFiles, fileDiff, recentArtifacts, jobList, stopAgentJob, captureToolFiles, completedFileDiffs } from './workspace.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
+
+/**
+ * Raw browser MCP tools (e.g. mcp__playwright__browser_navigate) bypass the
+ * first-party browser session, so without help the live preview sidebar never
+ * hears about them. The first-party `browser` tool is excluded: it already
+ * emits its own session events.
+ */
+export function isRawBrowserTool(name) {
+  return /^mcp__.+__browser_/.test(String(name || ''));
+}
+
+export function rawBrowserStep(name) {
+  return `browser ${String(name).replace(/^mcp__.+__browser_/, '')}`;
+}
 
 function messageText(value) {
   if (typeof value === 'string') return value;
@@ -207,6 +226,7 @@ export class DesktopEngine {
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
     channelsFile = path.join(CONFIG_DIR, 'desktop-channels.json'),
     composioFile = COMPOSIO_FILE,
+    browserFile = BROWSER_FILE,
     sessionsDir = SESSIONS_DIR,
     projectsFile = PROJECTS_FILE,
     envPath = path.join(root, '.env'),
@@ -242,6 +262,16 @@ export class DesktopEngine {
     this.pendingFileEdits = new Map();
     this.turns = new Map();
     this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
+    this.browserManager = new BrowserSessionManager({
+      store: new BrowserPluginStore(browserFile).load(),
+      chromeFactory: mcp => new ChromeBrowserAdapter(mcp, { ensureConnected: ctx => this.browserPlugins.startChrome(ctx) }),
+      onEvent: (state, threadId) => this.emit({ type: 'browser-state', threadId: threadId || null, state: { ...state, screenshot: null } }),
+    });
+    this.browserPlugins = new DesktopBrowserPlugins({
+      browserFile, mcpFile: MCP_FILE, mcp: this.mcp, approvals: this.approvals,
+      onChange: () => this.emit({ type: 'browser-plugins-changed' }),
+      onProgress: text => this.emit({ type: 'browser-install-progress', text }),
+    });
     this.channels = new ChannelManager({
       store: new ChannelStore(channelsFile),
       engine: this,
@@ -492,7 +522,7 @@ export class DesktopEngine {
     const mime = ({ '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp' })[path.extname(absolute).toLowerCase()];
     if (!mime) throw new Error('Unsupported image format');
     const stat = await fs.promises.stat(absolute);
-    if (!stat.isFile() || stat.size > 15 * 1024 * 1024) throw new Error('Image is unavailable or larger than 15 MB');
+    if (!stat.isFile() || stat.size > MAX_BROWSER_SCREENSHOT_BYTES) throw new Error('Image is unavailable or larger than 15 MB');
     const data = await fs.promises.readFile(absolute);
     return { dataUrl: `data:${mime};base64,${data.toString('base64')}` };
   }
@@ -648,6 +678,7 @@ export class DesktopEngine {
     }
     const agent = new this.AgentClass({
       client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId, workspacePath,
+      browserManager: this.browserManager, browserThreadId: id,
       skillsEnabled: true,
       disabledSkills: this.desktopSettings.data.disabledSkills || [],
       journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
@@ -677,6 +708,7 @@ export class DesktopEngine {
     const callbacks = {
       onMessageStart: () => { currentMessageId = randomUUID(); this.emit({ type: 'message-start', threadId: id, messageId: currentMessageId }); },
       onMessageEnd: () => this.emit({ type: 'message-end', threadId: id, messageId: currentMessageId }),
+      onMessageReset: () => this.emit({ type: 'message-reset', threadId: id, messageId: currentMessageId }),
       onDelta: delta => this.emit({ type: 'assistant-delta', threadId: id, messageId: currentMessageId, text: delta }),
       onReasoning: delta => this.emit({ type: 'reasoning-delta', threadId: id, messageId: currentMessageId, text: delta }),
       onUsage: usage => this.emit({ type: 'usage', threadId: id, ...usage }),
@@ -686,6 +718,12 @@ export class DesktopEngine {
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
         this.pendingFileEdits.set(`${id}:${call.id}`, captureToolFiles(name, args, agent.cwd));
         this.emit({ type: 'tool-call', threadId: id, callId: call.id, name, args: displayArgs(name, args) });
+        // Raw browser MCP tools drive pages outside the browser session: open
+        // the live panel for them. No pixels flow through this path (the first-
+        // party browser tool remains the one with a live preview).
+        if (isRawBrowserTool(name)) {
+          this.emit({ type: 'browser-state', threadId: id, state: { mode: 'external', status: 'working', step: rawBrowserStep(name), tabs: [], screenshot: null } });
+        }
       },
       onToolResult: (call, result) => {
         const pendingKey = `${id}:${call.id}`;
@@ -701,6 +739,10 @@ export class DesktopEngine {
           }
         }
         this.emit({ type: 'tool-result', threadId: id, callId: call.id, text: String(result || ''), isError: /^Error\b/i.test(String(result || '')) });
+        if (isRawBrowserTool(call.function?.name)) {
+          const failed = /^Error\b/i.test(String(result || ''));
+          this.emit({ type: 'browser-state', threadId: id, state: { mode: 'external', status: failed ? 'error' : 'ready', step: failed ? String(result || '').slice(0, 200) : `${rawBrowserStep(call.function?.name)} done`, tabs: [], screenshot: null } });
+        }
         if (['project', 'project_memory'].includes(call.function?.name) && !/^Error\b/i.test(String(result || ''))) {
           const assigned = this.teammates.find(id)?.projectId;
           if (call.function.name === 'project' && agent.projectId !== assigned) this.teammates.update(id, { projectId: agent.projectId });
@@ -716,7 +758,7 @@ export class DesktopEngine {
       this.emit({ type: 'teammates-changed' });
       return reply;
     }).catch(err => {
-      this.emit({ type: 'error', threadId: id, message: err.message || String(err) });
+      if (!agent.cancelled?.()) this.emit({ type: 'error', threadId: id, message: err.message || String(err) });
       throw err;
     }).finally(() => {
       saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, todos: agent.state?.todos || [], projectId: agent.projectId, journaled: agent.journalComplete });
@@ -735,6 +777,7 @@ export class DesktopEngine {
 
   cancel(id) {
     this.approvals.cancelThread(id);
+    this.browserManager.cancel(id);
     return this.agents.get(id)?.cancel() || false;
   }
 
@@ -779,6 +822,7 @@ export class DesktopEngine {
     await this.channels.stopAll().catch(() => {});
     this.approvals.cancelAll();
     for (const id of this.turns.keys()) this.agents.get(id)?.cancel();
+    await this.browserManager.close();
     await this.mcp.closeAll();
   }
 }

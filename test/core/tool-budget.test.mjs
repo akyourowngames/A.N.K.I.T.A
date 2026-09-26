@@ -258,7 +258,7 @@ test('the prompt states the termination policy and the bound it enforces', () =>
   // It must not undo the existing rule that one failed attempt is not an answer:
   // this policy is about a finished task, not about giving up on a failure.
   assert.match(prompt, /One failed attempt is not an answer/);
-  assert.doesNotMatch(prompt, /do not invent|never invent|made-up command/i);
+  assert.doesNotMatch(prompt, /(?:do not invent|never invent) (?:commands|shell)|made-up command/i);
 });
 
 /* ---------------------------- the settings ------------------------------ */

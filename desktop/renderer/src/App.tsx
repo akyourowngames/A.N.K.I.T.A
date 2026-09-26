@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { ChatMessage, DesktopPreferences, DesktopSettingsResult, MenuCommand, Model, Project, Teammate, UpdateEvent } from '../../shared/wire';
+import type { BrowserSessionView, ChatMessage, DesktopPreferences, DesktopSettingsResult, MenuCommand, Model, Project, Teammate, UpdateEvent } from '../../shared/wire';
 import { reducer, initialState } from './state/store';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/ChatPane';
@@ -13,6 +13,7 @@ import { OnboardingDialog } from './components/OnboardingDialog';
 import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
+import { BrowserStage } from './components/BrowserStage';
 import { Icon } from './components/Icons';
 import { IPC_CONTRACT, checkCompat } from '../../shared/version.mjs';
 
@@ -39,6 +40,9 @@ export default function App() {
   const [view, setView] = useState<'chat' | 'plugins' | 'projects'>('chat');
   const [projects, setProjects] = useState<Project[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [browserOpen, setBrowserOpen] = useState(false);
+  const [browserView, setBrowserView] = useState<BrowserSessionView | null>(null);
+  const [browserThreadId, setBrowserThreadId] = useState<string | null>(null);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'kilo', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
@@ -72,6 +76,11 @@ export default function App() {
       if (event.type === 'projects-changed') void refreshProjects();
       if (event.type === 'tools-changed') setToolsRevision(value => value + 1);
       if (event.type === 'workspace-changed' && event.threadId === selectedIdRef.current) { setWorkspaceRevision(value => value + 1); if (event.open) setReviewOpen(true); }
+      if (event.type === 'browser-state' && (!event.threadId || event.threadId === selectedIdRef.current)) {
+        setBrowserView(previous => ({ ...event.state, screenshot: event.state.screenshot || (event.state.mode === previous?.mode && !['error', 'stopped', 'idle'].includes(event.state.status) ? previous?.screenshot || null : null) }));
+        if (event.threadId) setBrowserThreadId(event.threadId);
+        if (event.state.status === 'working' && event.state.mode) { setBrowserOpen(true); setReviewOpen(false); }
+      }
     });
     void window.ankita.invoke<Bootstrap>('initialize')
       .then(data => {
@@ -136,6 +145,20 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    if (!browserView?.mode || browserOpen) return;
+    let active = true;
+    let timer: number;
+    const poll = async () => {
+      const started = performance.now();
+      try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView'); if (active) setBrowserView(previous => ({ ...next, screenshot: next.screenshot || (next.status !== 'error' && next.mode === previous?.mode ? previous?.screenshot || null : null) })); }
+      catch { /* keep the last useful frame */ }
+      finally { if (active) timer = window.setTimeout(() => void poll(), Math.max(0, 2000 - (performance.now() - started))); }
+    };
+    void poll();
+    return () => { active = false; window.clearInterval(timer); };
+  }, [browserView?.mode, browserOpen]);
+
+  useEffect(() => {
     if (!update) return;
     if (update.type === 'current' || update.type === 'unsupported') {
       const timer = setTimeout(() => setUpdate(null), 6000);
@@ -149,7 +172,8 @@ export default function App() {
       const name = event.key.toLowerCase();
       if (name === 'n') { event.preventDefault(); setDialog('create'); }
       if (name === 'k') { event.preventDefault(); if (view === 'plugins') requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.plugins-search input')?.focus()); else { setSidebarOpen(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()); } }
-      if (name === 'b') { event.preventDefault(); setSidebarOpen(open => !open); }
+      if (name === 'b' && event.shiftKey) { event.preventDefault(); setBrowserOpen(open => !open); setReviewOpen(false); }
+      else if (name === 'b') { event.preventDefault(); setSidebarOpen(open => !open); }
       if (event.key === ',') { event.preventDefault(); setSettingsTab('model'); }
     };
     window.addEventListener('keydown', key);
@@ -215,7 +239,14 @@ export default function App() {
     void window.ankita.appAction('relaunch');
   };
 
-  return <div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''}`}>
+  const showBrowser = view === 'chat' && browserOpen && Boolean(browserView?.mode) && browserThreadId === state.selectedId;
+  useEffect(() => { if (showBrowser) setSidebarOpen(false); }, [showBrowser]);
+  const stopBrowser = () => {
+    if (state.selectedId) void window.ankita.invoke('cancel', { id: state.selectedId });
+    void window.ankita.invoke('browserSessionStop').finally(() => { setBrowserOpen(false); setBrowserView(null); setBrowserThreadId(null); });
+  };
+
+  return <div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
     <Sidebar
       teammates={state.teammates} selectedId={state.selectedId} search={search} onSearch={setSearch}
       onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
@@ -229,9 +260,10 @@ export default function App() {
       running={Boolean(state.selectedId && state.running[state.selectedId])}
       models={state.models} projects={projects} defaultModel={state.settings?.model || ''}
       usage={state.selectedId ? state.usage[state.selectedId] : undefined}
-      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => setReviewOpen(open => !open)} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
+      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => { setView('plugins'); requestAnimationFrame(() => document.querySelector('.browser-plugins-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
       onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onClear={clear} onDelete={remove}
     />}
+    {view === 'chat' && state.selectedId && <BrowserStage view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}
     {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} />}

@@ -50,9 +50,8 @@ export const parameters = {
   required: ["action"],
 };
 
-// True so that starting a server can be gated; approval() below returns
-// nothing for the actions that only touch configuration.
-export const needsApproval = true;
+// Approval policy belongs here; an empty preview must never suppress a gate.
+export const needsApproval = (args = {}) => String(args.action || 'list').toLowerCase() === 'reload';
 
 /**
  * Only `reload` runs third-party code. It shows the exact command that will be

@@ -13,6 +13,21 @@ const call = (id, name, args = {}) => ({
   function: { name, arguments: JSON.stringify(args) },
 });
 
+test('browser snapshots separated by successful interactions do not prematurely stop a workflow', async () => {
+  const agent = makeAgent();
+  let round = 0;
+  agent.runToolCall = async c => JSON.parse(c.function.arguments).action === 'act' ? 'click complete.' : '[ref=1-0-0] button Next';
+  agent.streamTurn = async () => {
+    round++;
+    if (round > 8) return { content: 'Workflow complete', toolCalls: [] };
+    return { content: '', toolCalls: [call(`browser-${round}`, 'browser', round % 2 ? { action: 'snapshot' } : { action: 'act', op: 'click', ref: `${round}-0-0` })] };
+  };
+  const output = await agent.send('Complete this multi-step form');
+  console.log(`browser workflow trace: rounds=${round}; result=${output}`);
+  assert.equal(output, 'Workflow complete');
+  assert.equal(round, 9);
+});
+
 test('an active checklist stays in the model context after its tool calls are trimmed', async () => {
   const agent = makeAgent();
   agent.state.todos = [
@@ -242,28 +257,29 @@ test('a too-large request (413) also falls back instead of ending the turn', asy
 
 /* ------------------------- capability discovery -------------------------- */
 
-test('a capability you do not have routes to the mcp group', () => {
-  // The gap this closes: asked to drive a browser with no browser server
-  // connected, find_tools used to match nothing and the model shelled out.
-  // Inclusion, not exclusivity - a browser request also legitimately matches
-  // `web` ("browser" contains the web keyword "browse"), and loading both is
-  // the right answer.
-  for (const q of [
-    'playwright',
-    'open a browser',
-    'drive a headless browser',
-    'mcp marketplace',
-    'install a tool from the registry',
-    'add a database integration',
-  ]) {
+test('browser requests load the first-party tool; other missing capabilities reach MCP', () => {
+  for (const q of ['playwright', 'open a browser', 'drive a headless browser']) {
+    assert.ok(findTools.matchCategories(q).includes('browser'), `"${q}" must reach the browser group`);
+  }
+  for (const q of ['mcp marketplace', 'install a tool from the registry', 'add a database integration']) {
     assert.ok(findTools.matchCategories(q).includes('mcp'), `"${q}" must reach the mcp group`);
   }
-  assert.deepEqual(findTools.matchCategories('playwright'), ['mcp'], 'and nothing spurious for this one');
+  assert.deepEqual(findTools.matchCategories('playwright'), ['browser']);
 });
 
 test('unrelated queries still do not match everything', () => {
   assert.deepEqual(findTools.matchCategories('nothing relevant at all'), []);
   assert.deepEqual(findTools.matchCategories(''), []);
+});
+
+test('booking and playback intent reaches the browser instead of dead-ending', () => {
+  for (const q of ['book a flight from Mumbai to Delhi', 'book flight tickets', 'play some music', 'play a song on youtube']) {
+    assert.ok(findTools.matchCategories(q).includes('browser'), `"${q}" must reach the browser group`);
+  }
+  // Whole-word matching only: display/settings/sing-along must not route to browser.
+  for (const q of ['change the display settings', 'sing along']) {
+    assert.ok(!findTools.matchCategories(q).includes('browser'), `"${q}" must not reach the browser group`);
+  }
 });
 
 test('every mcp keyword is lowercase, since matching lowercases the query', () => {
@@ -282,7 +298,7 @@ test('a find_tools miss points at the registry instead of dead-ending', async ()
 test('a hit does not mention the registry - only a miss does', async () => {
   const out = findTools.run({ query: 'playwright' }, {});
   assert.doesNotMatch(out, /Nothing matched/);
-  assert.match(out, /Loaded mcp/);
+  assert.match(out, /Loaded browser/);
 });
 
 /* --------------------------- the prompt rules ---------------------------- */
@@ -294,7 +310,10 @@ test('the prompt says a silent exit zero is not proof of success', () => {
   assert.match(prompt, /prefer a tool whose result you can read/i);
   // It has to be about evidence, not about which commands exist: "playwright
   // open" is a real command, so a rule against "inventing" it would be wrong.
-  assert.doesNotMatch(prompt, /do not invent|never invent|made-up command/i);
+  assert.doesNotMatch(prompt, /(?:do not invent|never invent) (?:commands|shell)|made-up command/i);
+  assert.match(prompt, /opaque \[ref=\.\.\.\] IDs verbatim/);
+  assert.match(prompt, /fresh snapshot in the error/);
+  assert.doesNotMatch(prompt, /Re-snapshot before every action/);
 });
 
 test('the prompt routes an absent capability to the registry, with consent', () => {

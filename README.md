@@ -1,6 +1,6 @@
 # ankita
 
-A coding agent and personal assistant in your terminal, powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, talk hands-free — and let it work while you are away: scheduled briefings, watched pages, and a Telegram inbox. The CLI has zero runtime npm dependencies.
+A coding agent and personal assistant in your terminal, powered by GitHub Copilot models. Chat, run shell commands, edit files with approval diffs, search the live web, scrape pages, talk hands-free — and let it work while you are away: scheduled briefings, watched pages, and a Telegram inbox. Browser use loads Playwright on demand.
 
 ```
 ankita › search for the latest Node.js LTS release and fetch the announcement
@@ -12,7 +12,7 @@ ankita › search for the latest Node.js LTS release and fetch the announcement
 
 ## Quickstart
 
-**Prereqs:** Node.js 18+ (Node 22+ recommended).
+**Prereqs:** Node.js 20+ for the CLI and browser runtime; Node 22.12+ for desktop development and packaging. The minimum versions follow the Playwright and Electron build dependencies.
 Optional: `ffmpeg`/`ffplay` on PATH for voice (`winget install Gyan.FFmpeg`), and Python 3 + `pip install scrapling` for the stealth scraping tier.
 
 ### Run it from anywhere
@@ -65,6 +65,8 @@ Open [`docs/media/ankita-launch-film.html`](docs/media/ankita-launch-film.html) 
 
 Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
 
+The **By Ankita** section in Plugins works without a Composio key. It offers an isolated Playwright Chromium and an optional Chrome connection for sites that need your existing session. Browser runs have a live stage beside chat with tabs, a page preview, Stop, and takeover controls. See [Browser use](docs/guides/browser-use.md) for setup, permissions, and CLI commands.
+
 **Settings → Channels** connects the app to a chat service so you can reach your agent from anywhere, starting with Telegram. Create a bot with [@BotFather](https://t.me/BotFather), paste its token, pick the teammate that should answer, and add the chat ids allowed to talk to it — an unknown chat is told its own id so you can add it. While enabled, the bridge runs with the app and routes each message to that teammate, sharing the same thread and history as the desktop; tool approvals are asked and answered in the chat. Voice notes are transcribed when a Groq key is set, and replies can be spoken back. Channel settings live in `~/.copilot-chat-cli/desktop-channels.json`. Only one process may poll a bot token at a time, so stop the CLI `--daemon` before enabling the same bot here.
 
 Open **Projects** to record a working folder, conventions, decisions, and open tasks. Assign a project from the teammate header or when editing a teammate. That teammate uses the project's folder for file and command tools and receives a short project brief. The **Work review** button in chat opens Git changes with file diffs, recent artifacts, and command jobs with output and a stop action; file edits open it automatically. The agent allows at most six `web_search` calls per user request, then uses the sources already gathered.
@@ -81,6 +83,7 @@ ankita --api-base http://localhost:11434/v1      # local models via Ollama
 - **Act** through 24 tools: shell (foreground + background jobs), file read/write/edit (string, atomic multi-edit, or by line number), search, glob, mkdir/move/delete, raw fetch, todo lists — every mutating call shows a unified `@@` diff and asks first
 - **Make and find images**: generate original pictures, search Unsplash and Pixabay stock photos, and download a chosen result — saved into the workspace and previewed inline in the desktop app
 - **Know the internet**: `web_search` (keyless, five fused backends) plus `web_fetch` and three scraping tiers that escalate from plain HTTP to a headless stealth browser to a multi-page crawl
+- **Use a real browser**: a deferred `browser` tool opens pages, reads element refs, acts, handles tabs and screenshots, and can pause for your input
 - **Talk**: `/mic` dictates via Groq Whisper, `/voice` runs a hands-free loop, replies are spoken with Edge neural TTS (Aria) or Groq Orpheus
 - **Knows your projects**: tell her about one — a folder, a server, a client — and she keeps the details, the conventions and the open questions, and stops asking you the same things
 - **Works while you are away**: `ankita --daemon` runs scheduled routines, watches pages for changes, and answers Telegram messages — see [The proactive assistant](#the-proactive-assistant)
@@ -174,6 +177,7 @@ Slash commands: `/help /config /reload /models /model /tools /auto /cd /save /lo
 | `port_status` / `kill_process` | Deferred `process` group: port owners and approved PID/port termination with identity rechecks |
 | `web_search` | Keyless live search (DuckDuckGo + Wikipedia + news + HN + Reddit), fused and de-duped |
 | `web_fetch` | Read a page as text, Jina reader fallback when extraction is thin |
+| `browser` | Deferred interactive browser: open, snapshot, act, read, tabs, screenshot, close, batch |
 | `scrape_low` | One simple page, static fetch with browser impersonation |
 | `scrape_mid` | Blocked/JS pages (auto stealth browser) or named CSS/XPath fields |
 | `scrape_high` | Multi-page BFS crawl (depth≤2, ≤20 pages, same-domain default) |
@@ -576,7 +580,9 @@ Warmup sends are discarded so a provider cold start does not skew the medians, a
 
 ## Security notes
 
-- Mutating tools always show a diff and ask first; `-y`/`AUTO_APPROVE` is explicit and visible per call.
+- Mutating actions ask for confirmation by default. `-y`, `AUTO_APPROVE=on`, and an explicit session “always” reply opt out. File writes still prepare and recheck the exact plan before writing; a file changed during approval requires a new approval.
 - `.env` is gitignored (copy `.env.example`); tokens live in `~/.copilot-chat-cli/` with `0600` perms, never in the repo.
-- `delete_file` refuses the workspace root; `move_file` refuses overwrites; `fetch_url` is text-only with byte/time caps.
+- File tools stay inside the active workspace and reject interior symlinks/junctions, traversal escapes, Windows device aliases, and alternate data streams. A workspace root reached through a junction is supported. Delete/move refuse the workspace and current directory roots; move refuses overwrites.
+- Filesystem inspection has a worker deadline; Stop terminates a stuck inspection and subsequent queued reads recover automatically. MCP output and stderr lines are bounded, and approval/diagnostic previews redact configured credentials.
+- File-tool containment does not sandbox approved shell commands or external MCP processes; those run with the user's OS permissions. `fetch_url` is text-only with byte/time caps.
 - Web tools refuse non-public hosts, including via redirects. Scraping needs local Python + `pip install scrapling` for the browser tier; the static tier works anywhere the bridge runs.

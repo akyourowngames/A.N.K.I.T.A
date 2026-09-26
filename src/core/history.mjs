@@ -205,24 +205,30 @@ export function trimMessages(messages, maxMessages = 40, maxBytes = Infinity) {
   for (let i = clean.length - 1; i >= 0; i--) if (clean[i].role === 'user') { userIndex = i; break; }
   const anchor = userIndex < 0 ? null : clean[userIndex];
   const candidates = groups(clean.filter((_, i) => i !== userIndex));
-  let selected = [];
+  const selected = [];
   let count = anchor ? 1 : 0;
   for (let i = candidates.length - 1; i >= 0; i--) {
     if (count + candidates[i].length > max) break;
-    selected.unshift(candidates[i]);
+    selected.push(candidates[i]);
     count += candidates[i].length;
   }
+  selected.reverse();
+  const groupCosts = selected.map(group => group.reduce((total, message) => total + messageCost(message), 0));
+  let totalBytes = messageCost(system) + (anchor ? messageCost(anchor) : 0) +
+    groupCosts.reduce((total, cost) => total + cost, 0);
+  let firstSelected = 0;
+  while (totalBytes > maxBytes && selected.length - firstSelected > 1) {
+    totalBytes -= groupCosts[firstSelected++];
+  }
   // Preserve chronological ordering around the anchored user message.
-  const assemble = () => {
-    const keep = new Set(selected.flat());
-    if (anchor) keep.add(anchor);
-    return [system, ...clean.filter(m => keep.has(m))];
-  };
-  let result = assemble();
-  const size = () => conversationCost(result);
-  while (size() > maxBytes && selected.length > 1) { selected.shift(); result = assemble(); }
-  if (size() > maxBytes) {
-    result = result.map(m => ({ ...m }));
+  const keep = new Set(selected.slice(firstSelected).flat());
+  if (anchor) keep.add(anchor);
+  let result = [system, ...clean.filter(m => keep.has(m))];
+  if (totalBytes > maxBytes) {
+    result = result.map(m => ({
+      ...m,
+      content: Array.isArray(m.content) ? m.content.map(part => part && typeof part === 'object' ? { ...part } : part) : m.content,
+    }));
     // The largest message is usually the current user turn with an attachment,
     // whose content is an array of parts rather than a string. Trimming only
     // strings left that turn untouched, so it still exceeded the budget and the
@@ -258,25 +264,34 @@ export function trimMessages(messages, maxMessages = 40, maxBytes = Infinity) {
       if (m.role === 'system') continue;
       for (const part of textUnits(m)) units.push(part);
     }
-    const unitCost = (unit) => (unit.kind === 'image' ? estimateImageBytes(unit.get()) : Buffer.byteLength(unit.get()));
+    for (const unit of units) {
+      unit.cost = unit.kind === 'image' ? estimateImageBytes(unit.get()) : Buffer.byteLength(unit.get());
+    }
     // Shrink the biggest text first. An attachment block is droppable as a last
     // resort: losing the file body is far better than failing the whole turn.
-    for (const part of units.sort((a, b) => unitCost(b) - unitCost(a))) {
-      const excess = size() - maxBytes;
+    for (const part of units.sort((a, b) => b.cost - a.cost)) {
+      const excess = totalBytes - maxBytes;
       if (excess <= 0) break;
+      if (part.kind === 'image') continue;
       const current = part.get();
-      part.set(capOutput(current, Math.max(128, unitCost(part) - excess - 64)));
+      const trimmed = capOutput(current, Math.max(128, part.cost - excess - 64));
+      part.set(trimmed);
+      const cost = Buffer.byteLength(trimmed);
+      totalBytes += cost - part.cost;
+      part.cost = cost;
     }
     // Images go first: they are the largest single unit and cannot be shrunk.
     for (const part of units.filter(unit => unit.kind === 'image')) {
-      if (size() <= maxBytes) break;
+      if (totalBytes <= maxBytes) break;
       part.drop?.();
+      totalBytes -= part.cost;
     }
     for (const part of units.filter(unit => unit.kind === 'attachment')) {
-      if (size() <= maxBytes) break;
+      if (totalBytes <= maxBytes) break;
       part.drop?.();
+      totalBytes -= part.cost;
     }
   }
-  if (size() > maxBytes) throw new Error('The current request/tool schema exceeds the model context budget. Use a larger context model or clear/reduce the request.');
+  if (totalBytes > maxBytes) throw new Error('The current request/tool schema exceeds the model context budget. Use a larger context model or clear/reduce the request.');
   return result;
 }

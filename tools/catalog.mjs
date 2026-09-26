@@ -19,6 +19,7 @@ import * as imageGenerate from './images/image-generate.mjs';
 import * as unsplashSearch from './images/unsplash-search.mjs';
 import * as pixabaySearch from './images/pixabay-search.mjs';
 import * as imageDownload from './images/image-download.mjs';
+import * as browser from './browser/browser.mjs';
 
 /**
  * Grouped tools: most schemas are deferred so discovery loads a whole family.
@@ -56,12 +57,18 @@ export const CATEGORIES = [
     tools: [skill],
   },
   {
+    id: 'browser',
+    summary: 'drive a real browser with page snapshots, stable refs, tabs and screenshots',
+    keywords: ['browser', 'playwright', 'chrome', 'click website', 'fill form', 'browse interactively', 'book', 'booking', 'flight', 'flights', 'ticket', 'tickets', 'travel', 'hotel', 'play', 'music', 'song', 'video', 'youtube', 'listen'],
+    tools: [browser],
+  },
+  {
     id: "web",
     summary: "search the internet, read pages, scrape blocked or JS-heavy sites",
     keywords: [
       "web", "search", "google", "internet", "online", "browse", "website", "url",
       "link", "docs", "documentation", "news", "latest", "current", "recent", "scrape",
-      "crawl", "page", "lookup", "research",
+      "crawl", "page", "lookup", "research", "flight", "flights", "ticket", "tickets", "booking",
     ],
     tools: [webSearch, webFetch, scrape],
   },
@@ -96,7 +103,7 @@ export const CATEGORIES = [
   {
     id: "connectors",
     summary: "connected apps: Gmail, Slack, Notion, Calendar, Drive, GitHub and more",
-    keywords: ["gmail", "email", "slack", "notion", "calendar", "drive", "sheets", "docs", "jira", "linear", "asana", "github", "twitter", "x", "connected apps", "my email", "send an email", "post to slack"],
+    keywords: ["gmail", "email", "slack", "notion", "calendar", "drive", "sheets", "docs", "jira", "linear", "asana", "github", "twitter", "x", "connected apps", "my email", "send an email", "post to slack", "flight", "flights", "hotel", "travel", "music", "spotify", "youtube"],
     tools: [composio],
   },
   {
@@ -110,7 +117,7 @@ export const CATEGORIES = [
       // Discovery, so a capability the user wants but does not have lands here
       // rather than becoming a shell guess.
       "marketplace", "registry", "discover", "install", "find a tool", "add a tool",
-      "browser", "playwright", "automation", "database", "figma", "integration",
+      "database", "figma", "integration",
     ],
     // Only mcp_manage is loadable directly; its search action is the way in to
     // everything else. Nothing from a server is callable until it is installed,
