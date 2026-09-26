@@ -39,9 +39,9 @@ individual regression passed **1/1**, process/tree/worker suites passed **20/20*
 and the complete repeated gate passed as shown above. Mixed line endings in
 the new worker runner were normalized to LF without a logic change.
 
-Publication and a user-installed 2.4.3 upgrade are not claimed by this local
-record. Part G and the release notes retain external-site, provider, configured
-Chrome MCP, download and non-Windows coverage limits.
+A user-installed 2.4.3 upgrade remains uncovered. Part G and the release notes
+retain external-site, provider, configured Chrome MCP, download and non-Windows
+coverage limits. Publication checks are recorded below.
 
 ### Clean release runner exposed a command cleanup ordering bug
 
@@ -70,6 +70,31 @@ Affected job/process/tool suites: 30 total / 30 pass / 0 fail / 0 cancelled
 Final npm test: 714 total / 713 pass / 0 fail / 0 cancelled / 1 skip
 duration_ms: 172485.1894
 ```
+
+### Published release checks
+
+The corrected [GitHub Windows release run](https://github.com/akyourowngames/A.N.K.I.T.A/actions/runs/36259156384)
+succeeded using Node 22 and a clean `npm ci`. Its test output was **714 total /
+691 pass / 0 fail / 0 cancelled / 23 skipped**, `duration_ms: 59223.27`, including
+`launcher Stop: closed=true, pending at unref=0`. The optional Chromium/Python
+skips are not reported as live coverage; local coverage is recorded above.
+
+The stable [2.4.3 release](https://github.com/akyourowngames/A.N.K.I.T.A/releases/tag/v2.4.3)
+is public and not a draft/prerelease. Its tag points to
+`30b960d80c55dcf7f56abd7eee319edbc9525848`. The installer, portable executable,
+blockmap and update manifest were downloaded from the published release.
+
+```text
+Ankita-2.4.3-setup-x64.exe: 114766818 bytes; GitHub SHA-256 and updater SHA-512 match
+Ankita-2.4.3-portable-x64.exe: 114548135 bytes; GitHub SHA-256 matches
+Ankita-2.4.3-setup-x64.exe.blockmap: 120501 bytes; GitHub SHA-256 matches
+latest.yml: 349 bytes; GitHub SHA-256 matches
+RELEASE_VERIFIED: stable v2.4.3; 4/4 assets; detailed notes match; manifest version, size and checksums match
+```
+
+The release body includes the full versioned changelog with documentation links
+rooted at the release tag. The checks confirm published downloads and manifest
+integrity, not an installed auto-upgrade or live provider/site completion.
 
 ## Part G — live-sidebar diagnostics, packaged verification, and command startup
 

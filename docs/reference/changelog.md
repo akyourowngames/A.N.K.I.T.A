@@ -182,6 +182,10 @@ command/file/Markdown processing. Detailed changes and verification follow.
 
 ### Verification
 
+- The clean GitHub Windows release run passed **691 tests, 0 failed, 0 cancelled,
+  23 skipped (714 total)**; optional Chromium/Python coverage ran locally instead.
+  All four published release assets were downloaded and their SHA-256 digests
+  checked. The installer's SHA-512, size and version match the update manifest.
 - Release preflight on 2.4.3: **713 passed, 0 failed, 1 skipped (714 total)**,
   desktop production build and rendered sidebar round trip passed. The CLI's
   declared Node minimum now matches Playwright's Node 20 requirement; desktop
