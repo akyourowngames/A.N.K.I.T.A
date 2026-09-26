@@ -76,6 +76,10 @@ command/file/Markdown processing. Detailed changes and verification follow.
 
 ### Fixed
 
+- Windows command cleanup keeps the launcher referenced until every pending
+  Stop acknowledgement settles. Native pipe closure can arrive first on fast
+  machines; it no longer leaves cleanup promises unresolved or cancels the
+  remaining command tests on the clean release runner.
 - Recoverable browser errors no longer mark a healthy session disconnected or
   dump fresh snapshots, page code and raw call logs into the live sidebar.
   Page/action notices preserve preview refresh and Take control; only connection
@@ -178,7 +182,7 @@ command/file/Markdown processing. Detailed changes and verification follow.
 
 ### Verification
 
-- Release preflight on 2.4.3: **712 passed, 0 failed, 1 skipped (713 total)**,
+- Release preflight on 2.4.3: **713 passed, 0 failed, 1 skipped (714 total)**,
   desktop production build and rendered sidebar round trip passed. The CLI's
   declared Node minimum now matches Playwright's Node 20 requirement; desktop
   development requires Node 22.12+ for the Electron build dependencies.
@@ -191,7 +195,7 @@ command/file/Markdown processing. Detailed changes and verification follow.
   **1.8.0**; configured **1.10.1**, real downloads, personal attachment and live
   provider/site completion remain untested. Traces and coverage are recorded in
   [browser findings](docs/browser-screenshot-findings.md).
-- Latest full gate: **712 passed, 0 failed, 1 skipped (713 total)**. The
+- Latest full gate: **713 passed, 0 failed, 1 skipped (714 total)**. The
   previous command startup/output failures now pass without weaker deadlines.
   Desktop TypeScript checking and production build passed;
   `git diff --check` and new browser-file whitespace checks passed.

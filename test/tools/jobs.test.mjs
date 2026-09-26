@@ -14,6 +14,7 @@ import { cleanupJobs } from '../../tools/index.mjs';
 
 // Milliseconds: keep fixture jobs alive until their explicit test cleanup.
 const IDLE_JOB_SOURCE = 'setInterval(()=>{}, 1000)';
+const LAUNCHER_TERMINATION_TEST_TIMEOUT_MS = 20_000; // Milliseconds: bound native startup and tree termination in this regression.
 
 function fixture(t, source) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-jobs-'));
@@ -34,6 +35,25 @@ test('Windows commands launch the resolved shell executable rather than its acti
   const executable = job.child.shellExecutable;
   assert.ok(path.isAbsolute(executable), `shell launch must use the discovered executable: ${executable}`);
   assert.ok(fs.existsSync(executable), 'the discovered shell must exist');
+});
+
+test('native close keeps the launcher referenced until Stop acknowledges termination', { skip: process.platform !== 'win32', timeout: LAUNCHER_TERMINATION_TEST_TIMEOUT_MS }, async t => {
+  const { command, ctx } = fixture(t, IDLE_JOB_SOURCE);
+  await run({ command, background: true }, ctx);
+  const job = [...ctx.state.jobs.values()][0];
+  await job.child.ready;
+  const pendingAtUnref = [];
+  const unref = job.child.worker.unref.bind(job.child.worker);
+  job.child.worker.unref = () => {
+    pendingAtUnref.push(job.child.pending.size);
+    return unref();
+  };
+  await killTree(job.child);
+  await waitForExit(job, LAUNCHER_TERMINATION_TEST_TIMEOUT_MS);
+  console.log(`launcher Stop: closed=${job.child.closed}, pending at unref=${pendingAtUnref.join(',')}`);
+  assert.equal(job.done, true, 'the real native command must close');
+  assert.ok(pendingAtUnref.length, 'the finished launcher must release its event-loop reference');
+  assert.deepEqual(pendingAtUnref, [0], 'Stop acknowledgement must settle before the launcher releases its reference');
 });
 
 test('cold Windows shell startup cannot block the caller event loop', { skip: process.platform !== 'win32' }, async t => {

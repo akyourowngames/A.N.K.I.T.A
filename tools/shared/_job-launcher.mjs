@@ -68,6 +68,12 @@ class JobProcess extends EventEmitter {
 
   post(message) { if (!this.closed) this.worker.postMessage(message); }
 
+  releaseWorker() {
+    // Native close can precede taskkill's acknowledgement. Keep the owner alive
+    // until its pending Stop requests settle, even after the pipes have closed.
+    if (this.closed && !this.pending.size) this.worker.unref();
+  }
+
   sendInput(type, data, done) {
     if (this.closed) { done(new Error(CLOSED_STDIN_ERROR)); return; }
     const id = ++this.requestId;
@@ -107,13 +113,14 @@ class JobProcess extends EventEmitter {
       this.stdout.end(); this.stderr.end();
       this.closeInput(this.pendingInput.size ? new Error(CLOSED_STDIN_ERROR) : undefined);
       this.emit('close', message.code, message.signal);
-      this.worker.unref();
+      this.releaseWorker();
     } else if (message.type === MESSAGE.error) this.emit('error', new Error(message.error));
     else if (message.type === MESSAGE.terminated) {
       const entry = this.pending.get(message.id);
       this.pending.delete(message.id);
       if (message.error) entry?.reject(new Error(message.error));
       else entry?.resolve();
+      this.releaseWorker();
     }
   }
 

@@ -17,7 +17,7 @@ build prerequisites document Node 22.12+. These declarations are not evidence
 of a separate Node 20 execution. Release CI uses Node 22.
 
 ```text
-Final npm test: 713 total / 712 pass / 0 fail / 1 skip
+Initial local release gate: 713 total / 712 pass / 0 fail / 1 skip
 duration_ms: 176987.0717
 npm run desktop:build: exit 0; 319 modules; 6.28s
 BROWSER_SIDEBAR_ERROR_OK: stale refs, navigation and action errors keep pixels/control; no page code or call logs
@@ -42,6 +42,34 @@ the new worker runner were normalized to LF without a logic change.
 Publication and a user-installed 2.4.3 upgrade are not claimed by this local
 record. Part G and the release notes retain external-site, provider, configured
 Chrome MCP, download and non-Windows coverage limits.
+
+### Clean release runner exposed a command cleanup ordering bug
+
+GitHub run `36258602272` completed **672 pass / 0 fail / 18 cancelled / 23
+skipped**. The first cancelled test was the resolved Windows executable fixture;
+its cleanup reported `Promise resolution is still pending but the event loop
+has already resolved`. Native pipe close released the launch worker's reference
+while a Stop request still awaited its termination reply. The new real-process
+regression reproduced this locally, even with the local event loop remaining
+alive long enough to receive the reply:
+
+```text
+Before: launcher Stop: closed=true, pending at unref=1; 0 pass / 1 fail
+After: launcher Stop: closed=true, pending at unref=0; 1 pass / 0 fail
+```
+
+`tools/shared/_job-launcher.mjs` now releases the worker only when native close
+and all pending termination acknowledgements have completed, in either order.
+The regression runs a real native command and records the pending requests at
+worker release. It preserves all process identity guards and existing deadlines.
+The clean runner's skips reflect absent Chromium and optional Python packages;
+local installed-browser coverage is recorded separately in Part G.
+
+```text
+Affected job/process/tool suites: 30 total / 30 pass / 0 fail / 0 cancelled
+Final npm test: 714 total / 713 pass / 0 fail / 0 cancelled / 1 skip
+duration_ms: 172485.1894
+```
 
 ## Part G — live-sidebar diagnostics, packaged verification, and command startup
 
