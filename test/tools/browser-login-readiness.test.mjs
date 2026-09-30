@@ -4,6 +4,7 @@ import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { chromium } from 'playwright';
 import { PlaywrightBrowserAdapter } from '../../tools/browser/playwright.mjs';
 import { BrowserSessionManager } from '../../tools/browser/session.mjs';
 import { BrowserPluginStore } from '../../src/integrations/browser-plugins.mjs';
@@ -16,6 +17,7 @@ const FORM = '<div class="login"><label>Username<input name="username"></label><
 const HANDLER = `<script>document.querySelector('.login button').onclick=async()=>{await fetch('/authenticate',{method:'POST',body:JSON.stringify({password:document.querySelector('input[type=password]').value})});document.body.innerHTML='<h1>Logged in successfully</h1><a href="/logout">Log out</a>';}</script>`;
 
 async function fixture(t) {
+  if (!await fs.stat(chromium.executablePath()).catch(() => null)) { t.skip('Chromium has not been downloaded'); return; }
   const directory = await fs.mkdtemp(path.join(os.tmpdir(), 'ankita-formless-login-'));
   let submits = 0, leaks = 0;
   const server = http.createServer(async (request, response) => {
@@ -39,7 +41,8 @@ async function fixture(t) {
 }
 
 test('secure sign-in supports one scoped JavaScript login with Submit outside a native form', async t => {
-  const { adapter, base, ctx, counts } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, base, ctx, counts } = live;
   const plan = await adapter.prepareLogin({ website: `${base}/login` }, ctx);
   assert.equal(await adapter.login(plan, { username: 'student', password: SECRET }, ctx), true);
   assert.deepEqual(counts(), { submits: 1, leaks: 0 });
@@ -48,7 +51,8 @@ test('secure sign-in supports one scoped JavaScript login with Submit outside a 
 });
 
 test('a replaced JavaScript login container cannot receive the credential', async t => {
-  const { adapter, base, ctx, counts } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, base, ctx, counts } = live;
   const plan = await adapter.prepareLogin({ website: `${base}/changed` }, ctx);
   await adapter.page.evaluate(() => { document.querySelector('.login').outerHTML = '<div><input name="username"><input type="password"><button>Submit</button></div>'; });
   await assert.rejects(adapter.login(plan, { username: 'student', password: SECRET }, ctx));
@@ -56,14 +60,16 @@ test('a replaced JavaScript login container cannot receive the credential', asyn
 });
 
 test('opening a deferred SPA waits for rendered controls before snapshot and secure sign-in', async t => {
-  const { adapter, base, ctx } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, base, ctx } = live;
   assert.match(await adapter.run({ action: 'open', url: `${base}/delayed` }, ctx), /Username/);
   const plan = await adapter.prepareLogin({ website: base }, ctx);
   assert.equal(await adapter.login(plan, { username: 'student', password: SECRET }, ctx), true);
 });
 
 test('empty HTTP denial and empty success are load failures and cannot become Ready through snapshot or preview', async t => {
-  const { adapter, directory, base, ctx } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, directory, base, ctx } = live;
   const store = new BrowserPluginStore(path.join(directory, 'browser.json')).load(); store.setEnabled('isolated', true);
   const manager = new BrowserSessionManager({ store, isolatedFactory: () => adapter });
   t.after(() => manager.close());
@@ -127,7 +133,8 @@ test('a failed navigation returns even when tab metadata never resolves', async 
 });
 
 test('model-selected refs support username-first and arbitrary submit labels without form detection', async t => {
-  const { adapter, base, ctx } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, base, ctx } = live;
   const plan = await adapter.prepareCredentials({ website: `${base}/steps` }, ctx);
   const snapshot = await adapter.credentialSnapshot(plan, ctx);
   const ref = (text, label) => text.split('\n').find(line => line.includes(label))?.match(/\[ref=([^\]]+)\]/)?.[1];
@@ -140,7 +147,8 @@ test('model-selected refs support username-first and arbitrary submit labels wit
 });
 
 test('selected credentials reject stale, non-password and foreign form targets before any fill', async t => {
-  const { adapter, base, ctx } = await fixture(t);
+  const live = await fixture(t); if (!live) return;
+  const { adapter, base, ctx } = live;
   const plan = await adapter.prepareCredentials({ website: `${base}/login` }, ctx);
   const snapshot = await adapter.credentialSnapshot(plan, ctx);
   const username = snapshot.match(/\[ref=([^\]]+)\] input Username/)[1];

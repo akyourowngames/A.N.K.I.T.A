@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { chromium } from 'playwright';
 import { PlaywrightBrowserAdapter } from '../../tools/browser/playwright.mjs';
 
 test('closing an owned browser marks the guard closed before its socket disconnects', async () => {
@@ -26,6 +27,7 @@ test('concurrent error and scheduler cleanup close one owned context exactly onc
   assert.equal(closeCount, 1); assert.equal(adapter.context, null);
 });
 test('background browser denies redirect destinations before either GET or POST reaches them', async t => {
+  if (!fs.existsSync(chromium.executablePath())) return t.skip('Chromium has not been downloaded');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'job-redirect-')), hits = [];
   let base, frameOrigin;
   const server = http.createServer((request, response) => {

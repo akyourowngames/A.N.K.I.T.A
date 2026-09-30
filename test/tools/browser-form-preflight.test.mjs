@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { chromium } from 'playwright';
 import { PlaywrightBrowserAdapter } from '../../tools/browser/playwright.mjs';
 import { ChromeBrowserAdapter } from '../../tools/browser/chrome.mjs';
 import { assertFillControl, inspectFillControl, ISOLATED_REF_PATTERN } from '../../tools/browser/refs.mjs';
@@ -44,6 +45,7 @@ test('Chrome reports a dialog-interrupted batch as incomplete without replaying 
 });
 
 test('real Chromium rejects a noneditable batch target before filling any field', async t => {
+  if (!fs.existsSync(chromium.executablePath())) return t.skip('Chromium has not been downloaded');
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-fill-preflight-'));
   const server = http.createServer((_request, response) => { response.setHeader('content-type', 'text/html'); response.end('<label>Report text<input value="original"></label><button>Publish report</button><label>Locked<input readonly value="locked"></label>'); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
