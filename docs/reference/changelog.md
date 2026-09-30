@@ -7,6 +7,8 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.4.4 — 2026-09-30
+
 ### Teammate-written scheduled results — 2026-09-30
 
 - The owning desktop teammate writes the final chat update from the completed

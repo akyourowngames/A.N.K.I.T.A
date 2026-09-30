@@ -10,7 +10,16 @@ import * as shared from '../../tools/shared/_shared.mjs';
 import { renderDiff } from '../../tools/shared/_diff.mjs';
 import { waitForExit } from '../../tools/process/run-command.mjs';
 
-const BURST_COMPLETION_TIMEOUT_MS = 30_000; // Milliseconds: allow a native shell to drain a large output burst under the serial suite.
+const COMMAND_COMPLETION_TIMEOUT_MS = 60_000; // Milliseconds: allow a cold native shell and large output burst under the serial suite.
+
+async function runFinishedCommand(args, ctx) {
+  await registry.get('run_command').run(args, ctx);
+  const job = [...ctx.state.jobs.values()].at(-1);
+  await waitForExit(job, COMMAND_COMPLETION_TIMEOUT_MS);
+  assert.equal(job.done, true, 'the native command must finish before its final result is inspected');
+  const result = JSON.parse(registry.get('job_status').run({ job_id: job.id, since_offset: 0 }, ctx));
+  return { job, result };
+}
 
 function workspace(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-tools-'));
@@ -125,16 +134,18 @@ test('fetch_url bounds streaming responses and enforces timeout', async t => {
 
 test('shell failures surface a non-zero exit instead of a silent success', async t => {
   const ctx = workspace(t);
+  t.after(async () => { if(registry.cleanupJobs) await registry.cleanupJobs(ctx.state); });
   const cmd = process.platform === 'win32'
     ? 'Get-ChildItem C:/definitely/not/here'
     : 'cat /definitely/not/here';
-  const out = await registry.get('run_command').run({ command: cmd, yield_ms: 10000 }, ctx);
-  assert.match(out, /exit code: [1-9]/);
+  const failed = await runFinishedCommand({ command: cmd, yield_ms: 10000 }, ctx);
+  assert.ok(failed.job.code > 0, 'shell errors must produce a non-zero exit');
+  assert.equal(failed.result.exit_code, failed.job.code);
   if (process.platform === 'win32') {
-    const lenient = await registry.get('run_command').run(
+    const lenient = await runFinishedCommand(
       { command: 'Get-ChildItem C:/nope -ErrorAction SilentlyContinue; Write-Output continued', yield_ms: 10000 }, ctx);
-    assert.match(lenient, /exit code: 0/);
-    assert.match(lenient, /continued/);
+    assert.equal(lenient.result.exit_code, 0);
+    assert.match(lenient.result.output, /continued/);
   }
 });
 
@@ -144,13 +155,10 @@ test('command input/environment, bounded output and background jobs', async t =>
   const command = process.platform === 'win32'
     ? "[Console]::In.ReadToEnd(); [Console]::Write($env:CHAT_TOOLS_TEST)"
     : "cat; printf '%s' \"$CHAT_TOOLS_TEST\"";
-  const out = await registry.get('run_command').run({command,stdin:'hello',env:{CHAT_TOOLS_TEST:'world'},yield_ms:10000},ctx);
-  assert.match(out,/hello/); assert.match(out,/world/);
+  const input = await runFinishedCommand({command,stdin:'hello',env:{CHAT_TOOLS_TEST:'world'},yield_ms:10000},ctx);
+  assert.match(input.result.output,/hello/); assert.match(input.result.output,/world/);
   const burst = process.platform === 'win32' ? "[Console]::Write(('x' * 200000))" : "head -c 200000 /dev/zero | tr '\\0' x";
-  await registry.get('run_command').run({command:burst,yield_ms:10000},ctx);
-  const burstJob = [...ctx.state.jobs.values()].at(-1);
-  await waitForExit(burstJob, BURST_COMPLETION_TIMEOUT_MS);
-  assert.equal(burstJob.done, true, 'the burst must finish before inspecting its bounded output');
+  const { job: burstJob } = await runFinishedCommand({command:burst,yield_ms:10000},ctx);
   assert.ok(burstJob.out.total > burstJob.out.toString().length, 'the burst exceeded the retained output');
   assert.ok(Buffer.byteLength(burstJob.out.toString()) < 66000);
   const sleep = process.platform === 'win32' ? 'Start-Sleep -Seconds 60' : 'sleep 60';

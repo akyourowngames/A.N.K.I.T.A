@@ -7,6 +7,8 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+## [2.4.4] - 2026-09-30
+
 ### Added
 
 - Scheduled desktop results now come from the owning teammate's model as normal
@@ -97,8 +99,9 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
   CLI sign-in guidance. Skill tests now discover the installed catalog instead
   of assuming two skills. Windows launcher crash cleanup checks only its root
   PID before applying the creation-identity guard, avoiding a full process-table
-  scan. The command output test waits for its burst job before asserting that
-  a later background job is the only active one.
+  scan. Command tests now follow a cold shell past the initial yield and wait
+  for final output and exit status before asserting that a later background job
+  is the only active one.
 - Scheduled browser tasks no longer stop on accumulated input-token totals, the
   old three-minute deadline, fixed tool counts or the foreground search ceiling. Regular desktop jobs run until
   completion; usage remains recorded, Stop and no-progress detection remain
