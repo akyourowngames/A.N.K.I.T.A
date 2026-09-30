@@ -264,6 +264,13 @@ export function serverEnv(extra = {}) {
   return env;
 }
 
+/** Electron's executable needs its Node mode when it is reused as an MCP runtime. */
+export function mcpLaunchEnv(command, extra = {}, runtime = { execPath: process.execPath, electron: Boolean(process.versions.electron) }) {
+  const env = serverEnv(extra);
+  if (runtime.electron && path.resolve(command) === path.resolve(runtime.execPath)) env.ELECTRON_RUN_AS_NODE = '1';
+  return env;
+}
+
 /**
  * MCP reports a *tool* failure inside a successful JSON-RPC response, as
  * result.isError with the message in content - not as a JSON-RPC error.
@@ -409,7 +416,7 @@ export class McpClient {
       try {
         this.child = spawn(exe, argv, {
           cwd: this.cwd || process.cwd(),
-          env: serverEnv(this.env),
+          env: mcpLaunchEnv(exe, this.env),
           shell: false,
           windowsHide: true,
           // A console-subsystem server (uv's mcp-server-*.exe, a python exe)

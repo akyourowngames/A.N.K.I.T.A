@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { BrowserSessionView } from '../../../shared/wire';
 import { Icon } from './Icons';
-import { browserNotice, browserNeedsConnection } from '../../../../src/integrations/browser-errors.mjs';
+import { browserNotice, browserNeedsConnection, browserPageFailed } from '../../../../src/integrations/browser-errors.mjs';
 
 function domain(url: string) { try { return new URL(url).hostname; } catch { return url || 'New tab'; } }
 
@@ -14,9 +14,9 @@ export function BrowserRunCard({ view, onOpen }: { view: BrowserSessionView; onO
   </section>;
 }
 
-export function BrowserStage({ view: sharedView, visible, onView, onStop, onOpenSetup }: { view: BrowserSessionView | null; visible: boolean; onView: (view: BrowserSessionView) => void; onStop: () => void; onOpenSetup?: () => void }) {
+export function BrowserStage({ view: sharedView, visible, onView, onStop, onOpenSetup, scope }: { view: BrowserSessionView | null; visible: boolean; onView: (view: BrowserSessionView) => void; onStop: () => void; onOpenSetup?: () => void; scope?: string | null }) {
   const [liveView, setLiveView] = useState(sharedView);
-  useEffect(() => { setLiveView(previous => sharedView ? { ...sharedView, screenshot: sharedView.screenshot || (sharedView.mode === previous?.mode && !['stopped', 'idle'].includes(sharedView.status) && !browserNeedsConnection(sharedView.notice) ? previous?.screenshot || null : null) } : null); }, [sharedView]);
+  useEffect(() => { setLiveView(previous => sharedView ? { ...sharedView, screenshot: sharedView.screenshot || (sharedView.mode === previous?.mode && !['stopped', 'idle'].includes(sharedView.status) && !browserNeedsConnection(sharedView.notice) && !browserPageFailed(sharedView.notice) ? previous?.screenshot || null : null) } : null); }, [sharedView]);
   useEffect(() => {
     // External mode (raw MCP browser tools) has no session to poll: the panel
     // opens for awareness, not for live pixels.
@@ -26,9 +26,9 @@ export function BrowserStage({ view: sharedView, visible, onView, onStop, onOpen
       const started = performance.now();
       let delay = 100;
       try {
-        const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView');
+        const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope });
         if (!active) return;
-        setLiveView(previous => ({ ...next, screenshot: next.screenshot || (next.mode === previous?.mode && !['stopped', 'idle'].includes(next.status) && !browserNeedsConnection(next.notice) ? previous?.screenshot || null : null) }));
+        setLiveView(previous => ({ ...next, screenshot: next.screenshot || (next.mode === previous?.mode && !['stopped', 'idle'].includes(next.status) && !browserNeedsConnection(next.notice) && !browserPageFailed(next.notice) ? previous?.screenshot || null : null) }));
         // Share an occasional chat thumbnail; live frames only render this pane.
         if (started - publishedAt > 2000) { onView(next); publishedAt = started; }
         if (['stopped', 'idle'].includes(next.status) || browserNeedsConnection(next.notice)) delay = 2000;
@@ -37,7 +37,7 @@ export function BrowserStage({ view: sharedView, visible, onView, onStop, onOpen
     };
     void poll();
     return () => { active = false; window.clearTimeout(timer); };
-  }, [visible, sharedView?.mode, onView]);
+  }, [visible, sharedView?.mode, onView, scope]);
   const view = liveView?.mode === sharedView?.mode ? liveView : sharedView;
   const [error, setError] = useState('');
   const viewport = useRef<HTMLDivElement>(null);
@@ -49,10 +49,10 @@ export function BrowserStage({ view: sharedView, visible, onView, onStop, onOpen
   const status = takeover ? 'Your control' : failed ? 'Needs attention' : view?.status === 'stopped' ? 'Stopped' : view?.status === 'working' ? 'Working' : active ? 'Ready' : 'Idle';
   const failure = notice?.message || '';
   const invoke = async (action: string, payload?: object) => {
-    try { const next = await window.ankita.invoke<BrowserSessionView>(action, payload); setError(''); if (next && typeof next === 'object') onView(next); }
+    try { const next = await window.ankita.invoke<BrowserSessionView>(action, { ...payload, scope }); setError(''); if (next && typeof next === 'object') onView(next); }
     catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); }
   };
-  const sendInput = (payload: object) => { void window.ankita.invoke('browserSessionInput', payload).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))); };
+  const sendInput = (payload: object) => { void window.ankita.invoke('browserSessionInput', { ...payload, scope }).catch(cause => setError(cause instanceof Error ? cause.message : String(cause))); };
   const clickViewport = (event: React.MouseEvent<HTMLImageElement>) => {
     if (!takeover || view?.mode !== 'isolated') return;
     const rect = event.currentTarget.getBoundingClientRect();

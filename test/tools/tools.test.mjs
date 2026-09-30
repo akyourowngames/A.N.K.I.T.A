@@ -8,6 +8,9 @@ import * as registry from '../../tools/index.mjs';
 import * as edit from '../../tools/filesystem/edit-file.mjs';
 import * as shared from '../../tools/shared/_shared.mjs';
 import { renderDiff } from '../../tools/shared/_diff.mjs';
+import { waitForExit } from '../../tools/process/run-command.mjs';
+
+const BURST_COMPLETION_TIMEOUT_MS = 30_000; // Milliseconds: allow a native shell to drain a large output burst under the serial suite.
 
 function workspace(t) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'chat-tools-'));
@@ -144,7 +147,12 @@ test('command input/environment, bounded output and background jobs', async t =>
   const out = await registry.get('run_command').run({command,stdin:'hello',env:{CHAT_TOOLS_TEST:'world'},yield_ms:10000},ctx);
   assert.match(out,/hello/); assert.match(out,/world/);
   const burst = process.platform === 'win32' ? "[Console]::Write(('x' * 200000))" : "head -c 200000 /dev/zero | tr '\\0' x";
-  assert.ok(Buffer.byteLength(await registry.get('run_command').run({command:burst,yield_ms:10000},ctx))<66000);
+  await registry.get('run_command').run({command:burst,yield_ms:10000},ctx);
+  const burstJob = [...ctx.state.jobs.values()].at(-1);
+  await waitForExit(burstJob, BURST_COMPLETION_TIMEOUT_MS);
+  assert.equal(burstJob.done, true, 'the burst must finish before inspecting its bounded output');
+  assert.ok(burstJob.out.total > burstJob.out.toString().length, 'the burst exceeded the retained output');
+  assert.ok(Buffer.byteLength(burstJob.out.toString()) < 66000);
   const sleep = process.platform === 'win32' ? 'Start-Sleep -Seconds 60' : 'sleep 60';
   const started = await registry.get('run_command').run({command:sleep,background:true},ctx);
   assert.match(started,/job/i); assert.equal([...ctx.state.jobs.values()].filter(j=>!j.done).length,1);

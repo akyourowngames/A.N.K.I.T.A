@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 export function Icon({ name, size = 18, stroke = 1.8 }: { name: string; size?: number; stroke?: number }) {
   const shared = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const };
   const paths: Record<string, ReactNode> = {
+    clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
+    pulse: <path d="M2 12h5l3-8 4 16 3-8h5" />,
     plus: <path d="M12 5v14M5 12h14" />,
     search: <><circle cx="11" cy="11" r="6.5"/><path d="m16 16 4 4"/></>,
     send: <path d="M12 19V5m-6 6 6-6 6 6" />,

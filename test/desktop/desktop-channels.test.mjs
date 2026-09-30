@@ -12,6 +12,8 @@ class StubBot {
     this.sent = [];
     this.typing = [];
     this.voices = [];
+    this.reactions = [];
+    this.files = [];
     this.script = [];
     this.me = { username: 'test_bot' };
   }
@@ -24,6 +26,9 @@ class StubBot {
   async send(chatId, text, options = {}) { this.sent.push({ chatId, text, ...options }); return [{ message_id: this.sent.length }]; }
   async sendTyping(chatId) { this.typing.push(chatId); }
   async sendVoice(chatId) { this.voices.push(chatId); }
+  async react(chatId, messageId, emoji) { this.reactions.push({ chatId, messageId, emoji }); }
+  async sendPhoto(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'photo', after: this.sent.length }); }
+  async sendDocument(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'document', after: this.sent.length }); }
   async download() { return Buffer.from('audio'); }
 }
 
@@ -178,4 +183,65 @@ test('the desktop engine starts an enabled channel and rejects an unknown teamma
   assert.equal(JSON.stringify(view).includes('secret'), false);
   assert.equal(events.some(event => event.type === 'channels-updated'), true);
   await engine.close();
+});
+
+test('channel emits bounded tool progress and reactions, sends current-turn files after final text, and cleans up', async t => {
+  const store = tempStore(t, { teammateId: 'chief' }), bot = new StubBot();
+  const dir = tempDir(t); fs.mkdirSync(path.join(dir, 'generated-images'));
+  const image = path.join(dir, 'generated-images', 'current.png'); fs.writeFileSync(image, Buffer.from('fixture image'));
+  const old = { role: 'tool', name: 'image_generate', result: JSON.stringify({ type: 'generated_image', path: image }) };
+  const agent = { cwd: dir, messages: [old] };
+  let finish; const turn = new Promise(resolve => { finish = resolve; });
+  const engine = { agentFor: () => agent, send: async () => { channel.handleEngineEvent({ type: 'turn-start', threadId: 'chief', turnId: 'owned' }); }, waitForTurn: () => turn };
+  const channel = readyChannel(t, { store, engine, bot });
+  const work = channel.handleJob({ chatId: 42, messageId: 7, kind: 'text', text: 'make image' });
+  await new Promise(resolve => setImmediate(resolve));
+  for (let i = 0; i < 20; i++) channel.handleEngineEvent({ type: 'tool-call', threadId: 'chief', name: 'image_generate', args: { password: 'never-progress' } });
+  channel.handleEngineEvent({ type: 'assistant-delta', threadId: 'chief', text: 'never-progress' });
+  channel.handleEngineEvent({ type: 'tool-result', threadId: 'chief', text: old.result });
+  agent.messages.push(old); finish('Here is the image'); await work;
+  assert.equal(bot.reactions.length, 2);
+  assert.equal(bot.reactions[0].messageId, 7);
+  assert.equal(bot.sent.filter(item => /Using/.test(item.text)).length, 1);
+  assert.ok(!JSON.stringify(bot.sent).includes('never-progress'));
+  assert.equal(bot.files.length, 1); assert.equal(bot.files[0].kind, 'photo');
+  assert.equal(bot.sent[bot.files[0].after - 1].text, 'Here is the image');
+  assert.equal(channel.activeJobs.size, 0);
+});
+
+test('/cancel bypasses the chat queue and pending approval, stops only its owned turn, and sends no success reply', async t => {
+  const store = tempStore(t, { teammateId: 'chief' }), bot = new StubBot();
+  let finish, cancelled = 0; const turn = new Promise(resolve => { finish = resolve; });
+  const engine = { send: async () => {}, waitForTurn: () => turn, cancel: id => { assert.equal(id, 'chief'); cancelled++; finish('partial reply'); }, respondApproval: () => {} };
+  const channel = readyChannel(t, { store, engine, bot });
+  const work = channel.handleJob({ chatId: 42, messageId: 7, kind: 'text', text: 'long task' });
+  await new Promise(resolve => setImmediate(resolve));
+  channel.handleEngineEvent({ type: 'approval-request', threadId: 'chief', requestId: 'pending', toolName: 'run_command', detail: 'action' });
+  bot.script.push({ jobs: [{ chatId: 42, messageId: 8, kind: 'text', text: '/cancel' }] });
+  await channel.tick(bot); await work;
+  assert.equal(cancelled, 1); assert.equal(channel.pending.size, 0);
+  assert.ok(bot.sent.some(item => /stopped/i.test(item.text)));
+  assert.ok(!bot.sent.some(item => item.text === 'partial reply'));
+});
+
+test('another chat starting during final delivery cannot add its files to the preceding chat turn', async t => {
+  const store = tempStore(t, { teammateId: 'chief' }), bot = new StubBot(), dir = tempDir(t);
+  fs.mkdirSync(path.join(dir, 'generated-images')); const image = path.join(dir, 'generated-images', 'private.png'); fs.writeFileSync(image, 'private image');
+  const agent = { cwd: dir, messages: [] }; let release, began, reply;
+  const delivering = new Promise(resolve => { began = resolve; });
+  const send = bot.send.bind(bot);
+  bot.send = async (chatId, text, options) => { if (chatId === 1 && text === 'final A') { began(); await new Promise(resolve => { release = resolve; }); } return send(chatId, text, options); };
+  const engine = { agentFor: () => agent, send: async (_id, text) => {
+    reply = `final ${text}`;
+    if (text === 'B') {
+      const result = JSON.stringify({ type: 'generated_image', path: image });
+      channel.handleEngineEvent({ type: 'tool-call', threadId: 'chief', callId: 'image-B', name: 'image_generate', args: {} });
+      channel.handleEngineEvent({ type: 'tool-result', threadId: 'chief', callId: 'image-B', text: result });
+      agent.messages.push({ role: 'tool', name: 'image_generate', result });
+    }
+  }, waitForTurn: async () => reply };
+  const channel = readyChannel(t, { store, engine, bot });
+  const first = channel.handleJob({ chatId: 1, messageId: 7, kind: 'text', text: 'A' }); await delivering;
+  await channel.handleJob({ chatId: 2, messageId: 8, kind: 'text', text: 'B' }); release(); await first;
+  assert.deepEqual(bot.files.map(file => file.chatId), [2]);
 });

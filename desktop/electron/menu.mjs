@@ -12,7 +12,7 @@ export function menuTemplate({ isMac, isDev, send, openConfigFolder, openDataFol
     label: 'File',
     submenu: [
       command('New teammate', 'CmdOrCtrl+N', 'new-teammate'),
-      command('Find teammate', 'CmdOrCtrl+K', 'find'),
+      command('Command palette', 'CmdOrCtrl+K', 'find'),
       command('Settings', 'CmdOrCtrl+,', 'settings'),
       { type: 'separator' },
       isMac ? { role: 'close' } : { role: 'quit' },

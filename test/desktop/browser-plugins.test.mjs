@@ -18,7 +18,8 @@ test('Chrome setup records a pinned hidden MCP command and connection mode', asy
   const record = new McpStore(mcpFile).load().find('ankita-chrome');
   assert.equal(record.hidden, true);
   assert.equal(record.manualStart, true);
-  assert.ok(record.args.includes('chrome-devtools-mcp@1.10.1'));
+  assert.equal(record.command, process.execPath);
+  assert.match(record.args[0].replaceAll('\\', '/'), /chrome-devtools-mcp\/build\/src\/bin\/chrome-devtools-mcp\.js$/);
   assert.ok(record.args.includes('--no-usage-statistics'));
   assert.equal(record.args.at(-1), '--browserUrl=http://127.0.0.1:9333');
   assert.equal(record.approvedHash, null);

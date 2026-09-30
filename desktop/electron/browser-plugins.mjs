@@ -1,17 +1,16 @@
 import { spawn } from 'node:child_process';
 import { createRequire } from 'node:module';
 import path from 'node:path';
-import { BrowserPluginStore, BROWSER_FILE, CHROME_MCP_ID, browserPluginOverview, chromeMcpCommand, chromeInstallNeeded } from '../../src/integrations/browser-plugins.mjs';
+import { BrowserPluginStore, BROWSER_FILE, CHROME_MCP_ID, CHROME_MCP_VERSION, browserPluginOverview, chromeMcpCommand } from '../../src/integrations/browser-plugins.mjs';
 import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { MCP_FILE } from '../../src/core/config.mjs';
 import { waitForBrowser } from '../../tools/browser/pending.mjs';
 
 const require = createRequire(import.meta.url);
 
-// Handshake budgets (ms): a warm connect only negotiates, while a first-ever
-// connect also downloads the MCP package through npx.
+// Milliseconds: the bundled bridge only negotiates; there is no runtime download.
 const CHROME_WARM_INIT_TIMEOUT_MS = 25_000;
-const CHROME_COLD_INSTALL_TIMEOUT_MS = 120_000;
+const CHROME_REQUEST_TIMEOUT_MS = 15_000;
 
 /** Main-process boundary for setup and health. Browser execution lives in BrowserSessionManager. */
 export class DesktopBrowserPlugins {
@@ -88,7 +87,7 @@ export class DesktopBrowserPlugins {
       signal.addEventListener('abort', cancelApproval, { once: true });
       let allowed;
       try {
-        allowed = await waitForBrowser(this.approvals.request(browserThreadId, 'chrome-devtools-mcp', `Start Chrome browser connection\n\n${record.command} ${record.args.join(' ')}\n\nThis server can inspect and control Chrome. Chrome may ask for a second permission when attaching to your active session.`), { signal });
+        allowed = await waitForBrowser(this.approvals.request(browserThreadId, 'chrome-devtools-mcp', `Start Chrome browser connection\nBundled chrome-devtools-mcp@${CHROME_MCP_VERSION}\n\n${record.command} ${record.args.join(' ')}\n\nThis server can inspect and control Chrome. Chrome may ask for a second permission when attaching to your active session.`), { signal });
       } finally { signal.removeEventListener('abort', cancelApproval); this.approvals.cancelThread(browserThreadId); }
       signal.throwIfAborted();
       if (!allowed) throw new Error('Chrome connection was not approved');
@@ -99,7 +98,7 @@ export class DesktopBrowserPlugins {
     if (this.mcp.has(CHROME_MCP_ID) && !reconnect) return this.overview();
     if (this.mcp.has(CHROME_MCP_ID)) await this.mcp.disconnect(CHROME_MCP_ID);
     try {
-      await this.mcp.connect({ id: record.id, command: record.command, args: record.args, env: record.env, hidden: true, signal, initTimeoutMs: chromeInstallNeeded(record.args) ? CHROME_COLD_INSTALL_TIMEOUT_MS : CHROME_WARM_INIT_TIMEOUT_MS, requestTimeoutMs: 15_000 });
+      await this.mcp.connect({ id: record.id, command: record.command, args: record.args, env: record.env, hidden: true, signal, initTimeoutMs: CHROME_WARM_INIT_TIMEOUT_MS, requestTimeoutMs: CHROME_REQUEST_TIMEOUT_MS });
       signal.throwIfAborted();
       if (!this.store().get('local').enabled) { await this.mcp.disconnect(CHROME_MCP_ID); throw new Error('Chrome local was disabled'); }
       store.markConnected(CHROME_MCP_ID, true);

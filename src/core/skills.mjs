@@ -1,6 +1,9 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { validatePalette } from '../palette/index.mjs';
+
+const MANIFEST_FILENAME = 'plugin.json'; // Optional skill action contributions.
 
 export const SKILL_NAME_RE = /^[a-z0-9-]{1,64}$/;
 
@@ -59,9 +62,12 @@ export function loadSkills(dir = skillsDir()) {
 
   const files = entries.map(entry => {
     const file = path.join(dir, entry.name, 'SKILL.md');
+    const manifest = path.join(dir, entry.name, MANIFEST_FILENAME);
+    let manifestStamp = 'missing';
+    try { const stat = fs.statSync(manifest); manifestStamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`; } catch {}
     try {
       const stat = fs.statSync(file);
-      return { name: entry.name, file, stamp: stat.isFile() ? `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}` : 'missing' };
+      return { name: entry.name, file, manifest, stamp: stat.isFile() ? `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}:${manifestStamp}` : 'missing' };
     } catch {
       return { name: entry.name, file, stamp: 'missing' };
     }
@@ -70,7 +76,7 @@ export function loadSkills(dir = skillsDir()) {
   if (cache?.key === key) return cache.skills;
 
   const skills = [];
-  for (const { name, file, stamp } of files) {
+  for (const { name, file, manifest, stamp } of files) {
     if (stamp === 'missing') continue;
     try {
       const parsed = parseSkillFile(fs.readFileSync(file, 'utf8'), name);
@@ -78,7 +84,9 @@ export function loadSkills(dir = skillsDir()) {
         console.error(`Skipping skill ${name}: ${parsed.error}`);
         continue;
       }
-      skills.push({ ...parsed, path: file });
+      let palette = [];
+      if (fs.existsSync(manifest)) palette = validatePalette(JSON.parse(fs.readFileSync(manifest, 'utf8')).palette);
+      skills.push({ ...parsed, palette, path: file });
     } catch (error) {
       console.error(`Skipping skill ${name}: ${error.message}`);
     }

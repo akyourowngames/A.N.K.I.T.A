@@ -3,7 +3,7 @@ import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSe
 import { Icon } from './Icons';
 import { detectTimezone, timezoneSuggestions } from '../lib/timezones';
 
-export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'background' | 'privacy' | 'appearance' | 'about';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
@@ -11,6 +11,8 @@ const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
+  { id: 'background', label: 'Background jobs', icon: 'clock' },
+  { id: 'privacy', label: 'Privacy', icon: 'shield' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
   { id: 'about', label: 'About', icon: 'info' },
 ];
@@ -67,6 +69,10 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
   const [channelNotice, setChannelNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const [channelTestResult, setChannelTestResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
+  const [hostSettings, setHostSettings] = useState({ startAtLogin: false, supported: false });
+  useEffect(() => {
+    if (tab === 'background') void window.ankita.invoke<typeof hostSettings>('scheduleHostSettings').then(setHostSettings).catch(error => setNotice({ tone: 'error', text: error.message }));
+  }, [tab]);
 
   useEffect(() => { setDraft(fromPreferences(preferences)); setRemoved([]); }, [preferences]);
   useEffect(() => {
@@ -338,6 +344,21 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               </div>
               <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
             </div>
+          </div>}
+          {tab === 'background' && <div className="settings-content">
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="clock" size={20} /></span><h1 id="settings-title">Background jobs</h1><p>Scheduled browser tasks stay with the desktop app.</p></div>
+            <div className="settings-panel"><h2>Keep Ankita available</h2><p>Closing or minimizing the window keeps jobs running in the tray. Quit stops active jobs and scheduling until you open Ankita again.</p>
+              <label className="channel-toggle"><input type="checkbox" checked={hostSettings.startAtLogin} disabled={!hostSettings.supported} onChange={event => { void window.ankita.invoke<typeof hostSettings>('scheduleHostSettings', { startAtLogin: event.target.checked }).then(setHostSettings).catch(error => setNotice({ tone: 'error', text: error.message })); }} /><span>Start Ankita when I sign in</span></label>
+              <button className="settings-secondary" onClick={() => { void window.ankita.invoke('schedulePauseAll').then(() => setNotice({ tone: 'ok', text: 'All scheduled jobs paused. An active run can finish; use Stop run to cancel it.' })).catch(error => setNotice({ tone: 'error', text: error.message })); }}>Pause all jobs</button>
+            </div><div className="settings-note"><Icon name="alert" size={15} />Only one scheduler can own your routines. Stop the CLI daemon before using desktop jobs. CLI <code>--takeover</code> requests a cooperative handover.</div>
+          </div>}
+          {tab === 'privacy' && <div className="settings-content">
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="shield" size={20} /></span><h1 id="settings-title">Privacy</h1><p>Keep pasted secrets out of saved conversations.</p></div>
+            <div className="settings-panel"><h2>Secret scrubbing</h2><p>Supported API keys, tokens, passwords and private keys are removed from history, job logs and exports. Explicitly saved secrets go to the encrypted Secure store.</p><label className="channel-toggle"><input type="checkbox" checked={preferences.secretScrubbing !== false} onChange={event => {
+              const enabled = event.target.checked;
+              if (!enabled && !preferences.secretWarningSeen && !window.confirm('Turning off secret scrubbing can save passwords and tokens in plain text. Continue?')) return;
+              void window.ankita.invoke<DesktopSettingsResult>('saveDesktopSettings', { secretScrubbing: enabled, ...(!enabled ? { secretWarningSeen: true } : {}) }).then(onSaved).catch(error => setNotice({ tone: 'error', text: error.message }));
+            }} /><span>Secret scrubbing</span></label><small>Arbitrary unlabeled secrets and secrets split between messages may not be detected.</small></div>
           </div>}
           {tab === 'appearance' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="palette" size={20} /></span><h1 id="settings-title">Appearance</h1><p>Set the tone of your workspace.</p></div>

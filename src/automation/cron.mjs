@@ -145,9 +145,10 @@ export function parseCron(expr) {
 }
 
 /** True when `date` falls inside the field. Granularity is one minute. */
-export function matchCron(expr, date = new Date()) {
+export function matchCron(expr, date = new Date(), timeZone = null) {
   const parsed = typeof expr === "string" ? parseCron(expr) : expr;
   if (!parsed) return false;
+  if (timeZone) date = zonedDate(date, timeZone);
 
   if (!parsed.minute.has(date.getMinutes())) return false;
   if (!parsed.hour.has(date.getHours())) return false;
@@ -159,6 +160,54 @@ export function matchCron(expr, date = new Date()) {
   if (parsed.domRestricted) return domHit;
   if (parsed.dowRestricted) return dowHit;
   return true;
+}
+
+const CRON_MINUTE_MS = 60_000; // Cron precision in milliseconds.
+const CRON_SEARCH_DAYS = 366 * 8; // Covers leap-day schedules across a leap-year gap.
+const CRON_DAY_MS = 24 * 60 * CRON_MINUTE_MS; // Calendar search uses UTC dates as wall-date containers.
+const ZONE_PROBE_HOURS = [-36, -12, 0, 12, 36]; // Observe offsets on both sides of DST transitions.
+const zoneFormatters = new Map();
+function zonedDate(date, timeZone) {
+  let formatter = zoneFormatters.get(timeZone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat('en-US', { timeZone, year: 'numeric', month: 'numeric', day: 'numeric', hour: 'numeric', minute: 'numeric', hourCycle: 'h23' });
+    zoneFormatters.set(timeZone, formatter);
+  }
+  const p = Object.fromEntries(formatter.formatToParts(date).map(part => [part.type, Number(part.value)]));
+  const day = new Date(Date.UTC(p.year, p.month - 1, p.day)).getUTCDay();
+  return { getFullYear: () => p.year, getMinutes: () => p.minute, getHours: () => p.hour, getMonth: () => p.month - 1, getDate: () => p.day, getDay: () => day };
+}
+
+/** Next exclusive / previous inclusive fire, as an actual UTC instant (DST safe). */
+export function cronFire(expr, date = new Date(), timeZone = null, direction = 1) {
+  const parsed = parseCron(expr);
+  if (!parsed || !Number.isFinite(date.getTime())) return null;
+  const zone = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone;
+  const local = zonedDate(date, zone), step = direction > 0 ? 1 : -1;
+  const startDay = Date.UTC(local.getFullYear(), local.getMonth(), local.getDate());
+  const hours = [...parsed.hour], minutes = [...parsed.minute];
+  for (let n = 0; n < CRON_SEARCH_DAYS; n++) {
+    const day = new Date(startDay + n * step * CRON_DAY_MS);
+    if (!parsed.month.has(day.getUTCMonth() + 1)) continue;
+    const dom = parsed.dom.has(day.getUTCDate()), dow = parsed.dow.has(day.getUTCDay());
+    const hit = parsed.domRestricted && parsed.dowRestricted ? dom || dow : parsed.domRestricted ? dom : parsed.dowRestricted ? dow : true;
+    if (!hit) continue;
+    const offsets = new Set(ZONE_PROBE_HOURS.map(hour => {
+      const instant = new Date(day.getTime() + hour * 60 * CRON_MINUTE_MS), wall = zonedDate(instant, zone);
+      return Date.UTC(wall.getFullYear(), wall.getMonth(), wall.getDate(), wall.getHours(), wall.getMinutes()) - instant.getTime();
+    }));
+    let best = null;
+    for (const hour of hours) for (const minute of minutes) for (const offset of offsets) {
+      const candidate = new Date(day.getTime() + (hour * 60 + minute) * CRON_MINUTE_MS - offset);
+      if (step > 0 ? candidate <= date : candidate > date) continue;
+      const wall = zonedDate(candidate, zone);
+      // Both instances of a repeated hour are candidates; skipped hours are rejected.
+      if (wall.getFullYear() !== day.getUTCFullYear() || wall.getMonth() !== day.getUTCMonth() || wall.getDate() !== day.getUTCDate() || wall.getHours() !== hour || wall.getMinutes() !== minute) continue;
+      if (!best || (step > 0 ? candidate < best : candidate > best)) best = candidate;
+    }
+    if (best) return best;
+  }
+  return null;
 }
 
 const WEEKDAY_LABEL = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];

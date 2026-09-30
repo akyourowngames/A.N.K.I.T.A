@@ -1,6 +1,7 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('ankita', {
+  redact: text => ipcRenderer.invoke('engine:invoke', 'redact', { text }),
   invoke: (action, payload) => ipcRenderer.invoke('engine:invoke', action, payload),
   onEvent: callback => {
     const listener = (_event, value) => callback(value);

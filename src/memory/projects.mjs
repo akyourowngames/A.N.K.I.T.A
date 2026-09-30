@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { writeTextFile } from "../../tools/shared/_shared.mjs";
+import { redactValue } from '../security/secret-scrubber.mjs';
 
 /**
  * Projects: the things ankita is expected to know about.
@@ -158,7 +159,7 @@ export class ProjectStore {
     if (this.loadError) throw new Error(`Existing project state is malformed or unreadable: ${this.loadError.message}`);
     if (this.conflicts.length) throw new Error(`Project state conflict: ${this.conflicts.join('; ')}`);
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    writeTextFile(this.file, JSON.stringify(this.data, null, 2), "\n");
+    writeTextFile(this.file, JSON.stringify(redactValue(this.data), null, 2), "\n");
     return this;
   }
 

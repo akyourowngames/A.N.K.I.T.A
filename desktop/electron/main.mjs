@@ -1,6 +1,7 @@
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { app, BrowserWindow, ipcMain, shell, Menu, screen } from 'electron';
+import { app, BrowserWindow, ipcMain, shell, Menu, screen, safeStorage, Tray, Notification, nativeImage, powerMonitor, dialog } from 'electron';
+import fs from 'node:fs';
 import { DesktopEngine } from './engine.mjs';
 import { windowChrome } from './window-chrome.mjs';
 import { loadWindowState, saveWindowState, visibleBounds } from './window-state.mjs';
@@ -23,6 +24,30 @@ let engine = null;
 let updater = null;
 let saveTimer = null;
 let crashes = 0;
+let tray = null;
+let quitting = false;
+let drainingQuit = false;
+const TRAY_ICON_PATH = '../build/icon.png'; // Packaged with the app; no external runtime dependency.
+const TRAY_ICON_SIZE = 18; // Pixels for native menu-bar/taskbar rendering.
+function showWindow() { if (!window) return; if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
+function installTray() {
+  if (tray) return;
+  tray = new Tray(nativeImage.createFromPath(path.resolve(here, TRAY_ICON_PATH)).resize({ width: TRAY_ICON_SIZE, height: TRAY_ICON_SIZE }));
+  tray.setToolTip(`${APP_NAME} — scheduled jobs keep running here`);
+  tray.setContextMenu(Menu.buildFromTemplate([
+    { label: 'Show Ankita', click: showWindow },
+    { label: 'Pause all jobs', click: () => engine?.schedule().pauseAll() },
+    { type: 'separator' }, { label: 'Quit — stop jobs', click: () => app.quit() },
+  ]));
+  tray.on('double-click', showWindow);
+}
+function hideToTray() {
+  installTray(); window?.hide();
+  if (!engine?.desktopSettings.data.trayNoticeSeen) {
+    engine?.desktopSettings.update({ trayNoticeSeen: true });
+    if (Notification.isSupported()) new Notification({ title: APP_NAME, body: 'Ankita is running in the tray. Scheduled jobs continue. Choose Quit in the tray to stop them.' }).show();
+  }
+}
 
 app.setName(APP_NAME);
 app.setAppUserModelId(APP_ID);
@@ -123,7 +148,8 @@ function createWindow() {
   });
   window.on('resize', scheduleSave);
   window.on('move', scheduleSave);
-  window.on('close', persistWindowState);
+  window.on('close', event => { persistWindowState(); if (!quitting) { event.preventDefault(); hideToTray(); } });
+  window.on('minimize', () => { if (!quitting) hideToTray(); });
   window.on('closed', () => { window = null; });
 
   if (isDev) {
@@ -133,8 +159,14 @@ function createWindow() {
   }
 
   engine = new DesktopEngine({
+    safeStorage,
     emit: event => {
       if (window && !window.isDestroyed()) window.webContents.send('engine:event', event);
+      if (tray && event.type === 'schedule-changed') tray.setToolTip(`${APP_NAME} — ${event.jobs.filter(job => job.running).length} running, ${event.jobs.filter(job => job.needsApproval).length} need approval`);
+      if ((event.type === 'routine-failed' || (event.type === 'approval-request' && event.routineId)) && (!window?.isVisible() || !window?.isFocused()) && Notification.isSupported()) {
+        const notification = new Notification({ title: event.type === 'routine-failed' ? 'Scheduled job needs attention' : 'Scheduled job needs approval', body: event.detail || event.text || 'Open Ankita to review the job.' });
+        notification.on('click', showWindow); notification.show();
+      }
     },
   });
 
@@ -156,10 +188,14 @@ function requiredEngine() {
   return engine;
 }
 
-ipcMain.handle('engine:invoke', async (_event, action, payload) => {
+ipcMain.handle('engine:invoke', async (event, action, payload) => {
+  if (!window || event.sender !== window.webContents || event.senderFrame !== window.webContents.mainFrame) throw new Error('Desktop IPC is restricted to the main application window');
   const current = requiredEngine();
   if (action === 'initialize') {
     await current.init();
+    try { await current.schedule().start(); }
+    catch (error) { current.emit({ type: 'scheduler-error', message: error.message }); }
+    installTray();
     return {
       teammates: current.listTeammates(),
       models: current.listModels(),
@@ -168,10 +204,40 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
       version: app.getVersion(),
       contract: IPC_CONTRACT,
       chrome: windowChrome().controls,
+      jobs: current.schedule().list(),
     };
   }
   await current.init();
   switch (action) {
+    case 'palette:query': return current.paletteQuery(payload?.query);
+    case 'palette:run': return current.paletteRun(payload?.id, payload?.threadId);
+    case 'redact': return current.secretHistory.clean(String(payload?.text || ''));
+    case 'secretList': return current.secureStore.listSecrets();
+    case 'secretRemove': return current.secureStore.remove(payload?.id);
+    case 'exportChat': {
+      const format = payload?.format === 'json' ? 'json' : 'md';
+      const content = current.exportChat(payload?.id, format);
+      const result = await dialog.showSaveDialog(window, { title: 'Export conversation', defaultPath: `${payload?.id || 'conversation'}.${format}`, filters: [{ name: format === 'json' ? 'JSON' : 'Markdown', extensions: [format] }] });
+      if (result.canceled || !result.filePath) return { cancelled: true };
+      fs.writeFileSync(result.filePath, content, { encoding: 'utf8', mode: 0o600 });
+      return { saved: true };
+    }
+    case 'scheduleList': return current.schedule().list(payload?.threadId);
+    case 'scheduleStatus': return current.schedule().status(payload?.threadId);
+    case 'scheduleAdd': return current.schedule().add(payload);
+    case 'scheduleUpdate': return current.schedule().update(payload.id, payload.patch);
+    case 'scheduleRemove': return current.schedule().remove(payload.id);
+    case 'scheduleEnable': return current.schedule().enable(payload.id, payload.enabled);
+    case 'scheduleRunNow': return current.schedule().runNow(payload.id);
+    case 'scheduleStop': return current.schedule().stopRun(payload.id);
+    case 'schedulePauseAll': return current.schedule().pauseAll();
+    case 'scheduleHostSettings': {
+      if (payload?.startAtLogin !== undefined) {
+        const startAtLogin = payload.startAtLogin === true;
+        app.setLoginItemSettings({ openAtLogin: startAtLogin }); current.desktopSettings.update({ startAtLogin });
+      }
+      return { startAtLogin: current.desktopSettings.data.startAtLogin === true, supported: !isPortable };
+    }
     case 'listTeammates': return current.listTeammates();
     case 'listProjects': return current.listProjects();
     case 'createProject': return current.createProject(payload);
@@ -202,6 +268,16 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'renderPdfPages': return renderPdfPages(payload?.data);
     case 'cancel': return current.cancel(payload.id);
     case 'respondApproval': return current.respondApproval(payload.requestId, payload.answer);
+    case 'secureStoreList': return { available: await current.secureStore.available(), records: await current.secureStore.list() };
+    case 'secureStoreSave': {
+      try { const record = await current.secureStore.save(payload); current.emit({ type: 'secure-store-changed' }); return record; }
+      finally { if (payload) payload.password = ''; }
+    }
+    case 'secureStoreRemove': { const removed = await current.secureStore.remove(payload.id); current.emit({ type: 'secure-store-changed' }); return removed; }
+    case 'respondSecureStore': {
+      try { return current.credentialRequests.respond(payload); }
+      finally { if (payload) payload.password = ''; }
+    }
     case 'listModels': return current.listModels();
       case 'listSkills': return current.listSkills();
       case 'setSkillEnabled': return current.setSkillEnabled(payload.name, payload.enabled);
@@ -227,11 +303,11 @@ ipcMain.handle('engine:invoke', async (_event, action, payload) => {
     case 'browserPluginStartChrome': return current.browserPlugins.startChrome();
     case 'browserPluginTestChromePort': return current.browserPlugins.testChromePort(payload);
     case 'browserPluginInstallChromium': return current.browserPlugins.installChromium();
-    case 'browserSessionView': return current.browserManager.view();
-    case 'browserSessionStop': return current.browserManager.close();
-    case 'browserSessionTakeover': return current.browserManager.takeover(payload?.enabled === true);
-    case 'browserSessionInput': return current.browserManager.userInput(payload);
-    case 'browserSessionSelectTab': return current.browserManager.selectTab(payload?.tab);
+    case 'browserSessionView': return current.browserScope(payload?.scope).view();
+    case 'browserSessionStop': return payload?.scope ? current.schedule().stopRun(payload.scope.replace(/^job:/, '')) : current.browserManager.close({ includeScopes: false });
+    case 'browserSessionTakeover': return current.browserScope(payload?.scope).takeover(payload?.enabled === true);
+    case 'browserSessionInput': return current.browserScope(payload?.scope).userInput(payload);
+    case 'browserSessionSelectTab': return current.browserScope(payload?.scope).selectTab(payload?.tab);
     case 'appInfo': return { version: app.getVersion(), contract: IPC_CONTRACT };
     default: throw new Error('Unknown desktop action');
   }
@@ -255,7 +331,7 @@ ipcMain.handle('app:action', (_event, action) => {
   // is on disk now, so a half-applied update finishes instead of staying stuck.
   if (action === 'relaunch') {
     app.relaunch();
-    app.exit(0);
+    app.quit(); // before-quit drains jobs and releases ownership before restart.
     return true;
   }
   return null;
@@ -277,6 +353,11 @@ if (!gotLock) {
 } else {
   // The resident filesystem-inspection worker must not outlive the app.
   app.on('will-quit', shutdownFileToolWorkers);
+  app.on('before-quit', event => {
+    if (quitting) return;
+    event.preventDefault(); if (drainingQuit) return; drainingQuit = true;
+    void Promise.resolve(engine?.close()).finally(() => { quitting = true; tray?.destroy(); tray = null; app.quit(); });
+  });
   app.on('second-instance', () => {
     if (!window) return;
     if (window.isMinimized()) window.restore();
@@ -287,16 +368,12 @@ if (!gotLock) {
   app.whenReady().then(() => {
     installMenu();
     createWindow();
+    powerMonitor.on('lock-screen', () => { if (engine?.scheduler) engine.scheduler.foregroundAvailable = false; });
+    powerMonitor.on('unlock-screen', () => { if (engine?.scheduler) engine.scheduler.foregroundAvailable = true; });
     app.on('activate', () => {
       if (BrowserWindow.getAllWindows().length === 0) createWindow();
     });
   });
 
-  app.on('window-all-closed', async () => {
-    try {
-      await engine?.close();
-    } finally {
-      app.quit();
-    }
-  });
+  app.on('window-all-closed', () => { if (quitting) app.quit(); });
 }

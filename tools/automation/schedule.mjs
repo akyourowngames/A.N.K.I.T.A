@@ -2,17 +2,25 @@ import { STATE_FILE, PROJECTS_FILE } from "../../src/core/config.mjs";
 import { RoutineStore, describeRoutine } from "../../src/automation/routines.mjs";
 import { ProjectStore, resolveProjectRef } from "../../src/memory/projects.mjs";
 import { describeCron, normalizeSchedule, parseCron } from "../../src/automation/cron.mjs";
+import { createHash } from 'node:crypto';
+import { HEARTBEAT_CRON, HEARTBEAT_PROMPT, JOB_MUTABLE_FIELDS, JOB_EXECUTION_POLICIES, SCHEDULE_TASK_GUIDANCE } from '../../src/automation/job-policy.mjs';
 
 export const name = "schedule";
 export const description =
-  "Manage scheduled routines: prompts that run on a cron schedule and are delivered to you " +
-  "(Telegram when configured, otherwise shown in the terminal). Use this to set up recurring " +
-  "briefings, reminders, or standing checks. Actions: add, list, remove, enable, disable, run.";
+  'Create and manage durable scheduled tasks. Desktop add activates a task and shows a card in this conversation; no form is needed. ' +
+  'Use update with id and patch to change it, list to inspect, enable/disable to resume/pause, remove to delete, and run ONLY when an immediate execution is requested. ' +
+  'Supply the complete task, success check and schedule. Clarify missing timing or task details first. Use kind=heartbeat for an idle proactive check. ' +
+  'Creating a job does not require browsing or element refs. Store task instructions, never snapshot refs; each worker observes fresh controls when it runs. ' +
+  'Desktop browser jobs use isolated Chromium and saved credentials; first sign-in or MFA may need foreground input. Read the returned status/nextRunAt; creation is not execution. CLI delivery uses the daemon. ' + SCHEDULE_TASK_GUIDANCE;
 
 export const parameters = {
   type: "object",
   properties: {
-    action: { type: "string", description: "add, list, remove, enable, disable, or run." },
+    action: { type: 'string', enum: ['add', 'update', 'list', 'remove', 'enable', 'disable', 'run', 'needs_input'] },
+    reason: { type: 'string', description: 'Background needs_input only: what user input is required, such as an authenticator code. Never include credentials.' },
+    kind: { type: 'string', enum: ['routine', 'heartbeat'], description: 'Desktop: heartbeat runs only while the owner is idle and suppresses uneventful reports.' },
+    description: { type: 'string', description: 'One sentence describing the task for its chat card.' },
+    requestKey: { type: 'string', description: 'Stable creation key for retries of this same request. Never reuse for another task.' },
     name: { type: "string", description: "Short label, e.g. 'Morning briefing'." },
     cron: {
       type: "string",
@@ -21,9 +29,19 @@ export const parameters = {
     },
     prompt: {
       type: "string",
-      description: "What to ask when it fires. Put every instruction here; nothing else is passed.",
+      description: SCHEDULE_TASK_GUIDANCE,
     },
-    id: { type: "string", description: "Routine id or name (for remove/enable/disable/run)." },
+    id: { type: "string", description: "Existing routine id or name (required for update/remove/enable/disable/run)." },
+    threadId: { type: 'string', description: 'Desktop owning teammate; defaults to this thread.' },
+    browserPolicy: { type: 'string', enum: ['autonomous', 'scoped'], description: 'Desktop defaults to autonomous browser use for the requested task; scoped is an explicitly restricted task.' },
+    executionPolicy: { type: 'string', enum: JOB_EXECUTION_POLICIES, description: 'Desktop regular tasks default to complete, without token/time/tool-count cutoffs. Use bounded only for limits explicitly requested by the user; heartbeats default to bounded.' },
+    allow: { type: 'object', properties: { read: { type: 'boolean' }, interact: { type: 'boolean' }, login: { type: 'boolean' }, sites: { type: 'array', items: { type: 'string' } }, mode: { type: 'string', enum: ['isolated'] } } },
+    timeoutMs: { type: 'number', description: 'Optional bounded-policy active execution deadline, milliseconds. Ignored in complete execution.' },
+    enabled: { type: 'boolean', description: 'Desktop: active by default. False creates or updates a paused job.' },
+    headless: { type: 'boolean', description: 'Desktop: background Chromium is headless by default; its live preview remains available.' },
+    onNewRequest: { type: 'string', enum: ['pause-ask', 'deny'], description: 'Scoped browser policy only: behavior for a site outside saved permissions.' },
+    budget: { type: 'object', description: 'Optional bounded-policy daily limits explicitly requested by the user. Ignored in complete execution; usage is still recorded. Do not estimate ceilings on behalf of the user.', properties: { maxRunsPerDay: { type: 'number' }, maxTokensPerDay: { type: 'number' }, maxMinutesPerDay: { type: 'number' } } },
+    patch: { type: 'object', description: 'Fields to update: name, description, cron, prompt, kind, threadId, enabled, browserPolicy, allow, timeoutMs, budget.' },
     project: {
       type: "string",
       description:
@@ -32,6 +50,12 @@ export const parameters = {
   },
   required: ["action"],
 };
+parameters.properties.patch.properties = {
+  ...Object.fromEntries(JOB_MUTABLE_FIELDS.filter(field => parameters.properties[field]).map(field => [field, parameters.properties[field]])),
+  projectId: { type: ['string', 'null'], description: 'Existing project id for this job; null clears a fixed project.' },
+  projectDetached: { type: 'boolean', description: 'True runs without inheriting the owning teammate project.' },
+};
+parameters.properties.patch.additionalProperties = false;
 
 export const needsApproval = false;
 
@@ -39,14 +63,62 @@ function store() {
   return new RoutineStore(STATE_FILE).load();
 }
 
+function desktopJob(scheduler, reference, threadId) {
+  const key = String(reference ?? '').trim().toLowerCase();
+  const exact = scheduler.list().find(job => job.id === key);
+  if (exact) return exact;
+  const matches = scheduler.list(threadId).filter(job => String(job.name || '').toLowerCase() === key);
+  if (matches.length > 1) throw new Error('Task name is ambiguous. Use its id from the scheduling list.');
+  if (!matches.length) throw new Error('Task not found in this teammate. Use its id from the scheduling list.');
+  return matches[0];
+}
+
+function updatePatch(args) {
+  if (args.patch !== undefined && (!args.patch || typeof args.patch !== 'object' || Array.isArray(args.patch))) throw new Error('Update patch must contain fields to update.');
+  const patch = { ...args.patch };
+  if (Object.keys(patch).some(field => !JOB_MUTABLE_FIELDS.includes(field))) throw new Error('Update patch contains unsupported fields. Use the scheduling schema.');
+  for (const field of JOB_MUTABLE_FIELDS) {
+    if (args[field] === undefined) continue;
+    if (patch[field] !== undefined && JSON.stringify(patch[field]) !== JSON.stringify(args[field])) throw new Error(`Conflicting update values for ${field}; supply it once in patch.`);
+    patch[field] = args[field];
+  }
+  if (!Object.keys(patch).length) throw new Error('Supply fields to update in patch. An empty update cannot change the task.');
+  return patch;
+}
+
 /** Small note appended to results so the tag is never silent. */
 export function tagNote(projectId) {
   return projectId ? `\nAttached to project "${projectId}".` : "\nNot attached to any project.";
 }
 
-export function run(args = {}, ctx = {}) {
-  const s = store();
+export async function run(args = {}, ctx = {}) {
   const action = String(args.action || "list").toLowerCase();
+  if (ctx.backgroundJob) {
+    if (action === 'needs_input' && ctx.requireForeground) { ctx.requireForeground(String(args.reason || 'This task needs foreground input.')); return JSON.stringify({ action, status: 'needs-input' }); }
+    if (action !== 'list') return 'Error: Background workers cannot change schedules. Use needs_input when manual sign-in or verification is required.';
+  }
+  if (ctx.scheduler) {
+    const scheduler = ctx.scheduler;
+    try {
+      if (action === 'list') return JSON.stringify(scheduler.list(ctx.scheduleThreadId));
+      if (action === 'add') {
+        const project = resolveProjectRef(new ProjectStore(ctx.projectsFile || PROJECTS_FILE).load(), args.project, ctx.projectId);
+        if (!project.ok) return `Error: ${project.error}`;
+        const input = { ...args, threadId: args.threadId || ctx.scheduleThreadId, browserPolicy: args.browserPolicy || 'autonomous',
+          ...(args.project !== undefined || ctx.projectId ? { projectId: project.projectId, projectDetached: String(args.project || '').trim().toLowerCase() === 'none' } : {}),
+          cron: args.cron || (args.kind === 'heartbeat' ? HEARTBEAT_CRON : undefined), prompt: args.prompt || (args.kind === 'heartbeat' ? HEARTBEAT_PROMPT : undefined) };
+        input.requestKey ||= createHash('sha256').update(JSON.stringify([input.threadId, input.name, normalizeSchedule(input.cron), input.prompt, input.kind || 'routine'])).digest('hex');
+        const routine = scheduler.add(input);
+        return JSON.stringify({ action, job: routine });
+      }
+      if (action === 'update') return JSON.stringify({ action, job: scheduler.update(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id, updatePatch(args)) });
+      if (action === 'remove') return JSON.stringify({ action, job: scheduler.remove(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id) });
+      if (action === 'enable' || action === 'disable') return JSON.stringify({ action, job: scheduler.enable(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id, action === 'enable') });
+      if (action === 'run') { const id = desktopJob(scheduler, args.id, ctx.scheduleThreadId).id; return JSON.stringify({ action, ...await scheduler.runNow(id), job: scheduler.list().find(job => job.id === id) }); }
+      return 'Error: unknown schedule action.';
+    } catch (error) { return `Error: ${error.message}`; }
+  }
+  const s = store();
 
   if (action === "add") {
     if (!args.cron) return "Error: 'cron' is required to add a routine.";

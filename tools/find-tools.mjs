@@ -1,4 +1,5 @@
 import { CATEGORIES, CATEGORIES as ALL, findCategory } from "./catalog.mjs";
+import { managedMcpSummaries } from '../src/integrations/browser-routing.mjs';
 
 export const name = "find_tools";
 export const description =
@@ -95,7 +96,9 @@ export function run(args = {}, ctx = {}) {
   const query = String(args.query ?? "").trim();
   const skillsEnabled = ctx.skillsEnabled !== false;
   // Only held-back servers need loading; a small one is already in the request.
-  const held = (ctx.mcp?.summaries() || []).filter((s) => s.deferred);
+  const connected = ctx.mcp?.summaries() || [];
+  const available = ctx.browserManager ? managedMcpSummaries(connected) : connected;
+  const held = available.filter((s) => s.deferred);
 
   if (!query) {
     return `Tell me what you want to do and I will load the right tools.\nGroups you can load:\n${catalogue(held, skillsEnabled)}`;
@@ -154,7 +157,7 @@ export function run(args = {}, ctx = {}) {
     summaries.push(`  ${id}: MCP server - ${s ? s.tools.length : "?"} tool(s)`);
   }
 
-  const fromMcp = ctx.mcp?.summaries().filter((s) => servers.includes(s.id)) || [];
+  const fromMcp = available.filter((s) => servers.includes(s.id));
   const mcpTools = fromMcp.flatMap((s) => s.tools.map((t) => `mcp__${s.id}__${t}`));
 
   return (

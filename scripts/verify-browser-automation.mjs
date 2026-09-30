@@ -4,9 +4,8 @@ import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
-import { resolveNpxBin } from '../src/integrations/mcp-client.mjs';
 import { McpManager } from '../src/integrations/mcp-manager.mjs';
-import { BrowserPluginStore, CHROME_MCP_ID, CHROME_MCP_VERSION } from '../src/integrations/browser-plugins.mjs';
+import { BrowserPluginStore, CHROME_MCP_ID, CHROME_MCP_VERSION, chromeMcpCommand } from '../src/integrations/browser-plugins.mjs';
 import { BrowserSessionManager } from '../tools/browser/session.mjs';
 import { PlaywrightBrowserAdapter } from '../tools/browser/playwright.mjs';
 import { ChromeBrowserAdapter } from '../tools/browser/chrome.mjs';
@@ -50,16 +49,15 @@ await new Promise(resolve => server.listen(0, TEST_HOST, resolve));
 const url = `http://${TEST_HOST}:${server.address().port}`;
 const ctx = { config: { allowPrivateHosts: true }, cwd: directory };
 try {
-  const entry = resolveNpxBin(`chrome-devtools-mcp@${CHROME_MCP_VERSION}`) || resolveNpxBin('chrome-devtools-mcp');
-  if (!entry) throw new Error('No cached Chrome MCP server is available; install the configured version through Plugins first.');
+  const entry = chromeMcpCommand({ connection: 'profile' }).args[0];
   let manifest;
   for (let folder = path.dirname(entry); folder !== path.dirname(folder); folder = path.dirname(folder)) {
     try { const candidate = JSON.parse(fs.readFileSync(path.join(folder, 'package.json'), 'utf8')); if (candidate.name === 'chrome-devtools-mcp') { manifest = candidate; break; } } catch {}
   }
-  console.log(`Live Chrome MCP version=${manifest?.version}; configured=${CHROME_MCP_VERSION}; cached executable only`);
+  console.log(`Live Chrome MCP version=${manifest?.version}; configured=${CHROME_MCP_VERSION}; bundled executable only`);
   const chrome = new ChromeBrowserAdapter(mcp, { ensureConnected: async context => {
     if (context.reconnect) await mcp.disconnect(CHROME_MCP_ID);
-    await mcp.connect({ id: CHROME_MCP_ID, command: process.execPath, args: [entry, '--headless', `--executablePath=${chromium.executablePath()}`, `--user-data-dir=${path.join(directory, 'chrome')}`], signal: context.signal, initTimeoutMs: CONNECT_TIMEOUT_MS, requestTimeoutMs: REQUEST_TIMEOUT_MS, hidden: true });
+    await mcp.connect({ id: CHROME_MCP_ID, command: process.execPath, args: [entry, '--no-usage-statistics', '--no-performance-crux', '--headless', `--executablePath=${chromium.executablePath()}`, `--user-data-dir=${path.join(directory, 'chrome')}`], signal: context.signal, initTimeoutMs: CONNECT_TIMEOUT_MS, requestTimeoutMs: REQUEST_TIMEOUT_MS, hidden: true });
   } });
   manager = new BrowserSessionManager({ store, isolatedFactory: () => playwright, chromeFactory: () => chrome });
   for (const [mode, adapter] of [['isolated', playwright], ['local', chrome]]) {

@@ -5,12 +5,15 @@ import { ProjectStore } from '../memory/projects.mjs';
 import { McpStore } from "../integrations/mcp-store.mjs";
 import { ComposioStore } from "../integrations/composio-store.mjs";
 import { Agent } from "../core/agent.mjs";
+import { TelegramProgress, sendTurnArtifacts, isCancelMessage } from '../channels/telegram-progress.mjs';
+import { UNSUPPORTED_MEDIA_MESSAGE } from '../channels/telegram.mjs';
 import { sanitizeMessages } from "../core/history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
 import { numericDelta } from "./routines.mjs";
 import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
 import { recordTurn, saveSession } from '../core/sessions.mjs';
+import { redact } from '../security/secret-scrubber.mjs';
 import {
   transcribeGroq,
   synthesizeEdge,
@@ -75,8 +78,14 @@ export class Daemon {
     checker = checkWatch,
     mcp = null,
     now = () => new Date(),
+    routineExecutor = null,
+    routineSettled = null,
+    routinesOnly = false,
   }) {
     this.store = store;
+    this.routineExecutor = routineExecutor;
+    this.routineSettled = routineSettled;
+    this.routinesOnly = routinesOnly;
     this.bot = bot?.enabled ? bot : null;
     this.config = config;
     this.client = client;
@@ -92,6 +101,7 @@ export class Daemon {
     this.logFile = logFile;
     // Tee every line to a UTF-8 log file, and to the terminal when one exists.
     this.log = (message) => {
+      message = redact(message);
       log(message);
       if (!this.logFile) return;
       try {
@@ -111,6 +121,7 @@ export class Daemon {
     this.offset = store.telegramOffset || 0;
     this.offsetReady = this.offset > 0;
     this.chatAgents = new Map();
+    this.chatTurns = new Map();
     // Per-chat work chains: the poll loop must stay free to receive an
     // approval reply while an agent turn is parked waiting for one.
     this.chains = new Map();
@@ -138,6 +149,7 @@ export class Daemon {
   stop() {
     this.stopping = true;
     this.wake?.();
+    for (const active of this.chatTurns.values()) { active.cancelled = true; void active.progress.stop(); active.agent.cancel?.(); }
     // Queued turns have no work to drain. Settle their permits as cancelled;
     // active turns keep their slots until their own finally blocks release.
     for (const resolve of this.waiting.splice(0)) resolve(false);
@@ -299,6 +311,10 @@ export class Daemon {
   }
 
   async executeRoutine(routine) {
+    if (this.routineExecutor) {
+      try { return await this.routineExecutor(routine); }
+      finally { this.runningRoutines.delete(routine.id); this.stats.routinesRun++; this.routineSettled?.(routine); }
+    }
     let status = "ok";
     let summary = "";
     try {
@@ -459,18 +475,22 @@ export class Daemon {
     if (this.stopping) return;
     const agent = this.chatAgent(job.chatId);
     let prompt = job.text || "";
+    const progress = new TelegramProgress(this.bot, job);
+    const active = { agent, progress, cancelled: false };
+    this.chatTurns.set(String(job.chatId), active);
+    const messageStart = agent.messages?.length || 0;
     try {
       if (job.kind === "voice") {
         if (voiceRuntimeCheck()) throw new Error(voiceRuntimeCheck());
         if (!this.config.groqApiKey) throw new Error("set GROQ_API_KEY to transcribe voice notes");
         const ogg = await this.bot.download(job.fileId);
-        if (this.stopping) return;
+        if (this.stopping || active.cancelled) return;
         const wav = await convertAudio(ogg, { to: "wav" });
-        if (this.stopping) return;
+        if (this.stopping || active.cancelled) return;
         const wavPath = tmpVoiceFile('wav');
         try {
           await fs.promises.writeFile(wavPath, wav);
-          if (this.stopping) return;
+          if (this.stopping || active.cancelled) return;
           prompt = await transcribeGroq({
             apiKey: this.config.groqApiKey,
             model: this.config.sttModel,
@@ -481,29 +501,41 @@ export class Daemon {
             await fs.promises.unlink(wavPath);
           } catch {}
         }
-        if (this.stopping) return;
+        if (this.stopping || active.cancelled) return;
         if (!prompt) {
           await this.bot.send(job.chatId, "I could not make out that voice note.");
           return;
         }
       }
 
-      await this.bot.sendTyping(job.chatId);
-      if (this.stopping) return;
-      const reply = await agent.send(prompt, {});
+      await progress.start();
+      if (this.stopping || active.cancelled) return;
+      const reply = await agent.send(prompt, {
+        onToolCall: call => progress.beat({ type: 'tool-call', name: call.function?.name }),
+        onToolResult: (call, result) => progress.beat({ type: 'tool-result', name: call.function?.name, isError: /^Error\b/i.test(String(result)) }),
+      });
+      await progress.stop();
+      if (active.cancelled || this.stopping) return;
       const text = String(reply || "").trim() || "(no reply)";
-      await this.bot.send(job.chatId, text, { replyTo: job.messageId });
+      await this.bot.send(job.chatId, text, { replyTo: job.messageId, messageThreadId: job.messageThreadId });
+      if (agent.messages && agent.cwd) await sendTurnArtifacts(this.bot, job, agent.cwd, agent.messages.slice(messageStart), () => active.cancelled || this.stopping);
 
       if (this.config.telegramVoiceReply) {
         await this.speakBack(job.chatId, text);
       }
+      if (!active.cancelled) await progress.react('complete');
     } catch (err) {
+      await progress.stop();
+      if (active.cancelled || this.stopping) return;
       this.stats.errors++;
       this.log(`dm ${job.chatId} failed: ${err.message}`);
       try {
         await this.bot.send(job.chatId, `error: ${err.message}`);
       } catch {}
+      await progress.react('failed');
     } finally {
+      await progress.stop();
+      if (this.chatTurns.get(String(job.chatId)) === active) this.chatTurns.delete(String(job.chatId));
       this.stats.messagesHandled++;
       this.saveChat(job.chatId);
     }
@@ -550,7 +582,7 @@ export class Daemon {
       return 0;
     }
 
-    const { jobs, denied, offset, error } = await this.bot.poll(this.offset);
+    const { jobs, denied, unsupported, offset, error } = await this.bot.poll(this.offset);
     if (this.stopping) return 0;
     if (error) {
       this.log(`telegram poll: ${error}`);
@@ -569,6 +601,7 @@ export class Daemon {
       } catch {}
     }
     for (const job of jobs) {
+      if (isCancelMessage(job)) { await this.cancelChatJob(job); continue; }
       if (this.resolvePending(job)) continue;
       // A stray "y" with nothing pending is an answer to a question that has
       // already expired; say so instead of asking the model what it meant.
@@ -580,7 +613,17 @@ export class Daemon {
       }
       this.dispatch(job);
     }
+    for (const job of unsupported || []) await this.bot.send(job.chatId, UNSUPPORTED_MEDIA_MESSAGE, { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
     return jobs.length;
+  }
+
+  async cancelChatJob(job) {
+    const active = this.chatTurns.get(String(job.chatId));
+    if (!active) { await this.bot.send(job.chatId, 'Nothing is running in this chat.', { replyTo: job.messageId }).catch(() => {}); return; }
+    active.cancelled = true; active.agent.cancel?.();
+    this.pending.get(String(job.chatId))?.settle('no');
+    await active.progress.stop(); await active.progress.react('failed');
+    await this.bot.send(job.chatId, 'Stopped this task.', { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
   }
 
   /**
@@ -679,6 +722,7 @@ export class Daemon {
     } catch (err) {
       this.log(`could not reload state: ${err.message}`);
     }
+    if (this.routinesOnly) return { routines: this.dispatchRoutines(), checked: 0, messages: 0 };
     // Bring MCP connections in line with the store, so `/mcp add` in another
     // window reaches a running daemon without a restart. Same reasoning as
     // reloading routines and watches above.

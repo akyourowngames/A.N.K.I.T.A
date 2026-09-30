@@ -209,6 +209,11 @@ export function Composer({ threadId, name, messages, running, models, model, onM
 
   useEffect(() => { if (input.current) { input.current.style.height = 'auto'; input.current.style.height = `${Math.min(input.current.scrollHeight, 170)}px`; } }, [text]);
   useEffect(() => { setText(''); setAttachments([]); setNotice(''); }, [threadId]);
+  useEffect(() => {
+    const compose = (event: Event) => { setText(String((event as CustomEvent).detail || '')); input.current?.focus(); };
+    window.addEventListener('ankita:compose', compose);
+    return () => window.removeEventListener('ankita:compose', compose);
+  }, []);
   // Ctrl/Cmd+U opens the file picker. It is ignored while typing in a field
   // elsewhere in the app, but the composer's own message box is exactly where
   // the shortcut is expected to work.

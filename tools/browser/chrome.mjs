@@ -5,7 +5,7 @@ import path from 'node:path';
 import { CHROME_MCP_ID } from '../../src/integrations/browser-plugins.mjs';
 import { guardBrowserUrl, screenshotFile } from './playwright.mjs';
 import { waitForBrowser } from './pending.mjs';
-import { BrowserReferenceError, CHROME_REF_PATTERN, INTERACTIVE_ROLES, SNAPSHOT_LIMITS, browserFields, recoverBrowserReference, withBrowserSnapshot } from './refs.mjs';
+import { BrowserReferenceError, CHROME_REF_PATTERN, CREDENTIAL_ATTRIBUTE, FILL_NO_CHANGE_TEXT, INTERACTIVE_ROLES, SNAPSHOT_LIMITS, assertFillControl, browserFields, formFillFailure, inspectFillControl, recoverBrowserReference, withBrowserSnapshot } from './refs.mjs';
 import { BROWSER_SCREENSHOT_TYPE } from './screenshots.mjs';
 
 
@@ -20,10 +20,16 @@ const FOCUS_KEY_TARGET = '(element) => { element.focus(); return element.getRoot
 // MCP evaluate_script returns its JSON value inside a fenced response.
 const FOCUS_CONFIRMED = /```json\s*true\s*```/;
 const KEY_TARGET_FOCUS_ERROR = 'Browser target could not receive keyboard focus; inspect the current controls before continuing.';
+// Fixed read-only function, UID-bound by MCP; inspect every target in one round trip.
+const INSPECT_FILL_TARGETS = `(...elements) => elements.map(element => (${inspectFillControl.toString()})(element, ${JSON.stringify(CREDENTIAL_ATTRIBUTE)}, true))`;
+const MCP_JSON_RESULT = /```json\s*([\s\S]*?)\s*```/; // MCP's documented JSON result envelope.
+const INTERRUPTED_FILL_RESULT = /\bopened a dialog\b|\bremaining elements were not filled\b/i; // Upstream can report partial writes without throwing.
+const INTERRUPTED_FILL_MESSAGE = 'Browser action was interrupted by a page dialog. Some fields may have changed; inspect the page or take control. Do not repeat the action.';
 
 /** Uses the existing MCP transport; never opens a CDP socket from Ankita. */
 export class ChromeBrowserAdapter {
-  constructor(mcp, { ensureConnected } = {}) {
+  constructor(mcp, { ensureConnected, ownedTabs = false } = {}) {
+    this.ownedTabs = ownedTabs ? new Set() : null;
     this.mcp = mcp;
     this.ensureConnected = ensureConnected;
     this.pageId = null;
@@ -64,11 +70,13 @@ export class ChromeBrowserAdapter {
         active: Number(match[1]) === this.pageId || (!this.pageId && /\[selected\]/.test(titled ? match[4] : match[3])),
       });
     }
-    this.cachedTabs = tabs;
-    return tabs;
+    this.allTabs = tabs;
+    this.cachedTabs = this.ownedTabs ? tabs.filter(tab => this.ownedTabs.has(Number(tab.id))) : tabs;
+    return this.cachedTabs;
   }
 
   async #page(tab, ctx = {}) {
+    if (this.ownedTabs && tab != null && !this.ownedTabs.has(Number(tab))) throw new Error('Tab is not owned by this browser job');
     if (tab != null) this.pageId = Number(tab);
     if (!Number.isInteger(this.pageId)) {
       const tabs = this.cachedTabs.length ? this.cachedTabs : await this.tabs(ctx);
@@ -102,13 +110,25 @@ export class ChromeBrowserAdapter {
     return uid;
   }
 
+  async #validateFill(fields, pageId, ctx) {
+    const uids = fields.map(field => this.#uid(field.ref, pageId));
+    const result = await this.#call('evaluate_script', { pageId, function: INSPECT_FILL_TARGETS, args: uids }, ctx);
+    let controls;
+    try { controls = JSON.parse(MCP_JSON_RESULT.exec(result)?.[1]); } catch {}
+    if (!Array.isArray(controls) || controls.length !== fields.length || controls.some(control => typeof control?.tag !== 'string' || !Object.hasOwn(control, 'issue'))) throw new Error(`Chrome could not validate the fill targets. ${FILL_NO_CHANGE_TEXT}`);
+    controls.forEach((control, index) => assertFillControl(control, fields[index], CHROME_REF_PATTERN, ctx?.backgroundJob));
+    return uids;
+  }
+
   #actionResult(receipt, result, pageId, ctx) {
+    if (INTERRUPTED_FILL_RESULT.test(result)) throw new Error(INTERRUPTED_FILL_MESSAGE);
     this.refs.clear(); this.epoch++;
     if (/uid=\S+/.test(result)) return `${receipt}\nCurrent snapshot:\n${this.#snapshotResult(result, pageId)}`;
     return withBrowserSnapshot(receipt, () => this.#runOnce({ action: 'snapshot', tab: String(pageId) }, ctx));
   }
 
   async selectTab(tab) {
+    if (this.ownedTabs && !this.ownedTabs.has(Number(tab))) throw new Error('Tab is not owned by this browser job');
     this.pageId = Number(tab);
     await this.#call('select_page', { pageId: this.pageId, bringToFront: true });
     this.refs.clear(); this.epoch++;
@@ -157,11 +177,14 @@ export class ChromeBrowserAdapter {
     const action = args.action;
     if (action === 'open') {
       const url = await guardBrowserUrl(args.url, ctx);
+      const before = new Set((this.allTabs || []).map(tab => tab.id));
       const result = await call('new_page', { url });
       this.epoch++;
       this.refs.clear();
-      const tabs = await this.tabs(ctx);
-      const tab = tabs.find(item => item.url === url) || tabs.at(-1);
+      await this.tabs(ctx);
+      const tab = this.allTabs.find(item => !before.has(item.id) && item.url === url) || this.allTabs.find(item => !before.has(item.id));
+      if (this.ownedTabs && !tab) throw new Error('Chrome did not return a newly created job tab');
+      if (tab && this.ownedTabs) { this.ownedTabs.add(Number(tab.id)); await this.tabs(ctx); }
       if (tab) this.pageId = Number(tab.id);
       return withBrowserSnapshot(result, () => this.#runOnce({ action: 'snapshot' }, ctx));
     }
@@ -173,8 +196,11 @@ export class ChromeBrowserAdapter {
     }
     if (action === 'fill_form') {
       const fields = browserFields(args.fields);
-      const elements = fields.map(field => ({ uid: this.#uid(field.ref, pageId), value: field.text }));
-      const result = await call('fill_form', { pageId, elements, includeSnapshot: true });
+      const uids = await this.#validateFill(fields, pageId, ctx);
+      const elements = fields.map((field, index) => ({ uid: uids[index], value: field.text }));
+      let result;
+      try { result = await call('fill_form', { pageId, elements, includeSnapshot: true }); }
+      catch (error) { throw formFillFailure(error, true); }
       return this.#actionResult(`Filled ${fields.length} fields.`, result, pageId, ctx);
     }
     if (action === 'act') {
@@ -184,8 +210,12 @@ export class ChromeBrowserAdapter {
       let result;
       const act = (name, values) => call(name, { pageId, ...values, includeSnapshot: true });
       if (op === 'click') result = await act('click', { uid });
-      else if (op === 'fill' || op === 'select') result = await act('fill', { uid, value: String(args.text ?? '') });
+      else if (op === 'fill' || op === 'select') {
+        await this.#validateFill([{ ref, text: String(args.text ?? '') }], pageId, ctx);
+        result = await act('fill', { uid, value: String(args.text ?? '') });
+      }
       else if (op === 'type') {
+        if (ctx.backgroundJob) await this.#validateFill([{ ref, text: String(args.text ?? '') }], pageId, ctx);
         await call('click', { pageId, uid });
         // type_text has no includeSnapshot parameter; read the next refs only
         // after this keyboard mutation succeeds, without replaying the text.
@@ -224,6 +254,7 @@ export class ChromeBrowserAdapter {
     }
     if (action === 'close') {
       await call('close_page', { pageId });
+      this.ownedTabs?.delete(pageId);
       this.pageId = null;
       this.refs.clear();
       this.epoch++;
@@ -259,6 +290,11 @@ export class ChromeBrowserAdapter {
   invalidate() { this.refs.clear(); this.epoch++; }
 
   async close() {
+    if (this.ownedTabs) {
+      for (const pageId of this.ownedTabs) await this.#call('close_page', { pageId }).catch(() => {});
+      this.ownedTabs.clear(); this.invalidate(); this.pageId = null; this.cachedTabs = [];
+      return;
+    }
     this.refs.clear();
     this.pageId = null;
     this.cachedTabs = [];

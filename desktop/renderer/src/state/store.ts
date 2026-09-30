@@ -1,9 +1,10 @@
-import type { ChatMessage, EngineEvent, Model, Teammate } from '../../../shared/wire';
+import type { ChatMessage, EngineEvent, Model, Teammate, Routine } from '../../../shared/wire';
 import type { Compat } from '../../../shared/version.mjs';
 
 export type Approval = Extract<EngineEvent, { type: 'approval-request' }>;
 export type Usage = { prompt_tokens: number; completion_tokens: number; estimated_cost: number };
 export type State = {
+  jobs: Routine[];
   phase: string;
   chrome: string;
   teammates: Teammate[];
@@ -22,13 +23,14 @@ export type State = {
 };
 
 export const initialState: State = {
+  jobs: [],
   phase: 'starting', chrome: 'custom', teammates: [], models: [], settings: null,
   selectedId: null, threads: {}, running: {}, unread: {}, usage: {}, approvals: [],
   deviceCode: null, error: null, compat: null, compatDismissed: false,
 };
 
 type Action =
-  | { type: 'bootstrap'; teammates: Teammate[]; models: Model[]; settings: NonNullable<State['settings']>; chrome: string; selectedId?: string | null }
+  | { type: 'bootstrap'; teammates: Teammate[]; models: Model[]; settings: NonNullable<State['settings']>; chrome: string; selectedId?: string | null; jobs?: Routine[] }
   | { type: 'select'; id: string }
   | { type: 'thread-loaded'; id: string; messages: ChatMessage[] }
   | { type: 'teammates-loaded'; teammates: Teammate[] }
@@ -50,7 +52,7 @@ function keepSelection(state: State, teammates: Teammate[]): string | null {
 
 export function reducer(state: State, action: Action): State {
   if (action.type === 'bootstrap') return {
-    ...state, phase: 'ready', teammates: action.teammates, models: action.models,
+    ...state, phase: 'ready', teammates: action.teammates, models: action.models, jobs: action.jobs || state.jobs,
     settings: action.settings, chrome: action.chrome,
     selectedId: action.selectedId && action.teammates.some(t => t.id === action.selectedId)
       ? action.selectedId
@@ -71,11 +73,18 @@ export function reducer(state: State, action: Action): State {
   if (action.type === 'compat-dismissed') return { ...state, compatDismissed: true };
 
   const event = action.event;
+  if (event.type === 'schedule-changed') return { ...state, jobs: event.jobs };
+  if (event.type === 'scheduler-error' || event.type === 'scheduler-stopped') return { ...state, error: event.message };
+  if (event.type === 'routine-result') {
+    const next = patchThread(state, event.threadId, messages => messages.map(message =>
+      message.role === 'assistant' && message.id === event.messageId ? { ...message, content: event.content, job: event } : message));
+    return { ...next, unread: { ...state.unread, [event.threadId]: state.selectedId !== event.threadId } };
+  }
   if (event.type === 'status') return { ...state, phase: event.phase, deviceCode: event.phase === 'ready' ? null : state.deviceCode };
   if (event.type === 'settings-updated') return { ...state, settings: event.settings, models: event.models };
   if (event.type === 'auth-device-code') return { ...state, deviceCode: event };
   if (event.type === 'error') return { ...state, error: event.message, phase: state.phase === 'starting' ? 'error' : state.phase };
-  if (event.type === 'approval-request') return { ...state, approvals: [...state.approvals, event] };
+  if (event.type === 'approval-request') return event.routineId ? state : { ...state, approvals: [...state.approvals, event] };
   if (event.type === 'approval-resolved') return { ...state, approvals: state.approvals.filter(item => item.requestId !== event.requestId) };
   if (event.type === 'thread-cleared') return {
     ...state, threads: { ...state.threads, [event.threadId]: [] },
@@ -84,7 +93,7 @@ export function reducer(state: State, action: Action): State {
   if (event.type === 'turn-start') return {
     ...state,
     running: { ...state.running, [event.threadId]: true },
-    threads: { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: `user-${event.turnId}`, role: 'user', content: event.text, attachments: event.attachments }] },
+    threads: event.source === 'routine' ? state.threads : { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: `user-${event.turnId}`, role: 'user', content: event.text, attachments: event.attachments }] },
   };
   if (event.type === 'turn-end') return {
     ...state,

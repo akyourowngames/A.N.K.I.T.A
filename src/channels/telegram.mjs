@@ -7,6 +7,16 @@
  */
 
 export const TG_LIMIT = 4096;
+const TELEGRAM_API_BASE = 'https://api.telegram.org'; // Official Bot API endpoint; injectable for transport round-trip tests.
+const UPLOAD_TIMEOUT_MS = 60_000; // Milliseconds: bounded multipart uploads, shared with voice.
+const CAPTION_LIMIT = 1024; // Telegram caption character limit.
+export const UNSUPPORTED_MEDIA_MESSAGE = 'Receiving photos, documents and videos is not supported yet. Send text or a voice note; I can send generated files back to you.';
+
+export function unsupportedMediaJob(update) {
+  const message = update?.message || update?.edited_message || update?.channel_post;
+  if (message?.chat?.id == null || ![message.photo, message.document, message.video].some(Boolean) || updateToJob(update)) return null;
+  return { chatId: message.chat.id, messageId: message.message_id, ...(message.message_thread_id ? { messageThreadId: message.message_thread_id } : {}) };
+}
 
 /** Splits text into Telegram-sized chunks on paragraph, line, then word bounds. */
 export function splitMessage(text, limit = TG_LIMIT) {
@@ -54,6 +64,7 @@ export function updateToJob(update) {
       messageId: message.message_id,
     };
   }
+  if (message.photo || message.document || message.video) return null;
   if (typeof message.caption === "string" && message.caption.trim()) {
     return { chatId, from, kind: "text", text: message.caption.trim(), messageId: message.message_id };
   }
@@ -69,12 +80,13 @@ export function parseChatIds(value) {
 }
 
 export class TelegramBot {
-  constructor({ token = "", allowedChatIds = [], ownerChatId = null, timeoutMs = 45000 } = {}) {
+  constructor({ token = "", allowedChatIds = [], ownerChatId = null, timeoutMs = 45000, apiBase = TELEGRAM_API_BASE } = {}) {
     this.token = String(token || "").trim();
     this.allowed = new Set(allowedChatIds.map((id) => String(id)));
     this.ownerChatId = ownerChatId ? String(ownerChatId) : null;
     this.timeoutMs = timeoutMs;
     this.me = null;
+    this.apiBase = apiBase.replace(/\/$/, '');
   }
 
   get enabled() {
@@ -96,10 +108,11 @@ export class TelegramBot {
       else signal.addEventListener("abort", onAbort, { once: true });
     }
     try {
-      const res = await fetch(`https://api.telegram.org/bot${this.token}/${method}`, {
+      const multipart = params instanceof FormData;
+      const res = await fetch(`${this.apiBase}/bot${this.token}/${method}`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(params),
+        ...(multipart ? {} : { headers: { "Content-Type": "application/json" } }),
+        body: multipart ? params : JSON.stringify(params),
         signal: ctrl.signal,
       });
       const data = await res.json().catch(() => ({}));
@@ -129,20 +142,21 @@ export class TelegramBot {
     const jobs = [];
     let next = offset;
     const denied = [];
+    const unsupported = [];
     for (const update of updates || []) {
       next = Math.max(next, (update.update_id || 0) + 1);
       const job = updateToJob(update);
-      if (!job) continue;
+      if (!job) { const media = unsupportedMediaJob(update); if (media && this.isAllowed(media.chatId)) unsupported.push(media); continue; }
       if (!this.isAllowed(job.chatId)) {
         denied.push(job);
         continue;
       }
       jobs.push(job);
     }
-    return { jobs, denied, offset: next, error: null };
+    return { jobs, denied, unsupported, offset: next, error: null };
   }
 
-  async send(chatId, text, { replyTo = null } = {}) {
+  async send(chatId, text, { replyTo = null, messageThreadId = null } = {}) {
     const parts = splitMessage(text);
     const sent = [];
     for (const part of parts) {
@@ -152,30 +166,30 @@ export class TelegramBot {
           text: part,
           disable_web_page_preview: true,
           ...(replyTo ? { reply_to_message_id: replyTo, allow_sending_without_reply: true } : {}),
+          ...(messageThreadId ? { message_thread_id: messageThreadId } : {}),
         })
       );
     }
     return sent;
   }
 
-  async sendVoice(chatId, oggBuffer, { caption = "" } = {}) {
+  async upload(method, field, chatId, bytes, { caption = '', filename = field, mime = 'application/octet-stream', replyTo = null, messageThreadId = null } = {}) {
     const form = new FormData();
     form.append("chat_id", String(chatId));
-    if (caption) form.append("caption", caption.slice(0, 1000));
-    form.append("voice", new Blob([oggBuffer], { type: "audio/ogg" }), "reply.ogg");
-    const res = await fetch(`https://api.telegram.org/bot${this.token}/sendVoice`, {
-      method: "POST",
-      body: form,
-      signal: AbortSignal.timeout(60000),
-    });
-    const data = await res.json().catch(() => ({}));
-    if (!res.ok || data.ok === false) throw new Error(`telegram sendVoice failed: ${data.description || res.status}`);
-    return data.result;
+    if (caption) form.append('caption', caption.slice(0, CAPTION_LIMIT));
+    if (replyTo) form.append('reply_parameters', JSON.stringify({ message_id: replyTo, allow_sending_without_reply: true }));
+    if (messageThreadId) form.append('message_thread_id', String(messageThreadId));
+    form.append(field, new Blob([bytes], { type: mime }), filename);
+    return this.call(method, form, { timeoutMs: UPLOAD_TIMEOUT_MS });
   }
+  sendVoice(chatId, bytes, options = {}) { return this.upload('sendVoice', 'voice', chatId, bytes, { filename: 'reply.ogg', mime: 'audio/ogg', ...options }); }
+  sendPhoto(chatId, bytes, options = {}) { return this.upload('sendPhoto', 'photo', chatId, bytes, options); }
+  sendDocument(chatId, bytes, options = {}) { return this.upload('sendDocument', 'document', chatId, bytes, options); }
+  react(chatId, messageId, emoji) { return this.call('setMessageReaction', { chat_id: chatId, message_id: messageId, reaction: [{ type: 'emoji', emoji }] }); }
 
-  async sendTyping(chatId) {
+  async sendTyping(chatId, action = 'typing', messageThreadId = null) {
     try {
-      await this.call("sendChatAction", { chat_id: chatId, action: "typing" }, { timeoutMs: 10000 });
+      await this.call("sendChatAction", { chat_id: chatId, action, ...(messageThreadId ? { message_thread_id: messageThreadId } : {}) }, { timeoutMs: 10000 });
     } catch {}
   }
 

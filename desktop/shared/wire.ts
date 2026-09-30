@@ -7,6 +7,7 @@ export type Teammate = {
 export type Model = { id: string; name?: string; vendor?: string; context?: number; tools?: boolean };
 export type DesktopSkill = { name: string; description: string; suggestedTools: string; body: string; enabled: boolean };
 export type DesktopPreferences = {
+  secretScrubbing?: boolean; secretWarningSeen?: boolean;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
   imageApiBase: string; imageModel: string;
@@ -15,6 +16,7 @@ export type DesktopPreferences = {
   hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
 export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
+  secretScrubbing?: boolean; secretWarningSeen?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
   imageApiKey?: string; unsplashAccessKey?: string; pixabayApiKey?: string;
 };
@@ -43,8 +45,15 @@ export type PluginsCatalogPage = { cards: PluginCard[]; nextCursor: string | nul
 export type BrowserPlugin = { id: string; name: string; description: string; mode: 'isolated' | 'local'; enabled: boolean; ready: boolean; reason: string; allowedSites: string[]; blockedSites: string[]; headless?: boolean; connection?: 'profile' | 'port' | 'active'; port?: number };
 export type BrowserPluginsOverview = { isolated: BrowserPlugin; local: BrowserPlugin };
 export type BrowserSessionView = { mode: 'isolated' | 'local' | 'external' | null; status: string; step: string; tabs: { id: string; url: string; title: string; active: boolean }[]; screenshot: string | null; notice?: import('../../src/integrations/browser-errors.mjs').BrowserNotice | null };
+export type SecureStoreRecord = { id: string; website: string; username: string; updatedAt: string; hasPassword: boolean };
+export type SecureStoreRequest = { type: 'secure-store-request'; requestId: string; threadId: string; callId: string; website: string; username: string; canSave: boolean; message: string };
+export type SecureStoreStatus = { type: 'secure-store-status'; threadId: string; callId: string; website: string; username: string; state: string; message: string };
+export type RoutineAllow = { read: boolean; interact: boolean; login: boolean; sites: string[]; mode: 'isolated' | 'local' };
+export type RoutineBudget = { maxRunsPerDay: number; maxTokensPerDay: number; maxMinutesPerDay: number };
+export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string };
+export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null };
 export type ChatMessage =
-  | { id: string; role: 'user' | 'assistant'; content: string; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
+  | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
 
 export type MenuCommand = 'new-teammate' | 'find' | 'toggle-sidebar' | 'settings' | 'about';
@@ -60,6 +69,17 @@ export type UpdateEvent =
   | { type: 'error'; message: string };
 
 export type EngineEvent =
+  | { type: 'secret-notice'; message: string }
+  | { type: 'schedule-changed'; jobs: Routine[] }
+  | { type: 'routine-draft'; threadId: string; routineId: string }
+  | { type: 'routine-run-start' | 'routine-run-step' | 'routine-run-end' | 'routine-queued'; threadId: string; routineId: string; runId: string; scope?: string; step?: number; detail?: string; status?: string }
+  | ({ type: 'routine-result'; messageId: string; content: string } & JobReceipt)
+  | { type: 'routine-failed'; threadId?: string; routineId: string; status: string; text?: string }
+  | { type: 'routine-approval-ended'; requestId: string; routineId: string; threadId: string; outcome: string }
+  | { type: 'scheduler-error' | 'scheduler-stopped'; message: string }
+  | SecureStoreRequest | SecureStoreStatus
+  | { type: 'secure-store-resolved'; requestId: string; threadId: string; callId: string }
+  | { type: 'secure-store-changed' }
   | { type: 'status'; phase: string }
   | ({ type: 'settings-updated' } & DesktopSettingsResult)
   | { type: 'auth-device-code'; user_code: string; verification_uri: string }
@@ -72,18 +92,19 @@ export type EngineEvent =
   | { type: 'approval-resolved'; requestId: string }
   | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
-  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; attachments?: { name: string; image?: boolean }[] }
+  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine'; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string }
   | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }
   | { type: 'tool-call'; threadId: string; callId: string; name: string; args: unknown }
   | { type: 'tool-result'; threadId: string; callId: string; text: string; isError: boolean }
   | { type: 'usage'; threadId: string; prompt_tokens?: number; completion_tokens?: number; estimated_cost?: number }
-  | { type: 'approval-request'; requestId: string; threadId: string; toolName: string; detail: string }
+  | { type: 'approval-request'; requestId: string; threadId: string; toolName: string; detail: string; routineId?: string; runId?: string; expiresAt?: string }
   | { type: 'thread-cleared'; threadId: string }
   | { type: 'error'; threadId: string | null; message: string };
 
 export type DesktopApi = {
+  redact(text: string): Promise<string>;
   invoke<T = unknown>(action: string, payload?: unknown): Promise<T>;
   onEvent(callback: (event: EngineEvent) => void): () => void;
   onMenuCommand(callback: (command: MenuCommand) => void): () => void;

@@ -82,18 +82,20 @@ test('desktop skill toggles update live chats and survive restart', async t => {
   assert.match(agent.messages[0].content, /ankita-dev:.*Use when/);
   assert.ok(agent.currentSpecs().some(spec => spec.function.name === 'skill'));
   assert.match(await agent.runToolCall({ function: { name: 'skill', arguments: '{"name":"commit-review"}' } }), /# Skill: commit-review/);
-  assert.deepEqual(engine.listSkills().map(skill => skill.name), ['ankita-dev', 'commit-review']);
+  const skillNames = engine.listSkills().map(skill => skill.name);
+  assert.ok(skillNames.includes('ankita-dev'));
+  assert.ok(skillNames.includes('commit-review'));
   engine.setSkillEnabled('commit-review', false);
   assert.equal(engine.listSkills().find(skill => skill.name === 'commit-review').enabled, false);
   assert.doesNotMatch(agent.messages[0].content, /commit-review:/);
   assert.match(await agent.runToolCall({ function: { name: 'skill', arguments: '{"name":"commit-review"}' } }), /disabled in Plugins > Skills/);
-  engine.setSkillEnabled('ankita-dev', false);
+  for (const name of skillNames.filter(name => name !== 'commit-review')) engine.setSkillEnabled(name, false);
   assert.ok(!agent.currentSpecs().some(spec => spec.function.name === 'skill'));
   const restored = new DesktopEngine(options);
   await restored.init();
-  assert.deepEqual(restored.listSkills().map(skill => skill.enabled), [false, false]);
+  assert.deepEqual(restored.listSkills().map(skill => skill.enabled), skillNames.map(() => false));
   restored.setSkillEnabled('commit-review', true);
-  assert.deepEqual(restored.listSkills().map(skill => skill.enabled), [false, true]);
+  assert.deepEqual(restored.listSkills().map(skill => skill.enabled), skillNames.map(name => name === 'commit-review'));
   assert.match(restored.agentFor(restored.listTeammates()[0].id).messages[0].content, /commit-review:/);
 });
 

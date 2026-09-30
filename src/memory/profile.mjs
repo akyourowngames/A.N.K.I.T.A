@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
+import { redactValue } from '../security/secret-scrubber.mjs';
 
 export const MAX_ALWAYS = 12;
 export const FACT_PROMPT_CAP = 160;
@@ -40,7 +41,7 @@ export class ProfileStore {
     try {
       this.load();
       const result = fn();
-      writeTextFile(this.file, JSON.stringify(this.data, null, 2));
+      writeTextFile(this.file, JSON.stringify(redactValue(this.data), null, 2));
       return result;
     } finally {
       fs.closeSync(fd);

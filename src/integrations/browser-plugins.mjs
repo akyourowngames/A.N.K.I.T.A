@@ -1,12 +1,16 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { createRequire } from 'node:module';
 import { CONFIG_DIR } from '../core/config.mjs';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
-import { resolveNpxBin } from './mcp-client.mjs';
 
 export const BROWSER_FILE = path.join(CONFIG_DIR, 'browser.json');
 export const CHROME_MCP_ID = 'ankita-chrome';
-export const CHROME_MCP_VERSION = '1.10.1';
+const CHROME_MCP_PACKAGE = 'chrome-devtools-mcp'; // Official production bridge; its exact version is owned by package.json.
+export const CHROME_MCP_VERSION = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8')).dependencies[CHROME_MCP_PACKAGE];
+const require = createRequire(import.meta.url);
+const ASAR_DIRECTORY = 'app.asar'; // electron-builder's standard archive; Node-mode children use the unpacked bridge.
+const ASAR_UNPACKED_DIRECTORY = `${ASAR_DIRECTORY}.unpacked`;
 export const BROWSER_PLUGINS = Object.freeze({
   isolated: { id: 'ankita-playwright', name: 'Playwright Browser', description: 'A private Chromium for Ankita', mode: 'isolated' },
   local: { id: 'ankita-chrome', name: 'Chrome local', description: 'Chrome for browsing and debugging', mode: 'local' },
@@ -101,20 +105,19 @@ export class BrowserPluginStore {
 }
 
 export function chromeMcpCommand(settings) {
-  const args = ['-y', `chrome-devtools-mcp@${CHROME_MCP_VERSION}`, '--no-usage-statistics', '--no-performance-crux'];
+  let entry;
+  try {
+    const manifestFile = require.resolve(`${CHROME_MCP_PACKAGE}/package.json`);
+    const manifest = JSON.parse(fs.readFileSync(manifestFile, 'utf8'));
+    if (manifest.version !== CHROME_MCP_VERSION) throw new Error('Pinned bridge version mismatch');
+    entry = path.resolve(path.dirname(manifestFile), manifest.bin[CHROME_MCP_PACKAGE]);
+    entry = entry.split(path.sep).map(part => part === ASAR_DIRECTORY ? ASAR_UNPACKED_DIRECTORY : part).join(path.sep);
+    if (!fs.statSync(entry).isFile()) throw new Error('Missing bundled entry');
+  } catch { throw new Error('The bundled Chrome bridge is missing or damaged. Reinstall Ankita to restore it.'); }
+  const args = [entry, '--no-usage-statistics', '--no-performance-crux'];
   if (settings.connection === 'active') args.push('--autoConnect');
   else if (settings.connection === 'port') args.push(`--browserUrl=http://127.0.0.1:${settings.port}`);
-  return { command: 'npx', args };
-}
-
-/**
- * Whether connecting will have to download the MCP package first: the first
- * positional arg is the package spec, and a missing npx-cache entry means a
- * cold install. The resolver is injectable so tests do not touch the disk.
- */
-export function chromeInstallNeeded(args = [], resolve = resolveNpxBin) {
-  const spec = (Array.isArray(args) ? args : []).find(arg => typeof arg === 'string' && !arg.startsWith('-'));
-  return !spec || !resolve(spec);
+  return { command: process.execPath, args };
 }
 
 export async function browserPluginOverview(store = new BrowserPluginStore().load(), mcp = null) {

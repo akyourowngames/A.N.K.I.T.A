@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { TelegramBot, parseChatIds } from '../../src/channels/telegram.mjs';
+import { TelegramBot, parseChatIds, UNSUPPORTED_MEDIA_MESSAGE } from '../../src/channels/telegram.mjs';
+import { TelegramProgress, sendTurnArtifacts, isCancelMessage } from '../../src/channels/telegram-progress.mjs';
 import { parseApproval, isBareApproval, stripAnsi } from '../../src/automation/daemon.mjs';
 import {
   transcribeGroq,
@@ -151,6 +152,7 @@ export class TelegramChannel {
     this.pending = new Map();
     this.chains = new Map();
     this.activeChat = null;
+    this.activeJobs = new Map();
   }
 
   settings() { return this.store.telegram(); }
@@ -200,6 +202,7 @@ export class TelegramChannel {
     this.stopping = true;
     this.running = false;
     this.abort?.abort(new Error('channel stopped'));
+    for (const [chatId, active] of this.activeJobs) { active.cancelled = true; void active.progress.stop(); if (this.activeChat === chatId) this.engine?.cancel?.(active.teammateId); }
     for (const entry of this.pending.values()) entry.settle('no');
     this.pending.clear();
     this.chains.clear();
@@ -248,7 +251,7 @@ export class TelegramChannel {
       if (!drain.error && drain.offset > 0) this.offset = drain.offset;
       return 0;
     }
-    const { jobs, denied, offset, error } = await bot.poll(this.offset, { signal: this.abort?.signal });
+    const { jobs, denied, unsupported, offset, error } = await bot.poll(this.offset, { signal: this.abort?.signal });
     if (this.stopping) return 0;
     if (error) {
       this.error = error;
@@ -264,6 +267,7 @@ export class TelegramChannel {
       bot.send(job.chatId, `This bot is private. Your chat id is ${job.chatId} - add it to Allowed chat ids to allow it.`).catch(() => {});
     }
     for (const job of jobs || []) {
+      if (isCancelMessage(job)) { await this.cancelJob(job); continue; }
       if (this.resolvePending(job)) continue;
       if (job.kind === 'text' && isBareApproval(job.text)) {
         bot.send(job.chatId, 'Nothing is waiting for approval right now.', { replyTo: job.messageId }).catch(() => {});
@@ -271,6 +275,7 @@ export class TelegramChannel {
       }
       this.dispatch(job);
     }
+    for (const job of unsupported || []) await bot.send(job.chatId, UNSUPPORTED_MEDIA_MESSAGE, { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
     return (jobs || []).length;
   }
 
@@ -309,16 +314,28 @@ export class TelegramChannel {
       }
     }
     const chatId = String(job.chatId);
+    const progress = new TelegramProgress(bot, job);
+    const active = { teammateId, progress, cancelled: false, started: false, calls: new Map(), artifacts: [] };
+    this.activeJobs.set(chatId, active);
     try {
-      await bot.sendTyping(job.chatId);
+      await progress.start();
+      if (active.cancelled || this.stopping) return;
       await this.runTurn(teammateId, text, chatId);
       const reply = await this.engine.waitForTurn(teammateId);
+      await progress.stop();
+      if (active.cancelled || this.stopping) return;
       const body = String(reply || '').trim() || '(no reply)';
-      await bot.send(job.chatId, body, { replyTo: job.messageId });
+      await bot.send(job.chatId, body, { replyTo: job.messageId, messageThreadId: job.messageThreadId });
+      const agent = this.engine.agents?.get(teammateId) || this.engine.agentFor?.(teammateId);
+      if (agent) await sendTurnArtifacts(bot, job, agent.cwd, active.artifacts, () => active.cancelled || this.stopping);
       if (this.settings().voiceReply) await this.speak(job.chatId, body);
+      if (!active.cancelled) await progress.react('complete');
     } catch (err) {
-      await bot.send(job.chatId, `error: ${err.message}`).catch(() => {});
+      await progress.stop();
+      if (!active.cancelled && !this.stopping) { await bot.send(job.chatId, `error: ${err.message}`, { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {}); await progress.react('failed'); }
     } finally {
+      await progress.stop();
+      if (this.activeJobs.get(chatId) === active) this.activeJobs.delete(chatId);
       if (this.activeChat === chatId) this.activeChat = null;
     }
   }
@@ -330,12 +347,18 @@ export class TelegramChannel {
    * running turn is never routed to a chat that is still waiting.
    */
   async runTurn(teammateId, text, chatId) {
-    try {
-      await this.engine.send(teammateId, text);
-    } catch (err) {
+    const begin = async () => {
+      const active = this.activeJobs.get(chatId);
+      if (active?.cancelled || this.stopping) throw new Error('Channel turn stopped');
+      const previous = this.activeChat;
+      this.activeChat = chatId;
+      try { await this.engine.send(teammateId, text, null, { surface: 'channel' }); if (active) active.started = true; }
+      catch (error) { this.activeChat = previous; throw error; }
+    };
+    try { await begin(); } catch (err) {
       if (!/already replying/i.test(String(err.message))) throw err;
       await this.engine.waitForTurn(teammateId);
-      await this.engine.send(teammateId, text);
+      await begin();
     }
     this.activeChat = chatId;
   }
@@ -370,10 +393,31 @@ export class TelegramChannel {
 
   /** Routes an approval raised by the connected teammate to the chat that asked. */
   handleEngineEvent(event) {
+    if (this.activeChat && this.running && this.bot && this.settings().teammateId === event?.threadId) {
+      const active = this.activeJobs.get(this.activeChat);
+      if (active && !active.cancelled) {
+        if (event.type === 'tool-call') active.calls.set(event.callId, { name: event.name, args: event.args });
+        if (event.type === 'tool-result') {
+          const call = active.calls.get(event.callId);
+          if (call) { active.artifacts.push({ role: 'tool', ...call, result: event.text, isError: event.isError }); active.calls.delete(event.callId); }
+        }
+        active.progress.beat(event);
+      }
+    }
     if (event?.type !== 'approval-request' || !this.running || !this.bot) return;
     if (!this.activeChat) return; // desktop-initiated turn; the dialog handles it
     if (this.settings().teammateId !== event.threadId) return;
     this.askApproval(this.activeChat, event);
+  }
+
+  async cancelJob(job) {
+    const chatId = String(job.chatId), active = this.activeJobs.get(chatId);
+    if (!active) { await this.bot.send(job.chatId, 'Nothing is running in this chat.', { replyTo: job.messageId }).catch(() => {}); return; }
+    active.cancelled = true;
+    if (active.started && this.activeChat === chatId) this.engine.cancel(active.teammateId);
+    this.pending.get(chatId)?.settle('no');
+    await active.progress.stop(); await active.progress.react('failed');
+    await this.bot.send(job.chatId, 'Stopped this task.', { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
   }
 
   askApproval(chatId, event) {

@@ -3,6 +3,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { parseCron, matchCron, normalizeSchedule, describeCron, parseDuration, formatDuration } from "./cron.mjs";
 import { writeTextFile } from "../../tools/shared/_shared.mjs";
+import { normalizeRoutine } from './job-policy.mjs';
+import { redactValue } from '../security/secret-scrubber.mjs';
 
 /**
  * Durable store for the things ankita does on its own: scheduled routines
@@ -29,8 +31,9 @@ function uniqueId(base, taken) {
 }
 
 export class RoutineStore {
-  constructor(file) {
+  constructor(file, { transform = redactValue } = {}) {
     this.file = file;
+    this.transform = transform;
     this.data = { version: STATE_VERSION, routines: [], watches: [] };
   }
 
@@ -39,7 +42,7 @@ export class RoutineStore {
       const parsed = JSON.parse(fs.readFileSync(this.file, "utf8"));
       this.data = {
         version: STATE_VERSION,
-        routines: Array.isArray(parsed.routines) ? parsed.routines : [],
+        routines: Array.isArray(parsed.routines) ? parsed.routines.map(normalizeRoutine) : [],
         watches: Array.isArray(parsed.watches) ? parsed.watches : [],
         telegramOffset: Number(parsed.telegramOffset) || 0,
       };
@@ -51,7 +54,7 @@ export class RoutineStore {
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    writeTextFile(this.file, JSON.stringify(this.data, null, 2), "\n");
+    writeTextFile(this.file, JSON.stringify(this.transform(this.data), null, 2), "\n");
     return this;
   }
 
@@ -94,18 +97,19 @@ export class RoutineStore {
 
   /* ----------------------------- routines ----------------------------- */
 
-  addRoutine({ name, cron, prompt, channel = "telegram", enabled = true, runAt = null, projectId = null }) {
+  addRoutine({ name, cron, prompt, channel = "telegram", enabled = true, runAt = null, projectId = null, ...options }) {
     this._fresh();
     const expr = normalizeSchedule(cron);
     if (!expr || !parseCron(expr)) throw new Error(`invalid schedule: ${cron}`);
     if (!String(prompt ?? "").trim()) throw new Error("prompt is required");
     const taken = new Set(this.routines.map((r) => r.id));
     const id = uniqueId(slug(name || expr, "routine"), taken);
-    const routine = {
+    const routine = normalizeRoutine({
+      ...options,
       id,
       name: String(name || id),
       cron: expr,
-      prompt: String(prompt).trim(),
+      prompt: String(prompt),
       channel,
       // Metadata only: which project this belongs to. Never changes execution.
       projectId: projectId ? String(projectId) : null,
@@ -116,7 +120,7 @@ export class RoutineStore {
       lastSummary: null,
       runs: 0,
       runAt: runAt || null,
-    };
+    });
     this.routines.push(routine);
     this.save();
     return routine;
@@ -129,6 +133,20 @@ export class RoutineStore {
       this.routines.find((r) => r.name.toLowerCase() === key) ||
       null
     );
+  }
+
+  updateRoutine(id, patch) {
+    this._fresh();
+    const record = this.findRoutine(id);
+    if (!record) return null;
+    const next = normalizeRoutine({ ...record, ...patch, id: record.id,
+      allow: { ...record.allow, ...patch.allow }, budget: { ...record.budget, ...patch.budget } });
+    next.cron = normalizeSchedule(next.cron);
+    if (!next.cron || !parseCron(next.cron)) throw new Error('invalid schedule');
+    if (!String(next.prompt || '').trim()) throw new Error('prompt is required');
+    Object.assign(record, next);
+    this.save();
+    return record;
   }
 
   removeRoutine(id) {

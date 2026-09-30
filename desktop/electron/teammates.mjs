@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
+import { redactValue } from '../../src/security/secret-scrubber.mjs';
 
 const defaults = () => ({ version: 1, teammates: [
   { id: 'chief', name: 'Chief', color: '#b9a27c', emoji: '✦', persona: 'Coordinate the work. Be clear, decisive, and thoughtful.', projectId: null, model: null, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), lastMessage: '', lastMessageAt: null },
@@ -39,7 +40,7 @@ export class TeammateStore {
 
   save() {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
-    writeTextFile(this.file, JSON.stringify(this.data, null, 2));
+    writeTextFile(this.file, JSON.stringify((this.transform || redactValue)(this.data), null, 2));
     return this;
   }
 

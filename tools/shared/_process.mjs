@@ -2,6 +2,8 @@ import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import { BoundedOutput } from "./_shared.mjs";
 
+export const PROCESS_NOT_FOUND_CODE = 'PROCESS_NOT_FOUND'; // Distinguish a missing PID from an inspection failure.
+
 export function integer(value, fallback, min, max) {
   if (value === undefined) return fallback;
   if (!Number.isInteger(value) || value < min || value > max) throw new Error(`Value must be an integer between ${min} and ${max}.`);
@@ -127,7 +129,11 @@ export async function processIdentity(pid, ctx = {}) {
     const result = await execute("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], options);
     if (result.code !== 0 || result.truncated) throw new Error(`Cannot inspect PID ${pid}: ${result.output}`);
     const value = result.output.trim() ? JSON.parse(result.output) : null;
-    if (!value?.CreationDate) throw new Error(`PID ${pid} is no longer running or its identity is unavailable.`);
+    if (!value?.CreationDate) {
+      const error = new Error(`PID ${pid} is no longer running or its identity is unavailable.`);
+      error.code = PROCESS_NOT_FOUND_CODE;
+      throw error;
+    }
     return { pid, parent: value.ParentProcessId, name: value.Name, identity: String(value.CreationDate) };
   }
   if (process.platform === "linux") {

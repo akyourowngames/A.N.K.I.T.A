@@ -4,6 +4,7 @@ import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
 import { SkillsSection } from './SkillsSection';
 import { BrowserPluginsSection } from './BrowserPluginsSection';
+import { SecureStoreAccounts } from './SecureStore';
 
 const PAGE_SIZE = 24;
 const featured = ['gmail', 'google_drive', 'googledrive', 'github', 'slack', 'notion', 'outlook', 'outlookemail'];
@@ -178,6 +179,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
       {section === 'skills' ? <SkillsSection /> : <>
       <div className="plugins-intro"><div className="plugins-eyebrow"><span /> CONNECTED WORKSPACE</div><h1>Give Ankita more<br /><em>to work with.</em></h1><p>Bring the apps you already use into the conversation. Connect once, then manage every account from here.</p></div>
       <BrowserPluginsSection />
+      <SecureStoreAccounts />
       {error && <div className="plugins-alert" role="alert"><Icon name="alert" size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div>}
       {notice && <div className="plugins-notice" role="status"><Icon name="check" size={16} /><span>{notice}</span><button type="button" onClick={() => setNotice('')} aria-label="Dismiss notice"><Icon name="close" size={15} /></button></div>}
 

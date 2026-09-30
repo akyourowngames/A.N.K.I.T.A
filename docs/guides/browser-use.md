@@ -11,11 +11,72 @@ Open **Plugins → Apps → By Ankita team**, then select a browser to open its 
 
 Chrome's private profile is the least privileged local option. **My session** can see your existing tabs and sign-ins, so use it when a task needs them. Chrome shows its own control banner while attached. The Chrome MCP server is kept behind Ankita's single `browser` tool; its diagnostics are not offered to the agent by default.
 
+In desktop chats, external Playwright/Chrome MCP browser tools are excluded from
+discovery, prompts and model schemas. Calls carried over from an old conversation
+are rejected before execution and load the built-in `browser` tool for recovery.
+Other MCP integrations remain available. Browser tabs and refs always belong to
+the selected enabled built-in backend.
+
 Enabling a card records the choice. A disabled browser is never selected. With both enabled, a new session prefers Playwright, then keeps its current enabled browser. Disabling Chrome makes the next page open use Playwright; old Chrome tab IDs and refs must be replaced with a fresh page and snapshot. Plugin choices are stored in `~/.copilot-chat-cli/browser.json`. Playwright's browser profile lives under `~/.copilot-chat-cli/browser/playwright/`.
 
 ## Use it
 
+### Secure sign-in
+
+For a password sign-in, the desktop agent uses `browser login` with the actual
+login URL (or a page already open at the website's exact origin) and an optional
+username. Open the site's real login page first if necessary; Ankita does not
+invent login routes. Never paste passwords into chat or memory. The **Secure
+store** card's **Add** button opens the secure dialog, where you enter the username
+and password and choose whether to save them. Website is fixed to that request.
+**Enter** resumes the same browser call. A request without fields returns a
+snapshot and confirms that credentials are available privately; no form detector
+or particular button name is required to open the dialog.
+
+Saved accounts are scoped to the exact origin, including scheme/host/port; a
+different subdomain does not inherit credentials. Multiple saved accounts require
+an explicit username or fresh input. Only usernames, website, timestamps and
+`hasPassword` appear in **Plugins → Saved sign-ins**, where Remove deletes a record.
+Encryption uses Electron's asynchronous OS storage in the main process. Windows
+DPAPI protects against other users, not other programs running as you; macOS
+Keychain needs consistent application signing across updates. Linux's plaintext
+`basic_text` fallback is refused. If secure encryption is unavailable, saving is
+disabled; you may use credentials for this sign-in only or take control manually.
+The vault is local to this machine and does not sync.
+
+Only isolated Playwright supports this helper. Chrome uses its own signed-in
+session/manual login; CLI and Telegram cannot access the vault. Login needs a
+separate tool call so its secure card can receive input. The model selects refs
+from the snapshot using `credential_fields: [{ref, credential: 'username'},
+{ref, credential: 'password'}]`, with an optional `submit_ref`. No plaintext is
+supplied in these arguments. All targets are bound and validated before filling;
+password slots require password inputs, and origin/form-action checks prevent
+cross-origin and native GET password submissions. Button labels and form layouts
+are chosen from the actual page by the model.
+
+Username-first screens use one login call to fill username/Next and another for
+the subsequent password ref. Unsaved credentials stay private in the main process
+for that thread/origin/tab/page until password use, Stop, turn end or expiry.
+Calls return **Selected controls filled** and a snapshot, not a claimed login
+success. The model inspects the resulting page, handles further steps and resumes
+the original task when the page confirms it. A changed control returns fresh refs
+to the model without automatically retrying credentials. For a wrong password,
+the model may request the secure dialog again. Take control supports CAPTCHA/2FA;
+Hand back returns the observed page for the model to inspect. Escape/Cancel or
+Stop settles the wait without another fill. A prompt expires after thirty
+minutes. Passwords exist briefly in
+the input DOM and main-process fill callback; JavaScript strings cannot promise
+secure memory erasure. They are never returned to the model or persisted in chat.
+
+### Page interactions
+
 Ask Ankita to open a site, inspect it, and perform a task. `open`, `act`, and `fill_form` return the current snapshot with `[ref=…]` element references. Copy the opaque ref verbatim; a DOM ID, selector, accessible label, or role name is not a ref. Use the returned controls for the next action without taking another snapshot. A successful action whose follow-up snapshot fails still reports success: inspect the page before proceeding rather than repeating the action.
+
+Playwright observes a blank document for visible content before returning the
+first snapshot. HTTP refusals (such as 403) or an empty page that does not render
+produce **Needs attention**, not **Ready**. Repeating snapshots does not bypass a
+refusal. Use an approved local Chrome session or manual control when the website
+rejects a background browser; no automation can guarantee acceptance by every site.
 
 Snapshots replace the previous refs. Navigation, switching tabs, and takeover invalidate them. Playwright can follow a uniquely matching accessible control after a re-render within the original frame; ambiguous replacements are rejected. An invalid ref returns an error with a fresh snapshot when available, without executing the requested mutation. Use the new ref from that output. If a snapshot omits a control because of its size limit, request `snapshot` with a `query` matching its accessible label. Playwright includes visible controls in child frames and open shadow roots, along with values and relevant states; password values are hidden.
 
@@ -27,7 +88,7 @@ Screenshots are saved under `downloaded-images/` in the current workspace and re
 
 The desktop **browser stage** opens beside chat during a run and collapses the left sidebar to give the page more room. It shows the current tab and URL, a live page preview, and **Stop** and **Take control** actions. Take control pauses Ankita's next browser action. In the Playwright stage, click, type, paste, or scroll on the preview; press `Esc` or **Hand back** to resume. With Chrome local, interact in Chrome itself and then hand back. `Ctrl/Cmd+Shift+B` toggles the stage. The composer Stop cancels pending browser calls, including requests paused for takeover or setup approval. Closing the stage stops the browser run and disconnects Chrome's MCP connection; the next Chrome request can reconnect automatically.
 
-The visible preview targets 10 updates per second with one request in flight. Chrome returns image data directly through MCP, without a temporary screenshot file. Tab metadata refreshes every two seconds. Hidden panes/windows and lost connections refresh less frequently. Recoverable page/action errors keep the live preview and Take control available. Live frames update the browser pane independently of the chat; the chat thumbnail refreshes every two seconds. Actual FPS depends on page complexity and Chrome's screenshot latency. Run `node scripts/verify-browser-automation.mjs` for a disposable local form, screenshot, cancellation, reconnect, and animated-page benchmark of both backends. This script uses an already cached Chrome MCP executable, prints its actual version alongside the configured version, and never downloads a package. The older `verify-browser-chrome.mjs` script can invoke the configured package through npx.
+The visible preview targets 10 updates per second with one request in flight. Chrome returns image data directly through MCP, without a temporary screenshot file. Tab metadata refreshes every two seconds. Hidden panes/windows and lost connections refresh less frequently. Recoverable page/action errors keep the live preview and Take control available. Live frames update the browser pane independently of the chat; the chat thumbnail refreshes every two seconds. Actual FPS depends on page complexity and Chrome's screenshot latency. Run `node scripts/verify-browser-automation.mjs` for a disposable local form, screenshot, cancellation, reconnect, and animated-page benchmark of both backends. The verification scripts use the shipped, pinned Chrome MCP executable and never download a package.
 
 The stage shows short notices for stale controls, page loading and action failures. Fresh snapshots, page code, terminal formatting and call logs remain in tool diagnostics rather than the live pane. Only a lost connection or browser startup failure prompts browser setup. A successful subsequent action clears the notice. A slow preview keeps its last frame and clears its notice when capture resumes.
 
@@ -46,6 +107,19 @@ In the terminal, use `/browser list`, `/browser enable isolated`, `/browser disa
 On Windows, run `npm run desktop:build`, then `node scripts/verify-browser-desktop.mjs`. The verifier packages the installed Electron distribution into a temporary directory and launches the actual executable with isolated configuration and user data. It checks three appearances, a browser task through the real HTTP/SSE and IPC paths, screenshot pixels in the next request, sidebar collapse, takeover, Stop, shipped command stdin/EOF and exit status, and Playwright's installer `--dry-run`. The model decisions are scripted and the page is a local form; this does not test a live LLM or a real booking site. No packages or browsers are downloaded.
 
 Use `--keep-artifacts` to retain the screenshots and disposable build for inspection. To rerun that exact build, pass `--package-dir <win-unpacked-directory>`; otherwise a fresh archive is built. Keep source files settled throughout packaging so an archive cannot combine incompatible module revisions.
+
+`node scripts/verify-browser-vault-packaged.mjs` builds and launches a disposable
+actual executable, reproduces the legacy exit-before-initialize failure, then
+checks the shipped Chrome bridge with empty PATH/cache and OS-encrypted login
+through the renderer/IPC/agent/browser path. It tests cold/warm login, appearance,
+keyboard focus, eye toggle, cancellation, explicit retry and takeover. Artifacts
+are retained for review. `--package-dir` reuses an exact build. These checks use
+local forms and scripted model decisions, not personal accounts or a real LLM.
+
+The Chrome bridge is included in the app and its version is pinned in
+`package.json`. The Chromium browser binary remains a separate browser download;
+Chrome local requires Chrome installed. First launch after an older npx-based
+configuration can ask approval again because the actual launch command changed.
 
 ## Site controls
 

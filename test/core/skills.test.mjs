@@ -77,7 +77,11 @@ test('catalogue lines describe skills without including their full bodies', () =
 
 test('built-in skills parse and the read-only tool returns their instructions', () => {
   const installed = loadSkills(skillsDir());
-  assert.deepEqual(installed.map(skill => skill.name), ['ankita-dev', 'commit-review']);
+  const diskNames = fs.readdirSync(skillsDir(), { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && fs.existsSync(path.join(skillsDir(), entry.name, 'SKILL.md')))
+    .map(entry => entry.name).sort((a, b) => a.localeCompare(b));
+  assert.deepEqual(installed.map(skill => skill.name), diskNames);
+  assert.ok(installed.some(skill => skill.name === 'commit-review'));
   for (const skill of installed) assert.equal(parseSkillFile(fs.readFileSync(skill.path, 'utf8'), skill.name).name, skill.name);
   assert.ok(coreNames().includes('skill'));
   assert.equal(needsApproval('skill'), false);
@@ -86,7 +90,7 @@ test('built-in skills parse and the read-only tool returns their instructions', 
   assert.match(result, /^# Skill: commit-review/m);
   assert.match(result, /Suggested tools \(hints only\): git/);
   assert.match(result, /Review the diff/);
-  assert.match(readSkill({ name: 'unknown' }), /Available: ankita-dev, commit-review/);
+  assert.ok(readSkill({ name: 'unknown' }).includes(`Available: ${diskNames.join(', ')}`));
 });
 
 test('skill result caps a long multibyte body to 8000 UTF-8 bytes', () => {

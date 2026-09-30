@@ -57,7 +57,7 @@ test('navigation failure exposes a concise notice, keeps the tab and never becom
   t.after(() => manager.close());
   assert.match(await manager.run({ action: 'open' }), /ERR_HTTP2_PROTOCOL_ERROR/);
   const view = await manager.view();
-  assert.equal(view.status, 'ready');
+  assert.equal(view.status, 'error');
   assert.equal(view.notice.kind, 'navigation');
   assert.ok(!JSON.stringify(view).includes('private-page-code'));
   assert.equal(view.tabs.length, 1);

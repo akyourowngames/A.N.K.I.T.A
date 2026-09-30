@@ -21,6 +21,35 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const config = { tools: true, autoApprove: true, historyMessages: 40, maxTokens: 1000, memoryConsolidation: false };
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 
+test('desktop discovery, schemas and execution keep browser tasks in the managed session', async () => {
+  const summaries = [{ id: 'outside-playwright', tools: ['browser_navigate', 'browser_snapshot', 'health'], deferred: true }, { id: 'outside-chrome', tools: ['list_pages', 'take_snapshot', 'navigate_page'], deferred: false }, { id: 'notes', tools: ['read_note'], deferred: false }];
+  let externalCalls = 0, managedCalls = 0;
+  const mcp = {
+    summaries: () => summaries, alwaysOnIds: () => ['outside-chrome', 'notes'], has: () => true,
+    specs: ({ only }) => summaries.filter(server => only.has(server.id)).flatMap(server => server.tools.map(name => ({ type: 'function', function: { name: `mcp__${server.id}__${name}`, description: name, parameters: { type: 'object' } } }))),
+    findTool: name => { const server = summaries.find(server => name.startsWith(`mcp__${server.id}__`)); return server && { record: { tools: server.tools.map(name => ({ name })) } }; },
+    needsApproval: () => false, callTool: async () => { externalCalls++; return 'external'; },
+  };
+  const agent = new Agent({ client: {}, config, mcp, workspacePath: directory, browserManager: { run: async () => { managedCalls++; return 'managed'; } } });
+  const output = await agent.runToolCall(call('discover', 'find_tools', { query: 'playwright browser' }));
+  assert.doesNotMatch(output, /mcp__outside-playwright__browser/);
+  const names = agent.currentSpecs().map(spec => spec.function.name);
+  assert.ok(names.includes('browser'));
+  assert.ok(names.includes('mcp__notes__read_note'));
+  assert.ok(!names.some(name => name.includes('__browser_') || name.startsWith('mcp__outside-chrome__')));
+  assert.doesNotMatch(agent.messages[0].content, /browser_snapshot|browser_evaluate/);
+  const rejected = await agent.runToolCall(call('old', 'mcp__outside-playwright__browser_navigate', { url: 'https://example.com' }));
+  assert.match(rejected, /built-in.*browser|managed.*browser/i);
+  assert.match(await agent.runToolCall(call('nested', 'mcp__outside-playwright__browser_snapshot__variant', {})), /built-in.*browser|managed.*browser/i);
+  assert.equal(externalCalls, 0);
+  assert.equal(await agent.runToolCall(call('open', 'browser', { action: 'open', url: 'https://example.com' })), 'managed');
+  assert.equal(managedCalls, 1);
+  assert.equal(await agent.runToolCall(call('notes', 'mcp__notes__read_note', {})), 'external');
+  assert.equal(externalCalls, 1);
+  const cli = new Agent({ client: {}, config, mcp, workspacePath: directory });
+  assert.equal(await cli.runToolCall(call('cli', 'mcp__outside-playwright__browser_snapshot', {})), 'external');
+});
+
 test('browser screenshots reach the next model round as pixels while tool messages stay valid', async () => {
   const folder = path.join(directory, 'downloaded-images'); fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, 'browser-1-abcd.png'); fs.writeFileSync(file, PNG);
@@ -33,7 +62,7 @@ test('browser screenshots reach the next model round as pixels while tool messag
     if (round === 2) return { content: '', toolCalls: [call('shot', 'browser', { action: 'screenshot' })] };
     const request = agent.messages.findLast(message => message.role === 'user');
     const image = Array.isArray(request.content) && request.content.find(part => part.type === 'image_url');
-    assert.ok(image, 'the model needs pixels, not a binary filename');
+    assert.ok(image, `the model needs pixels, not a binary filename; context ${JSON.stringify(agent.messages.map(message => ({ role: message.role, bytes: Buffer.byteLength(JSON.stringify(message.content)), images: Array.isArray(message.content) ? message.content.filter(part => part.type === 'image_url').length : 0 })))}`);
     assert.equal(image.image_url.url, `data:image/png;base64,${PNG.toString('base64')}`);
     assert.match(request.content[0].text, /Inspect the page/);
     const toolReply = agent.messages.find(message => message.tool_call_id === 'shot');

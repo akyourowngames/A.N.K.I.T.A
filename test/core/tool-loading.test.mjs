@@ -117,6 +117,10 @@ test('an interactive agent starts core-only and grows only when asked', () => {
 
 test('activation survives /clear, matching jobs and todos', () => {
   const agent = new Agent({ client: {}, config: { tools: true } });
+  // Isolate activation persistence from schema/prompt budget shedding, as in
+  // the activation test above; tool-budget tests cover constrained windows.
+  const activationHeadroomBytes = 4096;
+  agent.contextWindow = bytes(index.specs) + bytes(agent.messages[0]) + agent.outputReserve() + activationHeadroomBytes;
   findTools.run({ query: 'search the web' }, agent);
   assert.ok(agent.state.activatedTools.has('web_search'));
   agent.clear();
@@ -181,13 +185,14 @@ test('the system prompt never offers a deferred tool as directly available', () 
   const prompt = buildSystemPrompt({ username: 'k', agentName: 'a', systemExtra: '' }, 'C:/x');
   const toolLine = prompt.split('\n').find((l) => l.startsWith('You have these tools:'));
   assert.ok(toolLine, 'the prompt lists tools');
+  const offered = new Set(toolLine.match(/\b[a-z]+(?:_[a-z]+)*\b/g));
 
   for (const name of index.coreNames()) {
-    assert.ok(toolLine.includes(name), `core tool ${name} is listed`);
+    assert.ok(offered.has(name), `core tool ${name} is listed`);
   }
   const deferred = CATEGORIES.filter(c => !c.alwaysOn).flatMap((c) => c.tools.map((t) => t.name));
   for (const name of deferred) {
-    assert.ok(!toolLine.includes(name), `${name} must NOT be listed as directly available`);
+    assert.ok(!offered.has(name), `${name} must NOT be listed as directly available`);
   }
   // They are still discoverable - named in the group list, behind find_tools.
   for (const c of CATEGORIES.filter(c => !c.alwaysOn)) {

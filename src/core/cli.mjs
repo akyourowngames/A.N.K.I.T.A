@@ -27,6 +27,8 @@ import * as composioTool from "../../tools/connectors/composio.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "../automation/routines.mjs";
 import { TelegramBot, parseChatIds } from "../channels/telegram.mjs";
 import { Daemon } from "../automation/daemon.mjs";
+import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
+import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
 import { createSession } from "./bootstrap.mjs";
@@ -91,6 +93,7 @@ ${c.bold("options")}
       --speak           read replies aloud (Edge TTS)
       --voice           start hands-free voice mode (VAD + barge-in)
       --daemon          run in the background: schedules, watches, Telegram inbox
+      --takeover        request the desktop scheduler to stop before owning routines
       --brief           print a briefing now and exit
   -h, --help            show this
   -v, --version         show version
@@ -209,6 +212,9 @@ function parseArgs(argv) {
         break;
       case "--daemon":
         opts.daemon = true;
+        break;
+      case '--takeover':
+        opts.takeover = true;
         break;
       case "--brief":
         opts.brief = true;
@@ -1237,6 +1243,10 @@ export async function main() {
   }
 
   if (opts.daemon) {
+    const ownership = new SchedulerOwnership(path.join(path.dirname(STATE_FILE), SCHEDULER_LOCK_FILENAME), { host: 'cli' });
+    await ownership.acquire({ takeover: opts.takeover === true });
+    const ownershipTimer = setInterval(() => { if (!ownership.heartbeat()) daemonRef?.stop(); }, SCHEDULER_TICK_MS);
+    ownershipTimer.unref();
     banner({
       agentName: `${config.agentName} \u25d7 daemon`,
       username: config.username,
@@ -1269,7 +1279,8 @@ export async function main() {
       term.line(c.dim("\n  stopping..."));
       daemon.stop();
     });
-    await daemon.run();
+    try { await daemon.run(); }
+    finally { clearInterval(ownershipTimer); ownership.release(); }
     // The daemon's own agents are gone by now, so anything they left running
     // - background commands, MCP servers - has to be shut down here or it
     // outlives the process that owns it.

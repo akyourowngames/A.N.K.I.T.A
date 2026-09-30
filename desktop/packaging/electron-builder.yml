@@ -20,12 +20,17 @@ files:
   - '!**/*.test.*'
   - '!desktop/renderer/src/**'
   - '!desktop/build/**'
+  - desktop/build/icon.png
   - '!desktop/scripts/**'
   - '!test/**'
   - '!docs/**'
   - '!scripts/**'
   - '!.github/**'
 asar: true
+# Node-mode children load this self-contained bridge from real files, without
+# npm/npx, ASAR loader support, or a runtime package download.
+asarUnpack:
+  - node_modules/chrome-devtools-mcp/**/*
 win:
   target:
     - target: nsis

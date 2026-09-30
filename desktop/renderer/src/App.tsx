@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
-import type { BrowserSessionView, ChatMessage, DesktopPreferences, DesktopSettingsResult, MenuCommand, Model, Project, Teammate, UpdateEvent } from '../../shared/wire';
+import type { BrowserSessionView, ChatMessage, DesktopPreferences, DesktopSettingsResult, MenuCommand, Model, Project, Teammate, UpdateEvent, Routine } from '../../shared/wire';
 import { reducer, initialState } from './state/store';
 import { Sidebar } from './components/Sidebar';
 import { ChatPane } from './components/ChatPane';
@@ -14,10 +14,14 @@ import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { BrowserStage } from './components/BrowserStage';
+import { SecureStoreProvider } from './components/SecureStore';
 import { Icon } from './components/Icons';
 import { IPC_CONTRACT, checkCompat } from '../../shared/version.mjs';
+import { RoutineSheet } from './components/RoutineSheet';
+import { JobsPanel } from './components/JobsPanel';
+import { PaletteModal } from './components/PaletteModal';
 
-type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; contract?: number; chrome: string };
+type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; contract?: number; chrome: string; jobs: Routine[] };
 type UiState = { selectedId?: string | null; sidebarWidth?: number; sidebarOpen?: boolean };
 
 const UI_KEY = 'ankita.ui';
@@ -43,10 +47,16 @@ export default function App() {
   const [browserOpen, setBrowserOpen] = useState(false);
   const [browserView, setBrowserView] = useState<BrowserSessionView | null>(null);
   const [browserThreadId, setBrowserThreadId] = useState<string | null>(null);
+  const [browserScope, setBrowserScope] = useState<string | null>(null);
+  const browserScopeRef = useRef<string | null>(null);
+  const [jobSheet, setJobSheet] = useState<{ id?: string; advanced?: boolean } | null>(null);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const editJob = useCallback((id?: string) => { setJobSheet({ id }); setReviewOpen(false); setBrowserOpen(false); }, []);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'kilo', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
   const [version, setVersion] = useState(__ANKITA_VERSION__);
+  const [secretNotice, setSecretNotice] = useState('');
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
   const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
@@ -66,19 +76,23 @@ export default function App() {
   useEffect(() => { saveUi({ sidebarWidth }); }, [sidebarWidth]);
   useEffect(() => { document.documentElement.dataset.theme = preferences.appearance; }, [preferences.appearance]);
   useEffect(() => { selectedIdRef.current = state.selectedId; }, [state.selectedId]);
+  useEffect(() => { browserScopeRef.current = browserScope; }, [browserScope]);
 
   useEffect(() => {
     if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
     const unsubscribe = window.ankita.onEvent(event => {
       dispatch({ type: 'event', event });
       if (event.type === 'settings-updated') setPreferences(event.preferences);
+      if (event.type === 'secret-notice') setSecretNotice(event.message);
+      if (event.type === 'routine-draft') { dispatch({ type: 'select', id: event.threadId }); setView('chat'); editJob(event.routineId); }
+      if (event.type === 'routine-run-end' && browserScopeRef.current === `job:${event.routineId}`) { setBrowserOpen(false); setBrowserScope(null); setBrowserView(null); }
       if (event.type === 'teammates-changed') void window.ankita.invoke<Teammate[]>('listTeammates').then(teammates => dispatch({ type: 'teammates-loaded', teammates }));
       if (event.type === 'projects-changed') void refreshProjects();
       if (event.type === 'tools-changed') setToolsRevision(value => value + 1);
       if (event.type === 'workspace-changed' && event.threadId === selectedIdRef.current) { setWorkspaceRevision(value => value + 1); if (event.open) setReviewOpen(true); }
-      if (event.type === 'browser-state' && (!event.threadId || event.threadId === selectedIdRef.current)) {
+      if (event.type === 'browser-state' && (browserScopeRef.current ? event.threadId === browserScopeRef.current : !event.threadId || event.threadId === selectedIdRef.current)) {
         setBrowserView(previous => ({ ...event.state, screenshot: event.state.screenshot || (event.state.mode === previous?.mode && !['error', 'stopped', 'idle'].includes(event.state.status) ? previous?.screenshot || null : null) }));
-        if (event.threadId) setBrowserThreadId(event.threadId);
+        if (event.threadId && !browserScopeRef.current) setBrowserThreadId(event.threadId);
         if (event.state.status === 'working' && event.state.mode) { setBrowserOpen(true); setReviewOpen(false); }
       }
     });
@@ -94,7 +108,7 @@ export default function App() {
       })
       .catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: null, message: err.message } }));
     return unsubscribe;
-  }, [refreshProjects]);
+  }, [refreshProjects, editJob]);
 
   useEffect(() => {
     if (!state.selectedId || !window.ankita) return;
@@ -122,11 +136,10 @@ export default function App() {
       else if (command === 'about') setSettingsTab('about');
       else if (command === 'toggle-sidebar') setSidebarOpen(open => !open);
       else if (command === 'find') {
-        setSidebarOpen(true);
-        requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.search-box input')?.focus());
+        if (!dialog && !settingsTab && !confirm && !state.approvals.length) setPaletteOpen(true);
       }
     });
-  }, []);
+  }, [dialog, settingsTab, confirm, state.approvals.length]);
 
   useEffect(() => {
     if (!window.ankita?.onUpdateEvent) return;
@@ -150,13 +163,13 @@ export default function App() {
     let timer: number;
     const poll = async () => {
       const started = performance.now();
-      try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView'); if (active) setBrowserView(previous => ({ ...next, screenshot: next.screenshot || (next.status !== 'error' && next.mode === previous?.mode ? previous?.screenshot || null : null) })); }
+      try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: browserScope }); if (active) setBrowserView(previous => ({ ...next, screenshot: next.screenshot || (next.status !== 'error' && next.mode === previous?.mode ? previous?.screenshot || null : null) })); }
       catch { /* keep the last useful frame */ }
       finally { if (active) timer = window.setTimeout(() => void poll(), Math.max(0, 2000 - (performance.now() - started))); }
     };
     void poll();
     return () => { active = false; window.clearInterval(timer); };
-  }, [browserView?.mode, browserOpen]);
+  }, [browserView?.mode, browserOpen, browserScope]);
 
   useEffect(() => {
     if (!update) return;
@@ -171,14 +184,20 @@ export default function App() {
       if (!(event.metaKey || event.ctrlKey)) return;
       const name = event.key.toLowerCase();
       if (name === 'n') { event.preventDefault(); setDialog('create'); }
-      if (name === 'k') { event.preventDefault(); if (view === 'plugins') requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.plugins-search input')?.focus()); else { setSidebarOpen(true); requestAnimationFrame(() => document.querySelector<HTMLInputElement>('.search-box input')?.focus()); } }
+      if (name === 'k') { event.preventDefault(); if (!dialog && !settingsTab && !confirm && !state.approvals.length) setPaletteOpen(true); }
       if (name === 'b' && event.shiftKey) { event.preventDefault(); setBrowserOpen(open => !open); setReviewOpen(false); }
       else if (name === 'b') { event.preventDefault(); setSidebarOpen(open => !open); }
       if (event.key === ',') { event.preventDefault(); setSettingsTab('model'); }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [view]);
+  }, [view, dialog, settingsTab, confirm, state.approvals.length]);
+
+  useEffect(() => {
+    const open = () => { if (!dialog && !settingsTab && !confirm && !state.approvals.length) setPaletteOpen(true); };
+    window.addEventListener('ankita:palette', open);
+    return () => window.removeEventListener('ankita:palette', open);
+  }, [dialog, settingsTab, confirm, state.approvals.length]);
 
   const selected = state.teammates.find(t => t.id === state.selectedId) || null;
   const send = useCallback((text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => {
@@ -242,11 +261,17 @@ export default function App() {
   const showBrowser = view === 'chat' && browserOpen && Boolean(browserView?.mode) && browserThreadId === state.selectedId;
   useEffect(() => { if (showBrowser) setSidebarOpen(false); }, [showBrowser]);
   const stopBrowser = () => {
-    if (state.selectedId) void window.ankita.invoke('cancel', { id: state.selectedId });
-    void window.ankita.invoke('browserSessionStop').finally(() => { setBrowserOpen(false); setBrowserView(null); setBrowserThreadId(null); });
+    if (state.selectedId && !browserScope) void window.ankita.invoke('cancel', { id: state.selectedId });
+    void window.ankita.invoke('browserSessionStop', { scope: browserScope }).finally(() => { setBrowserOpen(false); setBrowserView(null); setBrowserThreadId(null); setBrowserScope(null); });
   };
+  const watchJob = async (job: Routine) => {
+    if (!job.scope || !state.selectedId) return;
+    try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: job.scope }); setBrowserScope(job.scope); setBrowserThreadId(state.selectedId); setBrowserView(next); setBrowserOpen(true); setJobSheet(null); setReviewOpen(false); }
+    catch (error) { dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: error instanceof Error ? error.message : String(error) } }); }
+  };
+  const threadJobs = state.jobs.filter(job => job.threadId === state.selectedId || (job.ownerMissing && job.deliveryThreadId === state.selectedId));
 
-  return <div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
+  return <SecureStoreProvider><div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
     <Sidebar
       teammates={state.teammates} selectedId={state.selectedId} search={search} onSearch={setSearch}
       onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
@@ -257,22 +282,33 @@ export default function App() {
     />
     {view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} toolsRevision={toolsRevision} /> : view === 'projects' ? <ProjectsPage projects={projects} selectedThread={selected} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onRefresh={refreshProjects} onAssign={assignProject} /> : <ChatPane
       teammate={selected} messages={state.selectedId ? state.threads[state.selectedId] || [] : []}
+      jobs={threadJobs} onEditJob={editJob} onWatchJob={job => void watchJob(job)}
       running={Boolean(state.selectedId && state.running[state.selectedId])}
       models={state.models} projects={projects} defaultModel={state.settings?.model || ''}
       usage={state.selectedId ? state.usage[state.selectedId] : undefined}
-      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => { setView('plugins'); requestAnimationFrame(() => document.querySelector('.browser-plugins-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
+      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={!browserScope && browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => { setView('plugins'); requestAnimationFrame(() => document.querySelector('.browser-plugins-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
       onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onClear={clear} onDelete={remove}
     />}
-    {view === 'chat' && state.selectedId && <BrowserStage view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
+    {view === 'chat' && state.selectedId && <BrowserStage scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
+    {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={state.jobs.find(job => job.id === jobSheet.id) || null} jobs={state.jobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={state.jobs} teammates={state.teammates} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent('ankita:compose', { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}
-    {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} />}
+    {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} jobsCount={state.jobs.filter(job => job.threadId === confirm.id).length} onRehome={() => { const job = state.jobs.find(item => item.threadId === confirm.id); setConfirm(null); if (job) editJob(job.id); }} />}
     {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
     {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
     {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
     {showOnboarding && <OnboardingDialog initialName={preferences.username} initialTimeZone={preferences.timeZone} onSave={saveOnboarding} onSkip={skipOnboarding} />}
     {update && <UpdateBanner update={update} onInstall={installUpdate} onOpenRelease={() => void window.ankita.openExternal('https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest')} onDismiss={dismissUpdate} />}
     {state.compat && !state.compat.ok && !state.compatDismissed && <VersionMismatchNotice compat={state.compat} hasUpdate={update?.type === 'downloaded'} onRestart={recoverFromMismatch} onDismiss={() => dispatch({ type: 'compat-dismissed' })} />}
+    {paletteOpen && <PaletteModal threadId={state.selectedId} revision={`${toolsRevision}:${state.jobs.map(job => `${job.id}:${job.enabled}:${job.nextRunAt}`).join('|')}`} onClose={() => setPaletteOpen(false)} onCommand={command => {
+      if (command === 'new-teammate') setDialog('create');
+      if (command === 'settings') setSettingsTab('model');
+      if (command === 'jobs') { setView('chat'); editJob(); }
+      if (command === 'plugins') setView('plugins');
+      if (command === 'updates') void window.ankita.updateAction('check');
+      if (command === 'export' && state.selectedId) void window.ankita.invoke('exportChat', { id: state.selectedId }).catch(cause => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: cause.message } }));
+    }} />}
+    {secretNotice && !state.error && <div className="error-toast secret-toast" role="status"><Icon name="shield" size={18} /><span>{secretNotice}</span><button onClick={() => setSecretNotice('')} aria-label="Dismiss secret notice"><Icon name="close" size={16} /></button></div>}
     {state.error && <div className="error-toast" role="alert"><Icon name="alert" size={18} /><span>{state.error}</span><button onClick={() => dispatch({ type: 'dismiss-error' })} aria-label="Dismiss error"><Icon name="close" size={16} /></button></div>}
-  </div>;
+  </div></SecureStoreProvider>;
 }

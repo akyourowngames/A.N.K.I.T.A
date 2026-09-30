@@ -3,6 +3,7 @@ import type { ChatMessage } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { CopyButton } from './CopyButton';
 import { formatDuration, humanizeTool, summarizeArgs } from '../lib/format';
+import { SecureStoreCard } from './SecureStore';
 
 type ToolMessage = Extract<ChatMessage, { role: 'tool' }>;
 type LocalImage = { type: 'generated_image' | 'downloaded_image'; path: string; prompt?: string; photographer?: string; source?: string; pageUrl?: string; mime?: string };
@@ -46,6 +47,9 @@ export function ToolCallCard({ message, threadId, onOpenBrowserPlugins }: { mess
   }, [localImage?.path, threadId]);
 
   const openExternal = (url: string) => { if (url) void window.ankita.openExternal(url); };
+
+  const login = message.name === 'browser' && typeof message.args === 'object' && message.args !== null && (message.args as { action?: string }).action === 'login';
+  if (login) return <SecureStoreCard threadId={threadId} callId={message.callId} website={String((message.args as { website?: string }).website || '')} result={message.result} />;
 
   return <div className={`tool-card ${message.isError ? 'failed' : ''} ${running ? 'running' : ''}`}>
     <button type="button" className="tool-card-header" onClick={() => setOpen(!open)} aria-expanded={open}>

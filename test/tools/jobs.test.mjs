@@ -154,6 +154,25 @@ test('launcher crash cleanup refuses a changed root identity and missing identit
   await assert.rejects(cleanupFailedLauncher(job.child, undefined), /without.*identity/);
 });
 
+test('launcher crash cleanup inspects only its root PID before refusing a changed identity', { skip: process.platform !== 'win32' }, async t => {
+  const { command, ctx } = fixture(t, IDLE_JOB_SOURCE);
+  await run({ command, background: true }, ctx);
+  const job = [...ctx.state.jobs.values()][0];
+  const snapshot = await job.child.identityReady;
+  const queries = [];
+  const spawn = childProcess.spawn;
+  childProcess.spawn = (executable, args, ...rest) => {
+    if (path.basename(executable).toLowerCase() === 'powershell.exe') queries.push(args.join(' '));
+    return spawn(executable, args, ...rest);
+  };
+  syncBuiltinESMExports();
+  t.after(() => { childProcess.spawn = spawn; syncBuiltinESMExports(); });
+  const { cleanupFailedLauncher } = await import('../../tools/shared/_job-tree.mjs');
+  await assert.rejects(cleanupFailedLauncher(job.child, { ...snapshot, identity: 'different-creation-identity' }), /identity changed/);
+  assert.ok(queries.some(query => query.includes(`ProcessId = ${job.child.pid}`)), 'lookup must filter to the root PID');
+  assert.ok(queries.every(query => query.includes(`ProcessId = ${job.child.pid}`)), 'cleanup must not enumerate the whole process table');
+});
+
 test('launcher Stop cleans inherited pipes after its shell exits', { skip: process.platform !== 'win32', timeout: 20000 }, async t => {
   const { command, ctx } = fixture(t, "const leaf=require('child_process').spawn(process.execPath,['-e','setInterval(()=>{},1000)'],{stdio:['ignore','inherit','inherit'],detached:true,windowsHide:true});console.log('leaf:'+leaf.pid);leaf.unref();setInterval(()=>{},1000)");
   await run({ command, background: true }, ctx);

@@ -128,6 +128,7 @@ test('Chrome invalid refs recover a snapshot without replaying a mutation; actio
     callTool: async (name, args) => {
       if (name.endsWith('__list_pages')) return '1: Form (https://example.com/) [selected]';
       if (name.endsWith('__take_snapshot')) return 'uid=1_0 RootWebArea "Form"\n uid=1_8 StaticText "Where from?"\n uid=1_1 combobox "Where from?"\n uid=1_2 button "Search"';
+      if (name.endsWith('__evaluate_script')) return '```json\n[{"tag":"input","type":"text","issue":null}]\n```';
       mutations.push({ name, args }); return 'done';
     } });
   const first = await adapter.run({ action: 'snapshot' });
@@ -152,6 +153,7 @@ test('Chrome refuses refs from another tab and uses snapshots included in action
   const adapter = new ChromeBrowserAdapter({ has: () => true, callTool: async (name, args) => {
     if (name.endsWith('__list_pages')) return '1: First (https://example.com/) [selected]\n2: Second (https://example.org/)';
     if (name.endsWith('__take_snapshot')) { snapshots++; return snapshot; }
+    if (name.endsWith('__evaluate_script')) return '```json\n[{"tag":"input","type":"text","issue":null}]\n```';
     assert.equal(args.includeSnapshot, true); mutations++; return snapshot;
   } });
   const first = await adapter.run({ action: 'snapshot', tab: '1' });

@@ -7,6 +7,150 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+### Added
+
+- Scheduled desktop results now come from the owning teammate's model as normal
+  chat replies. The scheduled worker's text and browser screenshot remain
+  expandable evidence beneath the reply. The writing pass has no tools, waits
+  for an active chat turn and retries delivery without rerunning the job.
+- Desktop scheduled browser jobs: timezone-aware cron, independent serial workers
+  and Chromium profiles, editable settings, a compact jobs pill, live viewing
+  and proof receipts in the owning teammate's chat. The model's `schedule` tool
+  creates active tasks from chat, updates the same task and returns compact
+  widgets with the next run; a thin upcoming list replaces the creation form.
+- Idle heartbeat tasks use owner/project context and proactive briefing
+  instructions, skip busy teammates and suppress uneventful replies. Chat-created
+  tasks browse autonomously in isolated Chromium; existing scoped tasks retain
+  their approvals. Creation retries are idempotent and lifecycle guards resolve
+  model-supplied task names before checking active workers. Names are scoped to
+  the owning teammate; ambiguous matches are rejected. A shared typed update
+  schema and flat-argument normalization prevent silent empty updates, and
+  conflicting values return an actionable error.
+- Scheduled workers advertise isolated Chromium only and separate execution
+  instructions from job-creation guidance. Saved username/password steps use
+  private credential refs; an omitted login URL binds the actual selected tab.
+  Generic unattended password fill/type is rejected, including shown passwords.
+- Browser form batches preflight every target before writing. Invalid buttons,
+  readonly controls and stale refs return fresh refs without partial writes;
+  failures after filling starts remain incomplete and are never replayed.
+  Chrome retains custom toggle support and reports dialog-interrupted batches
+  as incomplete. Concurrent Chromium cleanup shares one owned-context close.
+- Printed pretend tool calls trigger one bounded model correction in a job;
+  repeated malformed requests and exhausted tool loops produce incomplete
+  receipts instead of successful jobs. Printed JSON is never executed directly.
+- Secret scrubbing at session, journal, memory, routine, job-log, tool-log,
+  diagnostic and export boundaries; deterministic shaped/context/encoded
+  detection with a 50-sample regression corpus. Explicit save intent encrypts
+  named secrets with the OS vault and persists references. Detected desktop
+  pastes remain protected in later unlabeled echoes; short prefixed password
+  labels are supported. Privacy settings include an explicit disable warning.
+- Idempotent first-launch migration covers transcript/export folders, job state,
+  teammate previews and legacy daemon logs while excluding provider/vault
+  configuration. Text diagnostics rotate within a bounded disk budget.
+- Ctrl/Cmd+K command palette searches app commands, enabled skills/manifest
+  actions and scheduled jobs, with keyboard navigation, focus restoration,
+  live registry refresh and protection against launching stale search results.
+- Real Chromium login verification covers username-first flow, password iframe,
+  CSRF, control replacement, expired sessions and MFA handoff in the actual
+  development and packaged Windows app. Live model scheduling is checked
+  separately from scripted provider/browser verification.
+- Routine-scoped inline approvals, optional bounded execution and approval deadlines,
+  opt-in daily run/token/minute budgets, saved-only sign-in, late/missed-run reporting,
+  delivery-only retry and retained redacted run audits. Background jobs use
+  isolated Chromium only; Chrome remains a foreground backend. No mobile wiring.
+- Desktop tray hosting with Show, Pause all and Quit, a first-close notice,
+  opt-in startup at sign-in, and a shared scheduler ownership lock that prevents
+  desktop/CLI double firing and supports cooperative CLI takeover.
+- Actual development and packaged Windows job verifiers exercise browser
+  submissions, inline approvals, concurrent chat, live viewing, tray completion,
+  reload/idempotent delivery and recovery shutdown. A separate verifier can run
+  the same browser task through the currently configured provider.
+- Secure browser sign-in for desktop Playwright: a compact **Secure store** chat
+  card opens the native **Secure credentials store** dialog. Website is locked;
+  username/password fields, show/hide, optional saving, Escape/Cancel and a focus
+  trap follow the existing appearance. Saved sign-ins can be removed in Plugins.
+- A main-process vault uses asynchronous Electron OS encryption, exact website
+  origins and atomic owner-only files. Only account metadata leaves the vault;
+  plaintext is cleared after filling. Unavailable encryption and Linux
+  `basic_text` refuse persistence. CLI, channels and Chrome cannot use the vault.
+- `browser login` can request the secure dialog before any form appears. The
+  model selects observed refs through `credential_fields` (private username/
+  password slots) and optional `submit_ref`, including username-first steps and
+  input-based submit controls. Each call returns a fresh snapshot to the model
+  to finish sign-in and continue the original task. One-time credentials are
+  scoped to thread/origin/tab/page and cleared on password use, Stop, turn end
+  or expiry. Password values stay hidden even when a site toggles input type;
+  exact-origin, bound-node and native GET submission guards remain enforced.
+- Telegram desktop and CLI channels show a typing heartbeat and throttled tool
+  progress, acknowledge messages with supported received/completed/failed
+  reactions, and send up to five current-turn image artifacts after the final
+  text reply. Reads enforce workspace/folder/type/15 MiB limits; photo failures
+  fall back to documents. `/cancel` bypasses approval and task queues. Incoming
+  photos/documents/videos receive a not-supported nudge; voice notes still work.
+- A disposable packaged verifier reproduces the old Chrome launch failure and
+  checks bundled CDP, real OS encryption, cold/warm login, theme/focus/eye controls,
+  cancellation, retries, takeover and password-free model/events/persistence.
+
+### Fixed
+
+- Resolved the README merge blocks while retaining desktop setup, security and
+  CLI sign-in guidance. Skill tests now discover the installed catalog instead
+  of assuming two skills. Windows launcher crash cleanup checks only its root
+  PID before applying the creation-identity guard, avoiding a full process-table
+  scan. The command output test waits for its burst job before asserting that
+  a later background job is the only active one.
+- Scheduled browser tasks no longer stop on accumulated input-token totals, the
+  old three-minute deadline, fixed tool counts or the foreground search ceiling. Regular desktop jobs run until
+  completion; usage remains recorded, Stop and no-progress detection remain
+  active, and explicit limits are optional. Heartbeats keep bounded defaults.
+- Watching another job tab changes only the preview, preserving the worker's
+  selected page and snapshot refs. App navigation and foreground browsing remain
+  independent. Saved completion URLs and screenshots follow the worker's page.
+  Task details/editor now show the full execution prompt; model
+  guidance requests clear objectives, steps, evidence and output. Fresh workers
+  receive the last successful result for comparisons across failed runs/reloads.
+- A malformed model-selected credential field now returns fresh controls and
+  correction guidance before vault access or filling. Scheduled workers can
+  correct the native call and continue; origin checks and uncertain actions
+  remain enforced. Packaged tests exercise the rejection and correction twice.
+- Job navigation intercepts redirects before network dispatch, including POST,
+  popups and embedded frames; Fetch/XHR requests also pass the runtime permission
+  gate. Approval waits no longer inherit foreground browser command timeouts.
+- Foreground chat cancellation preserves job approvals and shared Chrome
+  connections. Budget checks stop a worker before its next browser side effect;
+  yearly cron searches no longer block the main process for seconds.
+- Pause/Resume keeps the routine form's Enabled checkbox synchronized, so a
+  later Save cannot silently reverse the action. Job control errors stay in the
+  sheet, and watching a job no longer adds a duplicate foreground browser card.
+- Stale truncated ownership locks recover, heartbeats replace atomically,
+  copied proof receipts obey the per-routine retention cap, and recovery relaunch
+  drains the scheduler before quitting and releases its ownership.
+- Secure login no longer depends on detecting a unique form or a button-name
+  whitelist. Cirro's honeypot and input-based **Sign In** no longer block the
+  secure dialog. Model-selected controls are validated before filling, and
+  selection failures return to the model without an automatic credential loop.
+- Playwright waits for a blank SPA to render before returning its first snapshot.
+  HTTP refusals and pages that stay empty are load failures, with **Needs attention**
+  and a concise message instead of a white **Ready** preview. A later real render
+  can recover; snapshots cannot conceal a refused request.
+- Desktop tool discovery, prompts and schemas exclude external Playwright/Chrome
+  MCP browser tools. Old browser MCP calls are blocked at execution and activate
+  the built-in browser, preserving enabled backend choices, refs, secure login and
+  live preview. Blocked external calls cannot replace the live stage state.
+- Packaged Chrome connections launch the pinned, shipped `chrome-devtools-mcp`
+  bridge from `app.asar.unpacked` with the packaged executable in Node mode.
+  No system Node, npm/npx, runtime download or pre-existing npm cache is needed.
+  This fixes the second GUI instance exiting with code 0 before MCP initialize.
+- The bridge version comes from the production dependency pin; all connection
+  modes use the same runtime. Explicit command approval and on-demand reconnect
+  remain in place. Runtime metadata now matches the bridge's Node requirements.
+- Desktop IPC is restricted to the main application frame; contract is bumped
+  to 7. Compact browser guidance preserves room for deferred tools/screenshots.
+
+Verification and platform limits: [browser findings](docs/browser-screenshot-findings.md)
+and the [credential/Telegram ledger](docs/plans/vault-model-selection-telegram-implementation.md).
+Desktop jobs: [implementation and verification](docs/plans/desktop-background-jobs-implementation.md).
+
 ## [2.4.3] - 2026-09-26
 
 Browser automation, a live browser stage that follows the app appearance,

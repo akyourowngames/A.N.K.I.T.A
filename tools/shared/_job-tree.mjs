@@ -1,4 +1,4 @@
-import { processIdentity, processTable, execute } from './_process.mjs';
+import { PROCESS_NOT_FOUND_CODE, processIdentity, processTable, execute } from './_process.mjs';
 import { spawn } from 'node:child_process';
 
 // Milliseconds: bound taskkill itself before checking tracked descendants.
@@ -39,7 +39,9 @@ export async function cleanupFailedLauncher(child, snapshot) {
   // earlier native exit bound so a reused PID cannot extend descendant search.
   entry.exitedAt = Math.min(entry.exitedAt, Date.now());
   tracked.set(child, entry);
-  const root = (await processTable()).find(row => row.pid === child.pid);
+  let root;
+  try { root = await processIdentity(child.pid); }
+  catch (error) { if (error.code !== PROCESS_NOT_FOUND_CODE) throw error; }
   if (root) {
     if (root.identity !== entry.identity || root.name !== entry.name) throw new Error(ROOT_IDENTITY_CHANGED_ERROR);
     await killTree(child);

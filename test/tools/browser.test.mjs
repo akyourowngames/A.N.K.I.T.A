@@ -4,12 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
-import { BrowserPluginStore, chromeInstallNeeded, chromeMcpCommand } from '../../src/integrations/browser-plugins.mjs';
+import { BrowserPluginStore, chromeMcpCommand } from '../../src/integrations/browser-plugins.mjs';
 import { BrowserSessionManager } from '../../tools/browser/session.mjs';
 import * as browser from '../../tools/browser/browser.mjs';
 import { PlaywrightBrowserAdapter, guardBrowserUrl, screenshotFile } from '../../tools/browser/playwright.mjs';
 import { ChromeBrowserAdapter } from '../../tools/browser/chrome.mjs';
 import { normalizeBrowserArgs } from '../../tools/browser/pending.mjs';
+const PROFILE_CLEANUP = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }; // Disposable fixture only: Windows can briefly retain a closed Chromium profile lock.
 
 test('browser plugin choices persist without enabling either backend by default', (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-browser-'));
@@ -92,11 +93,11 @@ test('act falls back to the marked element when the page changed since the snaps
   await assert.rejects(adapter.run({ action: 'act', op: 'click', ref: 'gone' }, {}), /Unknown browser ref/);
 });
 
-test('uncached Chrome MCP package means a cold install on connect', () => {
-  const { args } = chromeMcpCommand({ connection: 'profile', port: 9222 });
-  assert.equal(chromeInstallNeeded(args, () => null), true, 'nothing cached: budget the download');
-  assert.equal(chromeInstallNeeded(args, () => '/cache/entry.js'), false, 'cached: warm handshake only');
-  assert.equal(chromeInstallNeeded([]), true, 'no spec: assume cold');
+test('Chrome launches the installed bridge without a package download', () => {
+  const { command, args } = chromeMcpCommand({ connection: 'profile', port: 9222 });
+  assert.equal(command, process.execPath);
+  assert.ok(fs.statSync(args[0]).isFile());
+  assert.ok(!args.includes('-y'));
 });
 
 test('site rules block navigation before a network request', async () => {
@@ -216,6 +217,7 @@ test('Chrome adapter maps MCP snapshot UIDs to expiring browser refs', async () 
       calls.push({ name, args });
       if (name.endsWith('__new_page') || name.endsWith('__list_pages')) return '## Pages\n1: about:blank\n2: Example Domain (https://example.com/) [selected]';
       if (name.endsWith('__take_snapshot')) return 'uid=1_0 RootWebArea "Example"\n  uid=1_1 textbox "Name"';
+      if (name.endsWith('__evaluate_script')) return '```json\n[{"tag":"input","type":"text","issue":null}]\n```';
       return 'ok';
     },
   };
@@ -243,7 +245,7 @@ test('real Chromium opens a page, fills a form, and rejects stale refs', async (
   const store = new BrowserPluginStore(path.join(dir, 'browser.json')).load();
   store.setEnabled('isolated', true);
   const manager = new BrowserSessionManager({ store, isolatedFactory: () => new PlaywrightBrowserAdapter({ profile: path.join(dir, 'profile') }) });
-  t.after(async () => { await manager.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); fs.rmSync(dir, { recursive: true, force: true }); });
+  t.after(async () => { await manager.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); assert.equal(fs.realpathSync(path.dirname(dir)), fs.realpathSync(os.tmpdir())); await fs.promises.rm(dir, PROFILE_CLEANUP); });
   const ctx = { config: { allowPrivateHosts: true }, cwd: dir };
   const opened = await manager.run({ action: 'open', url: `http://127.0.0.1:${server.address().port}` }, ctx);
   assert.match(opened, /Demo form/);

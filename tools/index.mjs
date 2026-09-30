@@ -17,6 +17,7 @@ import * as jobInput from './process/job-input.mjs';
 import * as jobWait from './process/job-wait.mjs';
 import * as writeTodos from "./project/write-todos.mjs";
 import * as findTools from "./find-tools.mjs";
+import * as scheduleStatus from './automation/schedule-status.mjs';
 import { killTree, waitForExit } from "./process/run-command.mjs";
 import { CATEGORIES, alwaysOnTools, deferredTools, deferredSpecByName, categoryOfTool, specOf } from "./catalog.mjs";
 
@@ -25,6 +26,7 @@ import { CATEGORIES, alwaysOnTools, deferredTools, deferredSpecByName, categoryO
  * every schema here is paid on every turn, forever.
  */
 export const CORE = [
+  scheduleStatus,
   ...alwaysOnTools,
   readFile,
   writeFile,

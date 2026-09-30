@@ -6,7 +6,297 @@ Date: 2026-09-26. Scope: `copilot-chat` — `tools/browser/` (`browser.mjs`, `pl
 `desktop/electron/browser-plugins.mjs`. This record preserves the original live
 failure traces and documents subsequent fixes. Original code paths, line numbers,
 environment paths, and proposals below describe the initial investigation, not
-the current implementation. The latest verification is in Part H.
+the current implementation. The latest verification is in Part K.
+
+## Part K — model-selected credentials and Telegram upgrade (2026-09-27)
+
+The user's Cirro screenshot reproduced a real defect: the old login detector
+rejected its honeypot plus input-based submit control. Read-only live trace:
+`An unambiguous username and sign-in button are required`. The first diagnostic
+snapshot was truncated, not missing controls. Its full output includes Email,
+Password and Sign In refs; preparation now reports `accepted:true` and
+`formDetection:false`. No Cirro account was submitted or fabricated as a test.
+
+`browser login` without fields can request the secure dialog independently of
+any form detection. It returns private credential availability and a fresh
+snapshot. The model chooses `credential_fields` refs mapped to username/password
+slots and optional `submit_ref`; sequential username-first calls work on the
+same origin/tab. Actual nodes, password input type, origin and form submission
+targets are checked before filling. GET password submission remains prevented,
+including a subsequent model click. Each call returns `filled` and page evidence;
+the model verifies sign-in and continues the original task. No button-name or
+logout-name heuristic gates the new runtime flow. Historical direct adapter
+login tests remain, but those helpers are not called by desktop login.
+
+Unsaved passwords remain main-process only, scoped to thread/origin/tab/page.
+Consumption immediately clears the transient record even if a later click or
+snapshot fails. Stop, turn end and expiry also clear it. Malformed model fields
+are rejected without breaking display/history. Secure cards parse the receipt
+through Agent's read-back and repeated-call notices. Snapshot input types are
+visible, while password values remain hidden after a site toggles input type.
+
+Telegram desktop and CLI paths now keep typing active, throttle interim tool
+labels, acknowledge received/completed/failed states and send up to five
+current-turn artifacts after final text. Reads enforce generated/downloaded
+folders, canonical containment, MIME and 15 MiB limits; photo failure falls back
+to document upload. `/cancel` bypasses task queues and pending approvals.
+Incoming photos/docs/videos receive a deferred-support nudge. Voice stays
+supported. CLI cancellation during typing/transcription cannot start the model;
+desktop artifact receipts are captured from owned tool events, so another chat
+sharing the teammate cannot contribute its files during final delivery.
+
+The original plan's reaction emoji are unsupported by Telegram. The implemented
+received/completed/failed reactions are 👀/👍/👎, from the
+[official supported list](https://core.telegram.org/bots/api#reactiontypeemoji).
+
+### Executed evidence
+
+```text
+New vault request/control tests: RED -> GREEN
+Fresh-context review: 4 Important findings -> each regression RED -> GREEN
+Combined affected gate: 74/74 pass, 0 fail, 0 skip; 30440.6514 ms
+desktop:build: exit 0; 322 modules; 9.61 s; existing bundle-size advisory
+PACKAGED_CHROME_RED_GREEN: shipped bridge -> 30 tools; empty PATH/npm cache
+PACKAGED_VAULT_COLD_WARM_OK / CANCEL_STOP_OK / RETRY_TAKEOVER_OK
+PACKAGED_MANAGED_BROWSER_ROUTING_OK / EMPTY_PAGE_OK
+PACKAGED_PUBLIC_LOGIN_OK: real public practice site -> secure dialog
+  -> model-selected refs -> Submit -> visible Log out -> original task resumes
+PACKAGED_SECRET_BOUNDARY_OK: no password in events/model/config; no renderer errors
+TELEGRAM_UPGRADE_LIVE_OK: 4 chat actions, 2 progress replies, 4 reactions, 1 file
+  Real configured Bot API; scripted desktop engine/CLI agent; approved test chat
+  CLI cancel sent stopped reply and suppressed the partial answer
+BROWSER_AUTOMATION_LIVE_OK: both real browser backends; reconnect/fallback/actions
+  Isolated: 9.2 FPS / 15 frames; Stop 3 ms; queue release 123 ms
+  Chrome local: 4.8 FPS / 15 frames; Stop 20 ms; queue release 2251 ms
+Final full suite: exit 0; 753 tests; 752 pass, 0 fail, 1 skip; 293065.7794 ms
+```
+
+Packaged artifacts and executable are in
+`C:\Users\anime\AppData\Local\Temp\ankita-packaged-vault-k2IhF1` (executable under
+`package\win-unpacked`; keep that entire folder together). The public-site
+success screenshot was visually inspected. This is an unsigned directory build,
+not an installed/published update. Primary test account source:
+[Practice Test Automation](https://practicetestautomation.com/practice-test-login/).
+
+Intermediate checks caught verifier-only receipt parsing errors caused by Agent
+advisories, and the affected screenshot test caught an oversized browser schema.
+Receipt parsing now handles those notices; compact schema descriptions preserve
+screenshot pixels in the default context window. These failures were fixed and
+the same gates rerun. Detailed rulings/review evidence are in
+[the ledger](plans/vault-model-selection-telegram-implementation.md).
+
+Limits: model decisions in the packaged verification are scripted; no actual
+Cirro/X login, CAPTCHA completion, personal Chrome-session vault flow, native
+macOS/Linux vault, installer/auto-update or live LLM decision is claimed. Vault
+filling remains desktop Playwright only; approved Chrome can use its existing
+session. Telegram transport was live, while inbound user polling was exercised
+with fixtures rather than modifying the real bot cursor. Incoming media and
+reaction handling remain deferred per the plan.
+Group topics and real voice transcription/TTS were not live-tested; desktop
+cancellation during pre-turn voice transcription remains uncovered.
+
+## Part J — public login controls, blank navigation and managed routing (2026-09-27)
+
+The user's public-site screenshots revealed gaps that Part I's controlled forms
+did not cover. Its passing fixture checks did **not** establish that arbitrary
+real-world sign-in screens worked.
+
+### Live reproduction and root causes
+
+```text
+Practice Test Automation: forms=0, passwords=1, button=Submit, button.form=false
+Before: prepareLogin -> Login form must submit to this origin
+After: same public page -> prepareLogin accepted=true
+X background browser: HTTP 403, response body=0 bytes, no controls/scripts
+Before: Opened tab ...; live session Ready with a white screenshot
+After: Navigation refused: HTTP 403; Needs attention; no white frame
+Normal headed Chromium probe: HTTP 200; X username/Continue screen rendered
+Discovery before: find_tools(browser) advertised external browser_navigate/snapshot
+Discovery after: desktop schemas/prompt/results contain only managed browser tools
+```
+
+- A JavaScript login group need not be a native `<form>`. The detector binds the
+  smallest local group containing exactly one username, password and recognized
+  sign-in/Submit button. Actual element/container handles, exact origin, native
+  form/submitter action checks and GET prevention still protect the fill path.
+- A blank SPA is observed for visible content before the first snapshot. HTTP
+  errors and pages that remain empty fail navigation; subsequent snapshot/read
+  and preview calls cannot silently turn a refusal into Ready. A later actual
+  render can recover. The live pane discards an old frame for a page-load failure.
+- Desktop filters external Playwright/Chrome tools from MCP summaries, prompts,
+  discovery and schemas, and blocks old calls before MCP execution. It activates
+  the built-in browser for recovery; enabled backend selection remains in the
+  session manager. Blocked calls no longer emit an external live-stage state.
+  Non-browser MCP integrations and standalone CLI MCP behavior are preserved.
+- Public packaged verification also exposed a late-preview race: an old tab's
+  capture could restore a frame after a newer page-load error. Session generations
+  now discard captures/results crossing operations or tab changes. A deterministic
+  regression reproduced the old frame overwriting the error, then passed.
+  MCP-name classification uses the existing protocol parser, including tool names
+  containing `__`; those cannot bypass the managed-browser execution guard.
+
+### Regression and live verification
+
+Failed navigation also returns without awaiting another tab-metadata request.
+A Chrome stub with a never-resolving tab list reproduced the blocked queue;
+the same regression now returns the HTTP failure and settles immediately.
+
+```text
+New readiness/login regressions: RED 0/5 -> GREEN 5/5
+External discovery regression: RED (advertised raw tools) -> GREEN
+Agent/discovery/lifecycle/readiness gate: 47/47, 0 failures (includes preview race)
+Packaged app: old MCP call refused -> built-in login -> original task resumes
+Packaged HTTP 403 and empty HTTP 200: load-error panel, no white image or Ready
+Fresh packaged app: BROWSER_VAULT_PACKAGED_OK
+Public site: native dialog -> Submit -> visible Log out -> original task resumes
+Built-in routing: old external call refused, no external live-stage events
+Secret boundary: no fixture password in model/events/persistence; no renderer errors
+Both real backends: BROWSER_AUTOMATION_LIVE_OK
+  Playwright preview 8.3 FPS; 15 distinct frames; Stop returned 2 ms
+  Chrome preview 3.9 FPS; 15 distinct frames; Stop returned 17 ms
+  Reconnect and disabled-Chrome fallback passed
+Final isolated full suite: 737 tests; 736 pass / 0 fail / 1 skip
+  exit 0; duration 200519.4613 ms
+```
+
+The first full run reached 733 pass / 1 fail / 1 skip; the sole failure was
+Windows `EPERM` deleting a closed disposable Chromium profile in
+`test/tools/browser.test.mjs`. The same test passed alone. Cleanup now has bounded
+retries and validates its temporary-directory parent. The cleanup rerun completed
+734 pass / 0 fail / 1 skip. A later 737-test run overlapped packaged/browser
+verification and hit two unchanged job-timing assertions (running vs done,
+empty output before the job had started). No job implementation was changed;
+The final full suite ran without those competing browser checks and passed both
+previously failing job assertions; 736 passed, zero failed and one skipped.
+
+The latest executable/ASAR is
+`C:\Users\anime\AppData\Local\Temp\ankita-packaged-vault-j9bwsV\package\win-unpacked`.
+It contains the complete runtime fixes above; keep the entire folder with the
+executable. Artifacts in its parent include `public-login-success.png`,
+`denied-page.png`, `blank-page.png` and the themed native dialog screenshots.
+The real public test used the [site's published dummy account](https://practicetestautomation.com/practice-test-login/),
+with saving disabled. A public redirect is observed through the periodically
+refreshed live tab list; no assertion assumes the first cached tick is current.
+
+`desktop:build` exited 0 (322 modules, 5.39s; existing bundle-size advisory).
+Literal review: render timeout and HTTP boundary are named constants; protocol
+parser, site policy and notice classification are shared helpers. DOM attributes,
+ARIA names, protocol keys and UI text are interface invariants. No dependency
+change, publication, installed upgrade or personal browser profile modification
+is part of this follow-up.
+
+Remaining coverage: X still refuses background Chromium and its username-first
+flow needs manual interaction/approved local Chrome. No X account, CAPTCHA, real
+LLM, native macOS/Linux, installer/auto-update or personal Chrome-session sign-in
+is claimed here. External site acceptance cannot be guaranteed by a local test.
+
+## Part I — packaged Chrome bridge and credential vault (2026-09-27)
+
+The two plans in `docs/plans/` are implemented. Chrome MCP is now a pinned
+production dependency and its self-contained build is unpacked beside ASAR.
+Electron-owned MCP children use `ELECTRON_RUN_AS_NODE=1`; no npm/npx, system Node
+or pre-existing cache is needed. The exact command still requires approval;
+enabling records the plugin choice and connections start on demand.
+
+Desktop isolated Playwright `browser login` now has a native themed Secure store
+card/dialog, main-process async OS-encrypted exact-origin vault, metadata-only
+Plugins management, cancellation, explicit retries, takeover and verified task
+continuation. CLI/channels/Chrome cannot read or fill the vault. Native GET
+submission, submitter overrides, cross-origin actions, signup/ambiguous forms,
+disabled Playwright fallback and changed site policy are guarded. A visible
+logout/sign-out control with no visible password input is required for success.
+No password-bearing snapshot/error is returned from the login operation.
+
+### Reproduced and corrected
+
+```text
+Baseline: 714 total / 713 pass / 0 fail / 1 skip
+Chrome focused: 7/7 pass after RED npx-command/missing-runtime-helper tests
+Vault: 3/3 pass after RED missing implementation
+Login service: 3/3 pass after RED missing implementation
+Final focused browser/login/context gates: 46/46 pass / 0 fail / 0 skip
+Actual packaged legacy launch: exit=0, no initialize
+Bundled packaged bridge: 1.10.1 -> 30 tools -> CDP page/snapshot
+  PATH empty and npm cache empty
+Both backends: BROWSER_AUTOMATION_LIVE_OK
+  Playwright 9.1 FPS / Chrome 6.5 FPS; 15 distinct frames each
+  Stop returned 3 / 13 ms; Chrome reconnect and disabled fallback passed
+npm audit --omit=dev: 0 vulnerabilities
+```
+
+The fresh whole-change review found and corrected five issues with RED/GREEN
+regressions. Independent live verification confirmed the two security fixes:
+
+```text
+Before submitter-method fix:
+{"result":true,"passwordInServerQuery":true,"passwordInTabUrl":true}
+After:
+{"overrideLoginResult":false,"passwordInServerQuery":false,"passwordInTabUrl":false}
+Before policy refresh fix:
+{"blockedSiteLoginSucceeded":true,"submits":1}
+After:
+{"blockedAtPrepare":true,"blockedBeforeFillWithFreshPolicy":true,"submits":0,"passwordFilled":false}
+Remaining review fixes: enabled-Playwright requirement, visible plain-text
+  card errors/cancellation, sanitized save failure with explicit one-time retry.
+Reviewer focused gates: 8/8 pass / 0 fail / 0 skip
+```
+
+The packaged verifier uses the actual executable, real local HTTP/SSE and IPC,
+real Chromium and real Windows async OS encryption. It checks cold/warm login,
+three appearances, autofocus/focus trap/eye toggle, metadata removal, Escape,
+Stop, wrong-password retry, extra verification/takeover/hand-back, and no password
+in model requests/public events/persisted app data. Final gates on settled source:
+
+```text
+npm test: 729 total / 728 pass / 0 fail / 1 skip
+duration_ms: 232917.7214 (skip: POSIX executable-permission test on Windows)
+npm run desktop:build: exit 0; 322 modules; 6.37s
+git diff --check: exit 0
+
+PACKAGED_CHROME_RED_GREEN: legacy exit=0, no initialize; bundled 1.10.1
+  -> 30 tools -> CDP page/snapshot; PATH empty, npm cache empty
+PACKAGED_VAULT_COLD_WARM_OK: real async OS encryption; secure dialog
+  -> save -> one fill/submit -> confirmed sign-in -> original task resumes
+PACKAGED_VAULT_MANAGEMENT_OK: Plugins metadata row and Remove via real IPC
+PACKAGED_VAULT_CANCEL_STOP_OK: Escape/Stop resolve without fill or save
+PACKAGED_VAULT_RETRY_TAKEOVER_OK: explicit Retry; verification/hand-back
+PACKAGED_VAULT_ERRORS_OK: visible local denial; corrupt-file one-time retry
+PACKAGED_SECRET_BOUNDARY_OK: no passwords in model/events/persisted app data;
+  no renderer errors
+BROWSER_VAULT_PACKAGED_OK
+
+PACKAGED_RUNTIME_OK / PACKAGED_THEME_OK / PACKAGED_AGENT_HTTP_OK:
+  actual executable/app.asar; mono/slate/graphite; 8 real HTTP/SSE model rounds
+PACKAGED_SIDEBAR_RECOVERY_OK / PACKAGED_STAGE_OK / PACKAGED_BROWSER_LIVE_OK
+PACKAGED_COMMAND_OK / PACKAGED_WORKER_CRASH_OK / PACKAGED_CHROMIUM_SETUP_OK
+PACKAGED_DESKTOP_VERIFICATION_OK
+```
+
+Fresh tested app directory:
+`C:\Users\anime\AppData\Local\Temp\ankita-packaged-vault-rlJWyX\package\win-unpacked`.
+Secure-dialog screenshots and disposable profiles/config are in
+`C:\Users\anime\AppData\Local\Temp\ankita-packaged-vault-rlJWyX`.
+The broader verifier reused this exact build; its screenshots are in
+`C:\Users\anime\AppData\Local\Temp\ankita-packaged-browser-5acjnD\screenshots`.
+The build is local and unsigned; these traces do not assert a published release.
+
+### Coverage limits
+
+- Windows unpacked executable/ASAR and OS encryption are exercised; NSIS install,
+  auto-update deployment, and signed macOS/Linux builds are not exercised here.
+- Linux unavailable/basic_text and crypto/corrupt failures have stub-driven tests;
+  native Linux secret-store and macOS Keychain prompts remain untested.
+- Chrome private CDP is live; active personal-session permission prompts remain
+  manual. Chrome still needs an installed browser; Playwright's Chromium binary
+  remains a separate download. The MCP bridge itself is bundled.
+- Model decisions are scripted and sites are disposable forms, not a live LLM,
+  airline/Google login or real account. Sequential login screens/unsupported
+  widgets and avatar-only evidence require manual interaction.
+- Passwords necessarily exist briefly in dialog DOM and main-process callbacks;
+  owned references/buffers are cleared, without promising JavaScript memory erasure.
+
+See [the implementation ledger](plans/browser-packaged-vault-implementation.md)
+for source-plan rulings and test commands.
 
 ## Part H — 2.4.3 release preflight
 
@@ -1123,3 +1413,82 @@ model from ever looking.
 Add travel/media terms to the `connectors` keywords (or make the miss branch suggest
 `composio action="search" <query>` directly for service-shaped requests), then verify what
 the backend catalog actually returns for `flight`/`music` before promising the capability.
+
+## Scheduled authentication and owned-browser cleanup — 2026-09-28
+
+The scheduled worker reuses the built-in browser contract and its private
+model-selected credential refs. It has a separate persistent Chromium profile;
+foreground Chrome and chat retain their independent connections.
+
+- Fixed expected cleanup disconnects being reported as job network failures:
+  close the network guard before closing its Chromium context. The regression
+  failed with `false !== true` before the fix and passed afterwards. The real
+  navigation suite passed `2/2`, including pre-dispatch redirect/POST/frame/Fetch
+  interception and this shutdown ordering.
+- Rejected stale refs that cannot have performed an action can return fresh refs
+  to the worker. Uncertain action/network failures stop without replaying a
+  mutation. Audits contain fixed error notices, not raw snapshots or field values.
+- Actual Windows Electron development and unsigned unpacked app checks passed
+  username-first authentication, same-origin iframe password fill, hidden CSRF,
+  control replacement, expired sessions and a repeated run: exactly two posts,
+  zero wrong credentials and zero query leaks. MFA produced
+  `skipped-needs-foreground`, with no guessed code or extra submission.
+- Real Playwright and Chrome isolation round trips produced
+  `LIVE_JOB_BACKENDS_OK: Playwright + Chrome; posts=2; saved-login=1; shared connection preserved`.
+  Foreground tabs survived scope close. Chrome remains excluded from desktop
+  scheduled jobs per the user's backend decision.
+
+The app verifier's model responses are scripted HTTP/SSE fixtures; its browser,
+vault, UI and scheduler are real. Public anti-bot/OAuth/passkey flows are not
+covered by those fixtures. Separate real-provider results, exact commands and
+remaining limits are in the [assistant scheduling ledger](plans/assistant-scheduling-security-implementation.md).
+
+### Live-provider findings and hardening
+
+- A worker advertised Chrome while its runtime permitted isolated Chromium. The
+  real model selected `mode=local` and failed. Background schemas now advertise
+  only isolated Chromium; foreground Chrome retains its original choices.
+- A real model selected a text field and a button in `fill_form`. Before the fix,
+  the first value changed and the button then failed. Whole-batch target preflight
+  now rejects the call with fresh refs and zero field writes. A separate regression
+  changes a second control after the first write and proves the resulting error
+  stays incomplete rather than recoverable.
+- Live attempts also omitted the login URL, guessed a password and printed a
+  pretend tool call as final text. Missing login URLs now bind the actual selected
+  tab; saved-password fills stay private, including shown-password controls.
+  Printed tool markup requests one bounded native-tool correction, and repeats
+  or exhausted tool loops cannot produce successful job receipts.
+- Review reproduced Chrome's nonthrowing dialog-interruption response and custom
+  ARIA toggle support. Real MCP checks now show `CHROME_CUSTOM_TOGGLE_OK` and
+  `CHROME_INTERRUPTED_FORM_OK`; an interrupted batch is never reported fully filled.
+- Concurrent guard/scheduler cleanup previously closed the same context twice
+  (`2 !== 1`). Cleanup now detaches captured resources and shares a pending close;
+  reopening waits for cleanup. The focused hardening suite passed `16/16` in
+  `.commandcode/scheduled-browser-hardening.log`.
+
+## Scheduled completion and watched-tab selection — 2026-09-28
+
+The supplied Instagram run stopped at 63,472 recorded tokens against a
+model-chosen 60,000-token daily ceiling. Regular desktop tasks now record usage
+while running until completion; explicitly bounded tasks and Heartbeat retain
+their configured limits. Stop, no-progress detection and human-input boundaries
+remain available. The details and editor show the actual execution prompt.
+
+Watching another job tab previously retargeted the worker and invalidated its
+refs. A real Chromium reproduction read `/one` instead of `/two`. Independent
+preview selection now preserves the worker's selected page and original refs;
+completion proof captures that worker page independently of the watched frame.
+The same live reproduction passed after the fix, including a click using the
+original ref and distinct watched/proof screenshots.
+
+A live model put a submit button into `credential_fields`, and the schema
+rejection stopped its scheduled run. This now returns fresh refs and fixed
+guidance before vault access or any fill. The rebuilt app's two complex login
+runs deliberately reproduce that mistake, then correct the native call and
+complete exactly two posts; origin and uncertain-action failures still stop.
+
+The rebuilt unsigned Windows packaged app completed both complex login runs
+with exactly two posts, survived navigation to Plugins while running, exceeded
+the old token ceiling and remained enabled. Real-provider results, commands,
+artifact paths and uncovered public-site behavior are recorded in the
+[scheduled completion verification](plans/scheduled-job-completion-fixes.md).

@@ -24,7 +24,7 @@ ankita › search for the latest Node.js LTS release and fetch the announcement
 
 ## 🚀 Quickstart
 
-**Prereqs:** Node.js 20+ (`22.12+` for desktop dev). Optional: `ffmpeg` for voice, Python 3 + `pip install scrapling` for stealth scraping.
+**Prereqs:** Node.js 20.19+, 22.12+, or 23+ for the CLI and bundled Chrome bridge; Node 22.12+ for desktop development and packaging. The minimum versions follow the Chrome bridge and Electron build dependencies. The packaged app supplies its own runtime. Optional: `ffmpeg`/`ffplay` on PATH for voice, and Python 3 + `pip install scrapling` for the stealth scraping tier.
 
 ```bash
 npm install
@@ -33,7 +33,33 @@ cp .env.example .env   # or ~/.copilot-chat-cli/config.env as global fallback
 ankita            # talk to it
 ```
 
-First run prints a code → sign in at `github.com/login/device` once, token is cached (`0600` perms). Every later run skips login.
+Run these commands from the repository root. A fresh desktop install starts with Kilo's free `poolside/laguna-s-2.1:free` model without an API key; free access is subject to provider availability and rate limits. Existing provider choices are preserved. With Copilot selected and no cached login, the window shows a GitHub device code for sign-in. Open **Settings** from the sidebar gear or with `Ctrl+,` (`Cmd+,` on macOS) to choose a model or provider, add a Composio key, test a custom OpenAI-compatible endpoint, and change the appearance. Desktop settings are saved in `~/.copilot-chat-cli/desktop-settings.json` and take priority over `.env` in the desktop app. The CLI continues to use `.env` or its global fallback.
+
+For CLI Copilot sign-in, the first run prints a code. Sign in at `github.com/login/device` once; the token is cached with `0600` permissions, so later runs skip login.
+
+**Images are three separate tools.** Ask the agent to generate an image, search Unsplash, or search Pixabay; it loads the image tools on demand. Generated images are saved under `generated-images/` in the current workspace, and a chosen stock photo can be downloaded to `downloaded-images/`; both preview inline. Unsplash and Pixabay searches return separate attributed preview galleries. Configure the image-generation endpoint/model and the two stock-search keys in **Settings → Images**, or use `IMAGE_API_BASE`, `IMAGE_API_KEY`, `IMAGE_MODEL`, `UNSPLASH_ACCESS_KEY`, and `PIXABAY_API_KEY` in `config.env`. Generation uses the configured image endpoint (or falls back to the current model provider) and may incur provider charges. Both folders are git-ignored — they are content, not source.
+
+### Launch film
+
+Open [`docs/media/ankita-launch-film.html`](docs/media/ankita-launch-film.html) in a browser to play the self-contained, 30-second Canvas 2D A.N.K.I.T.A. launch film. Use **Space** to pause/play, **R** to restart, and **F** or the fullscreen control to toggle fullscreen. The memory-search sequence animates a typed prompt, a flying send arrow, and contextual results. Add `?seed=your-seed` to the URL for a repeatable particle arrangement.
+
+Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
+
+The **By Ankita** section in Plugins works without a Composio key. It offers an isolated Playwright Chromium and an optional Chrome connection for sites that need your existing session. Browser runs have a live stage beside chat with tabs, a page preview, Stop, and takeover controls. See [Browser use](docs/guides/browser-use.md) for setup, permissions, and CLI commands.
+
+**Desktop scheduled tasks** start in chat: tell Ankita what to do, how to check success and when. Its `schedule` tool creates an active task and shows a compact card with the next run. Ask it to update, pause, resume or remove a task; the clock opens a thin upcoming list with details and optional advanced settings. Jobs use independent isolated Chromium profiles and saved credentials, so chat stays available. New chat tasks browse autonomously for the requested work; existing scoped tasks keep their inline permissions. Heartbeat checks an idle teammate's context and stays quiet when there is no useful update. Closing/minimizing keeps jobs in the tray; **Quit** stops them. Startup is opt-in. No mobile wiring. See [Scheduled desktop jobs](docs/guides/desktop-jobs.md).
+
+**Command palette:** press `Ctrl+K` (`Cmd+K` on macOS), or click the search icon in the chat header. Search commands, enabled skills and jobs; use arrows and Enter to run, Escape to close. Job launches use the normal scheduler path.
+
+### Secret protection
+
+Secret scrubbing is on by default. Supported API-key/token shapes, labeled passwords, high-entropy labeled tokens, private-key blocks and encoded wrappers are replaced in saved transcripts, tool logs, job state, text diagnostics and exports. The live model turn still receives the original value. Explicit save intent stores detected values with OS encryption and leaves a `[STORED:keychain:name]` reference in history; ordinary pastes are redacted without vault storage. Previously detected desktop values also stay hidden in later unlabeled echoes.
+
+First launch migrates app-managed history, job state, teammate previews, daemon/text logs and exports. Provider configuration and encrypted vault records are excluded. Exported files outside app-managed folders must be exported again to receive protection. Settings → Privacy can disable scrubbing with a warning. Detection cannot guarantee protection for arbitrary unlabeled secrets or values split between messages. Native binary crash dumps are not collected by this feature; only app-written text diagnostics are protected. See [CONTRIBUTING.md](CONTRIBUTING.md) for persistence and skill contribution rules.
+
+**Settings → Channels** connects the app to a chat service so you can reach your agent from anywhere, starting with Telegram. Create a bot with [@BotFather](https://t.me/BotFather), paste its token, pick the teammate that should answer, and add the chat ids allowed to talk to it — an unknown chat is told its own id so you can add it. While enabled, the bridge runs with the app and routes each message to that teammate, sharing the same thread and history as the desktop; tool approvals are asked and answered in the chat. Voice notes are transcribed when a Groq key is set, and replies can be spoken back. Channel settings live in `~/.copilot-chat-cli/desktop-channels.json`. Only one process may poll a bot token at a time, so stop the CLI `--daemon` before enabling the same bot here.
+
+Open **Projects** to record a working folder, conventions, decisions, and open tasks. Assign a project from the teammate header or when editing a teammate. That teammate uses the project's folder for file and command tools and receives a short project brief. The **Work review** button in chat opens Git changes with file diffs, recent artifacts, and command jobs with output and a stop action; file edits open it automatically. The agent allows at most six `web_search` calls per user request, then uses the sources already gathered.
 
 ```bash
 ankita -p "summarise what this repo does"        # one-shot
@@ -201,6 +227,17 @@ npm run bench           # real agent loop latency split: pre / ttft / gen / tota
 700+ tests per release. Web suites run against fixtures (no network), MCP suite drives a real stdio fixture.
 
 ## 🔒 Security notes
+
+Desktop and CLI Telegram turns keep typing active, send throttled tool-step
+updates and acknowledge receipt/completion/failure with reactions. Current-turn
+generated images, downloads and browser captures are uploaded after the final
+text reply (up to five files). `/cancel` stops the active task in that chat,
+including a task waiting for approval. Incoming photos/documents/videos receive
+a not-supported reply; send text or voice notes instead. Captions and file reads
+stay bounded, and generated files remain available in the workspace if an upload
+fails.
+
+**Approvals come to your phone.** A DM cannot answer a terminal y/n prompt, so when a requested action would change something, Ankita sends you the diff in the chat and waits for your reply.
 
 - Mutating actions ask first by default (`-y` / `AUTO_APPROVE=on` opts out; file writes re-verify the plan at write time).
 - `.env` is gitignored; tokens live in `~/.copilot-chat-cli/` with `0600` perms, never in the repo.

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
-import type { BrowserSessionView, ChatMessage, Model, Project, Teammate } from '../../../shared/wire';
+import type { BrowserSessionView, ChatMessage, Model, Project, Teammate, Routine } from '../../../shared/wire';
 import type { Usage } from '../state/store';
 import { Composer } from './Composer';
 import { Icon } from './Icons';
@@ -7,8 +7,11 @@ import { Message } from './Message';
 import { WindowControls } from './WindowControls';
 import { formatTokens } from '../lib/format';
 import { BrowserRunCard } from './BrowserStage';
+import { JobsPill } from './JobsPill';
+import { JobApprovalCard } from './JobCard';
 
-export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onClear, onDelete }: {
+export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onClear, onDelete, jobs, onEditJob, onWatchJob }: {
+  jobs: Routine[]; onEditJob: (id?: string) => void; onWatchJob: (job: Routine) => void;
   teammate: Teammate | null; messages: ChatMessage[]; running: boolean; models: Model[]; defaultModel: string;
   projects: Project[]; usage?: Usage; chrome: string; sidebarOpen: boolean; reviewOpen: boolean; onToggleSidebar: () => void; onToggleReview: () => void; onProject: (id: string | null) => void; onOpenProjects: () => void;
   browserRun?: BrowserSessionView | null; onOpenBrowser: () => void; onOpenBrowserPlugins?: () => void;
@@ -23,6 +26,8 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
   // layout effect, or a streaming delta arriving right after the user scrolls
   // up still sees the previous "at bottom" value and yanks the view back down.
   const stick = useRef(true);
+  const pendingJobs = jobs.filter(job => job.pendingApproval);
+  const pendingJobIds = pendingJobs.map(job => job.pendingApproval?.requestId).join(',');
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = 'auto') => {
     const element = scroll.current;
@@ -37,7 +42,7 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
     if (!stick.current) return;
     const element = scroll.current;
     if (element) element.scrollTop = element.scrollHeight;
-  }, [messages, running]);
+  }, [messages, running, pendingJobIds]);
 
   useLayoutEffect(() => { setMenu(false); setProjectMenu(false); stick.current = true; setAtBottom(true); const element = scroll.current; if (element) element.scrollTop = element.scrollHeight; }, [teammate?.id]);
 
@@ -67,6 +72,8 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
         <div className="header-identity"><span className="header-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span><div><h2>{teammate.name}</h2><span>{teammate.persona || 'A conversation with room to think'}</span></div></div>
       </div>
       <div className="header-actions no-drag">
+        <button className="icon-button palette-launcher" onClick={() => window.dispatchEvent(new Event('ankita:palette'))} aria-label="Open command palette" title="Commands, skills and tasks (Ctrl+K)"><Icon name="search" size={16} /></button>
+        <button className="jobs-header-chip" onClick={() => onEditJob()} aria-label="Scheduled jobs"><Icon name="clock" size={14} /><span>{jobs.length || 'Add'} jobs</span></button>
         <div className="project-picker"><button className="project-picker-button" onClick={() => setProjectMenu(!projectMenu)} aria-expanded={projectMenu} title="Choose this teammate's project"><Icon name="folder" size={15} /><span>{assignedProject?.name || 'No project'}</span><Icon name="chevron" size={13} /></button>{projectMenu && <div className="project-picker-menu"><span>Work in</span><button className={!teammate.projectId ? 'active' : ''} disabled={running} onClick={() => { onProject(null); setProjectMenu(false); }}>No project</button>{projects.filter(project => !project.archived).map(project => <button key={project.id} className={teammate.projectId === project.id ? 'active' : ''} disabled={running} onClick={() => { onProject(project.id); setProjectMenu(false); }}><strong>{project.name}</strong><small>{project.path || project.summary || 'Project context'}</small></button>)}<button className="project-picker-manage" onClick={() => { setProjectMenu(false); onOpenProjects(); }}>Manage projects <Icon name="arrowRight" size={14} /></button></div>}</div>
         {tokens > 0 && <span className="usage-chip" title="Tokens used in this conversation">{formatTokens(tokens)} tokens{usage && usage.estimated_cost > 0 ? ` · $${usage.estimated_cost.toFixed(4)}` : ''}</span>}
         <button className={`icon-button review-toggle ${reviewOpen ? 'active' : ''}`} onClick={onToggleReview} aria-label="Review changes, artifacts and runs" aria-pressed={reviewOpen} title="Work review"><Icon name="code" size={18} /></button>
@@ -74,12 +81,13 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
       </div>
     </header>
     <div className="chat-scroll" ref={scroll} onScroll={onScroll} aria-label={`${teammate.name} conversation`}><div className="transcript">
-       {!messages.length && !running ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} threadId={teammate.id} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} onOpenBrowserPlugins={onOpenBrowserPlugins} />)}
+       {!messages.length && !running && !pendingJobs.length ? <div className="welcome"><div className="welcome-emblem"><span>{teammate.emoji || '✦'}</span></div><h1>Good things start<br />with a conversation.</h1><p>{teammate.name} is here to help you think, make, and move forward. What’s on your mind?</p><div className="welcome-rule" /><div className="welcome-prompts"><span>Try asking</span><button onClick={() => onSend('Help me make a clear plan for what I’m working on.')}>Make a plan <span>↗</span></button><button onClick={() => onSend('Review my current project and suggest the next step.')}>Find the next step <span>↗</span></button></div></div> : messages.map(message => <Message key={message.id} message={message} teammate={teammate} threadId={teammate.id} streaming={running && message.id === lastAssistant && messages.at(-1)?.id === message.id} onOpenBrowserPlugins={onOpenBrowserPlugins} jobs={jobs} onEditJob={onEditJob} />)}
       {showThinking && <div className="thinking-row"><span className="message-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span><span className="thinking-dots"><i /><i /><i /></span><span>{teammate.name} is thinking</span></div>}
       {browserRun?.mode && browserRun.tabs.length > 0 && <BrowserRunCard view={browserRun} onOpen={onOpenBrowser} />}
+      {jobs.filter(job => job.pendingApproval).map(job => <JobApprovalCard key={job.id} job={job} onEdit={onEditJob} />)}
       <div />
     </div></div>
     {!atBottom && <button className="jump-to-bottom" onClick={jump} aria-label="Jump to latest"><Icon name="chevron" size={17} /><span>Latest</span></button>}
-    <Composer threadId={teammate.id} name={teammate.name} messages={messages} running={running} models={models} model={teammate.model || defaultModel} onModel={onModel} onSend={onSend} onStop={onStop} />
+    <div className="jobs-composer"><JobsPill jobs={jobs} onEdit={onEditJob} onWatch={onWatchJob} /><Composer threadId={teammate.id} name={teammate.name} messages={messages} running={running} models={models} model={teammate.model || defaultModel} onModel={onModel} onSend={onSend} onStop={onStop} /></div>
   </main>;
 }

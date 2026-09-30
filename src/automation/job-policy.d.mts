@@ -1,0 +1,10 @@
+export const DEFAULT_JOB_ALLOW: { read: boolean; interact: boolean; login: boolean; sites: string[]; mode: 'isolated' | 'local' };
+export const DEFAULT_JOB_BUDGET: { maxRunsPerDay: number; maxTokensPerDay: number; maxMinutesPerDay: number };
+export const JOB_TIMEOUT_MS: number;
+export const JOB_MUTABLE_FIELDS: readonly string[];
+export const BACKGROUND_JOB_PROMPT: string;
+export const BACKGROUND_BROWSER_PROMPT: string;
+export const JOB_EXECUTION_COMPLETE: 'complete';
+export const JOB_EXECUTION_BOUNDED: 'bounded';
+export const JOB_EXECUTION_POLICIES: readonly ('complete' | 'bounded')[];
+export const SCHEDULE_TASK_GUIDANCE: string;

@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { McpManager } from '../src/integrations/mcp-manager.mjs';
 import { ChromeBrowserAdapter } from '../tools/browser/chrome.mjs';
-import { CHROME_MCP_ID, CHROME_MCP_VERSION } from '../src/integrations/browser-plugins.mjs';
+import { CHROME_MCP_ID, chromeMcpCommand } from '../src/integrations/browser-plugins.mjs';
 import { PlaywrightBrowserAdapter } from '../tools/browser/playwright.mjs';
 import { BrowserSessionManager } from '../tools/browser/session.mjs';
 import { BrowserPluginStore } from '../src/integrations/browser-plugins.mjs';
@@ -13,7 +13,8 @@ import { waitForBrowser } from '../tools/browser/pending.mjs';
 
 const mcp = new McpManager({ log: message => console.log(message) });
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-chrome-live-'));
-const connection = { id: CHROME_MCP_ID, command: 'npx', args: ['-y', `chrome-devtools-mcp@${CHROME_MCP_VERSION}`, '--no-usage-statistics', '--no-performance-crux', '--headless', `--user-data-dir=${path.join(directory, 'chrome')}`], hidden: true, initTimeoutMs: 25_000, requestTimeoutMs: 15_000 };
+const bundled = chromeMcpCommand({ connection: 'profile' });
+const connection = { id: CHROME_MCP_ID, command: bundled.command, args: [...bundled.args, '--headless', `--user-data-dir=${path.join(directory, 'chrome')}`], hidden: true, initTimeoutMs: 25_000, requestTimeoutMs: 15_000 };
 const playwright = new PlaywrightBrowserAdapter({ profile: path.join(directory, 'playwright') });
 let notifySlow;
 const slowRequested = new Promise(resolve => { notifySlow = resolve; });

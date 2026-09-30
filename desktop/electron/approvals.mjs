@@ -6,11 +6,13 @@ export class ApprovalRegistry {
     this.pending = new Map();
   }
 
-  request(threadId, toolName, detail) {
+  request(threadId, toolName, detail, metadata = {}) {
     const requestId = randomUUID();
     return new Promise(resolve => {
-      this.pending.set(requestId, { threadId, resolve });
-      this.onRequest({ requestId, threadId, toolName, detail });
+      this.pending.set(requestId, { ...metadata, threadId, resolve });
+      metadata.onRegistered?.(requestId);
+      const { onRegistered, ...publicMetadata } = metadata;
+      this.onRequest({ requestId, threadId, toolName, detail, ...publicMetadata });
     });
   }
 
@@ -24,7 +26,7 @@ export class ApprovalRegistry {
 
   cancelThread(threadId) {
     for (const [id, entry] of this.pending) {
-      if (entry.threadId !== threadId) continue;
+      if (entry.threadId !== threadId || entry.routineId) continue;
       this.pending.delete(id);
       entry.resolve(false);
     }

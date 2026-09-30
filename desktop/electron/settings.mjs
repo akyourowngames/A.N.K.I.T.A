@@ -3,8 +3,10 @@ import path from 'node:path';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom']);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+keys.add('secretScrubbing');
+keys.add('secretWarningSeen');
 
 /** An IANA zone the runtime accepts, or null. */
 function validTimeZone(value) {
@@ -68,7 +70,7 @@ function validatePatch(patch) {
         if (!zone) throw new Error('Enter a valid timezone, e.g. Asia/Kolkata');
         clean[key] = zone;
       }
-    } else if (key === 'profileSetupDone') {
+    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen'].includes(key)) {
       clean[key] = value === true || value === 'true';
     } else if (key === 'disabledSkills') {
       if (!Array.isArray(value) || value.length > 100 || value.some(name => typeof name !== 'string' || !/^[a-z0-9-]{1,64}$/.test(name))) {
@@ -175,6 +177,8 @@ export class DesktopSettingsStore {
       username: this.data.username || config.username || '',
       timeZone: this.data.timeZone || config.timeZone || '',
       profileSetupDone: Boolean(this.data.profileSetupDone),
+      secretScrubbing: this.data.secretScrubbing !== false,
+      secretWarningSeen: this.data.secretWarningSeen === true,
       customApiBase: this.data.customApiBase || (provider === 'custom' ? config.apiBase || '' : ''),
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,

@@ -3,7 +3,7 @@ export function waitForBrowser(work, { signal, timeoutMs = 30_000, onTimeout } =
   return new Promise((resolve, reject) => {
     const finish = (fn, value) => { clearTimeout(timer); signal?.removeEventListener('abort', cancel); fn(value); };
     const cancel = () => finish(reject, new Error('Browser action cancelled'));
-    const timer = setTimeout(() => {
+    const timer = timeoutMs === null ? null : setTimeout(() => {
       finish(reject, new Error(`Browser request timed out after ${Math.round(timeoutMs / 1000)} seconds. Check the browser connection and try again.`));
       onTimeout?.();
     }, timeoutMs);
@@ -17,6 +17,7 @@ export function waitForBrowser(work, { signal, timeoutMs = 30_000, onTimeout } =
 const ACT_OPS = new Set(['click', 'fill', 'type', 'press', 'select', 'hover', 'scroll', 'drag']);
 // Display modes confused for connection modes (headless is a launch setting, not a mode).
 const MODE_ALIAS = { headless: 'isolated', headful: 'isolated' };
+const ACTION_ALIAS = { signin: 'login', sign_in: 'login' }; // Common sign-in spelling; secure path only.
 
 /**
  * Forgiving argument shapes observed live: the model sends op names as
@@ -27,6 +28,7 @@ const MODE_ALIAS = { headless: 'isolated', headful: 'isolated' };
  */
 export function normalizeBrowserArgs(args = {}) {
   const out = { ...args };
+  if (ACTION_ALIAS[out.action]) out.action = ACTION_ALIAS[out.action];
   if (ACT_OPS.has(out.action)) { out.op = out.op || out.action; out.action = 'act'; }
   if (out.target != null && out.ref == null) out.ref = out.target;
   if (out.to_target != null && out.to_ref == null) out.to_ref = out.to_target;
