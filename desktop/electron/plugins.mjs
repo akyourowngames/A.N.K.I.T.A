@@ -4,6 +4,22 @@ import { authorize, canonicalSlug, connectedServices, connectionMode, listToolki
 
 const cleanText = (value, max = 200) => String(value || '').slice(0, max);
 
+/**
+ * Composio serves every toolkit mark as an SVG from its own CDN. Only that host
+ * may reach the renderer: it is the single external origin allowed for images
+ * beyond the existing Unsplash/Pixabay entries, so anything else is dropped
+ * rather than handed to an <img src>.
+ */
+const PLUGIN_LOGO_HOST = 'logos.composio.dev';
+
+export function pluginLogoUrl(value) {
+  try {
+    const url = new URL(String(value || ''));
+    if (url.protocol !== 'https:' || url.hostname !== PLUGIN_LOGO_HOST) return '';
+    return url.toString();
+  } catch { return ''; }
+}
+
 /** The desktop's small, secret-free boundary around Composio management. */
 export class DesktopPlugins {
   constructor({ getConfig, storeFile = COMPOSIO_FILE, fetchImpl = fetch, isLive = () => false } = {}) {
@@ -52,7 +68,7 @@ export class DesktopPlugins {
       for (const item of result.cards) {
         let slug;
         try { slug = canonicalSlug(item.slug); } catch { continue; }
-        cards.push({ slug, label: cleanText(item.label || slug, 90), blurb: cleanText(item.blurb, 160), noAuth: Boolean(item.noAuth) });
+        cards.push({ slug, label: cleanText(item.label || slug, 90), blurb: cleanText(item.blurb, 160), noAuth: Boolean(item.noAuth), logo: pluginLogoUrl(item.logo) });
       }
       next = typeof result.nextCursor === 'string' && result.nextCursor.length <= 1000 && result.nextCursor !== next ? result.nextCursor : '';
       if (cards.length || !next) break;

@@ -3,7 +3,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Agent } from '../../src/core/agent.mjs';
-import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG } from '../../src/core/config.mjs';
+import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG, MCP_TIERS_FILE, COMPOSIO_GRANTS_FILE } from '../../src/core/config.mjs';
+import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
+import { ComposioGrantStore } from '../../src/integrations/composio-oauth.mjs';
 import { SecretHistory } from './secret-history.mjs';
 import { migrateSecrets, migrationMarker } from '../../src/security/secret-migration.mjs';
 import { createSession } from '../../src/core/bootstrap.mjs';
@@ -242,6 +244,8 @@ export class DesktopEngine {
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
     channelsFile = path.join(CONFIG_DIR, 'desktop-channels.json'),
     composioFile = COMPOSIO_FILE,
+    composioGrantsFile = COMPOSIO_GRANTS_FILE,
+    openExternal = null,
     browserFile = BROWSER_FILE,
     sessionsDir = SESSIONS_DIR,
     projectsFile = PROJECTS_FILE,
@@ -271,7 +275,11 @@ export class DesktopEngine {
     this.config = config;
     this.bootstrap = bootstrap;
     this.AgentClass = AgentClass;
-    this.mcp = mcp || new McpManager({ onChange: () => this.emit({ type: 'tools-changed', connected: this.mcp?.connectedIds || [] }) });
+    this.mcp = mcp || new McpManager({
+      onChange: () => this.emit({ type: 'tools-changed', connected: this.mcp?.connectedIds || [] }),
+      // File-backed: tier overrides outlive the process. Heuristics apply either way.
+      tiers: new TierPolicy(MCP_TIERS_FILE),
+    });
     // Keep the raw sink separate so the channel bridge can observe every event
     // (approvals included) without the emit path calling back into itself.
     this._emit = emit;
@@ -290,6 +298,12 @@ export class DesktopEngine {
     this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
     this.secureStore = new SecureStore({ file: credentialFile, safeStorage });
     this.secretHistory = new SecretHistory(this.secureStore);
+    // Grant metadata is not secret, so it lives in its own file; the token goes
+    // to the vault above. `openExternal` is injected by main.mjs (electron shell)
+    // so this module stays importable without Electron.
+    this.composioGrants = new ComposioGrantStore(composioGrantsFile, { secrets: this.secureStore });
+    this.composioOauth = { grants: this.composioGrants, secrets: this.secureStore, openUrl: openExternal || null };
+    this.mcp.useComposioOauth?.(this.composioOauth);
     this.teammates.transform = this.secretHistory.clean;
     this.credentialRequests = new CredentialRequests(event => this.emit(event));
     this.browserManager = new BrowserSessionManager({
@@ -369,7 +383,7 @@ export class DesktopEngine {
       this.emit({ type: 'status', phase: 'connecting-tools' });
       await this.mcp.reconcile(new McpStore(MCP_FILE).load());
       if (this.mcp.ensureComposio) {
-        await this.mcp.ensureComposio(this.config, new ComposioStore(this.composioFile).load());
+        await this.mcp.ensureComposio(this.config, new ComposioStore(this.composioFile).load(), fetch, this.composioOauth);
       }
       this.emit({ type: 'tools-changed', connected: this.mcp.connectedIds || [] });
       this.emit({ type: 'status', phase: this.client ? 'ready' : 'error' });
@@ -397,7 +411,7 @@ export class DesktopEngine {
   async refreshPlugins() {
     if (this.mcp.ensureComposio) {
       try {
-        await this.mcp.ensureComposio(this.config, new ComposioStore(this.composioFile).load());
+        await this.mcp.ensureComposio(this.config, new ComposioStore(this.composioFile).load(), fetch, this.composioOauth);
         this.emit({ type: 'tools-changed', connected: this.mcp.connectedIds || [] });
       } catch (error) {
         this.emit({ type: 'error', threadId: null, message: `Could not refresh connected apps: ${error.message}` });
@@ -969,6 +983,12 @@ export class DesktopEngine {
       if (agent) agent.autoApprove = true;
     }
     return this.approvals.respond(requestId, answer);
+  }
+
+  /** Pending tool approvals for late subscribers (the island). Routine job
+   * approvals are excluded here; they ride on scheduleList entries instead. */
+  listApprovals() {
+    return this.approvals.list();
   }
 
   clearThread(id) {

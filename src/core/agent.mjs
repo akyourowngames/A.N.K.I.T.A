@@ -9,6 +9,7 @@ import { personalMemoryContext, withMemoryContext } from '../memory/memory-conte
 import { warmRecall } from '../../tools/personal/recall.mjs';
 import { specs, coreSpecs, specsFor, get, needsApproval, isReadOnly, displayArgs, coreNames, categoryOfTool, CATEGORIES } from "../../tools/index.mjs";
 import { redactText, configuredSecrets } from './redact.mjs';
+import { TIER_DENY } from '../integrations/mcp-tiers.mjs';
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
 import { renderDiff } from "../../tools/shared/_diff.mjs";
@@ -815,9 +816,17 @@ export class Agent {
       return `Error: arguments were not valid JSON (${err.message}).`;
     }
 
-    if (this.mcp.needsApproval(name) && this.autoApprove !== true) {
+    // Tier 3 is the only silent denial, and it is always an explicit blocklist
+    // entry rather than a guess, so the model can be told exactly why.
+    const decision = this.mcp.tierFor?.(name, args);
+    if (decision?.tier === TIER_DENY) {
+      this.mcp.recordTierDecision?.(name, "denied");
+      return `Error: ${decision.label} is blocked by the approval tiers. Do not retry it; ask the user whether the tier rule should change.`;
+    }
+    if (this.mcp.needsApproval(name, args) && this.autoApprove !== true) {
       const detail = this.mcp.approvalDetail(name, args);
       const ok = await this.confirm?.(name, detail);
+      this.mcp.recordTierDecision?.(name, ok === true ? "allowed" : "denied");
       if (ok !== true) return "The user denied permission for this action. Do not retry it; ask what to do instead.";
     }
 
@@ -881,6 +890,12 @@ export class Agent {
     try {
       if (this.cancelled()) return 'Action cancelled by user.';
       if (needsApproval(tool.name, args, ctx)) {
+        // Auto-approve means "do not interrupt me", not "you may lower your own
+        // protection". An unattended scheduled job has these tools, so a change
+        // that only loosens the gate must still reach a human.
+        if (this.autoApprove === true && tool.neverAutoApprove?.(args, ctx) === true) {
+          return `Error: ${tool.name} can change approval settings, which auto-approve is not allowed to do. Ask the user to run it interactively.`;
+        }
         const preview = tool.approval ? await tool.approval(args, ctx, this.ui) : null;
         const detail = redactText(typeof preview === 'string' && preview.trim() ? preview :
           `${tool.name}\n\n${JSON.stringify(displayArgs(tool.name, args, ctx), null, 2)}`,

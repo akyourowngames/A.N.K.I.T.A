@@ -15,11 +15,13 @@ import {
   PROJECTS_FILE,
   MCP_FILE,
   COMPOSIO_FILE,
+  MCP_TIERS_FILE,
   DAEMON_LOG,
   NOTIFY_QUEUE_FILE,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "../memory/projects.mjs";
 import { McpManager } from "../integrations/mcp-manager.mjs";
+import { TierPolicy } from "../integrations/mcp-tiers.mjs";
 import { McpStore, describeServer, enableMessage, disableMessage } from "../integrations/mcp-store.mjs";
 import { BrowserPluginStore, CHROME_MCP_ID, browserPluginOverview } from '../integrations/browser-plugins.mjs';
 import { ComposioStore } from "../integrations/composio-store.mjs";
@@ -499,6 +501,8 @@ export async function main() {
   const mcp = new McpManager({
     log: (m) => term.line(c.dim(`  mcp: ${m}`)),
     onChange: () => agent?.refreshPrompt?.(),
+    // File-backed: tier overrides outlive the process. Heuristics apply either way.
+    tiers: new TierPolicy(MCP_TIERS_FILE),
   });
   const activeProject = () => projects.active;
   const projectBlock = () => projects.promptBlock();

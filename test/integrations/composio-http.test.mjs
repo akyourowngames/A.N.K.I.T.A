@@ -48,6 +48,34 @@ test('HTTP MCP handles JSON, SSE, session header, and trusted manager tools', as
   } finally { await manager.closeAll(); await app.close(); }
 });
 
+test('a destructive app action over a live MCP transport is gated; discovery is not', async () => {
+  const app = await server(async (req, res) => {
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    const message = JSON.parse(body);
+    if (!('id' in message)) { res.writeHead(202).end(); return; }
+    const result = message.method === 'initialize' ? { protocolVersion: '2025-11-25', serverInfo: { name: 'composio-stub' } }
+      : message.method === 'tools/list' ? { tools: [
+        { name: 'COMPOSIO_SEARCH_TOOLS', inputSchema: { type: 'object' } },
+        { name: 'COMPOSIO_MULTI_EXECUTE_TOOL', inputSchema: { type: 'object' } },
+      ] }
+      : { content: [{ type: 'text', text: 'done' }] };
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  const manager = new McpManager();
+  const sendArgs = { tools: [{ slug: 'GMAIL_SEND_EMAIL', arguments: { to: 'someone@example.com' } }] };
+  try {
+    // Connects exactly as ensureComposio does: trusted, synthetic, always-on.
+    await manager.connect({ id: 'composio', transport: 'http', url: app.url, trusted: true, alwaysOn: true, synthetic: true });
+    assert.equal(manager.needsApproval('mcp__composio__COMPOSIO_SEARCH_TOOLS'), false, 'catalog search reads metadata only');
+    assert.equal(manager.needsApproval('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', sendArgs), true, 'sending mail is gated even though the server is trusted');
+    const detail = manager.approvalDetail('mcp__composio__COMPOSIO_MULTI_EXECUTE_TOOL', sendArgs);
+    assert.match(detail, /gmail: send email/, 'the card names the real action');
+    assert.equal(detail.includes('COMPOSIO_MULTI_EXECUTE_TOOL'), false, 'the meta-tool name is never shown');
+    assert.equal(await manager.callTool('mcp__composio__COMPOSIO_SEARCH_TOOLS', {}), 'done', 'the transport still works end to end');
+  } finally { await manager.closeAll(); await app.close(); }
+});
+
 test('Composio stays mounted through ordinary MCP reconcile and is discoverable', async () => {
   const app = await server(async (req, res) => {
     let body = '';
@@ -63,7 +91,8 @@ test('Composio stays mounted through ordinary MCP reconcile and is discoverable'
     await manager.reconcile({ enabled: [], isApproved: () => false });
     assert.equal(manager.has('composio'), true);
     assert.ok(matchCategories('send an email').includes('connectors'));
-    assert.equal(composioTool.needsApproval, false);
+    assert.equal(composioTool.needsApproval({ action: 'status' }), false, 'reading connections is management, not execution');
+    assert.equal(composioTool.needsApproval({ action: 'allow' }), true, 'a tier change can weaken protection, so it asks');
   } finally { await manager.closeAll(); await app.close(); }
 });
 

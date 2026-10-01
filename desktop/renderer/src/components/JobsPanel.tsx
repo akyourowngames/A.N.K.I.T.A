@@ -4,28 +4,92 @@ import { Icon } from './Icons';
 import { nextRunLabel } from './ScheduledTaskCard';
 import { JobCard } from './JobCard';
 import { JOB_EXECUTION_BOUNDED } from '../../../../src/automation/job-policy.mjs';
+import { relativeTime } from '../lib/relative-time';
 
-export function JobsPanel({ jobs, teammates, selectedId, onChoose, onEdit, onWatch, onAsk, onClose }: { jobs: Routine[]; teammates: Teammate[]; selectedId?: string; onChoose: (id: string) => void; onEdit: (id: string) => void; onWatch: (job: Routine) => void; onAsk: () => void; onClose: () => void }) {
+// A task is worth surfacing before the rest when it is blocked on the user,
+// lost its owner, or missed its last window. Grouping keeps the panel scannable
+// instead of forcing a linear read of every job.
+function needsAttention(job: Routine) {
+  return Boolean(job.needsApproval || job.ownerMissing || job.lastStatus === 'missed');
+}
+
+function rowMeta(job: Routine) {
+  if (job.needsApproval) return 'Needs your attention';
+  if (job.ownerMissing) return 'Owner missing — choose a teammate';
+  if (job.running) return `Running · step ${job.step}`;
+  if (job.lastStatus === 'missed') return 'Missed last run';
+  if (job.pausedReason) return `Paused: ${job.pausedReason}`;
+  if (!job.enabled) return 'Paused';
+  return nextRunLabel(job);
+}
+
+function runAgo(at: string) {
+  const label = relativeTime(at);
+  return label === 'now' ? 'just now' : label === 'yesterday' ? 'yesterday' : `${label} ago`;
+}
+
+function rowState(job: Routine) {
+  if (needsAttention(job)) return 'attention';
+  if (job.running) return 'running';
+  if (!job.enabled) return 'paused';
+  return 'ready';
+}
+
+// `jobs` is already scoped to `threadId` by the caller, so a run started here always
+// executes and reports in the conversation the panel was opened from.
+export function JobsPanel({ jobs, teammates, threadId, selectedId, onChoose, onEdit, onWatch, onAsk, onClose }: { jobs: Routine[]; teammates: Teammate[]; threadId?: string; selectedId?: string; onChoose: (id: string) => void; onEdit: (id: string) => void; onWatch: (job: Routine) => void; onAsk: () => void; onClose: () => void }) {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const ownerName = teammates.find(item => item.id === threadId)?.name;
   const selected = jobs.find(job => job.id === selectedId);
   const ordered = [...jobs].sort((a, b) => Number(b.running) - Number(a.running) || Number(b.enabled) - Number(a.enabled) || String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
+  const groups = [
+    { key: 'attention', label: 'Needs attention', jobs: ordered.filter(needsAttention) },
+    { key: 'running', label: 'Running now', jobs: ordered.filter(job => !needsAttention(job) && job.running) },
+    { key: 'upcoming', label: 'Upcoming', jobs: ordered.filter(job => !needsAttention(job) && !job.running && job.enabled) },
+    { key: 'paused', label: 'Paused', jobs: ordered.filter(job => !needsAttention(job) && !job.running && !job.enabled) },
+  ].filter(group => group.jobs.length);
+  const running = jobs.filter(job => job.running).length;
+  const attention = jobs.filter(needsAttention).length;
+  const next = ordered.filter(job => job.enabled && job.nextRunAt).sort((a, b) => Date.parse(a.nextRunAt!) - Date.parse(b.nextRunAt!))[0];
+  const summary = attention ? `${attention} need attention` : running ? `${running} running` : next ? `Next ${nextRunLabel(next)}` : jobs.length ? 'All paused' : 'Nothing scheduled';
+  const teammateName = selected ? teammates.find(item => item.id === selected.threadId)?.name || 'Choose a teammate' : '';
+  const lastRun = selected ? selected.lastStatus?.replaceAll('-', ' ') || 'Not run yet' : '';
   const act = async (action: string, payload: object) => { setBusy(true); setError(''); try { await window.ankita.invoke(action, payload); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
   return <aside className="jobs-panel" aria-label="Upcoming scheduled jobs">
-    <header><div><Icon name="clock" size={18} /><strong>Scheduled tasks</strong></div><button className="icon-button" aria-label="Close scheduled tasks" onClick={onClose}><Icon name="close" size={17} /></button></header>
+    <header>
+      <div className="jobs-panel-heading"><Icon name="clock" size={18} /><strong>Scheduled tasks</strong>{jobs.length > 0 && <span className="jobs-panel-count">{jobs.length}</span>}</div>
+      <button className="icon-button" aria-label="Close scheduled tasks" onClick={onClose}><Icon name="close" size={17} /></button>
+    </header>
     <div className="jobs-panel-scroll">
-      <div className="jobs-panel-intro"><span>Upcoming</span><button onClick={onAsk}><Icon name="plus" size={14} /> Ask Ankita</button></div>
-      {!jobs.length && <div className="jobs-empty"><Icon name="clock" size={24} /><h3>A little ahead of time.</h3><p>Tell Ankita what to do and when. Your scheduled tasks will appear here.</p><button className="primary" onClick={onAsk}>Create a task in chat</button></div>}
-      {ordered.map(job => <button className={`upcoming-job ${job.id === selectedId ? 'selected' : ''}`} key={job.id} onClick={() => onChoose(job.id)}><span className={`upcoming-job-icon ${job.running ? 'running' : ''}`}><Icon name={job.kind === 'heartbeat' ? 'pulse' : 'clock'} size={17} /></span><span><strong>{job.name}</strong><small>{job.needsApproval ? 'Needs your attention' : nextRunLabel(job)}</small></span><Icon name="chevron" size={13} /></button>)}
-      {selected && <section className="job-detail">
+      <div className="jobs-panel-intro">
+        <span className={`jobs-panel-summary ${attention ? 'attention' : ''}`}>{summary}</span>
+        <button onClick={onAsk}><Icon name="plus" size={14} /> Ask Ankita</button>
+      </div>
+      {!jobs.length && <div className="jobs-empty"><Icon name="clock" size={24} /><h3>A little ahead of time.</h3><p>Tell {ownerName || 'Ankita'} what to do and when. Tasks run as {ownerName || 'this teammate'} and report back in this chat.</p><button className="primary" onClick={onAsk}>Create a task in chat</button></div>}
+      {groups.map(group => <section className={`jobs-group ${group.key}`} key={group.key}>
+        <div className="jobs-group-title"><span>{group.label}</span><small>{group.jobs.length}</small></div>
+        {group.jobs.map(job => <button className={`upcoming-job ${job.id === selectedId ? 'selected' : ''}`} key={job.id} onClick={() => onChoose(job.id)}>
+          <span className={`upcoming-job-icon ${rowState(job)}`}><Icon name={job.kind === 'heartbeat' ? 'pulse' : 'clock'} size={16} /></span>
+          <span><strong>{job.name}</strong><small>{rowMeta(job)}</small></span>
+          <Icon name="chevron" size={13} />
+        </button>)}
+      </section>)}
+      {selected && <section className="job-detail" key={selected.id}>
         <div className="job-detail-title"><h3>{selected.name}</h3><button className="icon-button" aria-label="Edit task settings" onClick={() => onEdit(selected.id)}><Icon name="edit" size={16} /></button></div>
-        <dl><dt>Schedule</dt><dd>{selected.cronLabel}</dd><dt>Timezone</dt><dd>{selected.timeZone}</dd><dt>Teammate</dt><dd>{teammates.find(item => item.id === selected.threadId)?.name || 'Choose a teammate'}</dd><dt>Execution</dt><dd>{selected.executionPolicy === JOB_EXECUTION_BOUNDED ? 'Explicit limits' : 'Until complete'}</dd><dt>Last run</dt><dd>{selected.lastStatus?.replaceAll('-', ' ') || 'Not run yet'}</dd></dl>
+        <div className="job-stats">
+          <div className="job-stat"><span>Schedule</span><strong>{selected.cronLabel}</strong></div>
+          <div className="job-stat"><span>Next run</span><strong>{nextRunLabel(selected)}</strong></div>
+          <div className="job-stat"><span>Teammate</span><strong>{teammateName}</strong></div>
+          <div className="job-stat"><span>Execution</span><strong>{selected.executionPolicy === JOB_EXECUTION_BOUNDED ? 'Explicit limits' : 'Until complete'}</strong></div>
+          <div className="job-stat"><span>Last run</span><strong>{lastRun}</strong>{selected.lastReceipt && <small>{runAgo(selected.lastReceipt.at)}</small>}</div>
+          <div className="job-stat"><span>Time zone</span><strong>{selected.timeZone}</strong></div>
+        </div>
         <div className="job-detail-actions"><button disabled={busy} onClick={() => void act('scheduleEnable', { id: selected.id, enabled: !selected.enabled })}>{selected.enabled ? 'Pause' : 'Resume'}</button>{selected.running ? <><button onClick={() => onWatch(selected)}>Watch live</button><button disabled={busy} onClick={() => void act('scheduleStop', { id: selected.id })}>Stop</button></> : <button disabled={busy} onClick={() => void act('scheduleRunNow', { id: selected.id })}>Run now</button>}</div>
-        <section className="job-task-instructions" aria-label="Task instructions"><h4>Task instructions</h4><p>{selected.prompt}</p></section>
         {selected.lastReceipt && <JobCard receipt={selected.lastReceipt} />}
       </section>}
       {error && <p className="job-owner-warning" role="status">{error}</p>}
     </div>
-    <footer><small>Runs while Ankita is open, including in the tray.</small></footer>
+    <footer><small>{ownerName ? `Runs as ${ownerName} and reports in this chat. ` : ''}Runs while Ankita is open, including in the tray.</small></footer>
   </aside>;
 }

@@ -2,8 +2,12 @@ import { createContext, useContext, useEffect, useState, type ReactNode } from '
 import type { SecureStoreRequest, SecureStoreStatus, SecureStoreRecord } from '../../../shared/wire';
 import { SecureStoreDialog } from './SecureStoreDialog';
 import { Icon } from './Icons';
+import { relativeTime } from '../lib/relative-time';
 import { secureStoreReceipt } from '../../../shared/secure-store-receipt.mjs';
 const key = (threadId: string, callId: string) => `${threadId}:${callId}`;
+/** `https://www.linkedin.com` -> `linkedin.com`, for a readable site label. */
+const siteHost = (website: string) => { try { return new URL(website).hostname.replace(/^www\./, ''); } catch { return website; } };
+const siteHue = (host: string) => [...host].reduce((sum, char) => sum + char.charCodeAt(0), 0) % 360;
 const SecureContext = createContext<{ requests: SecureStoreRequest[]; statuses: Record<string, SecureStoreStatus>; open: (request: SecureStoreRequest) => void }>({ requests: [], statuses: {}, open: () => {} });
 
 export function SecureStoreProvider({ children }: { children: ReactNode }) {
@@ -36,14 +40,50 @@ export function SecureStoreCard({ threadId, callId, website, result }: { threadI
   </div>;
 }
 
+/**
+ * The browser vault, presented as a first-class section of Plugins rather than
+ * a stray disclosure. It is what the built-in browser and Chromium fill from, so
+ * it reads like the rest of the page: a section head, then a framed card.
+ */
 export function SecureStoreAccounts() {
-  const [open, setOpen] = useState(false);
-  const [records, setRecords] = useState<SecureStoreRecord[]>([]);
+  const [records, setRecords] = useState<SecureStoreRecord[] | null>(null);
   const [error, setError] = useState('');
+  const [removing, setRemoving] = useState<string | null>(null);
   useEffect(() => {
-    if (!open) return;
-    const load = () => void window.ankita.invoke<{ records: SecureStoreRecord[] }>('secureStoreList').then(value => { setRecords(value.records); setError(''); }).catch(() => setError('Could not read saved sign-ins.'));
-    load(); return window.ankita.onEvent(event => { if (event.type === 'secure-store-changed') load(); });
-  }, [open]);
-  return <section className="secure-store-accounts"><button className="button-quiet" onClick={() => setOpen(!open)} aria-expanded={open}><Icon name="lock" size={14} /> Saved sign-ins</button>{open && <div>{error && <p role="alert">{error}</p>}{!records.length && <p>Save a sign-in from the secure dialog during a browser task.</p>}{records.map(record => <div className="secure-store-account" key={record.id}><div><strong>{record.website}</strong><span>{record.username}</span></div><button className="button-quiet" aria-label={`Remove ${record.username} from ${record.website}`} onClick={() => void window.ankita.invoke('secureStoreRemove', { id: record.id }).catch(() => setError('Could not remove this sign-in.'))}><Icon name="trash" size={15} />Remove</button></div>)}</div>}</section>;
+    let alive = true;
+    const load = () => void window.ankita.invoke<{ records: SecureStoreRecord[] }>('secureStoreList')
+      .then(value => { if (alive) { setRecords(value.records); setError(''); } })
+      .catch(() => { if (alive) { setRecords([]); setError('Could not read saved sign-ins.'); } });
+    load();
+    const off = window.ankita.onEvent(event => { if (event.type === 'secure-store-changed') load(); });
+    return () => { alive = false; off(); };
+  }, []);
+  const remove = async (id: string) => {
+    setRemoving(id); setError('');
+    try { await window.ankita.invoke('secureStoreRemove', { id }); setRecords(current => (current || []).filter(record => record.id !== id)); }
+    catch { setError('Could not remove this sign-in.'); }
+    finally { setRemoving(null); }
+  };
+  const count = records?.length || 0;
+  return <section className="plugins-section vault-section" aria-labelledby="saved-sign-ins-heading">
+    <div className="plugins-section-head"><h2 id="saved-sign-ins-heading">Saved sign-ins</h2><span>{count ? `${count} saved · encrypted on this device` : 'Private to this device'}</span></div>
+    <div className="vault-card">
+      <div className="vault-intro">
+        <span className="vault-mark"><Icon name="lock" size={16} /></span>
+        <div><strong>Browser vault</strong><p>Sign-ins Ankita fills for the built-in browser and Chromium. Sealed with this device's encryption — never shown in chat.</p></div>
+      </div>
+      {error ? <p className="vault-error" role="alert">{error}</p> : null}
+      {records === null ? <p className="vault-status">Reading the vault…</p>
+        : count === 0 ? <div className="vault-empty"><Icon name="key" size={20} /><p>No sign-ins saved yet.</p><small>When a browser task asks you to sign in, choose Save and it will appear here.</small></div>
+        : <ul className="vault-list">{records.map(record => {
+            const host = siteHost(record.website), when = relativeTime(record.updatedAt);
+            return <li className="vault-item" key={record.id}>
+              <span className="vault-site" style={{ '--vault-hue': siteHue(host) } as React.CSSProperties} aria-hidden="true">{host.slice(0, 1).toUpperCase()}</span>
+              <span className="vault-item-copy"><strong>{host}</strong><small>{record.username || 'Saved sign-in'}</small></span>
+              <span className="vault-item-when">{when === 'now' ? 'just now' : when}</span>
+              <button type="button" className="vault-remove" onClick={() => void remove(record.id)} disabled={removing === record.id} aria-label={`Remove saved sign-in for ${record.username || 'this site'} at ${record.website}`}><Icon name="trash" size={14} /><span>{removing === record.id ? 'Removing…' : 'Remove'}</span></button>
+            </li>;
+          })}</ul>}
+    </div>
+  </section>;
 }

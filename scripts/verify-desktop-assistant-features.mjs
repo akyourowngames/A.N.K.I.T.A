@@ -111,8 +111,16 @@ try {
   await page.getByRole('button', { name: 'View scheduled task' }).last().click();
   const panel = page.getByRole('complementary', { name: 'Upcoming scheduled jobs' }); await panel.waitFor();
   assert.ok((await panel.locator('.upcoming-job').boundingBox()).height < 65);
-  assert.equal(await panel.getByRole('region', { name: 'Task instructions' }).locator('p').innerText(), jobs[0].prompt);
-  assert.ok((await panel.innerText()).includes('Until complete'));
+  assert.ok((await panel.locator('.job-stats').innerText()).includes('Until complete'), 'Detail tiles carry the execution policy');
+  assert.ok((await panel.locator('.job-stat').count()) >= 4, 'Detail shows stat tiles; the raw prompt is no longer mirrored in the panel');
+  // Regression: the panel is scoped to the open conversation. A task owned by another
+  // teammate used to appear here and Run now executed/delivered it in that teammate's chat.
+  const outsider = await page.evaluate(() => window.ankita.invoke('createTeammate', { name: 'Fixture pantry', persona: '', color: '#8fb0d6', emoji: '📦' }));
+  const outsiderJob = await page.evaluate(threadId => window.ankita.invoke('scheduleAdd', { name: 'Pantry stock check', cron: 'daily 07:00', prompt: 'Check pantry stock.', threadId }), outsider.id);
+  assert.equal(await panel.getByRole('button', { name: /^Pantry stock check/ }).count(), 0, "Another teammate's task is not listed in this conversation");
+  assert.equal((await panel.locator('.upcoming-job').count()), (await page.evaluate(() => window.ankita.invoke('scheduleList', { threadId: 'chief' }))).length, 'Panel rows match the open teammate only');
+  await page.evaluate(id => window.ankita.invoke('scheduleRemove', { id }), outsiderJob.id);
+  await page.evaluate(id => window.ankita.invoke('deleteTeammate', { id }), outsider.id);
   await panel.getByRole('button', { name: 'Edit task settings' }).click();
   const settings = page.getByRole('complementary', { name: 'Scheduled jobs' }); await settings.waitFor();
   assert.equal(await settings.getByLabel('Task instructions').inputValue(), jobs[0].prompt);

@@ -55,6 +55,69 @@ git diff --check
 
 The test script runs Node tests serially. The real-provider command uses the configured provider through IPC without printing or copying its API credentials. The timeout is a test-only upper bound in milliseconds.
 
+## Scheduler UI restructure — 2026-09-30
+
+Restructured the scheduled-task surfaces in `desktop/renderer/src/components` and their block in
+`desktop/renderer/src/styles.css`:
+
+- `JobsPanel` now groups tasks by state (Needs attention → Running now → Upcoming → Paused) with a
+  count badge and a summary line, and replaces the raw `dl` with scannable stat tiles. The duplicated
+  "Task instructions" prompt block was removed from the panel; the prompt stays visible and editable
+  in the job editor (`RoutineSheet`).
+- Latest-run receipt cards (`JobCard`) and inline task cards (`ScheduledTaskCard`) lead with a
+  plain-language status badge and relative time instead of raw status/minute text.
+- `JobsPill` gains an animated chevron and expand; `RoutineSheet` is regrouped into labelled sections
+  with an animated disclosure. Motion is transform/opacity only and inherits the existing
+  `prefers-reduced-motion` guard.
+
+Evidence: `tsc --noEmit -p desktop/tsconfig.json` and `npm run desktop:build` exited 0.
+`node --test test/desktop/*.test.mjs test/tools/*.test.mjs test/automation/*.test.mjs` →
+`tests 441; pass 440; fail 0; skipped 1` (the skip is the existing POSIX-executable check on Windows).
+A live Electron + Chromium round trip (`node scripts/verify-desktop-assistant-features.mjs
+--keep-artifacts`) reached `MODEL_TASK_CARDS_OK` with the updated assertions — the group rows measure
+under 65px, the detail renders `.job-stats` tiles including "Until complete", and `scheduled-tasks.png`
+was captured. The run later failed in the scripted complex-login worker (`'error' !== 'ok'`), which is
+browser/credential code untouched by this change; that scheduled-completion path is therefore not
+re-verified here. The panel no longer mirroring the prompt required updating the corresponding
+assertion in `scripts/verify-desktop-assistant-features.mjs` (prompt editability is still checked in
+the editor via `getByLabel('Task instructions')`).
+
+Follow-up after visual review: rows had no vertical gap, so adjacent hover/selected highlights
+merged; the panel scroll gutter, group titles and detail padding were re-aligned to one 10/11px
+gutter, and rows now sit in a 2px-gap flex column. The status colors I first used came from
+`--success` (green), which is not the scheduler palette — they were replaced with theme tokens
+(`--text-dim`/`--text-soft` for idle, `--gold`/`--accent-*` for running and attention, and the
+neutral `--surface-hover`/`--edge-strong` for the completed badge). Re-ran `npm run desktop:build`
+(exit 0) and the live verifier, which again reached `MODEL_TASK_CARDS_OK` with a fresh
+`scheduled-tasks.png`; the scripted-login worker stopped at the same place as before this CSS change.
+
+## Task ownership mismatch — 2026-09-30
+
+**Reproduced:** opening **Scheduled tasks** from teammate A's conversation listed every teammate's
+tasks. `ChatPane` (header chip + jobs pill) was passed `threadJobs` (filtered to the open teammate)
+while `JobsPanel`/`RoutineSheet` were passed unfiltered `state.jobs` (`App.tsx:293`). Running a task
+owned by teammate B from A's panel therefore executed as B's isolated worker and `deliverRoutine`
+posted the narration into B's conversation — "jobs run in another agent and are delivered by another
+agent". The chip could also read `2 jobs` while the panel listed five.
+
+**Fix:** the panel and editor now receive `threadJobs`, matching the chip and pill, and `JobsPanel`
+takes the open `threadId` so its empty state and footer name the teammate a task runs as. The isolated
+worker plus owner narration were kept as designed.
+
+**Regression test:** `scripts/verify-desktop-assistant-features.mjs` creates a second teammate and a
+task owned by that teammate, then asserts it is absent from the open conversation's panel and that the
+row count equals `scheduleList { threadId }`. RED (unscoped `state.jobs`, rebuilt):
+`AssertionError: Another teammate's task is not listed in this conversation`. GREEN (scoped, rebuilt):
+`MODEL_TASK_CARDS_OK`. `npm run desktop:build` exited 0. The verifier still stops later in the scripted
+complex-login worker, so the scheduled-completion path remains un-re-verified.
+
+**Open finding (not changed):** `DesktopScheduler.owner()` already flags `ownerMissing` and the UI warns
+"Owner was deleted. Choose a teammate in job settings.", but it still falls back to the most recently
+updated teammate, so an ownerless task runs and reports under that teammate. Changing it would alter
+tested scheduler semantics (`orphan falls back and unknown owner mutations reject`), so it needs a
+decision rather than a silent edit — options are to refuse the run until an owner is chosen, or to run
+it with no delivery target.
+
 ## Remaining limits
 
 - Local auth fixtures are realistic test systems, not proof that every public site's anti-bot, OAuth, passkey or payment flow works. MFA deliberately requires foreground input.

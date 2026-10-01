@@ -14,7 +14,11 @@ function message(error: unknown) {
   return (error instanceof Error ? error.message : String(error)).replace(/^Error invoking remote method ['"]engine:invoke['"]:\s*(?:Error:\s*)?/, '');
 }
 
-function PluginLogo({ slug, label }: { slug: string; label: string }) {
+function PluginLogo({ slug, label, logo }: { slug: string; label: string; logo?: string }) {
+  const [broken, setBroken] = useState(false);
+  // Composio's CDN mark when we have one; the curated marks and monogram below
+  // are the offline/unknown fallback, so a row never shows an empty tile.
+  if (logo && !broken) return <span className="plugin-logo"><img src={logo} alt="" loading="lazy" decoding="async" onError={() => setBroken(true)} /></span>;
   if (slug === 'gmail') return <span className="plugin-logo gmail"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M5 24V9l11 8L27 9v15" fill="none" stroke="#e66b61" strokeWidth="4" strokeLinejoin="round"/><path d="M5 9v15" stroke="#7ea5d8" strokeWidth="4"/><path d="M27 9v15" stroke="#8db68b" strokeWidth="4"/></svg></span>;
   if (slug === 'github') return <span className="plugin-logo github"><svg viewBox="0 0 24 24" aria-hidden="true" fill="currentColor"><path d="M12 2a10 10 0 0 0-3.16 19.49c.5.09.68-.22.68-.48v-1.69c-2.78.61-3.37-1.18-3.37-1.18-.45-1.16-1.11-1.47-1.11-1.47-.91-.62.07-.61.07-.61 1 .07 1.53 1.02 1.53 1.02.9 1.53 2.36 1.09 2.94.83.09-.65.35-1.09.64-1.34-2.22-.25-4.56-1.11-4.56-4.94 0-1.09.39-1.98 1.03-2.68-.1-.26-.45-1.27.1-2.65 0 0 .84-.27 2.75 1.02A9.6 9.6 0 0 1 12 6.96c.85 0 1.7.11 2.5.34 1.91-1.29 2.75-1.02 2.75-1.02.55 1.38.2 2.39.1 2.65.64.7 1.03 1.59 1.03 2.68 0 3.84-2.34 4.69-4.57 4.94.36.31.69.92.69 1.85v2.61c0 .26.18.58.69.48A10 10 0 0 0 12 2Z"/></svg></span>;
   if (slug.includes('drive')) return <span className="plugin-logo drive"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M11 5h8l10 17h-8Z" fill="#e8c967"/><path d="M11 5h8L8 25H1Z" fill="#8cbc8e"/><path d="M8 25h21l-4 6H4Z" fill="#6e9bc9"/></svg></span>;
@@ -103,7 +107,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
   const services = overview?.services || {};
   const installed = useMemo(() => Object.entries(services).filter(([, item]) => item.connected || item.pending || item.accounts.length).sort(([a], [b]) => a.localeCompare(b)), [services]);
   const installedCount = installed.filter(([, item]) => item.connected).length;
-  const lookup = (slug: string) => cards.find(card => card.slug === slug) || { slug, label: title(slug), blurb: '', noAuth: false };
+  const lookup = (slug: string) => cards.find(card => card.slug === slug) || { slug, label: title(slug), blurb: '', noAuth: false, logo: '' };
 
   const loadMore = async () => {
     if (visible < cards.length) { setVisible(current => current + PAGE_SIZE); return; }
@@ -149,7 +153,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
     const pending = Boolean(service?.pending || awaiting === card.slug);
     return <div className="plugin-row" key={card.slug}>
       <button type="button" className="plugin-row-main" onClick={() => { setSelected(card.slug); setAlias(''); }}>
-        <PluginLogo slug={card.slug} label={card.label} />
+        <PluginLogo slug={card.slug} label={card.label} logo={card.logo} />
         <span className="plugin-row-copy"><strong>{card.label}</strong><small>{card.blurb || 'Connect and use this app with Ankita'}</small></span>
       </button>
       {connected && <span className="plugin-row-state">Connected</span>}
@@ -200,7 +204,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
 
     {detail && <div className="plugins-drawer-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) setSelected(null); }}><section className="plugins-drawer" role="dialog" aria-modal="true" aria-labelledby="plugin-detail-title">
       <div className="plugins-drawer-top"><span>PLUGIN DETAILS</span><button type="button" className="icon-button" onClick={() => setSelected(null)} aria-label="Close plugin details"><Icon name="close" size={17} /></button></div>
-      <div className="plugins-drawer-body"><PluginLogo slug={detail.slug} label={detail.label} /><h2 id="plugin-detail-title">{detail.label}</h2><p>{detail.blurb || 'Bring this app into your Ankita workspace.'}</p>
+      <div className="plugins-drawer-body"><PluginLogo slug={detail.slug} label={detail.label} logo={detail.logo} /><h2 id="plugin-detail-title">{detail.label}</h2><p>{detail.blurb || 'Bring this app into your Ankita workspace.'}</p>
         <div className={`plugins-detail-status ${service?.connected ? 'connected' : ''}`}><i />{service?.connected ? 'Connected' : service?.pending || awaiting === detail.slug ? 'Waiting for authorization' : detail.noAuth ? 'Available without sign-in' : 'Not connected'}</div>
         {service?.accounts.length ? <div className="plugins-accounts"><h3>Connected accounts</h3>{service.accounts.map(account => <div className="plugins-account" key={account.id}><span><strong>{account.alias || account.id}</strong><small>{account.status.toLowerCase()}</small></span><button type="button" onClick={() => setConfirm({ slug: detail.slug, accountId: account.id, name: account.alias || account.id })}>Disconnect</button></div>)}</div> : null}
         {!detail.noAuth && !(service?.connected && !service.accounts.length) && <div className="plugins-connect-form"><h3>{service?.accounts.length ? 'Add another account' : 'Connect an account'}</h3><label htmlFor="plugin-alias">Account label <span>optional</span></label><input id="plugin-alias" value={alias} onChange={event => setAlias(event.target.value)} maxLength={64} placeholder="e.g. Work or Personal" /><button type="button" className="settings-primary" onClick={() => void connect(detail.slug)} disabled={acting === detail.slug}>{acting === detail.slug ? 'Opening…' : 'Connect in browser'} <Icon name="external" size={14} /></button></div>}

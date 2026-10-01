@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { Agent } from '../../src/core/agent.mjs';
+import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
+
+const tempPolicy = () => new TierPolicy(path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'composio-lock-')), 'mcp-tiers.json'));
+
+/** Just enough of McpManager for the Agent constructor and the composio tool. */
+const mcpStub = (policy) => ({ tiers: policy, summaries: () => [], alwaysOnIds: () => [], specs: () => [] });
 
 for (const [rounds, batch] of [[27, 1], [9, 8]]) test(`completion worker finishes ${rounds} browser rounds with ${batch} calls per round without a fixed tool ceiling`, async () => {
   let observed = 0, requested = 0;
@@ -76,6 +85,32 @@ test('background tool policy rejects shell and external MCP before approval or e
   assert.equal(called, 0);
   assert.deepEqual(agent.specParts().core.map(spec => spec.function.name), ['browser']);
 });
+test('auto-approve cannot loosen approval settings from an unattended job', async () => {
+  const policy = tempPolicy();
+  const agent = new Agent({ client: {}, config: { tools: true, autoApprove: true }, mcp: mcpStub(policy),
+    skillsEnabled: false, deferTools: false, allowedTools: new Set(['composio']), toolContext: {} });
+  const result = await agent.runToolCall({ id: 'call', function: { name: 'composio', arguments: JSON.stringify({ action: 'allow', service: 'gmail' }) } });
+  assert.match(result, /auto-approve is not allowed/i);
+  assert.equal(policy.appTierFor('composio', 'gmail'), null, 'a blocked change must not persist a tier');
+});
+
+test('an interactive chat can still change a tier once the user approves', async () => {
+  const policy = tempPolicy();
+  const agent = new Agent({ client: {}, config: { tools: true, autoApprove: false }, mcp: mcpStub(policy),
+    confirm: () => true, skillsEnabled: false, deferTools: false, toolContext: {} });
+  const result = await agent.runToolCall({ id: 'call', function: { name: 'composio', arguments: JSON.stringify({ action: 'always', service: 'github' }) } });
+  assert.match(result, /tier 2 \(always ask\)/);
+  assert.equal(policy.appTierFor('composio', 'github'), 2);
+});
+
+test('an interactive denial leaves the tier untouched', async () => {
+  const policy = tempPolicy();
+  const agent = new Agent({ client: {}, config: { tools: true, autoApprove: false }, mcp: mcpStub(policy),
+    confirm: () => false, skillsEnabled: false, deferTools: false, toolContext: {} });
+  assert.match(await agent.runToolCall({ id: 'call', function: { name: 'composio', arguments: JSON.stringify({ action: 'allow', service: 'gmail' }) } }), /denied permission/i);
+  assert.equal(policy.appTierFor('composio', 'gmail'), null);
+});
+
 test('background browser context reaches the same built-in tool with runtime permission hooks', async () => {
   let context;
   const hook = async () => {};

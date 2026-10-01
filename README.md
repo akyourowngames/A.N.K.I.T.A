@@ -20,7 +20,7 @@ ankita › search for the latest Node.js LTS release and fetch the announcement
 - 🧠 **Remember** — personal memory, per-project memory, named sessions with autosave
 - ⏰ **Work while you're away** — `ankita --daemon` runs scheduled routines, watches pages, answers Telegram DMs
 - 🖼️ **Make & find images** — generate originals or search Unsplash/Pixabay, saved + previewed inline
-- 🔌 **Extend** — MCP servers, Composio app integrations, project-aware teammates
+- 🔌 **Extend** — MCP servers, 1000+ Composio app integrations with per-action approval tiers, project-aware teammates
 
 ## 🚀 Quickstart
 
@@ -43,7 +43,11 @@ For CLI Copilot sign-in, the first run prints a code. Sign in at `github.com/log
 
 Open [`docs/media/ankita-launch-film.html`](docs/media/ankita-launch-film.html) in a browser to play the self-contained, 30-second Canvas 2D A.N.K.I.T.A. launch film. Use **Space** to pause/play, **R** to restart, and **F** or the fullscreen control to toggle fullscreen. The memory-search sequence animates a typed prompt, a flying send arrow, and contextual results. Add `?seed=your-seed` to the URL for a repeatable particle arrangement.
 
-Open **Plugins** in the sidebar to browse and search the Composio app catalog. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. Add a Composio project key in **Settings → Providers** first; without one, Plugins shows a setup link instead of an empty catalog.
+Open **Plugins** in the sidebar to browse and search the Composio app catalog, with a real brand icon on every app. Connect an app in your browser, see connected accounts in **Installed**, add another account, or disconnect individual accounts. On desktop, connecting needs **no API key**: Ankita opens a browser sign-in (OAuth 2.1 + PKCE) that returns to a one-time `127.0.0.1` address on your own machine and keeps the token in the OS vault rather than a config file — there is nothing for you to host. An existing Composio project key in **Settings → Providers** keeps working until the deprecation window closes; without either, Plugins shows a setup link instead of an empty catalog.
+
+**Saved sign-ins** in Plugins is the browser vault: the site/username pairs Ankita may fill for the built-in browser and Chromium. Entries are sealed with this device's encryption, never shown in chat, and removable from the same card.
+
+App actions run behind per-action **approval tiers**: reads run quietly, while sending, deleting, publishing or paying always asks first, every time. The assistant's `composio` tool exposes `tiers`, `allow`, `always` and `deny` to inspect or change the gate — and a call that loosens protection can never run under auto-approve.
 
 The **By Ankita** section in Plugins works without a Composio key. It offers an isolated Playwright Chromium and an optional Chrome connection for sites that need your existing session. Browser runs have a live stage beside chat with tabs, a page preview, Stop, and takeover controls. See [Browser use](docs/guides/browser-use.md) for setup, permissions, and CLI commands.
 
@@ -80,7 +84,7 @@ npm run desktop:build && npm run desktop:start
 
 Open **Settings** (gear icon or `Ctrl+,`) to pick models/providers, add a Composio key, test custom OpenAI-compatible endpoints, and tweak appearance. Fresh installs start on Kilo's free keyless models — no API key needed.
 
-Extras in the sidebar: **Plugins** (Composio app catalog + a built-in Playwright browser with live stage, tabs, and takeover), **Channels** (connect Telegram — create a bot with [@BotFather](https://t.me/BotFather), paste the token, done), **Projects** (working folders with conventions + open tasks the agent actually remembers).
+Extras in the sidebar: **Plugins** (the Composio app catalog with a real icon per app, keyless browser sign-in, a Saved sign-ins browser vault, and a built-in Playwright browser with live stage, tabs, and takeover), **Channels** (connect Telegram — create a bot with [@BotFather](https://t.me/BotFather), paste the token, done), **Projects** (working folders with conventions + open tasks the agent actually remembers).
 
 ## ⌨️ CLI reference
 
@@ -142,7 +146,7 @@ Background jobs: `/bg npm run dev`, `/jobs`, `/job 1`, `/input 1 yes`, `/stop 1`
 | `ALLOW_PRIVATE_HOSTS` | `off` | Opt in to loopback/LAN pages (watch your own dev server) |
 | `IMAGE_API_BASE` / `IMAGE_API_KEY` / `IMAGE_MODEL` | provider defaults | Image generation endpoint |
 | `UNSPLASH_ACCESS_KEY` / `PIXABAY_API_KEY` | unset | Stock-photo search tools |
-| `COMPOSIO_API_KEY` | unset | Connected-app integrations |
+| `COMPOSIO_API_KEY` | unset | Connected-app integrations (deprecated — desktop signs in without a key) |
 
 </details>
 
@@ -215,7 +219,7 @@ Notifications fall through **Telegram → ntfy/Discord/Pushover → desktop → 
 
 **MCP:** just ask — Ankita searches the official registry, installs what you pick, and loads big servers on demand (`find_tools`) so 25 Playwright tools don't nuke your context window. Installing ≠ running: every server start asks for approval first, tools are namespaced `mcp__<server>__<tool>`, third-party code gets a stripped environment without your secrets.
 
-**Composio:** set `COMPOSIO_API_KEY`, then `/composio connect gmail` — OAuth in your browser, and the agent can act on connected apps. Heads up: Composio tools run without approval prompts, so only connect accounts you actually want Ankita driving.
+**Composio:** connect an app from **Plugins**, or set `COMPOSIO_API_KEY` and run `/composio connect gmail` — OAuth in your browser, and the agent can act on connected apps. On desktop, connecting needs no API key at all: you sign in through the browser and the token is kept in the OS vault. Every app action runs behind an **approval tier** — read-only discovery runs quietly, while sending, deleting, publishing or paying always asks first, every time. Inspect or change the gate with the `composio` tool's `tiers`, `allow`, `always` and `deny` actions; a change that loosens protection can never be auto-approved.
 
 ## 🧪 Tests & benchmarks
 

@@ -1,12 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { TeammateStore } from '../../desktop/electron/teammates.mjs';
 import { ApprovalRegistry } from '../../desktop/electron/approvals.mjs';
 import { createSession } from '../../src/core/bootstrap.mjs';
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
+import { McpManager } from '../../src/integrations/mcp-manager.mjs';
+import { ComposioStore } from '../../src/integrations/composio-store.mjs';
 import { todoProgress } from '../../desktop/shared/todo-progress.mjs';
 import { run as writeTodos } from '../../tools/project/write-todos.mjs';
 
@@ -199,4 +202,61 @@ test('desktop restores a trimmed checklist for display and later status updates'
   await legacy.init();
   assert.equal(legacy.agentFor(id).state.todos[0].id, 's1');
   assert.equal(todoProgress(legacy.loadThread(id))[0].status, 'in_progress');
+});
+
+test('the desktop engine routes a vaulted Composio grant into the live MCP manager', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-composio-engine-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const seen = [];
+  const server = http.createServer(async (req, res) => {
+    seen.push(req.headers.authorization);
+    let body = '';
+    for await (const chunk of req) body += chunk;
+    if (!body) { res.writeHead(202).end(); return; }
+    const message = JSON.parse(body);
+    const result = message.method === 'tools/list'
+      ? { tools: [{ name: 'COMPOSIO_SEARCH_TOOLS', inputSchema: { type: 'object' } }] }
+      : { protocolVersion: '2025-11-25' };
+    res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ jsonrpc: '2.0', id: message.id, result }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections?.(); return new Promise(resolve => server.close(resolve)); });
+  const endpointUrl = `http://127.0.0.1:${server.address().port}/mcp`;
+  const token = 'vaulted-oauth-token';
+  // Stand-in for Electron's safeStorage: the engine only needs the async contract.
+  const safeStorage = {
+    isAsyncEncryptionAvailable: async () => true,
+    encryptStringAsync: async value => Buffer.from(`enc:${value}`),
+    decryptStringAsync: async buffer => ({ result: buffer.toString().replace(/^enc:/, '') }),
+  };
+  const engine = new DesktopEngine({
+    teammateFile: path.join(dir, 'teammates.json'),
+    settingsFile: path.join(dir, 'settings.json'),
+    channelsFile: path.join(dir, 'channels.json'),
+    sessionsDir: dir,
+    composioFile: path.join(dir, 'composio.json'),
+    composioGrantsFile: path.join(dir, 'composio-grants.json'),
+    browserFile: path.join(dir, 'browser.json'),
+    credentialFile: path.join(dir, 'credentials.json'),
+    safeStorage,
+    openExternal: async () => {},
+    bootstrap: async () => ({ client: {}, tool: null, models: [{ id: 'fast', tools: true }], model: 'fast', provider: { name: 'test' } }),
+    config: { provider: 'test', tools: true, model: '', memoryConsolidation: false },
+  });
+  try {
+    // No init(): connectTools() would reconcile the developer's real mcp.json.
+    assert.ok(engine.mcp instanceof McpManager, 'the engine owns a live manager');
+    assert.equal(engine.mcp.composioOauth, engine.composioOauth);
+    assert.equal(engine.mcp.composioOauth.grants, engine.composioGrants);
+    assert.equal(engine.mcp.composioOauth.secrets, engine.secureStore);
+    assert.equal(typeof engine.mcp.composioOauth.openUrl, 'function', 'the browser opener is injected');
+    assert.equal(engine.composioGrants.file, path.join(dir, 'composio-grants.json'), 'grant metadata lands in the configured file');
+
+    await engine.secureStore.saveSecret(engine.composioGrants.secretName('engine01'), token);
+    engine.composioGrants.record({ grantId: 'engine01', endpoint: endpointUrl, apps: ['gmail'] });
+    const record = await engine.mcp.ensureComposio({}, new ComposioStore(path.join(dir, 'composio.json')).load(), fetch, engine.composioOauth);
+    assert.equal(record.url, endpointUrl);
+    assert.equal(seen.includes(`Bearer ${token}`), true, 'the live request carried the vaulted token');
+    assert.equal(fs.readFileSync(path.join(dir, 'composio-grants.json'), 'utf8').includes(token), false, 'the grant file holds no token');
+  } finally { await engine.mcp.closeAll(); }
 });

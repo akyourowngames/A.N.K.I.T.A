@@ -9,7 +9,9 @@ export class ApprovalRegistry {
   request(threadId, toolName, detail, metadata = {}) {
     const requestId = randomUUID();
     return new Promise(resolve => {
-      this.pending.set(requestId, { ...metadata, threadId, resolve });
+      // toolName/detail are stored on the entry (not just the emitted event)
+      // so a late subscriber such as the island can list what is still pending.
+      this.pending.set(requestId, { ...metadata, threadId, toolName, detail, resolve });
       metadata.onRegistered?.(requestId);
       const { onRegistered, ...publicMetadata } = metadata;
       this.onRequest({ requestId, threadId, toolName, detail, ...publicMetadata });
@@ -22,6 +24,22 @@ export class ApprovalRegistry {
     this.pending.delete(requestId);
     entry.resolve(answer === 'yes' || answer === 'always');
     return true;
+  }
+
+  /** Serializable snapshot of pending tool approvals (resolve fns omitted). */
+  list() {
+    return [...this.pending.entries()]
+      .filter(([, entry]) => !entry.routineId)
+      .map(([requestId, entry]) => ({
+        type: 'approval-request',
+        requestId,
+        threadId: entry.threadId,
+        toolName: entry.toolName,
+        detail: entry.detail,
+        routineId: entry.routineId,
+        runId: entry.runId,
+        expiresAt: entry.expiresAt,
+      }));
   }
 
   cancelThread(threadId) {

@@ -160,10 +160,12 @@ try {
   console.log('PACKAGED_VAULT_COLD_WARM_OK: real async OS encryption; secure dialog -> save -> one fill/submit -> confirmed sign-in -> original task resumes; warm has no dialog');
   await page.getByRole('button', { name: 'Show sidebar', exact: true }).click();
   await page.getByRole('button', { name: 'Plugins', exact: true }).click();
-  await page.getByRole('button', { name: 'Saved sign-ins', exact: true }).click();
-  await page.locator('.secure-store-account').getByText(USERNAME, { exact: true }).waitFor();
-  await page.locator('.secure-store-account').getByRole('button', { name: /^Remove/ }).click();
-  await page.locator('.secure-store-account').waitFor({ state: 'hidden' });
+  // The vault is a section of Plugins now, not a collapsed disclosure: it loads
+  // its rows on mount, so there is nothing to expand.
+  await page.getByRole('heading', { name: 'Saved sign-ins' }).waitFor();
+  await page.locator('.vault-item').getByText(USERNAME, { exact: true }).waitFor();
+  await page.locator('.vault-item').getByRole('button', { name: /^Remove/ }).click();
+  await page.locator('.vault-item').waitFor({ state: 'hidden' });
   await page.getByRole('button', { name: /Chief/ }).first().click();
   console.log('PACKAGED_VAULT_MANAGEMENT_OK: Plugins metadata row and Remove update through real IPC');
   await send('cancel sign-in'); await waiting().click(); await page.keyboard.press('Escape'); await complete('cancel sign-in'); assert.equal(authCount, 2);

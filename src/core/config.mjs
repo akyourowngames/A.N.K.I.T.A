@@ -17,7 +17,9 @@ export const EMBEDDINGS_DIR = path.join(CONFIG_DIR, "embeddings");
 export const JOURNAL_DIR = path.join(SESSIONS_DIR, "journal");
 export const NOTIFY_QUEUE_FILE = path.join(CONFIG_DIR, "notification-queue.json");
 export const MCP_FILE = path.join(CONFIG_DIR, "mcp.json");
+export const MCP_TIERS_FILE = path.join(CONFIG_DIR, "mcp-tiers.json");
 export const COMPOSIO_FILE = path.join(CONFIG_DIR, "composio.json");
+export const COMPOSIO_GRANTS_FILE = path.join(CONFIG_DIR, "composio-grants.json");
 export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
 
 const DEFAULTS = {

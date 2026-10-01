@@ -7,6 +7,78 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Composio Direct-MCP: approval tiers, tier controls, keyless sign-in — 2026-10-01
+
+- MCP tool calls resolve a four-level approval tier (auto-allow, ask once, always
+  ask, deny) instead of the old read-only-hint rule. A connection's `trusted` flag
+  no longer skips the gate — that flag vets the server, not its actions, and it is
+  what let a connected Gmail send mail with no prompt. Composio meta-tools are
+  classified by the worst action they enclose: `COMPOSIO_MULTI_EXECUTE_TOOL`
+  wrapping `GMAIL_SEND_EMAIL` asks, `COMPOSIO_SEARCH_TOOLS` does not. The
+  resolution order is blocklist → explicit tool rule → per-app rule → locked app
+  defaults → heuristic, and a heuristic can never reach deny. Overrides, a
+  blocklist and allowed/asked/denied counters persist to `mcp-tiers.json`
+  (`CONFIG_DIR`), deliberately separate from the MCP server records so the
+  synthetic `composio` connection never makes `reconcile()` spawn a process that
+  does not exist. `gmail` ships locked to *always ask*.
+- `composio` gains `tiers`, `allow`, `always` and `deny`, and the management tool
+  is refusal-guarded so auto-approve can never loosen protection. This closes the
+  one real scheduled-job hole: a job holds the management tool and runs with
+  `autoApprove: true`, so it could previously persist a lower tier that then
+  applied to every later interactive session. A scheduled job still cannot reach
+  `mcp__composio__*` at all — `JOB_TOOLS` contains no `mcp__*` entry, which
+  `test/core/background-worker-policy.test.mjs` asserts.
+- Keyless sign-in lands: discovery, dynamic client registration (public client,
+  `token_endpoint_auth_method: none`), PKCE S256, a single-use `127.0.0.1`
+  loopback callback validated against `state`, and a vault-only access token. The
+  grant file carries no secret, and revoking drops the vaulted token and the
+  metadata together. The RFC 8707 `resource` indicator is now sent on both the
+  authorization and token requests — the MCP authorization spec requires it, and
+  omitting it is the difference between a granted sign-in and a 400 at the token
+  endpoint. The endpoint allowlist accepts the sibling `login.composio.dev` host
+  that the live Composio metadata actually uses. Nothing needs to be hosted.
+- `composio status` appends a deprecation notice naming the exact variable to
+  replace, derived from `package.json` rather than written down, and worded so it
+  never tells the user to run a switch the build does not offer yet.
+- Evidence: `test/integrations/mcp-tiers.test.mjs`,
+  `test/integrations/composio-deprecation.test.mjs`,
+  `test/integrations/composio-oauth.test.mjs` (real stub authorization server over
+  real HTTP, PKCE recomputed server-side) and new assertions in
+  `test/core/background-worker-policy.test.mjs` and `test/desktop/desktop.test.mjs`
+  (engine wiring, live local MCP mount over Bearer). Live Composio sign-in with a
+  real account remains outstanding; discovery, DCR support, PKCE method and the
+  resource requirement were checked against the real published metadata.
+  Implementation ledger: [composio-direct-mcp-implementation.md](../plans/composio-direct-mcp-implementation.md).
+
+### Plugins: real integration icons and a rebuilt browser vault — 2026-10-01
+
+- Every Composio app row renders its real brand mark from the toolkit's logo URL
+  (the catalog was already receiving it and dropping it). The curated marks and
+  the monogram remain the offline/unknown fallback, so a row never shows an empty
+  tile. Only the logo CDN is added to the renderer's `img-src`, and
+  `pluginLogoUrl()` drops any logo that is not https on that host before it ever
+  reaches an `<img src>`.
+- **Saved sign-ins** is rebuilt as a first-class section of Plugins rather than a
+  collapsed disclosure: a section head with a live count, a framed browser-vault
+  card explaining that it is what the built-in browser and Chromium fill from, and
+  rows showing the site, username, last-saved time and a Remove action, with
+  loading, empty and error states. It loads on mount and refreshes on
+  `secure-store-changed`.
+
+### Scheduled task UI rework and thread scoping — 2026-10-01
+
+- The jobs panel groups tasks by state (needs attention, running, upcoming,
+  paused) with a summary line, count badge and stat tiles; run receipts read as
+  plain status labels with relative times; the pill shows a live status dot. The
+  scheduler surfaces use theme tokens instead of a green success color, and their
+  motion is transform/opacity only and honours `prefers-reduced-motion`.
+- Fixed: a scheduled task and its run result could appear in a different
+  teammate's conversation. `App.tsx` passed unfiltered `state.jobs` to the panel
+  and routine sheet while the chat pane received the thread-filtered set; both now
+  receive the same thread-scoped jobs plus the thread id.
+- The panel also no longer mirrors the task prompt (it stays editable in the
+  routine sheet), and the "latest run" card was rewritten in plain language.
+
 ## 2.4.4 — 2026-09-30
 
 ### Teammate-written scheduled results — 2026-09-30

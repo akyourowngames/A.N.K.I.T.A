@@ -7,6 +7,60 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+### Added
+
+- **Keyless Composio sign-in — no API key, nothing to host.** Connecting an app
+  now runs a browser OAuth 2.1 + PKCE flow: discovery, dynamic client
+  registration as a public client (no secret issued), a single-use
+  `http://127.0.0.1:<port>/callback` loopback redirect, and a PKCE S256 code
+  exchange. There is no public callback URL, domain, certificate or broker to
+  stand up. The access token is written to the OS vault; the grant file holds
+  only a `grantId`, endpoint, apps and timestamps — never the token, verifier or
+  refresh token. Revoking deletes both in one step. `COMPOSIO_API_KEY` and
+  `COMPOSIO_BROKER_URL` keep working until the deprecation window closes.
+- **MCP approval tiers replace the trusted-server bypass.** Tool calls now
+  resolve a four-level gate — auto-allow, ask once, always ask, deny — instead of
+  the old read-only-hint rule, and a connection's `trusted` flag no longer skips
+  it. Composio meta-tools are classified by the worst action they enclose, so
+  `COMPOSIO_MULTI_EXECUTE_TOOL` wrapping `GMAIL_SEND_EMAIL` always asks while
+  read-only catalog discovery stays frictionless. Resolution order is blocklist →
+  explicit tool rule → per-app rule → locked app defaults → heuristic (a
+  heuristic can never deny). Overrides, a blocklist and allowed/asked/denied
+  counters persist to `mcp-tiers.json`, and `gmail` ships locked to *always ask*.
+- **`composio` tier controls.** New `tiers`, `allow`, `always` and `deny` actions
+  inspect and change the gate. They are refusal-guarded: a call that loosens
+  protection can never run under auto-approve, so an unattended scheduled job
+  cannot quietly grant itself a lower tier for every later session.
+- **Real integration icons in Plugins.** Every Composio app row renders the
+  toolkit's real brand mark from its logo URL, with the curated mark or a
+  monogram as the offline/unknown fallback.
+- **Deprecation notice on `composio status`** naming the exact variable to
+  replace, derived from the version in `package.json` rather than hardcoded, and
+  worded so it never promises a switch the build does not offer yet.
+
+### Changed
+
+- Plugins **Saved sign-ins** is now a first-class browser-vault section instead of
+  a stray disclosure: a section head with a live count and a framed card that
+  states it is what the built-in browser and Chromium fill from. Each row shows
+  the site, username, when it was last saved and a Remove action, with loading,
+  empty and error states.
+- Scheduled-task surfaces are grouped by state (needs attention, running,
+  upcoming, paused) with a summary line, count badge and stat tiles. Run receipts
+  read as plain status labels with relative times, and the scheduler no longer
+  uses the success color — state is carried by theme tokens and motion that
+  honours `prefers-reduced-motion`.
+
+### Fixed
+
+- **A scheduled task and its run result could appear in another teammate's
+  conversation.** The jobs panel and routine sheet are now scoped to the selected
+  thread, matching the chat pane.
+- The OAuth flow sends the RFC 8707 `resource` indicator on both the authorization
+  and token requests, which the MCP authorization spec requires and servers use to
+  bind the token audience. The endpoint allowlist also accepts the sibling
+  `login.composio.dev` host the live Composio metadata points at.
+
 ## [2.4.4] - 2026-09-30
 
 ### Added

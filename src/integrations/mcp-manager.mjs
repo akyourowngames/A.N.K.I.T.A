@@ -1,6 +1,7 @@
 import { McpClient, formatToolResult } from "./mcp-client.mjs";
-import { connectionMode, mcpEndpoint } from "./composio.mjs";
+import { connectionMode, mcpEndpoint, oauthEndpoint } from "./composio.mjs";
 import { configuredSecrets, redactText } from '../core/redact.mjs';
+import { TierPolicy, TIER_AUTO, TIER_LABELS, heuristicTier, resolveTier } from "./mcp-tiers.mjs";
 
 /**
  * Owns every live MCP connection for the process.
@@ -60,18 +61,24 @@ export function toOpenAiSpec(serverId, tool) {
 }
 
 /**
- * Approval follows the server's own hints, conservatively: only an explicit
- * readOnlyHint:true skips the gate. Unset or destructive means ask.
+ * Hint-only fallback for a single tool, with no policy and no arguments.
+ *
+ * Kept as the one source of truth for the hint rule - tier 0 only for an
+ * explicit readOnlyHint:true - so it can never drift from the resolver.
+ * Argument-aware calls go through `McpManager.tierFor`, which also sees
+ * meta-tool payloads and the user's tier overrides.
  */
 export function needsApprovalFor(tool) {
-  const hints = tool?.annotations || {};
-  return hints.readOnlyHint !== true;
+  return heuristicTier({ tool }) !== TIER_AUTO;
 }
 
 export class McpManager {
-  constructor({ log = () => {}, onChange = null } = {}) {
+  constructor({ log = () => {}, onChange = null, tiers = null } = {}) {
     this.log = log;
     this.onChange = onChange;
+    // In-memory by default so tests and one-off scripts never read or write a
+    // developer's real policy file; the CLI and desktop pass a file-backed one.
+    this.tiers = tiers || new TierPolicy();
     /**
      * Live connections, keyed by id. Treat as read-only: mutating this map
      * directly orphans the client and its child process, because closeAll()
@@ -163,12 +170,25 @@ export class McpManager {
     return true;
   }
 
-  async ensureComposio(config, store, fetchImpl = fetch) {
-    if (connectionMode(config) === "unavailable") {
+  /**
+   * Lets the chat tool start a browser sign-in. Set by the host that owns the
+   * vault and the browser (the desktop engine); absent in the CLI, which has no
+   * vault, so the keyless flow is desktop-first by design.
+   */
+  useComposioOauth(oauth) { this.composioOauth = oauth || null; return this; }
+
+  async ensureComposio(config, store, fetchImpl = fetch, oauth = null) {
+    if (oauth) this.composioOauth = oauth;
+    // A browser sign-in wins over leftover REST configuration: it is the
+    // endpoint the user actually authorized. REST stays until its removal
+    // window so an existing key keeps working.
+    const signedIn = oauth ? await oauthEndpoint(oauth) : null;
+    if (signedIn) oauth.grants.markUsed?.(oauth.grants.active()?.grantId);
+    if (!signedIn && connectionMode(config) === "unavailable") {
       if (this.has("composio")) await this.disconnect("composio");
       return null;
     }
-    const endpoint = await mcpEndpoint({ ...config, composioStore: store }, fetchImpl);
+    const endpoint = signedIn || await mcpEndpoint({ ...config, composioStore: store }, fetchImpl);
     const existing = this.servers.get("composio");
     if (existing?.url === endpoint.url && JSON.stringify(existing.headers) === JSON.stringify(endpoint.headers)) return existing;
     if (existing) await this.disconnect("composio");
@@ -189,9 +209,32 @@ export class McpManager {
     return { ...parsed, record, tool };
   }
 
-  needsApproval(fullName) {
+  /**
+   * The tier decision for one call, including the actions a meta-tool encloses.
+   *
+   * `trusted` is deliberately NOT consulted: it means the server connection was
+   * vetted by Ankita, not that its actions may run unreviewed. Composio is
+   * trusted, and letting that flag skip the gate entirely is exactly the hole
+   * this replaces.
+   */
+  tierFor(fullName, args = {}) {
     const found = this.findTool(fullName);
-    return found ? !found.record.trusted && needsApprovalFor(found.tool) : false;
+    if (!found) return { tier: TIER_AUTO, reason: "not connected", actions: [], label: String(fullName), serverId: null };
+    const decision = resolveTier({ serverId: found.serverId, toolName: found.toolName, tool: found.tool, args, policy: this.tiers });
+    return { ...decision, serverId: found.serverId };
+  }
+
+  needsApproval(fullName, args = {}) {
+    const found = this.findTool(fullName);
+    if (!found) return false;
+    return this.tierFor(fullName, args).tier !== TIER_AUTO;
+  }
+
+  /** Audit counters for the tier decision, so "why did it run?" is answerable. */
+  recordTierDecision(fullName, decision) {
+    const found = this.findTool(fullName);
+    if (!found) return null;
+    return this.tiers.recordDecision(found.serverId, decision);
   }
 
   /** Human-readable description of what a call will actually do. */
@@ -200,13 +243,21 @@ export class McpManager {
     if (!found) return String(fullName);
     const { record, tool } = found;
     const hints = tool.annotations || {};
+    const decision = this.tierFor(fullName, args);
     const flags = [
       hints.readOnlyHint ? "read-only" : null,
       hints.destructiveHint ? "destructive" : null,
       hints.openWorldHint ? "open-world" : null,
     ].filter(Boolean);
+    // A meta-tool name tells the user nothing about what is about to happen, so
+    // the parsed actions replace it entirely. The raw slug is still in the
+    // arguments below and in the decision counters, which is where debugging
+    // belongs - not in the sentence the user has to read before approving.
+    const heading = decision.actions.length
+      ? `${decision.label} on MCP server "${record.id}"  [${TIER_LABELS[decision.tier]}]`
+      : `${tool.name} on MCP server "${record.id}"  [${TIER_LABELS[decision.tier]}]`;
     return redactText(
-      `${tool.name} on MCP server "${record.id}"` +
+      heading +
       (flags.length ? `  [${flags.join(", ")}]` : "") +
       (record.transport === "http" ? `\n  URL: ${record.url}\n\n` : `\n  command: ${record.command} ${record.args.join(" ")}\n\n`) +
       JSON.stringify(args, null, 2),

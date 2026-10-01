@@ -32,7 +32,7 @@ export type TelegramChannelPreferences = {
 };
 export type ChannelsView = { telegram: TelegramChannelPreferences };
 export type TelegramChannelUpdate = Partial<Pick<TelegramChannelPreferences, 'enabled' | 'allowedChatIds' | 'ownerChatId' | 'teammateId' | 'voiceReply' | 'confirmTimeout'>> & { token?: string };
-export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean };
+export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean; logo: string };
 export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; lastUsedAt: string | null };
 export type ChangedFile = { path: string; status: string; untracked: boolean };
 export type WorkspaceJob = { id: string; state: string; command: string; cwd: string; exit_code: number | null; started_at: string; output: string };
@@ -57,6 +57,8 @@ export type ChatMessage =
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
 
 export type MenuCommand = 'new-teammate' | 'find' | 'toggle-sidebar' | 'settings' | 'about';
+
+export type IslandAction = 'show-main' | 'tuck' | 'petit' | 'home' | 'home-expanded';
 
 export type UpdateEvent =
   | { type: 'checking'; manual?: boolean }
@@ -112,6 +114,8 @@ export type DesktopApi = {
   updateAction(action: 'check' | 'install'): Promise<boolean>;
   appAction(action: 'open-config-folder' | 'open-data-folder' | 'relaunch'): Promise<unknown>;
   windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<boolean>;
+  islandAction(action: IslandAction): Promise<boolean>;
+  onCursor(callback: (point: { x: number; y: number }) => void): () => void;
   openExternal(url: string): Promise<void>;
 };
 

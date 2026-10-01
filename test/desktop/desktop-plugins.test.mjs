@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ComposioStore } from '../../src/integrations/composio-store.mjs';
-import { DesktopPlugins } from '../../desktop/electron/plugins.mjs';
+import { DesktopPlugins, pluginLogoUrl } from '../../desktop/electron/plugins.mjs';
 
 const json = body => new Response(JSON.stringify(body), { headers: { 'content-type': 'application/json' } });
 
@@ -28,7 +28,7 @@ test('desktop plugins expose catalog and owned accounts through the existing Com
     if (address.includes('/connected_accounts?')) return json({ items: [{ id: 'acc1', toolkit: { slug: 'gmail' }, status: 'ACTIVE', alias: 'work' }] });
     if (address.includes('/tool_router/session/s1/toolkits?')) return json({ items: [{ slug: 'gmail', is_no_auth: false }] });
     if (address.includes('/tool_router/session/s1')) return json({ session_id: 's1', mcp: { url: 'https://app.composio.dev/tool_router/v3/s1/mcp' }, config: { user_id: 'ankita_test', multi_account: { enable: true }, auth_configs: {} } });
-    if (address.includes('/toolkits?')) return json({ items: [{ slug: 'gmail', name: 'Gmail', description: 'Read your inbox' }, { slug: 'slack', name: 'Slack', description: 'Team chat' }] });
+    if (address.includes('/toolkits?')) return json({ items: [{ slug: 'gmail', name: 'Gmail', description: 'Read your inbox' }, { slug: 'slack', name: 'Slack', description: 'Team chat', logo: 'https://logos.composio.dev/api/slack' }] });
     if (init.method === 'DELETE') return json({});
     throw new Error(`Unexpected request: ${address}`);
   };
@@ -38,13 +38,35 @@ test('desktop plugins expose catalog and owned accounts through the existing Com
     assert.equal(overview.mode, 'direct');
     assert.equal(overview.live, true);
     assert.deepEqual(overview.services.gmail.accounts, [{ id: 'acc1', alias: 'work', status: 'ACTIVE' }]);
-    assert.deepEqual((await plugins.catalog({ query: 'team' })).cards.map(card => card.slug), ['slack']);
+    const searched = await plugins.catalog({ query: 'team' });
+    assert.deepEqual(searched.cards.map(card => card.slug), ['slack']);
+    assert.equal(searched.cards[0].logo, 'https://logos.composio.dev/api/slack', 'the toolkit mark reaches the renderer');
     assert.deepEqual(await plugins.connect({ slug: 'gmail' }), { url: 'https://app.composio.dev/connect/gmail' });
     assert.deepEqual(await plugins.disconnectAccount({ slug: 'gmail', accountId: 'acc1' }), { removed: 1 });
     assert.deepEqual(await plugins.disconnectService({ slug: 'gmail' }), { removed: 1 });
     assert.ok(calls.some(call => call.address.includes('/connected_accounts/acc1?revoke_on_delete=true') && call.method === 'DELETE'));
     assert.equal(JSON.stringify(overview).includes('ak_test'), false);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('toolkit logos are limited to the Composio CDN before they reach the renderer', async () => {
+  assert.equal(pluginLogoUrl('https://logos.composio.dev/api/slack'), 'https://logos.composio.dev/api/slack');
+  for (const bad of [
+    'http://logos.composio.dev/api/slack',        // not https
+    'https://evil.example/api/slack',             // not the Composio CDN
+    'https://logos.composio.dev.evil.example/x',  // suffix spoof
+    'javascript:alert(1)',                        // not a usable image URL
+    '',
+    undefined,
+  ]) assert.equal(pluginLogoUrl(bad), '', String(bad));
+  const fetchImpl = async () => json({ items: [
+    { slug: 'slack', name: 'Slack', description: 'Team chat', logo: 'https://logos.composio.dev/api/slack' },
+    { slug: 'github', name: 'GitHub', description: 'Code hosting', logo: 'https://cdn.evil.test/github.svg' },
+  ] });
+  const plugins = new DesktopPlugins({ getConfig: () => ({ composioApiKey: 'ak_test' }), fetchImpl });
+  const cards = (await plugins.catalog()).cards;
+  assert.equal(cards.find(card => card.slug === 'slack').logo, 'https://logos.composio.dev/api/slack');
+  assert.equal(cards.find(card => card.slug === 'github').logo, '', 'an off-CDN logo is dropped, not shipped');
 });
 
 test('plugin search scans later catalog pages and keeps a cursor for more results', async () => {

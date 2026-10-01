@@ -142,6 +142,23 @@ export async function ensureSession(config, fetchImpl = fetch) {
   return created;
 }
 
+/**
+ * The keyless MCP endpoint, when the user has signed in through the browser.
+ *
+ * `connect.composio.dev/mcp` rejects REST credentials outright, so the only
+ * accepted auth is the OAuth-minted Bearer token. The token is read inside the
+ * vault callback and handed straight into the headers - it is never returned to
+ * a caller, logged, or placed in agent context.
+ */
+export async function oauthEndpoint({ grants, secrets } = {}) {
+  if (!grants?.active || !secrets?.withSecret) return null;
+  const grant = grants.active();
+  if (!grant) return null;
+  // A grant whose token is gone is not an error to throw from a daemon tick;
+  // it resolves to null and the caller falls back to (or reports) unconfigured.
+  return grants.withToken(grant.grantId, (token) => token ? { url: grant.endpoint, headers: { authorization: `Bearer ${token}` } } : null);
+}
+
 export async function mcpEndpoint(config, fetchImpl = fetch) {
   if (connectionMode(config) === 'direct') {
     const session = await ensureSession(config, fetchImpl);
@@ -178,7 +195,7 @@ export async function listToolkits(config, { query = '', cursor = '' } = {}, fet
   }
   const cards = (body.items || body.data || body.cards || []).map(item => ({
     slug: item.slug, label: item.name || item.label || item.slug,
-    blurb: item.description || item.blurb || '', logo: item.logo || '',
+    blurb: item.description || item.blurb || '', logo: item.logo || item.meta?.logo || '',
     noAuth: Boolean(item.is_no_auth || item.noAuth), domain: item.app_website || item.domain || '',
   })).filter(item => !query || `${item.slug} ${item.label} ${item.blurb}`.toLowerCase().includes(String(query).toLowerCase()));
   return { cards, nextCursor: body.next_cursor || body.nextCursor || null };
