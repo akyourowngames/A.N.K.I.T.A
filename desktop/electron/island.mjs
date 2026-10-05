@@ -9,9 +9,11 @@
 
 // Pixel dimensions of the island window. The compact bar shows the mascot and
 // a status line; the expanded bar also lists pending approvals.
-export const ISLAND_WIDTH = 368;
+export const ISLAND_WIDTH = 640;
 export const ISLAND_HEIGHT_COMPACT = 76;
 export const ISLAND_HEIGHT_EXPANDED = 232;
+// Chat gets a tall card so the log never clips: header + tabs + ~5 messages + input.
+export const ISLAND_HEIGHT_CHAT = 420;
 // Minimum margin kept between the island and the left/right screen edges when
 // the display is narrower than the island itself.
 export const ISLAND_EDGE_MARGIN = 8;
@@ -22,14 +24,26 @@ export const ISLAND_MODE_EXPANDED = 'expanded';
 
 // Petit tab (collapsed) vs home card (expanded) sizes, logical pixels.
 // Coucou-style: a small tab stuck to the top-centre opens into the full card.
-export const ISLAND_PETIT_WIDTH = 240;
+export const ISLAND_PETIT_WIDTH = 288;
 export const ISLAND_PETIT_HEIGHT = 64;
-export const ISLAND_HOME_WIDTH = 368;
+export const ISLAND_HOME_WIDTH = ISLAND_WIDTH;
 
 export const ISLAND_VIEW_PETIT = 'petit';
 export const ISLAND_VIEW_HOME = 'home';
 export const ISLAND_VIEW_HOME_EXPANDED = 'home-expanded';
+export const ISLAND_VIEW_HOME_CHAT = 'home-chat';
 export const ISLAND_VIEW_TUCKED = 'tucked';
+
+/** Named island views, mirroring Coucou's IslandViewName subset that has an
+ * Ankita data source (mail/searching/result stay placeholders upstream too). */
+export const ISLAND_VIEW_OVERVIEW = 'overview';
+export const ISLAND_VIEW_EMPTY = 'empty';
+export const ISLAND_VIEW_APPROVAL = 'approval';
+export const ISLAND_VIEW_ERROR = 'error';
+export const ISLAND_VIEW_FINISHED = 'finished';
+export const ISLAND_VIEW_NOTE = 'note';
+export const ISLAND_VIEW_PROMPT = 'prompt';
+export const ISLAND_VIEW_SETTINGS = 'settings';
 
 // Visible sliver of the petit tab while tucked above the screen edge —
 // Coucou's wake strip: just enough to hover and click.
@@ -41,11 +55,21 @@ export function islandSizeFor(view, approvalCount) {
   const raw = innerIslandSizeFor(view, approvalCount);
   return {
     width: Math.min(ISLAND_HOME_WIDTH, Math.max(ISLAND_PETIT_WIDTH, raw.width)),
-    height: Math.min(ISLAND_HEIGHT_EXPANDED, Math.max(ISLAND_PETIT_HEIGHT, raw.height)),
+    height: Math.min(ISLAND_HEIGHT_CHAT, Math.max(ISLAND_PETIT_HEIGHT, raw.height)),
   };
 }
 
+/** Fit a window height under the work-area bottom so a tall card (chat) never
+ * runs off-screen on short displays. Pure so tests can cover it. */
+export function islandClampHeight(height, y, area) {
+  const room = (area?.y ?? 0) + (area?.height ?? height) - y;
+  return Math.min(height, Math.max(ISLAND_PETIT_HEIGHT, room));
+}
+
 function innerIslandSizeFor(view, approvalCount) {
+  if (view === ISLAND_VIEW_HOME_CHAT) {
+    return { width: ISLAND_HOME_WIDTH, height: ISLAND_HEIGHT_CHAT };
+  }
   if (view === ISLAND_VIEW_HOME_EXPANDED) {
     return { width: ISLAND_HOME_WIDTH, height: islandHeightFor(ISLAND_MODE_EXPANDED) };
   }
@@ -95,6 +119,17 @@ export function islandBounds(workArea, width = ISLAND_WIDTH) {
   };
 }
 
+/** Fit the remembered center and requested size to the current display, in logical pixels. */
+export function islandFittedBounds(area, size, anchorCX = null, view = ISLAND_VIEW_HOME) {
+  const centered = islandBounds(area, size.width);
+  const left = area.x + ISLAND_EDGE_MARGIN;
+  const right = Math.max(left, area.x + area.width - ISLAND_EDGE_MARGIN - centered.width);
+  const preferredX = anchorCX == null ? centered.x : anchorCX - centered.width / 2;
+  const y = islandYFor(view, area.y);
+  return { x: islandCoord(Math.min(right, Math.max(left, preferredX))), y: islandCoord(y),
+    width: centered.width, height: islandClampHeight(size.height, y, area) };
+}
+
 export function islandHeightFor(mode) {
   if (mode === ISLAND_MODE_EXPANDED) return ISLAND_HEIGHT_EXPANDED;
   return ISLAND_HEIGHT_COMPACT;
@@ -109,4 +144,12 @@ export function islandModeFor({ mainVisible, approvalCount }) {
   if (mainVisible) return ISLAND_MODE_HIDDEN;
   if (Number(approvalCount) > 0) return ISLAND_MODE_EXPANDED;
   return ISLAND_MODE_COMPACT;
+}
+
+/** Default home-card view from live counts — Coucou's State.defaultView()
+ * reduced to the views that have an Ankita data source. */
+export function islandDefaultView({ approvalCount, runningCount }) {
+  if (Number(approvalCount) > 0) return ISLAND_VIEW_APPROVAL;
+  if (Number(runningCount) > 0) return ISLAND_VIEW_OVERVIEW;
+  return ISLAND_VIEW_EMPTY;
 }

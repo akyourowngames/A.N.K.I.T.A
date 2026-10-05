@@ -13,6 +13,8 @@ files:
   - package.json
   - desktop/electron/**/*
   - desktop/shared/**/*
+  - desktop/browser-helper/**/*
+  - desktop/THIRD_PARTY_NOTICES.md
   - desktop/renderer/dist/**/*
   - src/**/*
   - tools/**/*
@@ -27,6 +29,10 @@ files:
   - '!scripts/**'
   - '!.github/**'
 asar: true
+extraResources:
+  - from: desktop/browser-helper
+    to: browser-helper
+    filter: ['**/*', '!**/*.d.mts']
 # Node-mode children load this self-contained bridge from real files, without
 # npm/npx, ASAR loader support, or a runtime package download.
 asarUnpack:

@@ -181,7 +181,7 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
     <div className="plugins-scroll"><div className="plugins-content">
       <nav className="plugins-sections" aria-label="Plugin sections"><button type="button" className={section === 'apps' ? 'active' : ''} aria-current={section === 'apps' ? 'page' : undefined} onClick={() => setSection('apps')}><Icon name="plug" size={16} /> Apps</button><button type="button" className={section === 'skills' ? 'active' : ''} aria-current={section === 'skills' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('skills'); }}><Icon name="file" size={16} /> Skills</button></nav>
       {section === 'skills' ? <SkillsSection /> : <>
-      <div className="plugins-intro"><div className="plugins-eyebrow"><span /> CONNECTED WORKSPACE</div><h1>Give Ankita more<br /><em>to work with.</em></h1><p>Bring the apps you already use into the conversation. Connect once, then manage every account from here.</p></div>
+      <div className="plugins-intro"><h1>Connected apps</h1><p>Browsers, accounts, and tools your teammates can use.</p></div>
       <BrowserPluginsSection />
       <SecureStoreAccounts />
       {error && <div className="plugins-alert" role="alert"><Icon name="alert" size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div>}

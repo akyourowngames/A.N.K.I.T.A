@@ -5,13 +5,15 @@ import fs from 'node:fs';
 import { DesktopEngine } from './engine.mjs';
 import { windowChrome } from './window-chrome.mjs';
 import { loadWindowState, saveWindowState, visibleBounds } from './window-state.mjs';
-import { islandBounds, islandCoord, islandSizeFor, islandYFor, ISLAND_VIEW_PETIT, ISLAND_VIEW_TUCKED } from './island.mjs';
+import { islandBounds, islandFittedBounds, islandCoord, islandSizeFor, islandYFor, ISLAND_VIEW_PETIT, ISLAND_VIEW_TUCKED } from './island.mjs';
 import { menuTemplate } from './menu.mjs';
 import { setupUpdater } from './updater.mjs';
 import { renderPdfPages } from './pdf-render.mjs';
 import { IPC_CONTRACT } from '../shared/version.mjs';
 import { CONFIG_DIR } from '../../src/core/config.mjs';
 import { shutdownFileToolWorkers } from '../../src/tooling/tool-worker.mjs';
+import { CompanionCapture } from './companion-capture.mjs';
+import { CAPTURE_ACTIONS, CAPTURE_EVENT } from '../browser-helper/protocol.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -23,6 +25,7 @@ const windowStateFile = () => path.join(app.getPath('userData'), 'window-state.j
 let window = null;
 let island = null;
 let islandAnchorCX = null;
+let islandSurface = ISLAND_VIEW_TUCKED;
 let engine = null;
 let updater = null;
 let saveTimer = null;
@@ -30,6 +33,20 @@ let crashes = 0;
 let tray = null;
 let quitting = false;
 let drainingQuit = false;
+let companionCapture = null;
+let captureStartup = null;
+const CAPTURE_CONFIG_FILE = 'companion-capture.json'; // Private bridge port and paired-helper credentials in CONFIG_DIR.
+const HELPER_DIRECTORY = 'browser-helper'; // Real unpacked directory for Chrome/Edge's Load unpacked command.
+function captureService(current) {
+  if (!captureStartup) {
+    companionCapture = new CompanionCapture({ configFile: path.join(CONFIG_DIR, CAPTURE_CONFIG_FILE),
+      threadExists: id => current.listTeammates().some(item => item.id === id),
+      onCapture: capture => current.emit({ type: CAPTURE_EVENT, capture }),
+    });
+    captureStartup = companionCapture.start().catch(error => { captureStartup = null; throw error; });
+  }
+  return captureStartup;
+}
 const TRAY_ICON_PATH = '../build/icon.png'; // Packaged with the app; no external runtime dependency.
 const TRAY_ICON_SIZE = 18; // Pixels for native menu-bar/taskbar rendering.
 function showWindow() { if (!window) return; hideIsland(); if (window.isMinimized()) window.restore(); window.show(); window.focus(); }
@@ -97,16 +114,15 @@ function createIsland() {
 }
 function showIsland() {
   if (quitting) return;
-  // Exactly one island, always: rebuild from scratch on every appearance so a
-  // stuck, drifted or duplicated window from an earlier state can never linger.
-  if (island && !island.isDestroyed()) island.destroy();
-  island = null;
-  createIsland();
+  // Reuse the single renderer so hiding/restoring the desktop cannot erase a draft or live turn.
+  if (!island || island.isDestroyed()) createIsland();
   if (!island || island.isDestroyed()) return;
-  const size = islandSizeFor(ISLAND_VIEW_PETIT, 0);
-  const at = islandPosition(size.width);
-  // Appear tucked above the edge with a sliver showing, Coucou-style.
-  const tuckedY = islandYFor(ISLAND_VIEW_TUCKED, at.y);
+  const requested = islandSizeFor(islandSurface, 0);
+  const fitted = islandFittedBounds(islandArea(), requested, null, islandSurface);
+  const size = { width: fitted.width, height: fitted.height };
+  const at = fitted;
+  // Reveal at the saved surface size; a new renderer starts as Coucou's wake strip.
+  const tuckedY = fitted.y;
   island.setPosition(at.x, tuckedY - 18);
   island.setSize(size.width, size.height);
   island.showInactive();
@@ -136,9 +152,10 @@ function hideIsland() {
   slideIslandTo(bounds.x, bounds.y - 24, () => { if (island && !island.isDestroyed()) island.hide(); });
 }
 
-// Island motion, position-only by design: the window slides (ease-out cubic)
-// but its size always snaps instantly to an exact preset — shapes never morph,
-// so geometry can never drift or distort. Content motion stays in CSS.
+// Island motion: the window slides (ease-out cubic) while its height glides to
+// the preset with the same ease — opening chat or answering approvals visibly
+// grows and shrinks the card. Width snaps instantly to an exact preset so the
+// pill never morphs sideways; content motion stays in CSS.
 const ISLAND_SLIDE_MS = 240;
 const ISLAND_SLIDE_FPS = 60;
 let islandSlideTimer = null;
@@ -150,22 +167,29 @@ function slideIslandTo(x, y, done, width, height) {
   const bounds = island.getBounds();
   const fromX = bounds.x;
   const fromY = bounds.y;
+  const fromH = bounds.height;
   // Size is re-asserted on every tick via setBounds: on Windows a lone
   // setSize() followed by position-only setPosition() ticks can lose the
-  // shrink (368→240 settles back at 368), leaving the island elongated
+  // shrink back to the compact preset, leaving the island elongated
   // after collapse. Callers without an explicit size hold the current one.
+  // Width snaps instantly (shapes never morph); height glides with the same
+  // ease so opening chat / answering approvals visibly grows and shrinks.
   const targetW = width ?? bounds.width;
   const targetH = height ?? bounds.height;
-  const applyBounds = (px, py) => {
+  const applyBounds = (px, py, t) => {
     if (!island || island.isDestroyed()) return;
     island.setBounds({
       x: islandCoord(px, x),
       y: islandCoord(py, y),
       width: targetW,
-      height: targetH,
+      height: islandCoord(fromH + (targetH - fromH) * t, targetH),
     });
   };
-  if (Math.abs(fromX - x) < 0.5 && Math.abs(fromY - y) < 0.5) { applyBounds(x, y); done?.(); return; }
+  if (Math.abs(fromX - x) < 0.5 && Math.abs(fromY - y) < 0.5 && Math.abs(fromH - targetH) < 0.5) {
+    applyBounds(x, y, 1);
+    done?.();
+    return;
+  }
   const started = Date.now();
   islandSlideTimer = setInterval(() => {
     if (!island || island.isDestroyed() || token !== islandSlideToken) {
@@ -181,12 +205,13 @@ function slideIslandTo(x, y, done, width, height) {
     applyBounds(
       fromX + (x - fromX) * eased,
       fromY + (y - fromY) * eased,
+      eased,
     );
     if (p >= 1) {
       clearInterval(islandSlideTimer);
       islandSlideTimer = null;
       if (island && !island.isDestroyed()) {
-        applyBounds(x, y);
+        applyBounds(x, y, 1);
         try {
           const settled = island.getBounds();
           const content = island.getContentBounds();
@@ -393,6 +418,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
   const current = requiredEngine();
   if (action === 'initialize') {
     await current.init();
+    void captureService(current).catch(() => {}); // Setup UI reports a remembered-port conflict without disrupting chat startup.
     try { await current.schedule().start(); }
     catch (error) { current.emit({ type: 'scheduler-error', message: error.message }); }
     installTray();
@@ -408,6 +434,17 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     };
   }
   await current.init();
+  if (Object.values(CAPTURE_ACTIONS).includes(action)) {
+    const capture = await captureService(current);
+    const surface = fromIsland ? 'island' : 'main';
+    const sourceId = event.sender.id;
+    if (action === CAPTURE_ACTIONS.setup) return capture.setup();
+    if (action === CAPTURE_ACTIONS.register) return capture.register({ ticketId: payload?.ticketId, threadId: payload?.threadId, surface, sourceId });
+    if (action === CAPTURE_ACTIONS.cancel) return capture.cancel(payload?.ticketId, sourceId);
+    if (action === CAPTURE_ACTIONS.inbox) return capture.inbox(surface);
+    if (action === CAPTURE_ACTIONS.ack) return capture.ack(payload?.id, surface);
+    if (action === CAPTURE_ACTIONS.openHelper) return shell.openPath(app.isPackaged ? path.join(process.resourcesPath, HELPER_DIRECTORY) : path.resolve(here, '..', HELPER_DIRECTORY));
+  }
   switch (action) {
     case 'palette:query': return current.paletteQuery(payload?.query);
     case 'palette:run': return current.paletteRun(payload?.id, payload?.threadId);
@@ -439,6 +476,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
       return { startAtLogin: current.desktopSettings.data.startAtLogin === true, supported: !isPortable };
     }
     case 'listTeammates': return current.listTeammates();
+    case 'islandSnapshot': return current.islandSnapshot();
     case 'listProjects': return current.listProjects();
     case 'createProject': return current.createProject(payload);
     case 'updateProject': return current.updateProject(payload.id, payload.patch);
@@ -464,7 +502,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'deleteTeammate': return current.deleteTeammate(payload.id);
     case 'loadThread': return current.loadThread(payload.id);
     case 'clearThread': return current.clearThread(payload.id);
-    case 'send': return current.send(payload.id, payload.text, payload.attachments);
+    case 'send': return current.send(payload.id, payload.text, payload.attachments, { surface: payload.surface });
     case 'renderPdfPages': return renderPdfPages(payload?.data);
     case 'cancel': return current.cancel(payload.id);
     case 'respondApproval': return current.respondApproval(payload.requestId, payload.answer);
@@ -523,25 +561,44 @@ ipcMain.handle('window:action', (_event, action) => {
   return true;
 });
 
-ipcMain.handle('island:action', (_event, action) => {
+ipcMain.handle('island:action', (_event, action, options) => {
   if (action === 'show-main') { showWindow(); return true; }
+  // Keyboard focus for the chat field only: the island is focusable:false by
+  // design (never steals focus), and becomes focusable while the prompt view
+  // is up — same pattern as Coucou's Bridge.focusWindow.
+  if (action === 'focus-on' || action === 'focus-off') {
+    if (!island || island.isDestroyed()) return false;
+    island.setFocusable(action === 'focus-on');
+    return true;
+  }
   // The island asks for a size preset as it flips between petit tab and home
-  // card. Sizes snap instantly (shapes never morph); only the y position
-  // slides, e.g. tucking back above the edge.
+  // card. Width snaps instantly (shapes never morph); y and height glide,
+  // e.g. tucking back above the edge or growing into the tall chat card.
   if (!island || island.isDestroyed()) return false;
   const size = action === 'petit' ? islandSizeFor('petit', 0)
     : action === 'home' ? islandSizeFor('home', 0)
     : action === 'home-expanded' ? islandSizeFor('home-expanded', 1)
+    : action === 'home-chat' ? islandSizeFor('home-chat', 0)
     : action === 'tuck' ? islandSizeFor('petit', 0)
     : null;
   if (!size) return false;
-  const at = islandPosition(size.width);
-  const y = action === 'tuck' ? islandYFor('tucked', at.y) : at.y;
-  // Centre comes from the session anchor, never a fresh display query.
-  const x = islandAnchorCX == null ? at.x : Math.round(islandAnchorCX - size.width / 2);
-  island.setSize(size.width, size.height);
-  logIslandGeometry(action, { x, y, width: size.width, height: size.height });
-  slideIslandTo(x, y, undefined, size.width, size.height);
+  const area = islandArea();
+  islandSurface = action === 'tuck' ? ISLAND_VIEW_TUCKED : action;
+  const fitted = islandFittedBounds(area, size, islandAnchorCX, islandSurface);
+  const { x, y } = fitted;
+  if (options?.animate === false) {
+    if (islandSlideTimer) { clearInterval(islandSlideTimer); islandSlideTimer = null; }
+    islandSlideToken++;
+    island.setBounds(fitted);
+    return true;
+  }
+  // Width snaps instantly; the slide glides y and height to the target.
+  if (!island.isDestroyed()) {
+    const current = island.getBounds();
+    island.setBounds({ x: current.x, y: current.y, width: fitted.width, height: current.height });
+  }
+  logIslandGeometry(action, { x, y, width: fitted.width, height: fitted.height });
+  slideIslandTo(x, y, undefined, fitted.width, fitted.height);
   return true;
 });
 
@@ -581,7 +638,7 @@ if (!gotLock) {
     event.preventDefault(); if (drainingQuit) return; drainingQuit = true;
     hideIsland();
     stopCursorFeed();
-    void Promise.resolve(engine?.close()).finally(() => { quitting = true; tray?.destroy(); tray = null; app.quit(); });
+    void Promise.allSettled([Promise.resolve(engine?.close()), Promise.resolve(companionCapture?.close())]).finally(() => { quitting = true; tray?.destroy(); tray = null; app.quit(); });
   });
   app.on('second-instance', () => {
     if (!window) return;

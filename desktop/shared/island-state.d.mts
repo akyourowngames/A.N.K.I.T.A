@@ -1,0 +1,15 @@
+import type { ChatMessage, EngineEvent, Teammate } from './wire';
+export const ISLAND_HISTORY_LIMIT: number;
+export const ISLAND_TOOL_DETAIL_LIMIT: number;
+export const ISLAND_TOOL_RESULT_LIMIT: number;
+export type IslandBubble = { id: string; kind: 'chat'; role: 'user' | 'assistant'; content: string; streaming: boolean; job?: { name: string; status: string; at: string } | null; attachments: { name: string; image?: boolean }[] };
+export type IslandTool = { id: string; kind: 'tool'; callId: string; name: string; args: unknown; detail: string; state: 'running' | 'ok' | 'error'; result: string };
+export type IslandLogEntry = IslandBubble | IslandTool;
+export type IslandThread = { running: boolean; error: string; log: IslandLogEntry[]; messageId: string | null };
+export type IslandState = { threads: Record<string, IslandThread> };
+export type IslandSnapshot = { teammates: Teammate[]; threads: { id: string; running: boolean; messages: ChatMessage[] }[]; state?: IslandState; sequence?: number };
+export function summarizeIslandTool(name: string, args: unknown): string;
+export function hydrateIslandState(snapshot: Omit<IslandSnapshot, 'teammates'>, events?: EngineEvent[]): IslandState;
+export function reduceIslandState(state: IslandState, event: EngineEvent): IslandState;
+export function islandThreadState(thread?: IslandThread): 'idle' | 'error' | 'thinking' | 'working' | 'searching';
+export function islandToolState(name: string): 'working' | 'searching';

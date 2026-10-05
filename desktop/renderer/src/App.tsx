@@ -20,6 +20,8 @@ import { IPC_CONTRACT, checkCompat } from '../../shared/version.mjs';
 import { RoutineSheet } from './components/RoutineSheet';
 import { JobsPanel } from './components/JobsPanel';
 import { PaletteModal } from './components/PaletteModal';
+import { CAPTURE_UI_EVENTS } from '../../browser-helper/protocol.mjs';
+import { COMPOSE_EVENT, sidebarWidth as normalizeSidebarWidth } from '../../shared/desktop-layout.mjs';
 
 type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; contract?: number; chrome: string; jobs: Routine[] };
 type UiState = { selectedId?: string | null; sidebarWidth?: number; sidebarOpen?: boolean };
@@ -59,7 +61,7 @@ export default function App() {
   const [secretNotice, setSecretNotice] = useState('');
   const closeSettings = useCallback(() => setSettingsTab(null), []);
   const [sidebarOpen, setSidebarOpen] = useState(initialUi.sidebarOpen !== false);
-  const [sidebarWidth, setSidebarWidth] = useState(initialUi.sidebarWidth && initialUi.sidebarWidth >= 236 ? initialUi.sidebarWidth : 292);
+  const [sidebarWidth, setSidebarWidth] = useState(() => normalizeSidebarWidth(initialUi.sidebarWidth));
   const [update, setUpdate] = useState<UpdateEvent | null>(null);
   const [onboardingClosed, setOnboardingClosed] = useState(false);
   const manualCheck = useRef(false);
@@ -82,6 +84,7 @@ export default function App() {
     if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
     const unsubscribe = window.ankita.onEvent(event => {
       dispatch({ type: 'event', event });
+      if (event.type === 'companion-capture-ready' && event.capture.surface === 'main') { dispatch({ type: 'select', id: event.capture.threadId }); setView('chat'); }
       if (event.type === 'settings-updated') setPreferences(event.preferences);
       if (event.type === 'secret-notice') setSecretNotice(event.message);
       if (event.type === 'routine-draft') { dispatch({ type: 'select', id: event.threadId }); setView('chat'); editJob(event.routineId); }
@@ -200,6 +203,11 @@ export default function App() {
   }, [dialog, settingsTab, confirm, state.approvals.length]);
 
   const selected = state.teammates.find(t => t.id === state.selectedId) || null;
+  useEffect(() => {
+    const captured = (event: Event) => { const id = (event as CustomEvent).detail; if (state.teammates.some(item => item.id === id)) { dispatch({type: 'select', id}); setView('chat'); } };
+    window.addEventListener(CAPTURE_UI_EVENTS.main, captured);
+    return () => window.removeEventListener(CAPTURE_UI_EVENTS.main, captured);
+  }, [state.teammates]);
   const send = useCallback((text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => {
     if (!state.selectedId || !window.ankita) return;
     void window.ankita.invoke('send', { id: state.selectedId, text, attachments }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: err.message } }));
@@ -271,11 +279,12 @@ export default function App() {
   };
   const threadJobs = state.jobs.filter(job => job.threadId === state.selectedId || (job.ownerMissing && job.deliveryThreadId === state.selectedId));
 
-  return <SecureStoreProvider><div className={`app-shell ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
+  return <SecureStoreProvider><div className={`app-shell desktop-workbench ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
     <Sidebar
       teammates={state.teammates} selectedId={state.selectedId} search={search} onSearch={setSearch}
       onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
       onOpenPlugins={() => setView('plugins')} pluginsOpen={view === 'plugins'} onOpenProjects={() => setView('projects')} projectsOpen={view === 'projects'}
+      onOpenChat={() => setView('chat')}
       provider={state.settings?.provider || 'Copilot'} model={state.settings?.model || ''} phase={state.phase}
       chrome={state.chrome} unread={state.unread} toolsCount={state.settings?.tools.length || 0}
       width={sidebarWidth} collapsed={!sidebarOpen} onCollapse={() => setSidebarOpen(false)} onResize={setSidebarWidth}
@@ -287,14 +296,14 @@ export default function App() {
       models={state.models} projects={projects} defaultModel={state.settings?.model || ''}
       usage={state.selectedId ? state.usage[state.selectedId] : undefined}
       chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={!browserScope && browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => { setView('plugins'); requestAnimationFrame(() => document.querySelector('.browser-plugins-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
-      onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onClear={clear} onDelete={remove}
+      onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onCreate={() => setDialog('create')} onClear={clear} onDelete={remove}
     />}
     {view === 'chat' && state.selectedId && <BrowserStage scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
-    {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent('ankita:compose', { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
+    {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}
     {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} jobsCount={state.jobs.filter(job => job.threadId === confirm.id).length} onRehome={() => { const job = state.jobs.find(item => item.threadId === confirm.id); setConfirm(null); if (job) editJob(job.id); }} />}
-    {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
+    {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} jobs={state.jobs} onOpenJobs={job => { const ownerId = job ? job.ownerMissing ? job.deliveryThreadId : job.threadId : state.selectedId || state.teammates[0]?.id; if (!ownerId) return; dispatch({ type: 'select', id: ownerId }); setView('chat'); closeSettings(); editJob(job?.id); }} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}
     {state.approvals[0] && <ApprovalDialog approval={state.approvals[0]} onAnswer={answer} />}
     {state.deviceCode && <div className="modal-backdrop"><div className="auth-dialog" role="dialog" aria-modal="true"><div className="modal-symbol"><Icon name="external" size={22} /></div><h2>Connect to GitHub</h2><p>Open the verification page and enter this code to connect your Copilot account.</p><div className="device-code">{state.deviceCode.user_code}</div><button className="button-primary" onClick={() => void window.ankita.openExternal(state.deviceCode!.verification_uri)}>Open GitHub <Icon name="external" size={15} /></button><small>Waiting for authorization…</small></div></div>}
     {showOnboarding && <OnboardingDialog initialName={preferences.username} initialTimeZone={preferences.timeZone} onSave={saveOnboarding} onSkip={skipOnboarding} />}

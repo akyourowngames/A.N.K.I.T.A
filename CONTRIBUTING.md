@@ -4,12 +4,12 @@ Thanks for showing up — Ankita is built in the open, and every PR from a real 
 
 ## 🚀 Get running in 5 minutes
 
-**Prereqs:** Node.js 20+ (`22.12+` for desktop work).
+**Prereqs:** Node.js 20.19+, 22.12+, or 23+ for CLI work; Node.js 22.12+ for desktop work. The exact supported ranges are in `package.json`.
 
 ```bash
 git clone https://github.com/<your-username>/A.N.K.I.T.A.git
 cd A.N.K.I.T.A
-npm install
+npm ci
 cp .env.example .env        # fill in the keys you need
 npm test                    # must be green BEFORE you change anything
 npm link                    # `ankita` now works from any folder
@@ -47,8 +47,11 @@ A PR with no verification evidence gets closed. Say what you ran and what the re
 - Keep diffs focused. If your PR touches 15 files, split it.
 - `write_file` for new files, `edit_file` for existing, `apply_patch` for multi-file changes.
 
-### 5. 🚫 Zero new runtime dependencies
-This repo has **zero runtime dependencies** and it stays that way. Use Node built-ins. If you think you need a package, open an issue first and argue for it — don't just add it.
+### 5. 🚫 Keep dependencies deliberate
+Prefer Node built-ins. The runtime already declares Playwright, the Chrome bridge
+and Electron's updater; adding another dependency needs a clear reason and review.
+Keep `package.json` and `package-lock.json` consistent. Do not mix dependency
+upgrades into an unrelated fix.
 
 ### 6. 🔒 Security is not optional
 - Never commit `.env`, tokens, keys, or credentials. Ever.
@@ -58,12 +61,29 @@ This repo has **zero runtime dependencies** and it stays that way. Use Node buil
 ### 7. 🎨 UI changes need proof
 - Desktop (Electron/React) changes → include a screenshot or short screen recording.
 - Follow the existing component patterns in `desktop/renderer/src/components/`.
+- Keep screenshots and recordings in temporary evidence folders or attach them
+  to the PR. Do not commit `.commandcode/`, `launch-video/`, generated media,
+  crash dumps or release executables. Preserve source fixtures and app assets.
 
 ### 8. 💬 Communicate like a maintainer
 - Link the issue: `Fixes #123`.
 - Describe **what** changed and **why**, not just what.
 - Respond to review comments within a few days or the PR may be closed for staleness.
 - Review feedback is about the code, never about you.
+
+## Adding a chat skill
+
+Put instructions in `skills/<name>/SKILL.md`. Start the file with YAML
+frontmatter containing `name` and `description`, followed by the Markdown body.
+The name must match its directory and use 1–64 lowercase letters, digits or
+hyphens. Descriptions must contain 10–300 characters. The raw body must contain
+1–12,000 characters, including its original line endings, and must not be blank.
+Optional `suggested-tools` is a hint, limited to 200 characters; it does not
+grant permission to run a tool. Skills apply to chat turns, not daemon workers.
+
+Run `node --test test/core/skills.test.mjs` after changing skill loading or
+metadata validation. See [the skill plan](docs/plans/skills-plan.md) for the discovery
+and prompt contract.
 
 ## 🔄 The PR process
 

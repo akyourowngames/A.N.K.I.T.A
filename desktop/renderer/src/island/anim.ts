@@ -17,6 +17,23 @@ export const Ease: Record<'out' | 'inOut' | 'back' | 'lin' | 'easeIn', EaseFn> =
 
 export const lerp = (a: number, b: number, t: number): number => a + (b - a) * t;
 
+/** cubic-bezier(x1,y1,x2,y2) solver — TS mirror of cubicBezier in
+ * desktop/shared/anim.mjs (itself ported from Coucou's windows/src/core/anim.ts,
+ * MIT License, (c) Louis Raille). Kept here so canvas code stays dependency-free. */
+export function cubicBezier(x1: number, y1: number, x2: number, y2: number): EaseFn {
+  const cx = (t: number) => ((1 - t) ** 2 * 3 * t * x1) + (3 * (1 - t) * t * t * x2) + t ** 3;
+  const cy = (t: number) => ((1 - t) ** 2 * 3 * t * y1) + (3 * (1 - t) * t * t * y2) + t ** 3;
+  return (x: number) => {
+    let lo = 0, hi = 1, t = x;
+    for (let i = 0; i < 12; i++) {
+      if (cx(t) < x) lo = t;
+      else hi = t;
+      t = (lo + hi) / 2;
+    }
+    return cy(t);
+  };
+}
+
 export type MascotState =
   | 'idle'
   | 'working'

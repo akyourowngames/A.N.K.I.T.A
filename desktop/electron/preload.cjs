@@ -21,7 +21,7 @@ contextBridge.exposeInMainWorld('ankita', {
   updateAction: action => ipcRenderer.invoke('update:action', action),
   appAction: action => ipcRenderer.invoke('app:action', action),
   windowAction: action => ipcRenderer.invoke('window:action', action),
-  islandAction: action => ipcRenderer.invoke('island:action', action),
+  islandAction: (action, options) => ipcRenderer.invoke('island:action', action, options),
   onCursor: callback => {
     const listener = (_event, value) => callback(value);
     ipcRenderer.on('island:cursor', listener);

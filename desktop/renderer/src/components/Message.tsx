@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage, Teammate, Routine } from '../../../shared/wire';
@@ -9,6 +9,7 @@ import { CopyButton } from './CopyButton';
 import { Icon } from './Icons';
 import { JobCard } from './JobCard';
 import { ScheduledTaskCard } from './ScheduledTaskCard';
+import { TeammateAvatar } from './TeammateAvatar';
 
 function localWorkspaceImage(src: string): string | null {
   let value = src;
@@ -76,10 +77,18 @@ export function Message({ message, teammate, threadId, streaming, onOpenBrowserP
       {message.content}
     </div>
   </div>;
+  return <AssistantMessage message={message} teammate={teammate} threadId={threadId} streaming={streaming} />;
+}
+
+// Reducers retain unchanged message objects. A token in the active reply must
+// not re-parse Markdown/images/reasoning in every completed reply above it.
+const AssistantMessage = memo(function AssistantMessage({ message, teammate, threadId, streaming }: {
+  message: Exclude<ChatMessage, {role: 'tool'}>; teammate: Teammate; threadId: string; streaming: boolean;
+}) {
   const thinking = Boolean(message.reasoning?.trim()) && streaming && !message.content;
   const displayedContent = streaming ? message.content : formatAssistantMarkdown(message.content);
   return <div className="message assistant-message">
-    <span className="message-avatar" style={{ '--avatar-color': teammate.color } as React.CSSProperties}>{teammate.emoji || '✦'}</span>
+    <TeammateAvatar id={teammate.id} color={teammate.color} className="message-avatar" />
     <div className="assistant-content">
       <span className="assistant-name">{teammate.name}</span>
       {message.reasoning ? <ThinkingPanel reasoning={message.reasoning} streaming={thinking} /> : null}
@@ -99,4 +108,4 @@ export function Message({ message, teammate, threadId, streaming, onOpenBrowserP
       {!streaming && message.content && <div className="message-actions"><CopyButton text={displayedContent} /></div>}
     </div>
   </div>;
-}
+});

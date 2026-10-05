@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model, Teammate, TelegramChannelUpdate } from '../../../shared/wire';
+import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model, Routine, Teammate, TelegramChannelUpdate } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { detectTimezone, timezoneSuggestions } from '../lib/timezones';
+import { TeammateAvatar } from './TeammateAvatar';
+import { nextRunLabel } from './ScheduledTaskCard';
 
 export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'background' | 'privacy' | 'appearance' | 'about';
 
@@ -23,7 +25,7 @@ const providers = [
   { id: 'custom', name: 'Custom provider', detail: 'OpenAI-compatible endpoint' },
 ];
 const themes: { id: DesktopPreferences['appearance']; name: string; detail: string }[] = [
-  { id: 'graphite', name: 'Graphite', detail: 'Warm, quiet neutrals' },
+  { id: 'graphite', name: 'Graphite', detail: 'The island’s graphite palette' },
   { id: 'mono', name: 'Mono', detail: 'Pure greyscale' },
   { id: 'slate', name: 'Slate', detail: 'Cool blue greys' },
 ];
@@ -49,9 +51,10 @@ function fromChannels(view: ChannelsView): ChannelDraft {
     teammateId: tg.teammateId || '', voiceReply: tg.voiceReply, confirmTimeout: String(tg.confirmTimeout || 300) };
 }
 
-export function SettingsDialog({ tab, onTab, onClose, preferences, models, teammates, version, onSaved }: {
+export function SettingsDialog({ tab, onTab, onClose, preferences, models, teammates, jobs, version, onSaved, onOpenJobs }: {
   tab: SettingsTab; onTab: (tab: SettingsTab) => void; onClose: () => void;
   preferences: DesktopPreferences; models: Model[]; teammates: Teammate[]; version: string; onSaved: (result: DesktopSettingsResult) => void;
+  jobs: Routine[]; onOpenJobs: (job?: Routine) => void;
 }) {
   const [draft, setDraft] = useState(() => fromPreferences(preferences));
   const [removed, setRemoved] = useState<Secret[]>([]);
@@ -70,8 +73,14 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
   const [channelTestResult, setChannelTestResult] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
   const dialog = useRef<HTMLDivElement>(null);
   const [hostSettings, setHostSettings] = useState({ startAtLogin: false, supported: false });
+  const [hostBusy, setHostBusy] = useState(false);
+  const [hostLoaded, setHostLoaded] = useState(false);
   useEffect(() => {
-    if (tab === 'background') void window.ankita.invoke<typeof hostSettings>('scheduleHostSettings').then(setHostSettings).catch(error => setNotice({ tone: 'error', text: error.message }));
+    if (tab !== 'background') return;
+    let active = true;
+    setHostLoaded(false);
+    void window.ankita.invoke<typeof hostSettings>('scheduleHostSettings').then(value => { if (active) { setHostSettings(value); setHostLoaded(true); } }).catch(error => { if (active) setNotice({ tone: 'error', text: error.message }); });
+    return () => { active = false; };
   }, [tab]);
 
   useEffect(() => { setDraft(fromPreferences(preferences)); setRemoved([]); }, [preferences]);
@@ -202,12 +211,27 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
     finally { setChannelTesting(false); }
   };
   const channelHasToken = Boolean(channels?.telegram.hasToken) && !channelRemoved;
+  const model = models.find(item => item.id === draft.model);
+  const activeJobs = jobs.filter(job => job.enabled).length;
+  const runningJobs = jobs.filter(job => job.running).length;
+  const changeHost = async (startAtLogin: boolean) => {
+    setHostBusy(true); setNotice(null);
+    try { setHostSettings(await window.ankita.invoke<typeof hostSettings>('scheduleHostSettings', { startAtLogin })); }
+    catch (error) { setNotice({ tone: 'error', text: (error as Error).message }); }
+    finally { setHostBusy(false); }
+  };
+  const pauseJobs = async () => {
+    setHostBusy(true); setNotice(null);
+    try { await window.ankita.invoke('schedulePauseAll'); setNotice({ tone: 'ok', text: 'All scheduled jobs paused. Active runs can finish; open a task to stop its run.' }); }
+    catch (error) { setNotice({ tone: 'error', text: (error as Error).message }); }
+    finally { setHostBusy(false); }
+  };
 
   return <div className="settings-backdrop" onMouseDown={event => { if (event.target === event.currentTarget) onClose(); }}>
     <div className="settings-window" ref={dialog} role="dialog" aria-modal="true" aria-labelledby="settings-title" tabIndex={-1}>
       <aside className="settings-nav">
-        <div className="settings-nav-brand"><span className="settings-brand-mark">A</span><div><strong>Ankita</strong><small>Preferences</small></div></div>
-        <nav aria-label="Settings sections">{tabs.map(item => <button key={item.id} type="button" className={`settings-nav-item ${tab === item.id ? 'active' : ''}`} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { onTab(item.id); setNotice(null); }}><Icon name={item.icon} size={15} /><span>{item.label}</span></button>)}</nav>
+        <div className="settings-nav-brand"><TeammateAvatar /><div><strong>Ankita</strong><small>Preferences</small></div></div>
+        <nav aria-label="Settings sections">{tabs.map(item => <button key={item.id} type="button" aria-label={item.label} title={item.label} className={`settings-nav-item ${tab === item.id ? 'active' : ''}`} aria-current={tab === item.id ? 'page' : undefined} onClick={() => { onTab(item.id); setNotice(null); }}><Icon name={item.icon} size={15} /><span>{item.label}</span></button>)}</nav>
         <div className="settings-nav-foot">Made with care by Krish.<br />Version {version || '—'}</div>
       </aside>
       <main className="settings-main">
@@ -215,24 +239,26 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
         <div className="settings-scroll" key={tab}>
           {tab === 'model' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="cube" size={20} /></span><h1 id="settings-title">Model</h1><p>Choose the default model for new conversations.</p></div>
-            <div className="settings-panel"><label className="settings-label" htmlFor="settings-model">Default model</label>
+            <section className="settings-panel settings-model-choice"><div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="cube" size={19} /></span><div><h2>Conversation model</h2><p>Your starting point for new teammates.</p></div><span className="settings-value-tag">{providers.find(item => item.id === preferences.provider)?.name || preferences.provider}</span></div><label className="settings-label" htmlFor="settings-model">Default model</label>
               <select id="settings-model" className="settings-select" value={draft.model} onChange={event => set('model', event.target.value)}>
                 <option value="">{models.length ? 'Choose a model' : 'Connect a provider to see available models'}</option>
                 {models.map(model => <option key={model.id} value={model.id}>{model.name || model.id}</option>)}
-              </select><p className="settings-help">The composer can switch models for the active chat. Teammates with their own model keep it.</p>
+              </select>{model && <div className="settings-model-meta">{model.vendor && <span>{model.vendor}</span>}{model.context && <span>{model.context.toLocaleString()} token context</span>}{typeof model.tools === 'boolean' && <span>{model.tools ? 'Tool calling' : 'Text only'}</span>}</div>}<p className="settings-help">Change the active chat’s model in the composer. Teammates with their own model keep it.</p>
+            </section>
+            <section className="settings-panel settings-model-limits"><div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="settings" size={19} /></span><div><h2>Conversation limits</h2><p>Leave these blank to use automatic limits.</p></div><span className="settings-value-tag">Optional</span></div>
               <div className="settings-form-pair">
                 <div className="settings-field"><label htmlFor="settings-context-window">Context window (tokens)</label>
                   <input id="settings-context-window" type="number" min="0" step="1024" inputMode="numeric" value={draft.contextWindow} onChange={event => set('contextWindow', event.target.value)} placeholder="e.g. 128000" />
-                  <small>Leave blank to use the model's advertised window, or the 32768 default. Some OpenAI-compatible endpoints report no window — set it here so tools and history have room.</small>
+                  <small>Room for instructions, history and tool results. Override if your provider reports the wrong window.</small>
                 </div>
                 <div className="settings-field"><label htmlFor="settings-max-tokens">Max output tokens</label>
                   <input id="settings-max-tokens" type="number" min="0" step="256" inputMode="numeric" value={draft.maxTokens} onChange={event => set('maxTokens', event.target.value)} placeholder="e.g. 4096" />
-                  <small>Leave blank to let the model decide. A pinned value is sent as <code>max_tokens</code> and reserved from the window.</small>
+                  <small>The maximum length of a reply. This space is reserved from the context window.</small>
                 </div>
               </div>
-              <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save model settings'}</button>
-            </div>
-            <div className="settings-note"><Icon name="info" size={15} />Need a different model list? Choose a provider in the Providers section.</div>
+            </section>
+            <div className="settings-savebar"><span>Saved on this device</span><button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save model settings'}</button></div>
+            <button className="settings-navigation-link" onClick={() => { onTab('providers'); setNotice(null); }}><Icon name="key" size={15} /><span>Connect or change a provider</span><Icon name="arrowRight" size={15} /></button>
           </div>}
           {tab === 'providers' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="key" size={20} /></span><h1 id="settings-title">Providers</h1><p>Connect a model provider and manage keys for connected apps.</p></div>
@@ -346,11 +372,16 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
             </div>
           </div>}
           {tab === 'background' && <div className="settings-content">
-            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="clock" size={20} /></span><h1 id="settings-title">Background jobs</h1><p>Scheduled browser tasks stay with the desktop app.</p></div>
-            <div className="settings-panel"><h2>Keep Ankita available</h2><p>Closing or minimizing the window keeps jobs running in the tray. Quit stops active jobs and scheduling until you open Ankita again.</p>
-              <label className="channel-toggle"><input type="checkbox" checked={hostSettings.startAtLogin} disabled={!hostSettings.supported} onChange={event => { void window.ankita.invoke<typeof hostSettings>('scheduleHostSettings', { startAtLogin: event.target.checked }).then(setHostSettings).catch(error => setNotice({ tone: 'error', text: error.message })); }} /><span>Start Ankita when I sign in</span></label>
-              <button className="settings-secondary" onClick={() => { void window.ankita.invoke('schedulePauseAll').then(() => setNotice({ tone: 'ok', text: 'All scheduled jobs paused. An active run can finish; use Stop run to cancel it.' })).catch(error => setNotice({ tone: 'error', text: error.message })); }}>Pause all jobs</button>
-            </div><div className="settings-note"><Icon name="alert" size={15} />Only one scheduler can own your routines. Stop the CLI daemon before using desktop jobs. CLI <code>--takeover</code> requests a cooperative handover.</div>
+            <div className="settings-heading"><span className="settings-heading-icon"><Icon name="clock" size={20} /></span><h1 id="settings-title">Background jobs</h1><p>The routine work, handled by your teammates.</p></div>
+            <div className="settings-job-overview" aria-label="Scheduled task status"><div><strong>{jobs.length}</strong><span>Scheduled</span></div><div><strong>{activeJobs}</strong><span>Enabled</span></div><div><strong>{runningJobs}</strong><span>Running</span></div></div>
+            <section className="settings-panel"><div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="pulse" size={18} /></span><div><h2>Keep Ankita available</h2><p>Tasks keep running when the window is in the tray.</p></div></div>
+              <label className="settings-switch-row"><span><strong>Start Ankita when I sign in</strong><small>{!hostLoaded ? 'Loading startup settings…' : hostSettings.supported ? 'Ready for scheduled work after you sign in.' : 'Startup control is unavailable on this system.'}</small></span><input type="checkbox" role="switch" checked={hostSettings.startAtLogin} disabled={!hostLoaded || !hostSettings.supported || hostBusy} onChange={event => void changeHost(event.target.checked)} /></label>
+              <div className="settings-tray-note"><Icon name="info" size={14} /><span>Quit stops scheduling and active runs until you reopen Ankita.</span></div>
+            </section>
+            <section className="settings-background-tasks"><div className="section-heading"><h2>Your scheduled work</h2><button className="section-secondary" disabled={!teammates.length} onClick={() => onOpenJobs()}>Open tasks <Icon name="arrowRight" size={13} /></button></div>
+              {jobs.length ? <div className="settings-job-list">{jobs.map(job => { const owner = teammates.find(item => item.id === job.threadId); return <button key={job.id} disabled={!owner && !job.deliveryThreadId} onClick={() => onOpenJobs(job)}><TeammateAvatar id={owner?.id} color={owner?.color} /><span><strong>{job.name}</strong><small>{owner?.name || 'Choose a teammate'} · {job.needsApproval ? 'Needs approval' : job.ownerMissing ? 'Owner missing' : nextRunLabel(job)}</small></span><Icon name="arrowRight" size={14} /></button>; })}</div> : <div className="settings-jobs-empty"><Icon name="clock" size={23} /><div><strong>No scheduled work yet</strong><p>Open a teammate’s tasks to set up the first one.</p></div></div>}
+              <div className="settings-pause-row"><div><strong>Pause scheduled work</strong><small>Active runs can finish. Resume tasks individually.</small></div><button className="settings-secondary" disabled={hostBusy || !activeJobs} onClick={() => void pauseJobs()}>{hostBusy ? 'Updating…' : 'Pause all jobs'}</button></div>
+            </section>
           </div>}
           {tab === 'privacy' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="shield" size={20} /></span><h1 id="settings-title">Privacy</h1><p>Keep pasted secrets out of saved conversations.</p></div>
@@ -368,7 +399,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
             <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Apply appearance'}</button>
           </div>}
           {tab === 'about' && <div className="settings-content settings-about">
-            <div className="settings-about-mark">A</div><h1 id="settings-title">Ankita</h1><p className="settings-about-version">Version {version || '—'}</p>
+            <TeammateAvatar className="welcome-face" /><h1 id="settings-title">Ankita</h1><p className="settings-about-version">Version {version || '—'}</p>
             <div className="settings-about-rule" /><h2>Made by Krish.</h2>
             <p>Built at 15, while in high school. A personal AI workspace made with curiosity, care, and a lot of late nights.</p>
             <div className="settings-about-meta"><span>Desktop app</span><span>Built for the curious</span></div>

@@ -58,7 +58,7 @@ export type ChatMessage =
 
 export type MenuCommand = 'new-teammate' | 'find' | 'toggle-sidebar' | 'settings' | 'about';
 
-export type IslandAction = 'show-main' | 'tuck' | 'petit' | 'home' | 'home-expanded';
+export type IslandAction = 'show-main' | 'tuck' | 'petit' | 'home' | 'home-expanded' | 'home-chat' | 'focus-on' | 'focus-off';
 
 export type UpdateEvent =
   | { type: 'checking'; manual?: boolean }
@@ -70,7 +70,8 @@ export type UpdateEvent =
   | { type: 'unsupported' }
   | { type: 'error'; message: string };
 
-export type EngineEvent =
+export type EngineEvent = (
+  | { type: 'companion-capture-ready'; capture: CompanionCaptureItem }
   | { type: 'secret-notice'; message: string }
   | { type: 'schedule-changed'; jobs: Routine[] }
   | { type: 'routine-draft'; threadId: string; routineId: string }
@@ -103,7 +104,10 @@ export type EngineEvent =
   | { type: 'usage'; threadId: string; prompt_tokens?: number; completion_tokens?: number; estimated_cost?: number }
   | { type: 'approval-request'; requestId: string; threadId: string; toolName: string; detail: string; routineId?: string; runId?: string; expiresAt?: string }
   | { type: 'thread-cleared'; threadId: string }
-  | { type: 'error'; threadId: string | null; message: string };
+  | { type: 'error'; threadId: string | null; message: string }
+) & { sequence?: number };
+
+export type CompanionCaptureItem = { id: string; ticketId: string; threadId: string; surface: 'main' | 'island'; attachment: {name: string; image: boolean; data: string} };
 
 export type DesktopApi = {
   redact(text: string): Promise<string>;
@@ -114,7 +118,7 @@ export type DesktopApi = {
   updateAction(action: 'check' | 'install'): Promise<boolean>;
   appAction(action: 'open-config-folder' | 'open-data-folder' | 'relaunch'): Promise<unknown>;
   windowAction(action: 'minimize' | 'maximize' | 'close'): Promise<boolean>;
-  islandAction(action: IslandAction): Promise<boolean>;
+  islandAction(action: IslandAction, options?: { animate?: boolean }): Promise<boolean>;
   onCursor(callback: (point: { x: number; y: number }) => void): () => void;
   openExternal(url: string): Promise<void>;
 };

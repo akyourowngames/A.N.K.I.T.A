@@ -1,18 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import type { ChatMessage, Model } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { ModelPicker } from './ModelPicker';
 import { TodoProgress } from './TodoProgress';
+import { useCompanionDrafts } from '../lib/useCompanionDrafts';
+import { EMPTY_COMPANION_DRAFT } from '../../../shared/companion-drafts.mjs';
+import { FILE_DROP_EVENT, MAX_TEXT_BYTES, CAPTURE_UI_EVENTS } from '../../../browser-helper/protocol.mjs';
+import { COMPOSE_EVENT } from '../../../shared/desktop-layout.mjs';
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
-const MAX_TEXT_BYTES = 200 * 1024;
 const MAX_DOC_BYTES = 20 * 1024 * 1024;
 const IMAGE_NAME = /\.(png|jpe?g|webp|gif)$/i;
 const OFFICE_NAME = /\.(pdf|docx|xlsx|pptx)$/i;
 const TEXT_NAME = /\.(txt|md|markdown|json|jsonc|m?js|c?js|tsx?|jsx|py|rb|go|rs|java|cs|c|h|cpp|hpp|css|scss|html?|xml|ya?ml|toml|ini|cfg|env|sh|bash|ps1|sql|csv|tsv|log)$/i;
 const ACCEPT = '.png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.markdown,.json,.js,.mjs,.cjs,.ts,.tsx,.jsx,.py,.rb,.go,.rs,.java,.cs,.c,.h,.cpp,.hpp,.css,.scss,.html,.htm,.xml,.yml,.yaml,.toml,.ini,.cfg,.env,.sh,.bash,.ps1,.sql,.csv,.tsv,.log';
 
-type Attachment = { name: string; image: boolean; data: string; preview?: string; kind?: 'document'; images?: string[] };
+export type Attachment = { name: string; image: boolean; data: string; preview?: string; kind?: 'document'; images?: string[] };
 
 /**
  * Base64 without `String.fromCharCode(...bytes)`: spreading a multi-megabyte
@@ -170,7 +173,7 @@ async function ocrPages(pages: string[]): Promise<string> {
 }
 
 /** Read a File into an attachment, with a size cap per kind. */
-async function readFile(file: File): Promise<Attachment> {
+export async function readFile(file: File): Promise<Attachment> {
   const image = IMAGE_NAME.test(file.name);
   const office = OFFICE_NAME.test(file.name);
   if (!image && !office && !TEXT_NAME.test(file.name)) throw new Error(`${file.name} is not a supported file type`);
@@ -200,20 +203,26 @@ export function Composer({ threadId, name, messages, running, models, model, onM
   threadId: string; name: string; messages: ChatMessage[]; running: boolean; models: Model[]; model: string;
   onModel: (id: string) => void; onSend: (text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => void; onStop: () => void;
 }) {
-  const [text, setText] = useState('');
-  const [attachments, setAttachments] = useState<Attachment[]>([]);
-  const [notice, setNotice] = useState('');
-  const [reading, setReading] = useState(false);
+  const captured = useCallback((item: import('../../../shared/wire').CompanionCaptureItem) => {
+    window.dispatchEvent(new CustomEvent(CAPTURE_UI_EVENTS.main, {detail: item.threadId}));
+  }, []);
+  const { drafts, store, addFiles: readFiles } = useCompanionDrafts('main', captured);
+  const { text, files: attachments, error: notice, reading } = drafts[threadId] || EMPTY_COMPANION_DRAFT;
+  const setText = (value: string) => store.update(threadId, draft => ({ ...draft, text: value }));
   const input = useRef<HTMLTextAreaElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   useEffect(() => { if (input.current) { input.current.style.height = 'auto'; input.current.style.height = `${Math.min(input.current.scrollHeight, 170)}px`; } }, [text]);
-  useEffect(() => { setText(''); setAttachments([]); setNotice(''); }, [threadId]);
   useEffect(() => {
-    const compose = (event: Event) => { setText(String((event as CustomEvent).detail || '')); input.current?.focus(); };
-    window.addEventListener('ankita:compose', compose);
-    return () => window.removeEventListener('ankita:compose', compose);
-  }, []);
+    const compose = (event: Event) => {
+      const detail = (event as CustomEvent<string | { text: string; append?: boolean }>).detail;
+      const next = typeof detail === 'string' ? detail : detail?.text || '';
+      store.update(threadId, draft => ({ ...draft, text: detail && typeof detail === 'object' && detail.append && draft.text.trim() ? `${draft.text}\n\n${next}` : next }));
+      input.current?.focus();
+    };
+    window.addEventListener(COMPOSE_EVENT, compose);
+    return () => window.removeEventListener(COMPOSE_EVENT, compose);
+  }, [threadId, store]);
   // Ctrl/Cmd+U opens the file picker. It is ignored while typing in a field
   // elsewhere in the app, but the composer's own message box is exactly where
   // the shortcut is expected to work.
@@ -231,24 +240,20 @@ export function Composer({ threadId, name, messages, running, models, model, onM
     return () => window.removeEventListener('keydown', onKey);
   }, []);
 
-  const addFiles = async (files: FileList | null) => {
-    if (!files?.length) return;
-    setNotice('');
-    setReading(true);
-    const added: Attachment[] = [];
-    for (const file of Array.from(files).slice(0, 8)) {
-      try { added.push(await readFile(file)); }
-      catch (error) { setNotice((error as Error).message); }
-    }
-    if (added.length) setAttachments(current => [...current, ...added].slice(0, 8));
-    setReading(false);
+  const addFiles = async (files: FileList | File[] | null, id = threadId) => {
+    if (files?.length) await readFiles(id, Array.from(files), readFile);
   };
+  useEffect(() => {
+    const drop = (event: Event) => { const {threadId: id, files} = (event as CustomEvent).detail; void readFiles(id, files, readFile); };
+    window.addEventListener(FILE_DROP_EVENT, drop);
+    return () => window.removeEventListener(FILE_DROP_EVENT, drop);
+  }, [store]);
 
-  const removeAttachment = (index: number) => setAttachments(current => current.filter((_, i) => i !== index));
+  const removeAttachment = (index: number) => store.update(threadId, draft => ({ ...draft, files: draft.files.filter((_, i) => i !== index) }));
   const submit = () => {
     if (running || reading || (!text.trim() && !attachments.length)) return;
     onSend(text.trim(), attachments.map(({ name: fileName, data, kind, images }) => ({ name: fileName, data, kind, ...(images?.length ? { images } : {}) })));
-    setText(''); setAttachments([]); setNotice(''); input.current?.focus();
+    store.update(threadId, () => EMPTY_COMPANION_DRAFT); input.current?.focus();
   };
 
   return <div className="composer-area"><TodoProgress key={threadId} messages={messages} /><div className="composer-shell"

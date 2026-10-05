@@ -1,0 +1,12 @@
+{
+  "manifest_version": 3,
+  "name": "ANKITA Mascot Capture",
+  "version": "1.0.0",
+  "description": "Drop your ANKITA teammate mascot onto a webpage to attach its readable content.",
+  "permissions": ["storage"],
+  "host_permissions": ["http://127.0.0.1/*"],
+  "background": {"service_worker": "background.mjs", "type": "module"},
+  "action": {"default_popup": "popup.html"},
+  "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "all_frames": true}],
+  "web_accessible_resources": [{"resources": ["content.mjs", "protocol.mjs"], "matches": ["http://*/*", "https://*/*"]}]
+}

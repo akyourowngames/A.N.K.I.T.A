@@ -7,6 +7,33 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+No unreleased changes.
+
+## 2.5.0 — 2026-10-05
+
+### Desktop workspace, companion and capture
+
+- The main desktop and floating island share graphite surfaces, system type,
+  mascot faces and action-driven motion. Responsive navigation keeps teammate
+  selection and window controls available in smaller windows.
+- The live island retains drafts, streams actual tool states and keeps four
+  avatars in two columns. Scheduled jobs remain activities rather than teammates;
+  long approval details scroll while decision buttons remain visible.
+- Mascots anticipate and swallow dropped files, chew during extraction and react
+  to actual reader outcomes. Chrome/Edge's separately loaded MV3 helper captures
+  readable page text through paired loopback IPC and single-use drag tickets.
+  Captures stay with their original teammate, retain drafts and never auto-send.
+- Projects separate the overview, tasks and searchable context; notes expand on
+  demand. Scheduling/settings show useful owner, next-run and actual job status.
+  Failed saves retain text and startup controls retain confirmed state.
+- Saved Markdown is memoized during streaming, idle/hidden animations stop work,
+  and hard focus rectangles are removed across desktop and island controls.
+- README and release/setup instructions are rewritten. Generated launch-film HTML
+  is untracked with its local copy retained; logs, media and dumps are ignored.
+- Root [release notes](../../CHANGELOG.md#250---2026-10-05) include the previously
+  unreleased Composio work below. The installed release includes the companion's
+  software attribution and unpacked browser helper.
+
 ### Composio Direct-MCP: approval tiers, tier controls, keyless sign-in — 2026-10-01
 
 - MCP tool calls resolve a four-level approval tier (auto-allow, ask once, always

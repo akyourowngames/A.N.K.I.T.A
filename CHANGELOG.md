@@ -7,8 +7,34 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [2.5.0] - 2026-10-05
+
 ### Added
 
+- **A live desktop companion.** The top-edge island uses ANKITA's real threads,
+  tools and approvals. Four teammate mascots fit in two columns; activity rolls
+  upward without a history scrollbar, and additional teammates remain selectable
+  in chat. Restoring/minimizing retains the same draft and companion window.
+- **Animated file capture.** The selected mascot opens its mouth for supported
+  dropped files, swallows, chews while the reader works, and reacts to success or
+  failure. Desktop and island use the existing document/image readers and keep
+  attachments with their original teammate. Reduced motion skips the swallow.
+- **Chrome/Edge webpage-capture helper.** An MV3 extension captures readable page
+  text when a teammate mascot is dropped onto an ordinary HTTP/HTTPS page.
+  Pairing uses the desktop's authenticated loopback bridge and single-use drag
+  tickets. Captures preserve existing drafts, wait in an inbox when attachment
+  slots are full, and never send a model request automatically. The helper is
+  included in the package and loaded unpacked separately; it is not store-published.
+- **Project sections.** Overview, Tasks and Context organize folders, assignments,
+  rules, open/completed tasks and searchable note/decision records. Long records
+  expand on demand; keyboard tab navigation and per-project draft retention make
+  larger projects usable without one long page.
+- **Release verification utilities.** Real renderer, capture-extension and native
+  Electron checks cover tool/approval flows, attachments, projects, settings,
+  responsive widths, themes and failure recovery. Coucou-derived software carries
+  an included MIT notice; its artwork and recordings are not bundled.
 - **Keyless Composio sign-in — no API key, nothing to host.** Connecting an app
   now runs a browser OAuth 2.1 + PKCE flow: discovery, dynamic client
   registration as a public client (no secret issued), a single-use
@@ -40,6 +66,20 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Changed
 
+- The main desktop now shares the companion's graphite style, mascot faces and
+  system typography. A compact navigation rail, responsive teammate roster,
+  separate project/scheduling/review strip and clearer composer replace the old
+  shell. Graphite, Mono and Slate themes remain available.
+- Scheduled-task empty/detail views prioritize the next run, owner and readable
+  task names. Background preferences show actual scheduled/enabled/running counts,
+  open each task in its owner/delivery conversation, and expose startup capability
+  and pause-all state. Model choice and optional limits use separate controls.
+- Completed Markdown replies are memoized instead of reparsed for every streaming
+  token. Hidden mascots and idle activity tickers pause animation work.
+- README, contributor setup, configuration comments and release instructions now
+  describe the current desktop, capture helper, real dependencies and CI gates.
+- Generated launch-film HTML is removed from tracking, with the local copy kept.
+  Local verification logs, video project output, crash dumps and media are ignored.
 - Plugins **Saved sign-ins** is now a first-class browser-vault section instead of
   a stray disclosure: a section head with a live count and a framed card that
   states it is what the built-in browser and Chromium fill from. Each row shows
@@ -53,6 +93,16 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Long teammate names and scheduled jobs no longer distort the island avatar
+  grid; the activity footer and approval actions remain visible in narrow windows.
+- A closed browser overlay no longer extends the document beyond the viewport.
+- Hard rectangular focus outlines around the composer, context editor, settings,
+  plugins and island controls are removed; focused fields retain subdued borders.
+- Failed project-context saves keep the text; failed startup changes keep the
+  confirmed value. Missing-owner tasks route to their delivery conversation,
+  while tasks with no usable destination remain disabled.
+- Capture pairing persists across browser/service-worker restarts. Remembered-port
+  conflicts fail visibly, and replayed, expired or cancelled tickets are rejected.
 - **A scheduled task and its run result could appear in another teammate's
   conversation.** The jobs panel and routine sheet are now scoped to the selected
   thread, matching the chat pane.

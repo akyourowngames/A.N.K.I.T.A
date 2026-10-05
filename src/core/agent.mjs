@@ -545,10 +545,16 @@ export class Agent {
     const checklist = todos.length ? '\nCurrent session checklist (stable IDs):\n' +
       capOutput(todos.map(item => `${item.id} ${item.content} ${item.status}`).join('\n'), 3000) +
       '\nBefore your final reply, use write_todos to mark work actually completed as completed. ' +
-      'Leave unfinished work pending or in_progress; do not mark it completed without evidence.' : '';
+      'Leave unfinished work pending or in_progress; do not mark completed without evidence.' : '';
+    // Companion-window turns (island): the user reads on a 368px card, so the
+    // reply must be direct — findings first, short markdown, no preamble.
+    // Set per turn by the desktop layer; never stored, never in the transcript.
+    const islandStyle = this.islandTurn
+      ? '\nCompanion-window turn: answer directly and concisely. Findings first, no preamble, no hedging, no restated question. Short markdown only; tables only when asked. Full detail belongs in tool results, not prose.'
+      : '';
     this.messages[0] = {
       role: "system",
-      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcpSummaries(), this.personalBlock(), this.skillLines, this.availableSkills().length > 0) + checklist,
+      content: buildSystemPrompt(this.config, this.cwd, this.project, this.mcpSummaries(), this.personalBlock(), this.skillLines, this.availableSkills().length > 0) + checklist + islandStyle,
     };
     return this;
   }

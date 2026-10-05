@@ -120,9 +120,9 @@ export class Tracked {
   }
 }
 
-/** cubic-bezier(.45,0,.2,1) solver — bisection on x, 12 iterations. */
-export function makeCloseCurve() {
-  const x1 = 0.45, y1 = 0, x2 = 0.2, y2 = 1;
+/** cubic-bezier(x1,y1,x2,y2) solver — bisection on x, 12 iterations.
+ * Ported from Coucou's windows/src/core/anim.ts (MIT License, (c) Louis Raille). */
+export function cubicBezier(x1, y1, x2, y2) {
   const cx = t => ((1 - t) ** 2 * 3 * t * x1) + (3 * (1 - t) * t * t * x2) + t ** 3;
   const cy = t => ((1 - t) ** 2 * 3 * t * y1) + (3 * (1 - t) * t * t * y2) + t ** 3;
   return x => {
@@ -135,4 +135,9 @@ export function makeCloseCurve() {
     }
     return cy(t);
   };
+}
+
+/** Close curve (.45,0,.2,1), 340 ms — matches Coucou's IslandContainer. */
+export function makeCloseCurve() {
+  return cubicBezier(0.45, 0, 0.2, 1);
 }

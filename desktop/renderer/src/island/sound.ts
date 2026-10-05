@@ -15,6 +15,54 @@ export type SoundCue =
   | 'rate' | 'sleep';
 
 const MASTER_VOLUME = 0.12; // Coucou's default player volume.
+export const SOUND_VOLUME_MAX = 0.2; // Unitless gain; limit synthesized cues to a quiet companion.
+export const SOUND_VOLUME_STEP = 0.005; // Unitless gain increment for the settings slider.
+const SOUND_SETTINGS_KEY = 'ankita.island.sound'; // Persistent companion preferences, independent of chat history.
+
+function loadSoundSettings(): { enabled?: boolean; volume?: number } {
+  try { return JSON.parse(localStorage.getItem(SOUND_SETTINGS_KEY) || '{}') || {}; }
+  catch { return {}; }
+}
+const soundSettings = loadSoundSettings();
+
+let soundEnabled = soundSettings.enabled !== false;
+let masterVolume = typeof soundSettings.volume === 'number' && Number.isFinite(soundSettings.volume)
+  ? Math.max(0, Math.min(SOUND_VOLUME_MAX, soundSettings.volume)) : MASTER_VOLUME;
+
+function saveSoundSettings(): void {
+  try { localStorage.setItem(SOUND_SETTINGS_KEY, JSON.stringify({ enabled: soundEnabled, volume: masterVolume })); }
+  catch { /* Preferences are optional when storage is unavailable. */ }
+}
+
+/** Island settings rows drive these (mirrors Coucou's State.settings.sound*). */
+export function setSoundEnabled(on: boolean): void {
+  soundEnabled = on === true;
+  saveSoundSettings();
+  try {
+    if (master) master.gain.value = soundEnabled ? masterVolume : 0;
+  } catch {
+    // Audio must never break the island.
+  }
+}
+
+export function isSoundEnabled(): boolean {
+  return soundEnabled;
+}
+
+export function setSoundVolume(v: number): void {
+  const clamped = Math.max(0, Math.min(SOUND_VOLUME_MAX, Number(v) || 0));
+  masterVolume = clamped;
+  saveSoundSettings();
+  try {
+    if (master && soundEnabled) master.gain.value = clamped;
+  } catch {
+    // Audio must never break the island.
+  }
+}
+
+export function getSoundVolume(): number {
+  return masterVolume;
+}
 
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
@@ -28,7 +76,7 @@ function audio(): AudioContext | null {
       if (!Ctor) return null;
       ctx = new Ctor();
       master = ctx.createGain();
-      master.gain.value = MASTER_VOLUME;
+      master.gain.value = soundEnabled ? masterVolume : 0;
       master.connect(ctx.destination);
     }
     if (ctx.state === 'suspended') void ctx.resume();
@@ -120,6 +168,7 @@ const RECIPES: Record<SoundCue, () => void> = {
 };
 
 export function playSound(cue: SoundCue): void {
+  if (!soundEnabled) return;
   try {
     RECIPES[cue]?.();
   } catch {

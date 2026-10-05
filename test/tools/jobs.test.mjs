@@ -204,6 +204,9 @@ test('the launcher drains stdout and stderr before reporting the shell exit code
   const shellCommand = process.platform === 'win32' ? `${command}; exit $LASTEXITCODE` : command;
   await run({ command: shellCommand, background: true, max_output_bytes: retainedBytes }, ctx);
   const job = [...ctx.state.jobs.values()][0];
+  // This tests final pipe draining, not cold native shell startup speed. The
+  // launcher may need longer than the command's five-second execution window.
+  await job.child.ready;
   const { run: wait } = await import('../../tools/process/job-wait.mjs');
   const result = JSON.parse(await wait({ job_id: job.id, timeout_ms: 5000, since_offset: 0, max_bytes: retainedBytes }, ctx));
   assert.equal(result.state, 'done');
@@ -226,6 +229,8 @@ test('job status can list all jobs and read only new bytes, with explicit replay
   const { command, ctx } = fixture(t, "console.log('first'); setTimeout(()=>console.log('second'), 300); setTimeout(()=>{}, 500)");
   await run({ command, background: true }, ctx);
   const id = [...ctx.state.jobs.keys()][0];
+  // Start the output/status observation window after actual native readiness.
+  await ctx.state.jobs.get(id).child.ready;
   const { run: wait } = await import('../../tools/process/job-wait.mjs');
   await wait({ job_id: id, timeout_ms: 5000 }, ctx);
   const list = JSON.parse(status({}, ctx));

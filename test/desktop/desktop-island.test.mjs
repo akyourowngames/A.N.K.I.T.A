@@ -3,12 +3,20 @@ import assert from 'node:assert/strict';
 import {
   ISLAND_WIDTH, ISLAND_HEIGHT_COMPACT, ISLAND_HEIGHT_EXPANDED, ISLAND_EDGE_MARGIN,
   ISLAND_MODE_HIDDEN, ISLAND_MODE_COMPACT, ISLAND_MODE_EXPANDED,
-  ISLAND_PETIT_WIDTH, ISLAND_PETIT_HEIGHT, ISLAND_HOME_WIDTH, ISLAND_PEEK_PX,
+  ISLAND_PETIT_WIDTH, ISLAND_PETIT_HEIGHT, ISLAND_HOME_WIDTH, ISLAND_HEIGHT_CHAT, ISLAND_PEEK_PX,
   ISLAND_VIEW_PETIT, ISLAND_VIEW_HOME, ISLAND_VIEW_HOME_EXPANDED, ISLAND_VIEW_TUCKED,
+  ISLAND_VIEW_APPROVAL, ISLAND_VIEW_OVERVIEW, ISLAND_VIEW_EMPTY,
   ISLAND_COORD_MIN, ISLAND_COORD_MAX,
-  islandBounds, islandCoord, islandHeightFor, islandModeFor, islandSizeFor, islandYFor,
+  islandBounds, islandClampHeight, islandCoord, islandDefaultView, islandHeightFor, islandModeFor, islandSizeFor, islandYFor,
 } from '../../desktop/electron/island.mjs';
+import * as islandGeometry from '../../desktop/electron/island.mjs';
 import { ApprovalRegistry } from '../../desktop/electron/approvals.mjs';
+
+test('wide home cards fit narrow displays even when their saved center is off-screen', () => {
+  assert.equal(typeof islandGeometry.islandFittedBounds, 'function');
+  const bounds = islandGeometry.islandFittedBounds({ x: 100, y: 40, width: 400, height: 300 }, { width: 640, height: 420 }, 1200);
+  assert.deepEqual(bounds, { x: 108, y: 40, width: 384, height: 300 });
+});
 
 test('island sits top-centre of the work area', () => {
   const bounds = islandBounds({ x: 0, y: 0, width: 1920, height: 1040 });
@@ -94,6 +102,22 @@ test('island coordinates fall back and clamp instead of throwing', () => {
   assert.equal(islandCoord(1e20, 0), ISLAND_COORD_MAX);
   assert.equal(islandCoord(-1e20, 0), ISLAND_COORD_MIN);
   assert.equal(islandCoord(Number.NaN), 0);
+});
+
+test('chat takes a tall card that fits under the work-area bottom', () => {
+  assert.deepEqual(islandSizeFor('home-chat', 0), { width: ISLAND_HOME_WIDTH, height: ISLAND_HEIGHT_CHAT });
+  assert.ok(ISLAND_HEIGHT_CHAT > ISLAND_HEIGHT_EXPANDED);
+  // Roomy display keeps the full card.
+  assert.equal(islandClampHeight(400, 0, { y: 0, height: 1040 }), 400);
+  // Short display stops at the bottom edge, never below the petit height.
+  assert.equal(islandClampHeight(400, 0, { y: 0, height: 300 }), 300);
+  assert.equal(islandClampHeight(400, 0, { y: 0, height: 20 }), ISLAND_PETIT_HEIGHT);
+});
+
+test('home view routes approvals first, then running jobs, else empty', () => {
+  assert.equal(islandDefaultView({ approvalCount: 2, runningCount: 1 }), ISLAND_VIEW_APPROVAL);
+  assert.equal(islandDefaultView({ approvalCount: 0, runningCount: 3 }), ISLAND_VIEW_OVERVIEW);
+  assert.equal(islandDefaultView({ approvalCount: 0, runningCount: 0 }), ISLAND_VIEW_EMPTY);
 });
 
 test('every step of a zero-crossing slide is int32-safe', () => {

@@ -14,6 +14,7 @@
 
 import { Ease, lerp, type EaseFn, type MascotEmote, type MascotState } from './anim';
 import { playSound } from './sound';
+import { interactionFrame, type InteractionFrame } from '../../../shared/mascot-interaction.mjs';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -163,6 +164,7 @@ function starPath(x: CanvasRenderingContext2D, ro: number, ri: number): void {
 }
 
 const FONT = 'system-ui, "Segoe UI Variable Text", "Segoe UI", sans-serif';
+const FEED_FACE = { eyeLift: .4, mouthWidth: .65, mouthHeight: .5, mouthY: .28, tongueWidth: .32, tongueHeight: .12 }; // Ratios of body radius; funny mouth remains inside every mascot size.
 
 // ── Engine ────────────────────────────────────────────────────────────────────
 
@@ -170,6 +172,7 @@ export class MascotEngine {
   isMini = false;
   /** Solid body colour for mini variants (null = default gradient). */
   bodyColor: RGB | null = null;
+  interaction: InteractionFrame = interactionFrame('rest', 0);
 
   // Animated state
   yaw = 0; pitch = 0; roll = 0; tilt = 0; open = 1;
@@ -651,9 +654,9 @@ export class MascotEngine {
     this.drawHandsBehind(x, R, rx, ry, cx, cy);
 
     x.save();
-    x.translate(cx, cy);
-    if (this.tilt !== 0) x.rotate(this.tilt);
-    x.scale(this.sx, this.sy);
+    x.translate(cx, cy + this.interaction.lift * R);
+    x.rotate(this.tilt + this.interaction.tilt);
+    x.scale(this.sx * this.interaction.sx, this.sy * this.interaction.sy);
 
     const body = this.bodyPath(rx, ry, R);
     this.drawBody(x, body, R, rx, ry);
@@ -674,6 +677,14 @@ export class MascotEngine {
 
     this.drawEyes(x, body, R, rx, ry);
     if (this.morph > 0.05) this.drawMouth(x, body, R);
+    if (this.interaction.mouth > 0) {
+      x.save(); x.clip(body);
+      const height = R * FEED_FACE.mouthHeight * this.interaction.mouth;
+      x.fillStyle = INK;
+      x.beginPath(); x.ellipse(0, R * FEED_FACE.mouthY, R * FEED_FACE.mouthWidth, height, 0, 0, Math.PI * 2); x.fill();
+      x.clip(); x.fillStyle = '#ef8f9d'; // Warm tongue colour; only visible inside the interaction mouth.
+      x.beginPath(); x.ellipse(0, R * FEED_FACE.mouthY + height, R * FEED_FACE.tongueWidth, R * FEED_FACE.tongueHeight, 0, 0, Math.PI * 2); x.fill(); x.restore();
+    }
 
     x.restore();
 
@@ -767,7 +778,7 @@ export class MascotEngine {
       if (Math.cos(eyeYaw) * cp <= 0.04) continue;
 
       const ex = Math.sin(eyeYaw) * cp * rx;
-      const ey = -Math.sin(eyePitch) * ry + (this.morph > 0 ? ry * 0.14 * this.morph : 0);
+      const ey = -Math.sin(eyePitch) * ry + (this.morph > 0 ? ry * 0.14 * this.morph : 0) - this.interaction.mouth * R * FEED_FACE.eyeLift;
       const fx = lerp(Math.max(0.18, Math.cos(eyeYaw)), 1, this.morph * 0.7);
       const fy = lerp(Math.max(0.18, cp), 1, this.morph * 0.7);
       const eyeMult = this.isMini ? 1.9 : 1.0;

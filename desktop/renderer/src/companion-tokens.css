@@ -1,0 +1,13 @@
+/* Shared source of color and type for the desktop and floating companion. */
+:root {
+  --companion-font: -apple-system, BlinkMacSystemFont, "Segoe UI Variable Text", system-ui, sans-serif;
+  --companion-canvas: #0e0f11;
+  --companion-card: #141518;
+  --companion-raised: #1d1f23;
+  --companion-ink: #f5f6f8;
+  --companion-soft: #b9bdc5;
+  --companion-dim: #9398a1;
+  --companion-blue: #7aa2ff;
+  --companion-green: #34d399;
+  --companion-red: #ff8d97;
+}

@@ -1,0 +1,12 @@
+export const DRAG_MIME: string, PROTOCOL_VERSION: number, LOOPBACK_HOST: string;
+export const MAX_ATTACHMENTS: number, MAX_TEXT_BYTES: number, MAX_REQUEST_BYTES: number, MAX_TITLE_CHARS: number, MAX_URL_CHARS: number;
+export const TICKET_TTL_MS: number, PAIR_TTL_MS: number, MAX_PENDING_CAPTURES: number, REQUEST_TIMEOUT_MS: number;
+export const RECEIPT_MS: number;
+export const FILE_ACTIVITY_EVENT: string, FILE_DROP_EVENT: string;
+export const CAPTURE_EVENT: 'companion-capture-ready';
+export const CAPTURE_UI_EVENTS: {island: string; main: string};
+export const ROUTES: {pair: string; capture: string};
+export const CAPTURE_ACTIONS: {setup: string; register: string; cancel: string; inbox: string; ack: string; openHelper: string};
+export const HELPER_MESSAGE: {pair: string; capture: string};
+export function boundedText(value: unknown, maxBytes?: number): string;
+export function isPageUrl(value: string): boolean;

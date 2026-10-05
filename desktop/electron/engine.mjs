@@ -19,6 +19,7 @@ import { sanitizeMessages, estimateImageBytes } from '../../src/core/history.mjs
 import { loadSkills } from '../../src/core/skills.mjs';
 import { buildIndex, search as searchPalette } from '../../src/palette/index.mjs';
 import { todoProgress } from '../shared/todo-progress.mjs';
+import { hydrateIslandState, reduceIslandState, ISLAND_HISTORY_LIMIT } from '../shared/island-state.mjs';
 import { displayArgs } from '../../tools/index.mjs';
 import { TeammateStore } from './teammates.mjs';
 import { ApprovalRegistry } from './approvals.mjs';
@@ -283,11 +284,19 @@ export class DesktopEngine {
     // Keep the raw sink separate so the channel bridge can observe every event
     // (approvals included) without the emit path calling back into itself.
     this._emit = emit;
+    this.eventSequence = 0; // Monotonic event count; a startup snapshot must not replay already captured deltas.
+    this.islandState = { threads: {} };
     this.emit = (event) => {
       if (['error', 'scheduler-error', 'scheduler-stopped'].includes(event.type) && this.secretHistory) {
         event = this.secretHistory.clean(event);
         this.recordDiagnostic(event);
       }
+      event = { ...event, sequence: ++this.eventSequence };
+      if (event.type === 'turn-start' && !this.islandState.threads[event.threadId]) {
+        const loaded = hydrateIslandState({ threads: [{ id: event.threadId, running: false, messages: this.loadThread(event.threadId) }] });
+        this.islandState = { threads: { ...this.islandState.threads, ...loaded.threads } };
+      }
+      this.islandState = reduceIslandState(this.islandState, event);
       try { this._emit(event); } catch {}
       try { this.channels?.handleEngineEvent(event); } catch {}
     };
@@ -832,6 +841,16 @@ export class DesktopEngine {
 
   _rawThread(id) { return this._savedThread(id).messages; }
 
+  islandSnapshot() {
+    const teammates = this.listTeammates();
+    const threads = teammates.map(teammate => ({ id: teammate.id, running: this.turns.has(teammate.id),
+      messages: this.loadThread(teammate.id).slice(-ISLAND_HISTORY_LIMIT) }));
+    const history = hydrateIslandState({ threads });
+    const state = { threads: Object.fromEntries(teammates.map(teammate => [teammate.id,
+      this.islandState.threads[teammate.id] || history.threads[teammate.id]])) };
+    return { teammates, threads, state, sequence: this.eventSequence };
+  }
+
   loadThread(id) {
     const agent = this.agents.get(id);
     const { messages, todos } = agent
@@ -892,6 +911,9 @@ export class DesktopEngine {
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
     const agent = this.agentFor(id);
     agent.browserCredentialAllowed = surface === 'desktop';
+    // Island turns answer in a compact card: the style flag rides the
+    // system prompt (never the transcript), and is cleared when the turn ends.
+    agent.islandTurn = surface === 'island';
     // Cap attachments against this teammate's window, not a fixed number.
     const files = attachmentPayload(attachments, { contextWindow: agent.contextWindow || this.config.contextWindow });
     if (!prompt && !files.length) throw new Error('Write a message or attach a file first');
@@ -949,6 +971,10 @@ export class DesktopEngine {
       if (!agent.cancelled?.()) this.emit({ type: 'error', threadId: id, message: this.secretHistory.clean(err.message || String(err)) });
       throw err;
     }).finally(() => {
+      // The island style flag must not leak into later turns or the saved
+      // session on this thread: scrub it before persisting.
+      agent.islandTurn = false;
+      try { agent.refreshPrompt(); } catch { /* next turn rebuilds it anyway */ }
       saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, todos: agent.state?.todos || [], projectId: agent.projectId, journaled: agent.journalComplete }, { transform: this.secretHistory.clean });
       this.turns.delete(id);
       this.approvals.cancelThread(id);

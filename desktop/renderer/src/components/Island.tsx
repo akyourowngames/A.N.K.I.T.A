@@ -1,328 +1,298 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { EngineEvent, Routine } from '../../../shared/wire';
-import type { Approval } from '../state/store';
+import { islandThreadState, type IslandTool } from '../../../shared/island-state.mjs';
 import type { MascotState } from '../island/engine';
-import { playSound } from '../island/sound';
+import { useReducedMotion } from '../lib/useReducedMotion';
+import { isSoundEnabled, playSound, setSoundEnabled } from '../island/sound';
 import { Mascot } from './Mascot';
+import { Header } from './island-views/Header';
+import { Icon } from './island-views/icons';
+import { Overview, type ActivityItem } from './island-views/Overview';
+import { ApprovalView, type ApprovalItem } from './island-views/ApprovalView';
+import { Prompt } from './island-views/Prompt';
+import { useIslandChat } from './island-views/useIslandChat';
+import { SettingsMini } from './island-views/SettingsMini';
+import { EmptyView, ErrorView, FinishedView } from './island-views/StaticViews';
+import type { IslandHomeView } from './island-views/views';
+import { useMascotInteraction } from '../lib/useMascotInteraction';
+import { useMascotCapture } from '../lib/useMascotCapture';
+import { MascotFile } from './MascotFile';
+import { CAPTURE_UI_EVENTS } from '../../../browser-helper/protocol.mjs';
 
-type IslandApproval = Approval | {
-  type: 'approval-request';
-  requestId: string;
-  threadId: string | null;
-  toolName: string;
-  detail: string;
-  routineId?: string;
-  runId?: string;
-  expiresAt?: string;
-};
-
-/** How long a finished/error flash holds the mascot before it settles back. */
-const FLASH_MS = 4000;
-/** Pixels of cursor travel mapped to a full look swing. */
-const LOOK_RANGE_PX = 180;
-/** Delay before a revealed petit tab tucks back once the pointer leaves. */
-const TUCK_DELAY_MS = 900;
-/** Mascot canvas size in the petit tab vs the home card. */
-const MASCOT_PETIT_PX = 40;
-const MASCOT_HOME_PX = 52;
-
-/** State-tinted glow behind the mascot, Coucou-style. Kept faint on purpose. */
+type IslandApproval = ApprovalItem & { threadId?: string | null; routineId?: string };
+const FLASH_MS = 4000; // Milliseconds; completion/error expression before returning to live work.
+const LOOK_RANGE_PX = 180; // Cursor pixels mapped to a full eye movement.
+const TUCK_DELAY_MS = 900; // Milliseconds; close the quiet compact tab after pointer exit.
+const HOME_COLLAPSE_MS = 15000; // Milliseconds; Coucou's home-to-compact pause.
+const MASCOT_PETIT_PX = 40; // CSS pixels; fits the compact tab.
+const MASCOT_HOME_PX = 80; // CSS pixels; focus character beside the home card.
+const MAX_JOB_STEPS = 20; // Rows per job; bounded live activity history.
+const JOB_COLOR = 'var(--green)'; // Shared theme fallback for jobs without a teammate color.
+const TALL_VIEWS: IslandHomeView[] = ['prompt'];
 const STATE_GLOW: Record<MascotState, string> = {
-  idle: 'rgba(140,150,170,0.16)',
-  working: 'rgba(59,158,255,0.28)',
-  thinking: 'rgba(139,92,246,0.28)',
-  searching: 'rgba(99,102,241,0.28)',
-  approval: 'rgba(245,165,36,0.34)',
-  question: 'rgba(34,211,238,0.28)',
-  error: 'rgba(244,63,94,0.32)',
-  finished: 'rgba(52,211,153,0.28)',
-  ratelimit: 'rgba(251,146,60,0.28)',
-  sleeping: 'rgba(148,163,184,0.2)',
-  dizzy: 'rgba(244,114,182,0.28)',
+  idle: 'rgba(140,150,170,0.16)', working: 'rgba(59,158,255,0.28)',
+  thinking: 'rgba(139,92,246,0.28)', searching: 'rgba(99,102,241,0.28)',
+  approval: 'rgba(245,165,36,0.34)', question: 'rgba(34,211,238,0.28)',
+  error: 'rgba(244,63,94,0.32)', finished: 'rgba(52,211,153,0.28)',
+  ratelimit: 'rgba(251,146,60,0.28)', sleeping: 'rgba(148,163,184,0.2)', dizzy: 'rgba(244,114,182,0.28)',
 };
-
-function clampLook(v: number): number {
-  return Math.max(-1, Math.min(1, v));
-}
-
-function routineApprovals(jobs: Routine[]): IslandApproval[] {
-  const items: IslandApproval[] = [];
-  for (const job of jobs) {
-    if (job.pendingApproval) {
-      items.push({
-        type: 'approval-request',
-        requestId: job.pendingApproval.requestId,
-        threadId: job.threadId,
-        toolName: job.name || 'Scheduled job',
-        detail: job.pendingApproval.redactedDetail,
-        routineId: job.id,
-        runId: job.pendingApproval.runId,
-        expiresAt: job.pendingApproval.expiresAt,
-      });
-    }
-  }
-  return items;
-}
+const clampLook = (v: number) => Math.max(-1, Math.min(1, v));
 
 export function Island() {
+  const reducedMotion = useReducedMotion();
+  const chat = useIslandChat();
   const [jobs, setJobs] = useState<Routine[]>([]);
   const [tools, setTools] = useState<IslandApproval[]>([]);
-  const [thinking, setThinking] = useState(false);
-  const [flash, setFlash] = useState<{ kind: 'finished' | 'error'; key: number } | null>(null);
   const [view, setView] = useState<'tucked' | 'petit' | 'home'>('tucked');
-  const turns = useRef(new Map<string, string | undefined>());
-  const flashTimer = useRef<number | null>(null);
-  const lookRef = useRef({ x: 0, y: 0 });
+  const [navView, setNavView] = useState<IslandHomeView | null>(null);
+  const [flash, setFlash] = useState<'finished' | 'error' | null>(null);
+  const [errorCard, setErrorCard] = useState<{ who: string; detail: string } | null>(null);
+  const [focusId, setFocusId] = useState<string | null>(null);
+  const selectedTeammate = chat.teammates.find(item => item.id === (navView === 'prompt' ? chat.teammateId : focusId)) || chat.teammates.find(item => item.id === chat.teammateId);
+  const { interaction, pose, reset } = useMascotInteraction(selectedTeammate?.id || null);
+  const capture = useMascotCapture();
+  const dropRecipient = useRef<string | null>(null);
+  const [soundOn, setSoundOn] = useState(isSoundEnabled());
+  const [pendingApproval, setPendingApproval] = useState<string | null>(null);
+  const [approvalError, setApprovalError] = useState('');
+  const [dragOver, setDragOver] = useState(false);
+  const [, setStepTick] = useState(0);
   const mascotBox = useRef<HTMLDivElement>(null);
+  const fileInput = useRef<HTMLInputElement>(null);
+  const lookRef = useRef({ x: 0, y: 0 });
   const sizeRef = useRef('');
-  // True while home was auto-opened by an approval (so clearing them tucks back).
-  const autoHome = useRef(false);
-
-  const openHome = useCallback((auto: boolean) => {
-    autoHome.current = auto;
-    setView('home');
-  }, []);
-
-  const openPetit = useCallback(() => {
-    setView(current => (current === 'tucked' ? 'petit' : current));
-  }, []);
-
+  const flashTimer = useRef<number | null>(null);
   const tuckTimer = useRef<number | null>(null);
-  const cancelTuck = useCallback(() => {
-    if (tuckTimer.current != null) { window.clearTimeout(tuckTimer.current); tuckTimer.current = null; }
-  }, []);
-  const tuckSoon = useCallback(() => {
-    cancelTuck();
-    tuckTimer.current = window.setTimeout(() => {
-      tuckTimer.current = null;
-      autoHome.current = false;
-      setView(current => (current === 'petit' ? 'tucked' : current));
-    }, TUCK_DELAY_MS);
-  }, [cancelTuck]);
+  const homeTimer = useRef<number | null>(null);
+  const stepsRef = useRef(new Map<string, string[]>());
+  const failedTurns = useRef(new Set<string>());
+  const approvalPendingRef = useRef(false);
+  const autoHome = useRef(false);
+  const dragDepth = useRef(0);
 
+  const approvals = [...new Map([...tools, ...jobs.flatMap(job => job.pendingApproval ? [{
+    requestId: job.pendingApproval.requestId, threadId: job.threadId, routineId: job.id,
+    toolName: job.name, detail: job.pendingApproval.redactedDetail,
+  }] : [])].map(item => [item.requestId, item])).values()];
+  const activeThreads = chat.teammates.filter(item => chat.state.threads[item.id]?.running);
+  const runningJobs = jobs.filter(job => job.running);
+  const runningCount = activeThreads.length + runningJobs.filter(job => !activeThreads.some(item => item.id === job.threadId)).length;
+  const engaged = useRef(false);
+  engaged.current = approvals.length > 0 || chat.reading || chat.sending || interaction.phase !== 'rest' || Boolean(chat.input.trim() || chat.attachments.length);
+
+  const clearTimers = useCallback(() => {
+    if (tuckTimer.current !== null) window.clearTimeout(tuckTimer.current);
+    if (homeTimer.current !== null) window.clearTimeout(homeTimer.current);
+    tuckTimer.current = homeTimer.current = null;
+  }, []);
+  const openHome = useCallback((automatic = false) => {
+    clearTimers(); autoHome.current = automatic; setView('home');
+  }, [clearTimers]);
   const closeHome = useCallback(() => {
-    autoHome.current = false;
-    playSound('close');
-    setView('petit');
-  }, []);
-
+    clearTimers(); autoHome.current = false; setNavView(null); setView('petit'); playSound('close');
+  }, [clearTimers]);
   const showFlash = useCallback((kind: 'finished' | 'error') => {
-    if (flashTimer.current != null) window.clearTimeout(flashTimer.current);
-    setFlash({ kind, key: Date.now() });
+    if (flashTimer.current !== null) window.clearTimeout(flashTimer.current);
+    setFlash(kind);
+    setView(current => current === 'tucked' ? 'petit' : current);
     flashTimer.current = window.setTimeout(() => { setFlash(null); flashTimer.current = null; }, FLASH_MS);
+  }, []);
+  const pushStep = useCallback((id: string, line: string) => {
+    stepsRef.current.set(id, [...(stepsRef.current.get(id) || []), line].slice(-MAX_JOB_STEPS));
+    setStepTick(tick => tick + 1);
   }, []);
 
   useEffect(() => {
     let alive = true;
-    void window.ankita.invoke<Routine[]>('scheduleList').then(list => { if (alive) setJobs(list || []); }).catch(() => {});
-    void window.ankita.invoke<IslandApproval[]>('approvalList').then(list => {
+    let loadingApprovals = true;
+    const resolvedBeforeSnapshot = new Set<string>();
+    const refreshApprovals = () => void window.ankita.invoke<IslandApproval[]>('approvalList').then(list => {
       if (!alive) return;
-      setTools(list || []);
-      if ((list || []).length > 0) openHome(true);
-    }).catch(() => {});
+      const pending = (list || []).filter(item => !resolvedBeforeSnapshot.has(item.requestId));
+      // Live requests can arrive before an older startup snapshot completes.
+      setTools(current => [...new Map([...pending, ...current].map(item => [item.requestId, item])).values()]);
+      if (pending.length) openHome(true);
+    }).catch(error => { if (alive) setApprovalError(String(error.message || error)); })
+      .finally(() => { loadingApprovals = false; resolvedBeforeSnapshot.clear(); });
+    void window.ankita.invoke<Routine[]>('scheduleList').then(list => {
+      if (!alive) return;
+      setJobs(list || []);
+      if (list?.some(job => job.pendingApproval)) openHome(true);
+    }).catch(error => {
+      if (alive) setErrorCard({ who: 'Scheduled jobs', detail: String(error.message || error) });
+    });
+    refreshApprovals();
     const off = window.ankita.onEvent((event: EngineEvent) => {
       if (!alive) return;
       if (event.type === 'schedule-changed') setJobs(event.jobs);
-      else if (event.type === 'approval-request') {
+      else if (event.type === 'routine-run-start' || event.type === 'routine-run-step') {
+        pushStep(event.routineId, event.detail || event.status || 'Working…');
+        setView(current => current === 'tucked' ? 'petit' : current);
+      } else if (event.type === 'approval-request') {
         setTools(current => current.some(item => item.requestId === event.requestId) ? current : [...current, event]);
-        openHome(true);
+        setNavView(null); setApprovalError(''); openHome(true);
       } else if (event.type === 'approval-resolved' || event.type === 'routine-approval-ended') {
+        if (loadingApprovals) resolvedBeforeSnapshot.add(event.requestId);
         setTools(current => current.filter(item => item.requestId !== event.requestId));
       } else if (event.type === 'turn-start') {
-        turns.current.set(event.turnId, event.source);
-        setThinking(true);
+        failedTurns.current.delete(event.threadId);
+        setFlash(null); setErrorCard(null);
+        setView(current => current === 'tucked' ? 'petit' : current);
       } else if (event.type === 'turn-end') {
-        const source = turns.current.get(event.turnId);
-        turns.current.delete(event.turnId);
-        if (turns.current.size === 0) {
-          setThinking(false);
-          if (source !== 'routine') showFlash('finished');
-        }
-      } else if (event.type === 'routine-run-end') {
-        showFlash('finished');
-      } else if (event.type === 'routine-failed') {
+        if (!failedTurns.current.has(event.threadId)) showFlash('finished');
+      } else if (event.type === 'routine-failed' || event.type === 'error') {
+        if (event.threadId) failedTurns.current.add(event.threadId);
+        setErrorCard({ who: event.type === 'error' ? 'Ankita' : 'Scheduled job', detail: event.type === 'error' ? event.message : event.text || event.status });
         showFlash('error');
       }
     });
-    return () => { alive = false; off(); if (flashTimer.current != null) window.clearTimeout(flashTimer.current); };
-  }, [showFlash, openHome]);
+    return () => { alive = false; off(); if (flashTimer.current !== null) window.clearTimeout(flashTimer.current); };
+  }, [openHome, pushStep, showFlash]);
 
-  // Cursor follow: the main process streams the pointer relative to the island
-  // window; the mascot watches it through a ref so the pointer never re-renders.
   useEffect(() => {
-    const off = window.ankita.onCursor(point => {      const canvas = mascotBox.current?.querySelector('canvas');
+    const off = window.ankita.onCursor(point => {
+      const canvas = mascotBox.current?.querySelector('canvas');
       if (!canvas) return;
       const rect = canvas.getBoundingClientRect();
-      lookRef.current = {
-        x: clampLook((point.x - (rect.left + rect.width / 2)) / LOOK_RANGE_PX),
-        y: clampLook(((rect.top + rect.height / 2) - point.y) / LOOK_RANGE_PX),
-      };
+      lookRef.current = { x: clampLook((point.x - rect.left - rect.width / 2) / LOOK_RANGE_PX), y: clampLook((rect.top + rect.height / 2 - point.y) / LOOK_RANGE_PX) };
     });
     return off;
   }, []);
-
-  // Never leave a pending tuck behind on unmount.
-  useEffect(() => cancelTuck, [cancelTuck]);
-
-  const approvals = [...tools, ...routineApprovals(jobs)];
-  // Expanded while approvals pend (the window grows to fit the body); a quiet
-  // home card is header-only so it fits the compact window without clipping.
-  const expanded = approvals.length > 0;
-
-  const restore = useCallback(() => {
-    playSound('open');
-    void window.ankita.islandAction('show-main').catch(() => {});
-  }, []);
-
-  // Clicking the header row restores the main window from a quiet home card
-  // (whose body is hidden to fit the compact window), or collapses an
-  // expanded one back to petit; controls keep their clicks.
-  const toggleFromHeader = useCallback((event: React.MouseEvent) => {
-    const target = event.target as HTMLElement;
-    if (target.closest('button, .island-approvals, .island-body')) return;
-    if (expanded) closeHome();
-    else restore();
-  }, [closeHome, expanded, restore]);
-
-  const running = jobs.filter(job => job.running).length;
-  const needing = jobs.filter(job => job.needsApproval).length + tools.length;
-  const status = needing > 0
-    ? `${needing} need${needing === 1 ? 's' : ''} approval`
-    : running > 0 ? `${running} running` : 'All quiet';
-
-  const botState: MascotState =
-    approvals.length > 0 ? 'approval'
-    : flash?.kind === 'error' ? 'error'
-    : flash?.kind === 'finished' ? 'finished'
-    : thinking ? 'thinking'
-    : running > 0 ? 'working'
-    : 'idle';
-
-  // Window size follows view + approvals: tucked sliver, petit tab, home card.
+  useEffect(() => () => clearTimers(), [clearTimers]);
   useEffect(() => {
-    const want = view === 'home' ? (approvals.length > 0 ? 'home-expanded' : 'home') : view === 'petit' ? 'petit' : 'tuck';
-    if (want !== sizeRef.current) {
-      sizeRef.current = want;
-      void window.ankita.islandAction(want).catch(() => {});
-    }
-  }, [view, approvals.length]);
+    if (view !== 'home') return;
+    const blur = () => { if (!engaged.current) closeHome(); };
+    window.addEventListener('blur', blur);
+    return () => window.removeEventListener('blur', blur);
+  }, [view, closeHome]);
 
-  // Alerts answered → tuck back only if home opened itself for them.
+  const routedView: IslandHomeView = approvals.length ? 'approval' : runningCount ? 'overview' : 'empty';
+  // Alerts always win over a manually selected tab; approval answers stay visible.
+  const activeView: IslandHomeView = approvals.length ? 'approval' : navView || (errorCard ? 'error' : flash === 'finished' && !runningCount ? 'finished' : routedView);
+  const liveStates = activeThreads.map(item => islandThreadState(chat.state.threads[item.id]));
+  const botState: MascotState = approvals.length ? 'approval' : flash === 'error' ? 'error'
+    : liveStates.includes('searching') ? 'searching' : liveStates.includes('working') ? 'working'
+    : runningCount ? (activeThreads.length ? 'thinking' : 'working') : flash === 'finished' ? 'finished' : 'idle';
+
   useEffect(() => {
-    if (approvals.length === 0 && autoHome.current && view === 'home') closeHome();
-    if (approvals.length === 0 && autoHome.current) tuckSoon();
-  }, [approvals.length, view, closeHome, tuckSoon]);
-
-  // State-change jingles, Coucou-style (each state announces itself once).
+    const want = view === 'home' ? (TALL_VIEWS.includes(activeView) ? 'home-chat' : 'home-expanded') : view === 'petit' ? 'petit' : 'tuck';
+    if (want !== sizeRef.current) { sizeRef.current = want; void window.ankita.islandAction(want, { animate: !reducedMotion }).catch(() => {}); }
+    void window.ankita.islandAction(view === 'home' && (activeView === 'prompt' || activeView === 'approval' || activeView === 'settings') ? 'focus-on' : 'focus-off').catch(() => {});
+  }, [view, activeView, reducedMotion]);
+  useEffect(() => {
+    if (!approvals.length && autoHome.current && view === 'home') closeHome();
+  }, [approvals.length, view, closeHome]);
   const prevState = useRef(botState);
   useEffect(() => {
     if (botState === prevState.current) return;
     prevState.current = botState;
-    if (botState === 'approval') playSound('approval');
-    else if (botState === 'error') playSound('error');
-    else if (botState === 'finished') playSound('finish');
-    else if (botState === 'working') playSound('work');
-    else if (botState === 'thinking') playSound('think');
+    const cues = { approval: 'approval', error: 'error', finished: 'finish', working: 'work', thinking: 'think', searching: 'search' } as const;
+    if (botState in cues) playSound(cues[botState as keyof typeof cues]);
   }, [botState]);
 
   const answer = useCallback(async (requestId: string, result: 'yes' | 'no' | 'always') => {
-    playSound(result === 'no' ? 'blip' : 'approve');
-    setTools(current => current.filter(item => item.requestId !== requestId));
-    try { await window.ankita.invoke('respondApproval', { requestId, answer: result }); } catch { /* engine already settled it */ }
+    if (approvalPendingRef.current) return;
+    approvalPendingRef.current = true; setPendingApproval(requestId); setApprovalError('');
+    try {
+      await window.ankita.invoke('respondApproval', { requestId, answer: result });
+      setTools(current => current.filter(item => item.requestId !== requestId));
+      setNavView(null); playSound(result === 'no' ? 'blip' : 'approve');
+    } catch (error) { setApprovalError(error instanceof Error ? error.message : String(error)); }
+    finally { approvalPendingRef.current = false; setPendingApproval(null); }
   }, []);
+  const restore = () => void window.ankita.islandAction('show-main').catch(() => {});
+  const navigate = (target: IslandHomeView) => { clearTimers(); setNavView(target); openHome(); playSound('blip'); };
+  const attach = () => { navigate('prompt'); fileInput.current?.click(); };
+  useEffect(() => {
+    const captured = () => { setFocusId(null); setNavView('prompt'); openHome(); };
+    window.addEventListener(CAPTURE_UI_EVENTS.island, captured);
+    return () => window.removeEventListener(CAPTURE_UI_EVENTS.island, captured);
+  }, [openHome]);
+  const toggleSound = () => { const next = !soundOn; setSoundOn(next); setSoundEnabled(next); if (next) playSound('blip'); };
 
-  // Escape tucks home back to the petit tab (and petit back above the edge);
-  // Y / N answers the top approval.
   useEffect(() => {
     const key = (event: KeyboardEvent) => {
-      if (view === 'home') {
-        if (event.key === 'Escape') closeHome();
-        else if ((event.key === 'y' || event.key === 'Y') && approvals.length > 0) void answer(approvals[0].requestId, 'yes');
-        else if ((event.key === 'n' || event.key === 'N') && approvals.length > 0) void answer(approvals[0].requestId, 'no');
-      } else if (view === 'petit' && event.key === 'Escape') {
-        autoHome.current = false;
-        setView('tucked');
+      if (event.key === 'Escape') { dragDepth.current = 0; dropRecipient.current = null; setDragOver(false); if (interaction.phase === 'anticipate' || interaction.phase === 'grab') reset(); if (view === 'home') closeHome(); else { clearTimers(); setView('tucked'); } return; }
+      const target = event.target as HTMLElement | null;
+      if (target?.closest('input, textarea, select, [contenteditable="true"]') || event.ctrlKey || event.metaKey || event.altKey || event.repeat) return;
+      if (view === 'home' && approvals.length) {
+        if (event.key.toLowerCase() === 'y') { event.preventDefault(); void answer(approvals[0].requestId, 'yes'); }
+        if (event.key.toLowerCase() === 'n') { event.preventDefault(); void answer(approvals[0].requestId, 'no'); }
       }
     };
     window.addEventListener('keydown', key);
     return () => window.removeEventListener('keydown', key);
-  }, [view, closeHome, approvals, answer]);
+  }, [view, approvals, answer, clearTimers, closeHome, interaction.phase, reset]);
 
-  const runningJobs = jobs.filter(job => job.running);
+  const activities: ActivityItem[] = [
+    ...chat.teammates.map(teammate => {
+      const thread = chat.state.threads[teammate.id];
+      const state = islandThreadState(thread);
+      return { id: teammate.id, threadId: teammate.id, name: teammate.name, color: teammate.color || JOB_COLOR,
+        running: thread?.running === true, needsApproval: approvals.some(item => item.threadId === teammate.id),
+        label: state === 'idle' ? 'Ready' : state, steps: [], tools: (thread?.log || []).filter((row): row is IslandTool => row.kind === 'tool') };
+    }),
+    ...jobs.map(job => ({ id: job.id, routineId: job.id, name: job.name, color: JOB_COLOR, running: job.running,
+      needsApproval: job.needsApproval, label: job.running ? 'Running' : job.lastStatus || 'Scheduled',
+      steps: stepsRef.current.get(job.id) || [], tools: [] })),
+  ];
+  const stopActivity = (item: ActivityItem) => void window.ankita.invoke(item.routineId ? 'scheduleStop' : 'cancel', { id: item.routineId || item.threadId })
+    .catch(error => setErrorCard({ who: item.name, detail: String(error.message || error) }));
+  const status = approvals.length ? approvals.length + ' awaiting permission' : runningCount ? runningCount + ' working' : 'Ready when you are';
+  const home = view === 'home';
 
-  if (view !== 'home') {
-    const tucked = view === 'tucked';
-    return (
-      <div
-        className="island island-petit"
-        onClick={() => { playSound('open'); openHome(false); }}
-        onMouseEnter={() => { cancelTuck(); if (tucked) { playSound('peek'); openPetit(); } }}
-        onMouseLeave={() => { if (!tucked) tuckSoon(); }}
-        role="button" tabIndex={-1} aria-label="Open Ankita island" title="Click to open"
-      >
-        <div className="island-row">
-          <div className="island-mascot" ref={mascotBox} onClick={event => event.stopPropagation()}>
-            <div className="island-glow" style={{ background: `radial-gradient(circle, ${STATE_GLOW[botState]} 0%, transparent 70%)` }} />
-            <Mascot state={botState} lookRef={lookRef} size={MASCOT_PETIT_PX} awake={!tucked} />
-          </div>
-          <div className="island-status">
-            <strong>Ankita</strong>
-            <span key={status} className="island-status-text">{status}</span>
-          </div>
-          {approvals.length > 0 && <span className="island-badge">{approvals.length}</span>}
-        </div>
+  const leave = () => {
+    clearTimers();
+    if (engaged.current) return;
+    if (home) homeTimer.current = window.setTimeout(() => {
+      if (!engaged.current && !document.activeElement?.closest('input, textarea, select')) closeHome();
+    }, HOME_COLLAPSE_MS);
+    else if (!runningCount && !flash) tuckTimer.current = window.setTimeout(() => setView('tucked'), TUCK_DELAY_MS);
+  };
+  return <div className={'island ' + (home ? 'island-home' : 'island-petit') + (dragOver ? ' is-dragging' : '')}
+    data-mascot-state={botState} data-shell-view={view} style={{ '--wash': STATE_GLOW[botState] } as CSSProperties}
+    onMouseEnter={() => { clearTimers(); if (view === 'tucked') { setView('petit'); playSound('peek'); } }}
+    onMouseLeave={leave}
+    onDragEnter={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); if (!dragDepth.current) dropRecipient.current = selectedTeammate?.id || null; dragDepth.current++; setDragOver(true); pose('anticipate'); openHome(); }}
+    onDragOver={event => { if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
+    onDragLeave={event => { if (!event.dataTransfer.types.includes('Files')) return; if (--dragDepth.current <= 0) { dragDepth.current = 0; setDragOver(false); dropRecipient.current = null; if (interaction.phase === 'anticipate') reset(); } }}
+    onDrop={event => { if (!event.dataTransfer.files.length) return; event.preventDefault(); const id = dropRecipient.current || selectedTeammate?.id || chat.teammateId; dragDepth.current = 0; dropRecipient.current = null; setDragOver(false); if (id) { chat.selectTeammate(id); setFocusId(id); } navigate('prompt'); void chat.addFiles(Array.from(event.dataTransfer.files), id); }}>
+    <input ref={fileInput} type="file" multiple hidden aria-label="Attach files" onChange={event => {
+      const id = selectedTeammate?.id || chat.teammateId; if (id) chat.selectTeammate(id); void chat.addFiles(Array.from(event.target.files || []), id); event.target.value = '';
+    }} />
+    {home && <div className="island-toolbar">
+      <Header view={activeView} soundOn={soundOn} onNavigate={navigate} onDrop={attach} onToggleSound={toggleSound} />
+      <span className="island-live-status" role="status">{status}</span>
+      <button className="island-tab" aria-label="Open Ankita" title="Open desktop" onClick={restore}><Icon name="arrowUpRight" size={14} /></button>
+      <button className="island-tab" aria-label="Collapse island" title="Collapse (Esc)" onClick={closeHome}><Icon name="chevronRight" size={14} stroke={2} /></button>
+    </div>}
+    <div className="island-content">
+      <div className="island-mascot" ref={mascotBox} draggable title={capture.message || 'Drag onto a webpage; drop files here'}
+        onMouseEnter={() => { if (!capture.setup?.paired) void capture.refresh(); }}
+        onDragStart={event => { if (capture.start(event, selectedTeammate?.id || null)) pose('grab'); }}
+        onDragEnd={event => { capture.end(event); reset(); }}>
+        <div className={'island-glow' + (approvals.length ? ' island-glow-pulse' : '')} style={{ background: 'radial-gradient(circle, ' + STATE_GLOW[botState] + ' 0%, transparent 70%)' }} />
+        <Mascot state={botState} lookRef={lookRef} size={home ? MASCOT_HOME_PX : MASCOT_PETIT_PX} awake={view !== 'tucked'} interaction={interaction} color={selectedTeammate?.color} />
+        <MascotFile interaction={interaction} />
+        {home && <span className="island-mascot-name" title={selectedTeammate?.name}>{selectedTeammate?.name || 'Ankita'}</span>}
       </div>
-    );
-  }
-
-  return (
-    <div
-      className="island island-home island-wash"
-      style={{ '--wash': STATE_GLOW[botState] } as CSSProperties}
-    >
-      <div className="island-row" onClick={toggleFromHeader} role="button" tabIndex={-1} aria-label={expanded ? 'Collapse island' : 'Open Ankita'} title={expanded ? 'Click to collapse' : 'Click to open Ankita'}>
-        <div className="island-mascot" ref={mascotBox}>
-          <div className={`island-glow${approvals.length > 0 ? ' island-glow-pulse' : ''}`} style={{ background: `radial-gradient(circle, ${STATE_GLOW[botState]} 0%, transparent 70%)` }} />
-          <Mascot state={botState} lookRef={lookRef} size={MASCOT_HOME_PX} awake />
-        </div>
-        <div className="island-status">
-          <strong>Ankita</strong>
-          <span key={status} className="island-status-text">{status}</span>
-        </div>
-        {approvals.length > 0 && <span className="island-badge">{approvals.length}</span>}
-        <button className="island-collapse" onClick={closeHome} aria-label="Collapse island" title="Collapse (Esc)">▾</button>
-      </div>
-      {/* The body only fits the expanded window; a quiet home card is
-          header-only so nothing renders cut off inside the compact window. */}
-      {expanded && (
-      <div className="island-body">
-        {runningJobs.slice(0, 3).map((job, i) => (
-          <div className="island-job" key={job.id} style={{ animationDelay: `${i * 70}ms` }}>
-            <span className="island-job-dots" aria-hidden="true"><i /><i /><i /></span>
-            <span className="island-job-name">{job.name || 'Job'}</span>
-            <span className="island-job-step">{job.lastStatus || 'running'}</span>
-          </div>
-        ))}
-        {approvals.slice(0, 2).map(item => (
-          <div className="island-approval" key={item.requestId}>
-            <div className="island-who">
-              <span className="dot" style={{ background: '#f5a524' }} />
-              <span className="n">{item.toolName}</span>
-              <span className="t">needs permission</span>
-            </div>
-            <div className="island-code">{item.detail}</div>
-            <div className="island-actions">
-              <button className="island-deny" onClick={() => void answer(item.requestId, 'no')}>Deny <span className="island-kbd">N</span></button>
-              <button className="island-allow" onClick={() => void answer(item.requestId, 'yes')}>Allow <span className="island-kbd">Y</span></button>
-            </div>
-          </div>
-        ))}
-        {runningJobs.length === 0 && approvals.length === 0 && (
-          <div className="island-quiet">Nothing running — jobs and approvals appear here.</div>
-        )}
-        <button className="island-open" onClick={restore}>Open Ankita ↗</button>
-      </div>
-      )}
+      {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
+        <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
+      </button> : <div className="island-body" data-home-view={activeView}>
+        {activeView === 'approval' && <ApprovalView items={approvals} answer={answer} pendingId={pendingApproval} error={approvalError} />}
+        {activeView === 'overview' && <Overview activities={activities} selectedId={focusId} onFocus={id => { setFocusId(id); chat.selectTeammate(id); }}
+          onCaptureDrag={(event, id) => { setFocusId(id); chat.selectTeammate(id); if (capture.start(event, id)) pose('grab'); }}
+          onCaptureEnd={event => { capture.end(event); reset(); }}
+          onAsk={id => { if (id) chat.selectTeammate(id); navigate('prompt'); }} onStop={stopActivity} />}
+        {activeView === 'empty' && <EmptyView onAsk={() => navigate('prompt')} />}
+        {activeView === 'error' && errorCard && <ErrorView who={errorCard.who} detail={errorCard.detail} onRetry={() => { setErrorCard(null); navigate('prompt'); }} />}
+        {activeView === 'finished' && <FinishedView who={chat.teammateName} detail="All done. Your conversation is saved."
+          onOpen={() => navigate('prompt')} onOk={() => { setFlash(null); setNavView(null); }} />}
+        {activeView === 'prompt' && <Prompt chat={chat} onAttach={attach} />}
+        {activeView === 'settings' && <SettingsMini soundOn={soundOn} onToggleSound={toggleSound} />}
+      </div>}
     </div>
-  );
+    {dragOver && <div className="island-drop-hint" role="status">Feed {selectedTeammate?.name || 'Ankita'} a file</div>}
+    {capture.message && !dragOver && <div className="island-capture-status" role="status">{capture.message}</div>}
+  </div>;
 }

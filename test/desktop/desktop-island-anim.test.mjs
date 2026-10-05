@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { Ease, lerp, clamp, Spring, Tracked, makeCloseCurve } from '../../desktop/shared/anim.mjs';
+import { Ease, cubicBezier, lerp, clamp, Spring, Tracked, makeCloseCurve } from '../../desktop/shared/anim.mjs';
 
 test('easing functions span 0 to 1', () => {
   for (const ease of [Ease.out, Ease.inOut, Ease.back, Ease.lin, Ease.easeIn]) {
@@ -9,6 +9,15 @@ test('easing functions span 0 to 1', () => {
   }
   assert.ok(Ease.out(0.5) > 0.5);
   assert.ok(Ease.easeIn(0.5) < 0.5);
+});
+
+test('cubicBezier spans 0 to 1 and matches the close curve', () => {
+  const ease = cubicBezier(0.4, 0, 0.2, 1);
+  assert.ok(Math.abs(ease(0)) < 1e-9);
+  assert.ok(Math.abs(ease(1) - 1) < 1e-3);
+  assert.ok(ease(0.5) > 0 && ease(0.5) < 1);
+  const close = makeCloseCurve();
+  assert.ok(Math.abs(close(0.5) - cubicBezier(0.45, 0, 0.2, 1)(0.5)) < 1e-9);
 });
 
 test('lerp and clamp behave', () => {
