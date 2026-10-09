@@ -4,11 +4,13 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { execFileSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-transfers-'));
 process.env.CONFIG_DIR = path.join(root, 'config');
 const { PlaywrightBrowserAdapter } = await import('../../tools/browser/playwright.mjs');
 const { ChromeBrowserAdapter } = await import('../../tools/browser/chrome.mjs');
-const { BrowserDownloads, BROWSER_DOWNLOAD_DIRECTORY } = await import('../../tools/browser/transfers.mjs');
+const { BrowserDownloads, BROWSER_DOWNLOAD_DIRECTORY, selectedBrowserUpload } = await import('../../tools/browser/transfers.mjs');
 const browser = await import('../../tools/browser/browser.mjs');
 test.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
 
@@ -183,4 +185,38 @@ test('a native download source cannot be a file symlink', async t => {
   await assert.rejects(downloads.save({ download_id: record.id }, 'owned', { cwd: directory, workspacePath: directory }), /regular|symlink|junction/i);
   assert.ok(!fs.existsSync(path.join(directory, BROWSER_DOWNLOAD_DIRECTORY)));
   console.log('DOWNLOAD_SOURCE_LINK_GUARD', JSON.stringify({ coverage, published: 0 }));
+});
+
+test('Windows short-name paths retain authorized upload and download identity', { skip: process.platform !== 'win32' }, async t => {
+  const directory = fs.mkdtempSync(path.join(root, 'short-name-workspace-'));
+  const source = path.join(directory, 'selected-document.txt'); fs.writeFileSync(source, 'authorized alias content');
+  const probe = fileURLToPath(new URL('../fixtures/windows-short-path.ps1', import.meta.url));
+  const alias = execFileSync('powershell.exe', ['-NoProfile', '-File', probe], {
+    encoding: 'utf8', windowsHide: true, env: { ...process.env, ANKITA_TEST_ALIAS_FILE: source },
+  }).trim();
+  if (!path.relative(alias, await fs.promises.realpath(alias))) { t.skip('This volume does not expose a distinct short-name alias.'); return; }
+  assert.equal(fs.statSync(alias).ino, fs.statSync(source).ino);
+  const ctx = { cwd: directory, workspacePath: directory };
+  const selected = await selectedBrowserUpload({}, { ...ctx, selectBrowserUpload: async () => alias });
+  assert.equal(selected.buffer.toString(), 'authorized alias content');
+  const downloads = new BrowserDownloads();
+  const record = downloads.capture({ suggestedFilename: () => 'alias.txt', failure: async () => null, path: async () => alias, cancel: async () => {} }, 'owned');
+  await record.done;
+  const saved = await downloads.save({ download_id: record.id }, 'owned', ctx);
+  assert.equal(fs.readFileSync(saved.artifact.path, 'utf8'), selected.buffer.toString());
+  console.log('WINDOWS_TRANSFER_ALIAS_LIVE uploadIdentity=true downloadIdentity=true published=1');
+});
+
+test('native file-selection and download paths refuse ancestor junctions', async () => {
+  const directory = fs.mkdtempSync(path.join(root, 'ancestor-link-workspace-'));
+  const source = path.join(directory, 'selected.txt'); fs.writeFileSync(source, 'owned contents');
+  const junction = path.join(root, 'ancestor-link'); fs.symlinkSync(directory, junction, 'junction');
+  const linked = path.join(junction, 'selected.txt');
+  const ctx = { cwd: directory, workspacePath: directory };
+  await assert.rejects(selectedBrowserUpload({}, { ...ctx, selectBrowserUpload: async () => linked }), /symlink|junction/);
+  const downloads = new BrowserDownloads();
+  const record = downloads.capture({ suggestedFilename: () => 'linked.txt', failure: async () => null, path: async () => linked, cancel: async () => {} }, 'owned');
+  await record.done;
+  await assert.rejects(downloads.save({ download_id: record.id }, 'owned', ctx), /regular|symlink|junction/);
+  assert.ok(!fs.existsSync(path.join(directory, BROWSER_DOWNLOAD_DIRECTORY)));
 });

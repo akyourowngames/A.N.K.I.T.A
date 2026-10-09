@@ -21,7 +21,8 @@ const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR
 const config = { tools: true, autoApprove: true, historyMessages: 40, maxTokens: 1000, memoryConsolidation: false };
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 
-test('desktop discovery, schemas and execution keep browser tasks in the managed session', async () => {
+const WORKSPACE_PADDING_CHARS = 100; // Test-only path length: a valid longer directory must not consume the default browser schema margin.
+for (const extendedPath of [false, true]) test(`desktop discovery, schemas and execution keep browser tasks in the managed session${extendedPath ? ' with a longer workspace path' : ''}`, async () => {
   const summaries = [{ id: 'outside-playwright', tools: ['browser_navigate', 'browser_snapshot', 'health'], deferred: true }, { id: 'outside-chrome', tools: ['list_pages', 'take_snapshot', 'navigate_page'], deferred: false }, { id: 'notes', tools: ['read_note'], deferred: false }];
   let externalCalls = 0, managedCalls = 0;
   const mcp = {
@@ -30,11 +31,12 @@ test('desktop discovery, schemas and execution keep browser tasks in the managed
     findTool: name => { const server = summaries.find(server => name.startsWith(`mcp__${server.id}__`)); return server && { record: { tools: server.tools.map(name => ({ name })) } }; },
     needsApproval: () => false, callTool: async () => { externalCalls++; return 'external'; },
   };
-  const agent = new Agent({ client: {}, config, mcp, workspacePath: directory, browserManager: { run: async () => { managedCalls++; return 'managed'; } } });
+  const workspace = extendedPath ? path.join(directory, 'x'.repeat(WORKSPACE_PADDING_CHARS)) : directory;
+  const agent = new Agent({ client: {}, config, mcp, workspacePath: workspace, browserManager: { run: async () => { managedCalls++; return 'managed'; } } });
   const output = await agent.runToolCall(call('discover', 'find_tools', { query: 'playwright browser' }));
   assert.doesNotMatch(output, /mcp__outside-playwright__browser/);
   const names = agent.currentSpecs().map(spec => spec.function.name);
-  assert.ok(names.includes('browser'));
+  assert.ok(names.includes('browser'), `accepted browser discovery must fit: budget=${agent.toolBudgetBytes()}, core=${Buffer.byteLength(JSON.stringify(agent.specParts().core))}`);
   assert.ok(names.includes('mcp__notes__read_note'));
   assert.ok(!names.some(name => name.includes('__browser_') || name.startsWith('mcp__outside-chrome__')));
   assert.doesNotMatch(agent.messages[0].content, /browser_snapshot|browser_evaluate/);

@@ -77,6 +77,9 @@ No unreleased changes.
 - Connected Chrome scrolling uses observed native targets, and navigation/history
   actions return current controls. Native dialogs do not trigger automatic replay
   of the action that opened them. Timeouts after dispatch remain uncertain.
+- Compact browser schema wording retains the tool under the default context
+  budget with longer workspace paths. Windows short-name paths retain authorized
+  upload/download identity; actual ancestor junctions and changed files still refuse.
 - Hidden/minimized desktop windows throttle browser preview capture; parallel
   preview requests share pending work and preserve the last useful frame. Browser
   panels and background scopes retain their own state and cancellation boundaries.
@@ -100,8 +103,9 @@ No unreleased changes.
 
 ### Verification and limits
 
-- Local full suite: **1,108 passed, zero failures, one existing POSIX permission
-  skip on Windows**; final browser/desktop focus: **37/37**; browser lab: **183/183**.
+- Local full suite: **1,114 passed, zero failures, one existing POSIX permission
+  skip on Windows**; browser/desktop batch focus: **37/37**; release hardening:
+  **54/54**; browser lab: **183/183**.
   Real native forms independently record one correct submission per backend and
   receipt-mode variant; blocked/replaced controls produce no extra submission.
 - Desktop TypeScript/Vite builds pass, and the shipped ChatPane renders an actual

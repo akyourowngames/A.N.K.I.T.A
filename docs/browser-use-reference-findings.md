@@ -768,3 +768,48 @@ source. This is archive/resource verification, not an installed, headful native
 Electron run. Public workflow completion, tag identity, all release assets and
 the downloaded manifest/installer SHA-512 remain publication gates to check after
 pushing this prepared source; the existing browser confidence ledger still applies.
+
+### Fresh-runner corrections before publication
+
+The first exact-commit Windows workflow, `37943929437` at `c5bd6b3`, stopped at
+the test gate: 1,111 tests, 1,091 pass, nine failures, 11 skips (246,790.1197 ms).
+It created no release tag or assets. Eight skips require Python/MCP, two require
+the optional Scrapling bridge, and one is the existing POSIX permission case.
+The full failure log remains in `release-2.5.1-ci-failed.log`.
+
+Two causes reproduce without changing the production environment. The managed
+browser schema originally had a three-byte margin under the default request
+budget in the discovery fixture; extending the workspace by 100 characters
+dropped it. Shorter schema wording retains the same options, ref/credential
+guards and explicit batching preference. The second reproduction uses an actual
+Win32 8.3 alias of a temporary regular file: async `realpath` expands its spelling
+while inode identity is unchanged. Comparing canonical and lexical strings
+incorrectly rejected it as a link. The transfer guard now checks lexical ancestors
+with `lstat`, verifies canonical file identity and keeps the existing opened-file,
+size/mtime, bounded-copy and no-replay checks. Ancestor junctions still refuse.
+
+`release-ci-portability-red-final.log` records 2/4, with the longer-path schema
+and actual short-name upload failures. The focused first repair was 53/54 because
+the shortened description lost the explicit preference wording; that wording was
+restored rather than relaxing its assertion. Final
+`release-ci-portability-green.log`: **54/54**, zero skips/failures,
+87,691.8571 ms, including actual native Chrome navigation, both browser backends,
+Stop, real upload/download and partial-artifact refusal. Exact marker:
+`WINDOWS_TRANSFER_ALIAS_LIVE uploadIdentity=true downloadIdentity=true published=1`.
+
+Three initial native Chrome fixture opens reported `net::ERR_ABORTED` on the first
+runner; all pass in the local focused run. Their fixture wrapper now captures
+bounded read-only tab evidence if the error recurs and still fails the test;
+it never retries a navigation or weakens the native assertions. The wrapper delays
+config-dependent imports until the caller has isolated its test data. A fresh full
+local suite and another required exact-commit remote suite are the next gates;
+these checks do not yet prove a universal Chrome startup fix.
+
+The complete post-correction local serial suite exits 0: **1,115 tests, 1,114
+passed, zero failures, one existing POSIX permission skip**, 553,456.4608 ms,
+`release-2.5.1-main-final.log`. It contains the real short-name transfer marker,
+UID-label/oversized-Chrome-page oracles, both receipt-mode Chrome sequence refusals
+and native individual-action completion. Source behavior is unchanged after this
+run. Packaging is rebuilt before the publication retry; the original packaged
+Node-mode guide check also returned exit 0, whole body 5,794 characters, using
+Ankita.exe's own Electron 44.5.1 / Node 24.21.0 with no desktop UI launched.

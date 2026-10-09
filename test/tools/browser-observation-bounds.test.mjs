@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { chromium } from 'playwright';
+import { traceFixtureNavigation } from '../fixtures/chrome-navigation-trace.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-observation-bounds-'));
 process.env.CONFIG_DIR = path.join(root, 'config');
@@ -44,7 +45,7 @@ async function live(t, { mode = 'isolated', runtimeV2 = true, html, frameHtml = 
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const ctx = { signal: t.signal, config: { allowPrivateHosts: true, browserRuntimeV2: runtimeV2 }, settings: { headless: true } };
   const url = `http://127.0.0.1:${server.address().port}/`;
-  await adapter.run({ action: 'open', url }, ctx);
+  await traceFixtureNavigation(adapter, mcp, { action: 'open', url }, ctx);
   return { adapter, ctx, url, committed, writes: () => writes };
 }
 

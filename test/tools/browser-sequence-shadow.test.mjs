@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { traceFixtureNavigation } from '../fixtures/chrome-navigation-trace.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -243,7 +244,7 @@ test('actual approved Chrome refuses unsupported chains in both receipt modes an
   let source, ctx;
   for (const runtimeV2 of [false, true]) {
     ctx = {signal: t.signal, config: {allowPrivateHosts: true, browserRuntimeV2: runtimeV2}};
-    await adapter.run({action: 'open', url: `http://127.0.0.1:${server.address().port}/`}, ctx);
+    await traceFixtureNavigation(adapter, mcp, {action: 'open', url: `http://127.0.0.1:${server.address().port}/`}, ctx);
     source = await adapter.observe({}, ctx);
     assert.equal(source.capabilities.guardedSequences, false);
     const first = source.controls.find(control => control.name === 'First');
