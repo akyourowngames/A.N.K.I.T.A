@@ -886,3 +886,22 @@ PACKAGED_SKILL_EXIT=0
 This checks packaged guide loading and content, not a headful desktop window or
 native renderer IPC. A successful exact-commit remote workflow and downloaded
 public assets/manifest hash remain the final publication gates.
+
+### Publication decision and remaining Chrome failure
+
+Workflow `37953589910` at `9432fa2` fails before tagging: **1,120 tests, 1,106
+passed, three failed, 11 optional/platform skips**, 265,382.0939 ms. Native
+UID-label and oversized-line fixtures still report `net::ERR_ABORTED` during
+the requested navigation, with the selected tab on `about:blank`. The local/V2
+cart protocol fixture records zero edits rather than its required one. Staging
+tab creation has therefore **not resolved the fresh-runner failure**; the local
+green tests must not be presented as proof of a remote fix. Preserve
+`release-2.5.1-ci-chrome-failed.log` alongside the earlier failed runs.
+
+The user explicitly stopped further testing and requested immediate publication.
+Version 2.5.1 is prepared for manual publication from the locally checked source
+and package, with this known issue in the changelog. No assertions are relaxed,
+no failing action is replayed and the normal workflow test gate is unchanged.
+Only the publication-notes commit requests CI skip to honor that instruction.
+The local installer/portable build and public tag/assets/manifest checks still
+establish release identity and upload completeness, not browser success on CI.

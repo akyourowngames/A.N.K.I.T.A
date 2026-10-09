@@ -126,6 +126,12 @@ No unreleased changes.
   purchase or customer-form submission is claimed. Earlier free-model attempts
   hit provider 429; full parity/timing and native headful checks remain documented
   in [browser findings](docs/browser-use-reference-findings.md).
+- **Known release issue:** the final Windows CI run recorded **1,106 passed,
+  three failed, 11 skipped**. Two connected-Chrome fixtures abort their first
+  navigation while the new tab stays blank; a cart fixture records no edit.
+  Local native suites pass, but staged opening has not resolved the runner issue.
+  This version is published manually at the user's request to stop further tests;
+  the failing assertions and normal CI test gate remain intact.
 
 ## [2.5.0] - 2026-10-05
 
