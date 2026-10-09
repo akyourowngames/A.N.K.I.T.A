@@ -52,3 +52,62 @@ test('Chrome uses approved native navigation and refuses failed native receipts'
   assert.match(refused.error.message, /Unable to navigate/);
   assert.equal(calls.filter(call => call.name.endsWith('__new_page')).length, 0);
 });
+
+for (const runtimeV2 of [false, true]) test(`catalogued Chrome settles a new tab before its only target navigation (runtimeV2=${runtimeV2})`, async () => {
+  const requested = 'http://127.0.0.1/form'; // Synthetic transport URL: no request is sent to this host.
+  const createdId = '8', otherId = '9'; // Synthetic native IDs distinguish the created tab from a concurrent unrelated blank tab.
+  const tabs = new Map([['7', 'about:blank']]);
+  const calls = [];
+  const adapter = new ChromeBrowserAdapter({ has: () => true,
+    findTool: name => name.endsWith('__navigate_page') ? {} : null,
+    callTool: async (name, args) => {
+      calls.push({ name, args });
+      const listed = () => [...tabs].map(([id, url]) => `${id}: ${url}${id === createdId ? ' [selected]' : ''}`).join('\n');
+      if (name.endsWith('__list_pages')) return listed();
+      if (name.endsWith('__new_page')) {
+        if (args.url !== 'about:blank') return `Error: net::ERR_ABORTED at ${args.url}`;
+        tabs.set(createdId, args.url); tabs.set(otherId, args.url);
+        return listed();
+      }
+      if (name.endsWith('__navigate_page')) {
+        assert.equal(args.pageId, Number(createdId));
+        tabs.set(createdId, args.url); return 'Successfully navigated.';
+      }
+      if (name.endsWith('__take_snapshot')) return 'uid=8_1 button "Save once"';
+      throw new Error(`Unexpected native call: ${name}`);
+    },
+  }, { ownedTabs: true });
+  const result = await adapter.execute({ action: 'open', url: requested }, { config: { allowPrivateHosts: true, browserRuntimeV2: runtimeV2 } });
+  assert.equal(result.status, 'executed', JSON.stringify(result.error));
+  assert.equal(result.observation.tabId, createdId);
+  assert.equal(result.observation.url, requested);
+  assert.equal(tabs.get(otherId), 'about:blank');
+  assert.deepEqual([...adapter.ownedTabs], [Number(createdId)]);
+  assert.equal(calls.filter(call => call.name.endsWith('__new_page')).length, 1);
+  assert.equal(calls.filter(call => call.name.endsWith('__navigate_page')).length, 1);
+});
+
+for (const boundary of ['ambiguous', 'stopped', 'refused']) test(`staged Chrome open does not guess or replay at the ${boundary} boundary`, async () => {
+  const controller = new AbortController(), calls = [];
+  let created = false;
+  const adapter = new ChromeBrowserAdapter({ has: () => true,
+    findTool: name => name.endsWith('__navigate_page') ? {} : null,
+    callTool: async (name, args) => {
+      calls.push({ name, args });
+      if (name.endsWith('__list_pages')) return created ? '1: about:blank\n2: about:blank\n3: about:blank' : '1: about:blank';
+      if (name.endsWith('__new_page')) {
+        created = true;
+        if (boundary === 'stopped') controller.abort();
+        return `1: about:blank\n2: about:blank${boundary === 'ambiguous' ? '' : ' [selected]'}\n3: about:blank`;
+      }
+      if (name.endsWith('__navigate_page')) return 'Unable to navigate in the selected page: fixture denial.';
+      throw new Error(`Unexpected native call: ${name}`);
+    },
+  }, { ownedTabs: true });
+  const result = await adapter.execute({ action: 'open', url: 'http://127.0.0.1/form' }, { signal: controller.signal, config: { allowPrivateHosts: true } });
+  assert.equal(result.status, 'uncertain');
+  assert.equal(calls.filter(call => call.name.endsWith('__new_page')).length, 1);
+  assert.equal(calls.filter(call => call.name.endsWith('__navigate_page')).length, boundary === 'refused' ? 1 : 0);
+  if (boundary === 'refused') assert.deepEqual([...adapter.ownedTabs], [2]);
+  else assert.match(result.error.message, boundary === 'ambiguous' ? /identify.*tab/ : /cancel|abort/i);
+});

@@ -813,3 +813,76 @@ and native individual-action completion. Source behavior is unchanged after this
 run. Packaging is rebuilt before the publication retry; the original packaged
 Node-mode guide check also returned exit 0, whole body 5,794 characters, using
 Ankita.exe's own Electron 44.5.1 / Node 24.21.0 with no desktop UI launched.
+
+### Native Chrome startup before publication
+
+The second Windows workflow, `37948464329` at `a28dc6e`, still stopped before
+creating a tag: 1,115 tests, 1,100 pass, four failures, 11 optional/platform skips,
+241,860.3048 ms. Schema discovery and Windows file aliases now pass there. The
+remaining native Chrome failures reproduce the same initial-navigation boundary;
+the unchanged independent cart oracle also catches one run with no recorded edit.
+The diagnostic wrapper captures this exact state without replaying the action:
+
+```text
+Error: net::ERR_ABORTED at http://127.0.0.1:<fixture-port>/
+1: about:blank
+2: about:blank [selected]
+replayed=false
+```
+
+In the installed MCP implementation, target-created initialization inserts a page
+in the map before its initialization completes. `newPage` can retrieve that page
+while the event handler is still initializing it; `new_page` immediately navigates
+it to the requested URL. This source inspection and the observed blank-tab trace
+support a startup/navigation race; they do not establish failure on every host.
+
+When the native catalogue advertises `navigate_page`, Ankita now creates an
+`about:blank` bootstrap tab, identifies the new native page ID and only then sends
+the requested URL. Concurrent unrelated tabs are not selected by position or
+label. Ambiguous identity refuses; Stop prevents the requested navigation;
+refusal retains known ownership and reports uncertainty. There is one requested
+site navigation and no automatic replay. Legacy transports lacking that native
+tool keep their existing path. This adds one native MCP call inside the same
+logical browser action, without adding a model round or a production sleep.
+
+New startup contract tests fail **0/2** without the correction
+(`release-chrome-startup-red.log`). The focused serial run passes **46/46**,
+66,267.3568 ms (`release-chrome-startup-focused.log`), including real native
+Chrome opens, oversized/UID-label observations, dialogs, same-label replacement,
+sequences and both-backend HTTP cart fixtures. The expanded ambiguous/Stop/refused
+boundary run passes **23/23**, 30,360.3863 ms
+(`release-chrome-startup-boundaries.log`). Both receipt modes retain their checks;
+the independent cart oracle still requires exactly one correct write. A full
+local suite, rebuilt source-byte audit and another exact-commit Windows workflow
+remain required before publication; the two failed workflow logs are preserved.
+
+The final full serial suite with staged Chrome open exits 0: **1,120 tests, 1,119
+passed, zero failures, one existing POSIX permission skip**, 471,871.0267 ms,
+`release-2.5.1-main-chrome-final.log`. Actual Chrome oversized/UID-label opens,
+both receipt-mode form/cart checks, requested flight direction/date, Windows
+short-path transfers and partial/Stop/private-field guards all pass. No production
+behavior changed after this run. The required remote Windows gate still follows
+the final lab, package and staged-source audits.
+
+The browser lab rerun exits 0: **183/183**, no skips, 66,314.1279 ms,
+`release-2.5.1-lab-chrome-final.log`. The current-version desktop build exits 0:
+TypeScript and Vite, 369 modules, 4.30 s,
+`release-2.5.1-desktop-chrome-final.log`. These checks use the final staged-open
+source and make no autonomous-provider speed or native desktop-window claim.
+
+Final Windows unpacked packaging exits 0. The executable reports file version
+2.5.1 and product version 2.5.1.0. The archive audit reports 23 byte-identical
+source files, the renderer skill receipt, unpacked native bridge and capture
+helper (`release-2.5.1-content-chrome-final.log`). The staged audit excludes
+generated artifacts and potential credentials, with no introduced trailing
+whitespace. The executable's hidden, waited Node-mode probe exits 0 and loads
+the full 5,794-character guide from its packaged default directory:
+
+```text
+PACKAGED_SKILL_LOAD_LIVE version=2.5.1 skill=browser-use bodyChars=5794 wholeBody=true executable=Ankita.exe node=24.21.0 electron=44.5.1 desktopUi=false
+PACKAGED_SKILL_EXIT=0
+```
+
+This checks packaged guide loading and content, not a headful desktop window or
+native renderer IPC. A successful exact-commit remote workflow and downloaded
+public assets/manifest hash remain the final publication gates.

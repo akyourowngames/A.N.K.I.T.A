@@ -19,6 +19,9 @@ No unreleased changes.
 - Mixed independent fills/clicks/selects preflight current targets and defer
   intermediate snapshots, preserving original refs. Replaced/blocked targets
   stop with accurate partial receipts and fresh controls; no automatic replay.
+- Connected Chrome startup separates blank-tab creation from its first site
+  navigation, using the observed native page ID. Ambiguous tabs, Stop and refused
+  navigation do not replay; the change adds one native call and no model round.
 - Markdown reads, bounded literal find/chunks, hidden DOM evidence and native
   control-state flags improve page interpretation. Actual node identity prevents
   same-label/cloned-ref retargeting. Original flight goals survive bounded history

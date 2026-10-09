@@ -36,6 +36,9 @@ const INSPECT_FILL_TARGETS = `(...elements) => elements.map(element => (${inspec
 const MCP_JSON_RESULT = /```json\s*([\s\S]*?)\s*```/; // MCP's documented JSON result envelope.
 const INTERRUPTED_FILL_RESULT = /\bopened a dialog\b|\bremaining elements were not filled\b/i; // Upstream can report partial writes without throwing.
 const NAVIGATION_REFUSED = /^Unable to navigate\b/m; // Native MCP reports navigation failures as receipt text rather than throwing.
+const CHROME_NEW_TAB_DOCUMENT = 'about:blank'; // Native bootstrap document: settle target creation before sending the single requested HTTP navigation.
+const CHROME_SELECTED_PAGE = /^\s*(\d+)\s*:.*\[selected\]/m; // Native page-list identity, independent of labels or tab ordering.
+const CHROME_NEW_TAB_UNKNOWN = 'Chrome did not identify the newly created tab. Inspect current tabs before continuing.';
 function historyTarget(direction) {
   const history = globalThis.navigation;
   return history?.entries()?.find(entry => entry.index === history.currentEntry.index + direction)?.url || null;
@@ -61,11 +64,15 @@ export class ChromeBrowserAdapter {
     if (!this.mcp?.has?.(CHROME_MCP_ID)) throw new Error('Chrome is not connected. Open Plugins → By Ankita and start the Chrome connection.');
   }
 
+  #supportsNativeTool(name) {
+    return typeof this.mcp?.findTool === 'function' && Boolean(this.mcp.findTool(`mcp__${CHROME_MCP_ID}__${name}`));
+  }
+
   #capabilities() {
     // Runtime catalogue discovery is authoritative when available; lightweight legacy transports have no catalogue.
-    const pageText = typeof this.mcp?.findTool !== 'function' || Boolean(this.mcp.findTool(`mcp__${CHROME_MCP_ID}__evaluate_script`));
+    const pageText = typeof this.mcp?.findTool !== 'function' || this.#supportsNativeTool('evaluate_script');
     return { ...TEXT_BROWSER_CAPABILITIES, pageTextSearch: pageText, chunkedRead: pageText,
-      dialogs: typeof this.mcp?.findTool === 'function' && Boolean(this.mcp.findTool(`mcp__${CHROME_MCP_ID}__handle_dialog`)) };
+      dialogs: this.#supportsNativeTool('handle_dialog') };
   }
 
   attention() { const dialog = this.dialogs.get(this.pageId); return dialog ? { dialog } : null; }
@@ -302,15 +309,29 @@ export class ChromeBrowserAdapter {
     if (action === 'open') {
       const url = await guardBrowserUrl(args.url, ctx);
       const before = new Set((this.allTabs || []).map(tab => tab.id));
-      const result = await call('new_page', { url });
-      ctx.onBrowserDispatch?.({ phase: 'complete', action });
+      const staged = this.#supportsNativeTool('navigate_page');
+      let result = await call('new_page', { url: staged ? CHROME_NEW_TAB_DOCUMENT : url });
       this.epoch++;
       this.refs.clear();
       await this.tabs(ctx);
-      const tab = this.allTabs.find(item => !before.has(item.id) && item.url === url) || this.allTabs.find(item => !before.has(item.id));
+      const created = this.allTabs.filter(item => !before.has(item.id));
+      const selectedId = CHROME_SELECTED_PAGE.exec(result)?.[1];
+      const tab = staged
+        ? (selectedId ? created.find(item => item.id === selectedId && item.url === CHROME_NEW_TAB_DOCUMENT)
+          : created.length === 1 && created[0].url === CHROME_NEW_TAB_DOCUMENT ? created[0] : null)
+        : created.find(item => item.url === url) || created[0];
+      if (staged && !tab) throw new Error(CHROME_NEW_TAB_UNKNOWN);
       if (this.ownedTabs && !tab) throw new Error('Chrome did not return a newly created job tab');
       if (tab && this.ownedTabs) { this.ownedTabs.add(Number(tab.id)); await this.tabs(ctx); }
       if (tab) this.pageId = Number(tab.id);
+      if (staged) {
+        ctx.signal?.throwIfAborted();
+        // This is the first requested-site navigation, never a retry of a
+        // failed new_page mutation. Preserve ownership even if it is refused.
+        result = await call('navigate_page', { pageId: this.pageId, type: 'url', url });
+        if (NAVIGATION_REFUSED.test(result)) throw new Error(result);
+      }
+      ctx.onBrowserDispatch?.({ phase: 'complete', action });
       return withBrowserSnapshot(result, () => this.#runOnce({ action: 'snapshot' }, ctx));
     }
     if (action === 'tabs') return this.cachedTabs;
