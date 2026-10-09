@@ -25,7 +25,17 @@ They use the same agent runtime and tools. Desktop teammates have separate
 threads, personas and drafts; assign a project to give a teammate its working
 folder and shared context.
 
-## What's new in 2.5.1
+## What's new in 2.5.2
+
+The desktop now starts correctly in development and packaged Windows builds.
+A shared browser metadata import previously reached host-only code that the
+renderer's security policy blocked before the UI could mount. The import boundary
+is corrected without weakening that policy or removing browser form batching.
+See the [startup findings](docs/desktop-startup-findings.md) for reproduction and
+verification evidence. If you run from source, rebuild before `desktop:start`;
+`desktop:dev` serves the corrected source directly.
+
+## Browser improvements in 2.5.1
 
 - **More reliable form batches.** Live target checks and original node bindings
   keep mixed fills, clicks and selects from invalidating their own refs. Changed

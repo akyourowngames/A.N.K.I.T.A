@@ -1,3 +1,6 @@
+import { MAX_BROWSER_FORM_FIELDS } from './operations.mjs';
+export { MAX_BROWSER_FORM_FIELDS }; // Preserve the ref-module API while the policy's browser-safe owner supplies the single limit.
+
 // Character/node budgets keep snapshots within the tool-result context budget.
 export const SNAPSHOT_LIMITS = Object.freeze({ characters: 16_000, elements: 160, label: 160, frames: 16, url: 500 });
 export const SNAPSHOT_CONTEXT_CHARACTERS = 2000; // Characters/frame: visible stock, price and validation text supplements controls without inventing actionable refs.
@@ -5,8 +8,6 @@ export const SNAPSHOT_LIMIT_REACHED = 'Snapshot limit reached. Use snapshot quer
 // Milliseconds: preserve Playwright auto-waiting while bounding each interaction.
 export const BROWSER_ACTION_TIMEOUT_MS = 7000;
 export const BROWSER_SCROLL_DISTANCE_PX = 550; // CSS pixels: preserve the existing wheel default on both backends.
-// Maximum controls per form call: bound partial work and keep one snapshot readable.
-export const MAX_BROWSER_FORM_FIELDS = 10;
 export const CREDENTIAL_ATTRIBUTE = 'data-ankita-credential'; // Preserve private password identity when a site toggles input type.
 export const BROWSER_GROUP_SELECTOR = 'form,[role="dialog"],[role="group"]'; // Form/widget ownership for observations and guarded actions.
 export const FILL_NO_CHANGE_TEXT = 'No fields changed.'; // Shared pre-action receipt; removed once a mutation starts.

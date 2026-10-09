@@ -1,5 +1,5 @@
 // Shared operation metadata: approval/read classification and primitive costs are protocol policy.
-import { MAX_BROWSER_FORM_FIELDS } from './refs.mjs';
+export const MAX_BROWSER_FORM_FIELDS = 10; // Controls per form call: keep shared cost/approval metadata independent of host-only ref probes.
 export const BROWSER_OPERATIONS = Object.freeze({
   open: { readOnly: false, approval: false }, snapshot: { readOnly: true, approval: false },
   navigate: { readOnly: false, approval: false }, back: { readOnly: false, approval: false }, forward: { readOnly: false, approval: false },

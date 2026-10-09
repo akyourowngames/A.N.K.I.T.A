@@ -9,6 +9,39 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 No unreleased changes.
 
+## [2.5.2] - 2026-10-09
+
+### Fixed
+
+- **Blank desktop startup in development and packaged builds.** Shared browser
+  progress metadata imported a host-only DOM probe that compiles a function at
+  module initialization. The renderer's Content Security Policy correctly
+  refused it before React mounted. The form-field limit now lives in the pure
+  operation-policy module, and the ref module re-exports it for compatibility.
+  Browser batching is preserved; the security policy still refuses `unsafe-eval`.
+
+### Verification and limits
+
+- New startup regressions exercise both complete renderer entry points with
+  their shipped HTML and CSP, rather than an isolated component without CSP.
+  The focused startup/progress/browser recovery suite passes **33/33**, including
+  real Playwright and connected-Chrome form batches and stale-ref recovery.
+- The full serial local suite reports **1,121 passed, zero failures, one existing
+  POSIX permission skip on Windows**. TypeScript/Vite builds pass. Hidden native
+  Electron checks mount both complete entries through the shipped preload and
+  real IPC in dev and built-file mode, with offline engine fixtures, disposable
+  profiles, zero renderer exceptions and the security policy unchanged.
+- The packaged ASAR also mounts both entries in native Electron with the actual
+  packaged preload and offline engine fixture. All 23 audited runtime/guide files
+  match source bytes; the executable reports 2.5.2 and includes the native browser
+  bridge and capture helper.
+- This hotfix does not address the connected-Chrome Windows CI navigation/cart
+  failures recorded for 2.5.1. Publication uses the locally checked Windows
+  package; no exact-commit remote CI pass is claimed, and the normal workflow's
+  required tests remain unchanged. See the
+  [desktop startup findings](docs/desktop-startup-findings.md) for the full
+  before/after traces, packaging checks and remaining verification limits.
+
 ## [2.5.1] - 2026-10-09
 
 ### Added
