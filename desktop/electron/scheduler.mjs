@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
+import { BROWSER_OPERATIONS } from '../../tools/browser/operations.mjs';
 import { normalizeSchedule } from '../../src/automation/cron.mjs';
 import { HEARTBEAT_QUIET, JOB_MUTABLE_FIELDS, JOB_EXECUTION_COMPLETE, JOB_EXECUTION_POLICIES, normalizeRoutine } from '../../src/automation/job-policy.mjs';
 import { redactValue } from '../../src/security/secret-scrubber.mjs';
@@ -19,7 +20,7 @@ import { APPROVAL_TIMEOUT_MS, CATCH_UP_WINDOW_MS, JOB_HISTORY_KEEP, JOB_PROOF_MA
 const MINUTE_MS = 60_000; // Clock conversion; schedules and wall budgets use minutes.
 const DRAIN_MS = 10_000; // Bounded main-process shutdown.
 const JOB_TOOLS = new Set(['browser', 'find_tools', 'write_todos', 'web_search', 'web_fetch', 'scrape', 'recall', 'remember', 'composio', 'project_memory', 'schedule', 'schedule_status']); // Task data/tools only; no shell or external browser MCP bypass.
-const READ_ACTIONS = new Set(['open', 'snapshot', 'read', 'tabs', 'screenshot', 'close']);
+const READ_ACTIONS = new Set(Object.entries(BROWSER_OPERATIONS).filter(([, operation]) => !operation.approval).map(([action]) => action)); // Routine read permission includes browsing navigation/status/cancellation; interactions retain separate approval.
 const MUTABLE_FIELDS = new Set(JOB_MUTABLE_FIELDS);
 const FAILURE_TEXT = 'Browser step failed; execution stopped without retry. Review the last proof before running again.';
 const INCOMPLETE_JOB_TEXT = 'Job stopped before completion because the worker could not make further progress. Review the last proof; no task retry was made.';

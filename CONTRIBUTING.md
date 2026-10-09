@@ -11,6 +11,7 @@ git clone https://github.com/<your-username>/A.N.K.I.T.A.git
 cd A.N.K.I.T.A
 npm ci
 cp .env.example .env        # fill in the keys you need
+node node_modules/playwright/cli.js install chromium # real browser regression runtime
 npm test                    # must be green BEFORE you change anything
 npm link                    # `ankita` now works from any folder
 ankita                      # talk to it
@@ -81,7 +82,14 @@ hyphens. Descriptions must contain 10–300 characters. The raw body must contai
 Optional `suggested-tools` is a hint, limited to 200 characters; it does not
 grant permission to run a tool. Skills apply to chat turns, not daemon workers.
 
-Run `node --test test/core/skills.test.mjs` after changing skill loading or
+Optional `auto-tools` lists comma-separated native tool names (up to 200
+characters). Accepted discovery or use of a named tool loads that enabled skill
+for the current turn. Automatic blocks share a 6,000-character whole-body budget;
+larger bodies remain manually readable. This field never loads tools or changes
+approvals. Use it for tool-specific instructions such as `browser-use`, rather
+than matching words in the user's request.
+
+Run `node --test --test-concurrency=1 test/core/skills.test.mjs test/core/browser-skill.test.mjs` after changing skill loading or
 metadata validation. See [the skill plan](docs/plans/skills-plan.md) for the discovery
 and prompt contract.
 

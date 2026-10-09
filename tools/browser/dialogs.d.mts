@@ -1,0 +1,11 @@
+export type BrowserDialog = { id?: string; type: string | null; message: string; tabId: string | null };
+export const BROWSER_DIALOG_LIMITS: Readonly<{ message: number; prompt: number }>;
+export const BROWSER_DIALOG_DECISIONS: readonly string[];
+export const BROWSER_DIALOG_TYPES: readonly string[];
+export const BROWSER_DIALOG_GUIDANCE: string;
+export const BROWSER_DIALOG_INTERRUPTED: string;
+export const BROWSER_DIALOG_CHANGED: string;
+export function browserDialog(type: string | null, message: string, tabId?: string | null, id?: string | null): BrowserDialog;
+export function chromeDialog(text: string, tabId: string): BrowserDialog | null;
+export function dialogDecision(args: { decision?: string; prompt_text?: string; dialog_id?: string }, dialog: BrowserDialog | null): string;
+export function dialogText(dialog: BrowserDialog): string;

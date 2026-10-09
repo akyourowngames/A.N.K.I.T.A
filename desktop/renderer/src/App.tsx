@@ -14,6 +14,7 @@ import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { BrowserStage } from './components/BrowserStage';
+import { BROWSER_PREVIEW_POLL, publicBrowserView } from '../../shared/browser-progress.mjs';
 import { SecureStoreProvider } from './components/SecureStore';
 import { Icon } from './components/Icons';
 import { IPC_CONTRACT, checkCompat } from '../../shared/version.mjs';
@@ -166,9 +167,9 @@ export default function App() {
     let timer: number;
     const poll = async () => {
       const started = performance.now();
-      try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: browserScope }); if (active) setBrowserView(previous => ({ ...next, screenshot: next.screenshot || (next.status !== 'error' && next.mode === previous?.mode ? previous?.screenshot || null : null) })); }
+      try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: browserScope }); if (active) setBrowserView(previous => ({ ...publicBrowserView(next), screenshot: next.screenshot || (next.status !== 'error' && next.mode === previous?.mode ? previous?.screenshot || null : null) })); }
       catch { /* keep the last useful frame */ }
-      finally { if (active) timer = window.setTimeout(() => void poll(), Math.max(0, 2000 - (performance.now() - started))); }
+      finally { if (active) timer = window.setTimeout(() => void poll(), Math.max(0, BROWSER_PREVIEW_POLL.thumbnail - (performance.now() - started))); }
     };
     void poll();
     return () => { active = false; window.clearInterval(timer); };
@@ -295,10 +296,11 @@ export default function App() {
       running={Boolean(state.selectedId && state.running[state.selectedId])}
       models={state.models} projects={projects} defaultModel={state.settings?.model || ''}
       usage={state.selectedId ? state.usage[state.selectedId] : undefined}
+      loadedSkills={state.selectedId ? state.loadedSkills[state.selectedId] : undefined}
       chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={!browserScope && browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => { setView('plugins'); requestAnimationFrame(() => document.querySelector('.browser-plugins-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' })); }} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
       onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onCreate={() => setDialog('create')} onClear={clear} onDelete={remove}
     />}
-    {view === 'chat' && state.selectedId && <BrowserStage scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
+    {view === 'chat' && state.selectedId && <BrowserStage key={browserScope || state.selectedId} scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
     {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}

@@ -8,6 +8,7 @@ import { fileURLToPath } from 'node:url';
 import { build, Platform } from 'electron-builder';
 import { _electron as electron } from 'playwright';
 import { DesktopSettingsStore } from '../desktop/electron/settings.mjs';
+import { browserNotice } from '../src/integrations/browser-errors.mjs';
 
 // This is a disposable packaged-app check, using installed Electron/dependencies only.
 // It uses a local scripted provider and never installs packages or uses personal configuration.
@@ -151,7 +152,7 @@ try {
   await page.getByRole('complementary', { name: 'Live browser' }).waitFor();
   await page.waitForFunction(() => JSON.parse(localStorage.getItem('ankita.ui')).sidebarOpen === false);
   const browserPane = page.getByRole('complementary', { name: 'Live browser' });
-  await browserPane.getByText('The page changed. Ankita can refresh its controls and continue.', { exact: true }).waitFor();
+  await browserPane.getByText(browserNotice(new Error('Unknown browser ref')).message, { exact: true }).waitFor();
   await browserPane.getByRole('img', { name: /Live browser page/ }).waitFor();
   assert.equal(await browserPane.getByRole('button', { name: 'Take control', exact: true }).isEnabled(), true);
   assert.ok(!(await browserPane.innerText()).includes('[ref='));

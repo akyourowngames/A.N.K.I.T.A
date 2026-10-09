@@ -19,6 +19,7 @@ export const parameters = { type: 'object', properties: {
 }, required: ['command'] };
 
 const POSIX_SHELL = '/bin/sh'; // Existing POSIX command language, independent of the login shell.
+const TERMINATION_ERROR_PREFIX = 'Command termination failed: '; // Shared job diagnostic for deadline and cancellation failures.
 export function strictEnabled() { return String(process.env.PS_STRICT ?? '1') !== '0'; }
 function argvFor(command) {
   return process.platform === 'win32' ? ['-NoProfile', '-Command', (strictEnabled() ? "$ErrorActionPreference='Stop'; " : '') + command] : ['-c', command];
@@ -54,19 +55,28 @@ export async function run(args, ctx = {}) {
   let deadline;
   const finish = (code, signal, error) => {
     if (job.done) return;
-    job.done = true; job.code = code; job.signal = signal; job.error = error; job.endedAt = Date.now();
+    job.done = true; job.code = code; job.signal = signal; job.error = error ?? job.error; job.endedAt = Date.now();
     clearTimeout(deadline);
     if (job.background) notifyJob(ctx, 'finished', job);
   };
   child.once('error', err => finish(null, null, err.message));
   child.once('close', (code, signal) => finish(code, signal));
+  const requestStop = () => {
+    job.stopped = true;
+    // Keep a rejected identity lookup/kill on the live job, never as an unhandled rejection.
+    void killTree(child).catch(error => {
+      job.error = TERMINATION_ERROR_PREFIX + error.message;
+      if (!job.done) job.stopped = false;
+      notifyJob(ctx, 'termination_failed', job);
+    });
+  };
   const timeout = clamp(args.timeout_ms, 0, 0, 600000);
-  if (timeout) deadline = setTimeout(() => { job.timedOut = true; job.stopped = true; void killTree(child); }, timeout);
+  if (timeout) deadline = setTimeout(() => { job.timedOut = true; requestStop(); }, timeout);
   if (args.stdin !== undefined) {
     child.stdin.write(String(args.stdin));
     if (!(args.keep_stdin_open ?? !!args.background)) child.stdin.end();
   }
-  const onAbort = () => { job.stopped = true; void killTree(child); };
+  const onAbort = requestStop;
   ctx.signal?.addEventListener('abort', onAbort, { once: true });
   if (args.background) notifyJob(ctx, 'started', job);
   else await waitForExit(job, clamp(args.yield_ms, 1000, 0, 10000), ctx.signal);

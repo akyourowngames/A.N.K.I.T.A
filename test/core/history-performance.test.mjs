@@ -34,7 +34,9 @@ test('byte trimming preserves the latest tool exchange atomically and keeps chro
   const anchor = { role: 'user', content: 'read again' };
   const newest = exchange('new');
   const messages = [system, { role: 'user', content: 'old request' }, ...exchange('old'), anchor, ...newest];
-  assert.deepEqual(trimMessages(messages, 40, 400), [system, anchor, ...newest]);
+  assert.deepEqual(trimMessages(messages, 40, 400), [system, messages[1], anchor, ...newest]);
+  const tightBudget = conversationCost([system, anchor, ...newest]);
+  assert.deepEqual(trimMessages(messages, 40, tightBudget), [system, anchor, ...newest]);
 });
 
 test('trimming attachment text preserves the original input content parts', () => {

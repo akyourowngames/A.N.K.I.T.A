@@ -1,4 +1,5 @@
 import { fetchWithRetry } from "./net.mjs";
+import { declaredVision, declaredFree } from './model-capabilities.mjs';
 
 /**
  * Default picks when the user did not pin a model. Ordered by preference;
@@ -91,6 +92,7 @@ export const PROVIDERS = {
     // the gateway's free-tier rate limits.
     defaultModel: "poolside/laguna-s-2.1:free",
     keyless: true,
+    anonymousFreeOnly: true, // Its public catalogue includes paid routes that require an authenticated account.
   },
   groq: {
     label: "Groq",
@@ -125,12 +127,14 @@ export function resolveProvider(name) {
  * baseUrl, headers(stream), ensureToken(), models().
  */
 export class CompatibleClient {
-  constructor({ apiBase, apiKey = "", model = "", contextWindow = null } = {}) {
+  constructor({ apiBase, apiKey = "", model = "", contextWindow = null, freeOnly = false } = {}) {
     if (!apiBase) throw new Error("API_BASE is required for a custom endpoint.");
     this._base = String(apiBase).replace(/\/$/, "");
     this.apiKey = apiKey;
     this.configuredModel = model;
     this.contextWindow = contextWindow;
+    this.freeOnly = freeOnly;
+    this.modelCapabilities = new Map();
   }
 
   get baseUrl() {
@@ -155,7 +159,8 @@ export class CompatibleClient {
       const res = await fetchWithRetry(`${this._base}/models`, { headers: this.headers(false) });
       if (!res.ok) throw new Error(`Model list failed (${res.status})`);
       const data = await res.json();
-      const list = (data.data || []).map((m) => ({
+      const available = (data.data || []).filter(model => !this.freeOnly || this.apiKey || declaredFree(model));
+      const list = available.map((m) => ({
         id: m.id,
         name: m.name || m.id,
         vendor: m.vendor || m.publisher || m.owned_by || "",
@@ -164,7 +169,9 @@ export class CompatibleClient {
           : (m.capabilities?.supports?.tool_calls ?? null),
         context: m.context_length ?? m.capabilities?.limits?.max_context_window_tokens ?? null,
         default: m.default ?? null,
+        vision: declaredVision(m),
       }));
+      this.modelCapabilities = new Map(list.map(model => [model.id, { vision: model.vision, tools: model.tools }]));
       if (!list.length) throw new Error("Model list is empty.");
       return list;
     } catch (err) {

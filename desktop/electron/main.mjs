@@ -10,6 +10,7 @@ import { menuTemplate } from './menu.mjs';
 import { setupUpdater } from './updater.mjs';
 import { renderPdfPages } from './pdf-render.mjs';
 import { IPC_CONTRACT } from '../shared/version.mjs';
+import { BROWSER_PREVIEW_POLL } from '../shared/browser-progress.mjs';
 import { CONFIG_DIR } from '../../src/core/config.mjs';
 import { shutdownFileToolWorkers } from '../../src/tooling/tool-worker.mjs';
 import { CompanionCapture } from './companion-capture.mjs';
@@ -18,6 +19,12 @@ import { CAPTURE_ACTIONS, CAPTURE_EVENT } from '../browser-helper/protocol.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
 const APP_ID = 'com.ankita.desktop';
+// Dev and packaged share one profile by default; on Windows a running packaged
+// instance holds the disk-cache files, so the dev instance fails Chromium's
+// cache move with "Access is denied (0x5)" and its single-instance lock is
+// refused too. A separate profile keeps dev cache/settings out of the race.
+const DEV_PROFILE_SUFFIX = '-dev';
+const BROWSER_UPLOAD_PICKER = Object.freeze({ title: 'Choose a file to upload', buttonLabel: 'Choose file', properties: ['openFile'] }); // Native one-file consent; no model-provided paths or defaults.
 const isDev = Boolean(process.env.ANKITA_DESKTOP_DEV_URL);
 const isPortable = Boolean(process.env.PORTABLE_EXECUTABLE_DIR);
 const windowStateFile = () => path.join(app.getPath('userData'), 'window-state.json');
@@ -265,6 +272,7 @@ function stopCursorFeed() {
 }
 
 app.setName(APP_NAME);
+if (isDev) app.setPath('userData', `${app.getPath('userData')}${DEV_PROFILE_SUFFIX}`);
 app.setAppUserModelId(APP_ID);
 app.setAboutPanelOptions({
   applicationName: APP_NAME,
@@ -380,6 +388,14 @@ function createWindow() {
     safeStorage,
     // Composio keyless sign-in opens the system browser from the main process.
     openExternal: url => openExternal(url),
+    selectBrowserUpload: async ({ signal }) => {
+      signal?.throwIfAborted();
+      showWindow();
+      if (!window || window.isDestroyed()) throw new Error('Open the desktop window to select an upload file.');
+      const result = await dialog.showOpenDialog(window, BROWSER_UPLOAD_PICKER);
+      signal?.throwIfAborted();
+      return result.canceled ? null : result.filePaths[0] || null;
+    },
     emit: event => {
       if (window && !window.isDestroyed()) window.webContents.send('engine:event', event);
       if (island && !island.isDestroyed()) island.webContents.send('engine:event', event);
@@ -542,10 +558,15 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'browserPluginStartChrome': return current.browserPlugins.startChrome();
     case 'browserPluginTestChromePort': return current.browserPlugins.testChromePort(payload);
     case 'browserPluginInstallChromium': return current.browserPlugins.installChromium();
-    case 'browserSessionView': return current.browserScope(payload?.scope).view();
+    case 'browserSessionView': {
+      const requester = BrowserWindow.fromWebContents(event.sender);
+      const backgrounded = Boolean(requester && (!requester.isVisible() || requester.isMinimized()));
+      return { ...await current.browserScope(payload?.scope).view({ minIntervalMs: backgrounded ? BROWSER_PREVIEW_POLL.hidden : 0 }), backgrounded };
+    }
     case 'browserSessionStop': return payload?.scope ? current.schedule().stopRun(payload.scope.replace(/^job:/, '')) : current.browserManager.close({ includeScopes: false });
     case 'browserSessionTakeover': return current.browserScope(payload?.scope).takeover(payload?.enabled === true);
     case 'browserSessionInput': return current.browserScope(payload?.scope).userInput(payload);
+    case 'browserSessionDialog': return current.browserScope(payload?.scope).decideDialog(payload);
     case 'browserSessionSelectTab': return current.browserScope(payload?.scope).selectTab(payload?.tab);
     case 'appInfo': return { version: app.getVersion(), contract: IPC_CONTRACT };
     default: throw new Error('Unknown desktop action');
@@ -638,7 +659,13 @@ if (!gotLock) {
     event.preventDefault(); if (drainingQuit) return; drainingQuit = true;
     hideIsland();
     stopCursorFeed();
-    void Promise.allSettled([Promise.resolve(engine?.close()), Promise.resolve(companionCapture?.close())]).finally(() => { quitting = true; tray?.destroy(); tray = null; app.quit(); });
+    void Promise.allSettled([Promise.resolve(engine?.close()), Promise.resolve(companionCapture?.close())]).finally(() => {
+      quitting = true;
+      // Windows refuses app.quit while the resident island remains non-closable; normal use still keeps it protected.
+      if (island && !island.isDestroyed()) island.setClosable(true);
+      tray?.destroy(); tray = null;
+      app.quit();
+    });
   });
   app.on('second-instance', () => {
     if (!window) return;

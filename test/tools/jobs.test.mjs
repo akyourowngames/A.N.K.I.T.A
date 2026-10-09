@@ -16,6 +16,26 @@ import { cleanupJobs } from '../../tools/index.mjs';
 const IDLE_JOB_SOURCE = 'setInterval(()=>{}, 1000)';
 const LAUNCHER_TERMINATION_TEST_TIMEOUT_MS = 20_000; // Milliseconds: bound native startup and tree termination in this regression.
 
+test('deadline cleanup rejection stays on the live job instead of becoming an unhandled process rejection', { skip: process.platform !== 'win32', timeout: LAUNCHER_TERMINATION_TEST_TIMEOUT_MS }, async t => {
+  const { command, ctx } = fixture(t, IDLE_JOB_SOURCE);
+  const deadlineMs = 100; // Milliseconds: exercise the actual run_command deadline callback.
+  await run({ command, background: true, timeout_ms: deadlineMs }, ctx);
+  const job = [...ctx.state.jobs.values()][0];
+  const terminate = job.child.terminateTree.bind(job.child);
+  job.child.terminateTree = async () => { throw new Error('fixture cleanup identity lookup unavailable'); };
+  try {
+    await new Promise(resolve => setTimeout(resolve, deadlineMs * 2));
+    console.log(`DEADLINE_REPRO done=${job.done} error=${job.error || 'none'}`);
+    assert.match(job.error || '', /cleanup identity lookup unavailable/);
+    assert.equal(job.done, false, 'a failed kill must not claim the process exited');
+    const snapshot = JSON.parse(await status({ job_id: job.id }, ctx));
+    assert.match(snapshot.error, /cleanup/);
+  } finally {
+    job.child.terminateTree = terminate;
+    await killTree(job.child); await waitForExit(job, LAUNCHER_TERMINATION_TEST_TIMEOUT_MS);
+  }
+});
+
 function fixture(t, source) {
   const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-jobs-'));
   const file = path.join(cwd, 'child.cjs');

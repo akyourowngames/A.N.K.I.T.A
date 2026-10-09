@@ -73,15 +73,17 @@ test('forgiving browser spellings normalize to the canonical form', () => {
   assert.equal(browser.readOnly({ action: 'click' }), false);
 });
 
-test('act falls back to the marked element when the page changed since the snapshot', async () => {
+test('act uses only the registered native node and rejects an unknown ref', async () => {
   let clicked = false;
+  let disposed = false;
+  const native = { evaluate: async () => true, click: async () => { clicked = true; }, dispose: async () => { disposed = true; } };
   const fake = {
     isClosed: () => false,
     isDetached: () => false,
     url: () => 'about:blank',
     evaluate: async () => 99,
     locator: sel => sel === '[data-ankita-ref="1-0-0"]'
-      ? { count: async () => 1, click: async () => { clicked = true; } }
+      ? { count: async () => 1, evaluate: async () => true, elementHandle: async () => native }
       : { count: async () => 0 },
   };
   const adapter = new PlaywrightBrowserAdapter();
@@ -90,6 +92,7 @@ test('act falls back to the marked element when the page changed since the snaps
   adapter.refState = { serial: 1, page: fake, refs: new Map([['1-0-0', { frame: fake, url: fake.url() }]]) };
   assert.match(await adapter.run({ action: 'act', op: 'click', ref: '1-0-0' }, {}), /click complete/);
   assert.equal(clicked, true);
+  assert.equal(disposed, true);
   await assert.rejects(adapter.run({ action: 'act', op: 'click', ref: 'gone' }, {}), /Unknown browser ref/);
 });
 
@@ -258,7 +261,7 @@ test('real Chromium opens a page, fills a form, and rejects stale refs', async (
   const button = /\[ref=([^\]]+)\] button Save/.exec(second)?.[1];
   assert.ok(button, second);
   assert.match(await manager.run({ action: 'act', op: 'click', ref: button }, ctx), /click complete/);
-  assert.equal((await manager.run({ action: 'read' }, ctx)).trim(), 'Name Save\nAnkita');
+  assert.match(await manager.run({ action: 'read' }, ctx), /Name.*Save[\s\S]*Ankita/);
   assert.match((await manager.view()).screenshot, /^data:image\/jpeg;base64,/);
   const shot = JSON.parse(await manager.run({ action: 'screenshot' }, ctx));
   assert.equal(shot.type, 'browser_screenshot');

@@ -1,7 +1,7 @@
 // Fixed user-facing notices. Tool results retain diagnostics and recovery refs;
 // status surfaces must never render page text, snapshots, stacks or call logs.
 const NOTICES = Object.freeze({
-  reference: { kind: 'reference', message: 'The page changed. Ankita can refresh its controls and continue.' },
+  reference: { kind: 'reference', message: 'Ankita could not locate the requested control. It can refresh its view and continue.' },
   navigation: { kind: 'navigation', message: 'This page could not load. The browser is still available.' },
   connection: { kind: 'connection', message: 'The browser connection was lost. Reconnect to continue.' },
   setup: { kind: 'setup', message: 'The browser could not start. Check its setup in Plugins.' },
@@ -15,6 +15,7 @@ const NAVIGATION_FAILURE = /page\.goto|net::ERR_|navigation.*(?:failed|timed out
 const SETUP_FAILURE = /Chromium could not start|Chromium is not downloaded|Playwright is missing/i;
 const REFERENCE_FAILURE = /stale ref|unknown browser ref/i;
 const DENIED_NAVIGATION = /Navigation refused: HTTP/i; // Adapter-owned HTTP failure, never page content.
+const RECOVERABLE_NOTICES = new Set(['reference', 'preview']); // Refreshable observations need no user intervention or lost-connection warning.
 
 export function browserNotice(error, fallback = 'action') {
   const message = error instanceof Error ? error.message : String(error || '');
@@ -33,3 +34,5 @@ export function browserNeedsConnection(notice) {
 export function browserPageFailed(notice) {
   return notice?.kind === 'navigation' || notice?.kind === 'denied';
 }
+
+export function browserNoticeIsRecoverable(notice) { return RECOVERABLE_NOTICES.has(notice?.kind); }

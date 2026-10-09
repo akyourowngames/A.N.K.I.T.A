@@ -4,6 +4,9 @@ import { fileURLToPath } from 'node:url';
 import { validatePalette } from '../palette/index.mjs';
 
 const MANIFEST_FILENAME = 'plugin.json'; // Optional skill action contributions.
+const TOOL_METADATA_CHARS = 200; // Characters per tool-hint/activation field; bounds catalog metadata.
+const TOOL_NAME_RE = /^[a-z][a-z0-9_-]*$/; // Native tool identifiers, never page text or query matching.
+const AUTO_SKILL_PROMPT_CHARS = 6000; // Total characters of automatic instruction blocks per turn; load whole bodies only.
 
 export const SKILL_NAME_RE = /^[a-z0-9-]{1,64}$/;
 
@@ -37,13 +40,16 @@ export function parseSkillFile(text, dirName) {
   const name = fields.name || '';
   const description = (fields.description || '').replace(/\s+/g, ' ').trim();
   const suggestedTools = fields['suggested-tools'] || '';
+  const automatic = fields['auto-tools'] || '';
+  const autoTools = [...new Set(automatic.split(',').map(tool => tool.trim()).filter(Boolean))];
   const rawBody = diskLines.slice(end + 1).join('\n');
   const body = lines.slice(end + 1).join('\n').trim();
   if (!SKILL_NAME_RE.test(name) || name !== dirName) return { error: 'invalid or mismatched name' };
   if (description.length < 10 || description.length > 300) return { error: 'description must be 10–300 characters' };
-  if (suggestedTools.length > 200) return { error: 'suggested-tools exceeds 200 characters' };
+  if (suggestedTools.length > TOOL_METADATA_CHARS) return { error: `suggested-tools exceeds ${TOOL_METADATA_CHARS} characters` };
+  if (automatic.length > TOOL_METADATA_CHARS || autoTools.some(tool => !TOOL_NAME_RE.test(tool))) return { error: `auto-tools must be comma-separated tool names within ${TOOL_METADATA_CHARS} characters` };
   if (!body || rawBody.length > 12000) return { error: 'body must be 1–12000 characters on disk' };
-  return { name, description, suggestedTools, body };
+  return { name, description, suggestedTools, autoTools, body };
 }
 
 export function reloadSkills() {
@@ -95,12 +101,33 @@ export function loadSkills(dir = skillsDir()) {
   return skills;
 }
 
-export function skillPromptLines(skills) {
+const automaticBlock = skill => `Automatically loaded skill: ${skill.name}\n${skill.body}`;
+
+export function activeAutomaticSkills(skills, activatedTools = []) {
+  const tools = new Set(activatedTools);
+  let remaining = AUTO_SKILL_PROMPT_CHARS;
+  return skills.filter(skill => {
+    if (!skill.autoTools?.some(tool => tools.has(tool))) return false;
+    const chars = automaticBlock(skill).length;
+    if (chars > remaining) return false;
+    remaining -= chars;
+    return true;
+  });
+}
+
+export function skillPromptLines(skills, activatedTools = []) {
   if (!skills.length) return [];
+  const active = activeAutomaticSkills(skills, activatedTools);
+  const loaded = new Set(active.map(skill => skill.name));
   return [
     'Available skills (interactive chats, progressive disclosure):',
-    ...skills.map(skill =>
-      `  - ${skill.name}: ${skill.description}${skill.suggestedTools ? ` Suggested tools: ${skill.suggestedTools}.` : ''} To use, call skill({"name":"${skill.name}"}).`),
+    ...skills.map(skill => {
+      const hint = skill.suggestedTools ? ` Suggested tools: ${skill.suggestedTools}.` : '';
+      const trigger = skill.autoTools?.length ? `Loads automatically when ${skill.autoTools.join(', ')} is discovered or used. ` : '';
+      const instructions = loaded.has(skill.name) ? 'Instructions already loaded below for this turn.' : `${trigger}To read manually, call skill({"name":"${skill.name}"}).`;
+      return `  - ${skill.name}: ${skill.description}${hint} ${instructions}`;
+    }),
     'Skills are instructions only. Suggested tools are hints, not requirements. Use find_tools to load tools if needed.',
+    ...active.map(automaticBlock),
   ];
 }

@@ -1,12 +1,12 @@
 import { isReadOnly, needsApproval } from '../../tools/index.mjs';
+import { toolResultFailed } from '../../tools/browser/operations.mjs';
 
-const FAILURE_RE = /^(Error\b|Not run:|The user denied|Action cancelled)/i;
 const READ_ACTION_RE = /(?:^|_)(GET|FETCH|LIST|SEARCH|QUERY|LOOKUP|READ|DOWNLOAD|RETRIEVE|FIND|DESCRIBE)(?:_|$)/i;
 const GMAIL_SEND_RE = /^GMAIL_.*SEND/i;
 const DRIVE_CREATE_RE = /^(GOOGLEDRIVE|GOOGLEDOCS)_.*(UPLOAD|CREATE)/i;
 
 export function isToolFailure(resultText) {
-  return FAILURE_RE.test(String(resultText));
+  return toolResultFailed(resultText);
 }
 
 function composioActions(toolName, args) {

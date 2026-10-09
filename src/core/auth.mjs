@@ -3,6 +3,7 @@ import path from "node:path";
 import { exec } from "node:child_process";
 import { AUTH_FILE } from "./config.mjs";
 import { fetchWithRetry } from "./net.mjs";
+import { declaredVision } from './model-capabilities.mjs';
 
 const CLIENT_ID = "Iv1.b507a08c87ecfe98";
 const OAUTH_SCOPE = "read:user";
@@ -150,13 +151,16 @@ export class CopilotClient {
     const res = await fetchWithRetry(`${this.baseUrl}/models`, { headers: this.headers(false) });
     if (!res.ok) throw new Error(`Model list failed (${res.status}): ${await res.text()}`);
     const data = await res.json();
-    return (data.data || []).map((m) => ({
+    const list = (data.data || []).map((m) => ({
       id: m.id,
       name: m.name || m.id,
       vendor: m.vendor || m.publisher || "",
       tools: m.capabilities?.supports?.tool_calls ?? null,
       context: m.capabilities?.limits?.max_context_window_tokens ?? null,
       default: m.default ?? null,
+      vision: declaredVision(m),
     }));
+    this.modelCapabilities = new Map(list.map(model => [model.id, { vision: model.vision, tools: model.tools }]));
+    return list;
   }
 }

@@ -25,7 +25,28 @@ They use the same agent runtime and tools. Desktop teammates have separate
 threads, personas and drafts; assign a project to give a teammate its working
 folder and shared context.
 
-## What's new in 2.5.0
+## What's new in 2.5.1
+
+- **More reliable form batches.** Live target checks and original node bindings
+  keep mixed fills, clicks and selects from invalidating their own refs. Changed
+  controls stop with fresh observations and accurate partial-work receipts.
+- **Browser instructions you can see.** The complete guide loads without an
+  extra model call; the desktop header confirms actual request inclusion.
+- **Readable page evidence.** Markdown reads, bounded text search and labelled
+  hidden DOM evidence accompany grouped controls and state flags.
+- **Clearer browser activity.** Separate planning, reading, acting and checking
+  states, takeover dialogs and throttled hidden previews improve live feedback.
+- **Better failure recovery.** Original goals survive bounded tool history;
+  flight direction/date checks, native-menu guidance and one protocol correction
+  reduce confused retries. Provider errors distinguish their actual categories.
+- **Consistent terminal controls.** `/commands`, help, completion and typo hints
+  share a registry; startup shows version/provider.
+
+Experimental browser runtime, focus and context switches remain opt-in. See the
+[complete changelog](CHANGELOG.md#251---2026-10-09) for capabilities, test evidence
+and the remaining limits.
+
+## Desktop and companion in 2.5.0
 
 - **A redesigned desktop.** A compact navigation rail, mascot teammate faces,
   clearer conversation controls and responsive work panels share the island's
@@ -205,6 +226,13 @@ Built-in chat skills live in [`skills/`](skills). Use `/skills` to inspect them
 or the desktop command palette to discover enabled skills. Contribution and
 size limits are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The [browser-use skill](skills/browser-use/SKILL.md) loads its full guide when
+an interactive chat discovers or uses the browser, without a separate model
+request. It covers current refs, form batching, result checks and error recovery.
+Before browser discovery, turns retain its description. While browser tools
+remain available, the whole guide precedes each decision; **Plugins → Skills**
+can disable it. The desktop header confirms whole-body request inclusion.
+
 ## Keyboard and CLI reference
 
 | Desktop shortcut | Action |
@@ -223,7 +251,9 @@ ankita --voice                            # hands-free mode
 ankita --daemon                           # background automation
 ```
 
-Use `/help` for the current command list. Common commands include `/models`,
+Use `/help` for the current command list and `/commands` for the full grouped
+cheatsheet (every command, subcommand and tab-completion comes from one
+registry). Common commands include `/models`,
 `/model`, `/tools`, `/auto`, `/skills`, `/project`, `/projects`, `/browser`,
 `/composio`, `/mcp`, `/save`, `/load`, `/sessions`, `/usage`, `/mic`, `/voice`,
 `/routines`, `/watches`, `/brief` and `/exit`. `/bg`, `/jobs`, `/job`, `/input`
@@ -291,6 +321,8 @@ Third-party companion attribution ships in
 - [Desktop workspace](docs/guides/desktop-workbench.md)
 - [Companion, file drops and webpage capture](docs/guides/desktop-companion.md)
 - [Browser connections and permissions](docs/guides/browser-use.md)
+- [Browser lab fixes and remaining limits](docs/browser-lab-FINDINGS.md)
+- [Browser request cost and A/B evidence](docs/browser-lab-token-research.md)
 - [Scheduled desktop jobs](docs/guides/desktop-jobs.md)
 - [Release and auto-update](docs/guides/releasing.md)
 - [Code signing](docs/guides/code-signing.md)

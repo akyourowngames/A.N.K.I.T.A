@@ -23,7 +23,7 @@ export async function createSession({
 
   let client;
   if (config.apiBase) {
-    client = new CompatibleClientClass({ apiBase: config.apiBase, apiKey: config.apiKey, model: config.model, contextWindow: config.contextWindow });
+    client = new CompatibleClientClass({ apiBase: config.apiBase, apiKey: config.apiKey, model: config.model, contextWindow: config.contextWindow, freeOnly: Boolean(provider.anonymousFreeOnly && config.apiBase === provider.apiBase) });
   } else {
     let token = resolveToken();
     if (!token) {

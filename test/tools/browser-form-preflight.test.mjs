@@ -7,10 +7,23 @@ import http from 'node:http';
 import { chromium } from 'playwright';
 import { PlaywrightBrowserAdapter } from '../../tools/browser/playwright.mjs';
 import { ChromeBrowserAdapter } from '../../tools/browser/chrome.mjs';
-import { assertFillControl, inspectFillControl, ISOLATED_REF_PATTERN } from '../../tools/browser/refs.mjs';
+import { assertFillControl, assertBatchTarget, inspectFillControl, ISOLATED_REF_PATTERN } from '../../tools/browser/refs.mjs';
+import { independentRefBatch } from '../../tools/browser/operations.mjs';
 
 const refFor = (snapshot, label) => snapshot.split('\n').find(line => line.includes(label) && line.includes('[ref='))?.match(/\[ref=([^\]]+)\]/)?.[1];
 const CLEANUP = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }; // Disposable Windows browser fixture only.
+
+test('malformed form steps retain normal argument validation without a batch eligibility crash', () => {
+  const edit = { action: 'act', ref: '1-0-1', op: 'click' };
+  for (const fields of [null, {}, 'wrong', [null]]) assert.equal(independentRefBatch([{ action: 'fill_form', fields }, edit]), false);
+});
+
+test('later readonly preflight does not claim completed batch steps made no changes', () => {
+  const probe = { fill: { tag: 'input', type: 'text', issue: 'readonly' }, state: {} };
+  assert.throws(() => assertBatchTarget(probe, { action: 'fill_form' }, { ref: '1-0-1', text: 'new' }, ISOLATED_REF_PATTERN), error => {
+    assert.equal(error.name, 'BrowserReferenceError'); assert.match(error.message, /readonly/); assert.doesNotMatch(error.message, /No fields changed/); return true;
+  });
+});
 
 test('background generic filling cannot substitute guessed text for a private password', () => {
   const control = { tag: 'input', type: 'password', issue: null }, field = { ref: '1-0-0', text: 'guessed' };

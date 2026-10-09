@@ -1,3 +1,5 @@
+import { BROWSER_ACTIONS } from './operations.mjs';
+
 /** Bound browser work even when a transport never settles. Always detach listeners. */
 export function waitForBrowser(work, { signal, timeoutMs = 30_000, onTimeout } = {}) {
   return new Promise((resolve, reject) => {
@@ -18,6 +20,8 @@ const ACT_OPS = new Set(['click', 'fill', 'type', 'press', 'select', 'hover', 's
 // Display modes confused for connection modes (headless is a launch setting, not a mode).
 const MODE_ALIAS = { headless: 'isolated', headful: 'isolated' };
 const ACTION_ALIAS = { signin: 'login', sign_in: 'login' }; // Common sign-in spelling; secure path only.
+const ACTION_TOKEN_SUFFIX = />+$/; // Step 5 live traces emitted a trailing token delimiter on otherwise valid actions.
+const NORMALIZABLE_ACTIONS = new Set([...BROWSER_ACTIONS, 'batch', ...ACT_OPS, ...Object.keys(ACTION_ALIAS)]); // Existing facade protocol and aliases only.
 
 /**
  * Forgiving argument shapes observed live: the model sends op names as
@@ -28,6 +32,10 @@ const ACTION_ALIAS = { signin: 'login', sign_in: 'login' }; // Common sign-in sp
  */
 export function normalizeBrowserArgs(args = {}) {
   const out = { ...args };
+  if (typeof out.action === 'string') {
+    const candidate = out.action.replace(ACTION_TOKEN_SUFFIX, '');
+    if (NORMALIZABLE_ACTIONS.has(candidate)) out.action = candidate;
+  }
   if (ACTION_ALIAS[out.action]) out.action = ACTION_ALIAS[out.action];
   if (ACT_OPS.has(out.action)) { out.op = out.op || out.action; out.action = 'act'; }
   if (out.target != null && out.ref == null) out.ref = out.target;
@@ -35,6 +43,9 @@ export function normalizeBrowserArgs(args = {}) {
   if (MODE_ALIAS[out.mode]) out.mode = MODE_ALIAS[out.mode];
   // Automatic selection is the existing omitted-mode policy, including disabled-mode guards.
   if (out.mode === 'auto') delete out.mode;
+  // Models use the same automatic-selection spelling for the active tab.
+  // It must not become a literal tab ID or trigger a tab/ref invalidation.
+  if (out.tab === 'auto') delete out.tab;
   if (Array.isArray(out.steps)) out.steps = out.steps.map(normalizeBrowserArgs);
   return out;
 }

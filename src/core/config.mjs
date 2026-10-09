@@ -33,8 +33,13 @@ const DEFAULTS = {
   temperature: null,
   maxTokens: 4096,
   maxToolChars: 65536,
-  maxToolSteps: 24,
+  maxToolSteps: 100,
   maxToolCalls: 60,
+  browserToolFocus: false, // Boolean: opt-in until repeated live capability parity clears the browser-lab gate.
+  browserHistoryCompaction: false, // Boolean: opt-in request projection; mixed-page evidence retention still needs live parity.
+  browserRuntimeV2: false, // Boolean: experimental structured browser runtime; enable only after paired capability/speed gates.
+  browserEvidenceRetention: false, // Boolean: opt-in grounded task quotes; requires structured runtime observations.
+  browserProgressTracking: false, // Boolean: opt-in state-aware recovery guidance; existing hard limits still apply.
   agentDebug: false,
   contextWindow: 32768,
   provider: "",
@@ -169,8 +174,10 @@ function readVars(file) {
  * (File settings beat process.env because Windows already defines USERNAME
  * for the OS account, which would otherwise shadow the user's .env.)
  */
-export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
-  const global = readVars(GLOBAL_ENV_FILE);
+export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalEnvFile = GLOBAL_ENV_FILE } = {}) {
+  // Read-only provider/config source override for hermetic callers. Runtime storage
+  // remains bound to CONFIG_DIR; no credentials are copied into test artifacts.
+  const global = readVars(globalEnvFile);
   const project = readVars(envPath);
   const fileVars = { ...global.vars, ...project.vars };
 
@@ -220,6 +227,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env")) {
     // bug this bound exists to prevent, so garbage falls back to the default.
     maxToolSteps: clampInt(pick("MAX_TOOL_STEPS"), 1, 200, DEFAULTS.maxToolSteps),
     maxToolCalls: clampInt(pick("MAX_TOOL_CALLS"), 1, 500, DEFAULTS.maxToolCalls),
+    browserToolFocus: onOff(pick("BROWSER_TOOL_FOCUS"), DEFAULTS.browserToolFocus),
+    browserHistoryCompaction: onOff(pick("BROWSER_HISTORY_COMPACTION"), DEFAULTS.browserHistoryCompaction),
+    browserRuntimeV2: onOff(pick("BROWSER_RUNTIME_V2"), DEFAULTS.browserRuntimeV2),
+    browserEvidenceRetention: onOff(pick("BROWSER_EVIDENCE_RETENTION"), DEFAULTS.browserEvidenceRetention),
+    browserProgressTracking: onOff(pick("BROWSER_PROGRESS_TRACKING"), DEFAULTS.browserProgressTracking),
     agentDebug: onOff(pick("ANKITA_AGENT_DEBUG"), DEFAULTS.agentDebug),
     contextWindow: posInt(pick("CONTEXT_WINDOW"), DEFAULTS.contextWindow),
     // Whether that value was chosen or just defaulted. Providers advertise each

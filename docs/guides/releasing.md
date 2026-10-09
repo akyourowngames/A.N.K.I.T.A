@@ -59,7 +59,8 @@ the local checks and completed remote workflow pass.
    Then inspect the release and all expected assets, including `latest.yml`.
    A pushed branch or created tag alone does not prove publication.
 
-The Windows workflow installs the lockfile, requires `npm test`, derives the
+The Windows workflow installs the lockfile and downloads Chromium using that
+installed Playwright CLI before requiring `npm test`, then derives the
 version from `package.json`, and checks whether that version already has an update
 manifest. If it needs publishing, it builds with `--publish never`, then uploads
 the installer, portable executable, blockmap and manifest in one deterministic

@@ -19,10 +19,11 @@ const STARTERS = [
   { icon: 'chat', label: 'Explore an idea', text: 'Help me explore an idea: ' },
 ]; // User-editable draft starters; none starts a model request.
 
-export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onCreate, onClear, onDelete, jobs, onEditJob, onWatchJob }: {
+export function ChatPane({ teammate, messages, running, models, projects, defaultModel, usage, loadedSkills, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onCreate, onClear, onDelete, jobs, onEditJob, onWatchJob }: {
   jobs: Routine[]; onEditJob: (id?: string) => void; onWatchJob: (job: Routine) => void;
   teammate: Teammate | null; messages: ChatMessage[]; running: boolean; models: Model[]; defaultModel: string;
   projects: Project[]; usage?: Usage; chrome: string; sidebarOpen: boolean; reviewOpen: boolean; onToggleSidebar: () => void; onToggleReview: () => void; onProject: (id: string | null) => void; onOpenProjects: () => void;
+  loadedSkills?: string[];
   browserRun?: BrowserSessionView | null; onOpenBrowser: () => void; onOpenBrowserPlugins?: () => void;
   onSend: (text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => void; onStop: () => void; onModel: (id: string) => void;
   onEdit: () => void; onCreate: () => void; onClear: () => void; onDelete: () => void;
@@ -73,12 +74,13 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
   const showThinking = running && (!messages.length || messages.at(-1)?.role !== 'assistant');
   const tokens = usage ? usage.prompt_tokens + usage.completion_tokens : 0;
   const assignedProject = projects.find(project => project.id === teammate.projectId);
+  const instructions = loadedSkills?.length ? `Instructions loaded: ${loadedSkills.join(', ')}` : null; // Display actual request inclusion supplied by the engine; absent receipts retain the persona subtitle.
 
   return <main className="chat-pane">
     <header className="chat-header drag-region">
       <div className="header-left no-drag">
         {!sidebarOpen && <>{chrome === 'custom' && <WindowControls />}<button className="icon-button header-sidebar-toggle" onClick={onToggleSidebar} aria-label="Show sidebar" title="Show sidebar (Ctrl+B)" aria-expanded={false}><Icon name="panelLeft" size={18} /></button></>}
-        <div className="header-identity"><CompanionStatus messages={messages} running={running} teammate={teammate} /><div className="header-copy"><div className="header-name-line"><h2 title={teammate.name}>{teammate.name}</h2><span className={`conversation-state ${running ? 'working' : ''}`}><i />{running ? 'Working' : 'Ready'}</span></div><p title={teammate.persona}>{teammate.persona || 'Your teammate'}</p></div></div>
+        <div className="header-identity"><CompanionStatus messages={messages} running={running} teammate={teammate} /><div className="header-copy"><div className="header-name-line"><h2 title={teammate.name}>{teammate.name}</h2><span className={`conversation-state ${running ? 'working' : ''}`}><i />{running ? 'Working' : 'Ready'}</span></div><p title={instructions || teammate.persona} role={instructions ? 'status' : undefined}>{instructions || teammate.persona || 'Your teammate'}</p></div></div>
       </div>
       <div className="header-actions no-drag">
         <button className="icon-button palette-launcher" onClick={() => window.dispatchEvent(new Event('ankita:palette'))} aria-label="Open command palette" title="Commands, skills and tasks (Ctrl+K)"><Icon name="search" size={16} /></button>

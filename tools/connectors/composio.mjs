@@ -4,6 +4,7 @@ import { connectionMode, listToolkits, connectedServices, authorize, removeAccou
 import { connectComposio } from '../../src/integrations/composio-oauth.mjs';
 import { TierPolicy, TIER_AUTO, TIER_ALWAYS, TIER_LABELS } from '../../src/integrations/mcp-tiers.mjs';
 import { deprecationNotice } from '../../src/integrations/composio-deprecation.mjs';
+import { COMPOSIO_ACTIONS } from '../../src/core/commands.mjs';
 
 export const name = 'composio';
 export const description = 'Manage connected apps such as Gmail, Slack, Notion, Calendar, Drive and GitHub. Actions: status, list, accounts, search, connect, disconnect, reload, tiers, allow, always, deny. This tool only manages connections; app actions run through the MCP approval tiers, so sending or deleting always asks first.';
@@ -139,5 +140,5 @@ export async function run(args = {}, ctx = {}) {
     policy.setTier(SERVER_ID, key, tier);
     return `${key} is now tier ${tier} (${TIER_LABELS[tier]}).`;
   }
-  return `Error: unknown Composio action "${action}".`;
+  return `Error: unknown Composio action "${action}". Try: ${COMPOSIO_ACTIONS.join(", ")}.`;
 }

@@ -47,6 +47,10 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Native browser regressions must execute on a clean runner, using the
+      # lockfile's Playwright CLI rather than downloading another npm package.
+      - name: Install Chromium for browser regression tests
+        run: node node_modules/playwright/cli.js install chromium
       - run: npm test
 
       - name: Resolve the version to release

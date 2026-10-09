@@ -7,6 +7,9 @@ import { capOutput } from '../../tools/shared/_shared.mjs';
  */
 const IMAGE_DATA_URL = /^data:image\/(png|jpe?g|gif|webp);base64,([A-Za-z0-9+/=]+)$/i;
 const IMAGE_TOKEN_BYTES = 4;
+const USER_REQUEST_ANCHORS = 3; // User messages: retain the goal plus recent corrections across long tool loops.
+const PRIOR_REQUEST_ANCHOR_BYTES = 4096; // UTF-8 bytes across prior requests; attachments must not monopolize history.
+const TOOL_EXCHANGE_MESSAGES = 2; // Messages: the minimum atomic assistant-call plus tool-reply protocol pair.
 
 function bytesFromDataUrl(url) {
   const match = typeof url === 'string' ? url.match(IMAGE_DATA_URL) : null;
@@ -200,13 +203,23 @@ function groups(messages) {
 export function trimMessages(messages, maxMessages = 40, maxBytes = Infinity) {
   const clean = sanitizeMessages(messages);
   const system = clean[0]?.role === 'system' ? clean.shift() : { role: 'system', content: '' };
-  const max = Math.max(2, Number(maxMessages) || 40);
+  const max = Math.max(TOOL_EXCHANGE_MESSAGES, Number(maxMessages) || 40);
   let userIndex = -1;
   for (let i = clean.length - 1; i >= 0; i--) if (clean[i].role === 'user') { userIndex = i; break; }
   const anchor = userIndex < 0 ? null : clean[userIndex];
-  const candidates = groups(clean.filter((_, i) => i !== userIndex));
+  const priorAnchors = [];
+  const anchorLimit = Math.max(1, Math.min(USER_REQUEST_ANCHORS, max - TOOL_EXCHANGE_MESSAGES)); // Keep room for the newest atomic tool exchange.
+  let priorBytes = 0;
+  for (let i = userIndex - 1; i >= 0 && priorAnchors.length < anchorLimit - 1; i--) {
+    if (clean[i].role !== 'user') continue;
+    const cost = messageCost(clean[i]);
+    if (priorBytes + cost > PRIOR_REQUEST_ANCHOR_BYTES) break;
+    priorAnchors.unshift({ message: clean[i], cost }); priorBytes += cost;
+  }
+  const anchors = new Set([anchor, ...priorAnchors.map(item => item.message)].filter(Boolean));
+  const candidates = groups(clean.filter(message => !anchors.has(message)));
   const selected = [];
-  let count = anchor ? 1 : 0;
+  let count = anchors.size;
   for (let i = candidates.length - 1; i >= 0; i--) {
     if (count + candidates[i].length > max) break;
     selected.push(candidates[i]);
@@ -214,15 +227,19 @@ export function trimMessages(messages, maxMessages = 40, maxBytes = Infinity) {
   }
   selected.reverse();
   const groupCosts = selected.map(group => group.reduce((total, message) => total + messageCost(message), 0));
-  let totalBytes = messageCost(system) + (anchor ? messageCost(anchor) : 0) +
+  let totalBytes = messageCost(system) + (anchor ? messageCost(anchor) : 0) + priorBytes +
     groupCosts.reduce((total, cost) => total + cost, 0);
   let firstSelected = 0;
   while (totalBytes > maxBytes && selected.length - firstSelected > 1) {
     totalBytes -= groupCosts[firstSelected++];
   }
+  // Under actual byte pressure, older requests yield before the current request or latest tool exchange.
+  while (totalBytes > maxBytes && priorAnchors.length) {
+    const prior = priorAnchors.shift(); anchors.delete(prior.message); totalBytes -= prior.cost;
+  }
   // Preserve chronological ordering around the anchored user message.
   const keep = new Set(selected.slice(firstSelected).flat());
-  if (anchor) keep.add(anchor);
+  for (const request of anchors) keep.add(request);
   let result = [system, ...clean.filter(m => keep.has(m))];
   if (totalBytes > maxBytes) {
     result = result.map(m => ({

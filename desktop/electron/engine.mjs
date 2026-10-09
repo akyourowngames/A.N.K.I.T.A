@@ -247,6 +247,7 @@ export class DesktopEngine {
     composioFile = COMPOSIO_FILE,
     composioGrantsFile = COMPOSIO_GRANTS_FILE,
     openExternal = null,
+    selectBrowserUpload = null,
     browserFile = BROWSER_FILE,
     sessionsDir = SESSIONS_DIR,
     projectsFile = PROJECTS_FILE,
@@ -273,6 +274,7 @@ export class DesktopEngine {
     this.sessionsDir = sessionsDir;
     this.projectsFile = projectsFile;
     this.envPath = envPath;
+    this.selectBrowserUpload = selectBrowserUpload; // Host-only native selection; remote messages cannot provide this authority.
     this.config = config;
     this.bootstrap = bootstrap;
     this.AgentClass = AgentClass;
@@ -314,7 +316,7 @@ export class DesktopEngine {
     this.composioOauth = { grants: this.composioGrants, secrets: this.secureStore, openUrl: openExternal || null };
     this.mcp.useComposioOauth?.(this.composioOauth);
     this.teammates.transform = this.secretHistory.clean;
-    this.credentialRequests = new CredentialRequests(event => this.emit(event));
+    this.credentialRequests = new CredentialRequests(event => { this.browserManager?.reportPhase('waiting-for-user', event.threadId); this.emit(event); });
     this.browserManager = new BrowserSessionManager({
       credentials: new BrowserCredentials({ store: this.secureStore, requests: this.credentialRequests, emit: event => this.emit(event) }),
       store: new BrowserPluginStore(browserFile).load(),
@@ -889,7 +891,15 @@ export class DesktopEngine {
     const agent = new this.AgentClass({
       client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId, workspacePath,
       browserManager: this.browserManager, browserThreadId: id,
-      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile },
+      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile,
+        selectBrowserUpload: async ({ signal } = {}) => {
+          signal?.throwIfAborted();
+          if (agent.browserCredentialAllowed !== true || agent.config?.backgroundJob || typeof this.selectBrowserUpload !== 'function') throw new Error('Choose upload files from a foreground desktop conversation.');
+          const selected = await this.selectBrowserUpload({ threadId: id, signal });
+          signal?.throwIfAborted();
+          if (agent.browserCredentialAllowed !== true) throw new Error('The desktop turn ended during file selection.');
+          return selected;
+        } },
       skillsEnabled: true,
       disabledSkills: this.desktopSettings.data.disabledSkills || [],
       journal: turn => recordTurn(turn, { timeZone: config.timeZone, transform: this.secretHistory.clean }),
@@ -921,12 +931,13 @@ export class DesktopEngine {
     this.emit({ type: 'turn-start', threadId: id, turnId, model: agent.model, text: this.secretHistory.clean(prompt), attachments: files.map(file => ({ name: file.name, image: Boolean(file.dataUrl) })) });
     let currentMessageId = null;
     const callbacks = {
-      onMessageStart: () => { currentMessageId = randomUUID(); this.emit({ type: 'message-start', threadId: id, messageId: currentMessageId }); },
+      onMessageStart: () => { this.browserManager.reportPhase('thinking', id); currentMessageId = randomUUID(); this.emit({ type: 'message-start', threadId: id, messageId: currentMessageId }); },
       onMessageEnd: () => this.emit({ type: 'message-end', threadId: id, messageId: currentMessageId }),
       onMessageReset: () => this.emit({ type: 'message-reset', threadId: id, messageId: currentMessageId }),
       onDelta: delta => this.emit({ type: 'assistant-delta', threadId: id, messageId: currentMessageId, text: delta }),
       onReasoning: delta => this.emit({ type: 'reasoning-delta', threadId: id, messageId: currentMessageId, text: delta }),
       onUsage: usage => this.emit({ type: 'usage', threadId: id, ...usage }),
+      onSkillsLoaded: names => this.emit({ type: 'skills-loaded', threadId: id, turnId, names }),
       onToolCall: call => {
         const name = call.function?.name || 'tool';
         let args = {};
@@ -964,10 +975,12 @@ export class DesktopEngine {
       else if (notice.redacted && !this.secretNoticeSeen && this.secretHistory.enabled) { this.secretNoticeSeen = true; this.emit({ type: 'secret-notice', message: 'Secrets in this conversation are removed from saved history.' }); }
       return agent.send(prompt, { ...callbacks, attachments: files });
     }).then(reply => {
+      this.browserManager.reportPhase('finished', id);
       this.teammates.touch(id, this.secretHistory.clean(reply || prompt));
       this.emit({ type: 'teammates-changed' });
       return reply;
     }).catch(err => {
+      this.browserManager.reportPhase(agent.cancelled?.() ? 'stopped' : 'recovering', id);
       if (!agent.cancelled?.()) this.emit({ type: 'error', threadId: id, message: this.secretHistory.clean(err.message || String(err)) });
       throw err;
     }).finally(() => {

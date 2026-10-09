@@ -9,6 +9,115 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 No unreleased changes.
 
+## [2.5.1] - 2026-10-09
+
+### Added
+
+- **Automatic browser instructions.** Interactive desktop and CLI chats load the
+  complete `browser-use` guide when browser tools are discovered or already
+  available, including short continuations. The desktop header shows
+  `Instructions loaded: browser-use` when the whole body is included in a prepared
+  request. Disabled or omitted guides do not produce that status; no extra router,
+  skill-tool call or memory handoff is required.
+- **Readable page evidence.** Browser reads return Markdown headings, paragraphs,
+  links, lists and tables. Literal `find` locates text beyond the first chunk;
+  bounded reads continue with source identity. Optional hidden DOM evidence is
+  labelled separately from actionable controls. Scripts, styles and private field
+  values stay out of page text.
+- **Clearer live browser progress.** Thinking, reading, acting, checking, recovery,
+  manual help and Stop have separate states and completed-operation counts.
+  Native dialogs can be accepted or dismissed during takeover; transient dialog
+  and prompt text stays out of shared thumbnails and progress broadcasts.
+- **Experimental browser runtime.** `BROWSER_RUNTIME_V2=on` exposes structured
+  executed/partial/failed/uncertain receipts, capability metadata and guarded
+  Playwright sequences. Isolated Chromium supports explicitly selected uploads
+  and bounded workspace downloads with completion evidence and cancellation.
+  Unsupported connected-Chrome transfers are refused rather than guessed.
+- **Optional context controls.** Browser tool focus keeps the same agent, chat,
+  memory and approvals while refusing unrelated discovery until an explicit
+  general-scope switch. Request-only history compaction, grounded evidence
+  retention and unchanged-page diagnostics have independent opt-in switches.
+  Request/schema/history byte metrics support controlled lab comparisons.
+- **CLI command discovery.** `/commands` provides a grouped cheatsheet. Help,
+  subcommand completion and typo suggestions share one registry; startup reports
+  the app version and provider. Composio tier-management subcommands now complete
+  and validate consistently.
+- **Browser regression and verification utilities.** Real Playwright and bundled
+  Chrome fixtures cover forms, original flight direction/date, ref replacement,
+  overlays, Markdown reads, dialogs, transfers, Stop and actual desktop guide
+  delivery. Release CI provisions the locked Chromium runtime before native tests.
+
+### Fixed
+
+- **Mixed batches invalidating their own refs.** Independent same-tab fills,
+  clicks and native selects now check all live targets before the first edit and
+  each later step before dispatch. Original node/UID bindings remain valid through
+  intermediate steps; the final snapshot supplies new refs. Disabled or replaced
+  targets stop safely, completed edits are retained, and a failed batch is never
+  automatically replayed. Malformed form fields retain ordinary argument errors.
+- Same-named controls and cloned DOM ref attributes cannot inherit an old
+  Playwright node identity. Stale refs return observed recovery controls;
+  first-field failures before dispatch remain recoverable zero-write failures.
+- Native `select` refuses custom menus with guidance to click their observed
+  options. The guide distinguishes committed autocomplete choices from typed
+  text, real tab IDs from ref segments, and independent batches from dynamic
+  picker transitions; oversized forms must be split at the advertised limit.
+- Recent user goals and corrections survive long tool loops within bounded
+  history limits. Flight guidance verifies origin, destination, trip type and
+  exact date before Search and on results, keeps results open when requested,
+  and distinguishes readable fares from an unpriced results shell or a booking.
+- Printed tool-call JSON or browser-form markup gets one bounded native-protocol
+  correction. The printed payload is never executed; repeated proposals end as
+  unfinished work. Partial batch failures remain failures through verification
+  and request projection, without turning page prose into execution errors.
+- Provider errors now distinguish rate limits, quota, authentication, paid-model
+  access, client-only routes, unavailable upstreams and unsupported image input.
+  Keyless Kilo model discovery filters out routes requiring paid/account access;
+  model vision capability comes from advertised metadata.
+- Connected Chrome scrolling uses observed native targets, and navigation/history
+  actions return current controls. Native dialogs do not trigger automatic replay
+  of the action that opened them. Timeouts after dispatch remain uncertain.
+- Hidden/minimized desktop windows throttle browser preview capture; parallel
+  preview requests share pending work and preserve the last useful frame. Browser
+  panels and background scopes retain their own state and cancellation boundaries.
+- Source desktop development uses a separate Electron profile to avoid installed
+  app cache/single-instance conflicts. Shutdown drains work and releases the
+  protected companion window. Failed Windows command termination stays visible
+  on its live job rather than causing an unhandled rejection or false completion.
+
+### Changed
+
+- The default tool-round ceiling is now 100, configurable through `MAX_TOOL_STEPS`;
+  the separate call ceiling and repeat/Stop guards remain enforced. Browser form
+  and sequence primitives count against the call budget.
+- Scheduled-browser permission classification shares operation metadata with the
+  foreground runtime. Test/provider configuration can use a read-only global
+  source while keeping disposable runtime storage separate from user data.
+- README, browser/skill instructions, release setup and investigation ledgers now
+  document current behavior, measured token costs, failed experiments and remaining
+  limitations. Generated logs, media, dumps and local assistant settings are not
+  release source.
+
+### Verification and limits
+
+- Local full suite: **1,108 passed, zero failures, one existing POSIX permission
+  skip on Windows**; final browser/desktop focus: **37/37**; browser lab: **183/183**.
+  Real native forms independently record one correct submission per backend and
+  receipt-mode variant; blocked/replaced controls produce no extra submission.
+- Desktop TypeScript/Vite builds pass, and the shipped ChatPane renders an actual
+  engine skill event with zero page errors. Two additional release-contract tests
+  enforce matching version/changelog metadata and browser setup before CI tests.
+- The unpacked Windows package reports version 2.5.1. Its full browser guide and
+  22 runtime modules match the source byte for byte; the renderer skill receipt,
+  unpacked native Chrome bridge and capture helper are present.
+- Experimental runtime/focus/history/evidence/progress flags remain **off by
+  default**. Connected Chrome still has its documented frame/transfer limits;
+  hidden text is evidence, not permission or proof of interaction availability.
+- No universal browser speedup, arbitrary-model success rate, completed flight
+  purchase or customer-form submission is claimed. Earlier free-model attempts
+  hit provider 429; full parity/timing and native headful checks remain documented
+  in [browser findings](docs/browser-use-reference-findings.md).
+
 ## [2.5.0] - 2026-10-05
 
 ### Added

@@ -13,6 +13,7 @@ export type State = {
   selectedId: string | null;
   threads: Record<string, ChatMessage[]>;
   running: Record<string, boolean>;
+  loadedSkills: Record<string, string[]>;
   unread: Record<string, boolean>;
   usage: Record<string, Usage>;
   approvals: Approval[];
@@ -25,7 +26,7 @@ export type State = {
 export const initialState: State = {
   jobs: [],
   phase: 'starting', chrome: 'custom', teammates: [], models: [], settings: null,
-  selectedId: null, threads: {}, running: {}, unread: {}, usage: {}, approvals: [],
+  selectedId: null, threads: {}, running: {}, loadedSkills: {}, unread: {}, usage: {}, approvals: [],
   deviceCode: null, error: null, compat: null, compatDismissed: false,
 };
 
@@ -88,11 +89,13 @@ export function reducer(state: State, action: Action): State {
   if (event.type === 'approval-resolved') return { ...state, approvals: state.approvals.filter(item => item.requestId !== event.requestId) };
   if (event.type === 'thread-cleared') return {
     ...state, threads: { ...state.threads, [event.threadId]: [] },
+    loadedSkills: { ...state.loadedSkills, [event.threadId]: [] },
     usage: { ...state.usage, [event.threadId]: { prompt_tokens: 0, completion_tokens: 0, estimated_cost: 0 } },
   };
   if (event.type === 'turn-start') return {
     ...state,
     running: { ...state.running, [event.threadId]: true },
+    loadedSkills: { ...state.loadedSkills, [event.threadId]: [] },
     threads: event.source === 'routine' ? state.threads : { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: `user-${event.turnId}`, role: 'user', content: event.text, attachments: event.attachments }] },
   };
   if (event.type === 'turn-end') return {
@@ -100,6 +103,9 @@ export function reducer(state: State, action: Action): State {
     running: { ...state.running, [event.threadId]: false },
     unread: event.threadId === state.selectedId ? state.unread : { ...state.unread, [event.threadId]: true },
     approvals: state.approvals.filter(item => item.threadId !== event.threadId),
+  };
+  if (event.type === 'skills-loaded') return {
+    ...state, loadedSkills: { ...state.loadedSkills, [event.threadId]: [...new Set([...(state.loadedSkills[event.threadId] || []), ...event.names])] },
   };
   if (event.type === 'message-start') return {
     ...state,

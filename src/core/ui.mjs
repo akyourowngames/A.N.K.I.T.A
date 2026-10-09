@@ -1,6 +1,7 @@
 import readline from "node:readline";
 import fs from "node:fs";
 import path from "node:path";
+import { SLASH_GROUPS, BANNER_HINT } from "./commands.mjs";
 
 export let colorEnabled =
   process.stdout.isTTY && !process.env.NO_COLOR && process.env.TERM !== "dumb";
@@ -150,7 +151,7 @@ export class Terminal {
   }
 }
 
-export function banner({ agentName, username, model, tools, autoApprove, cwd, envPath, count, project = null }) {
+export function banner({ agentName, username, model, tools, autoApprove, cwd, envPath, count, project = null, version = null, provider = null, hint = true }) {
   const width = 58;
   const pad = (s, len = width) => s + " ".repeat(Math.max(0, len - visibleLen(s)));
   const visibleLen = (s) => String(s).replace(/\x1b\[[0-9;]*m/g, "").length;
@@ -159,6 +160,8 @@ export function banner({ agentName, username, model, tools, autoApprove, cwd, en
     `agent      ${agentName}`,
     `user       ${username}`,
     project ? `project    ${project}` : null,
+    version ? `version    ${version}` : null,
+    provider ? `provider   ${provider}` : null,
     `model      ${model}`,
     `tools      ${tools ? "on" : "off"}${autoApprove ? "  (auto-approve)" : ""}`,
     `cwd        ${cwd}`,
@@ -179,45 +182,33 @@ export function banner({ agentName, username, model, tools, autoApprove, cwd, en
   for (const l of lines) process.stdout.write(c.cyan("  │") + pad(" " + l) + c.cyan("│") + "\n");
   process.stdout.write(c.cyan("  ╰" + "─".repeat(width) + "╯") + "\n");
   if (envPath) process.stdout.write(c.dim(`  config: ${envPath}\n`));
+  if (hint) process.stdout.write(c.dim(`  ${BANNER_HINT}\n`));
   process.stdout.write("\n");
 }
 
-export function helpText({ agentName }) {
+/** Column where command descriptions start; longer labels flow straight into the text. */
+const HELP_DESC_COL = 36;
+
+/** Renders the grouped command cheatsheet from the registry (single source of truth). */
+function commandGroupsText() {
+  const label = (i) => `${i.name}${i.args ? " " + i.args : ""}`;
+  const sections = SLASH_GROUPS.map((g) => {
+    const lines = g.items.map((i) => {
+      const l = label(i);
+      const alias = i.aliases?.length ? c.dim(`  (alias ${i.aliases.join(", ")})`) : "";
+      const col = l.length + 2 <= HELP_DESC_COL ? l.padEnd(HELP_DESC_COL) : `${l}  `;
+      return `  ${c.cyan(col)}${i.desc}${alias}`;
+    });
+    return [`  ${c.bold(g.title)}`, ...lines].join("\n");
+  });
+  return sections.join("\n\n");
+}
+
+export function helpText({ agentName, groupsOnly = false } = {}) {
+  const groups = commandGroupsText();
+  if (groupsOnly) return `${c.bold("commands")}\n${groups}`;
   return `${c.bold("commands")}
-  ${c.cyan("/help")}              this
-  ${c.cyan("/config")}            show .env values and where they come from
-  ${c.cyan("/reload")}            re-read .env without restarting
-  ${c.cyan("/skills")}            list built-in skills
-  ${c.cyan("/models")}            list available models
-  ${c.cyan("/model")} <id>        switch model
-  ${c.cyan("/tools")} on|off      enable/disable tool use
-  ${c.cyan("/auto")} on|off       toggle auto-approving tool calls
-  ${c.cyan("/cd")} <dir>          change the working directory tools use
-  ${c.cyan("/save")} [name]       save this conversation
-  ${c.cyan("/load")} <name>       load a saved conversation
-  ${c.cyan("/sessions")}          list saved conversations
-  ${c.cyan("/paste")}             paste multiple lines (end with a single .)
-  ${c.cyan("/usage")}             show token usage for this turn and session
-  ${c.cyan("/jobs")}              list running and completed commands
-  ${c.cyan("/job")} <id> [offset]  read new output (offset 0 replays retained output)
-  ${c.cyan("/input")} <id> <text>  send a line to a running command
-  ${c.cyan("/eof")} <id>           close a job's stdin
-  ${c.cyan("/stop")} <id>          stop a job and its child processes
-  ${c.cyan("/wait")} <id> [ms]     wait briefly for a job
-  ${c.cyan("/bg")} <command>       run a command in the background
-  ${c.cyan("/project")} [name]    switch project (no name = show the active one)
-  ${c.cyan("/projects")}          list the projects I know about
-  ${c.cyan("/brief")}             briefing now: inbox, watch changes, what needs you
-  ${c.cyan("/routines")}          scheduled prompts and their last result
-  ${c.cyan("/watches")}           pages being watched and their last reading
-  ${c.cyan("/browser")}           list, enable, or disable browser plugins
-  ${c.cyan("/mic")}               dictate one message (auto-sends on pause)
-  ${c.cyan("/voice")}             hands-free loop: VAD, barge-in, spoken replies
-  ${c.cyan("/say")} <text>        speak text aloud (Edge TTS)
-  ${c.cyan("/speak")} on|off      auto-speak every reply
-  ${c.cyan("/voices")} [filter]   list Edge TTS voices
-  ${c.cyan("/clear")}             reset the conversation
-  ${c.cyan("/exit")}              quit
+${groups}
 
 ${c.bold("keys")}
   ctrl-c              cancel the reply that is streaming, or quit when idle

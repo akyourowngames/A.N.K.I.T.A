@@ -12,6 +12,15 @@ function mockFetch(t, replies) {
 }
 const makeAgent = () => new Agent({ client: { baseUrl: 'https://test.invalid', headers: () => ({}) }, config: { tools: false, historyMessages: 40, historyLines: 40, maxTokens: 1000, memoryConsolidation: false } });
 
+for (const [label, response] of [
+  ['SSE', () => sse([delta('Partial'), { error: { code: 429, message: 'private-key-account' } }, '[DONE]'])],
+  ['JSON', () => Response.json({ error: { code: 'PAID_MODEL_AUTH_REQUIRED', message: 'private-key-account' } })],
+]) test(`HTTP-success ${label} provider errors cannot become successful empty replies or stream retries`, async t => {
+  const calls = mockFetch(t, [response()]);
+  await assert.rejects(makeAgent().send('Go'), error => /^provider_/.test(error.code) && !error.message.includes('private-key-account'));
+  assert.equal(calls(), 1);
+});
+
 test('a truncated model stream retries the same model step without duplicated visible text', async t => {
   const calls = mockFetch(t, [sse([delta('I have opened')]), sse([delta('I have opened the page.'), '[DONE]'])]);
   const agent = makeAgent(); let visible = '';

@@ -5,6 +5,13 @@ Scope lock: `suggested-tools` is a hint, never enforced. Standalone daemon agent
 
 Desktop extension: the agent enables skills, Settings lists the installed skill catalogue, and Electron packages `skills/` so installed builds can load the full instructions through the `skill` tool. The original v1 decisions below are retained as implementation history.
 
+Browser extension (2026-10-07): optional `auto-tools` metadata binds instruction
+loading to accepted discovery/use of native tools in interactive chats. The guide
+is held once per turn in the system prompt with a shared whole-body character
+budget; disabled skills and standalone agents remain excluded. Manual `skill`
+reads still work in browser focus. No user-text keyword matcher or extra model
+call was introduced. See [browser instructions](../guides/browser-use.md#browser-instructions).
+
 Reference standard: [agentskills.io](https://agentskills.io/home) (`SKILL.md` open format, progressive disclosure).
 
 ---

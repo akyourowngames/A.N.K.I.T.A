@@ -129,6 +129,28 @@ test('configured compatible model remains usable when model discovery is unavail
   assert.equal(client.headers(false).Authorization, undefined);
 });
 
+test('model discovery carries declared image support to the selected client', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ data: [
+    { id: 'text-only', architecture: { input_modalities: ['text'] }, supported_parameters: ['tools'] },
+    { id: 'vision', architecture: { input_modalities: ['text', 'image'] }, supported_parameters: ['tools'] },
+  ] }));
+  const client = new provider.CompatibleClient({ apiBase: 'https://fixture.test' });
+  await client.models();
+  assert.equal(client.modelCapabilities?.get('text-only')?.vision, false);
+  assert.equal(client.modelCapabilities?.get('vision')?.vision, true);
+});
+
+test('anonymous gateway catalogue excludes paid routes; adding an account key restores the complete catalogue', async t => {
+  t.mock.method(globalThis, 'fetch', async () => Response.json({ data: [
+    { id: 'free-route:free', pricing: { prompt: '0', completion: '0' }, supported_parameters: ['tools'] },
+    { id: 'paid-route', pricing: { prompt: '0.001', completion: '0.002' }, supported_parameters: ['tools'] },
+  ] }));
+  const client = new provider.CompatibleClient({ apiBase: 'https://fixture.test', freeOnly: true });
+  assert.deepEqual((await client.models()).map(model => model.id), ['free-route:free']);
+  client.apiKey = 'fixture-account-key';
+  assert.equal((await client.models()).length, 2);
+});
+
 test('hard DNS failures return immediately without retrying', async t => {
   let attempts = 0;
   t.mock.method(globalThis, 'fetch', async () => { attempts++; throw new TypeError('fetch failed', { cause: { code: 'ENOTFOUND' } }); });

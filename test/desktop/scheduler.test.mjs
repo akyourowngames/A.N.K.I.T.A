@@ -131,6 +131,14 @@ test('autonomous browser jobs can navigate, click and use saved login without si
   assert.equal(f.events.filter(e => e.type === 'approval-request').length, 0);
   await assert.rejects(f.scheduler.authorize(run, { action: 'open' }, { mode: 'local', url: 'https://new-site.example' }), /mode/);
 });
+
+test('scoped reading jobs retain native navigation, search and download-status access', async t => {
+  const f = await fixture(t);
+  const r = f.add({ browserPolicy: 'scoped', onNewRequest: 'deny', allow: { read: true, interact: false, login: false, sites: ['https://example.com/*'] } });
+  const run = { routineId: r.id, active: true, grants: new Set() };
+  for (const action of ['navigate', 'back', 'forward', 'find', 'downloads']) assert.equal(await f.scheduler.authorize(run, { action }, { mode: 'isolated', url: 'https://example.com/page' }), true);
+  await assert.rejects(f.scheduler.authorize(run, { action: 'handle_dialog', decision: 'accept' }, { mode: 'isolated', url: 'https://example.com/page' }), /denied/);
+});
 test('a ref rejected before interaction can recover; a model can stop for foreground MFA', async t => {
   const f = await fixture(t, async function(_prompt, hooks) {
     this.toolContext.onBrowserError(Object.assign(new Error('Stale ref; fresh snapshot'), { name: 'BrowserReferenceError' }));

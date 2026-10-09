@@ -213,13 +213,16 @@ test('Chrome typing sends only supported keyboard arguments and reads next refs 
   assert.ok(refFor(output, 'Alpha'), output);
 });
 
-test('live registered refs follow a unique re-rendered control but reject ambiguous replacements', async t => {
+test('live registered refs reject replacements and require the recovered observation before editing', async t => {
   const live = await liveSession(t); if (!live) return;
   await browser.run({ action: 'open', url: live.url }, live.ctx);
   const first = await browser.run({ action: 'snapshot' }, live.ctx);
   const origin = refFor(first, 'Where from?'); assert.ok(origin, first);
   await live.adapter.page.getByRole('combobox').evaluate(element => { element.outerHTML = element.outerHTML.replace(/ data-ankita-ref="[^"]*"/, ''); });
-  assert.match(await browser.run({ action: 'act', op: 'fill', ref: origin, text: 'New origin' }, live.ctx), /fill complete/);
+  const replacement = await browser.run({ action: 'act', op: 'fill', ref: origin, text: 'Must not be filled' }, live.ctx);
+  assert.match(replacement, /Stale ref/);
+  assert.equal(await live.adapter.page.getByRole('combobox').inputValue(), '');
+  assert.match(await browser.run({ action: 'act', op: 'fill', ref: refFor(replacement, 'Where from?'), text: 'New origin' }, live.ctx), /fill complete/);
   assert.equal(await live.adapter.page.getByRole('combobox').inputValue(), 'New origin');
   const second = await browser.run({ action: 'snapshot' }, live.ctx);
   const next = refFor(second, 'Where from?');

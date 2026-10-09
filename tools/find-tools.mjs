@@ -1,21 +1,20 @@
 import { CATEGORIES, CATEGORIES as ALL, findCategory } from "./catalog.mjs";
 import { managedMcpSummaries } from '../src/integrations/browser-routing.mjs';
+import { focusAllows, setToolFocus, BROWSER_DISCOVERY_GUIDANCE } from '../src/core/tool-focus.mjs';
 
 export const name = "find_tools";
 export const description =
-  "Load extra tools that are not in your default set: searching the internet and scraping pages, " +
-  "a real browser, Git, port/process management, scheduled routines and page watches, project management and memory, GitHub notifications, and " +
-  "directory creation. Call this first whenever a task needs one of those; the tools become callable " +
-  "immediately afterwards.";
+  "Discover tools for browser, web, files, Git, processes, schedules, apps and memory; accepted tools become available immediately. " + BROWSER_DISCOVERY_GUIDANCE;
 
 export const parameters = {
   type: "object",
   properties: {
+    scope: { type: 'string', enum: ['focus', 'general'], description: 'For browser focus use exactly query="browser", scope="focus". Focus accepts only the browser group and retains memory/checklist/skills/discovery. General restores other tools in this same conversation.' },
     query: {
       type: "string",
       description:
         "What you want to do, in a few words - e.g. 'search the web', 'remind me daily', " +
-        "'where does this project stand', 'my github notifications'.",
+        "'where does this project stand', 'my github notifications'. For browser use exactly 'browser'; broad phrases can match unrelated groups.",
     },
   },
   required: ["query"],
@@ -92,6 +91,9 @@ function activated(state) {
 }
 
 export function run(args = {}, ctx = {}) {
+  if (args.scope !== undefined && !['focus', 'general'].includes(args.scope)) return 'Error: tool scope must be focus or general. Tool access was not changed.';
+  // An explicit exit must work even when the desired tool is core or the query misses.
+  const restored = args.scope === 'general' ? setToolFocus(ctx.state, 'general', []) : '';
   const set = activated(ctx.state);
   const query = String(args.query ?? "").trim();
   const skillsEnabled = ctx.skillsEnabled !== false;
@@ -101,17 +103,26 @@ export function run(args = {}, ctx = {}) {
   const held = available.filter((s) => s.deferred);
 
   if (!query) {
-    return `Tell me what you want to do and I will load the right tools.\nGroups you can load:\n${catalogue(held, skillsEnabled)}`;
+    return `${restored ? restored + '\n' : ''}Tell me what you want to do and I will load the right tools.\nGroups you can load:\n${catalogue(held, skillsEnabled)}`;
   }
 
   const matched = matchCategories(query).filter(id => skillsEnabled || id !== 'skills');
   const servers = matchMcpServers(query, held);
+  const requestedTools = [...matched.flatMap(id => findCategory(id).tools.map(tool => tool.name)),
+    ...available.filter(server => servers.includes(server.id)).flatMap(server => server.tools.map(tool => `mcp__${server.id}__${tool}`))];
+  const browserTools = new Set(findCategory('browser').tools.map(tool => tool.name));
+  if (args.scope === 'focus' && ctx.config?.browserToolFocus === true && (!requestedTools.length || requestedTools.some(name => !browserTools.has(name)))) {
+    return 'Error: Browser focus requires only the browser group. Call find_tools(query="browser", scope="focus") to enter it, or use scope="general" for another group. No tools were loaded.';
+  }
+  if (args.scope !== 'general' && requestedTools.some(name => !focusAllows(ctx.state, name))) {
+    return 'Error: This group is outside the current tool focus. Call find_tools(scope="general", query=the needed group) first. No tools were loaded and focus was not changed.';
+  }
   if (!matched.length && !servers.length) {
     // Never guess which family was meant - show them all and ask again. But a
     // miss usually means the capability is not here at all, so point at the one
     // place it might be bought in from, rather than dead-ending.
     return (
-      `Nothing matched "${query}". Everything you can load right now:\n${catalogue(held, skillsEnabled)}\n\n` +
+      `${restored ? restored + '\n' : ''}Nothing matched "${query}". Everything you can load right now:\n${catalogue(held, skillsEnabled)}\n\n` +
       "Tip: booking, shopping, and media playback can usually be done directly in " +
       "a website - load the `browser` group with find_tools and drive the site. " +
       "If instead you need a whole capability that is not in that list - " +
@@ -159,9 +170,12 @@ export function run(args = {}, ctx = {}) {
 
   const fromMcp = available.filter((s) => servers.includes(s.id));
   const mcpTools = fromMcp.flatMap((s) => s.tools.map((t) => `mcp__${s.id}__${t}`));
+  const focus = restored || (ctx.config?.browserToolFocus === true ? setToolFocus(ctx.state, args.scope, requestedTools) : '');
+  // Notify the chat's skill loader only after discovery passed the focus boundary.
+  ctx.onToolsActivated?.(requestedTools);
 
   return (
-    `Loaded ${[...matched, ...servers].join(", ")}.\n${summaries.join("\n")}` +
+    `Loaded ${[...matched, ...servers].join(", ")}.\n${summaries.join("\n")}` + (focus ? `\n${focus}` : '') +
     (loaded.length ? `\nNow callable: ${loaded.join(", ")}.` : "") +
     (mcpTools.length ? `\nNow callable: ${mcpTools.join(", ")}.` : "") +
     (already.length && !loaded.length && !serversLoaded.length

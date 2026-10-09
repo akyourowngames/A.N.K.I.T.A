@@ -38,6 +38,10 @@ import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
 import { loadSkills, reloadSkills } from './skills.mjs';
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
+import {
+  FLAGS, USAGE_LABEL_WIDTH, COMPOSIO_ACTIONS, TOOL_SLUG_PATTERN, FALLBACK_HINT,
+  commandNames, itemFor, unknownActionMessage, closestCommand,
+} from "./commands.mjs";
 import { LiveRenderer } from "./markdown.mjs";
 import { names as toolNames, cleanupJobs, displayArgs } from "../../tools/index.mjs";
 import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from '../tooling/job-ui.mjs';
@@ -73,32 +77,19 @@ function packageVersion() {
 
 const VERSION = packageVersion();
 
+const USAGE_OPTIONS = FLAGS.map((f) => {
+  const left = f.short ? `${f.short}, ${f.long}` : `    ${f.long}`;
+  const label = f.value ? `${left} ${f.value}` : left;
+  return `  ${label.padEnd(USAGE_LABEL_WIDTH)}${f.desc}`;
+}).join("\n");
+
 const USAGE = `${c.bold("ankita")} ${c.dim("·")} GitHub Copilot chat in your terminal
 
 ${c.bold("usage")}
   ankita [options] [message...]
 
 ${c.bold("options")}
-  -p, --prompt <text>   send one message and exit (non-interactive)
-  -m, --model <id>      model to use
-      --max-tokens <n>  cap generated tokens per reply
-      --list-models     print available models and exit
-      --config          print resolved configuration and exit
-      --continue [name] resume a saved session (default: autosave)
-  -y, --yes             auto-approve every tool call
-      --no-tools        disable tool use
-      --no-banner       hide the startup banner
-      --plain           no colors or markdown boxes (best for pipes)
-      --json            print one JSON result (requires -p)
-      --api-base <url>  use an OpenAI-compatible endpoint instead of Copilot
-      --api-key <key>   credentials for --api-base
-      --speak           read replies aloud (Edge TTS)
-      --voice           start hands-free voice mode (VAD + barge-in)
-      --daemon          run in the background: schedules, watches, Telegram inbox
-      --takeover        request the desktop scheduler to stop before owning routines
-      --brief           print a briefing now and exit
-  -h, --help            show this
-  -v, --version         show version
+${USAGE_OPTIONS}
 
 ${c.bold("config")}
   Read from ${c.cyan(".env")} in the working directory, falling back to
@@ -264,13 +255,7 @@ function completePath(prefix) {
   return [hits, prefix];
 }
 
-const COMMANDS = [
-  ...JOB_COMMANDS,
-  "/help", "/config", "/reload", "/skills", "/models", "/model", "/tools", "/auto", "/cd",
-  "/save", "/load", "/sessions", "/paste", "/usage", "/mic", "/voice", "/say",
-  "/speak", "/voices", "/brief", "/routines", "/watches", "/daemon",
-  "/project", "/projects", "/mcp", "/browser", "/composio", "/clear", "/exit", "/quit",
-];
+const COMMANDS = [...JOB_COMMANDS, ...commandNames()];
 
 function skillsListText() {
   const skills = loadSkills();
@@ -279,10 +264,7 @@ function skillsListText() {
     : '  No built-in skills installed.';
 }
 
-const MCP_ACTIONS = ["list", "add", "remove", "enable", "disable", "reload"];
-const COMPOSIO_ACTIONS = ["status", "list", "accounts", "search", "connect", "disconnect", "reload"];
-
-function makeCompleter(models) {
+export function makeCompleter(models) {
   return (line) => {
     try {
       if (line.startsWith("/")) {
@@ -302,27 +284,20 @@ function makeCompleter(models) {
           const hits = names.map((n) => `${cmd} ${n}`).filter((s) => s.startsWith(line));
           return [hits, line];
         }
-        if (cmd === "/mcp") {
+        const item = itemFor(cmd);
+        if (item?.actions?.length) {
           if (!arg.includes(" ")) {
-            const hits = MCP_ACTIONS.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
+            const hits = item.actions.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
             return [hits, line];
           }
           const action = arg.split(/\s+/)[0];
-          if (action === "reload" || action === "remove" || action === "enable" || action === "disable") {
+          if (item.idActions?.includes(action)) {
             const ids = new McpStore(MCP_FILE).load().servers.map((s) => s.id);
             const used = `${cmd} ${action}`;
             const hits = ids.map((id) => `${used} ${id}`).filter((s) => s.startsWith(line));
             return [hits, line];
           }
           return [[], line];
-        }
-        if (cmd === "/composio") {
-          const hits = COMPOSIO_ACTIONS.map((a) => `${cmd} ${a}`).filter((s) => s.startsWith(line));
-          return [hits, line];
-        }
-        if (cmd === "/browser") {
-          const hits = ['list', 'enable isolated', 'enable local', 'disable isolated', 'disable local'].map(a => `${cmd} ${a}`).filter(s => s.startsWith(line));
-          return [hits, line];
         }
         if (cmd === "/load" || cmd === "/cd" || cmd === "/save") {
           const [hits, frag] = completePath(arg);
@@ -603,6 +578,8 @@ export async function main() {
       agentName: config.agentName,
       username: config.username,
       model,
+      version: VERSION,
+      provider: provider.name,
       tools: agent.useTools,
       autoApprove: agent.autoApprove,
       cwd: process.cwd(),
@@ -1255,11 +1232,14 @@ export async function main() {
       agentName: `${config.agentName} \u25d7 daemon`,
       username: config.username,
       model,
+      version: VERSION,
+      provider: provider.name,
       tools: agent.useTools,
       autoApprove: agent.autoApprove,
       cwd: process.cwd(),
       envPath: config.envPath || config.globalEnvPath,
       count: 0,
+      hint: false,
     });
     const daemon = new Daemon({
       store,
@@ -1338,6 +1318,13 @@ export async function main() {
       case "/exit":
       case "/quit":
         await shutdown(0);
+        break;
+
+      case "/commands":
+        term.line("");
+        term.line(helpText({ agentName: config.agentName, groupsOnly: true }));
+        term.line(c.dim("  tab-completion works on every command and subcommand above."));
+        term.line("");
         break;
 
       case "/help":
@@ -1645,16 +1632,25 @@ export async function main() {
           }
           term.line(c.dim(`  ${mode === 'local' ? 'Chrome local' : 'Playwright Browser'} ${enabled ? 'enabled' : 'disabled'}.`));
           if (enabled && mode === 'local') term.line(c.dim('  Configure and start the Chrome connection in desktop Plugins → By Ankita.'));
-        } else term.line(c.red('  usage: /browser list|enable|disable [isolated|local]'));
+        } else term.line(c.red(`  ${unknownActionMessage("/browser", action)}`));
         break;
       }
 
       case "/composio": {
         const [action = "status", service, ...rest] = arg.split(/\s+/).filter(Boolean);
+        if (action !== "status" && !COMPOSIO_ACTIONS.includes(action)) {
+          term.line(c.red(`  ${unknownActionMessage("/composio", action)}`));
+          break;
+        }
         const options = { action, service };
         if (action === "search") options.query = [service, ...rest].filter(Boolean).join(" ");
         if (action === "connect") options.alias = rest.length ? rest.join(" ") : undefined;
         if (action === "disconnect") options.accountId = rest[0];
+        // allow/always/deny take either a tool slug (GMAIL_SEND_EMAIL) or a
+        // service (gmail); a slug with uppercase or an underscore is a tool.
+        if (action === "allow" || action === "always" || action === "deny") {
+          if (service && TOOL_SLUG_PATTERN.test(service)) options.tool = service;
+        }
         try {
           const result = await composioTool.run(options, { config, mcp });
           term.line("");
@@ -1775,7 +1771,7 @@ export async function main() {
           break;
         }
 
-        term.line(c.red(`  unknown action "${sub}" - try: ${MCP_ACTIONS.join(", ")}`));
+        term.line(c.red(`  ${unknownActionMessage("/mcp", sub)}`));
         break;
       }
 
@@ -1913,8 +1909,10 @@ export async function main() {
         break;
       }
 
-      default:
-        term.line(c.red(`  unknown command "${cmd}" - try /help`));
+      default: {
+        const near = closestCommand(cmd);
+        term.line(c.red(`  unknown command "${cmd}"${near ? ` - did you mean ${near}?` : ` - ${FALLBACK_HINT}`}`));
+      }
     }
   }
 

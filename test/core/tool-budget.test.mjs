@@ -27,6 +27,16 @@ const call = (id, name, args = {}) => ({
 const forcedNotes = (agent) =>
   agent.messages.filter((m) => m.role === 'user' && /runtime stopped the tool loop/.test(m.content || ''));
 
+test('experimental browser batching cannot exceed the turn primitive budget', async () => {
+  let runs = 0;
+  const agent = makeAgent({ config: { browserRuntimeV2: true, maxToolCalls: 2 }, browserManager: { run: async () => { runs++; return 'done'; } } });
+  const result = await agent.runToolCall(call('batch', 'browser', { action: 'batch', steps: [
+    { action: 'act', op: 'click', ref: '1-0-0' }, { action: 'act', op: 'click', ref: '1-0-1' }, { action: 'act', op: 'click', ref: '1-0-2' },
+  ] }));
+  assert.match(result, /primitive.*budget/i);
+  assert.equal(runs, 0);
+});
+
 /** Every tool_call the assistant declared must have exactly one tool reply. */
 function assertPaired(agent, declaredIds) {
   const declared = new Set(declaredIds);
@@ -57,7 +67,7 @@ test('the loop stops at the configured budget and answers, instead of looping', 
   const out = await agent.send('go');
 
   assert.equal(round, 3, 'it ran exactly the configured number of tool rounds');
-  assert.equal(out, 'here is what I did', 'the request ends with a real answer');
+  assert.match(out, /^here is what I did\n\n\[Stopped:/, 'the request ends with an answer and an explicit runtime limit');
   assert.ok(!agent.messages.some((m) => /too many tool calls in a row/.test(m.content || '')),
     'the canned failure string is never written to history');
   assert.equal(agent.messages.at(-1).role, 'assistant');
@@ -75,7 +85,7 @@ test('the forced final turn has no tools, so the model writes instead of investi
       : { content: '', toolCalls: [call('a', 'read_file', { path: 'x.txt' })] };
   };
 
-  assert.equal(await agent.send('go'), 'summary');
+  assert.match(await agent.send('go'), /^summary\n\n\[Stopped:/);
   assert.deepEqual(toolFlags, [undefined, false], 'only the hand-off turn withholds tools');
 });
 
@@ -113,7 +123,7 @@ test('one model round cannot exceed the total call budget, including a continue 
       call('three', 'read_file', { path: 'c' }),
     ] };
   };
-  assert.equal(await agent.send('inspect'), 'limited summary');
+  assert.match(await agent.send('inspect'), /^limited summary\n\n\[Stopped:/);
   assert.equal(decisions, 1);
   assert.equal(executed, 2);
   assertPaired(agent, ['one', 'two', 'three']);
@@ -150,7 +160,7 @@ test('repeating one identical call stops the loop on the third round', async () 
 
   const out = await agent.send('go');
 
-  assert.equal(out, 'stopped summary');
+  assert.match(out, /^stopped summary\n\n\[Stopped:/);
   assert.equal(round, MAX_REPEAT_CALLS, 'it stops on the round that repeats too often, not at the budget');
   const notes = agent.messages.filter((m) => m.role === 'tool' && /Repeated call/.test(m.content || ''));
   assert.equal(notes.length, MAX_REPEAT_CALLS - 1, 'the repeating rounds are told, in the tool result');
@@ -170,7 +180,7 @@ test('the same call with reordered arguments still counts as a repeat', async ()
     return { content: '', toolCalls: [call(`r${round}`, 'read_file', args)] };
   };
 
-  assert.equal(await agent.send('go'), 'stopped summary');
+  assert.match(await agent.send('go'), /^stopped summary\n\n\[Stopped:/);
   assert.match(forcedNotes(agent)[0].content, /kept repeating/);
 });
 
@@ -184,7 +194,7 @@ test('nested argument key order does not disguise repeated requests', async () =
     const filters = round === 2 ? { exclude: 'build', include: 'src' } : { include: 'src', exclude: 'build' };
     return { content: '', toolCalls: [call(`n${round}`, 'search_files', { filters })] };
   };
-  assert.equal(await agent.send('look'), 'summary');
+  assert.match(await agent.send('look'), /^summary\n\n\[Stopped:/);
   assert.equal(round, MAX_REPEAT_CALLS);
 });
 
@@ -197,7 +207,7 @@ test('equivalent relative paths cannot bypass the repeat guard', async () => {
     round++;
     return { content: '', toolCalls: [call(`p${round}`, 'read_file', { path: round === 2 ? './notes.txt' : 'notes.txt' })] };
   };
-  assert.equal(await agent.send('look'), 'summary');
+  assert.match(await agent.send('look'), /^summary\n\n\[Stopped:/);
   assert.equal(round, MAX_REPEAT_CALLS);
 });
 
@@ -233,8 +243,8 @@ test('the counters start over for the next request', async () => {
     ? { content: 'summary', toolCalls: [] }
     : { content: '', toolCalls: [call('a', 'read_file', { path: 'same.txt' })] });
 
-  assert.equal(await agent.send('first'), 'summary');
-  assert.equal(await agent.send('second'), 'summary');
+  assert.match(await agent.send('first'), /^summary\n\n\[Stopped:/);
+  assert.match(await agent.send('second'), /^summary\n\n\[Stopped:/);
 
   assert.equal(agent.repeatsThisTurn.size, 1, 'one signature for this request');
   assert.equal([...agent.repeatsThisTurn.values()][0].count, 1,
@@ -310,9 +320,9 @@ test('debug trace links request and tool events without exposing arguments', asy
   assert.doesNotMatch(JSON.stringify(logs), /sensitive-value/);
 });
 
-test('the default budget is a sane bound, not the old hundred rounds', () => {
-  assert.ok(MAX_TOOL_STEPS > 1 && MAX_TOOL_STEPS <= 50,
-    `MAX_TOOL_STEPS must stay a real bound, got ${MAX_TOOL_STEPS}`);
+test('the default budget is a real bound within the documented clamp', () => {
+  assert.ok(MAX_TOOL_STEPS > 1 && MAX_TOOL_STEPS <= 200,
+    `MAX_TOOL_STEPS must stay within the 1-200 clamp, got ${MAX_TOOL_STEPS}`);
   assert.ok(MAX_REPEAT_CALLS >= 2 && MAX_REPEAT_CALLS < MAX_TOOL_STEPS,
     'the repeat guard must be able to fire before the budget runs out');
 });

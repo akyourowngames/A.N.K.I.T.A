@@ -44,7 +44,7 @@ export type PluginsOverview = { mode: 'direct' | 'broker' | 'unavailable'; live:
 export type PluginsCatalogPage = { cards: PluginCard[]; nextCursor: string | null };
 export type BrowserPlugin = { id: string; name: string; description: string; mode: 'isolated' | 'local'; enabled: boolean; ready: boolean; reason: string; allowedSites: string[]; blockedSites: string[]; headless?: boolean; connection?: 'profile' | 'port' | 'active'; port?: number };
 export type BrowserPluginsOverview = { isolated: BrowserPlugin; local: BrowserPlugin };
-export type BrowserSessionView = { mode: 'isolated' | 'local' | 'external' | null; status: string; step: string; tabs: { id: string; url: string; title: string; active: boolean }[]; screenshot: string | null; notice?: import('../../src/integrations/browser-errors.mjs').BrowserNotice | null };
+export type BrowserSessionView = { mode: 'isolated' | 'local' | 'external' | null; status: string; step: string; tabs: { id: string; url: string; title: string; active: boolean }[]; screenshot: string | null; notice?: import('../../src/integrations/browser-errors.mjs').BrowserNotice | null; progress?: import('./browser-progress.mjs').BrowserProgress; backgrounded?: boolean; dialog?: import('../../tools/browser/dialogs.mjs').BrowserDialog };
 export type SecureStoreRecord = { id: string; website: string; username: string; updatedAt: string; hasPassword: boolean };
 export type SecureStoreRequest = { type: 'secure-store-request'; requestId: string; threadId: string; callId: string; website: string; username: string; canSave: boolean; message: string };
 export type SecureStoreStatus = { type: 'secure-store-status'; threadId: string; callId: string; website: string; username: string; state: string; message: string };
@@ -97,6 +97,7 @@ export type EngineEvent = (
   | { type: 'model-changed'; threadId: string; model: string }
   | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine'; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string }
+  | { type: 'skills-loaded'; threadId: string; turnId: string; names: string[] }
   | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }
   | { type: 'tool-call'; threadId: string; callId: string; name: string; args: unknown }

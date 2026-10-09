@@ -1,8 +1,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
 import { IPC_CONTRACT, checkCompat } from '../../desktop/shared/version.mjs';
 
 const identity = (version, contract = IPC_CONTRACT) => ({ version, contract });
+
+test('release metadata agrees across package, lockfile and published changelog', () => {
+  const pkg = JSON.parse(fs.readFileSync(new URL('../../package.json', import.meta.url), 'utf8'));
+  const lock = JSON.parse(fs.readFileSync(new URL('../../package-lock.json', import.meta.url), 'utf8'));
+  const notes = fs.readFileSync(new URL('../../CHANGELOG.md', import.meta.url), 'utf8');
+  assert.equal(lock.version, pkg.version); assert.equal(lock.packages[''].version, pkg.version);
+  assert.ok(notes.includes(`## [${pkg.version}]`), 'the workflow needs hand-written notes for this exact version');
+});
+
+test('release CI provisions its locked browser before enforcing native regression tests', () => {
+  const workflow = fs.readFileSync(new URL('../../.github/workflows/release.yml', import.meta.url), 'utf8');
+  const install = workflow.indexOf('node node_modules/playwright/cli.js install chromium');
+  const tests = workflow.indexOf('- run: npm test');
+  assert.ok(install > workflow.indexOf('- run: npm ci') && install < tests, 'a clean runner needs Chromium before tests, using the installed locked CLI');
+  assert.doesNotMatch(workflow.slice(install, tests + '- run: npm test'.length), /continue-on-error/);
+});
 
 test('the contract version is a number the two halves can compare', () => {
   assert.equal(typeof IPC_CONTRACT, 'number');

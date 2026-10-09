@@ -9,6 +9,43 @@ the tree but not yet packaged.
 
 No unreleased changes.
 
+## 2.5.1 — 2026-10-09
+
+### Browser reliability, evidence and desktop progress
+
+- Automatic browser instructions precede decisions that advertise browser tools;
+  an actual whole-body request receipt appears in the desktop header. The next
+  turn/clear resets it. No router or memory migration is added.
+- Mixed independent fills/clicks/selects preflight current targets and defer
+  intermediate snapshots, preserving original refs. Replaced/blocked targets
+  stop with accurate partial receipts and fresh controls; no automatic replay.
+- Markdown reads, bounded literal find/chunks, hidden DOM evidence and native
+  control-state flags improve page interpretation. Actual node identity prevents
+  same-label/cloned-ref retargeting. Original flight goals survive bounded history
+  trimming, and route/date/results evidence is checked before completion claims.
+- Live browser phases, per-scope state, takeover dialogs and throttled hidden
+  previews make active work and uncertainty visible. Source dev profiles avoid
+  installed-app cache contention, and shutdown releases the companion after drain.
+- Experimental structured receipts, guarded Playwright sequences, explicitly
+  selected uploads and bounded workspace downloads remain behind runtime V2.
+  Browser focus, request projection, retained evidence and progress diagnostics
+  remain independently opt-in, with no causal speed claim.
+
+### Providers, terminal and release checks
+
+- Provider errors distinguish quota/rate limits from authentication, paid/client
+  restrictions, image support and upstream failure. Keyless Kilo discovery keeps
+  eligible free routes, and vision support uses catalogue metadata.
+- CLI help, `/commands`, subcommand completion and typo suggestions use a shared
+  registry. Startup shows version/provider; Composio tier arguments are validated.
+- Default tool rounds increase to 100 with the separate call/repeat/Stop guards
+  retained. Failed Windows job termination is recorded without claiming exit.
+- Main/lab native regression, actual HTTP/renderer receipts and release metadata
+  checks accompany the repair. CI downloads locked Chromium before tests. Full
+  source release notes are in [CHANGELOG.md](../../CHANGELOG.md#251---2026-10-09),
+  with measured outcomes and known model/native-desktop limits in
+  [browser findings](../browser-use-reference-findings.md).
+
 ## 2.5.0 — 2026-10-05
 
 ### Desktop workspace, companion and capture

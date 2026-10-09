@@ -1,0 +1,12 @@
+export type BrowserStatus = 'executed' | 'failed' | 'uncertain' | 'partial' | 'not_run';
+export type BrowserCapabilities = { guardedSequences: boolean; pageTextSearch: boolean; chunkedRead: boolean; documentIdentity: boolean; dialogs: boolean; downloads: boolean; uploads: boolean };
+export type BrowserControl = { ref: string; frameId: string | null; role: string; name: string; states: Record<string, string | boolean>; editable: boolean | null; actionable: boolean | null; group?: { id: string; name: string } | null };
+export type BrowserTextChunk = { sourceUrl: string; frameId: string | null; start: number; end: number; text: string; observationId: string };
+export type BrowserObservation = { version: number; id: string; mode: 'isolated' | 'local'; tabId: string | null; url: string; documentId: string | null; controls: BrowserControl[]; context: BrowserTextChunk[]; omissions: { truncated: boolean; frames: number | null; controls: number | null }; capabilities: BrowserCapabilities };
+export type BrowserStepReceipt = { index: number; callIndex?: number; status: Exclude<BrowserStatus, 'partial'>; errorCode?: string; retrySafe: boolean };
+export type BrowserEvidence = { id: string; kind: 'observed_text' | 'field_value' | 'url' | 'artifact'; sourceUrl: string; observationId: string; text: string };
+export type BrowserArtifact = { kind: 'screenshot' | 'download'; path: string; bytes: number | null };
+export type BrowserAttention = { dialog: { type: string | null; message: string; tabId: string | null } };
+export type BrowserActionResult = { version: number; status: BrowserStatus; action: string; observation: BrowserObservation | null; observations?: BrowserObservation[]; attention?: BrowserAttention; steps: BrowserStepReceipt[]; evidence: BrowserEvidence[]; artifacts: BrowserArtifact[]; error: { code: string; message: string; recovery: string } | null; timings: Record<string, number>; output: unknown };
+export function browserActionResult(input: Omit<Partial<BrowserActionResult>, 'error'> & { action: string; error?: Error | null; dispatched?: boolean; completed?: number; cost?: number }): BrowserActionResult;
+export function formatBrowserResult(result: BrowserActionResult): unknown;
