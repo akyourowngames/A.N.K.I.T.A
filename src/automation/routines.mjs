@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { parseCron, matchCron, normalizeSchedule, describeCron, parseDuration, formatDuration } from "./cron.mjs";
 import { writeTextFile } from "../../tools/shared/_shared.mjs";
-import { normalizeRoutine, JOB_SUMMARY_MAX_CHARS } from './job-policy.mjs';
+import { normalizeRoutine, routineOutcomeAt, JOB_SUMMARY_MAX_CHARS, JOB_HISTORY_KEEP } from './job-policy.mjs';
 import { redactValue } from '../security/secret-scrubber.mjs';
 
 /**
@@ -142,7 +142,7 @@ export class RoutineStore {
     const next = normalizeRoutine({ ...record, ...patch, id: record.id,
       lastOutcomeAt: patch.lastStatus !== undefined
         ? patch.lastOutcomeAt || patch.lastRun || patch.lastFireAt || new Date().toISOString()
-        : record.lastOutcomeAt || (record.lastStatus ? record.lastFireAt || record.lastRun : null),
+        : record.lastStatus ? routineOutcomeAt(record) : null,
       allow: { ...record.allow, ...patch.allow }, budget: { ...record.budget, ...patch.budget } });
     next.cron = normalizeSchedule(next.cron);
     if (!next.cron || !parseCron(next.cron)) throw new Error('invalid schedule');
@@ -178,7 +178,7 @@ export class RoutineStore {
     this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
-    routine.lastOutcomeAt ||= routine.lastStatus ? routine.lastFireAt || routine.lastRun : null;
+    routine.lastOutcomeAt ||= routine.lastStatus ? routineOutcomeAt(routine) : null;
     routine.lastRun = at || new Date().toISOString();
     if (routine.runAt) routine.runAt = null;
     this.save();
@@ -196,6 +196,7 @@ export class RoutineStore {
     routine.lastOutcomeAt = routine.lastRun;
     routine.lastSummary = summary ? String(summary).slice(0, 400) : null;
     if (routine.templateId && status === 'ok') routine.lastSuccessfulResult = { at: routine.lastRun, text: String(summary || '').slice(0, JOB_SUMMARY_MAX_CHARS) };
+    routine.runHistory = [...(Array.isArray(routine.runHistory) ? routine.runHistory : []), { at: routine.lastRun, status, summary: routine.lastSummary }].slice(-JOB_HISTORY_KEEP);
     routine.runs = (routine.runs || 0) + 1;
     this.save();
     return routine;

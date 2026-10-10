@@ -1,13 +1,22 @@
 import { createInterface } from 'node:readline/promises';
+import path from 'node:path';
 import { scaffoldSkill, SCAFFOLD_USAGE } from '../skills/scaffold.mjs';
 import { commandCheatSheet } from './cheat-sheet.mjs';
 import { RoutineStore } from '../automation/routines.mjs';
-import { STATE_FILE } from './config.mjs';
+import { STATE_FILE, SESSIONS_DIR, loadConfig } from './config.mjs';
 import { enableJobTemplate, jobTemplatesText } from '../automation/templates.mjs';
+import { jobRunbook } from '../automation/runbooks.mjs';
+import { JOB_BROWSER_DIRECTORY } from '../automation/job-policy.mjs';
 
 /** Local commands run before provider bootstrap so authoring works offline. */
 export async function runLocalCommand(argv, { ask, write = text => console.log(text) } = {}) {
   if (argv[0] === 'commands') { write(commandCheatSheet({ query: argv.slice(1).join(' ') })); return true; }
+  if (argv[0] === 'runbook') {
+    const options = parseLocalOptions(argv.slice(2), ['--state-file', '--runs-dir', '--time-zone']);
+    const routine = new RoutineStore(options['--state-file'] || STATE_FILE).load().findRoutine(argv[1]);
+    write(jobRunbook(routine, { runsDir: options['--runs-dir'] || path.join(SESSIONS_DIR, JOB_BROWSER_DIRECTORY), timeZone: options['--time-zone'] || loadConfig().timeZone }));
+    return true;
+  }
   if (argv[0] === 'jobs' && argv[1] === 'templates') {
     if (argv.length !== 2) throw new Error('Usage: ankita jobs templates');
     write(jobTemplatesText()); return true;

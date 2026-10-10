@@ -27,6 +27,17 @@ export const JOB_EXECUTION_POLICIES = Object.freeze([JOB_EXECUTION_COMPLETE, JOB
 export const SCHEDULE_TASK_GUIDANCE = 'Write prompt as clear, standalone execution instructions for the future worker, not a label or a copy of the scheduling request. Specify the objective, exact account/resource, known working method, remaining steps, observed completion evidence, output format and how to use the previous successful result when comparing readings. Include only relevant facts; do not invent a verified method or credentials. Prefer a known rendered-browser method over endpoints already observed to fail. The worker has no foreground conversation or Chrome session. Defining a schedule does not require a signed-in session, credentials or existing element refs: the worker observes fresh controls and checks saved sign-in at execution. schedule is already callable; do not request permission to discover it. Do not store element refs or passwords. description is only a brief card preview; prompt is the authoritative task shown in its details. Regular desktop jobs default to complete execution: do not invent token, time or tool ceilings. Set executionPolicy=bounded only if the user explicitly requests limits. Ask only for missing identity, task or timing details; create the task directly and run it immediately only when requested.';
 export const JOB_MUTABLE_FIELDS = Object.freeze(['name', 'description', 'kind', 'browserPolicy', 'executionPolicy', 'cron', 'prompt', 'threadId', 'projectId', 'projectDetached', 'allow', 'onNewRequest', 'headless', 'timeoutMs', 'budget', 'enabled']); // Shared definition contract for model schemas and durable updates.
 
+/** Legacy desktop lastRun is the start time; matching receipts hold completion time. */
+export function routineOutcomeAt(routine) {
+  if (routine.lastOutcomeAt) return routine.lastOutcomeAt;
+  const receipt = routine.lastReceipt;
+  const receiptAt = Date.parse(receipt?.at);
+  const latestFire = Math.max(...[routine.lastRun, routine.lastFireAt].map(at => Number.isFinite(Date.parse(at)) ? Date.parse(at) : -Infinity));
+  if (receipt?.status === routine.lastStatus && Number.isFinite(receiptAt) && receiptAt >= latestFire
+      && typeof receipt.text === 'string' && (receipt.text === routine.lastSummary || (routine.lastSummary && receipt.text.startsWith(routine.lastSummary)))) return receipt.at;
+  return routine.lastFireAt || routine.lastRun || null;
+}
+
 export function normalizeRoutine(record) {
   const allow = { ...DEFAULT_JOB_ALLOW, ...record.allow };
   allow.sites = Array.isArray(allow.sites) ? allow.sites.slice(0, MAX_ROUTINE_SITES).map(String) : [];
