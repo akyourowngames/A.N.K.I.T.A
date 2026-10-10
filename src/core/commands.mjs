@@ -16,6 +16,7 @@ export const LOCAL_COMMANDS = [
   { name: 'commands', args: '[search]', desc: 'print a generated terminal and desktop cheat sheet' },
   { name: 'jobs templates', desc: 'list ready-made scheduled tasks without changing anything' },
   { name: 'jobs enable', args: '<template> [--cron schedule] [--channel notify|log] [--topic text] [--url page] [--state-file path]', desc: 'enable a configured task template in the existing scheduler' },
+  { name: 'runbook', args: '<task-id> [--state-file path] [--runs-dir path] [--time-zone zone]', desc: 'generate a protected task guide with recent outcomes and recovery steps' },
 ];
 
 export const FLAGS = [

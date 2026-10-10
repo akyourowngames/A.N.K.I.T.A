@@ -322,19 +322,20 @@ export class DesktopScheduler {
       try { await this.engine.browserManager.closeScope(run.scope); }
       catch { run.status = 'error'; summary = 'Browser cleanup failed. Execution stopped; review the last proof before running again.'; }
       const current = this.store.load().findRoutine(routine.id);
+      const completedAt = this.now().toISOString(); // One outcome timestamp shared by durable state and receipt.
       if (current) {
         if (routine.enabled && !current.enabled && run.status === 'ok') run.status = 'disabled-mid-run';
         const budget = run.status === 'stopped-budget';
-        this.store.updateRoutine(routine.id, { activeRunId: null, pendingApproval: null, lastRun: started.toISOString(), lastStatus: run.status, lastSummary: summary, runs: current.runs + 1,
+        this.store.updateRoutine(routine.id, { activeRunId: null, pendingApproval: null, lastRun: started.toISOString(), lastOutcomeAt: completedAt, lastStatus: run.status, lastSummary: summary, runs: current.runs + 1,
           spend: { day: dayAt(this.now(), this.timeZone), runs: current.spend.runs + 1, tokens: current.spend.tokens + run.tokens, minutes: current.spend.minutes + elapsed / MINUTE_MS },
           ...(routine.kind === 'heartbeat' && run.status === 'ok' ? { lastNotifiedSummary: summary } : {}),
-          ...(run.status === 'ok' ? { lastSuccessfulResult: { text: summary, at: this.now().toISOString() } } : {}),
+          ...(run.status === 'ok' ? { lastSuccessfulResult: { text: summary, at: completedAt } } : {}),
           ...(budget ? { enabled: false, pausedReason: 'budget' } : {}) });
       }
       const owner = this.owner(routine);
       const receipt = { runId: run.runId, routineId: routine.id, name: routine.name, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing, status: run.status,
         templateId: routine.templateId, channel: routine.channel,
-        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: this.now().toISOString(), nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' };
+        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' };
       this.writeRun(run, { ...receipt, header, audit: run.audit, tokens: run.tokens, activeMs: elapsed });
       this.store.updateRoutine(routine.id, { lastReceipt: receipt });
       if (run.status !== 'quiet') await this.deliver(receipt);
