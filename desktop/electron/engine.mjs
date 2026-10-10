@@ -17,6 +17,7 @@ import { PROJECTS_FILE } from '../../src/core/config.mjs';
 import { saveSession, recordTurn } from '../../src/core/sessions.mjs';
 import { sanitizeMessages, estimateImageBytes } from '../../src/core/history.mjs';
 import { loadSkills } from '../../src/core/skills.mjs';
+import { startupProfile } from '../../src/core/startup-profile.mjs';
 import { buildIndex, search as searchPalette } from '../../src/palette/index.mjs';
 import { todoProgress } from '../shared/todo-progress.mjs';
 import { hydrateIslandState, reduceIslandState, ISLAND_HISTORY_LIMIT } from '../shared/island-state.mjs';
@@ -523,6 +524,7 @@ export class DesktopEngine {
   }
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
+  getStartupProfile() { loadSkills(); return startupProfile.format(); }
   listSkills() {
     const disabled = new Set(this.desktopSettings.data.disabledSkills || []);
     return loadSkills().map(({ name, description, suggestedTools, body }) => ({ name, description, suggestedTools, body, enabled: !disabled.has(name) }));

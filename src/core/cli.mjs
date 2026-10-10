@@ -38,6 +38,7 @@ import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
 import { loadSkills, reloadSkills } from './skills.mjs';
 import { runLocalCommand } from './local-commands.mjs';
+import { startupProfile } from './startup-profile.mjs';
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
 import {
   FLAGS, LOCAL_COMMANDS, USAGE_LABEL_WIDTH, COMPOSIO_ACTIONS, TOOL_SLUG_PATTERN, FALLBACK_HINT,
@@ -594,6 +595,7 @@ export async function main() {
       project: activeProject() ? `${activeProject().name}${activeProject().path ? "  " + activeProject().path : ""}` : null,
     });
     if (config.apiBase) console.log(c.dim(`  endpoint: ${config.apiBase}\n`));
+    term.line(c.dim(startupProfile.format()));
   }
 
   if (opts.continueName) {

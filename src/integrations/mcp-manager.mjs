@@ -2,6 +2,7 @@ import { McpClient, formatToolResult } from "./mcp-client.mjs";
 import { connectionMode, mcpEndpoint, oauthEndpoint } from "./composio.mjs";
 import { configuredSecrets, redactText } from '../core/redact.mjs';
 import { TierPolicy, TIER_AUTO, TIER_LABELS, heuristicTier, resolveTier } from "./mcp-tiers.mjs";
+import { startupProfile } from '../core/startup-profile.mjs';
 
 /**
  * Owns every live MCP connection for the process.
@@ -140,15 +141,21 @@ export class McpManager {
     const cancel = () => { void client.close(); };
     this._clients.add(client);
     signal?.addEventListener('abort', cancel, { once: true });
+    const started = startupProfile.now();
+    let startupStatus = 'error';
     try {
       await client.connect();
       signal?.throwIfAborted();
       if (client.closed) throw new Error('MCP connection closed during startup');
+      startupStatus = 'ready';
     } catch (error) {
       await client.close();
       this._clients.delete(client);
       throw error;
-    } finally { signal?.removeEventListener('abort', cancel); }
+    } finally {
+      signal?.removeEventListener('abort', cancel);
+      startupProfile.finish('plugin', serverId, started, startupStatus);
+    }
 
     const record = { id: serverId, command, args, env, transport, url, headers, trusted, alwaysOn, synthetic, hidden, client, tools: client.tools };
     this.servers.set(serverId, record);
