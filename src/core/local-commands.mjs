@@ -1,8 +1,10 @@
 import { createInterface } from 'node:readline/promises';
 import { scaffoldSkill, SCAFFOLD_USAGE } from '../skills/scaffold.mjs';
+import { commandCheatSheet } from './cheat-sheet.mjs';
 
 /** Local commands run before provider bootstrap so authoring works offline. */
 export async function runLocalCommand(argv, { ask, write = text => console.log(text) } = {}) {
+  if (argv[0] === 'commands') { write(commandCheatSheet({ query: argv.slice(1).join(' ') })); return true; }
   if (argv[0] !== 'new' || argv[1] !== 'skill') return false;
   const args = argv.slice(2);
   if (args.includes('--help')) { write(SCAFFOLD_USAGE); return true; }
