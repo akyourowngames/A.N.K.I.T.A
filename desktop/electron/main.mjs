@@ -535,6 +535,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     }
     case 'listModels': return current.listModels();
       case 'listSkills': return current.listSkills();
+      case 'getStartupProfile': return current.getStartupProfile();
       case 'setSkillEnabled': return current.setSkillEnabled(payload.name, payload.enabled);
     case 'setModel': return current.setModel(payload.id, payload.modelId);
     case 'settingsSummary': return current.getSettingsSummary();

@@ -2,8 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { validatePalette } from '../palette/index.mjs';
+import { startupProfile } from './startup-profile.mjs';
+import { SKILL_FILE, MANIFEST_FILE } from '../skills/layout.mjs';
 
-const MANIFEST_FILENAME = 'plugin.json'; // Optional skill action contributions.
 const TOOL_METADATA_CHARS = 200; // Characters per tool-hint/activation field; bounds catalog metadata.
 const TOOL_NAME_RE = /^[a-z][a-z0-9_-]*$/; // Native tool identifiers, never page text or query matching.
 const AUTO_SKILL_PROMPT_CHARS = 6000; // Total characters of automatic instruction blocks per turn; load whole bodies only.
@@ -67,8 +68,8 @@ export function loadSkills(dir = skillsDir()) {
   }
 
   const files = entries.map(entry => {
-    const file = path.join(dir, entry.name, 'SKILL.md');
-    const manifest = path.join(dir, entry.name, MANIFEST_FILENAME);
+    const file = path.join(dir, entry.name, SKILL_FILE);
+    const manifest = path.join(dir, entry.name, MANIFEST_FILE);
     let manifestStamp = 'missing';
     try { const stat = fs.statSync(manifest); manifestStamp = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`; } catch {}
     try {
@@ -84,6 +85,8 @@ export function loadSkills(dir = skillsDir()) {
   const skills = [];
   for (const { name, file, manifest, stamp } of files) {
     if (stamp === 'missing') continue;
+    const started = startupProfile.now();
+    let status = 'error';
     try {
       const parsed = parseSkillFile(fs.readFileSync(file, 'utf8'), name);
       if (parsed.error) {
@@ -93,9 +96,10 @@ export function loadSkills(dir = skillsDir()) {
       let palette = [];
       if (fs.existsSync(manifest)) palette = validatePalette(JSON.parse(fs.readFileSync(manifest, 'utf8')).palette);
       skills.push({ ...parsed, palette, path: file });
+      status = 'ready';
     } catch (error) {
       console.error(`Skipping skill ${name}: ${error.message}`);
-    }
+    } finally { startupProfile.finish('skill', name, started, status); }
   }
   cache = { key, skills };
   return skills;

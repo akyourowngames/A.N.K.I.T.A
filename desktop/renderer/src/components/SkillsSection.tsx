@@ -12,12 +12,19 @@ export function SkillsSection() {
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [query, setQuery] = useState('');
+  const [startup, setStartup] = useState('');
 
   useEffect(() => {
     let active = true;
     void window.ankita.invoke<DesktopSkill[]>('listSkills')
       .then(list => { if (active) setSkills(list); })
       .catch(cause => { if (active) setError(errorText(cause)); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void window.ankita.invoke<string>('getStartupProfile').then(report => { if (active) setStartup(report); }).catch(cause => { if (active) setError(errorText(cause)); });
     return () => { active = false; };
   }, []);
 
@@ -46,6 +53,7 @@ export function SkillsSection() {
     <div className="plugins-intro skills-intro"><div className="plugins-eyebrow"><span /> INSTALLED WORKFLOWS</div><h1>Make room for<br /><em>better habits.</em></h1><p>Skills give Ankita focused instructions for specific work. Choose which ones are available in your chats.</p></div>
     {error && <div className="plugins-alert" role="alert"><Icon name="alert" size={16} /><span>{error}</span><button type="button" onClick={() => setError('')} aria-label="Dismiss error"><Icon name="close" size={15} /></button></div>}
     <div className="plugins-toolbar"><div className="plugins-tabs"><span className="skills-tab-label">Installed skills <small>{skills?.length || 0}</small></span></div><span className="plugins-connection live"><i />{enabledCount} enabled</span></div>
+    {startup && <details className="skill-detail-instructions"><summary>Startup timings</summary><p>{startup}</p><button type="button" onClick={() => { void window.ankita.invoke<string>('getStartupProfile').then(setStartup).catch(cause => setError(errorText(cause))); }}>Refresh timings</button></details>}
     {skills === null && !error ? <div className="plugins-loading">Loading skills…</div> : skills?.length === 0 ? <div className="plugins-empty"><Icon name="file" size={22} /><h2>No skills installed</h2><p>Installed skills will appear here.</p></div> : <>
       <label className="plugins-search"><Icon name="search" size={18} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search installed skills" aria-label="Search installed skills" /></label>
       <section className="plugins-section"><div className="plugins-section-head"><h2>Your skills</h2><span>{enabledCount} of {skills?.length || 0} enabled</span></div>
