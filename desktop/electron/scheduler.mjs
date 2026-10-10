@@ -7,6 +7,7 @@ import { HEARTBEAT_QUIET, JOB_MUTABLE_FIELDS, JOB_EXECUTION_COMPLETE, JOB_EXECUT
 import { redactValue } from '../../src/security/secret-scrubber.mjs';
 import { RoutineStore } from '../../src/automation/routines.mjs';
 import { Daemon } from '../../src/automation/daemon.mjs';
+import { isLogOnlyTemplate } from '../../src/automation/templates.mjs';
 import { cronFire, describeCron } from '../../src/automation/cron.mjs';
 import { CONFIG_DIR, STATE_FILE, SESSIONS_DIR } from '../../src/core/config.mjs';
 import { SchedulerOwnership } from '../../src/automation/scheduler-ownership.mjs';
@@ -149,7 +150,7 @@ export class DesktopScheduler {
       this.nominal.set(routine.id, fire);
       if (date - fire > CATCH_UP_WINDOW_MS) {
         this.store.updateRoutine(routine.id, { lastFireAt: fire.toISOString(), runAt: null, lastStatus: 'missed', lastSummary: `Missed ${fire.toISOString()} run; outside catch-up window.` });
-        this.engine.emit({ type: 'routine-failed', routineId: routine.id, threadId: this.owner(routine).owner?.id, status: 'missed' }); this.changed(); continue;
+        if (!isLogOnlyTemplate(routine)) this.engine.emit({ type: 'routine-failed', routineId: routine.id, threadId: this.owner(routine).owner?.id, status: 'missed' }); this.changed(); continue;
       }
       due.push(this.store.findRoutine(routine.id));
     }
@@ -332,18 +333,27 @@ export class DesktopScheduler {
       }
       const owner = this.owner(routine);
       const receipt = { runId: run.runId, routineId: routine.id, name: routine.name, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing, status: run.status,
+        templateId: routine.templateId, channel: routine.channel,
         text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: this.now().toISOString(), nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' };
       this.writeRun(run, { ...receipt, header, audit: run.audit, tokens: run.tokens, activeMs: elapsed });
       this.store.updateRoutine(routine.id, { lastReceipt: receipt });
       if (run.status !== 'quiet') await this.deliver(receipt);
       this.runs.delete(routine.id); this.engine.emit({ type: 'routine-run-end', routineId: routine.id, threadId: receipt.threadId, runId: run.runId, status: run.status });
-      if (!['ok', 'quiet', 'disabled-mid-run'].includes(run.status)) this.engine.emit({ type: 'routine-failed', ...receipt });
+      if (!isLogOnlyTemplate(routine) && !['ok', 'quiet', 'disabled-mid-run'].includes(run.status)) this.engine.emit({ type: 'routine-failed', ...receipt });
       this.changed(); this.prune(routine.id);
     }
   }
   writeRun(run, data) { fs.mkdirSync(this.directory, { recursive: true }); writeTextFile(path.join(this.directory, `${run.routineId}-${run.runId}.json`), JSON.stringify(this.transform(data), null, 2), '\n'); }
   async deliver(receipt) {
-    const owner = this.owner(this.store.load().findRoutine(receipt.routineId) || receipt);
+    const routine = this.store.load().findRoutine(receipt.routineId);
+    if (isLogOnlyTemplate(receipt) || isLogOnlyTemplate(routine)) {
+      const file = path.join(this.directory, `${receipt.routineId}-${receipt.runId}.json`);
+      const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+      this.writeRun(receipt, { ...saved, delivered: true });
+      if (routine?.lastReceipt?.runId === receipt.runId) this.store.updateRoutine(routine.id, { lastReceipt: { ...receipt, delivered: true } });
+      return;
+    }
+    const owner = this.owner(routine || receipt);
     receipt = { ...receipt, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing };
     try {
       if (receipt.threadId && await this.engine.deliverRoutine(receipt)) {

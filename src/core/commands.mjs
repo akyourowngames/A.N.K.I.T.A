@@ -14,6 +14,8 @@ export const BANNER_HINT = "type /help · /commands for everything";
 export const LOCAL_COMMANDS = [
   { name: 'new skill', args: '[name] [--permissions domains] [--example input] [--directory path]', desc: 'create a documented skill with an offline fixture' },
   { name: 'commands', args: '[search]', desc: 'print a generated terminal and desktop cheat sheet' },
+  { name: 'jobs templates', desc: 'list ready-made scheduled tasks without changing anything' },
+  { name: 'jobs enable', args: '<template> [--cron schedule] [--channel notify|log] [--topic text] [--url page] [--state-file path]', desc: 'enable a configured task template in the existing scheduler' },
 ];
 
 export const FLAGS = [
