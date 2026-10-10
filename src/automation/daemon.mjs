@@ -10,6 +10,7 @@ import { UNSUPPORTED_MEDIA_MESSAGE } from '../channels/telegram.mjs';
 import { sanitizeMessages } from "../core/history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
+import { templatePrompt } from './templates.mjs';
 import { numericDelta } from "./routines.mjs";
 import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
 import { recordTurn, saveSession } from '../core/sessions.mjs';
@@ -295,7 +296,7 @@ export class Daemon {
    */
   dispatchRoutines() {
     if (this.stopping) return 0;
-    const due = this.store.dueRoutines(this.now());
+    const due = this.store.dueRoutines(this.now(), this.config.timeZone);
     let queued = 0;
     for (const routine of due) {
       if (this.runningRoutines.has(routine.id)) continue;
@@ -318,7 +319,7 @@ export class Daemon {
     let status = "ok";
     let summary = "";
     try {
-      const text = await this.runPrompt(routine.prompt, { purpose: "routine", routine });
+      const text = await this.runPrompt(templatePrompt(routine), { purpose: "routine", routine });
       summary = String(text || "").trim();
       if (!summary) status = "empty";
       else await this.deliver(`*${routine.name}*\n\n${summary}`, { routine });

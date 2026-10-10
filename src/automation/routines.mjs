@@ -3,7 +3,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { parseCron, matchCron, normalizeSchedule, describeCron, parseDuration, formatDuration } from "./cron.mjs";
 import { writeTextFile } from "../../tools/shared/_shared.mjs";
-import { normalizeRoutine } from './job-policy.mjs';
+import { normalizeRoutine, JOB_SUMMARY_MAX_CHARS } from './job-policy.mjs';
 import { redactValue } from '../security/secret-scrubber.mjs';
 
 /**
@@ -140,6 +140,9 @@ export class RoutineStore {
     const record = this.findRoutine(id);
     if (!record) return null;
     const next = normalizeRoutine({ ...record, ...patch, id: record.id,
+      lastOutcomeAt: patch.lastStatus !== undefined
+        ? patch.lastOutcomeAt || patch.lastRun || patch.lastFireAt || new Date().toISOString()
+        : record.lastOutcomeAt || (record.lastStatus ? record.lastFireAt || record.lastRun : null),
       allow: { ...record.allow, ...patch.allow }, budget: { ...record.budget, ...patch.budget } });
     next.cron = normalizeSchedule(next.cron);
     if (!next.cron || !parseCron(next.cron)) throw new Error('invalid schedule');
@@ -175,6 +178,7 @@ export class RoutineStore {
     this._fresh();
     const routine = this.findRoutine(id);
     if (!routine) return null;
+    routine.lastOutcomeAt ||= routine.lastStatus ? routine.lastFireAt || routine.lastRun : null;
     routine.lastRun = at || new Date().toISOString();
     if (routine.runAt) routine.runAt = null;
     this.save();
@@ -189,7 +193,9 @@ export class RoutineStore {
     // routine was due; otherwise a skewed or injected clock double-fires.
     routine.lastRun = at || new Date().toISOString();
     routine.lastStatus = status;
+    routine.lastOutcomeAt = routine.lastRun;
     routine.lastSummary = summary ? String(summary).slice(0, 400) : null;
+    if (routine.templateId && status === 'ok') routine.lastSuccessfulResult = { at: routine.lastRun, text: String(summary || '').slice(0, JOB_SUMMARY_MAX_CHARS) };
     routine.runs = (routine.runs || 0) + 1;
     this.save();
     return routine;
@@ -210,7 +216,7 @@ export class RoutineStore {
    * matching minute, so a daemon restart mid-minute cannot double-fire; a
    * one-shot (runAt) fires the moment its time passes, enabled or not.
    */
-  dueRoutines(now = new Date()) {
+  dueRoutines(now = new Date(), timeZone = null) {
     const minute = Math.floor(now.getTime() / 60000);
     return this.routines.filter((routine) => {
       if (routine.runAt) {
@@ -218,7 +224,7 @@ export class RoutineStore {
         return Number.isFinite(at) ? at <= now.getTime() : false;
       }
       if (!routine.enabled) return false;
-      if (!matchCron(routine.cron, now)) return false;
+      if (!matchCron(routine.cron, now, timeZone)) return false;
       if (routine.lastRun) {
         const last = Math.floor(Date.parse(routine.lastRun) / 60000);
         if (Number.isFinite(last) && last >= minute) return false;

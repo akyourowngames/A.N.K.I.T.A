@@ -39,6 +39,7 @@ import { Agent } from "./agent.mjs";
 import { loadSkills, reloadSkills } from './skills.mjs';
 import { runLocalCommand } from './local-commands.mjs';
 import { startupProfile } from './startup-profile.mjs';
+import { deliverTemplateResult } from '../automation/templates.mjs';
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
 import {
   FLAGS, LOCAL_COMMANDS, USAGE_LABEL_WIDTH, COMPOSIO_ACTIONS, TOOL_SLUG_PATTERN, FALLBACK_HINT,
@@ -1178,7 +1179,10 @@ export async function main() {
     print: text => { term.line(''); term.line(text.replace(/^/gm, '  ')); term.line(''); },
     log: text => term.line(c.dim(`  ${text}`)),
   });
-  const deliver = text => opts.daemon ? notifications.queueMessage(text) : notifications.send(text);
+  const deliver = (text, meta = {}) => deliverTemplateResult(text, meta, {
+    log: value => daemonRef ? daemonRef.log(value) : term.line(value),
+    deliver: value => opts.daemon ? notifications.queueMessage(value) : notifications.send(value),
+  });
 
   // Set once the daemon exists, so routine/brief work can ask for approval in
   // Telegram instead of being silently denied.
