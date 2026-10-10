@@ -37,9 +37,10 @@ import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
 import { loadSkills, reloadSkills } from './skills.mjs';
+import { runLocalCommand } from './local-commands.mjs';
 import { Terminal, banner, helpText, c, spinner, preview, short, clip, setColorEnabled } from "./ui.mjs";
 import {
-  FLAGS, USAGE_LABEL_WIDTH, COMPOSIO_ACTIONS, TOOL_SLUG_PATTERN, FALLBACK_HINT,
+  FLAGS, LOCAL_COMMANDS, USAGE_LABEL_WIDTH, COMPOSIO_ACTIONS, TOOL_SLUG_PATTERN, FALLBACK_HINT,
   commandNames, itemFor, unknownActionMessage, closestCommand,
 } from "./commands.mjs";
 import { LiveRenderer } from "./markdown.mjs";
@@ -90,6 +91,9 @@ ${c.bold("usage")}
 
 ${c.bold("options")}
 ${USAGE_OPTIONS}
+
+${c.bold("offline commands")}
+${LOCAL_COMMANDS.map(item => `  ankita ${item.name} ${item.args || ''} — ${item.desc}`).join('\n')}
 
 ${c.bold("config")}
   Read from ${c.cyan(".env")} in the working directory, falling back to
@@ -313,6 +317,8 @@ export function makeCompleter(models) {
 }
 
 export async function main() {
+  try { if (await runLocalCommand(process.argv.slice(2))) return; }
+  catch (error) { console.error(error.message); process.exitCode = 2; return; }
   const opts = parseArgs(process.argv.slice(2));
 
   if (opts.help) {

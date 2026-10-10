@@ -10,6 +10,11 @@ export const USAGE_LABEL_WIDTH = 22;
 /** Discoverability line printed under the startup banner. */
 export const BANNER_HINT = "type /help · /commands for everything";
 
+/** Offline entry points; shared by terminal help and the generated cheat sheet. */
+export const LOCAL_COMMANDS = [
+  { name: 'new skill', args: '[name] [--permissions domains] [--example input] [--directory path]', desc: 'create a documented skill with an offline fixture' },
+];
+
 export const FLAGS = [
   { short: "-p", long: "--prompt", value: "<text>", desc: "send one message and exit (non-interactive)" },
   { short: "-m", long: "--model", value: "<id>", desc: "model to use" },
