@@ -1,0 +1,32 @@
+name: Skill contribution gate
+
+on:
+  pull_request:
+    paths:
+      - 'skills/**'
+      - 'src/skills/**'
+      - 'src/core/skills.mjs'
+      - 'src/core/local-commands.mjs'
+      - 'tools/skills/**'
+      - 'scripts/check-skill*.mjs'
+      - 'test/core/skill*.test.mjs'
+      - 'docs/guides/skill-author-handbook.md'
+      - '.github/workflows/skills.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  skills:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          # Runtime range comes from the app's declared engine requirement.
+          node-version-file: package.json
+      - name: Check every skill artifact without executing contributed code
+        run: node scripts/check-skills.mjs
+      - name: Exercise fixtures, authoring and the verified handbook
+        run: node --test --test-concurrency=1 test/core/skill-fixtures.test.mjs test/core/skill-handbook.test.mjs test/core/skill-scaffold.test.mjs test/core/skill-contributions.test.mjs

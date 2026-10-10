@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "permissions": [
+    "files",
+    "shell"
+  ],
+  "palette": []
+}

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { checkSkillFixtures } from '../../src/skills/fixtures.mjs';
+import { checkSkillContributions } from '../../src/skills/contributions.mjs';
 import { loadSkills } from '../../src/core/skills.mjs';
 import { SKILL_FILE, MANIFEST_FILE, FIXTURE_DIR, FIXTURE_FILE, EXPECTED_FILE, SKILL_DOC_FILE } from '../../src/skills/layout.mjs';
 
@@ -33,6 +34,7 @@ test('the complete handbook example loads and passes its real golden fixture', t
   copyExamples(text, root);
   assert.equal(loadSkills(root)[0]?.name, 'hello-skill');
   assert.deepEqual(checkSkillFixtures(root), { checked: 1, errors: [] });
+  assert.deepEqual(checkSkillContributions(root), { checked: 1, errors: [] });
   assert.match(text, /not.*sandbox/i);
 });
 
