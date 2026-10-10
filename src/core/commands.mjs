@@ -13,6 +13,7 @@ export const BANNER_HINT = "type /help · /commands for everything";
 /** Offline entry points; shared by terminal help and the generated cheat sheet. */
 export const LOCAL_COMMANDS = [
   { name: 'new skill', args: '[name] [--permissions domains] [--example input] [--directory path]', desc: 'create a documented skill with an offline fixture' },
+  { name: 'commands', args: '[search]', desc: 'print a generated terminal and desktop cheat sheet' },
 ];
 
 export const FLAGS = [
@@ -50,9 +51,9 @@ export const SLASH_GROUPS = [
     items: [
       { name: "/help", desc: "this" },
       { name: "/commands", desc: "everything: all commands and subcommands grouped" },
-      { name: "/config", desc: "show .env values and where they come from" },
+      { name: "/config", desc: "show .env values and where they come from", desktopCommand: 'settings' },
       { name: "/reload", desc: "re-read .env without restarting" },
-      { name: "/skills", desc: "list built-in skills" },
+      { name: "/skills", desc: "list built-in skills", desktopCommand: 'plugins' },
       { name: "/usage", desc: "show token usage for this turn and session" },
       { name: "/clear", desc: "reset the conversation" },
       { name: "/exit", desc: "quit", aliases: ["/quit"] },
@@ -61,8 +62,8 @@ export const SLASH_GROUPS = [
   {
     title: "Models & tools",
     items: [
-      { name: "/models", desc: "list available models" },
-      { name: "/model", args: "<id>", desc: "switch model" },
+      { name: "/models", desc: "list available models", desktopCommand: 'settings' },
+      { name: "/model", args: "<id>", desc: "switch model", desktopCommand: 'settings' },
       { name: "/tools", args: "on|off", desc: "enable/disable tool use" },
       { name: "/auto", args: "on|off", desc: "toggle auto-approving tool calls" },
       { name: "/cd", args: "<dir>", desc: "change the working directory tools use" },
@@ -99,7 +100,7 @@ export const SLASH_GROUPS = [
     title: "Automation",
     items: [
       { name: "/brief", desc: "briefing now: inbox, watch changes, what needs you" },
-      { name: "/routines", desc: "scheduled prompts and their last result" },
+      { name: "/routines", desc: "scheduled prompts and their last result", desktopCommand: 'jobs' },
       { name: "/watches", desc: "pages being watched and their last reading" },
       { name: "/daemon", desc: "show daemon state (runs as: ankita --daemon)" },
       { name: "/project", args: "[name]", desc: "switch project (no name = show the active one)" },
