@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "release-notes"
+  },
+  "expectedFile": "expected.md"
+}
