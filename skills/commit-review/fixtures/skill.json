@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "commit-review"
+  },
+  "expectedFile": "expected.md"
+}
