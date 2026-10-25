@@ -42,6 +42,15 @@ export const MAX_NOTES = 50;
 export const MAX_DECISIONS = 50;
 export const MAX_TODOS = 100;
 
+// Automatic work capture outgrows notes quickly: a five-line entry per turn is
+// noise in the log but still worth a bounded prompt block.
+export const MAX_WORKLOG = 100;
+export const WORKLOG_TEXT_CAP = 400;
+export const WORK_BLOCK_CAP = 1200;
+const WORK_BLOCK_LOG_LINES = 3;
+const WORK_BLOCK_OPEN_TODOS = 4;
+const WORK_BLOCK_DECISIONS = 3;
+
 /** "6d ago" reads like a memory; "2026-09-12T09:14:22Z" reads like a database. */
 export function since(iso, now = Date.now()) {
   const t = Date.parse(iso);
@@ -135,6 +144,9 @@ export class ProjectStore {
         projects: Array.isArray(parsed.projects) ? parsed.projects.filter((p) => p && p.id) : [],
       };
       for (const project of this.data.projects) {
+        // Older files predate the work log; default in memory, never rewrite
+        // the file just because it was read.
+        if (!Array.isArray(project.worklog)) project.worklog = [];
         const ids = new Set();
         const active = new Set();
         for (const todo of project.todos || []) {
@@ -393,7 +405,7 @@ export class ProjectStore {
    * Closes one todo. `ref` is a t-id, a 1-based position among the *open*
    * items, or a substring of the text. Ambiguity is reported, never guessed.
    */
-  completeTodo(idOrName, ref) {
+  completeTodo(idOrName, ref, source = null) {
     this._fresh();
     const project = this.find(idOrName);
     if (!project) return null;
@@ -421,8 +433,69 @@ export class ProjectStore {
 
     target.done = true;
     target.doneAt = new Date().toISOString();
+    if (source) target.doneSource = source;
+    else delete target.doneSource;
     this.save();
     return { project, closed: target };
+  }
+
+  /**
+   * Appends one automatic work-log line. Anything the same turn already wrote
+   * is not repeated, so a retried or replayed turn is harmless.
+   */
+  appendWorkLog(idOrName, { text, at = new Date().toISOString(), source = null, cap = MAX_WORKLOG } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    const value = String(text ?? "").trim().slice(0, WORKLOG_TEXT_CAP);
+    if (!project) return null;
+    if (!value) return { error: "a work log entry needs some text" };
+    const log = project.worklog || [];
+    if (source?.turnId && log.some((entry) => entry.source?.turnId === source.turnId)) return { error: "this turn is already logged" };
+    project.worklog = [...log, { at, text: value, ...(source ? { source } : {}) }].slice(-Math.max(1, cap));
+    // lastUsedAt records activity; `active` stays whatever the user chose.
+    project.lastUsedAt = at;
+    this.save();
+    return project;
+  }
+
+  /**
+   * Removes everything an automatic session (or one turn) wrote, so a bad pass
+   * can be undone. Notes, decisions and todos are matched by their source, and
+   * todos auto-closed by that pass are reopened.
+   */
+  removeAutoEntries(idOrName, { sessionId, turnId } = {}) {
+    this._fresh();
+    const project = this.find(idOrName);
+    if (!project) return null;
+    const matches = (source) =>
+      Boolean(source) &&
+      String(source.kind || "").startsWith("auto") &&
+      (!sessionId || source.sessionId === sessionId) &&
+      (!turnId || source.turnId === turnId);
+
+    const counts = { worklog: 0, notes: 0, decisions: 0, todos: 0, reopened: 0 };
+    const keep = (list, key) =>
+      (list || []).filter((item) => {
+        if (!matches(item.source)) return true;
+        counts[key]++;
+        return false;
+      });
+
+    project.worklog = keep(project.worklog, "worklog");
+    project.notes = keep(project.notes, "notes");
+    project.decisions = keep(project.decisions, "decisions");
+    project.todos = keep(project.todos, "todos");
+    for (const todo of project.todos) {
+      if (todo.done && matches(todo.doneSource)) {
+        todo.done = false;
+        todo.doneAt = null;
+        delete todo.doneSource;
+        counts.reopened++;
+      }
+    }
+    const total = counts.worklog + counts.notes + counts.decisions + counts.todos + counts.reopened;
+    if (total) this.save();
+    return { project, ...counts, total };
   }
 
   memoryCounts(project) {
@@ -476,8 +549,7 @@ export class ProjectStore {
    * The bounded block injected into the system prompt. Kept small on purpose:
    * tool specs already take a large share of the context budget.
    */
-  promptBlock() {
-    const project = this.active;
+  promptBlock(project = this.active) {
     if (!project) return "";
     const lines = [`Active project: ${project.name} (${project.id})`];
     if (project.summary) lines.push(`  what it is: ${String(project.summary).slice(0, SUMMARY_CAP)}`);
@@ -491,6 +563,35 @@ export class ProjectStore {
     const dbs = (project.databases || []).map((d) => [d.kind, d.name].filter(Boolean).join(" "));
     if (dbs.length) lines.push(`  databases: ${dbs.join(", ")}`);
     return lines.join("\n");
+  }
+
+  /**
+   * Recent work and open items. Separate from promptBlock so the base project
+   * block stays stable, and capped because it is paid on every turn.
+   */
+  workBlock(project = this.active) {
+    if (!project) return "";
+    const lines = [];
+    const worklog = (project.worklog || []).slice(-WORK_BLOCK_LOG_LINES);
+    if (worklog.length) {
+      lines.push("Recent work:");
+      for (const entry of worklog) {
+        // The `since` prefix is regenerated per turn so old entries cannot
+        // masquerade as fresh ones.
+        lines.push(`  ${since(entry.at).padEnd(8)} ${entry.text}`.slice(0, WORK_BLOCK_CAP));
+      }
+    }
+    const open = (project.todos || []).filter((todo) => !todo.done).slice(0, WORK_BLOCK_OPEN_TODOS);
+    if (open.length) {
+      lines.push("Open items:");
+      for (const todo of open) lines.push(`  [${todo.id}] ${todo.text}`);
+    }
+    const decisions = (project.decisions || []).slice(-WORK_BLOCK_DECISIONS);
+    if (decisions.length) {
+      lines.push("Recent decisions:");
+      for (const decision of decisions) lines.push(`  ${decision.text}`);
+    }
+    return lines.join("\n").slice(0, WORK_BLOCK_CAP);
   }
 }
 
@@ -563,6 +664,8 @@ export function describeProjectFull(project, store) {
   lines.push(`  status       ${project.status || "active"}${project.archived ? "  (archived)" : ""}`);
   lines.push(`  created      ${project.createdAt}`);
   if (project.lastUsedAt) lines.push(`  last used    ${project.lastUsedAt}`);
+  const recentWork = (project.worklog || []).slice(-3);
+  if (recentWork.length) for (const item of recentWork) lines.push(`  work         ${item.at}  ${item.text}`);
   if (store && store.activeId === project.id) lines.push(`  (active)`);
   const missing = store ? store.missingFor(project) : [];
   if (missing.length) lines.push(`  still unknown: ${missing.join(", ")}`);

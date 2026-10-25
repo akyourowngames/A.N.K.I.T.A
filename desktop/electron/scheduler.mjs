@@ -7,6 +7,7 @@ import { HEARTBEAT_QUIET, JOB_MUTABLE_FIELDS, JOB_EXECUTION_COMPLETE, JOB_EXECUT
 import { redactValue } from '../../src/security/secret-scrubber.mjs';
 import { RoutineStore } from '../../src/automation/routines.mjs';
 import { Daemon } from '../../src/automation/daemon.mjs';
+import { MemoryConsolidator } from '../../src/memory/consolidate.mjs';
 import { isLogOnlyTemplate } from '../../src/automation/templates.mjs';
 import { cronFire, describeCron } from '../../src/automation/cron.mjs';
 import { CONFIG_DIR, STATE_FILE, SESSIONS_DIR } from '../../src/core/config.mjs';
@@ -58,8 +59,16 @@ export class DesktopScheduler {
     adapter.load = () => this.store.load();
     adapter.dueRoutines = date => this.due(date);
     adapter.claimRoutine = (id, at) => this.store.updateRoutine(id, { lastRun: at, lastFireAt: this.nominal.get(id)?.toISOString(), runAt: null });
+    // Desktop journals were previously never consolidated: the routine daemon
+    // returned before reaching that block. Keep the extractor tools-free.
+    this.consolidator = new MemoryConsolidator({
+      config: engine.config || {},
+      extract: (prompt, meta) => engine.runPrompt(prompt, meta),
+      projectsFile: engine.projectsFile,
+      log: message => { try { console.error('[memory]', message); } catch {} },
+    });
     this.daemon = new Daemon({ store: adapter, config: engine.config || {}, client: engine.client, maxConcurrent: MAX_CONCURRENT_JOBS,
-      now, tickMs, routinesOnly: true, routineExecutor: routine => this.execute(routine), routineSettled: () => this.changed(), log: () => {} });
+      now, tickMs, routinesOnly: true, consolidator: this.consolidator, routineExecutor: routine => this.execute(routine), routineSettled: () => this.changed(), log: () => {} });
   }
   changed() { this.engine.emit({ type: 'schedule-changed', jobs: this.list() }); }
   owner(routine) {

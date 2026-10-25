@@ -65,3 +65,44 @@ test('external project edits refresh the desktop and assigned agent context', as
   assert.ok(events.some(event => event.type === 'projects-changed'));
   assert.match(agent.project, /Task from another process/);
 });
+
+test('a changed turn on an assigned project records work and announces activity without touching the teammate', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-desktop-work-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const workspace = path.join(dir, 'work');
+  fs.mkdirSync(workspace);
+  const teammateFile = path.join(dir, 'teammates.json');
+  const events = [];
+  const engine = new DesktopEngine({
+    teammateFile, projectsFile: path.join(dir, 'projects.json'),
+    settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+    config: { provider: 'test', tools: false, agentName: 'Ankita', username: 'User' },
+    bootstrap: async () => ({ client: {}, tool: null, models: [], model: '', provider: { name: 'test' } }),
+    mcp: { reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {}, summaries: () => [], connectedIds: [] },
+    emit: event => events.push(event),
+  });
+  t.after(() => engine.close());
+  await engine.init();
+  const project = engine.createProject({ name: 'Widget', path: workspace });
+  const teammate = engine.listTeammates()[0];
+  engine.assignProject(teammate.id, project.id);
+  const agent = engine.agentFor(teammate.id);
+  agent.journal = () => null; // never write to the real journal directory
+  agent.streamTurn = async () => {
+    agent.turnAudit.changed = true;
+    agent.turnAudit.files.push('src/widget.js');
+    return { content: 'Edited the widget.', toolCalls: [] };
+  };
+  const teammatesBefore = fs.readFileSync(teammateFile, 'utf8');
+  events.length = 0;
+
+  await agent.send('edit the widget');
+
+  const stored = new ProjectStore(path.join(dir, 'projects.json')).load().find(project.id);
+  assert.equal(stored.worklog.length, 1);
+  assert.match(stored.worklog[0].text, /src\/widget\.js/);
+  assert.ok(events.some(event => event.type === 'project-activity' && event.projectId === project.id && event.written >= 1));
+  assert.ok(events.some(event => event.type === 'projects-changed'));
+  assert.equal(engine.listProjects()[0].worklog.length, 1);
+  assert.equal(fs.readFileSync(teammateFile, 'utf8'), teammatesBefore, 'automatic work never edits the teammate record');
+});

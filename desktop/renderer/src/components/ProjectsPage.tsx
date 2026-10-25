@@ -18,6 +18,10 @@ function recordDate(at: string) {
   const date = new Date(at);
   return Number.isFinite(date.getTime()) ? date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '';
 }
+function workDate(at: string) {
+  const date = new Date(at);
+  return Number.isFinite(date.getTime()) ? date.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' }) : '';
+}
 
 export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, onToggleSidebar, onRefresh, onAssign }: {
   projects: Project[]; selectedThread: { id: string; name: string; projectId: string | null } | null;
@@ -45,6 +49,11 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
   const doneTasks = project?.todos.filter(task => task.done) || [];
   const context = project ? recordKinds.flatMap(kind => project[kind === 'note' ? 'notes' : 'decisions'].map((item, index) => ({ ...item, kind, key: `${kind}-${index}` }))).sort((a, b) => b.at.localeCompare(a.at)) : [];
   const shownContext = context.filter(item => (contextFilter === 'all' || item.kind === contextFilter) && item.text.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const recentWork = project?.worklog ? project.worklog.slice(-5).reverse() : [];
+  const undoableSession = (entry: Project['worklog'][number], index: number) => {
+    const sessionId = entry.source?.sessionId;
+    return sessionId && recentWork.findIndex(other => other.source?.sessionId === sessionId) === index ? sessionId : null;
+  };
   const liveProjects = projects.filter(item => !item.archived);
   useEffect(() => { if (!creating && !projects.some(item => item.id === id)) setId(projects[0]?.id || null); }, [projects, id, creating]);
   useEffect(() => { if (project && !editing) setDraft(draftOf(project)); }, [project?.id, editing]);
@@ -99,6 +108,7 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
               <section className="project-overview-section"><div className="section-heading"><Icon name="folder" size={16} /><h2>Workspace</h2></div><dl className="project-workspace-facts"><div><dt>Working folder</dt><dd>{project.path ? <code>{project.path}</code> : <span>No folder set</span>}</dd></div>{project.repo && <div><dt>Repository</dt><dd><code>{project.repo}</code></dd></div>}{project.client && <div><dt>Client</dt><dd>{project.client}</dd></div>}</dl></section>
               {selectedThread && <div className="project-team-row"><TeammateAvatar id={selectedThread.id} /><div><strong>{selectedThread.name}</strong><small>{selectedThread.projectId === project.id ? 'Assigned to this workspace' : 'Bring this teammate into the project'}</small></div><button className="section-secondary" disabled={busy} onClick={() => void onAssign(selectedThread.projectId === project.id ? null : project.id)}>{selectedThread.projectId === project.id ? 'Unassign' : 'Assign teammate'}</button></div>}
               <section className="project-overview-section"><div className="section-heading"><Icon name="check" size={16} /><h2>Working rules</h2><span>{project.conventions.length}</span></div>{project.conventions.length ? <ol className="project-rule-list">{project.conventions.map((rule, index) => <li key={index}><span>{String(index + 1).padStart(2, '0')}</span><p>{rule}</p></li>)}</ol> : <p className="section-muted">Add working rules in project details to guide the team.</p>}</section>
+              <section className="project-overview-section"><div className="section-heading"><Icon name="clock" size={16} /><h2>Recent work</h2><span>{project.worklog?.length || 0}</span></div>{recentWork.length ? <ol className="project-worklog">{recentWork.map((entry, index) => { const sessionId = undoableSession(entry, index); return <li key={`${entry.at}-${index}`}><div className="project-worklog-copy"><span>{entry.text}</span><small><time dateTime={entry.at}>{workDate(entry.at)}</time></small></div>{sessionId && <button className="project-worklog-undo" disabled={busy} title="Undo this session’s automatic updates" aria-label={`Undo automatic updates from ${workDate(entry.at)}`} onClick={() => void run('undoProjectTurn', { id: project.id, sessionId })}>Undo</button>}</li>; })}</ol> : <p className="section-muted">Work in this project’s folder is recorded here automatically.</p>}</section>
               <div className="project-shortcuts"><button onClick={() => setSection('Tasks')}><Icon name="check" size={17} /><span><strong>{openTaskLabel(openTasks.length)}</strong><small>Keep the next steps in view</small></span><Icon name="arrowRight" size={16} /></button><button onClick={() => setSection('Context')}><Icon name="chat" size={17} /><span><strong>{recordCountLabel(context.length)} saved</strong><small>Notes & decisions for the team</small></span><Icon name="arrowRight" size={16} /></button></div>
             </>}
             {section === 'Tasks' && <>

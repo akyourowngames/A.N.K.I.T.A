@@ -113,6 +113,19 @@ Startup controls indicate unavailable capabilities and preserve the confirmed
 value on a failed change. Pausing all tasks updates the actual shared job state.
 The ordinary preferences flow no longer exposes CLI scheduler takeover commands.
 
+Turns that change files now append one bounded entry to the project's
+**Recent work** list and sync session todos; each entry carries its session so
+Overview can undo that session's automatic updates. Attribution stays explicit
+in the desktop: only an assigned teammate writes to a project. The desktop
+scheduler now also catches up on prior-day journal consolidation while idle.
+
+Verified so far: unit suites for path attribution, the turn audit, maintenance,
+undo and the daemon consolidator; a stub-provider CLI round trip that attaches
+from the folder, journals the audited paths, writes exactly one work-log entry
+and removes it with `/project undo`; and a clean `desktop:build`. Still
+uncovered: a live `desktop:dev` walkthrough of the Overview feed and Undo, and
+a real prior-day journal consolidated by the desktop scheduler.
+
 The two follow-up screenshots showed hard rectangular focus outlines around the
 composer and context textarea. The shared outlines were removed from desktop and
 island controls; focused fields retain their ordinary subdued borders. Keyboard

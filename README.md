@@ -204,8 +204,18 @@ Use **Projects → Overview** for the folder, client and working rules,
 Assign a teammate to a project from the overview, teammate editor or chat header.
 Its file/command tools use that folder and its prompt receives a bounded brief.
 
+Run the CLI from a project folder and that project attaches automatically unless
+another one is active; teammates attach through assignment. After a turn that
+changes files, the project gets one bounded **Recent work** line and matching
+todos, shown in Overview with **Undo**. With
+`PROJECT_INLINE_CONSOLIDATION=on`, a small local extraction can also propose
+notes and decisions. `/project undo` in the CLI removes the latest session's
+automatic entries. Explicit activation always wins over folder detection.
+
 **Work review** beside chat shows Git changes and diffs, recent artifacts, and
-command runs with output and Stop. File edits can open it automatically.
+command runs with output and Stop. File edits can open it automatically. The
+**Edited N files** card appears once the turn ends, so it never jumps around
+while tools are still running.
 
 ### Browsers and connected apps
 

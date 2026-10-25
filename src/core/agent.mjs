@@ -4,6 +4,9 @@ import { ProfileStore } from '../memory/profile.mjs';
 import fs from 'node:fs';
 import { PROFILE_FILE, PROJECTS_FILE, DEFAULT_TOOL_OUTPUT_BYTES } from './config.mjs';
 import { ProjectStore } from '../memory/projects.mjs';
+import { detectProject, suggestProjectForPath } from '../memory/project-resolver.mjs';
+import { createTurnAudit, noteToolUse, noteFileEffects, finishTurnAudit } from '../memory/turn-audit.mjs';
+import { PROJECT_WORK_GUIDANCE, UNTRACKED_REPO_GUIDANCE } from '../memory/project-guidance.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from '../memory/memory-context.mjs';
 import { warmRecall } from '../../tools/personal/recall.mjs';
@@ -340,6 +343,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       "group with find_tools and set it up instead of saying you cannot. Scheduled work runs in " +
       "`ankita --daemon`, so mention that if it is not already running.",
     project ? `\n${project}` : "",
+    project ? PROJECT_WORK_GUIDANCE : "",
     "Personal memory tools remember/recall are directly available; no find_tools needed. Before personal questions " +
       "or advice shaped by interests, preferences or circumstances, consult recalled personal context. " +
       "The runtime retrieves bounded memory candidates; use them when relevant and call recall(project=personal) " +
@@ -395,6 +399,11 @@ export class Agent {
     approvalContext = null,
     onSubagentEvent = null,
     subagentTransform = null,
+    // Folder-based attribution. `null` follows the config flag; `false` keeps a
+    // host (desktop) purely explicit even when the config allows detection.
+    autoProject = null,
+    // Called after a turn is journaled. A host uses this to write project work.
+    onTurnComplete = null,
   }) {
     this.client = client;
     this.allowedTools = allowedTools;
@@ -419,9 +428,14 @@ export class Agent {
     this.project = project || "";
     // Id of that project, so tools can tag what they create. Null when none.
     this.projectId = this.project ? projectId || null : null;
+    // 'explicit' wins over 'path'; rebase only re-detects in the latter case.
+    this.projectSource = this.projectId ? 'explicit' : 'none';
     this.abort = null;
     // activatedTools: deferred tool names find_tools has loaded this session.
     this.state = { todos: [], jobs: new Map(), activatedTools: new Set() };
+    this.onTurnComplete = typeof onTurnComplete === 'function' ? onTurnComplete : null;
+    this.turnAudit = null;
+    this.lastJournalFile = null;
     this.searchesThisTurn = 0;
     // Signatures of this request's tool calls, for the no-progress guard. Keyed
     // by callSignature(), valued { name, count }.
@@ -443,6 +457,12 @@ export class Agent {
     this.approvalContext = approvalContext && typeof approvalContext === 'object' ? approvalContext : null;
     this.onSubagentEvent = onSubagentEvent;
     this.subagentTransform = typeof subagentTransform === 'function' ? subagentTransform : null;
+    // A folder can identify the project on its own. Explicit assignment always
+    // wins, and one-shot/read-only/background agents stay unattributed.
+    const allowAutoProject = (autoProject ?? config.projectAutoDetect !== false) &&
+      !this.readOnly && this.depth === 0 && this.memoryEnabled !== false && !config.backgroundJob;
+    this.autoProject = allowAutoProject;
+    if (!this.projectId && allowAutoProject) this.resolvePathProject();
     // Tool discovery/use in this turn, separate from the session's persistent tool catalogue.
     this.activeSkillTools = new Set();
     this.loadedAutomaticSkills = new Set(); // Audit only bodies actually rendered in a turn's prompt.
@@ -464,6 +484,26 @@ export class Agent {
     if (this.useTools && this.memoryEnabled) warmRecallSafely({ config });
   }
 
+  /**
+   * Derive the project from the working directory. Detection is best-effort:
+   * a malformed store must never stop a session from starting.
+   */
+  resolvePathProject() {
+    try {
+      const store = new ProjectStore(this.toolContext?.projectsFile || PROJECTS_FILE).load();
+      const match = detectProject(store, this.cwd, this.config);
+      this.project = match ? [store.promptBlock(match), store.workBlock(match)].filter(Boolean).join('\n') : '';
+      this.projectId = match?.id || null;
+      this.projectSource = this.projectId ? 'path' : 'none';
+      if (this.projectId) this.state?.activatedTools?.add('project_memory');
+    } catch {
+      this.project = '';
+      this.projectId = null;
+      this.projectSource = 'none';
+    }
+    return this.projectId;
+  }
+
   /** System prompt with the tool catalog actually callable by this agent. */
   systemText() {
     const base = buildSystemPrompt(this.config, this.cwd, this.project, this.mcpSummaries(), this.personalBlock(), this.skillLines,
@@ -472,7 +512,19 @@ export class Agent {
         deferTools: this.deferTools,
         exclude: this.canDelegate() ? null : SUBAGENT_TOOL,
       });
-    return this.systemSuffix ? `${base}\n\n${this.systemSuffix}` : base;
+    const hint = this.projectHint();
+    const text = hint ? `${base}\n\n${hint}` : base;
+    return this.systemSuffix ? `${text}\n\n${this.systemSuffix}` : text;
+  }
+
+  /** One bounded line offering to track an untracked repository folder. */
+  projectHint() {
+    if (this.projectId || !this.autoProject) return '';
+    try {
+      return suggestProjectForPath(this.cwd) ? UNTRACKED_REPO_GUIDANCE : '';
+    } catch {
+      return '';
+    }
   }
 
   canDelegate() {
@@ -506,6 +558,9 @@ export class Agent {
 
   rebase() {
     this.cwd = this.workspacePath || process.cwd();
+    // Only a path-derived project follows the directory; an explicit choice is
+    // never silently replaced.
+    if (this.projectSource === 'path') this.resolvePathProject();
     this.skillLines = skillPromptLines(this.availableSkills(), this.activeSkillTools);
     this.messages[0] = { role: "system", content: this.systemText() };
   }
@@ -518,8 +573,12 @@ export class Agent {
   setProject(block, id = null, workspacePath = null) {
     this.project = block || "";
     this.projectId = this.project ? id || null : null;
+    this.projectSource = this.projectId ? 'explicit' : 'none';
     this.workspacePath = workspacePath;
-    if (this.projectId) this.turnProjects?.add(this.projectId);
+    if (this.projectId) {
+      this.turnProjects?.add(this.projectId);
+      this.state?.activatedTools?.add('project_memory');
+    }
     this.rebase();
     return this;
   }
@@ -970,16 +1029,18 @@ export class Agent {
           browserCredentialAllowed: this.browserCredentialAllowed === true,
           browserResultCallback: result => this.toolContext?.onBrowserActionResult?.(result),
           onLocalResult: (name, args, result, ctx) => {
+            if (!String(result).startsWith('Error:')) noteFileEffects(this.turnAudit, name, args, this.cwd);
             if (name === 'remember' && args.action !== 'list' && !String(result).startsWith('Error:')) this.memoryContext = null;
             if (['remember', 'project_memory', 'project'].includes(name) && !String(result).startsWith('Error:')) warmRecallSafely(ctx);
             if (name === 'project' && ['add', 'use', 'archive', 'forget', 'update'].includes(args.action) && !String(result).startsWith('Error:')) {
-              const projects = new ProjectStore(PROJECTS_FILE).load();
+              const projects = new ProjectStore(this.toolContext?.projectsFile || PROJECTS_FILE).load();
               if (!['add', 'use'].includes(args.action)) {
                 const current = projects.find(this.projectId);
                 projects.data.active = current && !current.archived ? current.id : null;
               }
               const workspacePath = projects.active?.path && fs.existsSync(projects.active.path) && fs.statSync(projects.active.path).isDirectory() ? projects.active.path : null;
-              this.setProject(projects.promptBlock(), projects.activeId, workspacePath);
+              const block = projects.active ? [projects.promptBlock(), projects.workBlock()].filter(Boolean).join("\n") : "";
+              this.setProject(block, projects.activeId, workspacePath);
             }
           },
         };
@@ -1000,6 +1061,7 @@ export class Agent {
     try { args = this.parseToolArguments(call, parsedArgs); }
     catch (err) { return `Error: arguments were not valid JSON (${err.message}).`; }
     const name = call.function.name;
+    noteToolUse(this.turnAudit, name);
     const result = await this.executionHost().execute({ id: call.id, name, arguments: args }, { resultMode: TOOL_RESULT_MODE.api });
     const targets = parseToolName(name)?.serverId === COMPUTER_MCP_ID ? computerObservationTargets(result) : null;
     const activeClient = this._activeModelClient || this.client;
@@ -1022,6 +1084,7 @@ export class Agent {
     try { args = this.parseToolArguments(call, parsedArgs); }
     catch (err) { return `Error: arguments were not valid JSON (${err.message}).`; }
     const name = call.function.name;
+    noteToolUse(this.turnAudit, name);
     const native = await this.executionHost().execute({ id: call.id, name, arguments: args }, { resultMode: TOOL_RESULT_MODE.api });
     let result = native.content.filter(part => part.type === 'text').map(part => part.text).join('\n');
     const budget = this.config.maxToolChars > 0 ? this.config.maxToolChars : DEFAULT_TOOL_OUTPUT_BYTES;
@@ -1090,6 +1153,8 @@ export class Agent {
     this.mcpImagesThisTurn = 0;
     this.computerObservations = new Map();
     this.ranThisTurn = [];
+    this.turnAudit = createTurnAudit({ maxTools: this.config.projectAuditMaxTools, maxFiles: this.config.projectAuditMaxFiles });
+    this.lastJournalFile = null;
     this.browserActionsThisTurn = 0;
     this.browserEvidence = null;
     this.browserProgress = null;
@@ -1111,12 +1176,27 @@ export class Agent {
     }
     if (this.useTools) warmRecallSafely({ config: this.config });
     if (this.config.memoryConsolidation === false) this.journalComplete = false;
+    const termination = this.cancelled() ? 'cancelled' : this.terminationReason || 'model_answer';
+    const turnId = this.requestId;
+    // Work capture is switchable: with it off the journal stays a plain
+    // transcript, and maintenance has nothing to log.
+    const audit = this.config.projectWorkCapture === false ? null : finishTurnAudit(this.turnAudit, { termination, turnId });
+    const projectId = this.turnProjects.size === 1 ? [...this.turnProjects][0] : null;
     if (this.journal && text !== null && this.config.memoryConsolidation !== false) {
-      const projectId = this.turnProjects.size === 1 ? [...this.turnProjects][0] : null;
-      try { this.journal({ text, reply, projectId, sessionId: this.sessionId }); }
+      try { this.lastJournalFile = this.journal({ text, reply, projectId, sessionId: this.sessionId, audit, turnId }); }
       catch (err) { this.journalComplete = false; this.print(`Could not journal this turn: ${err.message}`); }
     }
-    traceAgent({ event: 'final', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: this.cancelled() ? 'cancelled' : this.terminationReason || 'model_answer' }, this.config);
+    // Automatic project writing runs after the journal exists, and never costs
+    // the user their reply if it fails.
+    if (projectId && text !== null && this.config.memoryConsolidation !== false && this.onTurnComplete) {
+      try {
+        await this.onTurnComplete({ projectId, audit, todos: this.state.todos, sessionId: this.sessionId, turnId,
+          journalFile: this.lastJournalFile, termination });
+      } catch (err) {
+        this.print(`Could not update project memory: ${err.message}`);
+      }
+    }
+    traceAgent({ event: 'final', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: termination }, this.config);
     return reply;
   }
 

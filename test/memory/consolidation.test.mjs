@@ -188,3 +188,38 @@ test('disabling consolidation during a session stops automatic journaling immedi
   assert.equal(turns.length, 0);
   assert.equal(agent.journalComplete, false);
 });
+
+test('inline session consolidation reads a same-day journal, tags provenance, and is idempotent', async () => {
+  const f = fixture();
+  const at = '2026-09-21T04:00:00Z';
+  const file = recordTurn({ text: 'We decided to adopt Postgres.', reply: 'Noted.', projectId: f.project.id, sessionId: 's2', at },
+    { journalDir: f.journalDir, timeZone: 'UTC' });
+  let calls = 0;
+  const c = new MemoryConsolidator({ ...f, extract: async prompt => {
+    calls++;
+    assert.match(prompt, /adopt Postgres/);
+    return JSON.stringify({ summary: 'Adopted Postgres.', personal: [],
+      project: [{ action: 'decide', text: 'Adopt Postgres', evidence: 'We decided to adopt Postgres.' }] });
+  } });
+  const result = await c.runSession(file, { projectId: f.project.id, sessionId: 's2',
+    memorySource: { kind: 'auto-consolidation', sessionId: 's2', turnId: 't9' } });
+  assert.equal(result.processed, 1);
+  const decision = new ProjectStore(f.projectsFile).load().find(f.project.id).decisions.find(item => item.text === 'Adopt Postgres');
+  assert.equal(decision.source.kind, 'auto-consolidation');
+  assert.equal(decision.source.sessionId, 's2');
+  assert.equal(decision.source.turnId, 't9');
+
+  const replay = new MemoryConsolidator({ ...f, extract: async () => { throw new Error('must not run'); } });
+  assert.equal((await replay.runSession(file, { projectId: f.project.id })).processed, 0);
+  assert.equal(calls, 1);
+});
+
+test('inline consolidation respects the disable flag and an unknown project', async () => {
+  const f = fixture();
+  const off = new MemoryConsolidator({ ...f, config: { ...f.config, memoryConsolidation: false },
+    extract: async () => { throw new Error('must not run'); } });
+  assert.equal((await off.runSession(f.source, { projectId: f.project.id })).processed, 0);
+
+  const on = new MemoryConsolidator({ ...f, extract: async () => { throw new Error('must not run'); } });
+  assert.equal((await on.runSession(f.source, { projectId: 'missing' })).processed, 0);
+});

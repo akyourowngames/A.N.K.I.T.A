@@ -22,14 +22,24 @@ export function saveSession(file, data, { transform = redactValue } = {}) {
 }
 
 /** Immutable per-turn transcripts survive autosave replacement and history trimming. */
-export function recordTurn({ text, reply, projectId = null, sessionId = null, at = new Date().toISOString() }, { journalDir = JOURNAL_DIR, timeZone, transform = redactValue } = {}) {
+export function recordTurn(
+  { text, reply, projectId = null, sessionId = null, at = new Date().toISOString(), audit = null, turnId = null },
+  { journalDir = JOURNAL_DIR, timeZone, transform = redactValue } = {}
+) {
   if (typeof text !== 'string' || !text.trim()) return null;
   const id = randomUUID();
   const folder = path.join(journalDir, localClock(new Date(at), timeZone).date);
   fs.mkdirSync(folder, { recursive: true });
   const file = path.join(folder, `${new Date(at).getTime()}-${id}.json`);
-  writeTextFile(file, JSON.stringify(transform({ id, sessionId, savedAt: at, projectId, messages: [
+  const entry = { id, sessionId, savedAt: at, projectId, messages: [
     { role: 'user', content: text }, { role: 'assistant', content: String(reply || '') },
-  ] })));
+  ] };
+  // Work evidence belongs to a project; a chat with no project stays a plain
+  // conversation transcript.
+  if (projectId) {
+    entry.turnId = turnId || id;
+    if (audit) entry.audit = audit;
+  }
+  writeTextFile(file, JSON.stringify(transform(entry)));
   return file;
 }

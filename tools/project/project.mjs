@@ -78,8 +78,8 @@ export const parameters = {
 
 export const needsApproval = false;
 
-function store() {
-  return new ProjectStore(PROJECTS_FILE).load();
+function store(ctx = {}) {
+  return new ProjectStore(ctx.projectsFile || PROJECTS_FILE).load();
 }
 
 function askLine(missing) {
@@ -87,8 +87,8 @@ function askLine(missing) {
   return `\nWorth asking ${"them"} about (skip any that do not apply): ${missing.join(", ")}.`;
 }
 
-export function run(args = {}) {
-  const s = store();
+export function run(args = {}, ctx = {}) {
+  const s = store(ctx);
   const action = String(args.action || "list").toLowerCase();
 
   if (action === "add") {

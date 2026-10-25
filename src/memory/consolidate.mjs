@@ -8,6 +8,7 @@ import { localClock } from '../automation/notify.mjs';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
 import { run as remember } from '../../tools/personal/remember.mjs';
 import { run as projectMemory } from '../../tools/project/project-memory.mjs';
+import { LOCK_STALE_MS } from './file-lock.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const normal = value => value.trim().toLocaleLowerCase();
@@ -65,6 +66,29 @@ export class MemoryConsolidator {
 
   save(index) { writeTextFile(this.indexFile, JSON.stringify(index)); }
 
+  /** Chunk size that leaves room for the prompt and the model's reply. */
+  cap() {
+    return Math.max(1000, Math.min(this.config.memoryChunkChars || 12000, ((this.config.contextWindow || 32768) - 8000) / 2));
+  }
+
+  /** A bounded snapshot of personal facts the extractor may correct. */
+  facts() {
+    const facts = [];
+    let factSize = 0;
+    for (const fact of new ProfileStore(this.profileFile).load().facts.slice().reverse()) {
+      const row = { id: fact.id, text: fact.text.slice(0, 1000), kind: fact.kind, updatedAt: fact.updatedAt };
+      factSize += JSON.stringify(row).length;
+      if (factSize > 6000) break;
+      facts.push(row);
+    }
+    return facts;
+  }
+
+  projectContext(project) {
+    const compact = items => (items || []).map(item => ({ id: item.id, text: item.text.slice(0, 240) }));
+    return project ? { id: project.id, name: project.name, notes: compact(project.notes?.slice(-4)), decisions: compact(project.decisions?.slice(-4)), todos: compact(project.todos?.filter(t => !t.done).slice(-12)) } : null;
+  }
+
   async *sources() {
     // Async directory reads let inbox handling continue during a large backlog.
     const today = localClock(this.now(), this.config.timeZone).date;
@@ -114,8 +138,54 @@ export class MemoryConsolidator {
         const todo = p.todos?.find(t => t.id === item.ref);
         if (!todo || todo.done) continue;
       } else if (p[field]?.some(x => normal(x.text) === normal(item.text))) continue;
-      const result = projectMemory({ action: item.action, name: p.id, text: item.text, ref: item.ref }, { ...ctx, memorySource: { id: entry.id, at: entry.at, file: entry.source, evidence: item.evidence } });
+      const result = projectMemory({ action: item.action, name: p.id, text: item.text, ref: item.ref }, { ...ctx, memorySource: { id: entry.id, at: entry.at, file: entry.source, evidence: item.evidence, ...(entry.memorySource || {}) } });
       if (result.startsWith('Error:')) throw new Error(result);
+    }
+  }
+
+  /**
+   * One session, right now: the opt-in inline extraction after a turn. It
+   * bypasses the nightly gate and the next-day filter, but keeps the same
+   * index, lock and content-hash idempotency as the sweep.
+   */
+  async runSession(file, { projectId = null, sessionId = null, memorySource = null } = {}) {
+    if (this.running || this.config.memoryConsolidation === false) return { processed: 0 };
+    this.running = true;
+    const lock = `${this.indexFile}.lock`;
+    let fd, processed = 0;
+    try {
+      fs.mkdirSync(path.dirname(this.indexFile), { recursive: true });
+      try {
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(lock); } catch {}
+        fd = fs.openSync(lock, 'wx');
+      } catch (err) { if (err.code === 'EEXIST') return { processed: 0 }; throw err; }
+      let session;
+      try { session = JSON.parse(await fs.promises.readFile(file, 'utf8')); }
+      catch (err) { this.log(`Skipping unreadable session ${path.basename(file)}: ${err.message}`); return { processed: 0 }; }
+      if (!Array.isArray(session.messages)) return { processed: 0 };
+      const project = new ProjectStore(this.projectsFile).load().find(projectId || session.projectId);
+      if (!project) return { processed: 0 };
+      const index = readIndex(this.indexFile);
+      const done = new Set(index.entries.map(e => e.id));
+      const cap = this.cap();
+      const facts = this.facts();
+      const projectContext = this.projectContext(project);
+      const at = session.savedAt || this.now().toISOString();
+      for (const messages of chunks(session.messages, cap)) {
+        const id = hash(JSON.stringify([project.id, messages]));
+        if (done.has(id)) continue;
+        const raw = await this.extract(this.prompt(messages, projectContext, facts), { purpose: 'consolidation' });
+        const plan = validate(raw, messages, project.id, facts);
+        const entry = { id, sessionId: sessionId || session.sessionId || path.basename(file), source: file, at, projectId: project.id,
+          summary: plan.summary, plan, ...(memorySource ? { memorySource } : {}) };
+        index.entries.push(entry); this.save(index);
+        this.apply(entry); delete entry.plan; this.save(index);
+        done.add(id); processed++;
+      }
+      return { processed };
+    } finally {
+      if (fd !== undefined) { fs.closeSync(fd); fs.unlinkSync(lock); }
+      this.running = false;
     }
   }
 
@@ -128,13 +198,13 @@ export class MemoryConsolidator {
     try {
       fs.mkdirSync(path.dirname(this.indexFile), { recursive: true });
       try {
-        try { if (Date.now() - fs.statSync(lock).mtimeMs > 600000) fs.unlinkSync(lock); } catch {}
+        try { if (Date.now() - fs.statSync(lock).mtimeMs > LOCK_STALE_MS) fs.unlinkSync(lock); } catch {}
         fd = fs.openSync(lock, 'wx');
       } catch (err) { if (err.code === 'EEXIST') return { processed: 0 }; throw err; }
       const index = readIndex(this.indexFile);
       const done = new Set(index.entries.map(e => e.id));
       const budget = this.config.memoryBatchSize || 4;
-      const cap = Math.max(1000, Math.min(this.config.memoryChunkChars || 12000, ((this.config.contextWindow || 32768) - 8000) / 2));
+      const cap = this.cap();
       // Staged plans survive a crash between memory writes and checkpointing.
       for (const entry of index.entries.filter(e => e.plan)) {
         this.apply(entry); delete entry.plan; this.save(index); processed++;
@@ -151,16 +221,8 @@ export class MemoryConsolidator {
         for (const messages of chunks(session.messages, cap)) {
           const id = hash(JSON.stringify([session.projectId || null, messages]));
           if (done.has(id)) continue;
-          const facts = [];
-          let factSize = 0;
-          for (const fact of new ProfileStore(this.profileFile).load().facts.slice().reverse()) {
-            const row = { id: fact.id, text: fact.text.slice(0, 1000), kind: fact.kind, updatedAt: fact.updatedAt };
-            factSize += JSON.stringify(row).length;
-            if (factSize > 6000) break;
-            facts.push(row);
-          }
-          const compact = items => (items || []).map(item => ({ id: item.id, text: item.text.slice(0, 240) }));
-          const projectContext = project ? { id: project.id, name: project.name, notes: compact(project.notes?.slice(-4)), decisions: compact(project.decisions?.slice(-4)), todos: compact(project.todos?.filter(t => !t.done).slice(-12)) } : null;
+          const facts = this.facts();
+          const projectContext = this.projectContext(project);
           const raw = await this.extract(this.prompt(messages, projectContext, facts), { purpose: 'consolidation' });
           const plan = validate(raw, messages, project?.id, facts);
           const entry = { id, sessionId: session.sessionId || session.name || path.basename(file), source: file, at: session.savedAt, projectId: project?.id || null, summary: plan.summary, plan };

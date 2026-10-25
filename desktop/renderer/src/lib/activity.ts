@@ -117,6 +117,15 @@ export function buildTranscript(messages: ChatMessage[], running: boolean): Tran
   let items: ActivityItem[] = [];
   let edits = new Map<string, EditedFile>();
   let editSequence = 0;
+  // The still-running turn starts at its user message. Its edit card is held
+  // back until turn-end: showing it mid-turn made the card jump between the
+  // tool rows and the streamed answer on every update.
+  let lastUserIndex = -1;
+  if (running) {
+    for (let index = messages.length - 1; index >= 0; index--) {
+      if (messages[index].role === 'user') { lastUserIndex = index; break; }
+    }
+  }
 
   const flushActivity = () => {
     if (!items.length) return;
@@ -129,7 +138,9 @@ export function buildTranscript(messages: ChatMessage[], running: boolean): Tran
     edits = new Map();
   };
 
-  for (const message of messages) {
+  for (let index = 0; index < messages.length; index++) {
+    const message = messages[index];
+    const inProgress = index > lastUserIndex;
     if (message.role === 'user') {
       flushActivity();
       flushEdits();
@@ -149,13 +160,14 @@ export function buildTranscript(messages: ChatMessage[], running: boolean): Tran
     }
     if (message.content.trim()) {
       flushActivity();
+      if (!inProgress) flushEdits();
       blocks.push({ kind: 'message', id: message.id, message });
       continue;
     }
     if (message.reasoning?.trim()) items.push({ kind: 'thought', id: message.id, text: message.reasoning });
   }
   flushActivity();
-  flushEdits();
+  if (!running) flushEdits();
 
   if (running) {
     for (let index = blocks.length - 1; index >= 0; index--) {

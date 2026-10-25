@@ -714,6 +714,23 @@ export class Daemon {
     }
   }
 
+  /** Start the low-priority memory sweep, but only while nothing else runs. */
+  maybeConsolidate() {
+    if (this.stopping || !this.consolidator?.due() || this.chains.has('consolidation') || this.active !== 0 || this.waiting.length !== 0 ||
+        [...this.chains.keys()].some(key => key !== 'notifications')) return;
+    const work = this.consolidator.run()
+      .then(async result => {
+        if (result.processed) {
+          this.log(`memory: consolidated ${result.processed} transcript part(s)`);
+          const { warmRecall } = await import('../../tools/personal/recall.mjs');
+          void warmRecall({ config: this.config });
+        }
+      })
+      .catch(err => { this.stats.errors++; this.log(`memory consolidation failed: ${err.message}`); })
+      .finally(() => this.chains.delete('consolidation'));
+    this.chains.set('consolidation', work);
+  }
+
   /** One pass of everything. Exposed so tests can step the loop deterministically. */
   async tickOnce() {
     if (this.stopping) return { routines: 0, checked: 0, messages: 0 };
@@ -724,7 +741,10 @@ export class Daemon {
     } catch (err) {
       this.log(`could not reload state: ${err.message}`);
     }
-    if (this.routinesOnly) return { routines: this.dispatchRoutines(), checked: 0, messages: 0 };
+    if (this.routinesOnly) {
+      this.maybeConsolidate();
+      return { routines: this.dispatchRoutines(), checked: 0, messages: 0 };
+    }
     // Bring MCP connections in line with the store, so `/mcp add` in another
     // window reaches a running daemon without a restart. Same reasoning as
     // reloading routines and watches above.
@@ -746,21 +766,7 @@ export class Daemon {
     }
     // Receive interactive work before deciding whether maintenance can start.
     const messages = await this.pollInbox();
-    if (!this.stopping && this.consolidator?.due() && !this.chains.has('consolidation') && this.active === 0 && this.waiting.length === 0 &&
-        ![...this.chains.keys()].some(key => key !== 'notifications')) {
-      // Low-priority maintenance starts only while idle, without using a chat slot.
-      const work = this.consolidator.run()
-        .then(async result => {
-          if (result.processed) {
-            this.log(`memory: consolidated ${result.processed} transcript part(s)`);
-            const { warmRecall } = await import('../../tools/personal/recall.mjs');
-            void warmRecall({ config: this.config });
-          }
-        })
-        .catch(err => { this.stats.errors++; this.log(`memory consolidation failed: ${err.message}`); })
-        .finally(() => this.chains.delete('consolidation'));
-      this.chains.set('consolidation', work);
-    }
+    this.maybeConsolidate();
     if (!this.stopping && this.flushNotifications && !this.chains.has('notifications')) {
       const work = Promise.resolve().then(this.flushNotifications)
         .catch(err => this.log(`notification flush failed: ${err.message}`))

@@ -504,6 +504,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'addProjectTodo': return current.addProjectTodo(payload.id, payload.text);
     case 'addProjectRecord': return current.addProjectRecord(payload.id, payload.kind, payload.text);
     case 'completeProjectTodo': return current.completeProjectTodo(payload.id, payload.ref);
+    case 'undoProjectTurn': return current.undoProjectTurn(payload.id, { sessionId: payload.sessionId, turnId: payload.turnId });
     case 'workspaceSnapshot': return current.workspaceSnapshot(payload.id);
     case 'readGeneratedImage': return current.readGeneratedImage(payload.id, payload.path);
     case 'workspaceDiff': return current.workspaceDiff(payload.id, payload.path);

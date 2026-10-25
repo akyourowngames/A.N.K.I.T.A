@@ -347,6 +347,17 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     memoryBatchSize: Math.min(20, posInt(pick("MEMORY_BATCH_SIZE"), 4)),
     memoryChunkChars: Math.min(24000, posInt(pick("MEMORY_CHUNK_CHARS"), 12000)),
     memoryTimeout: posInt(pick("MEMORY_TIMEOUT"), 60),
+    // Project work capture. Detection and the work log are free; the inline
+    // extraction pass spends a model call, so it stays off unless asked for.
+    projectAutoDetect: onOff(pick("PROJECT_AUTO_DETECT"), true),
+    projectWorkCapture: onOff(pick("PROJECT_WORK_CAPTURE"), true),
+    projectAutoMaintenance: onOff(pick("PROJECT_AUTO_MAINTENANCE"), true),
+    projectInlineConsolidation: onOff(pick("PROJECT_INLINE_CONSOLIDATION"), false),
+    projectAuditMaxTools: Math.min(100, posInt(pick("PROJECT_AUDIT_MAX_TOOLS"), 20)),
+    projectAuditMaxFiles: Math.min(100, posInt(pick("PROJECT_AUDIT_MAX_FILES"), 20)),
+    projectWorklogMax: Math.min(1000, posInt(pick("PROJECT_WORKLOG_MAX"), 100)),
+    projectTodoSyncMax: Math.min(20, posInt(pick("PROJECT_TODO_SYNC_MAX"), 5)),
+    projectInlineMinChars: Math.min(100000, posInt(pick("PROJECT_INLINE_MIN_CHARS"), 400)),
     briefingPrompt: pick("BRIEFING_PROMPT") || "",
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,

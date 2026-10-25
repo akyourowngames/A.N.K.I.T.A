@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { ProjectStore, describeProject, describeProjectFull } from '../../src/memory/projects.mjs';
+import { ProjectStore, describeProject, describeProjectFull, MAX_WORKLOG } from '../../src/memory/projects.mjs';
 import { buildSystemPrompt } from '../../src/core/agent.mjs';
 
 function tmpStore(t) {
@@ -253,4 +253,55 @@ test('listing marks the active project and shows where it lives', (t) => {
   assert.match(list, /^\* zumba/m, 'active marked with *');
   assert.match(list, /^  ankita/m, 'inactive not marked');
   assert.match(describeProjectFull(store.find('zumba'), store), /active/);
+});
+
+test('the work log appends, dedupes a turn, caps entries, and never activates the project', (t) => {
+  const { store } = tmpStore(t);
+  store.add({ name: 'atlas' });
+  const source = { kind: 'auto-worklog', sessionId: 's1', turnId: 'turn-1' };
+  store.appendWorkLog('atlas', { text: 'model_answer · 1 file(s) · src/a.js', at: '2026-10-25T06:00:00.000Z', source });
+  assert.equal(store.appendWorkLog('atlas', { text: 'duplicate', source }).error, 'this turn is already logged');
+  assert.equal(store.find('atlas').worklog.length, 1);
+  assert.equal(store.activeId, null, 'activity is not activation');
+  assert.equal(store.find('atlas').lastUsedAt, '2026-10-25T06:00:00.000Z');
+
+  for (let i = 0; i < MAX_WORKLOG + 2; i++) store.appendWorkLog('atlas', { text: `entry ${i}` });
+  const log = store.find('atlas').worklog;
+  assert.equal(log.length, MAX_WORKLOG);
+  assert.equal(log.at(-1).text, `entry ${MAX_WORKLOG + 1}`, 'newest kept');
+  assert.match(describeProjectFull(store.find('atlas'), store), /work\s+.*entry/);
+});
+
+test('promptBlock accepts an explicit project while it stays memory-free', (t) => {
+  const { store } = tmpStore(t);
+  store.add({ name: 'atlas', summary: 'shared work' });
+  store.addNote('atlas', 'a private note');
+  const block = store.promptBlock(store.find('atlas'));
+  assert.match(block, /atlas/);
+  assert.match(block, /shared work/);
+  assert.doesNotMatch(block, /private note/);
+  assert.match(block, /Active project: atlas/);
+  assert.equal(store.activeId, null, 'the explicit argument does not activate anything');
+});
+
+test('undo removes only automatic writes and reopens the todos it closed', (t) => {
+  const { store } = tmpStore(t);
+  store.add({ name: 'atlas' });
+  store.addNote('atlas', 'manual note');
+  store.addTodo('atlas', 'ship it');
+  store.addNote('atlas', 'auto note', { kind: 'auto-consolidation', sessionId: 's1', turnId: 't1' });
+  store.addTodo('atlas', 'auto todo', { kind: 'auto-todo', sessionId: 's1' });
+  store.completeTodo('atlas', 't1', { kind: 'auto-todo', sessionId: 's1' });
+  store.appendWorkLog('atlas', { text: 'auto work', source: { kind: 'auto-worklog', sessionId: 's1', turnId: 't1' } });
+
+  const result = store.removeAutoEntries('atlas', { sessionId: 's1' });
+  assert.equal(result.worklog, 1);
+  assert.equal(result.notes, 1);
+  assert.equal(result.todos, 1);
+  assert.equal(result.reopened, 1);
+  assert.equal(result.total, 4);
+  const project = store.find('atlas');
+  assert.deepEqual(project.notes.map(note => note.text), ['manual note']);
+  assert.deepEqual(project.todos.map(todo => [todo.text, todo.done]), [['ship it', false]]);
+  assert.equal(project.worklog.length, 0);
 });

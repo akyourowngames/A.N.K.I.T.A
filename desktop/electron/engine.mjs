@@ -14,6 +14,9 @@ import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { ComposioStore } from '../../src/integrations/composio-store.mjs';
 import { ProjectStore } from '../../src/memory/projects.mjs';
 import { PROJECTS_FILE } from '../../src/core/config.mjs';
+import { maintainTurn } from '../../src/memory/project-maintenance.mjs';
+import { MemoryConsolidator } from '../../src/memory/consolidate.mjs';
+import { WORKSPACE_EFFECT_TOOLS, GENERATED_ARTIFACT_TOOLS } from '../../src/core/tool-effects.mjs';
 import { saveSession, recordTurn } from '../../src/core/sessions.mjs';
 import { sanitizeMessages, estimateImageBytes } from '../../src/core/history.mjs';
 import { loadSkills } from '../../src/core/skills.mjs';
@@ -746,6 +749,13 @@ export class DesktopEngine {
     this.emit({ type: 'projects-changed' });
     return projectSummary(result.project);
   }
+  undoProjectTurn(id, { sessionId = null, turnId = null } = {}) {
+    const result = new ProjectStore(this.projectsFile).load().removeAutoEntries(id, { sessionId, turnId });
+    if (!result) throw new Error('Project not found');
+    this.refreshProjectAgents(id);
+    this.emit({ type: 'projects-changed' });
+    return projectSummary(result.project);
+  }
   refreshProjectAgents(id) {
     const project = new ProjectStore(this.projectsFile).load().find(id);
     for (const [threadId, agent] of this.agents) {
@@ -990,6 +1000,10 @@ export class DesktopEngine {
     }
     const agent = new this.AgentClass({
       client: this.client, tool: this.tool, mcp: this.mcp, config, project, projectId, workspacePath,
+      // Desktop attribution stays explicit: unassigned teammates have no
+      // workspace to detect from.
+      autoProject: false,
+      onTurnComplete: info => this.projectTurnComplete(id, info),
       browserManager: this.browserManager, browserThreadId: id,
       toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile,
         selectBrowserUpload: async ({ signal } = {}) => {
@@ -1018,6 +1032,51 @@ export class DesktopEngine {
     agent.state.todos = saved.todos;
     this.agents.set(id, agent);
     return agent;
+  }
+
+  /** Inline memory extraction is opt-in, so the consolidator is built lazily. */
+  turnConsolidator() {
+    if (!this.config?.projectInlineConsolidation) return null;
+    return (this._turnConsolidator ??= new MemoryConsolidator({
+      config: this.config,
+      extract: (prompt, meta) => this.runPrompt(prompt, meta),
+      projectsFile: this.projectsFile,
+      log: message => { try { console.error('[memory]', message); } catch {} },
+    }));
+  }
+
+  /** One tools-free completion for background extraction, like deliverRoutine. */
+  async runPrompt(text) {
+    if (!this.client) throw new Error('Set up a provider in Settings before extracting memory');
+    const agent = new this.AgentClass({
+      client: this.client,
+      config: { ...this.config, backgroundJob: true, subagentsEnabled: false },
+      deferTools: false, skillsEnabled: false, memoryEnabled: false,
+      project: '', projectId: null, autoProject: false,
+      toolContext: { projectsFile: this.projectsFile },
+      print: () => {}, write: () => {}, confirm: async () => false,
+    });
+    agent.messages = [
+      { role: 'system', content: 'You extract durable memory from a transcript. Follow the user message exactly and return only what it asks for.' },
+      { role: 'user', content: String(text || '') },
+    ];
+    agent.memoryContext = null;
+    agent.useTools = false;
+    const result = await agent.streamTurn({ useTools: false });
+    return String(result.content || '').trim();
+  }
+
+  async projectTurnComplete(id, info) {
+    const result = await maintainTurn({
+      ...info,
+      config: this.config || {},
+      projectsFile: this.projectsFile,
+      consolidator: this.turnConsolidator(),
+      log: message => { try { console.error('[projects]', message); } catch {} },
+    });
+    if (!result?.written) return;
+    this.emit({ type: 'project-activity', threadId: id, projectId: info.projectId, turnId: info.turnId, written: result.written, audit: info.audit });
+    this.emit({ type: 'projects-changed' });
   }
 
   async send(id, text, attachments = null, { surface = 'desktop' } = {}) {
@@ -1072,7 +1131,7 @@ export class DesktopEngine {
           this.emit({ type: 'teammates-changed' });
           this.emit({ type: 'projects-changed' });
         }
-        if (['write_file', 'edit_file', 'edit_lines', 'apply_patch', 'move_file', 'delete_file', 'run_command', 'job_stop', 'git', 'image_generate', 'image_download'].includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: id, open: didChange || ['image_generate', 'image_download'].includes(call.function?.name) });
+        if (WORKSPACE_EFFECT_TOOLS.includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: id, open: didChange || GENERATED_ARTIFACT_TOOLS.includes(call.function?.name) });
       },
     };
     const work = Promise.resolve().then(async () => {

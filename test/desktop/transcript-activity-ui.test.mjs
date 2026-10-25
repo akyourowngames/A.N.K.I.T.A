@@ -123,5 +123,27 @@ test('agent work groups into compact thought and tool rows while the answer stay
   await live.scrollIntoViewIfNeeded();
   await capture('transcript-live.png');
 
+  // An edit made mid-turn stays off the transcript until the turn ends; the
+  // completed turn above keeps its card throughout.
+  await page.evaluate(() => {
+    window.emitEvent({ type: 'tool-call', threadId: 'chief', callId: 'call-late', name: 'write_file', args: { path: 'notes/late.md' } });
+    window.emitEvent({ type: 'tool-result', threadId: 'chief', callId: 'call-late', text: 'Overwrote C:\\repo\\notes\\late.md\n+3 -2 · now 10 lines', isError: false });
+  });
+  assert.equal(await page.locator('.edit-summary').count(), 1, 'a running turn shows no edit card yet');
+  assert.equal(await page.locator('.edit-summary', { hasText: 'notes/late.md' }).count(), 0);
+
+  await page.evaluate(() => {
+    window.emitEvent({ type: 'assistant-delta', threadId: 'chief', messageId: 'm2', text: 'Suite is green.' });
+    window.emitEvent({ type: 'message-end', threadId: 'chief', messageId: 'm2' });
+    window.emitEvent({ type: 'turn-end', threadId: 'chief', turnId: 't2' });
+  });
+  const late = page.locator('.edit-summary').last();
+  await late.waitFor();
+  assert.equal(await page.locator('.edit-summary').count(), 2, 'the finished turn adds exactly one card');
+  assert.match(await late.innerText(), /Edited 1 file\b/);
+  assert.match(await late.locator('.edit-summary-path').innerText(), /notes\/late\.md/);
+  assert.match(await late.innerText(), /\+3\b/);
+  assert.match(await late.innerText(), /-2\b/);
+
   assert.deepEqual(errors, []);
 });

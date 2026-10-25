@@ -20,6 +20,8 @@ import {
   NOTIFY_QUEUE_FILE,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "../memory/projects.mjs";
+import { detectProject } from "../memory/project-resolver.mjs";
+import { maintainTurn } from "../memory/project-maintenance.mjs";
 import { McpManager } from "../integrations/mcp-manager.mjs";
 import { TierPolicy } from "../integrations/mcp-tiers.mjs";
 import { McpStore, describeServer, enableMessage, disableMessage } from "../integrations/mcp-store.mjs";
@@ -422,6 +424,10 @@ export async function main() {
       ["MEMORY_BATCH_SIZE", config.memoryBatchSize],
       ["MEMORY_CHUNK_CHARS", config.memoryChunkChars],
       ["MEMORY_TIMEOUT", config.memoryTimeout],
+      ["PROJECT_AUTO_DETECT", config.projectAutoDetect ? "on" : "off"],
+      ["PROJECT_WORK_CAPTURE", config.projectWorkCapture ? "on" : "off"],
+      ["PROJECT_AUTO_MAINTENANCE", config.projectAutoMaintenance ? "on" : "off"],
+      ["PROJECT_INLINE_CONSOLIDATION", config.projectInlineConsolidation ? "on" : "off"],
       ["SYSTEM_EXTRA", config.systemExtra || ""],
     ];
     console.log(c.bold("\nresolved config"));
@@ -477,8 +483,12 @@ export async function main() {
   const term = new Terminal({ completer: makeCompleter(models) });
   term.loadHistory(HISTORY_FILE);
 
-  // Projects: which one is active shapes the system prompt from here on.
+  // Projects: which one is active shapes the system prompt from here on. An
+  // explicit choice always wins; otherwise the working directory can identify
+  // the project without changing the saved active project.
   let projects = new ProjectStore(PROJECTS_FILE).load();
+  const pathProject = () => (projects.activeId ? null : detectProject(projects, process.cwd(), config));
+  const detectedProject = pathProject();
 
   // Process-level, not per-Agent: every freshAgent worker must share these
   // live connections, or a routine would spawn a server for one call.
@@ -489,7 +499,13 @@ export async function main() {
     tiers: new TierPolicy(MCP_TIERS_FILE),
   });
   const activeProject = () => projects.active;
-  const projectBlock = () => projects.promptBlock();
+  const projectBlock = (project = activeProject() || pathProject()) =>
+    project ? [projects.promptBlock(project), projects.workBlock(project)].filter(Boolean).join("\n") : "";
+  // Inline extraction costs a model call, so it is built only when asked for.
+  let turnConsolidator = null;
+  const onTurnComplete = (info) => maintainTurn({ ...info, config, projectsFile: PROJECTS_FILE, consolidator: turnConsolidator,
+    log: (message) => term.line(c.dim(`  ${message}`)) });
+  if (detectedProject) term.line(c.dim(`  project ~ ${detectedProject.name} (from cwd)`));
 
   // The REPL is one session at a time, so a single slot is enough to attach
   // sub-agent progress to the turn currently streaming.
@@ -501,8 +517,9 @@ export async function main() {
     tool,
     config,
     journal: turn => recordTurn(turn, { timeZone: config.timeZone }),
-    project: projectBlock(),
+    project: activeProject() ? projectBlock(activeProject()) : "",
     projectId: activeProject()?.id || null,
+    onTurnComplete,
     mcp,
     onSubagentEvent: event => {
       if (activeOutcome && event.type === SUBAGENT_EVENT.end) {
@@ -1220,6 +1237,8 @@ export async function main() {
       tool,
       // Routines, briefings and alerts run unattended: no nested agents.
       config: { ...config, subagentsEnabled: false },
+      // Background work never claims a project from the daemon's directory.
+      autoProject: false,
       // One-shot agents for routines, briefings and alerts always carry every
       // tool: there is no session to amortise a find_tools round trip across,
       // and the briefing prompt needs github_notifications and watch every time.
@@ -1253,6 +1272,12 @@ export async function main() {
       await cleanupJobs(worker.state).catch(() => {});
     }
   };
+
+  // The interactive turn hook was wired before this existed; point it at the
+  // extractor now, and only when the opt-in flag is on.
+  if (config.projectInlineConsolidation) {
+    turnConsolidator = new MemoryConsolidator({ config, extract: runPrompt, log: m => term.line(c.dim(`  ${m}`)) });
+  }
 
   if (opts.brief) {
     const text = String((await runPrompt(BRIEFING_PROMPT)) || "").trim() || "(nothing to report)";
@@ -1822,7 +1847,10 @@ export async function main() {
         if (!projects.projects.length) {
           term.line(c.dim("  no projects yet - ask me to add one, e.g. \"add zumba to my projects\""));
         } else {
-          for (const p of projects.projects) term.line(`  ${describeProject(p, projects.activeId)}`);
+          const detected = pathProject();
+          for (const p of projects.projects) {
+            term.line(`  ${describeProject(p, projects.activeId)}${detected?.id === p.id ? c.dim("  (from cwd)") : ""}`);
+          }
         }
         term.line("");
         break;
@@ -1835,6 +1863,22 @@ export async function main() {
           term.line("");
           term.line(current ? describeProjectFull(current, projects) : c.dim("  no active project"));
           term.line("");
+          break;
+        }
+        if (arg.trim().toLowerCase() === "undo") {
+          const target = projects.active || pathProject();
+          const removed = target ? projects.removeAutoEntries(target.id, { sessionId: agent.sessionId }) : null;
+          if (!removed) {
+            term.line(c.red("  no active or detected project to undo"));
+            break;
+          }
+          if (agent.projectSource !== 'path') {
+            const refreshed = projects.find(target.id);
+            agent.project = refreshed ? [projects.promptBlock(refreshed), projects.workBlock(refreshed)].filter(Boolean).join("\n") : "";
+          }
+          agent.rebase();
+          term.line(c.dim(`  undid ${removed.total} automatic entr${removed.total === 1 ? "y" : "ies"} on ${removed.project.name}` +
+            `  (work log ${removed.worklog}, todos ${removed.todos}, reopened ${removed.reopened}, notes ${removed.notes}, decisions ${removed.decisions})`));
           break;
         }
         const picked = projects.use(arg);

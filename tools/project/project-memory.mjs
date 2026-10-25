@@ -107,7 +107,7 @@ export function run(args = {}, ctx = {}) {
   }
 
   if (action === "done") {
-    const result = s.completeTodo(project.id, args.ref);
+    const result = s.completeTodo(project.id, args.ref, ctx.memorySource);
     if (!result) return `Error: no project "${project.id}".`;
     if (result.error) {
       const open = (project.todos || []).filter((t) => !t.done);

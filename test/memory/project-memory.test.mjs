@@ -9,7 +9,7 @@ import path from 'node:path';
 const SANDBOX = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-mem-'));
 process.env.CONFIG_DIR = SANDBOX;
 
-const { ProjectStore, since, MAX_NOTES, MAX_TODOS } = await import('../../src/memory/projects.mjs');
+const { ProjectStore, since, MAX_NOTES, MAX_TODOS, WORK_BLOCK_CAP } = await import('../../src/memory/projects.mjs');
 const { RoutineStore } = await import('../../src/automation/routines.mjs');
 const mem = await import('../../tools/project/project-memory.mjs');
 const { PROJECTS_FILE, STATE_FILE } = await import('../../src/core/config.mjs');
@@ -238,4 +238,21 @@ test('the tool is registered and self-describes', () => {
   assert.equal(mem.name, 'project_memory');
   assert.equal(mem.needsApproval, false);
   assert.match(mem.description, /note, decide, todo, done, log, brief/);
+});
+
+test('the work block adds recent activity but stays bounded and never joins the base prompt', () => {
+  const name = project();
+  const store = reload();
+  store.appendWorkLog(name, { text: 'model_answer · 2 file(s) · src/a.js, src/b.js', source: { kind: 'auto-worklog', sessionId: 's1', turnId: 't1' } });
+  store.addTodo(name, 'ship the release');
+  store.addDecision(name, 'keep SQLite');
+
+  const work = reload().workBlock(reload().find(name));
+  assert.match(work, /src\/a\.js/);
+  assert.match(work, /ship the release/);
+  assert.match(work, /keep SQLite/);
+  assert.ok(work.length <= WORK_BLOCK_CAP, `bounded, got ${work.length}`);
+
+  const base = reload().promptBlock(reload().find(name));
+  assert.doesNotMatch(base, /src\/a\.js|ship the release|keep SQLite/);
 });

@@ -221,3 +221,18 @@ test('CLI flushes the latest partial render before reporting a stream failure', 
   assert.match(output, /LATEST_CHUNK/, 'pending streamed text must be flushed before exit');
   assert.ok(output.indexOf('LATEST_CHUNK') < output.indexOf('STREAM_FAILURE'), output);
 });
+
+test('a routines-only daemon still starts one idle memory sweep instead of returning early', async t => {
+  const pending = deferred();
+  let calls = 0;
+  const daemon = daemonWith(t, {
+    routinesOnly: true,
+    consolidator: { due: () => true, run: () => { calls++; return pending.promise; } },
+  });
+  await daemon.tickOnce();
+  await daemon.tickOnce();
+  assert.equal(calls, 1, 'the running sweep is not started twice');
+  pending.resolve({ processed: 0 });
+  await daemon.drain();
+  assert.equal(daemon.active, 0, 'consolidation never consumes a chat slot');
+});

@@ -36,7 +36,7 @@ export type TelegramChannelPreferences = {
 export type ChannelsView = { telegram: TelegramChannelPreferences };
 export type TelegramChannelUpdate = Partial<Pick<TelegramChannelPreferences, 'enabled' | 'allowedChatIds' | 'ownerChatId' | 'teammateId' | 'voiceReply' | 'confirmTimeout'>> & { token?: string };
 export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean; logo: string };
-export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; lastUsedAt: string | null };
+export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; worklog: { at: string; text: string; source?: { kind?: string; sessionId?: string; turnId?: string } }[]; lastWorkAt: string | null; lastUsedAt: string | null };
 export type ChangedFile = { path: string; status: string; untracked: boolean };
 export type WorkspaceJob = { id: string; state: string; command: string; cwd: string; exit_code: number | null; started_at: string; output: string };
 export type WorkspaceSnapshot = { root: string; cwd: string; files: ChangedFile[]; artifacts: { path: string; name: string }[]; jobs: WorkspaceJob[] };
@@ -102,6 +102,7 @@ export type EngineEvent = (
   | { type: 'auth-device-code'; user_code: string; verification_uri: string }
   | { type: 'teammates-changed' | 'tools-changed'; connected?: string[] }
   | { type: 'projects-changed' }
+  | { type: 'project-activity'; threadId: string; projectId: string; turnId?: string | null; written: number; audit?: { tools?: string[]; files?: string[]; changed?: boolean; termination?: string } | null }
   | { type: 'channels-updated'; channels: ChannelsView }
   | { type: 'browser-plugins-changed' | typeof COMPUTER_USE_CHANGED }
   | { type: typeof CHATGPT_CONNECTION_CHANGED; state: ChatGptConnectionState }
