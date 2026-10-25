@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "codebase-tour"
+  },
+  "expectedFile": "expected.md"
+}
