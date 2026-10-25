@@ -50,6 +50,23 @@ test('backups stay isolated between paths that share a filename prefix', t => {
   assert.equal(listBackups(sibling, ctx).length, 1, 'pruning one path must not delete another path backups');
 });
 
+test('a workspace reached through a linked path keeps backups in the real workspace', t => {
+  const base = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-trust-link-'));
+  t.after(() => fs.rmSync(base, { recursive: true, force: true }));
+  const real = path.join(base, 'real');
+  fs.mkdirSync(real);
+  fs.writeFileSync(path.join(real, 'note.txt'), 'v1');
+  const link = path.join(base, 'link');
+  try { fs.symlinkSync(real, link, process.platform === 'win32' ? 'junction' : 'dir'); }
+  catch (error) { t.skip(`Directory links are unavailable: ${error.code}`); return; }
+  const ctx = { cwd: link, workspacePath: link, state: {} };
+  const backed = backupPath(path.join(link, 'note.txt'), ctx);
+  assert.ok(backed, 'a linked workspace must still accept backups');
+  const realRoot = fs.realpathSync.native(real);
+  assert.ok(backed.startsWith(realRoot + path.sep), `${backed} should live inside ${realRoot}`);
+  assert.ok(fs.existsSync(path.join(real, '.ankita_backups')));
+});
+
 test('delete_file keeps a backup, previews size, and writes a scrubbed audit record', t => {
   const ctx = workspace(t);
   const p = path.join(ctx.cwd, 'secret.txt');

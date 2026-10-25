@@ -20,7 +20,10 @@ function stamp(now = Date.now()) {
 }
 
 function workspaceRoot(ctx = {}) {
-  return path.resolve(ctx.workspacePath || ctx.cwd || process.cwd());
+  // Canonicalize the root the same way file paths are canonicalized: on Windows
+  // an 8.3 short-name workspace (C:\Users\RUNNER~1\...) would otherwise never
+  // match the realpath of its files, and every backup would fail the boundary.
+  return canonicalPath(path.resolve(ctx.workspacePath || ctx.cwd || process.cwd()));
 }
 
 // Resolve a deleted file's parent so directory casing stays stable across backup and restore.
