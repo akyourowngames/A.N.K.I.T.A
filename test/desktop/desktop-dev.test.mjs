@@ -26,7 +26,7 @@ async function fixture(t) {
   t.after(async () => {
     for (const dev of launched) await dev.close();
     await new Promise(resolve => occupied.close(resolve));
-    const target = fs.realpathSync(root), base = fs.realpathSync(os.tmpdir());
+    const target = fs.realpathSync.native(root), base = fs.realpathSync.native(os.tmpdir());
     assert.ok(target.startsWith(base + path.sep) && path.basename(target).startsWith('ankita-dev-launcher-'));
     fs.rmSync(target, { recursive: true, force: true });
   });
