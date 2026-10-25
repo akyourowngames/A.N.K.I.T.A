@@ -13,6 +13,9 @@ import { OnboardingDialog } from './components/OnboardingDialog';
 import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
 import { WorkspacePanel } from './components/WorkspacePanel';
+import { SubagentPanel } from './components/SubagentPanel';
+import { activityFromReceipt } from '../../shared/subagent-state.mjs';
+import type { SubagentActivity } from '../../shared/subagent-state.mjs';
 import { BrowserStage } from './components/BrowserStage';
 import { BROWSER_PREVIEW_POLL, publicBrowserView } from '../../shared/browser-progress.mjs';
 import { SecureStoreProvider } from './components/SecureStore';
@@ -52,6 +55,8 @@ export default function App() {
   const [pluginsSection, setPluginsSection] = useState<'apps' | 'skills'>('apps');
   const [projects, setProjects] = useState<Project[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
+  const [subagentFocus, setSubagentFocus] = useState<string | null>(null);
+  const [subagentOpen, setSubagentOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [browserView, setBrowserView] = useState<BrowserSessionView | null>(null);
   const [browserThreadId, setBrowserThreadId] = useState<string | null>(null);
@@ -59,7 +64,7 @@ export default function App() {
   const browserScopeRef = useRef<string | null>(null);
   const [jobSheet, setJobSheet] = useState<{ id?: string; advanced?: boolean } | null>(null);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const editJob = useCallback((id?: string) => { setJobSheet({ id }); setReviewOpen(false); setBrowserOpen(false); }, []);
+  const editJob = useCallback((id?: string) => { setJobSheet({ id }); setReviewOpen(false); setBrowserOpen(false); setSubagentOpen(false); }, []);
   const [workspaceRevision, setWorkspaceRevision] = useState(0);
   const [toolsRevision, setToolsRevision] = useState(0);
   const [preferences, setPreferences] = useState<DesktopPreferences>({ provider: 'kilo', model: '', customApiBase: '', appearance: 'graphite', contextWindow: 0, maxTokens: 0, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false, hasCustomApiKey: false, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false });
@@ -74,6 +79,12 @@ export default function App() {
   const downloadActive = useRef(false);
   const selectedIdRef = useRef<string | null>(null);
   const projectsRequest = useRef(0);
+  // Auto-open only for sub-agents that appear while this thread is selected.
+  const subagentSeen = useRef<Set<string>>(new Set());
+  const subagentThread = useRef<string | null | undefined>(undefined);
+  const subagentOpenRef = useRef(false);
+  const browserOpenRef = useRef(false);
+  const jobSheetRef = useRef<{ id?: string; advanced?: boolean } | null>(null);
   const refreshProjects = useCallback(async () => {
     const request = ++projectsRequest.current;
     const next = await window.ankita.invoke<Project[]>('listProjects');
@@ -85,6 +96,9 @@ export default function App() {
   useEffect(() => { document.documentElement.dataset.theme = preferences.appearance; }, [preferences.appearance]);
   useEffect(() => { selectedIdRef.current = state.selectedId; }, [state.selectedId]);
   useEffect(() => { browserScopeRef.current = browserScope; }, [browserScope]);
+  useEffect(() => { subagentOpenRef.current = subagentOpen; }, [subagentOpen]);
+  useEffect(() => { browserOpenRef.current = browserOpen; }, [browserOpen]);
+  useEffect(() => { jobSheetRef.current = jobSheet; }, [jobSheet]);
 
   useEffect(() => {
     if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
@@ -98,11 +112,11 @@ export default function App() {
       if (event.type === 'teammates-changed') void window.ankita.invoke<Teammate[]>('listTeammates').then(teammates => dispatch({ type: 'teammates-loaded', teammates }));
       if (event.type === 'projects-changed') void refreshProjects();
       if (event.type === 'tools-changed') setToolsRevision(value => value + 1);
-      if (event.type === 'workspace-changed' && event.threadId === selectedIdRef.current) { setWorkspaceRevision(value => value + 1); if (event.open) setReviewOpen(true); }
+      if (event.type === 'workspace-changed' && event.threadId === selectedIdRef.current) { setWorkspaceRevision(value => value + 1); if (event.open && !subagentOpenRef.current) setReviewOpen(true); }
       if (event.type === 'browser-state' && (browserScopeRef.current ? event.threadId === browserScopeRef.current : !event.threadId || event.threadId === selectedIdRef.current)) {
         setBrowserView(previous => ({ ...event.state, screenshot: event.state.screenshot || (event.state.mode === previous?.mode && !['error', 'stopped', 'idle'].includes(event.state.status) ? previous?.screenshot || null : null) }));
         if (event.threadId && !browserScopeRef.current) setBrowserThreadId(event.threadId);
-        if (event.state.status === 'working' && event.state.mode) { setBrowserOpen(true); setReviewOpen(false); }
+        if (event.state.status === 'working' && event.state.mode) { setBrowserOpen(true); setReviewOpen(false); setSubagentOpen(false); }
       }
     });
     void window.ankita.invoke<Bootstrap>('initialize')
@@ -214,6 +228,66 @@ export default function App() {
     window.addEventListener(CAPTURE_UI_EVENTS.main, captured);
     return () => window.removeEventListener(CAPTURE_UI_EVENTS.main, captured);
   }, [state.teammates]);
+  // The transcript is the fallback source for sub-agents whose live events were
+  // missed, so a completed run can still be reopened in the side panel.
+  const messages = state.selectedId ? state.threads[state.selectedId] || [] : [];
+  const liveSubagents = state.selectedId ? state.subagents[state.selectedId] : undefined;
+  const subagentActivities = useMemo(() => {
+    const merged: Record<string, SubagentActivity> = { ...(liveSubagents || {}) };
+    for (const message of messages) {
+      if (message.role !== 'tool' || message.name !== 'delegate_task') continue;
+      if (merged[message.callId]) continue;
+      const past = activityFromReceipt(message.result);
+      if (past) merged[past.parentCallId || message.callId] = past;
+    }
+    return merged;
+  }, [liveSubagents, messages]);
+  const openSubagent = useCallback((key?: string) => {
+    const keys = Object.keys(subagentActivities);
+    const remembered = subagentFocus && subagentActivities[subagentFocus] ? subagentFocus : null;
+    const working = [...keys].reverse().find(item => subagentActivities[item].status === 'running');
+    const target = key && subagentActivities[key] ? key : working || remembered || keys.at(-1);
+    if (!target) return;
+    setSubagentFocus(target);
+    setSubagentOpen(true);
+    setReviewOpen(false);
+    setBrowserOpen(false);
+    setJobSheet(null);
+  }, [subagentActivities, subagentFocus]);
+  const subagentPanelOpen = subagentOpen && Boolean(subagentFocus && subagentActivities[subagentFocus]);
+  const toggleSubagent = useCallback(() => {
+    if (subagentPanelOpen) setSubagentOpen(false);
+    else openSubagent();
+  }, [subagentPanelOpen, openSubagent]);
+  // A freshly delegated child takes the side slot so the user can watch it work.
+  // Runs already present on thread switch stay inline until the user asks for them.
+  useEffect(() => {
+    const live = liveSubagents || {};
+    const liveKeys = Object.keys(live);
+    if (state.selectedId !== subagentThread.current) {
+      subagentThread.current = state.selectedId;
+      subagentSeen.current = new Set(liveKeys);
+      setSubagentFocus(null);
+      setSubagentOpen(false);
+      return;
+    }
+    const fresh = liveKeys.filter(key => !subagentSeen.current.has(key));
+    liveKeys.forEach(key => subagentSeen.current.add(key));
+    if (!fresh.length || browserOpenRef.current || jobSheetRef.current) return;
+    // Several read-only children can start together; the newest running one leads,
+    // but never steal the panel from a child the user is already watching.
+    const next = [...fresh].reverse().find(key => live[key].status === 'running') || fresh.at(-1);
+    if (!next) return;
+    setSubagentFocus(current => {
+      const activity = current ? subagentActivities[current] : null;
+      return current && activity?.status === 'running' ? current : next;
+    });
+    setSubagentOpen(true);
+    setReviewOpen(false);
+  }, [state.selectedId, liveSubagents, subagentActivities]);
+  useEffect(() => {
+    if (subagentFocus && !subagentActivities[subagentFocus]) { setSubagentFocus(null); setSubagentOpen(false); }
+  }, [subagentFocus, subagentActivities]);
   const send = useCallback((text: string, attachments?: { name: string; data: string; kind?: 'document'; images?: string[] }[]) => {
     if (!state.selectedId || !window.ankita) return;
     void window.ankita.invoke('send', { id: state.selectedId, text, attachments }).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: err.message } }));
@@ -259,7 +333,7 @@ export default function App() {
       if (selector) requestAnimationFrame(() => document.querySelector(selector)?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
     }
     if (command === DESKTOP_ACTIONS.projects) setView('projects');
-    if (command === DESKTOP_ACTIONS.review) { setReviewOpen(true); setBrowserOpen(false); }
+    if (command === DESKTOP_ACTIONS.review) { setReviewOpen(true); setBrowserOpen(false); setSubagentOpen(false); }
     if (command === DESKTOP_ACTIONS.clear) clear();
     if (command === DESKTOP_ACTIONS.updates) void window.ankita.updateAction('check');
     if (command === DESKTOP_ACTIONS.export && state.selectedId) void window.ankita.invoke('exportChat', { id: state.selectedId }).catch(cause => dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: cause.message } }));
@@ -297,12 +371,12 @@ export default function App() {
   };
   const watchJob = async (job: Routine) => {
     if (!job.scope || !state.selectedId) return;
-    try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: job.scope }); setBrowserScope(job.scope); setBrowserThreadId(state.selectedId); setBrowserView(next); setBrowserOpen(true); setJobSheet(null); setReviewOpen(false); }
+    try { const next = await window.ankita.invoke<BrowserSessionView>('browserSessionView', { scope: job.scope }); setBrowserScope(job.scope); setBrowserThreadId(state.selectedId); setBrowserView(next); setBrowserOpen(true); setJobSheet(null); setReviewOpen(false); setSubagentOpen(false); }
     catch (error) { dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: error instanceof Error ? error.message : String(error) } }); }
   };
   const threadJobs = state.jobs.filter(job => job.threadId === state.selectedId || (job.ownerMissing && job.deliveryThreadId === state.selectedId));
 
-  return <SecureStoreProvider><div className={`app-shell desktop-workbench ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
+  return <SecureStoreProvider><div className={`app-shell desktop-workbench ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${subagentPanelOpen ? 'subagent-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
     <Sidebar
       teammates={state.teammates} selectedId={state.selectedId} search={search} onSearch={setSearch}
       onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
@@ -313,20 +387,21 @@ export default function App() {
       width={sidebarWidth} collapsed={!sidebarOpen} onCollapse={() => setSidebarOpen(false)} onResize={setSidebarWidth}
     />
     {view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} toolsRevision={toolsRevision} initialSection={pluginsSection} /> : view === 'projects' ? <ProjectsPage projects={projects} selectedThread={selected} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onRefresh={refreshProjects} onAssign={assignProject} /> : <ChatPane
-      teammate={selected} messages={state.selectedId ? state.threads[state.selectedId] || [] : []}
-      jobs={threadJobs} onEditJob={editJob} onWatchJob={job => void watchJob(job)}
+      teammate={selected} messages={messages}
+      jobs={threadJobs} onEditJob={editJob}
       running={Boolean(state.selectedId && state.running[state.selectedId])}
       models={state.models} projects={projects} defaultModel={state.settings?.model || ''} provider={state.settings?.provider}
       usage={state.selectedId ? state.usage[state.selectedId] : undefined}
       loadedSkills={state.selectedId ? state.loadedSkills[state.selectedId] : undefined}
-      subagents={state.selectedId ? state.subagents[state.selectedId] : undefined}
+      subagents={subagentActivities} subagentOpen={subagentPanelOpen} onToggleSubagent={toggleSubagent} onOpenSubagent={openSubagent}
       onCommand={runCommand} commandsRevision={toolsRevision}
-      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={!browserScope && browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); }} onOpenBrowserPlugins={() => runCommand(DESKTOP_ACTIONS.browser)} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
+      chrome={state.chrome} sidebarOpen={sidebarOpen} reviewOpen={reviewOpen} browserRun={!browserScope && browserThreadId === state.selectedId ? browserView : null} onOpenBrowser={() => { setBrowserOpen(true); setReviewOpen(false); setSubagentOpen(false); }} onOpenBrowserPlugins={() => runCommand(DESKTOP_ACTIONS.browser)} onToggleSidebar={() => setSidebarOpen(open => !open)} onToggleReview={() => { setReviewOpen(open => !open); setBrowserOpen(false); setSubagentOpen(false); }} onProject={id => void assignProject(id)} onOpenProjects={() => setView('projects')}
       onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onCreate={() => setDialog('create')} onClear={clear} onDelete={remove}
     />}
     {view === 'chat' && state.selectedId && <BrowserStage key={browserScope || state.selectedId} scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
     {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
-    {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen} onClose={() => setReviewOpen(false)} />}
+    {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen && !subagentPanelOpen} onClose={() => setReviewOpen(false)} />}
+    {view === 'chat' && state.selectedId && <SubagentPanel activities={subagentActivities} focus={subagentFocus} visible={subagentPanelOpen} onFocus={key => { setSubagentFocus(key); setSubagentOpen(true); }} onClose={() => setSubagentOpen(false)} onStop={stop} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}
     {confirm && <ConfirmDialog action={confirm.action} name={confirm.name} onCancel={() => setConfirm(null)} onConfirm={confirmAction} jobsCount={state.jobs.filter(job => job.threadId === confirm.id).length} onRehome={() => { const job = state.jobs.find(item => item.threadId === confirm.id); setConfirm(null); if (job) editJob(job.id); }} />}
     {settingsTab && <SettingsDialog tab={settingsTab} onTab={setSettingsTab} onClose={closeSettings} preferences={preferences} models={state.models} teammates={state.teammates} selectedThreadId={state.selectedId} jobs={state.jobs} onOpenJobs={job => { const ownerId = job ? job.ownerMissing ? job.deliveryThreadId : job.threadId : state.selectedId || state.teammates[0]?.id; if (!ownerId) return; dispatch({ type: 'select', id: ownerId }); setView('chat'); closeSettings(); editJob(job?.id); }} version={version} onSaved={(result: DesktopSettingsResult) => { setPreferences(result.preferences); dispatch({ type: 'event', event: { type: 'settings-updated', ...result } }); }} />}

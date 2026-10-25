@@ -29,7 +29,7 @@ test('chat keeps browser controls in Settings while preserving drafts and Stop a
       }};
       function Harness(){const[running,setRunning]=useState(false);window.showConnection=(next,working=false)=>{state=next;setRunning(working);emit();};return React.createElement(ChatPane,{
         teammate:{id:'fixture',name:'Research desk',persona:'Your teammate',color:'sage',projectId:null},messages:[],running,models:[],projects:[],defaultModel:'',provider:'chatgpt-browser',chrome:'custom',sidebarOpen:true,reviewOpen:false,jobs:[],commandsRevision:0,
-        onToggleSidebar:()=>{},onToggleReview:()=>{},onOpenBrowser:()=>{},onProject:()=>{},onOpenProjects:()=>{},onSend:text=>window.calls.push({action:'send',text}),onStop:()=>window.calls.push({action:'stop'}),onModel:()=>{},onEdit:()=>{},onCreate:()=>{},onClear:()=>{},onDelete:()=>{},onEditJob:()=>{},onWatchJob:()=>{},onCommand:()=>{}
+        onToggleSidebar:()=>{},onToggleReview:()=>{},onOpenBrowser:()=>{},onProject:()=>{},onOpenProjects:()=>{},onSend:text=>window.calls.push({action:'send',text}),onStop:()=>window.calls.push({action:'stop'}),onModel:()=>{},onEdit:()=>{},onCreate:()=>{},onClear:()=>{},onDelete:()=>{},onEditJob:()=>{},onCommand:()=>{}
       });}
       createRoot(document.getElementById('root')).render(React.createElement(Harness));
     </script></body></html>`));

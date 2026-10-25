@@ -3,7 +3,7 @@ import type { ChannelsView, DesktopPreferences, DesktopSettingsResult, DesktopSe
 import { Icon } from './Icons';
 import { detectTimezone, timezoneSuggestions } from '../lib/timezones';
 import { TeammateAvatar } from './TeammateAvatar';
-import { nextRunLabel } from './ScheduledTaskCard';
+import { nextRunLabel } from '../lib/jobs';
 import { CHATGPT_BROWSER_PROVIDER, CHATGPT_BROWSER_LABEL, CHATGPT_CURRENT_MODEL_LABEL } from '../../../shared/chatgpt-browser.mjs';
 import { ChatGptConnection } from './ChatGptConnection';
 import { StatusPill } from './StatusPill';

@@ -12,6 +12,7 @@ downloaded-images/
 # Artifacts written into the working directory by tools we drive.
 .playwright-mcp/
 .kilo/
+.tmp-ui-captures/
 
 # Local verification logs, generated launch media and crash dumps are not source.
 .commandcode/

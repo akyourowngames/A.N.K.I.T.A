@@ -95,7 +95,7 @@ test('desktop sends the whole automatic guide and reports its actual request inc
       const events = ${JSON.stringify(events.filter(event => ['turn-start', 'skills-loaded', 'turn-end'].includes(event.type)))};
       let state = events.reduce((state, event) => reducer(state, { type: 'event', event }), initialState);
       const root = createRoot(document.getElementById('root'));
-      const callbacks = Object.fromEntries(['onToggleSidebar','onToggleReview','onOpenBrowser','onProject','onOpenProjects','onSend','onStop','onModel','onEdit','onCreate','onClear','onDelete','onEditJob','onWatchJob'].map(name => [name, () => {}]));
+      const callbacks = Object.fromEntries(['onToggleSidebar','onToggleReview','onOpenBrowser','onProject','onOpenProjects','onSend','onStop','onModel','onEdit','onCreate','onClear','onDelete','onEditJob'].map(name => [name, () => {}]));
       const render = () => root.render(React.createElement(ChatPane, { ...callbacks, teammate: ${JSON.stringify(engine.listTeammates()[0])}, messages: [], running: false, models: [], projects: [], jobs: [], defaultModel: '', chrome: 'native', sidebarOpen: true, reviewOpen: false, loadedSkills: state.loadedSkills[${JSON.stringify(id)}] }));
       window.nextTurn = () => { state = reducer(state, { type: 'event', event: { type: 'turn-start', threadId: ${JSON.stringify(id)}, turnId: 'next-ui-turn', text: 'Hello' } }); render(); };
       render();

@@ -46,6 +46,31 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
   controls and a single save bar. Settings share tokenized inputs, switches,
   focus rings and destructive confirmations. See
   `docs/findings/2026-10-24-desktop-ui-polish.md`.
+- **Grouped transcript activity.** Consecutive tool calls and intermediate
+  reasoning fold into one collapsible `Ran N tools` block with compact rows and
+  inline input/result details; the final answer stays prominent. Each edited
+  turn ends with an `Edited N files` card (`+added -removed` per file, `Review`
+  opens Work review). Sub-agent, scheduled-task, sign-in and image cards keep
+  their dedicated renderers. Verified by
+  `test/desktop/transcript-activity-ui.test.mjs`.
+- **Live sub-agent side panel.** Launching a child now opens a right-side panel,
+  narrows the chat beside it, and streams the child's output, status, elapsed
+  time, tokens and tool calls in place. Inline sub-agent cards are hidden while
+  the panel owns the run and return when it closes. Multiple children share a
+  switcher, the `N agents working` chip and each restored inline card reopen the
+  remembered run, and closing gives the chat its width back without
+  self-reopening. The panel shares one side slot with Work review, browser and
+  job sheets, overlays below 1200px, and falls back to the stored receipt for
+  historical children. Verified by `test/desktop/subagent-panel-ui.test.mjs`.
+- **Roomier jobs and child work.** Scheduled jobs no longer take a card above
+  the composer. One context-bar chip carries the live summary (`1 job ·
+  All paused`, `Running`, `Needs attention`, or the next run), marks blocked or
+  running work with a dot, and opens the Scheduled tasks panel for detail and
+  actions. Repeated child tools fold into one expandable row with a call count,
+  source URLs lose their scheme for scanning, and sub-agent output reads in the
+  UI font at a comfortable measure. Verified by
+  `test/desktop/jobs-entry-ui.test.mjs` and the updated `subagent-state` /
+  `subagent-panel-ui` suites.
 
 ### Fixed
 

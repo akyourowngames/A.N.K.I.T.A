@@ -1,13 +1,7 @@
 import type { Routine } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { relativeTime } from '../lib/relative-time';
-
-export function nextRunLabel(job: Routine) {
-  if (job.running) return `Running · step ${job.step}`;
-  if (!job.enabled) return 'Paused';
-  if (!job.nextRunAt) return job.cronLabel;
-  return new Intl.DateTimeFormat(undefined, { timeZone: job.timeZone, weekday: 'short', hour: 'numeric', minute: '2-digit' }).format(new Date(job.nextRunAt));
-}
+import { nextRunLabel } from '../lib/jobs';
 
 // A single state word the eye can attach to without reading the timing line.
 function cardState(job: Routine, removed: boolean) {

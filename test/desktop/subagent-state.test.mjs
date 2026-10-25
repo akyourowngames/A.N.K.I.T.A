@@ -148,3 +148,40 @@ test('the shipped card marks a stopped tool as unsuccessful in a real browser', 
     await browser.close();
   }
 });
+
+test('long runs of the same child tool fold into one expandable row', async () => {
+  const tools = Array.from({ length: 6 }, (_, index) => ({
+    callId: `page-${index}`, name: 'web_fetch', args: { url: `https://www.example.com/report-${index}` }, state: 'ok', isError: false,
+  }));
+  const { outputFiles } = await build({
+    stdin: {
+      contents: `
+        import React from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { SubagentTools } from './desktop/renderer/src/components/SubagentTools.tsx';
+        createRoot(document.getElementById('root')).render(React.createElement(SubagentTools, { tools: ${JSON.stringify(tools)} }));
+      `,
+      resolveDir: process.cwd(), sourcefile: 'subagent-tools-test.jsx', loader: 'jsx',
+    },
+    bundle: true, write: false, format: 'iife', platform: 'browser', target: 'es2022', logLevel: 'silent',
+  });
+  const browser = await chromium.launch({ headless: true });
+  try {
+    const page = await browser.newPage();
+    const errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.setContent('<div id="root"></div>');
+    await page.addScriptTag({ content: outputFiles[0].text });
+    const group = page.locator('.subagent-tool-group');
+    await group.waitFor();
+    assert.equal(await group.count(), 1, 'one run of six reads becomes one row');
+    assert.match(await page.locator('.subagent-tool-group-head').innerText(), /Read a page[\s\S]*6 calls[\s\S]*Done/);
+    assert.equal(await page.locator('.subagent-tool-rows .subagent-tool-row').count(), 0, 'long runs start folded');
+    await page.locator('.subagent-tool-group-head').click();
+    assert.equal(await page.locator('.subagent-tool-rows .subagent-tool-row').count(), 6);
+    assert.equal(await page.locator('.subagent-tool-rows .subagent-tool-row small').first().innerText(), 'example.com/report-0');
+    assert.deepEqual(errors, []);
+  } finally {
+    await browser.close();
+  }
+});

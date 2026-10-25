@@ -28,6 +28,13 @@ Children inherit cancellation, budgets and the approval gate with attribution,
 and their scrubbed transcripts live beside normal sessions. Discovery keeps the
 group hidden from background jobs, the daemon and one-shot routines.
 
+Scheduled work moved out of the message box: the chat context bar now carries a
+one-line jobs chip (`1 job · All paused`, `Running`, `Needs attention`, or the
+next run) that opens the Scheduled tasks panel for detail and actions, leaving
+the composer full width. In the live child panel, repeated same-name tool calls
+fold into one expandable row with a count, source URLs drop their scheme for
+scanning, and output uses readable prose typography instead of a monospace wall.
+
 The desktop UI pass replaces the raw error toast with compact, dismissible
 notices (two-line detail plus an on-demand `Details` popover for the hint and
 technical text); IPC, scheduler, network, auth, quota, disk and permission
@@ -44,6 +51,26 @@ keep one reading column with grouped actions and a single save bar; Settings
 share tokenized inputs, selects, switches, focus rings and inline destructive
 confirmations. Findings and verification are recorded in
 `docs/findings/2026-10-24-desktop-ui-polish.md`.
+
+The transcript now folds consecutive tool calls and intermediate reasoning into
+one collapsible `Ran N tools` block. Each step is a compact row (status, tool
+name, monospace argument, or a truncated thought) that opens its own
+input/result inline. Reasoning-only assistant messages no longer render as empty
+replies, failures stay marked without dominating the turn, and the final answer
+remains the visual focus. A per-turn `Edited N files` card lists up to three
+paths with aggregate and per-file `+added -removed` stats, folds the rest behind
+`Show N more files`, and opens Work review. Sub-agent, scheduled-task, sign-in
+and image results keep their existing dedicated cards.
+
+Launching a sub-agent now opens a right-side live panel: the chat narrows beside
+it while the child's output, status, elapsed time, tokens and tool calls stream
+in place. Inline sub-agent cards hide while the panel owns the run and return to
+the transcript when it closes. Several children share a status-dot switcher; the
+`N agents working` context chip and each restored inline card reopen the
+remembered run after closing, and a closed panel never reopens on its own. The
+panel shares one side slot with Work review, the browser stage and scheduled-job
+sheets, overlays the chat below 1200px, and rebuilds historical children from
+their stored receipt.
 
 Hosted ChatGPT sign-in, a signed installer and packaged-device round trips remain
 open verification gates.

@@ -4,26 +4,15 @@ import { Icon } from './Icons';
 import { CopyButton } from './CopyButton';
 import { formatDuration, humanizeTool, summarizeArgs } from '../lib/format';
 import { SecureStoreCard } from './SecureStore';
+import { imagePayload, isBrowserLoginCall } from '../lib/activity';
 
 type ToolMessage = Extract<ChatMessage, { role: 'tool' }>;
-type LocalImage = { type: 'generated_image' | 'downloaded_image'; path: string; prompt?: string; photographer?: string; source?: string; pageUrl?: string; mime?: string };
-type StockImage = { id: string; title: string; previewUrl: string; imageUrl: string; pageUrl: string; photographer: string; source: string };
-type StockResults = { type: 'stock_image_results'; provider: string; query: string; results: StockImage[] };
 
-function imagePayload(result: string): LocalImage | StockResults | null {
-  try {
-    const value = JSON.parse(result);
-    if (['generated_image', 'downloaded_image'].includes(value?.type) && typeof value.path === 'string') return value as LocalImage;
-    if (value?.type === 'stock_image_results' && Array.isArray(value.results)) return value as StockResults;
-  } catch {}
-  return null;
-}
-
-export function ToolCallCard({ message, threadId, onOpenBrowserPlugins }: { message: ToolMessage; threadId: string; onOpenBrowserPlugins?: () => void }) {
-  const [open, setOpen] = useState(message.isError);
+export function ToolCallCard({ message, threadId, onOpenBrowserPlugins, variant = 'card' }: { message: ToolMessage; threadId: string; onOpenBrowserPlugins?: () => void; variant?: 'card' | 'row' }) {
+  const [open, setOpen] = useState(variant === 'card' && message.isError);
   const [generatedPreview, setGeneratedPreview] = useState('');
   const [previewError, setPreviewError] = useState('');
-  useEffect(() => { if (message.isError) setOpen(true); }, [message.isError]);
+  useEffect(() => { if (variant === 'card' && message.isError) setOpen(true); }, [message.isError, variant]);
 
   const running = !message.result && !message.isError;
   const image = !message.isError ? imagePayload(message.result) : null;
@@ -48,17 +37,9 @@ export function ToolCallCard({ message, threadId, onOpenBrowserPlugins }: { mess
 
   const openExternal = (url: string) => { if (url) void window.ankita.openExternal(url); };
 
-  const login = message.name === 'browser' && typeof message.args === 'object' && message.args !== null && (message.args as { action?: string }).action === 'login';
-  if (login) return <SecureStoreCard threadId={threadId} callId={message.callId} website={String((message.args as { website?: string }).website || '')} result={message.result} />;
+  if (isBrowserLoginCall(message)) return <SecureStoreCard threadId={threadId} callId={message.callId} website={String((message.args as { website?: string }).website || '')} result={message.result} />;
 
-  return <div className={`tool-card ${message.isError ? 'failed' : ''} ${running ? 'running' : ''}`}>
-    <button type="button" className="tool-card-header" onClick={() => setOpen(!open)} aria-expanded={open}>
-      <span className="tool-glyph">{running ? <span className="tool-spinner" /> : <Icon name={message.isError ? 'alert' : 'check'} size={15} />}</span>
-      <span className="tool-card-title">{title}</span>
-      {hint && <span className="tool-card-hint">{hint}</span>}
-      <span className="tool-card-state">{message.isError ? 'Needs attention' : running ? 'Running' : duration || 'Completed'}</span>
-      <span className={`tool-card-chevron ${open ? 'open' : ''}`}><Icon name="chevron" size={16} /></span>
-    </button>
+  const previews = <>
     {localImage && <div className="image-tool-preview">
       {generatedPreview ? <img src={generatedPreview} alt={localImage.prompt || `${localImage.source || 'Generated'} image`} /> : <div className="image-preview-placeholder">{previewError || 'Loading image preview…'}</div>}
       <div className="image-preview-caption"><strong>{localImage.type === 'generated_image' ? 'Generated image' : `Downloaded ${localImage.source || 'stock'} image`}</strong><span title={localImage.path}>{localImage.path}</span></div>
@@ -72,12 +53,37 @@ export function ToolCallCard({ message, threadId, onOpenBrowserPlugins }: { mess
       </figure>)}
       {!stock.results.length && <p className="image-search-empty">No {stock.provider} images found for “{stock.query}”.</p>}
     </div>}
-    {open && <div className="tool-card-body">
-      <div className="tool-card-toolbar"><span className="tool-section-label">Input</span><CopyButton text={input} compact /></div>
-      <pre>{input}</pre>
-      <div className="tool-card-toolbar"><span className="tool-section-label">Result</span>{message.result && <CopyButton text={message.result} compact />}</div>
-      <pre>{message.result || (running ? 'Waiting for the tool…' : '(no output)')}</pre>
-      {browserSetupNeeded && onOpenBrowserPlugins && <button type="button" className="tool-browser-setup" onClick={onOpenBrowserPlugins}>Open browser setup <Icon name="arrowRight" size={14} /></button>}
-    </div>}
+  </>;
+
+  const details = <div className={`tool-card-body ${variant === 'row' ? 'activity-detail' : ''}`}>
+    <div className="tool-card-toolbar"><span className="tool-section-label">Input</span><CopyButton text={input} compact /></div>
+    <pre>{input}</pre>
+    <div className="tool-card-toolbar"><span className="tool-section-label">Result</span>{message.result && <CopyButton text={message.result} compact />}</div>
+    <pre>{message.result || (running ? 'Waiting for the tool…' : '(no output)')}</pre>
+    {browserSetupNeeded && onOpenBrowserPlugins && <button type="button" className="tool-browser-setup" onClick={onOpenBrowserPlugins}>Open browser setup <Icon name="arrowRight" size={14} /></button>}
+  </div>;
+
+  if (variant === 'row') return <div className={`activity-tool ${message.isError ? 'failed' : ''} ${running ? 'running' : ''}`}>
+    <button type="button" className="activity-row" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <span className={`activity-glyph ${message.isError ? 'failed' : ''}`}>{running ? <span className="tool-spinner" /> : <Icon name={message.isError ? 'alert' : 'check'} size={13} />}</span>
+      <span className="activity-label">{title}</span>
+      {hint && <span className="activity-arg" title={hint}>{hint}</span>}
+      {message.isError ? <span className="activity-error">Failed</span> : !running && duration ? <span className="activity-state">{duration}</span> : null}
+      <span className={`activity-chevron ${open ? 'open' : ''}`}><Icon name="chevron" size={13} /></span>
+    </button>
+    {previews}
+    {open && details}
+  </div>;
+
+  return <div className={`tool-card ${message.isError ? 'failed' : ''} ${running ? 'running' : ''}`}>
+    <button type="button" className="tool-card-header" onClick={() => setOpen(!open)} aria-expanded={open}>
+      <span className="tool-glyph">{running ? <span className="tool-spinner" /> : <Icon name={message.isError ? 'alert' : 'check'} size={15} />}</span>
+      <span className="tool-card-title">{title}</span>
+      {hint && <span className="tool-card-hint">{hint}</span>}
+      <span className="tool-card-state">{message.isError ? 'Needs attention' : running ? 'Running' : duration || 'Completed'}</span>
+      <span className={`tool-card-chevron ${open ? 'open' : ''}`}><Icon name="chevron" size={16} /></span>
+    </button>
+    {previews}
+    {open && details}
   </div>;
 }

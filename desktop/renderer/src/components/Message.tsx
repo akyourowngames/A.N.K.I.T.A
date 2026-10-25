@@ -67,11 +67,17 @@ function WorkspaceImage({ src, alt, threadId }: { src?: string; alt?: string; th
   return <img src={defaultUrlTransform(src)} alt={alt || ''} loading="lazy" referrerPolicy="no-referrer" />;
 }
 
-export function Message({ message, teammate, threadId, streaming, onOpenBrowserPlugins, jobs, onEditJob, subagents }: { message: ChatMessage; teammate: Teammate; threadId: string; streaming: boolean; onOpenBrowserPlugins?: () => void; jobs?: Routine[]; onEditJob?: (id: string) => void; subagents?: Record<string, SubagentActivity> }) {
+export function Message({ message, teammate, threadId, streaming, onOpenBrowserPlugins, jobs, onEditJob, subagents, onOpenSubagent, hideSubagents = false }: { message: ChatMessage; teammate: Teammate; threadId: string; streaming: boolean; onOpenBrowserPlugins?: () => void; jobs?: Routine[]; onEditJob?: (id: string) => void; subagents?: Record<string, SubagentActivity>; onOpenSubagent?: (key: string) => void; hideSubagents?: boolean }) {
   if (message.role === 'tool') {
     if (message.name === 'delegate_task') {
+      // The side panel already owns the live run; the inline card returns as
+      // its transcript anchor when the panel closes.
+      if (hideSubagents) return null;
       const activity = subagents?.[message.callId] || activityFromReceipt(message.result);
-      if (activity) return <SubagentCard activity={activity} />;
+      if (activity) {
+        const key = activity.parentCallId || message.callId;
+        return <SubagentCard activity={activity} onOpen={onOpenSubagent ? () => onOpenSubagent(key) : undefined} />;
+      }
     }
     if (message.name === 'schedule' && !message.isError && onEditJob) {
       try { const receipt = JSON.parse(message.result); if (receipt.job?.id && receipt.job?.name) { const current = jobs?.find(job => job.id === receipt.job.id); return <ScheduledTaskCard job={current || receipt.job} removed={!current && receipt.action === 'remove'} onOpen={onEditJob} />; } } catch {}

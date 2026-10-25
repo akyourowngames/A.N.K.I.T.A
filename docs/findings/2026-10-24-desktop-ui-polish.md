@@ -141,6 +141,140 @@ remains open.
   `setInterval` child, which survived `kill_process`; ending that child let the
   remaining suite finish.
 
+## Grouped transcript activity (follow-up)
+
+The first pass left every tool call as its own boxed card and rendered a
+reasoning-only assistant message as an empty assistant bubble. Long agent turns
+therefore stacked dozens of cards and blank replies between the prompt and the
+answer.
+
+- `desktop/renderer/src/lib/activity.ts` folds the stored flat transcript into
+  render blocks. Consecutive generic tool calls and reasoning-only assistant
+  messages become one activity group; a content-bearing assistant message stays
+  the prominent answer; edited-file stats are read from the filesystem tools'
+  existing receipts (`+a -r`, `Created … (N lines)`, and `apply_patch` file
+  lines) and summed per path.
+- `ActivityGroup` renders one collapsible `Ran N tools` block with compact
+  one-line rows: status glyph, humanized label, monospace argument chip, and a
+  truncated thought preview. Rows open their own input/result inline. Failed
+  rows and the group header stay marked, but failures no longer auto-expand a
+  large detail block.
+- `ToolCallCard` gained a `row` variant that reuses the same detail body,
+  image/stock previews and browser-setup action. The default card variant is
+  unchanged. `delegate_task`, `schedule`, browser sign-in and image results keep
+  their dedicated cards; hidden tools stay hidden.
+- `EditSummaryCard` closes each edited turn with `Edited N files`, total
+  `+added -removed`, up to three file rows, `Show N more files`, and a `Review`
+  action that opens the existing Work review panel.
+- Tool labels were shortened to compact row phrases (`Read file`, `Edit file`,
+  `Ran command`, `Find files`) without changing tool identity.
+
+Verification: `npx tsc --noEmit -p desktop/tsconfig.json` passed.
+`node --test --test-concurrency=1` over `transcript-activity-ui`,
+`companion-capture-ui`, `error-notice-ui` and `chatgpt-first-use-ui` passed
+**4/4**. The new `test/desktop/transcript-activity-ui.test.mjs` seeds a real
+transcript and asserts five tool rows, two thought rows, no empty assistant
+bubbles, failed-row marking, row-level expansion, group collapse/reopen,
+live-turn spinner, and `Edited 2 files +121 -4`. Screenshots were captured to a
+scratch directory and reviewed (not committed). The full serial suite and a
+packaged-desktop pass were not re-run for this follow-up.
+
+Limits: delete/move tools do not contribute line counts, and edit attribution is
+per turn rather than per git commit; `Review` opens the workspace-wide panel
+instead of a per-file diff.
+
+## Live sub-agent side panel (follow-up)
+
+The inline `delegate_task` card is useful after the fact, but a running child was
+easy to miss in a long transcript. A newly delegated child now takes the right
+side slot so its work stays visible while the chat narrows beside it.
+
+- `App` merges live `state.subagents` with `activityFromReceipt` transcript
+  fallbacks, then focuses a child the first time its live key appears. The panel
+  opens for new work only; historical receipts stay inline until opened.
+- `SubagentPanel` shows the child's type, description, status, elapsed/total
+  duration, tokens, depth, tool count, streaming output with a caret, tool rows,
+  summary, task brief and transcript path. Multiple children sharing a turn get
+  a status-dot switcher, and the panel keeps following the child the user is
+  watching rather than the newest one.
+- Closing the panel returns the chat width and does not re-open by itself. While
+  it is open, inline `delegate_task` cards are hidden so the run is not shown
+  twice; they return to the transcript as anchors when the panel closes. The
+  context-bar `N agents working` chip and the restored inline card's
+  `Watch live` / `Open in side panel` action reopen it, remembering the last
+  focus.
+- Review, browser, job sheets and the sub-agent panel share one side slot:
+  opening one closes the others, and auto-open defers while the browser stage or
+  a job sheet owns the slot. Workspace changes raised by the child no longer pop
+  Work review over the live panel.
+- Below 1200px the panel becomes a fixed overlay so the chat does not keep
+  shrinking. Labels, statuses and tones moved to
+  `desktop/renderer/src/lib/subagent.ts`; card and panel share `SubagentTools`.
+
+Verification: `npx tsc --noEmit -p desktop/tsconfig.json` passed and
+`npm run desktop:build` produced 393 modules. The new
+`test/desktop/subagent-panel-ui.test.mjs` passes 1/1 in a real Chromium
+renderer: history stays inline, a `subagent-start` auto-opens the panel, the
+chat narrows by more than 200px, streamed text and a completed tool row appear,
+the inline delegate card is hidden while the panel owns the run, a second child
+joins the switcher without stealing focus, completion shows `Done` without a
+spinner, close restores both the chat width and the inline card, the chip and
+inline card reopen the remembered run, and 1100px switches the panel to
+`position: fixed`.
+Adjacent suites passed 9/9 (`subagent-state`, `transcript-activity-ui`,
+`error-notice-ui`) and 2/2 (`companion-capture-ui`, `chatgpt-first-use-ui`).
+The bridge was stubbed; no packaged-desktop pass was run for this follow-up.
+
+Limits: auto-open is skipped while the browser stage or a scheduled-job sheet is
+open, and a completed child reconstructed only from a receipt has no live key,
+so it never auto-opens. The switcher shows descriptions rather than a full
+per-child history, and deeply nested delegation is out of scope because children
+cannot recurse.
+
+## Jobs card and sub-agent density pass (2026-10-25)
+
+The first pass gave the jobs card above the composer more room, then user
+feedback showed the card itself was the problem: scheduled work should not
+occupy composer space on every message. The card was removed and its status
+moved into the context bar. The live child panel also stayed dense: 10–11px
+rows, actions press-fit together, 28 near-identical `Read a page` rows, and
+output rendered as one unbroken monospace block.
+
+- The always-visible `JobsPill` above the composer was removed. One context-bar
+  chip now carries the live summary (`1 job · All paused`, `Running`,
+  `Needs attention`, or `Next …`), adds a dot for running or blocked work, and
+  opens the existing Scheduled tasks panel for names, timing and actions.
+  `nextRunLabel` and the attention rule moved to `lib/jobs.ts` so the chip and
+  panel cannot drift. The composer keeps the full message-box width.
+- `SubagentTools` folds consecutive same-name runs longer than three into one
+  expandable row with a call count and aggregate state; long runs start folded.
+  Source URLs lose their scheme for scanning while the full argument stays in
+  the tooltip. Single rows gained status chips, and the same component still
+  powers the inline card.
+- The panel widened to `clamp(360px, 31vw, 440px)`, raised its title to 14px,
+  separated status facts with middots, and renders output/summary/brief in the
+  UI font at 12.5px/1.72 with `text-wrap: pretty`. Section spacing is 18px,
+  chips and tool rows share new sub-agent accent tokens, and the task brief uses
+  a custom disclosure arrow instead of the browser default.
+
+Verification: typecheck passed and `npm run desktop:build` produced 393 modules.
+`test/desktop/jobs-entry-ui.test.mjs` passes 1/1 in real Chromium — no
+`.jobs-pill` or `.jobs-composer` wrapper, `Schedule` when empty, `1 job · All
+paused` for a paused routine, no dot when paused, a pulsing dot while running,
+amber attention for blocked work, pluralized `2 jobs · 2 need attention`, and
+the chip opening the task list. `subagent-state.test.mjs` passes 8/8 including
+the new fold test (six reads → one row, expand to six, scheme-stripped hint).
+`subagent-panel-ui.test.mjs` passes 1/1 with six seeded fetches folding into one
+row and an output line-height ratio of at least 1.6. The full `test/desktop`
+suite passes 291/291. Captures reviewed:
+`.tmp-ui-captures/jobs-header-entry.png` and `subagent-panel-live.png`.
+
+Limits: the chip hides its text below 1050px and keeps only the clock and dot;
+the panel still owns `Run now` / `Edit` / `Pause`, so those actions are one
+click further away; folding only groups consecutive calls, so interleaved tools
+stay in sequence; output bytes are not re-paragraphed, only re-typeset;
+verification is Chromium with a stubbed bridge, not the packaged desktop.
+
 ## Existing suite failures (not caused by this diff)
 
 - `test/core/browser-workflow.test.mjs` — the same three baseline failures

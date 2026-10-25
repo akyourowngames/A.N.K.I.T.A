@@ -1,18 +1,11 @@
 import { useState } from 'react';
 import type { Routine, Teammate } from '../../../shared/wire';
 import { Icon } from './Icons';
-import { nextRunLabel } from './ScheduledTaskCard';
+import { jobNeedsAttention, jobStatusSummary, nextRunLabel } from '../lib/jobs';
 import { JobCard } from './JobCard';
 import { JOB_EXECUTION_BOUNDED } from '../../../../src/automation/job-policy.mjs';
 import { relativeTime } from '../lib/relative-time';
 import { TeammateAvatar } from './TeammateAvatar';
-
-// A task is worth surfacing before the rest when it is blocked on the user,
-// lost its owner, or missed its last window. Grouping keeps the panel scannable
-// instead of forcing a linear read of every job.
-function needsAttention(job: Routine) {
-  return Boolean(job.needsApproval || job.ownerMissing || job.lastStatus === 'missed');
-}
 
 function rowMeta(job: Routine) {
   if (job.needsApproval) return 'Needs your attention';
@@ -30,7 +23,7 @@ function runAgo(at: string) {
 }
 
 function rowState(job: Routine) {
-  if (needsAttention(job)) return 'attention';
+  if (jobNeedsAttention(job)) return 'attention';
   if (job.running) return 'running';
   if (!job.enabled) return 'paused';
   return 'ready';
@@ -45,15 +38,13 @@ export function JobsPanel({ jobs, teammates, threadId, selectedId, onChoose, onE
   const selected = jobs.find(job => job.id === selectedId);
   const ordered = [...jobs].sort((a, b) => Number(b.running) - Number(a.running) || Number(b.enabled) - Number(a.enabled) || String(a.nextRunAt || '').localeCompare(String(b.nextRunAt || '')));
   const groups = [
-    { key: 'attention', label: 'Needs attention', jobs: ordered.filter(needsAttention) },
-    { key: 'running', label: 'Running now', jobs: ordered.filter(job => !needsAttention(job) && job.running) },
-    { key: 'upcoming', label: 'Upcoming', jobs: ordered.filter(job => !needsAttention(job) && !job.running && job.enabled) },
-    { key: 'paused', label: 'Paused', jobs: ordered.filter(job => !needsAttention(job) && !job.running && !job.enabled) },
+    { key: 'attention', label: 'Needs attention', jobs: ordered.filter(jobNeedsAttention) },
+    { key: 'running', label: 'Running now', jobs: ordered.filter(job => !jobNeedsAttention(job) && job.running) },
+    { key: 'upcoming', label: 'Upcoming', jobs: ordered.filter(job => !jobNeedsAttention(job) && !job.running && job.enabled) },
+    { key: 'paused', label: 'Paused', jobs: ordered.filter(job => !jobNeedsAttention(job) && !job.running && !job.enabled) },
   ].filter(group => group.jobs.length);
-  const running = jobs.filter(job => job.running).length;
-  const attention = jobs.filter(needsAttention).length;
-  const next = ordered.filter(job => job.enabled && job.nextRunAt).sort((a, b) => Date.parse(a.nextRunAt!) - Date.parse(b.nextRunAt!))[0];
-  const summary = attention ? `${attention} need attention` : running ? `${running} running` : next ? `Next ${nextRunLabel(next)}` : jobs.length ? 'All paused' : 'Nothing scheduled';
+  const attention = jobs.filter(jobNeedsAttention).length;
+  const summary = jobStatusSummary(jobs);
   const teammateName = selected ? teammates.find(item => item.id === selected.threadId)?.name || 'Choose a teammate' : '';
   const lastRun = selected ? selected.lastStatus?.replaceAll('-', ' ') || 'Not run yet' : '';
   const act = async (action: string, payload: object) => { setBusy(true); setError(''); try { await window.ankita.invoke(action, payload); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
