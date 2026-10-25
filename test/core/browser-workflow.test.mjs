@@ -18,7 +18,10 @@ const { Agent } = await import('../../src/core/agent.mjs');
 const { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } = await import('../../tools/browser/screenshots.mjs');
 // Valid synthetic 1x1 PNG: never read a user's screenshot or personal data.
 const PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jZQAAAABJRU5ErkJggg==', 'base64');
-const config = { tools: true, autoApprove: true, historyMessages: 40, maxTokens: 1000, memoryConsolidation: false };
+// Desktop models report a real window (>=64k); 32k is only the no-metadata
+// fallback and leaves no room for the browser schema plus history.
+const DESKTOP_CONTEXT_WINDOW = 65536;
+const config = { tools: true, autoApprove: true, historyMessages: 40, maxTokens: 1000, memoryConsolidation: false, contextWindow: DESKTOP_CONTEXT_WINDOW };
 const call = (id, name, args) => ({ id, type: 'function', function: { name, arguments: JSON.stringify(args) } });
 
 const WORKSPACE_PADDING_CHARS = 100; // Test-only path length: a valid longer directory must not consume the default browser schema margin.

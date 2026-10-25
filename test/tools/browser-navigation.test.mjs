@@ -87,6 +87,57 @@ for (const runtimeV2 of [false, true]) test(`catalogued Chrome settles a new tab
   assert.equal(calls.filter(call => call.name.endsWith('__navigate_page')).length, 1);
 });
 
+test('a fresh Chrome tab retries an aborted URL navigation without creating another tab', async () => {
+  const requested = 'http://127.0.0.1/retry'; // Synthetic transport URL: no request is sent to this host.
+  const createdId = '8';
+  const tabs = new Map([['7', 'about:blank']]);
+  const listed = () => [...tabs].map(([id, url]) => `${id}: ${url}${id === createdId ? ' [selected]' : ''}`).join('\n');
+  let navigations = 0, opened = 0;
+  const adapter = new ChromeBrowserAdapter({ has: () => true,
+    findTool: name => name.endsWith('__navigate_page') ? {} : null,
+    callTool: async (name, args) => {
+      if (name.endsWith('__list_pages')) return listed();
+      if (name.endsWith('__new_page')) { opened++; tabs.set(createdId, args.url); return listed(); }
+      if (name.endsWith('__navigate_page')) {
+        navigations++;
+        if (navigations < 3) return `Unable to navigate in the selected page: net::ERR_ABORTED at ${args.url}.`;
+        tabs.set(String(args.pageId), args.url); return 'Successfully navigated.';
+      }
+      if (name.endsWith('__take_snapshot')) return 'uid=8_1 button "Save"';
+      throw new Error(`Unexpected native call: ${name}`);
+    },
+  }, { ownedTabs: true });
+  const result = await adapter.execute({ action: 'open', url: requested }, { config: { allowPrivateHosts: true }, signal: new AbortController().signal });
+  assert.equal(result.status, 'executed', JSON.stringify(result.error));
+  assert.equal(navigations, 3, 'each aborted navigation is retried, at most twice');
+  assert.equal(opened, 1, 'the retry must not create a second tab');
+  assert.deepEqual([...adapter.ownedTabs], [Number(createdId)]);
+});
+
+test('a URL that keeps aborting is reported after the bounded retries', async () => {
+  const createdId = '8';
+  const tabs = new Map([['7', 'about:blank']]);
+  const listed = () => [...tabs].map(([id, url]) => `${id}: ${url}${id === createdId ? ' [selected]' : ''}`).join('\n');
+  let navigations = 0, opened = 0;
+  const adapter = new ChromeBrowserAdapter({ has: () => true,
+    findTool: name => name.endsWith('__navigate_page') ? {} : null,
+    callTool: async (name, args) => {
+      if (name.endsWith('__list_pages')) return listed();
+      if (name.endsWith('__new_page')) { opened++; tabs.set(createdId, args.url); return listed(); }
+      if (name.endsWith('__navigate_page')) {
+        navigations++;
+        return `Unable to navigate in the selected page: net::ERR_ABORTED at ${args.url}.`;
+      }
+      throw new Error(`Unexpected native call: ${name}`);
+    },
+  }, { ownedTabs: true });
+  const result = await adapter.execute({ action: 'open', url: 'http://127.0.0.1/always-aborts' }, { config: { allowPrivateHosts: true }, signal: new AbortController().signal });
+  assert.equal(result.status, 'uncertain');
+  assert.match(result.error.message, /net::ERR_ABORTED/);
+  assert.equal(navigations, 3, 'retries stay bounded');
+  assert.equal(opened, 1);
+});
+
 for (const boundary of ['ambiguous', 'stopped', 'refused']) test(`staged Chrome open does not guess or replay at the ${boundary} boundary`, async () => {
   const controller = new AbortController(), calls = [];
   let created = false;

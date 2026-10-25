@@ -37,12 +37,27 @@ const INSPECT_FILL_TARGETS = `(...elements) => elements.map(element => (${inspec
 const MCP_JSON_RESULT = /```json\s*([\s\S]*?)\s*```/; // MCP's documented JSON result envelope.
 const INTERRUPTED_FILL_RESULT = /\bopened a dialog\b|\bremaining elements were not filled\b/i; // Upstream can report partial writes without throwing.
 const NAVIGATION_REFUSED = /^Unable to navigate\b/m; // Native MCP reports navigation failures as receipt text rather than throwing.
+// A freshly created about:blank tab can abort its first requested navigation
+// while the renderer finishes attaching. Repeating the same GET is safe;
+// history actions are never retried because a late success would move twice.
+const NAVIGATION_ABORTED = /net::ERR_ABORTED/;
+const NAVIGATION_RETRY_DELAYS_MS = [250, 750]; // Settle time (ms) before each bounded retry.
 const CHROME_NEW_TAB_DOCUMENT = 'about:blank'; // Native bootstrap document: settle target creation before sending the single requested HTTP navigation.
 const CHROME_SELECTED_PAGE = /^\s*(\d+)\s*:.*\[selected\]/m; // Native page-list identity, independent of labels or tab ordering.
 const CHROME_NEW_TAB_UNKNOWN = 'Chrome did not identify the newly created tab. Inspect current tabs before continuing.';
 function historyTarget(direction) {
   const history = globalThis.navigation;
   return history?.entries()?.find(entry => entry.index === history.currentEntry.index + direction)?.url || null;
+}
+async function navigateWithAbortRetry(call, args, ctx) {
+  let result = await call('navigate_page', args);
+  for (const delay of NAVIGATION_RETRY_DELAYS_MS) {
+    if (args.type !== 'url' || !NAVIGATION_ABORTED.test(String(result))) return result;
+    await new Promise(resolve => setTimeout(resolve, delay));
+    ctx.signal?.throwIfAborted();
+    result = await call('navigate_page', args);
+  }
+  return result;
 }
 
 /** Uses the existing MCP transport; never opens a CDP socket from Ankita. */
@@ -335,9 +350,9 @@ export class ChromeBrowserAdapter {
       if (tab) this.pageId = Number(tab.id);
       if (staged) {
         ctx.signal?.throwIfAborted();
-        // This is the first requested-site navigation, never a retry of a
+        // This is the first requested-site navigation, never a replay of a
         // failed new_page mutation. Preserve ownership even if it is refused.
-        result = await call('navigate_page', { pageId: this.pageId, type: 'url', url });
+        result = await navigateWithAbortRetry(call, { pageId: this.pageId, type: 'url', url }, ctx);
         if (NAVIGATION_REFUSED.test(result)) throw new Error(result);
       }
       ctx.onBrowserDispatch?.({ phase: 'complete', action });
@@ -374,8 +389,8 @@ export class ChromeBrowserAdapter {
         await guardBrowserUrl(target, ctx);
       }
       this.invalidate();
-      const result = await call('navigate_page', { pageId, type: action === 'navigate' ? 'url' : action,
-        ...(action === 'navigate' ? { url: args.url } : {}), handleBeforeUnload: 'dismiss' });
+      const result = await navigateWithAbortRetry(call, { pageId, type: action === 'navigate' ? 'url' : action,
+        ...(action === 'navigate' ? { url: args.url } : {}), handleBeforeUnload: 'dismiss' }, ctx);
       if (NAVIGATION_REFUSED.test(result)) throw new Error(result);
       ctx.onBrowserDispatch?.({ phase: 'complete', action });
       await this.tabs(ctx);

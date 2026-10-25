@@ -17,7 +17,9 @@ const PREFERENCES = {
 };
 
 test('providers keep one calm column, grouped actions and a single save bar', async t => {
-  const vite = await createServer({ configFile: false, root: ROOT, define: { __ANKITA_VERSION__: JSON.stringify('0.0.0-test') }, server: { middlewareMode: true }, appType: 'custom' });
+  // This preview is static: no HMR client, so a loaded CI runner cannot surface
+  // Vite's "WebSocket closed without opened" as an unhandled page error.
+  const vite = await createServer({ configFile: false, root: ROOT, define: { __ANKITA_VERSION__: JSON.stringify('0.0.0-test') }, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
   const server = http.createServer(async (req, res) => {
     if (req.url !== ROUTE) return vite.middlewares(req, res);
     res.setHeader('content-type', 'text/html');
@@ -52,6 +54,9 @@ test('providers keep one calm column, grouped actions and a single save bar', as
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}${ROUTE}`);
   await page.getByRole('heading', { name: 'Providers', exact: true }).waitFor();
+  // The dialog enters with a 220ms scale animation; measuring before it settles
+  // reports scaled sizes (36px buttons read as 35.46) on a slower runner.
+  await page.locator('.settings-window').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
 
   const cards = page.locator('.settings-provider-card');
   assert.equal(await cards.count(), 5);
@@ -68,7 +73,7 @@ test('providers keep one calm column, grouped actions and a single save bar', as
   const actions = page.locator('.chatgpt-actions').getByRole('button');
   const actionBoxes = await actions.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()));
   assert.equal(Math.round(actionBoxes[0].y), Math.round(actionBoxes[1].y), 'setup actions stay on one row');
-  assert.ok(actionBoxes.every(box => box.height >= 36), 'all setup actions keep a comfortable target');
+  assert.ok(actionBoxes.every(box => box.height >= 36), `all setup actions keep a comfortable target: ${actionBoxes.map(box => box.height).join(', ')}`);
 
   const sessionButtons = page.locator('.chatgpt-session-actions').getByRole('button');
   assert.equal(await sessionButtons.count(), 2, 'session controls stay grouped');
