@@ -11,9 +11,10 @@ import { startDesktopDev } from '../../desktop/scripts/dev-server.mjs';
 const HOST_REPORT = "process.stdout.write(process.env.ANKITA_DESKTOP_DEV_URL);setInterval(()=>{},1000)"; // Real child host fixture, no GUI or user profile.
 const OPTIONS = { electronPath: process.execPath, electronArgs: ['-e', HOST_REPORT], stdio: ['ignore', 'pipe', 'pipe'], logLevel: 'silent' };
 async function fixture(t) {
-  // Vite resolves real paths for its serving allow list; an 8.3 short temp path
-  // (C:\Users\RUNNER~1\...) would otherwise 403 its own renderer.
-  const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-dev-launcher-')));
+  // Vite resolves real paths for its serving allow list. The native call is
+  // required: realpathSync alone leaves an 8.3 short temp path (C:\Users\RUNNER~1\...)
+  // unchanged, and Vite then 403s its own renderer.
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-dev-launcher-')));
   const occupied = http.createServer((_req, res) => res.end('unrelated server'));
   await new Promise(resolve => occupied.listen(0, '127.0.0.1', resolve));
   fs.mkdirSync(path.join(root, 'desktop', 'renderer'), { recursive: true });
