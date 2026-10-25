@@ -7,6 +7,8 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.7.0 — 2026-10-25
+
 ### Managed browser, safety and desktop polish
 
 ChatGPT work now offers two transports: an app-owned compact Electron window
@@ -59,8 +61,10 @@ input/result inline. Reasoning-only assistant messages no longer render as empty
 replies, failures stay marked without dominating the turn, and the final answer
 remains the visual focus. A per-turn `Edited N files` card lists up to three
 paths with aggregate and per-file `+added -removed` stats, folds the rest behind
-`Show N more files`, and opens Work review. Sub-agent, scheduled-task, sign-in
-and image results keep their existing dedicated cards.
+`Show N more files`, and opens Work review. The card is assembled once the turn
+ends, so it never jumps between the tool rows and the streaming answer.
+Sub-agent, scheduled-task, sign-in and image results keep their existing
+dedicated cards.
 
 Launching a sub-agent now opens a right-side live panel: the chat narrows beside
 it while the child's output, status, elapsed time, tokens and tool calls stream
@@ -71,6 +75,37 @@ remembered run after closing, and a closed panel never reopens on its own. The
 panel shares one side slot with Work review, the browser stage and scheduled-job
 sheets, overlays the chat below 1200px, and rebuilds historical children from
 their stored receipt.
+
+### Self-maintaining projects and a community codebase tour
+
+Projects stop being a manual notebook. A session started inside a registered
+project folder attaches to that project without changing the global `active`
+project; explicit `/project` selection or a desktop assignment still wins, and
+nested folders resolve to the longest matching path. After a turn that changes
+files or tasks, Ankita acquires a short projects-file lock, appends one bounded
+work-log line (`model_answer · 2 file(s) · src/app.ts, src/app.test.ts`) and
+syncs up to five open session todos into the project, each tagged with its
+session and turn.
+Automatic entries are reversible: `/project undo` in the CLI and **Undo** in the
+desktop Overview remove exactly that session's work-log lines, added todos and
+auto-completed todos. Pure question-and-answer turns, sessions with no project,
+and any failure write nothing and never break the turn. `project_memory` is
+directly callable whenever a project is active instead of hiding behind
+`find_tools`, and `PROJECT_INLINE_CONSOLIDATION=on` opts into one small
+background extraction of decisions and open tasks. The desktop scheduler now
+also consolidates prior-day journals, and an unmatched folder that is a git
+repository gets one quiet line offering to track it — never an automatic create.
+
+The `codebase-tour` skill arrives from the community: contributed by
+**[Pradyumna Parida (@Pradyumna-red)](https://github.com/Pradyumna-red)** in
+[PR #69](https://github.com/akyourowngames/A.N.K.I.T.A/pull/69). It walks the
+real repository layout, follows targeted globs to documentation and manifests,
+reads only what the question needs, and reports entry points, commands and
+component relationships with repository-relative paths, separating observed
+facts from inferences. It stays inside an eight-step, six-file budget, never
+writes or runs project commands, and ships with a README, permission manifest
+and golden fixtures. Thank you, Pradyumna — this is exactly the kind of careful
+contribution that makes the skill catalogue stronger.
 
 Hosted ChatGPT sign-in, a signed installer and packaged-device round trips remain
 open verification gates.

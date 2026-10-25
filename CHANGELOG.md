@@ -7,8 +7,31 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-10-25
+
 ### Added
 
+- **Community contribution: the `codebase-tour` skill by
+  [Pradyumna Parida (@Pradyumna-red)](https://github.com/Pradyumna-red).**
+  Merged from [#69](https://github.com/akyourowngames/A.N.K.I.T.A/pull/69), it
+  gives Ankita a careful, verification-first way to explain an unfamiliar
+  repository: inspect the real top-level layout, find documentation and
+  manifests with targeted globs, read only the files needed, then report
+  entry points, build/run/test commands and component relationships with
+  repository-relative paths while separating observed facts from inferences.
+  It ships with its README, permission manifest and golden fixtures, stays
+  inside an eight-step budget, and never modifies or runs the project.
+- **Projects that maintain themselves.** A session started inside a registered
+  project folder now attaches to that project without changing the global
+  `active` project; explicit `/project` or a desktop assignment still wins, and
+  nested folders resolve to the longest match. After a turn that changes files
+  or tasks, Ankita appends one bounded work-log line and syncs up to five open
+  todos, each tagged with its session so `/project undo` in the CLI and
+  **Undo** in the desktop Overview remove exactly that session's automatic
+  entries. Sessions with no project record nothing. `PROJECT_INLINE_CONSOLIDATION=on`
+  opts into one small background extraction of notes and decisions, the desktop
+  scheduler now consolidates prior-day journals, and `project_memory` is
+  directly callable whenever a project is active.
 - **Managed ChatGPT browser.** Settings offers both CoS-style modes: a built-in
   compact Electron window with saved sign-in and automatic internal connection,
   or the existing Chrome companion with automatic local discovery and token
@@ -74,6 +97,9 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- **The edited-files card waits for the turn to finish.** It used to render as
+  soon as a write landed and jump between the tool rows and the streaming
+  answer; it now appears once at turn end with the final list and line counts.
 - **Chat header and composer are quieter.** The green `Ready` / `Working` pill
   and the mascot's `↗` browser-helper badge are removed. Helper setup now lives
   in the conversation menu (`Conversation options → Browser helper`) and the
@@ -97,6 +123,18 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
   `COMPUTER_DIRECT_CONFIG` import is restored; connecting the native desktop
   server builds the system prompt instead of throwing. See
   `docs/findings/computer-direct-config.md`.
+
+### Thanks
+
+A huge thank you to **[Pradyumna Parida
+(@Pradyumna-red)](https://github.com/Pradyumna-red)**, who contributed the
+`codebase-tour` skill in
+[#69](https://github.com/akyourowngames/A.N.K.I.T.A/pull/69). The contribution
+was done the right way: a clear README, a permission manifest, golden fixtures,
+bounded tool use, `node scripts/check-skills.mjs` clean (7 skills, 0 errors) and
+the targeted skill suite green (19/19). That care makes onboarding to any new
+repository materially easier for everyone. Welcome aboard, and thank you for
+showing up and building with us — this release is better because of you.
 
 ## [2.6.0] - 2026-10-14
 

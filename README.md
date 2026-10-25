@@ -261,6 +261,13 @@ Built-in chat skills live in [`skills/`](skills). Use `/skills` to inspect them
 or the desktop command palette to discover enabled skills. Contribution and
 size limits are documented in [CONTRIBUTING.md](CONTRIBUTING.md).
 
+The [codebase-tour skill](skills/codebase-tour/SKILL.md) explains an unfamiliar
+repository from verified files only: top-level layout, documentation and
+manifests, entry points, build/run/test commands and component relationships,
+with a bounded read budget and no writes. It was contributed by
+[Pradyumna Parida (@Pradyumna-red)](https://github.com/Pradyumna-red) in
+[PR #69](https://github.com/akyourowngames/A.N.K.I.T.A/pull/69).
+
 The [browser-use skill](skills/browser-use/SKILL.md) loads its full guide when
 an interactive chat discovers or uses the browser, without a separate model
 request. It covers current refs, form batching, result checks and error recovery.
