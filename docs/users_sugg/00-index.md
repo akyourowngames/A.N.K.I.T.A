@@ -13,7 +13,7 @@ formalises it. Nothing here invents a feature, a release, or a metric.
 4. [Scheduler lock can wedge forever](04-scheduler-lock-wedge.md) — PID reuse, orphaned .recovery sidecar, wedged owner. (arhancanli, "scheduler that can never double-fire")
 5. [Memory keeps near-duplicates and contradicting facts](05-memory-duplicates-contradictions.md) — exact-text dedup only, no contradiction detector. (baumgaerben, "memory must quote the transcript")
 6. [Secret scrubber misses split secrets and drifts with vendors](06-secret-scrubber-gaps.md) — runtime concatenation, hardcoded patterns, shape-only false positives. (cubl9snp71hm, "secret scrubber")
-7. [Heartbeat silence is brittle, and empty updates still reach chat](07-heartbeat-brittleness.md) — exact-string match, no substance gate, stale last state. (ai_adam, baumgaerben, ywnigcsmku2m, "quiet heartbeat")
+7. [Heartbeat silence is brittle, and empty updates still reach chat](07-heartbeat-brittleness.md) — exact-string match, no substance gate, stale last state. (ai_adam, baumgaerben, ywnigcsmku2m, "quiet heartbeat") **Phases 1–2 implemented 2026-10-26; Phase 3 (adaptive cadence, local pre-checks, feedback) open.**
 8. [Island doesn't follow the monitor you're working on](08-island-active-monitor.md) — anchors to the main window's display, not the active screen. (mp6nfjxhrlxc, "v2.5.0 island")
 9. [Chat-thread "always" trusts the whole agent, not the tool](09-chat-always-too-coarse.md) — session-wide autoApprove, no per-tool persistent allow-list. (koev3kcjausd, "companion island")
 10. [Heuristic can't tell a cache delete from an account delete](10-heuristic-cant-grade-writes.md) — crude verb regex, no argument inspection. (nikolovv, "v2.5.0 island")

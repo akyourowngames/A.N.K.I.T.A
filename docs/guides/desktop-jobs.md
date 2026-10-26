@@ -67,8 +67,16 @@ finish delivery without asking the model to write the same update again.
 Ask Ankita to create a heartbeat. Its default interval is every 30 minutes, with
 editable timing and instructions. It checks the teammate's existing proactive and
 project context while that teammate is idle. `HEARTBEAT_OK` produces a quiet receipt
-without another chat message. Useful updates are delivered once; heartbeat does
-not create more scheduled jobs by itself.
+without another chat message, even when the model adds a sentence after the marker.
+Empty or boilerplate answers also stay quiet.
+
+A useful update arrives as a structured card with a stable topic key, a short
+summary and a small memory for the next check. The same key is not repeated for six
+hours, and at most four proactive messages are delivered per local day; urgent
+updates skip only the daily limit. During `QUIET_HOURS` updates are held and the
+first check after quiet hours delivers one digest. Adjust the limits with
+`HEARTBEAT_DAILY_LIMIT` and `HEARTBEAT_COOLDOWN_MINUTES`. Heartbeat does not create
+more scheduled jobs by itself.
 
 **Watch live** opens the job's browser stage. **Stop** or **Close and stop browser**
 stops that job. Stopping a foreground chat does not cancel a background

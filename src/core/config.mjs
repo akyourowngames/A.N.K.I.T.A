@@ -3,6 +3,7 @@ import os from "node:os";
 import path from "node:path";
 import { DEFAULT_SUMMARY_NOTE } from "../channels/voice.mjs";
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
+import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -95,6 +96,8 @@ const DEFAULTS = {
   watchAlertLlm: true,
   watchAlertPrompt: "",
   briefingPrompt: "",
+  heartbeatDailyLimit: HEARTBEAT_DAILY_LIMIT,
+  heartbeatCooldownMinutes: HEARTBEAT_COOLDOWN_MINUTES,
   groqApiKey: "",
   sttModel: "whisper-large-v3-turbo",
   ttsProvider: "edge",
@@ -359,6 +362,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     projectTodoSyncMax: Math.min(20, posInt(pick("PROJECT_TODO_SYNC_MAX"), 5)),
     projectInlineMinChars: Math.min(100000, posInt(pick("PROJECT_INLINE_MIN_CHARS"), 400)),
     briefingPrompt: pick("BRIEFING_PROMPT") || "",
+    heartbeatDailyLimit: Math.min(24, Math.max(1, posInt(pick("HEARTBEAT_DAILY_LIMIT"), DEFAULTS.heartbeatDailyLimit))),
+    heartbeatCooldownMinutes: (() => {
+      const n = Number(pick("HEARTBEAT_COOLDOWN_MINUTES") ?? DEFAULTS.heartbeatCooldownMinutes);
+      return Number.isFinite(n) && n >= 0 ? Math.min(1440, Math.floor(n)) : DEFAULTS.heartbeatCooldownMinutes;
+    })(),
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,
     ttsProvider: (() => {

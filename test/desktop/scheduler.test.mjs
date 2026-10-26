@@ -385,3 +385,84 @@ test('an old successful note stays labelled history and never replaces the fresh
   assert.match(prompt, /Read the live followers count now\./);
   assert.match(prompt, /unchanged/);
 });
+
+const heartbeatCard = (patch = {}) => `\`\`\`heartbeat-card\n${JSON.stringify({ v: 1, status: 'notable', title: 'Deadline', summary: 'The report is due in two hours.', dedupe_key: 'report-due', evidence: ['calendar'], state: { due: 'today' }, ...patch })}\n\`\`\``;
+
+test('a heartbeat marker with an added sentence stays quiet and an empty answer never becomes a chat update', async t => {
+  const answers = ['HEARTBEAT_OK\nNothing important changed.', ''];
+  const f = await fixture(t, async () => answers.shift());
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 0);
+  assert.equal(f.scheduler.list()[0].lastStatus, 'quiet');
+  assert.doesNotMatch(f.scheduler.list()[0].lastSummary, /Job finished without a summary/);
+});
+
+test('a notable heartbeat card is delivered once and its dedupe key silences the repeat', async t => {
+  const f = await fixture(t, async () => heartbeatCard());
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1);
+  assert.match(f.delivered[0].text, /Deadline\nThe report is due in two hours\./);
+  const state = f.scheduler.list()[0].heartbeatState;
+  assert.equal(state.recent[0].key, 'report-due'); assert.equal(state.sent, 1);
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1);
+  assert.equal(f.scheduler.list()[0].lastStatus, 'quiet');
+});
+
+test('a heartbeat card larger than a chat receipt is parsed before any truncation', async t => {
+  const detailed = heartbeatCard({ summary: `The report is due in two hours. ${'Extra detail. '.repeat(40)}`, evidence: ['a', 'b', 'c', 'd', 'e', 'f'], state: { notes: 'x'.repeat(400) } });
+  assert.ok(detailed.length > 600, 'the fixture must exceed the receipt cap');
+  const f = await fixture(t, async () => detailed);
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1);
+  assert.doesNotMatch(f.delivered[0].text, /```/);
+  assert.match(f.delivered[0].text, /The report is due in two hours/);
+});
+
+test('quiet hours hold a heartbeat and the first morning check delivers one digest', async t => {
+  const answers = [heartbeatCard(), 'HEARTBEAT_OK'];
+  const f = await fixture(t, async () => answers.shift());
+  f.engine.config.quietHours = '22:00-07:00';
+  f.clock('2026-09-27T23:00:00Z');
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 0); assert.equal(f.scheduler.list()[0].lastStatus, 'held');
+  assert.equal(f.scheduler.list()[0].heartbeatState.held.length, 1);
+  f.clock('2026-09-28T07:30:00Z');
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1);
+  assert.match(f.delivered[0].text, /While you were away:\n- Deadline: The report is due in two hours\./);
+  assert.deepEqual(f.scheduler.list()[0].heartbeatState.held, []);
+});
+
+test('the daily proactive limit holds later updates until the next local day digests them', async t => {
+  const answers = [heartbeatCard(), heartbeatCard({ title: 'Build', summary: 'The build failed on the login page.', dedupe_key: 'build-failed' }), 'HEARTBEAT_OK', 'HEARTBEAT_OK'];
+  const f = await fixture(t, async () => answers.shift());
+  f.engine.config.heartbeatDailyLimit = 1;
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1);
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 1); assert.equal(f.scheduler.list()[0].lastStatus, 'held');
+  f.clock('2026-09-28T00:30:00Z');
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.delivered.length, 2);
+  assert.match(f.delivered[1].text, /While you were away:\n- Build: The build failed on the login page\./);
+});
+
+test('the next heartbeat receives structured state and the card contract instead of stale prose', async t => {
+  const answers = [heartbeatCard(), 'HEARTBEAT_OK', 'HEARTBEAT_OK', 'HEARTBEAT_OK'], prompts = [];
+  const f = await fixture(t, async prompt => { prompts.push(prompt); return answers.shift(); });
+  const r = f.add({ kind: 'heartbeat' });
+  for (let run = 0; run < 4; run++) { await f.scheduler.runNow(r.id); await f.scheduler.drain(); }
+  const extra = f.workers[3].config.systemExtra; // Three quiet checks later, memory must survive.
+  assert.match(extra, /Heartbeat output contract/);
+  assert.match(extra, /"state":\{"due":"today"\}/);
+  assert.match(extra, /"recentKeys":\["report-due"\]/);
+  assert.doesNotMatch(extra, /Previous useful heartbeat update/);
+  assert.doesNotMatch(prompts[3], /previous successful result|The report is due in two hours/);
+});

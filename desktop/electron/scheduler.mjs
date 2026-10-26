@@ -3,7 +3,8 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { BROWSER_OPERATIONS } from '../../tools/browser/operations.mjs';
 import { normalizeSchedule } from '../../src/automation/cron.mjs';
-import { HEARTBEAT_QUIET, JOB_MUTABLE_FIELDS, JOB_EXECUTION_COMPLETE, JOB_EXECUTION_POLICIES, normalizeRoutine } from '../../src/automation/job-policy.mjs';
+import { JOB_MUTABLE_FIELDS, JOB_EXECUTION_COMPLETE, JOB_EXECUTION_POLICIES, normalizeRoutine } from '../../src/automation/job-policy.mjs';
+import { HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext, heartbeatPolicy, parseHeartbeat } from '../../src/automation/heartbeat.mjs';
 import { redactValue } from '../../src/security/secret-scrubber.mjs';
 import { RoutineStore } from '../../src/automation/routines.mjs';
 import { Daemon } from '../../src/automation/daemon.mjs';
@@ -256,11 +257,16 @@ export class DesktopScheduler {
     if (spend.minutes + run.elapsed() / MINUTE_MS >= routine.budget.maxMinutesPerDay) return 'minutes';
     return null;
   }
+  heartbeatOptions() {
+    return { now: this.now(), timeZone: this.timeZone, quietHours: this.engine.config?.quietHours || '',
+      dailyLimit: this.engine.config?.heartbeatDailyLimit, cooldownMinutes: this.engine.config?.heartbeatCooldownMinutes };
+  }
   /** The single construction point for background workers. The config flag and
    *  the tool context are stamped here, so no caller can build one without them. */
   createJobWorker(routine, run, scope) {
     const owner = this.owner(routine).owner;
-    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(routine.kind === 'heartbeat' ? [this.engine.config.briefingPrompt || '', routine.lastNotifiedSummary ? `Previous useful heartbeat update: ${routine.lastNotifiedSummary}` : ''] : [])].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
+    const heartbeat = routine.kind === 'heartbeat';
+    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(heartbeat ? [this.engine.config.briefingPrompt || '', HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext(routine, this.heartbeatOptions())] : [])].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
     const worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
       ...this.engine.contextForJob?.(routine),
       browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
@@ -306,7 +312,9 @@ export class DesktopScheduler {
       const leg = this.budgetLeg(routine, run); if (leg) throw jobError(`Daily ${leg} budget reached`, 'stopped-budget');
       worker = this.createJobWorker(routine, run, scope);
       const previous = routine.lastSuccessfulResult || (routine.lastReceipt?.status === 'ok' ? { text: routine.lastReceipt.text, at: routine.lastReceipt.at } : null);
-      const priorContext = previous ? `\n[Previous successful result at ${previous.at}; historical context, never a substitute for a fresh observation]\n${previous.text}\n` : '\n[No previous successful result is recorded for this task.]\n';
+      // Heartbeats get structured state in systemExtra; repeating the last prose
+      // here would make a long quiet streak reason from stale text.
+      const priorContext = routine.kind === 'heartbeat' ? '' : previous ? `\n[Previous successful result at ${previous.at}; historical context, never a substitute for a fresh observation]\n${previous.text}\n` : '\n[No previous successful result is recorded for this task.]\n';
       summary = await Promise.race([worker.send(`${header}${priorContext}\n${routine.prompt}`, {
         onToolCall: call => {
           if (call.function.name !== 'browser') return;
@@ -325,8 +333,17 @@ export class DesktopScheduler {
       if (failure) throw failure;
       if (worker.terminationReason) throw jobError(INCOMPLETE_JOB_TEXT);
       const exceeded = this.budgetLeg(this.store.load().findRoutine(routine.id), run); if (exceeded) throw jobError(`Daily ${exceeded} budget reached`, 'stopped-budget');
-      summary = String(summary || 'Job finished without a summary.').slice(0, JOB_SUMMARY_MAX_CHARS);
-      if (routine.kind === 'heartbeat' && summary.trim() === HEARTBEAT_QUIET) { run.status = 'quiet'; summary = ''; }
+      summary = String(summary || 'Job finished without a summary.');
+      if (routine.kind === 'heartbeat') {
+        // Parse before any length cap: a card is larger than a chat receipt and
+        // truncating it would turn valid structured output into visible JSON.
+        const parsed = parseHeartbeat(summary);
+        const decision = heartbeatPolicy(routine, parsed, this.heartbeatOptions());
+        run.heartbeatState = decision.state; run.heartbeatReason = decision.reason;
+        if (decision.action === 'quiet') { run.status = 'quiet'; summary = ''; }
+        else if (decision.action === 'held') { run.status = 'held'; summary = parsed.card.summary; }
+        else summary = decision.text; // A delivered update or a digest of updates held earlier.
+      } else summary = summary.slice(0, JOB_SUMMARY_MAX_CHARS);
     } catch (error) { run.status = error.jobStatus || 'error'; summary = error.jobStatus ? error.message : 'Job failed; no automatic retry was made. Review the last browser proof.'; }
     finally {
       run.active = false; run.pauseTimer();
@@ -344,19 +361,19 @@ export class DesktopScheduler {
         const budget = run.status === 'stopped-budget';
         this.store.updateRoutine(routine.id, { activeRunId: null, pendingApproval: null, lastRun: started.toISOString(), lastOutcomeAt: completedAt, lastStatus: run.status, lastSummary: summary, runs: current.runs + 1,
           spend: { day: dayAt(this.now(), this.timeZone), runs: current.spend.runs + 1, tokens: current.spend.tokens + run.tokens, minutes: current.spend.minutes + elapsed / MINUTE_MS },
-          ...(routine.kind === 'heartbeat' && run.status === 'ok' ? { lastNotifiedSummary: summary } : {}),
+          ...(routine.kind === 'heartbeat' && run.heartbeatState ? { heartbeatState: run.heartbeatState } : {}),
           ...(run.status === 'ok' ? { lastSuccessfulResult: { text: summary, at: completedAt } } : {}),
           ...(budget ? { enabled: false, pausedReason: 'budget' } : {}) });
       }
       const owner = this.owner(routine);
       const receipt = { runId: run.runId, routineId: routine.id, name: routine.name, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing, status: run.status,
         templateId: routine.templateId, channel: routine.channel,
-        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' };
+        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' || run.status === 'held' };
       this.writeRun(run, { ...receipt, header, audit: run.audit, tokens: run.tokens, activeMs: elapsed });
       this.store.updateRoutine(routine.id, { lastReceipt: receipt });
-      if (run.status !== 'quiet') await this.deliver(receipt);
+      if (run.status !== 'quiet' && run.status !== 'held') await this.deliver(receipt);
       this.runs.delete(routine.id); this.engine.emit({ type: 'routine-run-end', routineId: routine.id, threadId: receipt.threadId, runId: run.runId, status: run.status });
-      if (!isLogOnlyTemplate(routine) && !['ok', 'quiet', 'disabled-mid-run'].includes(run.status)) this.engine.emit({ type: 'routine-failed', ...receipt });
+      if (!isLogOnlyTemplate(routine) && !['ok', 'quiet', 'held', 'disabled-mid-run'].includes(run.status)) this.engine.emit({ type: 'routine-failed', ...receipt });
       this.changed(); this.prune(routine.id);
     }
   }

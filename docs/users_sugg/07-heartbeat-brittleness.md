@@ -59,3 +59,27 @@ around it.
 - Fixture: empty summary → no chat update.
 - Fixture: long quiet streak → next heartbeat's prompt carries structured
   last-known state, not a stale text summary.
+
+## Implementation note — 2026-10-26
+
+Phases 1–2 implemented:
+
+- A versioned `heartbeat-card` payload with a parser and a substance gate.
+  `HEARTBEAT_OK` remains a fallback, and a marker followed by extra text is
+  still silence.
+- Empty and boilerplate-only answers stay out of chat; they no longer become
+  "Job finished without a summary."
+- Bounded structured state (`heartbeatState`) replaces `lastNotifiedSummary`.
+  The next check receives that state plus the card contract, and the old prose
+  result is no longer prepended to heartbeat prompts.
+- Delivery policy: dedupe key with a six-hour cooldown, four proactive
+  messages per local day (urgent exempt), quiet hours, and a bounded held
+  backlog flushed as one digest after the block clears.
+- A heartbeat card is parsed before the chat-length cap, so a detailed card
+  never leaks raw JSON into chat.
+- New settings: `HEARTBEAT_DAILY_LIMIT` and `HEARTBEAT_COOLDOWN_MINUTES`.
+
+Verified with `test/automation/heartbeat.test.mjs` (7/7) and
+`test/desktop/scheduler.test.mjs` (39/39), including the three acceptance
+fixtures above. Not covered: a live model round trip; Phase 3 (adaptive
+cadence, local pre-checks, feedback buttons) remains open.
