@@ -13,6 +13,10 @@ files:
   - package.json
   - desktop/electron/**/*
   - desktop/shared/**/*
+  # Main-process modules import companion runtime modules directly. The same
+  # companion also ships in extraResources because Chrome extensions cannot load
+  # from an ASAR; both copies are generated from this one source tree.
+  - desktop/chatgpt-companion/**/*
   - desktop/browser-helper/**/*
   - desktop/THIRD_PARTY_NOTICES.md
   - desktop/renderer/dist/**/*

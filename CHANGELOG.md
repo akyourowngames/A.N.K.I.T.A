@@ -7,6 +7,18 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-10-26
+
+### Fixed
+
+- **Desktop 2.7.0 failed to start after updating.** The packaged ASAR shipped
+  the ChatGPT bridge but excluded the companion runtime modules it imports, so
+  the main process stopped with `ERR_MODULE_NOT_FOUND` for
+  `desktop/chatgpt-companion/sign-in.mjs`. The companion tree is now packaged in
+  the ASAR as well as its existing real-file `extraResources` copy, and a
+  packaging regression test walks the shipped import graph so an excluded
+  module fails the suite instead of the app.
+
 ## [2.7.0] - 2026-10-25
 
 ### Added

@@ -7,6 +7,20 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.7.1 — 2026-10-26
+
+### Desktop 2.7.0 startup fix
+
+The 2.7.0 package stopped at launch with `ERR_MODULE_NOT_FOUND` for
+`desktop/chatgpt-companion/sign-in.mjs`: the bridge lived inside the ASAR, but
+electron-builder shipped the companion only as an external resource. The
+companion now ships in both places, because Chrome still needs ordinary files
+outside the archive while the main process imports its modules directly. A
+packaging test walks every relative import in the packaged file set and fails
+when a reachable module is excluded. Verified by launching the rebuilt
+`win-unpacked` application with an isolated profile: the window opened with no
+page errors.
+
 ## 2.7.0 — 2026-10-25
 
 ### Managed browser, safety and desktop polish

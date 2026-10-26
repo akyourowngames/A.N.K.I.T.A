@@ -8,6 +8,15 @@ import { chatgptResourcePaths, verifyCompanionResources } from '../../desktop/el
 import { createRequire } from 'node:module';
 import publisher from '../../vendor/openai-tunnel/source.json' with { type: 'json' };
 
+const ROOT = fileURLToPath(new URL('../../', import.meta.url));
+const BUILDER_CONFIG = new URL('../../desktop/packaging/electron-builder.yml', import.meta.url);
+const require = createRequire(import.meta.url);
+const yaml = require('js-yaml');
+const { FileMatcher } = require('app-builder-lib/out/fileMatcher.js');
+const PACKAGED_SOURCE_ROOTS = ['desktop', 'services', 'src', 'tools', 'skills', 'vendor']; // Local trees that can contribute shipped modules.
+const PACKAGED_MODULE_EXTENSIONS = /\.(?:mjs|js|cjs|mts|json)$/;
+const RELATIVE_IMPORTS = [/\b(?:import|export)\s+(?:[^'"`;]*?\s+from\s+)?['"]([^'"]+)['"]/g, /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g];
+
 test('packaged companion and native helper resolve through real resources outside ASAR and missing extension fails closed', t => {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-package-resources-')); t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
   const paths = chatgptResourcePaths({ packageRoot: path.join(directory, 'app.asar'), resourcesPath: directory, isPackaged: true });
@@ -21,13 +30,11 @@ test('packaged companion and native helper resolve through real resources outsid
 });
 
 test('Windows packaging keeps publisher helper bytes intact while signing ANKITA itself', () => {
-  const source = fs.readFileSync(new URL('../../desktop/packaging/electron-builder.yml', import.meta.url), 'utf8');
-  const require = createRequire(import.meta.url);
-  const { load } = require('js-yaml'); // Use the builder's existing locked YAML parser, including Windows checkout line endings.
+  const source = fs.readFileSync(BUILDER_CONFIG, 'utf8');
   require('app-builder-lib'); // The builder's public entry initializes its mutually dependent packager classes.
   const { WinPackager } = require('app-builder-lib/out/winPackager.js');
   for (const newline of ['\n', '\r\n']) {
-    const { win } = load(source.replace(/\r?\n/g, newline));
+    const { win } = yaml.load(source.replace(/\r?\n/g, newline), { schema: yaml.JSON_SCHEMA });
     const shouldSign = file => WinPackager.prototype.shouldSignFile.call({ platformSpecificBuildOptions: win }, file);
     for (const target of Object.values(publisher.targets)) {
       assert.equal(shouldSign(target.filename), false, 'The publisher primary hash must survive a signed ANKITA package');
@@ -35,6 +42,31 @@ test('Windows packaging keeps publisher helper bytes intact while signing ANKITA
     }
     assert.equal(shouldSign('Ankita.exe'), true);
   }
+});
+
+test('every local module imported by packaged sources ships inside the ASAR file set', () => {
+  const config = yaml.load(fs.readFileSync(BUILDER_CONFIG, 'utf8'), { schema: yaml.JSON_SCHEMA });
+  const filter = new FileMatcher(ROOT, ROOT, value => value, config.files).createFilter();
+  const isPackaged = file => filter(path.join(ROOT, file), { isDirectory: () => false });
+  const files = PACKAGED_SOURCE_ROOTS.filter(root => fs.existsSync(path.join(ROOT, root)))
+    .flatMap(root => fs.readdirSync(path.join(ROOT, root), { recursive: true })
+      .map(file => path.posix.join(root, String(file).replaceAll('\\', '/'))))
+    .filter(file => PACKAGED_MODULE_EXTENSIONS.test(file));
+  const missing = new Map();
+  for (const file of files.filter(isPackaged)) {
+    if (file.endsWith('.json')) continue;
+    const text = fs.readFileSync(path.join(ROOT, file), 'utf8');
+    for (const pattern of RELATIVE_IMPORTS) {
+      pattern.lastIndex = 0;
+      for (let match; (match = pattern.exec(text));) {
+        if (!match[1]?.startsWith('.')) continue;
+        const target = path.posix.normalize(path.posix.join(path.posix.dirname(file), match[1]));
+        if (target.startsWith('..') || path.posix.isAbsolute(target) || !fs.existsSync(path.join(ROOT, target)) || isPackaged(target)) continue;
+        missing.set(target, [...(missing.get(target) ?? []), file]);
+      }
+    }
+  }
+  assert.deepEqual([...missing], [], 'Every relative module imported by packaged code must be included in the ASAR file set');
 });
 
 test('release CI prepares pinned companion and native helper resources before either Windows package branch', () => {
