@@ -64,10 +64,13 @@
    state the trade-off and ask rather than silently picking.
 5. **Concise reports.** Changed files, test counts, traces, confidence. No filler.
 
-## 5. Plain Explanation — On Request
+## 5. Plain Explanation — Always
 
-1. **Simple words when asked.** When the user asks for simple plain English with
-   no coding language, use short everyday words. No code, no file names, no tool
-   names, no test counts, no jargon.
-2. **Say what and why.** List what was added and why it keeps the user safe, one
+1. **Know who you are talking to.** The user is 16 and is not a developer. Assume
+   no coding background unless they say otherwise.
+2. **Simple words, by default.** Use short everyday words. No code, no file names,
+   no tool names, no test counts, no jargon in explanations.
+3. **Say what and why.** List what was added and why it keeps the user safe, one
    short line per item.
+4. **Say if it is a real bug.** When the work is only a tidy-up or a missing test,
+   say so plainly so the user can decide whether it is worth doing.
