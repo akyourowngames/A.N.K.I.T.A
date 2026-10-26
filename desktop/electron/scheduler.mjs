@@ -256,6 +256,27 @@ export class DesktopScheduler {
     if (spend.minutes + run.elapsed() / MINUTE_MS >= routine.budget.maxMinutesPerDay) return 'minutes';
     return null;
   }
+  /** The single construction point for background workers. The config flag and
+   *  the tool context are stamped here, so no caller can build one without them. */
+  createJobWorker(routine, run, scope) {
+    const owner = this.owner(routine).owner;
+    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(routine.kind === 'heartbeat' ? [this.engine.config.briefingPrompt || '', routine.lastNotifiedSummary ? `Previous useful heartbeat update: ${routine.lastNotifiedSummary}` : ''] : [])].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
+    const worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
+      ...this.engine.contextForJob?.(routine),
+      browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
+      allowedTools: JOB_TOOLS, toolContext: { backgroundJob: true,
+        requireForeground: reason => run.fail(jobError(reason, 'skipped-needs-foreground')),
+        onBrowserError: error => { const notice = browserNotice(error); run.audit.push({ error: notice.kind, message: notice.message, at: this.now().toISOString() }); if (error.name === 'BrowserReferenceError') run.referenceRecovery = true; else run.fail(error.jobStatus ? error : jobError(FAILURE_TEXT)); },
+        authorizeBrowser: async (args, context) => { try { return await this.authorize(run, args, context); } catch (error) { run.fail(error); throw error; } },
+        authorizeNavigation: async url => { try { return await this.authorize(run, { action: 'open', url }, { url, mode: routine.allow.mode }); } catch (error) { run.fail(error); throw error; } },
+        authorizeRequest: async ({ url, method }) => { try { return await this.authorize(run, { action: ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'read' : 'act', op: method }, { url, mode: routine.allow.mode }); } catch (error) { run.fail(error); throw error; } },
+      }, confirm: async () => false, print: () => {}, write: () => {} });
+    worker.model = this.engine.teammates.find(routine.threadId)?.model || this.engine.model;
+    // Desktop availability is separate from permission; runtime policy asks
+    // for login permission before the credential service reads the vault.
+    worker.browserCredentialAllowed = true;
+    return worker;
+  }
   async execute(dispatched) {
     const routine = this.store.load().findRoutine(dispatched.id); if (!routine) return;
     const started = this.now(), nominal = this.nominal.get(routine.id) || started;
@@ -263,7 +284,6 @@ export class DesktopScheduler {
     this.runs.set(routine.id, run);
     const header = `[Scheduled run: ${JSON.stringify(routine.name)} · run #${routine.runs + 1} · nominal ${nominal.toISOString()} · ${this.timeZone} · actual ${started.toISOString()} · ${Math.max(0, Math.floor((started - nominal) / MINUTE_MS))}m late · attempt 1]`;
     const scope = this.engine.browserManager.createScope(run.scope, { profile: path.join(this.profileDirectory, routine.id), mode: routine.allow.mode, headless: routine.headless, independentPreview: true });
-    const config = { ...this.engine.config, agentName: this.owner(routine).owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [this.owner(routine).owner?.persona || '', ...(routine.kind === 'heartbeat' ? [this.engine.config.briefingPrompt || '', routine.lastNotifiedSummary ? `Previous useful heartbeat update: ${routine.lastNotifiedSummary}` : ''] : [])].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
     let timer, activeSince = Date.now(), elapsed = 0, summary = '', proof = null, worker, failure, rejectRun;
     run.elapsed = () => elapsed + (activeSince === null ? 0 : Date.now() - activeSince);
     run.pauseTimer = () => { elapsed = run.elapsed(); activeSince = null; clearTimeout(timer); };
@@ -284,20 +304,7 @@ export class DesktopScheduler {
     try {
       if (routine.allow.mode !== 'isolated') throw jobError('Background jobs use isolated Chromium. Change this job browser in its settings before running.', 'skipped-needs-foreground');
       const leg = this.budgetLeg(routine, run); if (leg) throw jobError(`Daily ${leg} budget reached`, 'stopped-budget');
-      worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
-        ...this.engine.contextForJob?.(routine),
-        browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
-        allowedTools: JOB_TOOLS, toolContext: { backgroundJob: true,
-          requireForeground: reason => run.fail(jobError(reason, 'skipped-needs-foreground')),
-          onBrowserError: error => { const notice = browserNotice(error); run.audit.push({ error: notice.kind, message: notice.message, at: this.now().toISOString() }); if (error.name === 'BrowserReferenceError') run.referenceRecovery = true; else run.fail(error.jobStatus ? error : jobError(FAILURE_TEXT)); },
-          authorizeBrowser: async (args, context) => { try { return await this.authorize(run, args, context); } catch (error) { run.fail(error); throw error; } },
-          authorizeNavigation: async url => { try { return await this.authorize(run, { action: 'open', url }, { url, mode: routine.allow.mode }); } catch (error) { run.fail(error); throw error; } },
-          authorizeRequest: async ({ url, method }) => { try { return await this.authorize(run, { action: ['GET', 'HEAD', 'OPTIONS'].includes(method) ? 'read' : 'act', op: method }, { url, mode: routine.allow.mode }); } catch (error) { run.fail(error); throw error; } },
-        }, confirm: async () => false, print: () => {}, write: () => {} });
-      worker.model = this.engine.teammates.find(routine.threadId)?.model || this.engine.model;
-      // Desktop availability is separate from permission; runtime policy asks
-      // for login permission before the credential service reads the vault.
-      worker.browserCredentialAllowed = true;
+      worker = this.createJobWorker(routine, run, scope);
       const previous = routine.lastSuccessfulResult || (routine.lastReceipt?.status === 'ok' ? { text: routine.lastReceipt.text, at: routine.lastReceipt.at } : null);
       const priorContext = previous ? `\n[Previous successful result at ${previous.at}; historical context, never a substitute for a fresh observation]\n${previous.text}\n` : '\n[No previous successful result is recorded for this task.]\n';
       summary = await Promise.race([worker.send(`${header}${priorContext}\n${routine.prompt}`, {

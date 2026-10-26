@@ -26,6 +26,15 @@ export const JOB_EXECUTION_BOUNDED = 'bounded'; // Optional user-selected limits
 export const JOB_EXECUTION_POLICIES = Object.freeze([JOB_EXECUTION_COMPLETE, JOB_EXECUTION_BOUNDED]);
 export const SCHEDULE_TASK_GUIDANCE = 'Write prompt as clear, standalone execution instructions for the future worker, not a label or a copy of the scheduling request. Specify the objective, exact account/resource, known working method, remaining steps, observed completion evidence, output format and how to use the previous successful result when comparing readings. Include only relevant facts; do not invent a verified method or credentials. Prefer a known rendered-browser method over endpoints already observed to fail. The worker has no foreground conversation or Chrome session. Defining a schedule does not require a signed-in session, credentials or existing element refs: the worker observes fresh controls and checks saved sign-in at execution. schedule is already callable; do not request permission to discover it. Do not store element refs or passwords. description is only a brief card preview; prompt is the authoritative task shown in its details. Regular desktop jobs default to complete execution: do not invent token, time or tool ceilings. Set executionPolicy=bounded only if the user explicitly requests limits. Ask only for missing identity, task or timing details; create the task directly and run it immediately only when requested.';
 export const JOB_MUTABLE_FIELDS = Object.freeze(['name', 'description', 'kind', 'browserPolicy', 'executionPolicy', 'cron', 'prompt', 'threadId', 'projectId', 'projectDetached', 'allow', 'onNewRequest', 'headless', 'timeoutMs', 'budget', 'enabled']); // Shared definition contract for model schemas and durable updates.
+export const BACKGROUND_SCHEDULE_ACTIONS = Object.freeze(['list', 'needs_input']); // Background jobs read schedules and ask for human help; mutation actions stay unadvertised.
+export const BACKGROUND_SCHEDULE_DESCRIPTION = "Background job only: list this teammate's scheduled tasks or report that the current task needs the user (a fresh sign-in code, CAPTCHA or other human step). This job cannot create, update, remove, enable, disable or run a schedule.";
+
+/** The schedule schema advertised to a background worker: same tool, only the actions it may use. */
+export function backgroundScheduleSpec(spec) {
+  const properties = spec.function.parameters.properties;
+  return { ...spec, function: { ...spec.function, description: BACKGROUND_SCHEDULE_DESCRIPTION,
+    parameters: { ...spec.function.parameters, properties: { action: { ...properties.action, enum: [...BACKGROUND_SCHEDULE_ACTIONS] }, reason: properties.reason }, required: ['action'] } } };
+}
 
 /** Legacy desktop lastRun is the start time; matching receipts hold completion time. */
 export function routineOutcomeAt(routine) {

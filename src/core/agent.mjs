@@ -29,7 +29,7 @@ import { managedMcpSummaries, isBrowserMcpTool } from '../integrations/browser-r
 import { parseToolName } from '../integrations/mcp-manager.mjs';
 import { attachMcpImages, MAX_MCP_IMAGES_PER_TURN, messagesForModel } from '../integrations/mcp-images.mjs';
 import { COMPUTER_MCP_ID, COMPUTER_DIRECT_CONFIG, COMPUTER_GUIDANCE, COMPUTER_READ_TOOLS, COMPUTER_TOOLS, computerObservationTargets, formatComputerTargets } from '../integrations/computer-use.mjs';
-import { BACKGROUND_JOB_PROMPT, BACKGROUND_BROWSER_PROMPT, DEFAULT_JOB_ALLOW, JOB_EXECUTION_COMPLETE, SCHEDULE_TASK_GUIDANCE } from '../automation/job-policy.mjs';
+import { BACKGROUND_JOB_PROMPT, BACKGROUND_BROWSER_PROMPT, DEFAULT_JOB_ALLOW, JOB_EXECUTION_COMPLETE, SCHEDULE_TASK_GUIDANCE, backgroundScheduleSpec as jobScheduleSpec } from '../automation/job-policy.mjs';
 
 const foregroundBrowserSpec = specs.find(spec => spec.function.name === 'browser');
 const backgroundBrowserSpec = { ...foregroundBrowserSpec, function: { ...foregroundBrowserSpec.function,
@@ -38,6 +38,8 @@ const backgroundBrowserSpec = { ...foregroundBrowserSpec, function: { ...foregro
     mode: { ...foregroundBrowserSpec.function.parameters.properties.mode, enum: [DEFAULT_JOB_ALLOW.mode], description: 'This job uses its own isolated Chromium profile; omit mode or use isolated.' },
   } },
 } }; // Shared immutable variant keeps job schemas accurate without changing foreground backends.
+const foregroundScheduleSpec = specs.find(spec => spec.function.name === 'schedule');
+const backgroundScheduleSpec = foregroundScheduleSpec ? jobScheduleSpec(foregroundScheduleSpec) : null; // Same tool, only list and needs_input advertised to a job.
 
 // Consecutive tool rounds allowed for one user request before the runtime stops
 // asking and has the model answer with what it has. This is a control-flow
@@ -681,7 +683,8 @@ export class Agent {
     core = core.filter(spec => focusAllows(this.state, spec.function?.name));
     optional = optional.map(group => ({ ...group, specs: group.specs.filter(spec => focusAllows(this.state, spec.function?.name)) })).filter(group => group.specs.length);
     if (this.config?.backgroundJob) {
-      const jobSpec = spec => spec.function.name === 'browser' ? backgroundBrowserSpec : spec;
+      const jobSpec = spec => spec.function.name === 'browser' ? backgroundBrowserSpec
+        : spec.function.name === 'schedule' && backgroundScheduleSpec ? backgroundScheduleSpec : spec;
       core = core.map(jobSpec); optional = optional.map(group => ({ ...group, specs: group.specs.map(jobSpec) }));
     }
     return { core, optional };

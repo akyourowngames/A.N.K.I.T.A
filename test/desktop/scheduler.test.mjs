@@ -340,3 +340,48 @@ test('background jobs reject Chrome while foreground Chrome remains independent'
   await f.scheduler.runNow(r.id); await f.scheduler.drain();
   assert.equal(f.workers.length, 0); assert.equal(f.scheduler.list()[0].lastStatus, 'skipped-needs-foreground');
 });
+
+test('the factory stamps every background worker and is the only construction path', async t => {
+  const f = await fixture(t);
+  const job = f.add();
+  const worker = f.scheduler.createJobWorker(job, { routineId: job.id, runId: 'factory', scope: `job:${job.id}`, threadId: 'owner' }, {});
+  assert.equal(worker.config.backgroundJob, true);
+  assert.equal(worker.config.backgroundExecutionPolicy, 'complete');
+  assert.equal(worker.toolContext.backgroundJob, true);
+  assert.equal(worker.browserCredentialAllowed, true);
+  const original = f.scheduler.createJobWorker.bind(f.scheduler);
+  let built = 0; f.scheduler.createJobWorker = (routine, run, scope) => { built++; return original(routine, run, scope); };
+  await f.scheduler.runNow(job.id); await f.scheduler.drain();
+  assert.equal(built, 1, 'execution must build its worker through the factory');
+});
+
+test('background jobs are advertised only list and needs_input on the schedule tool', async () => {
+  const [{ specs }, { backgroundScheduleSpec }] = await Promise.all([
+    import('../../tools/index.mjs'), import('../../src/automation/job-policy.mjs')]);
+  const foreground = specs.find(spec => spec.function.name === 'schedule');
+  assert.ok(foreground.function.parameters.properties.action.enum.includes('add'), 'foreground keeps the full action set');
+  const background = backgroundScheduleSpec(foreground);
+  assert.deepEqual(background.function.parameters.properties.action.enum, ['list', 'needs_input']);
+  for (const hidden of ['prompt', 'patch', 'cron', 'budget', 'allow']) assert.equal(background.function.parameters.properties[hidden], undefined);
+});
+
+test('an injected schedule-create call inside a job returns the capability error and stores nothing', async t => {
+  const f = await fixture(t);
+  const { run } = await import('../../tools/automation/schedule.mjs');
+  const before = f.scheduler.list().length;
+  const result = await run({ action: 'add', cron: '@daily', prompt: 'Create another job' }, { backgroundJob: true, scheduler: f.scheduler, scheduleThreadId: 'owner' });
+  assert.match(result, /Background workers cannot change schedules/);
+  assert.equal(f.scheduler.list().length, before);
+  assert.equal(JSON.parse(await run({ action: 'list' }, { backgroundJob: true, scheduler: f.scheduler, scheduleThreadId: 'owner' })).length, before);
+});
+
+test('an old successful note stays labelled history and never replaces the fresh task', async t => {
+  let prompt;
+  const f = await fixture(t, async value => { prompt = value; return 'Checked the page.'; });
+  const job = f.add({ prompt: 'Read the live followers count now.' });
+  f.scheduler.store.updateRoutine(job.id, { lastSuccessfulResult: { text: 'unchanged', at: '2026-09-27T08:00:00Z' } });
+  await f.scheduler.runNow(job.id); await f.scheduler.drain();
+  assert.match(prompt, /historical context, never a substitute for a fresh observation/);
+  assert.match(prompt, /Read the live followers count now\./);
+  assert.match(prompt, /unchanged/);
+});
