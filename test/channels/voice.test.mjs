@@ -37,6 +37,8 @@ const {
   parseSilenceEvents,
   createSilenceParser,
   createTurnDetector,
+  createVoiceMeterParser,
+  buildVoiceInputFilter,
   splitListItems,
   splitSentences,
   renderSummaryNote,
@@ -54,6 +56,27 @@ const {
 } = await import('../../src/channels/voice.mjs');
 const { loadConfig } = await import('../../src/core/config.mjs');
 const { findHandsFreePlayback } = await import('../../src/channels/audio-device.mjs');
+
+test('optional metering adds real RMS metadata without changing terminal silence detection', () => {
+  const options = { noiseDb: -35, silenceSec: 0.8 };
+  assert.equal(buildVoiceInputFilter(options), buildSilenceFilter(options));
+  const filter = buildVoiceInputFilter({ ...options, meter: true });
+  assert.ok(filter.startsWith(buildSilenceFilter(options)));
+  assert.ok(filter.includes('astats=metadata=1:reset=1'));
+  assert.ok(filter.includes('lavfi.astats.Overall.RMS_level'));
+});
+
+test('RMS input meter parses chunk boundaries, silence and malformed lines without inventing levels', () => {
+  const meter = createVoiceMeterParser();
+  assert.deepEqual(meter.push('lavfi.astats.Overall.RMS_'), []);
+  const events = meter.push('level=-25.0\n[silencedetect] silence_start: 1.0\nlavfi.astats.Overall.RMS_level=-inf\n');
+  assert.equal(events.length, 2);
+  assert.equal(events[0].type, 'level');
+  assert.ok(events[0].level > 0 && events[0].level < 1);
+  assert.equal(events[1].level, 0);
+  assert.deepEqual(meter.push('lavfi.astats.Overall.RMS_level=garbage\n'), []);
+  assert.deepEqual(meter.push('lavfi.astats.Overall.RMS_level=0\n'), [{ type: 'level', level: 1 }]);
+});
 
 test('speech text drops code fences but keeps inline code', () => {
   const out = stripForSpeech('Here is how:\n```js\nconst x = 1;\n```\nUse `npm test` to verify.');

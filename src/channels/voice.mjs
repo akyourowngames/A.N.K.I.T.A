@@ -188,7 +188,7 @@ export function parseMicList(stderr) {
   return devices.filter((d) => d.kind === "audio").map(({ name, alt }) => ({ name, alt }));
 }
 
-export async function detectMic(preferred = "") {
+export async function listMicrophones() {
   const args =
     process.platform === "win32"
       ? ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
@@ -200,7 +200,11 @@ export async function detectMic(preferred = "") {
     child.on("error", () => resolve(""));
     child.on("close", () => resolve(stderr));
   });
-  const mics = parseMicList(out);
+  return parseMicList(out);
+}
+
+export async function detectMic(preferred = "") {
+  const mics = await listMicrophones();
   if (preferred) {
     const hit =
       mics.find((m) => m.name.toLowerCase().includes(preferred.toLowerCase())) ||
@@ -322,13 +326,13 @@ export function parseSilenceLine(line) {
 }
 
 /** Stateful line splitter: feed stderr chunks, get parsed events back. */
-export function createSilenceParser() {
+export function createSilenceParser(parseLine = parseSilenceLine) {
   let buf = "";
   const drain = () => {
     const events = [];
     let nl;
     while ((nl = buf.indexOf("\n")) >= 0) {
-      const ev = parseSilenceLine(buf.slice(0, nl));
+      const ev = parseLine(buf.slice(0, nl));
       buf = buf.slice(nl + 1);
       if (ev) events.push(ev);
     }
@@ -340,11 +344,32 @@ export function createSilenceParser() {
       return drain();
     },
     flush() {
-      const ev = parseSilenceLine(buf);
+      const ev = parseLine(buf);
       buf = "";
       return ev ? [ev] : [];
     },
   };
+}
+
+const VOICE_RMS_METADATA = 'lavfi.astats.Overall.RMS_level'; // ffmpeg astats protocol key, shared by filter and parser.
+const VOICE_RMS_LINE = new RegExp(`${VOICE_RMS_METADATA.replaceAll('.', '\\.')}=(-inf|-?\\d+(?:\\.\\d+)?)(?:\\s|$)`);
+const VOICE_RMS_FLOOR_DB = -65; // dBFS: ignore the quiet device floor for visual movement, independent of VAD.
+const VOICE_RMS_CEILING_DB = -12; // dBFS: normal loud speech fills the visual range before clipping.
+const VOICE_METER_FILTER = `astats=metadata=1:reset=1,ametadata=print:key=${VOICE_RMS_METADATA}`;
+
+export function buildVoiceInputFilter(options = {}) {
+  const silence = buildSilenceFilter(options);
+  return options.meter ? `${silence},${VOICE_METER_FILTER}` : silence;
+}
+
+export function createVoiceMeterParser() {
+  return createSilenceParser(line => {
+    const match = String(line).match(VOICE_RMS_LINE);
+    if (!match) return null;
+    const db = Number(match[1]);
+    const level = Number.isFinite(db) ? Math.max(0, Math.min(1, (db - VOICE_RMS_FLOOR_DB) / (VOICE_RMS_CEILING_DB - VOICE_RMS_FLOOR_DB))) : 0;
+    return { type: 'level', level };
+  });
 }
 
 /** Parse a full stderr blob into silence events (order preserved). */
@@ -388,14 +413,14 @@ export function createTurnDetector() {
  * rejects if ffmpeg dies immediately (bad device); assign `onEvent`
  * after creation to receive { type: 'silence_start' | 'silence_end', at }.
  */
-export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent } = {}) {
+export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent, meter = false } = {}) {
   const args = [
     "-hide_banner",
     "-loglevel",
     "info",
     ...micInputArgs(device),
     "-af",
-    buildSilenceFilter({ noiseDb, silenceSec }),
+    buildVoiceInputFilter({ noiseDb, silenceSec, meter }),
     "-ac",
     "1",
     "-ar",
@@ -407,12 +432,14 @@ export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent }
   ];
   const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
   const parser = createSilenceParser();
+  const meterParser = meter ? createVoiceMeterParser() : null;
   const handle = { child, onEvent: typeof onEvent === "function" ? onEvent : null, stderr: "" };
 
   child.stderr?.on("data", (d) => {
     const text = d.toString();
     handle.stderr += text;
     for (const ev of parser.push(text)) handle.onEvent?.(ev);
+    if (meterParser) for (const ev of meterParser.push(text)) handle.onEvent?.(ev);
   });
 
   handle.ready = new Promise((resolve, reject) => {
