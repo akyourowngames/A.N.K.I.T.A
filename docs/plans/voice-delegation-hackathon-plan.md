@@ -1,0 +1,459 @@
+# Voice Delegation — Meta Global AI Developer Hackathon Plan
+
+> Status: plan only, nothing implemented (2026-10-27).
+> Target: Meta Global AI Developer Hackathon 2026, track Indie Developer, theme
+> **Build for Your World**. Building period 27 Oct – 4 Nov 2026.
+> Deadline: 4 Nov 9:00 PM ET = **5 Nov 07:30 IST**. Plan submits the evening of 4 Nov IST.
+> Repo: `github.com/akyourowngames/A.N.K.I.T.A` (this working copy, `ankita 2.7.1`).
+> Supersedes the local PDF `meta-hackathon-voice-plan.pdf` where this document says so;
+> every change from that PDF is listed in [§2](#2-what-changes-from-the-pdf).
+
+## 1. Pitch, and what is actually new
+
+**Pitch.** You speak one sentence in Hinglish — "Ankita, VS Code kholo aur mera workspace
+set up karo" — and Ankita turns it into a tracked job, does the work while you move on,
+speaks short progress updates, and reports back by voice when it is done.
+
+**The honest framing.** Voice input and spoken replies already exist in the base (see §4).
+They are **not** hackathon work and must never be presented as such. What is new this week:
+
+1. Sarvam AI speech-to-text and text-to-speech, tuned for Hinglish (§7.1).
+2. A spoken request becomes a **tracked job** with an id, status, steps and summary (§8).
+3. **Spoken progress at step boundaries** plus a spoken final report (§8.3).
+4. A **Meta planner** (Muse Spark Open via Baseten) behind the delegation path (§7.2).
+5. The end-to-end VS Code workspace flow, filmed in Hinglish (§11).
+
+The one-line story for judges: **"Voice was already there. This week it learned to take
+delegated work, run it in the background, and report back in the language you spoke."**
+
+## 2. What changes from the PDF
+
+| PDF says | Reality (verified 2026-10-27) | Decision |
+|---|---|---|
+| Ears: Meta Muse Voice Transcribe | No Meta Model API credits; a Sarvam key is already installed | **Sarvam `saaras:v4`** |
+| Voice out: reuse existing CLI voice, "do not add a TTS provider" | Existing TTS is Edge (default) or Groq Orpheus | **Sarvam `bulbul:v4-flash`**, Edge stays as automatic fallback |
+| Brain: Muse Spark Open via Baseten, model string `-1026` | Smoke tested 2026-10-27: `meta-models/muse-spark-open-1026` returns 200; the documented slug `meta-models/muse-spark-open` returns **403** on this key | **Use `-1026`** — the guide was right, the docs slug is the one that fails |
+| Plan JSON from the model | Baseten docs: **Muse Spark Open has no structured outputs and no JSON mode** | Steps are derived from real tool calls, never from a JSON plan |
+| Background job visible in the island UI | The island belongs to the desktop app's own engine and only appears when the main window is hidden (`desktop/electron/island.mjs:143`) | Terminal job first; desktop bridge only if Saturday's gate is green (§12) |
+| English-only demo | Sarvam handles Hinglish natively, which is a stronger "Build for Your World" story | Hinglish take, English backup take |
+
+The PDF's instruction "do not add a new TTS provider" is deliberately overridden because
+the Meta voice credits are unavailable. This is disclosed in the README, not hidden.
+
+## 3. Reality checks before building
+
+- **Eligibility.** The participant guide says nothing about age; the mandatory waiver
+  reportedly requires 18+, and third-party coverage confirms it. Platform approval is not
+  waiver clearance. Never sign anything with false information. Treat shipped work, a
+  working demo and judge feedback as the reliable outcome; this plan claims no prize.
+- **Meta fit is pass/fail.** Stage 1 requires reasonable use of the Meta Model API and/or
+  Meta open-weight models. **Sarvam does not satisfy this** — it is an Indian provider, not
+  Meta. The planner must stay on a Meta model even if voice runs on Sarvam.
+- **No free Meta route exists on this machine.** Checked 2026-10-27:
+  - Kilo gateway lists `meta/muse-spark-open`, but a keyless call returns
+    `401 PAID_MODEL_AUTH_REQUIRED`. The repo's current keyless Kilo setup cannot use it.
+  - The repo's Groq key only exposes GPT-OSS/Qwen models — no Meta Llama.
+  - So the submission depends on the Baseten key. **This is the single blocking risk.**
+
+## 4. Baseline — what already exists (reuse, do not re-frame as new)
+
+| Piece | Location | Notes |
+|---|---|---|
+| Mic capture, 16 kHz mono PCM WAV | `src/channels/voice.mjs:141` `startRecording` | Exactly the format Sarvam wants |
+| Voice activity / turn detection | `src/channels/voice.mjs:304` `openVoiceInput`, `:274` `createTurnDetector` | Pause-to-send, hands-free |
+| Whisper STT via Groq | `src/channels/voice.mjs:376` `transcribeGroq` | To be joined by a Sarvam path |
+| Edge TTS (default, keyless) | `src/channels/voice.mjs:665` `synthesizeEdge` | Automatic fallback |
+| Groq Orpheus TTS | `src/channels/voice.mjs:829` `synthesizeGroq` | Optional path |
+| Playback + stop | `src/channels/voice.mjs:881` `playMp3`, `:873` `stopPlayback` | Container-agnostic via ffplay |
+| Speech summarising | `src/channels/voice.mjs:1069` `summarizeForSpeech` | Long replies are shortened |
+| Voice loop, barge-in | `src/core/cli.mjs:1098` `voiceLoop`, `:986` `speakWithBargeIn` | Insertion point for jobs |
+| Turn runner + tool hooks | `src/core/cli.mjs:697` `runTurn` | `onToolCall`/`onToolResult` already exist |
+| Approval prompt | `src/core/cli.mjs:543` `confirm` | Reused by a job turn |
+| Job cards, `/jobs`, `/bg` | `src/tooling/job-ui.mjs:11` `jobEventText`, `tooling/process/*` | Shell-process jobs, a different concept |
+| Provider presets | `src/core/provider.mjs:87` `PROVIDERS` | Add a Baseten preset |
+| Config defaults | `src/core/config.mjs:101`…`:121` | Add keys and switches |
+| Desktop island | `desktop/electron/island.mjs:143` `islandModeFor` | Owned by the desktop engine |
+
+**Important:** the existing "jobs" are OS processes (`/bg`, `job-status`, `job-wait`).
+The new voice job is a delegated **agent task**, not a shell process. Give it its own
+module and its own card so the two are never confused.
+
+## 5. Non-goals (explicit)
+
+- No wake word, no always-listening. Push-to-talk or pause-to-send only.
+- No arbitrary voice control of every feature; one flow done reliably.
+- No UI redesign, no new desktop window, no new dependency.
+- No change to default providers: Groq/Edge stay the defaults so existing tests and users
+  are unaffected.
+- No second demo flow until the first passes three times in a row.
+- No claim that the island runs the terminal job unless the desktop bridge actually ships.
+
+## 6. Architecture
+
+```text
+ push-to-talk / pause-to-send
+        │
+        ▼
+ [ffmpeg 16 kHz mono WAV]                       src/channels/voice.mjs:141
+        │
+        ▼
+ [Sarvam STT  saaras:v4]                        new: transcribeSarvam()
+   transcript + language + confidence
+        │   transcript printed before anything runs
+        ▼
+ [job created: id, status, steps]               new: src/automation/voice-task.mjs
+        │
+        ▼
+ [Agent turn  planner = Muse Spark Open]        src/core/cli.mjs runTurn()
+   tool calls execute; each call = one step
+        │
+        ├── step boundary → spoken line (throttled) + card update
+        ├── destructive tool → existing approval gate, status "waiting for approval"
+        ▼
+ [final report] → spoken (barge-in allowed) + printed + stored in the job record
+```
+
+Failure rule: **voice is never a single point of failure.** If STT fails, the typed prompt
+still works. If TTS fails, the report prints. If the planner fails, the job fails loudly
+with the exact error and the transcript is kept.
+
+## 7. Providers
+
+### 7.1 Sarvam (voice in and out)
+
+**STT** — `POST https://api.sarvam.ai/speech-to-text`, `multipart/form-data`,
+header `api-subscription-key`.
+
+| Field | Value | Why |
+|---|---|---|
+| `file` | the recorded WAV | 16 kHz mono is the documented best case |
+| `model` | `saaras:v4` | Current default, supports all output modes |
+| `language_code` | `unknown` | Auto-detect; handles Hinglish better than an English hint |
+| `mode` | `translit` | Keeps commands in Latin script; tool names and folder names stay readable on video |
+| `keyterms` | `["Ankita","VS Code","workspace", …]` | Up to 50 terms; biases recognition, does not guarantee |
+| `with_timestamps` | `false` | Not needed |
+
+Response: `{ transcript, language_code, language_probability }`.
+
+**TTS** — `POST https://api.sarvam.ai/text-to-speech`, JSON, same auth header.
+
+| Field | Value | Why |
+|---|---|---|
+| `text` | ≤ 2500 chars (v4-flash) | Chunk with the existing sentence splitter |
+| `model` | `bulbul:v4-flash` | ₹1 per 1,000 chars vs ₹3 for v3 |
+| `language_code` | `hi-IN` when STT detected Hindi, else `en-IN` | Matches what the user spoke |
+| `speaker` | `sanchita_hi_assistant` / `sanchita_en_companion` / `ishita_enhi_companion` | Assistant-style personas |
+| `output_audio_codec` | `mp3` | Reuses `playMp3` unchanged |
+| `speech_sample_rate` | `22050` | Default; playback handles it |
+
+Response: `{ audios: [base64] }` → `Buffer.from(base64, "base64")`.
+
+**Measured on this machine, 2026-10-27** (real key, real calls):
+
+- TTS, one Hinglish sentence: **1.4 s**, 59,768-byte valid MP3.
+- STT on that audio (`translit`): **444 ms**, transcript
+  `Ankita VS Code kholo aur workspace setup karo.`, detected `hi-IN`.
+- STT on a short English clip: **193 ms**.
+- A Devanagari-input clip came back in Devanagari; script follows the audio. Keep the
+  keyterms list and test with the actual filming voice.
+
+**Limits and cost** (Sarvam docs): STT REST is for clips under 30 s; 60 requests/min on
+pay-as-you-go; TTS same 60/min. Free credits **₹100, never expiring**. STT ₹0.49/min,
+TTS ₹1 per 1,000 chars on v4-flash.
+
+**Data handling.** Audio leaves the machine only when the user explicitly speaks. Sarvam's
+retention policy is not documented on the pages read for this plan — mark `verify` before
+the submission text makes any privacy claim.
+
+### 7.2 Baseten (planner)
+
+- Base URL `https://inference.baseten.co/v1`, OpenAI-compatible Chat Completions.
+- Model slug: **`meta-models/muse-spark-open-1026`**. Smoke tested live on 2026-10-27 with
+  this machine's key: HTTP 200, ~1.0–1.2 s for short answers. The documented slug
+  `meta-models/muse-spark-open` (no suffix) returns **HTTP 403
+  `{"error":"please check the api-key you provided"}`** on the same key and same request
+  shape — so this is a model-routing rejection, not a bad key. Treat `-1026` as the slug.
+- Reasoning is **always on**: `reasoning_effort` accepts `low|medium|high|xhigh` (default
+  `xhigh`). Use `low` for job turns; `xhigh` adds latency and tokens for no benefit here.
+  Measured even at `low`: 110 reasoning tokens to answer "what is 2+2" (127 completion
+  tokens total). Budget `max_tokens` at 400+ or the reply is cut off before any content.
+- **Tool calling works**, verified end to end including a `role: "tool"` result round trip
+  returning a normal assistant message. This is what the job design depends on.
+- **No JSON mode and no structured outputs.** Do not build on a JSON plan.
+- Do not send `n > 1`; it returns HTTP 400.
+- Rate limits (Basic verified): 120 RPM / 500k TPM — far above this workload.
+- Baseten states synchronous Model API requests are not stored (zero data retention).
+
+The repo already supports any OpenAI-compatible endpoint (`src/core/provider.mjs:129`
+`CompatibleClient`, `src/core/bootstrap.mjs:14` custom provider), so this is a small
+preset plus a key, not a new client.
+
+**Live smoke test, 2026-10-27 (this machine, real key):**
+
+| Probe | Result |
+|---|---|
+| `meta-models/muse-spark-open-1026`, "reply ready", `max_tokens: 32` | 200, 2.2 s, but content truncated to `<|start|>assistant` — reasoning ate the budget |
+| Same model, "what is 2+2", `max_tokens: 800`, `reasoning_effort: low` | 200, 1.04 s, content `"2+2 equals 4."`, 110 reasoning tokens |
+| Tool call, `open_app({"app":"VS Code"})` | 200, 0.9 s, correct `tool_calls` array, `finish_reason: tool_calls` |
+| Tool result round trip, then "say done in three words" | 200, 1.15 s, content `"VS Code is open"` |
+| `meta-models/muse-spark-open` (no suffix) | **403**, `please check the api-key you provided` |
+
+Practical consequence: a small `max_tokens` silently truncates into garbage. The provider
+preset must send a floor (≥ 400) and never rely on a 32-token probe to judge health.
+
+### 7.3 Fallbacks, in order
+
+| Layer | Primary | Fallback 1 | Fallback 2 |
+|---|---|---|---|
+| Ears | Sarvam `saaras:v4` | Groq Whisper (existing) | typed prompt |
+| Voice out | Sarvam `bulbul:v4-flash` | Edge TTS (keyless, existing) | print only |
+| Planner | Baseten Spark Open | Groq GPT-OSS (existing, **not Meta**) | Kilo free (dev only) |
+
+The last two planner fallbacks are development conveniences. **Neither may appear in the
+filmed demo or the submission**, because the Meta fit is what Stage 1 checks.
+
+## 8. The voice job
+
+### 8.1 Record
+
+```js
+{
+  id,                 // short, e.g. 4f2c
+  transcript,         // exactly what STT returned
+  language,           // hi-IN / en-IN / ...
+  confidence,         // language_probability
+  status,             // queued | running | waiting_for_approval | done | failed | cancelled
+  steps: [{ index, label, tool, state }],
+  startedAt, endedAt,
+  summary,            // final report text
+  error,              // message on failure
+}
+```
+
+Persist under the existing config directory (`CONFIG_DIR`), one JSON file per job, so a
+crashed terminal does not lose the record. Keep the last N (constant, e.g. 20) to avoid
+unbounded growth.
+
+### 8.2 Steps without a JSON plan
+
+Because Spark Open has no JSON mode, the checklist comes from observed work:
+
+- `onToolCall` → append a step, mark `running`, speak one short line.
+- `onToolResult` → mark `done` or `failed` from the result.
+- Final assistant message → job summary, status `done`.
+
+Step labels use a deterministic verb map (`open`, `write`, `run`, `read`, `browse`) plus the
+tool's display name. No extra model call, no parsing risk, no invented steps.
+
+### 8.3 Speech policy
+
+- Start: one short acknowledgement (≤ 4 words). Never a paragraph.
+- Step: one line, at most every `VOICE_JOB_SPEAK_MIN_INTERVAL_MS` (proposal: 2500 ms,
+  unit milliseconds) and only while no playback is active.
+- Approval: "Permission chahiye" plus the tool name; the terminal prompt is authoritative.
+- Final: the existing `summarizeForSpeech` output, with barge-in allowed as today.
+- Step lines use plain playback (no barge-in mic), because a stray cough during a 1-second
+  line should not queue a phantom turn.
+- Every spoken line is also printed, so a missed audio never loses information.
+
+### 8.4 Where it hooks in
+
+- `src/core/cli.mjs:697` `runTurn`: add an optional job observer; do not fork the turn
+  runner.
+- `src/core/cli.mjs:1098` `voiceLoop`: route the transcript through the job, not straight
+  into `runTurn`, then keep the existing final-report path.
+- `src/core/cli.mjs:543` `confirm`: wrap for the duration of a job to set
+  `waiting_for_approval` and speak the approval line.
+- New `src/automation/voice-task.mjs`: the record, state machine, step labels, speech
+  throttle. Pure functions where possible so tests need no mic.
+
+**Concurrency, stated plainly.** The job runs inside one agent turn in the same process, so
+the terminal is busy while it works; the user can switch applications but cannot start a
+second Ankita request. That is the deliberate scope cut. True parallel chat needs the
+daemon (`src/automation/daemon.mjs:315` `executeRoutine`) and doubles the risk. Say this in
+the README; do not imply full concurrency.
+
+## 9. Config additions
+
+Names only; defaults preserve current behaviour. Values come from `.env` or the process
+environment (`pick()` in `src/core/config.mjs` already checks both).
+
+| Name | Default | Purpose |
+|---|---|---|
+| `BASETEN_API_KEY` | empty | Planner key; never committed |
+| `BASETEN_BASE_URL` | `https://inference.baseten.co/v1` | Override for testing |
+| `BASETEN_MODEL` | `meta-models/muse-spark-open-1026` | Planner slug (verified; no-suffix slug 403s) |
+| `BASETEN_MAX_TOKENS` | `1024` | Floor for reasoning overhead; small values truncate into garbage |
+| `BASETEN_REASONING_EFFORT` | `low` | `low|medium|high|xhigh` |
+| `SARVAM_API_KEY` | empty | Read from env if already set |
+| `STT_PROVIDER` | `groq` | `groq|sarvam` |
+| `TTS_PROVIDER` | `edge` | extend with `sarvam` |
+| `SARVAM_STT_MODEL` | `saaras:v4` | STT model |
+| `SARVAM_STT_MODE` | `translit` | Output script |
+| `SARVAM_TTS_MODEL` | `bulbul:v4-flash` | TTS model |
+| `SARVAM_TTS_SPEAKER_HI` | `sanchita_hi_assistant` | Hindi voice |
+| `SARVAM_TTS_SPEAKER_EN` | `sanchita_en_companion` | English voice |
+| `VOICE_JOB_SPEAK_MIN_INTERVAL_MS` | `2500` | Speech throttle, milliseconds |
+| `VOICE_JOB_KEYTERMS` | `Ankita,VS Code,workspace` | Comma list, max 50 |
+
+Update `.env.example` with the same names and comments. No secret values anywhere in the
+repo, the docs, or chat.
+
+## 10. File-level change list
+
+| File | Change | Size |
+|---|---|---|
+| `src/channels/voice.mjs` | `transcribeSarvam`, `synthesizeSarvam`, provider resolution, language → speaker map | ~120 lines |
+| `src/core/config.mjs` | new keys, provider enums, defaults | ~25 lines |
+| `src/core/provider.mjs` | `baseten` preset | ~10 lines |
+| `src/core/cli.mjs` | provider-aware `voiceReady`/`transcribeWav`/`synthesizeSpeech`; job hooks in `runTurn` + `voiceLoop`; `/task` command | ~120 lines |
+| `src/automation/voice-task.mjs` | new: record, state machine, labels, throttle | ~250 lines |
+| `src/tooling/job-ui.mjs` | render voice-task cards without touching process jobs | ~40 lines |
+| `.env.example` | document new names | ~15 lines |
+| `README.md` | "new work" section, old vs new table | ~40 lines |
+| `docs/guides/voice-delegation.md` | user-facing how-to | new |
+| `test/channels/voice.test.mjs` | Sarvam request/response/error tests | ~120 lines |
+| `test/automation/voice-task.test.mjs` | state machine, labels, throttle | ~120 lines |
+
+Deliberately **not** touched: the desktop app, the scheduler, the Telegram channel, the
+default provider behaviour.
+
+## 11. Failure matrix
+
+| Failure | Behaviour | Evidence to show |
+|---|---|---|
+| Sarvam key missing/expired | `voiceReady` explains exactly what to set, typed prompt still works | screenshot + log line |
+| STT 429/5xx | one retry with backoff, then "didn't catch that" and a re-record prompt | log + retry |
+| Mishearing | transcript is printed **before** execution; nothing runs on a wrong transcript without confirmation | video shot |
+| TTS fails | report prints; job status still `done` | log |
+| Baseten 401/402/404 | job fails fast with the exact status; no fake progress | log |
+| Baseten 529/429 | bounded retry, then fail with a plain message | log |
+| Approval required | status `waiting_for_approval`, spoken line, existing prompt | video shot |
+| Ctrl+C during job | status `cancelled`, spoken "cancelled", partial steps kept | trace |
+| Terminal crash | job JSON on disk shows where it stopped | file |
+
+## 12. Day-by-day, with pass/fail gates
+
+Weekdays: school until 13:30 IST, so build in the afternoon/evening. Saturday 31 Oct and
+Sunday 1 Nov are full days. Features freeze 3 Nov.
+
+| Day | Work | Gate (do not proceed otherwise) |
+|---|---|---|
+| **Tue 27 (tonight)** | ~~Put `BASETEN_API_KEY` in `.env`; smoke test~~ **DONE** — key present, `-1026` slug 200, tool calling verified, Sarvam round trip verified. Remaining: listen to one TTS clip | **Cleared**, except the by-ear voice check |
+| **Wed 28** | Sarvam STT/TTS in `voice.mjs`; provider-aware voice gate; unit tests; `/voice` uses Sarvam | Live Hinglish utterance → correct transcript → spoken reply, three times |
+| **Thu 29** | `voice-task.mjs`; job card; steps from tool calls; spoken final report | One spoken command opens VS Code, creates the folder/files, speaks the report |
+| **Fri 30** | Spoken step updates, approval status, failure paths, `/task` list | Three deliberate failures do not break the demo |
+| **Sat 31 (full)** | Hinglish demo flow ×3 in a row; English backup take; film rough shots | 3/3 clean runs |
+| **Sun 1 (full)** | Desktop pass **only if** Saturday is green; otherwise bugfix only | Desktop: mic → Sarvam → job → island visible. Miss it, drop it |
+| **Mon 2** | README old-vs-new, user guide, submission draft, rough cut | Submission text complete, not outlined |
+| **Tue 3** | Final 3-minute video, submission page, office hours if blocked | Everything submittable, one day early |
+| **Wed 4** | Submit evening IST; fixes only | Links re-checked from a logged-out view |
+
+Cut order if time runs short: desktop pass → second flow (never built) → spoken step
+updates (keep the final report) → **never** the core loop.
+
+## 13. Demo video (3 minutes, new work only)
+
+| Time | Shot | Audio / on screen |
+|---|---|---|
+| 0:00–0:15 | Desk, Ankita idle | "Setting up a workspace by hand is dead time. Watch." |
+| 0:15–0:35 | Speak Hinglish | Transcript appears on screen before anything runs |
+| 0:35–1:05 | Job card | id, status `running`, steps filling in; speaker turns to other work |
+| 1:05–1:50 | VS Code | Folder and files appear; one spoken progress line; approval gate shown briefly if it fires |
+| 1:50–2:20 | Report | Spoken summary; the same text on screen; status `done` |
+| 2:20–2:50 | Old vs new | Five new items on screen; say plainly that voice capture/playback already existed |
+| 2:50–3:00 | Repo | Public URL; optional 10 s island shot only if it is real |
+
+Rules: re-shoot, never submit a mishearing; keep the transcript visible in every voice
+shot; test the video link logged out.
+
+## 14. Cost
+
+Verified prices (Sarvam docs, 2026-10-27): STT ₹0.49/min; TTS ₹1 per 1,000 chars for
+`bulbul:v4-flash`; ₹100 free credits that never expire.
+
+One filmed take (6 s speech, three 50-char progress lines, 180-char report):
+
+- STT: 6 s = 0.1 min × ₹0.49 = **₹0.049**
+- TTS: 330 chars × ₹1/1000 = **₹0.33**
+- Per take ≈ **₹0.38**; 60 takes ≈ **₹23**, well inside the free ₹100.
+
+Baseten planner cost is not published on the pages read; mark `verify` and check the
+workspace usage page after the first day. The hackathon credit pot is a PDF claim, not
+verified here.
+
+## 15. Risks
+
+| Risk | Impact | Mitigation |
+|---|---|---|
+| Baseten key has no credit or wrong slug | Submission fails the Meta gate | **Cleared 2026-10-27**: `-1026` slug answers 200, tool calling works. Only the no-suffix slug 403s — never use it |
+| Sarvam mishears on the filming mic | Bad take | Keyterms, transcript-first, re-record; keep `translit` |
+| Voice sounds wrong for English words inside Hinglish | Demo quality | Listen before filming; try `ishita_enhi_companion` vs `sanchita_hi_assistant`; keep English backup take |
+| Job looks fake because the terminal is busy | Judge doubt | State the scope cut in the README; show the job card and the actual tool calls |
+| Desktop pass eats the weekend | Missed video | Hard gate Saturday evening; drop it without regret |
+| Heartbeat work mixed into the diff | "New work" claim collapses | Branch precondition below |
+| 18+ waiver | Prize ineligible | No false signature; ship the work, claim nothing |
+| Credits do not land | Blocked build | Sarvam is already usable; Baseten is the only dependency |
+
+## 16. Preconditions and branch hygiene
+
+Current state (2026-10-27): branch `feat/heartbeat-proactivity`, **30 modified files**,
+uncommitted. Do not start hackathon work on top of that.
+
+1. Commit or stash the heartbeat work (owner's choice).
+2. Cut `feat/voice-delegation` for this build, so the submission diff is exactly this
+   week's work.
+3. Keep `.env` untracked (already ignored); keys never enter git.
+4. Tag the submission commit on 4 Nov and archive the demo video link.
+
+## 17. Submission checklist
+
+- [ ] Repo public; submission commit tagged; branch diff = hackathon work only
+- [ ] 3-minute video, new work only, transcript visible, link tested logged out
+- [ ] Submission filed on the CV platform; representative Krish, solo; members: Krish only
+- [ ] Theme named once: **Build for Your World**; track: **Indie Developer**
+- [ ] README states the five new items and that voice capture/playback predates the event
+- [ ] README discloses Sarvam for speech and the Meta planner honestly
+- [ ] Submitted by evening IST 4 Nov (hard deadline 5 Nov 07:30 IST)
+- [ ] Checks the published rubric on the submission page — do not assume weights
+
+## 18. Verified vs unverified
+
+**Verified on 2026-10-27, on this machine**
+
+- Sarvam key present and working; live STT/TTS round trip; latencies above.
+- Sarvam endpoints, headers, model names, modes, speaker IDs, prices, free credits, limits.
+- **Baseten key works.** `meta-models/muse-spark-open-1026` → 200; tool calling and
+  tool-result round trip both work; short-answer latency ~1.0 s at `reasoning_effort: low`.
+- The no-suffix slug `meta-models/muse-spark-open` → 403 on the same key.
+- Baseten base URL, always-on reasoning and its token cost, no JSON mode, rate limits,
+  zero data retention for synchronous requests.
+- Kilo's keyless Meta models return `401 PAID_MODEL_AUTH_REQUIRED`.
+- The repo's Groq key has no Meta Llama model.
+- Repo touch points, config shape, provider preset mechanism, island ownership, ffmpeg and
+  ffplay present.
+
+**Unverified — must be settled before it is claimed**
+
+- Baseten credit balance, remaining spend, and end-to-end planning latency inside a real
+  job turn (only single-shot calls have been measured).
+- Audio quality by ear; only transcript accuracy was measured.
+- Sarvam data-retention terms.
+- Desktop island integration effort; estimated, not measured.
+- Hackathon rubric details; the PDF's tables were placeholders.
+- Baseten pricing and the two credit pots; PDF claims only.
+
+## 19. Sources
+
+- Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).
+- Sarvam: `/api-reference/speech-to-text/transcribe`, `/api-reference/text-to-speech/convert`,
+  `/api/api-guides-tutorials/text-to-speech/voices`, `/api-reference-docs/pricing`,
+  `/api/getting-started/ratelimits`.
+- Baseten: `/inference/model-apis`, `/inference/model-apis/audio`,
+  `/inference/model-apis/reasoning`, `/inference/model-apis/pricing-and-limits`.
+- Kilo gateway catalogue and a live keyless call (401).
+- Repo: `src/channels/voice.mjs`, `src/core/cli.mjs`, `src/core/config.mjs`,
+  `src/core/provider.mjs`, `src/automation/*`, `desktop/electron/island.mjs`,
+  `docs/plans/desktop-background-jobs-plan.md`.
+- Prior art: `ShashwatJain29/hermes-sarvam-voice` (Sarvam provider plugin),
+  `DINAKAR-S/voice-agent-starter-kit` (LiveKit + Sarvam streaming).
