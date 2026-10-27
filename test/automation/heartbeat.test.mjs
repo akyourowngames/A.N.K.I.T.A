@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { heartbeatContext, heartbeatPolicy, parseHeartbeat, substantive } from '../../src/automation/heartbeat.mjs';
-import { HEARTBEAT_COOLDOWN_MINUTES } from '../../src/automation/job-policy.mjs';
+import { HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext, heartbeatPolicy, parseHeartbeat, substantive } from '../../src/automation/heartbeat.mjs';
+import { DEFAULT_HEARTBEAT_BUDGET, HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_MAX_TOKENS_PER_DAY, heartbeatRunLabel, normalizeRoutine } from '../../src/automation/job-policy.mjs';
 
 const NOW = new Date('2026-10-26T12:00:00Z');
 const card = (patch = {}) => JSON.stringify({ v: 1, status: 'notable', title: 'Deadline', summary: 'The report is due in two hours.', dedupe_key: 'report-due', evidence: ['calendar'], state: { due: 'today' }, ...patch });
@@ -73,6 +73,14 @@ test('the daily limit holds new updates, urgent bypasses it, and a new day reset
   assert.equal(heartbeatPolicy({ heartbeatState: { ...full, day: '2026-10-25' } }, parsed, { now: NOW, timeZone: 'UTC' }).action, 'deliver');
 });
 
+test('the heartbeat knows its own job and how to read a superseded failure', () => {
+  const context = heartbeatContext({ id: 'job-watch', name: 'Job watch' }, { now: NOW, timeZone: 'UTC' });
+  assert.match(context, /"job":\{"id":"job-watch","name":"Job watch"\}/);
+  assert.match(HEARTBEAT_CARD_INSTRUCTIONS, /a failed receipt for that job is your own previous check/, 'A self-failure must not read as another job failing');
+  assert.match(HEARTBEAT_CARD_INSTRUCTIONS, /enabled=true and no pausedReason is running normally/, 'A recovered job is live state, not a current outage');
+  assert.match(HEARTBEAT_CARD_INSTRUCTIONS, /quote only limits the list shows/, 'A predicted reset or invented ceiling stays out of the report');
+});
+
 test('a new update merges earlier held items and the context carries structured state', () => {
   const parsed = parseHeartbeat(fenced(card()));
   const delivered = heartbeatPolicy({ heartbeatState: state({ sent: 0 }) }, parsed, { now: NOW, timeZone: 'UTC' });
@@ -84,4 +92,28 @@ test('a new update merges earlier held items and the context carries structured 
   assert.match(merged.text, /The meeting moved to noon\./); assert.match(merged.text, /Also earlier:\n- A package will arrive tomorrow\./);
   assert.deepEqual(merged.state.held, []);
   assert.deepEqual(merged.state.recent.map(item => item.key), ['old-news', 'new-topic'], 'merged items also enter the cooldown');
+});
+
+test('the job card explains a silent check in plain words', () => {
+  assert.equal(heartbeatRunLabel('quiet', 'marker'), 'Checked — nothing to report');
+  assert.equal(heartbeatRunLabel('quiet', 'empty'), 'Checked — nothing to report');
+  assert.equal(heartbeatRunLabel('quiet', 'duplicate'), 'Checked — already reported');
+  assert.equal(heartbeatRunLabel('held', 'quiet-hours'), 'Held for quiet hours');
+  assert.equal(heartbeatRunLabel('held', 'daily-limit'), 'Held — daily limit reached');
+  assert.equal(heartbeatRunLabel('ok', 'deliver'), null, 'A delivered run keeps the generic status label');
+  assert.equal(heartbeatRunLabel(null, null), null);
+});
+
+test('a heartbeat budget is a runaway gate sized for a full day at the fastest useful cadence', () => {
+  const fresh = normalizeRoutine({ kind: 'heartbeat', cron: '*/30 * * * *', prompt: 'Watch my jobs' });
+  assert.deepEqual(fresh.budget, DEFAULT_HEARTBEAT_BUDGET);
+  assert.ok(DEFAULT_HEARTBEAT_BUDGET.maxRunsPerDay > 288, 'A five-minute cadence (288 checks) plus manual runs fits');
+  assert.ok(DEFAULT_HEARTBEAT_BUDGET.maxTokensPerDay >= 288 * 12_100, 'A day of measured ~12k checks fits under the ceiling');
+  const legacy = normalizeRoutine({ kind: 'heartbeat', cron: '*/30 * * * *', prompt: 'Watch', budget: { maxRunsPerDay: 48, maxTokensPerDay: 50000, maxMinutesPerDay: 60 } });
+  assert.equal(legacy.budget.maxTokensPerDay, HEARTBEAT_MAX_TOKENS_PER_DAY, 'An untouched legacy budget was never a user choice, so it migrates');
+  const earlier = normalizeRoutine({ kind: 'heartbeat', cron: '*/30 * * * *', prompt: 'Watch', budget: { maxRunsPerDay: 60, maxTokensPerDay: 1_200_000, maxMinutesPerDay: 60 } });
+  assert.equal(earlier.budget.maxTokensPerDay, HEARTBEAT_MAX_TOKENS_PER_DAY, 'The earlier cadence-sized default migrates too');
+  const custom = normalizeRoutine({ kind: 'heartbeat', cron: '*/30 * * * *', prompt: 'Watch', budget: { maxTokensPerDay: 5000 } });
+  assert.equal(custom.budget.maxTokensPerDay, 5000, 'A budget the user actually set is kept');
+  assert.equal(normalizeRoutine({ prompt: 'Read' }).budget.maxTokensPerDay, 50000, 'Regular jobs keep the generic ceiling');
 });

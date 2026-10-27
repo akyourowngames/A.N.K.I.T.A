@@ -6,10 +6,11 @@ import { TeammateAvatar } from './TeammateAvatar';
 import { nextRunLabel } from '../lib/jobs';
 import { CHATGPT_BROWSER_PROVIDER, CHATGPT_BROWSER_LABEL, CHATGPT_CURRENT_MODEL_LABEL } from '../../../shared/chatgpt-browser.mjs';
 import { ChatGptConnection } from './ChatGptConnection';
+import { PhonePairingSettings } from './PhonePairingSettings';
 import { StatusPill } from './StatusPill';
 import { cleanErrorMessage } from '../../../shared/error-notices.mjs';
 
-export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'background' | 'privacy' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
@@ -17,6 +18,7 @@ const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
+  { id: 'phone', label: 'Phone', icon: 'phone' },
   { id: 'background', label: 'Background jobs', icon: 'clock' },
   { id: 'privacy', label: 'Privacy', icon: 'shield' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
@@ -391,6 +393,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
             </div>
           </div>}
+          {tab === 'phone' && <PhonePairingSettings />}
           {tab === 'background' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="clock" size={20} /></span><h1 id="settings-title">Background jobs</h1><p>The routine work, handled by your teammates.</p></div>
             <div className="settings-job-overview" aria-label="Scheduled task status"><div><strong>{jobs.length}</strong><span>Scheduled</span></div><div><strong>{activeJobs}</strong><span>Enabled</span></div><div><strong>{runningJobs}</strong><span>Running</span></div></div>

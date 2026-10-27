@@ -142,7 +142,13 @@ export class DesktopScheduler {
     const due = [];
     for (const routine of this.store.routines) {
       const day = dayAt(date, this.timeZone);
-      if (routine.spend.day !== day) this.store.updateRoutine(routine.id, { spend: { day, runs: 0, tokens: 0, minutes: 0 } });
+      if (routine.spend.day !== day) {
+        // A heartbeat paused by its own daily ceiling resumes with the new day;
+        // a regular job keeps a pause that the user's limits caused.
+        const resume = routine.kind === 'heartbeat' && routine.pausedReason === 'budget';
+        const updated = this.store.updateRoutine(routine.id, { spend: { day, runs: 0, tokens: 0, minutes: 0 }, ...(resume ? { enabled: true, pausedReason: null } : {}) });
+        if (updated) Object.assign(routine, updated);
+      }
       const fire = routine.runAt ? new Date(routine.runAt) : routine.enabled ? cronFire(routine.cron, date, this.timeZone, -1) : null;
       if (!fire || fire > date || !Number.isFinite(fire.getTime())) continue;
       const previous = Date.parse(routine.lastFireAt || routine.lastRun || routine.createdAt || '');
@@ -270,7 +276,10 @@ export class DesktopScheduler {
     const worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
       ...this.engine.contextForJob?.(routine),
       browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
-      allowedTools: JOB_TOOLS, toolContext: { backgroundJob: true,
+      // Read-only scheduler access: the background schedule tool is already
+      // restricted to list, but without this context the list is a status-free
+      // description set, so a heartbeat cannot see a failed job.
+      allowedTools: JOB_TOOLS, toolContext: { backgroundJob: true, scheduler: this, scheduleThreadId: routine.threadId || undefined,
         requireForeground: reason => run.fail(jobError(reason, 'skipped-needs-foreground')),
         onBrowserError: error => { const notice = browserNotice(error); run.audit.push({ error: notice.kind, message: notice.message, at: this.now().toISOString() }); if (error.name === 'BrowserReferenceError') run.referenceRecovery = true; else run.fail(error.jobStatus ? error : jobError(FAILURE_TEXT)); },
         authorizeBrowser: async (args, context) => { try { return await this.authorize(run, args, context); } catch (error) { run.fail(error); throw error; } },
@@ -361,13 +370,13 @@ export class DesktopScheduler {
         const budget = run.status === 'stopped-budget';
         this.store.updateRoutine(routine.id, { activeRunId: null, pendingApproval: null, lastRun: started.toISOString(), lastOutcomeAt: completedAt, lastStatus: run.status, lastSummary: summary, runs: current.runs + 1,
           spend: { day: dayAt(this.now(), this.timeZone), runs: current.spend.runs + 1, tokens: current.spend.tokens + run.tokens, minutes: current.spend.minutes + elapsed / MINUTE_MS },
-          ...(routine.kind === 'heartbeat' && run.heartbeatState ? { heartbeatState: run.heartbeatState } : {}),
+          ...(routine.kind === 'heartbeat' && run.heartbeatState ? { heartbeatState: run.heartbeatState, lastReason: run.heartbeatReason || null } : {}),
           ...(run.status === 'ok' ? { lastSuccessfulResult: { text: summary, at: completedAt } } : {}),
           ...(budget ? { enabled: false, pausedReason: 'budget' } : {}) });
       }
       const owner = this.owner(routine);
       const receipt = { runId: run.runId, routineId: routine.id, name: routine.name, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing, status: run.status,
-        templateId: routine.templateId, channel: routine.channel,
+        templateId: routine.templateId, channel: routine.channel, ...(routine.kind === 'heartbeat' && run.heartbeatReason ? { reason: run.heartbeatReason } : {}),
         text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' || run.status === 'held' };
       this.writeRun(run, { ...receipt, header, audit: run.audit, tokens: run.tokens, activeMs: elapsed });
       this.store.updateRoutine(routine.id, { lastReceipt: receipt });

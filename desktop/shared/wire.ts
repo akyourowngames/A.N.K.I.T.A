@@ -54,11 +54,26 @@ export type SecureStoreRequest = { type: 'secure-store-request'; requestId: stri
 export type SecureStoreStatus = { type: 'secure-store-status'; threadId: string; callId: string; website: string; username: string; state: string; message: string };
 export type RoutineAllow = { read: boolean; interact: boolean; login: boolean; sites: string[]; mode: 'isolated' | 'local' };
 export type RoutineBudget = { maxRunsPerDay: number; maxTokensPerDay: number; maxMinutesPerDay: number };
-export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string };
-export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null };
+export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; reason?: string | null; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string };
+export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastReason?: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null };
 export type ChatMessage =
   | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
+
+export type PhonePairingState = 'starting' | 'ready' | 'offline' | 'unsupported' | 'error';
+export type PhonePairingInvitation = { id: string; code: string; expiresAt: string; address: string; fingerprint: string; attemptsLeft: number };
+export type PhonePairingInvitationResult = PhonePairingInvitation & { uri: string; qr: string };
+export type PhonePairingRequest = { requestId: string; deviceName: string; platform: string; createdAt: string; expiresAt: string };
+export type PhonePairingDevice = {
+  id: string; name: string; platform: string; teammateId: string; teammateName: string;
+  createdAt: string; lastSeenAt: string | null; online: boolean; activeRun: string | null;
+};
+export type PhonePairingSnapshot = {
+  state: PhonePairingState; error: string | null; address: string | null; name: string; port: number | null;
+  fingerprint: string | null; addresses: string[]; preferredAddress: string | null; running: boolean;
+  invitation: PhonePairingInvitation | null; pending: PhonePairingRequest[];
+  devices: PhonePairingDevice[]; teammates: { id: string; name: string }[];
+};
 
 export type SubagentUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; estimated_cost?: number };
 export type SubagentCall = { id: string; function?: { name?: string; arguments?: string } };
@@ -104,6 +119,8 @@ export type EngineEvent = (
   | { type: 'projects-changed' }
   | { type: 'project-activity'; threadId: string; projectId: string; turnId?: string | null; written: number; audit?: { tools?: string[]; files?: string[]; changed?: boolean; termination?: string } | null }
   | { type: 'channels-updated'; channels: ChannelsView }
+  | { type: 'phone-pairing-changed'; snapshot: PhonePairingSnapshot }
+  | { type: 'phone-pairing-request'; requestId: string; deviceName: string; platform: string }
   | { type: 'browser-plugins-changed' | typeof COMPUTER_USE_CHANGED }
   | { type: typeof CHATGPT_CONNECTION_CHANGED; state: ChatGptConnectionState }
   | { type: 'browser-install-progress'; text: string }

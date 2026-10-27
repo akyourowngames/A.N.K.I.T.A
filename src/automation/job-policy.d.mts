@@ -8,3 +8,5 @@ export const JOB_EXECUTION_COMPLETE: 'complete';
 export const JOB_EXECUTION_BOUNDED: 'bounded';
 export const JOB_EXECUTION_POLICIES: readonly ('complete' | 'bounded')[];
 export const SCHEDULE_TASK_GUIDANCE: string;
+export const HEARTBEAT_REASON: { readonly MARKER: 'marker'; readonly EMPTY: 'empty'; readonly CARD_QUIET: 'card-quiet'; readonly DUPLICATE: 'duplicate'; readonly QUIET_HOURS: 'quiet-hours'; readonly DAILY_LIMIT: 'daily-limit'; readonly HELD_DIGEST: 'held-digest'; readonly DELIVERED: 'deliver' };
+export function heartbeatRunLabel(status: string | null | undefined, reason: string | null | undefined): string | null;

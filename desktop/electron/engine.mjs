@@ -302,6 +302,7 @@ export class DesktopEngine {
     // (approvals included) without the emit path calling back into itself.
     this._emit = emit;
     this.eventSequence = 0; // Monotonic event count; a startup snapshot must not replay already captured deltas.
+    this.eventListeners = new Set(); // In-process observers (the phone bridge) that do not need IPC.
     this.islandState = { threads: {} };
     this.emit = (event) => {
       if (['error', 'scheduler-error', 'scheduler-stopped'].includes(event.type) && this.secretHistory) {
@@ -315,6 +316,7 @@ export class DesktopEngine {
       }
       this.islandState = reduceIslandState(this.islandState, event);
       try { this._emit(event); } catch {}
+      for (const listener of this.eventListeners) { try { listener(event); } catch {} }
       try { this.channels?.handleEngineEvent(event); } catch {}
     };
     this.agents = new Map();
@@ -1171,6 +1173,12 @@ export class DesktopEngine {
   }
 
   waitForTurn(id) { return this.turns.get(id) || Promise.resolve(); }
+
+  /** Observe the same stream the renderer receives, without another IPC hop. */
+  onEvent(callback) {
+    this.eventListeners.add(callback);
+    return () => this.eventListeners.delete(callback);
+  }
 
   async resumeBrowser(id, operationId) {
     if (this.turns.has(id)) throw new Error('This teammate is already replying');

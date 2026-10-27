@@ -106,6 +106,7 @@ export default function App() {
       dispatch({ type: 'event', event });
       if (event.type === 'companion-capture-ready' && event.capture.surface === 'main') { dispatch({ type: 'select', id: event.capture.threadId }); setView('chat'); }
       if (event.type === 'settings-updated') setPreferences(event.preferences);
+      if (event.type === 'phone-pairing-request') setSettingsTab('phone');
       if (event.type === 'secret-notice') setSecretNotice(event.message);
       if (event.type === 'routine-draft') { dispatch({ type: 'select', id: event.threadId }); setView('chat'); editJob(event.routineId); }
       if (event.type === 'routine-run-end' && browserScopeRef.current === `job:${event.routineId}`) { setBrowserOpen(false); setBrowserScope(null); setBrowserView(null); }

@@ -466,3 +466,44 @@ test('the next heartbeat receives structured state and the card contract instead
   assert.doesNotMatch(extra, /Previous useful heartbeat update/);
   assert.doesNotMatch(prompts[3], /previous successful result|The report is due in two hours/);
 });
+
+test('a heartbeat worker reads live job status instead of a status-free list', async t => {
+  let listed = '';
+  const f = await fixture(t, async function() {
+    const { run } = await import('../../tools/automation/schedule.mjs');
+    listed = await run({ action: 'list' }, this.toolContext);
+    return 'HEARTBEAT_OK';
+  });
+  const broken = f.add({ name: 'Broken job', prompt: 'Check the login page' });
+  f.scheduler.store.updateRoutine(broken.id, { lastStatus: 'error', lastSummary: 'Login page broke' });
+  const watch = f.add({ name: 'Watch', prompt: 'Watch my jobs', kind: 'heartbeat' });
+  await f.scheduler.runNow(watch.id); await f.scheduler.drain();
+  assert.equal(f.workers[0].toolContext.scheduleThreadId, 'owner');
+  assert.equal(JSON.parse(listed).find(job => job.name === 'Broken job').lastStatus, 'error', 'The check must observe a real failure');
+  assert.equal(f.delivered.length, 0);
+});
+
+test('a quiet heartbeat records why it stayed silent so the job card can explain it', async t => {
+  const answers = ['HEARTBEAT_OK\nAll good here.'];
+  const f = await fixture(t, async () => answers.shift());
+  const r = f.add({ kind: 'heartbeat' });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.scheduler.list()[0].lastStatus, 'quiet');
+  assert.equal(f.scheduler.list()[0].lastReason, 'marker');
+  assert.equal(f.scheduler.list()[0].lastReceipt.reason, 'marker', 'The receipt card carries the same explanation');
+  assert.equal(f.delivered.length, 0);
+});
+
+test('a heartbeat that reaches its own daily ceiling resumes with the next day', async t => {
+  const f = await fixture(t, async function(_prompt, hooks) { hooks.onUsage({ total_tokens: 5000 }); return 'HEARTBEAT_OK'; });
+  const r = f.add({ kind: 'heartbeat', budget: { maxTokensPerDay: 1 } });
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  assert.equal(f.scheduler.list()[0].lastStatus, 'stopped-budget');
+  assert.equal(f.scheduler.list()[0].enabled, false);
+  assert.equal(f.scheduler.list()[0].pausedReason, 'budget');
+  f.clock('2026-09-28T09:00:00Z');
+  f.scheduler.due(new Date('2026-09-28T09:00:00Z'));
+  assert.equal(f.scheduler.list()[0].enabled, true, 'A heartbeat must not stay off after its daily ceiling');
+  assert.equal(f.scheduler.list()[0].pausedReason, null);
+  assert.equal(f.scheduler.list()[0].spend.tokens, 0);
+});

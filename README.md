@@ -362,6 +362,7 @@ Third-party companion attribution ships in
 
 - [Desktop workspace](docs/guides/desktop-workbench.md)
 - [Companion, file drops and webpage capture](docs/guides/desktop-companion.md)
+- [Phone pairing](docs/guides/phone-pairing.md)
 - [Browser connections and permissions](docs/guides/browser-use.md)
 - [Browser lab fixes and remaining limits](docs/browser-lab-FINDINGS.md)
 - [Browser request cost and A/B evidence](docs/browser-lab-token-research.md)

@@ -3,7 +3,7 @@ import { RoutineStore, describeRoutine } from "../../src/automation/routines.mjs
 import { ProjectStore, resolveProjectRef } from "../../src/memory/projects.mjs";
 import { describeCron, normalizeSchedule, parseCron } from "../../src/automation/cron.mjs";
 import { createHash } from 'node:crypto';
-import { HEARTBEAT_CRON, HEARTBEAT_PROMPT, JOB_MUTABLE_FIELDS, JOB_EXECUTION_POLICIES, SCHEDULE_TASK_GUIDANCE } from '../../src/automation/job-policy.mjs';
+import { HEARTBEAT_CRON, HEARTBEAT_PROMPT, HEARTBEAT_PROMPT_GUIDANCE, JOB_MUTABLE_FIELDS, JOB_EXECUTION_POLICIES, SCHEDULE_TASK_GUIDANCE } from '../../src/automation/job-policy.mjs';
 
 export const name = "schedule";
 export const description =
@@ -11,14 +11,14 @@ export const description =
   'Use update with id and patch to change it, list to inspect, enable/disable to resume/pause, remove to delete, and run ONLY when an immediate execution is requested. ' +
   'Supply the complete task, success check and schedule. Clarify missing timing or task details first. Use kind=heartbeat for an idle proactive check. ' +
   'Creating a job does not require browsing or element refs. Store task instructions, never snapshot refs; each worker observes fresh controls when it runs. ' +
-  'Desktop browser jobs use isolated Chromium and saved credentials; first sign-in or MFA may need foreground input. Read the returned status/nextRunAt; creation is not execution. CLI delivery uses the daemon. ' + SCHEDULE_TASK_GUIDANCE;
+  'Desktop browser jobs use isolated Chromium and saved credentials; first sign-in or MFA may need foreground input. Quote nextRunLocal when telling the user when it will run; nextRunAt is UTC. Creation is not execution. CLI delivery uses the daemon. ' + SCHEDULE_TASK_GUIDANCE;
 
 export const parameters = {
   type: "object",
   properties: {
     action: { type: 'string', enum: ['add', 'update', 'list', 'remove', 'enable', 'disable', 'run', 'needs_input'] },
     reason: { type: 'string', description: 'Background needs_input only: what user input is required, such as an authenticator code. Never include credentials.' },
-    kind: { type: 'string', enum: ['routine', 'heartbeat'], description: 'Desktop: heartbeat runs only while the owner is idle and suppresses uneventful reports.' },
+    kind: { type: 'string', enum: ['routine', 'heartbeat'], description: 'Desktop: heartbeat runs only while the owner is idle and suppresses uneventful reports. ' + HEARTBEAT_PROMPT_GUIDANCE },
     description: { type: 'string', description: 'One sentence describing the task for its chat card.' },
     requestKey: { type: 'string', description: 'Stable creation key for retries of this same request. Never reuse for another task.' },
     name: { type: "string", description: "Short label, e.g. 'Morning briefing'." },
@@ -91,6 +91,16 @@ export function tagNote(projectId) {
   return projectId ? `\nAttached to project "${projectId}".` : "\nNot attached to any project.";
 }
 
+const NEXT_RUN_LOCALE = 'en-GB'; // 24-hour, day-before-month: unambiguous when quoted to a user.
+/** Next run in the job's own time zone, so a model never presents UTC as local time. */
+export function nextRunText(job) {
+  const at = Date.parse(job?.nextRunAt);
+  if (!Number.isFinite(at)) return 'not scheduled (paused)';
+  const parts = Object.fromEntries(new Intl.DateTimeFormat(NEXT_RUN_LOCALE, { weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit', hourCycle: 'h23',
+    ...(job.timeZone ? { timeZone: job.timeZone } : {}) }).formatToParts(new Date(at)).map(part => [part.type, part.value]));
+  return `${parts.weekday} ${parts.day} ${parts.month}, ${parts.hour}:${parts.minute}${job.timeZone ? ` (${job.timeZone})` : ''}`;
+}
+
 export async function run(args = {}, ctx = {}) {
   const action = String(args.action || "list").toLowerCase();
   if (ctx.backgroundJob) {
@@ -109,9 +119,9 @@ export async function run(args = {}, ctx = {}) {
           cron: args.cron || (args.kind === 'heartbeat' ? HEARTBEAT_CRON : undefined), prompt: args.prompt || (args.kind === 'heartbeat' ? HEARTBEAT_PROMPT : undefined) };
         input.requestKey ||= createHash('sha256').update(JSON.stringify([input.threadId, input.name, normalizeSchedule(input.cron), input.prompt, input.kind || 'routine'])).digest('hex');
         const routine = scheduler.add(input);
-        return JSON.stringify({ action, job: routine });
+        return JSON.stringify({ action, job: routine, nextRunLocal: nextRunText(routine) });
       }
-      if (action === 'update') return JSON.stringify({ action, job: scheduler.update(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id, updatePatch(args)) });
+      if (action === 'update') { const job = scheduler.update(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id, updatePatch(args)); return JSON.stringify({ action, job, nextRunLocal: nextRunText(job) }); }
       if (action === 'remove') return JSON.stringify({ action, job: scheduler.remove(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id) });
       if (action === 'enable' || action === 'disable') return JSON.stringify({ action, job: scheduler.enable(desktopJob(scheduler, args.id, ctx.scheduleThreadId).id, action === 'enable') });
       if (action === 'run') { const id = desktopJob(scheduler, args.id, ctx.scheduleThreadId).id; return JSON.stringify({ action, ...await scheduler.runNow(id), job: scheduler.list().find(job => job.id === id) }); }

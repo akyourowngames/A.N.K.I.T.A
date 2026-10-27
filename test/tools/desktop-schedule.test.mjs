@@ -70,3 +70,15 @@ test('flat model updates normalize into a patch and empty or conflicting updates
   assert.match(await run({ action: 'update', id: 'job', cron: '@daily', patch: { cron: '@hourly' } }, { scheduler }), /conflicting/i);
   assert.equal(calls.length, 1);
 });
+
+test('creation and updates quote the next run in the job time zone instead of raw UTC', async () => {
+  const scheduler = { add: input => ({ id: 'job', name: input.name, timeZone: 'Asia/Calcutta', nextRunAt: '2026-10-26T16:30:00.000Z' }),
+    update: (id, patch) => ({ id, timeZone: 'Asia/Calcutta', nextRunAt: '2026-10-26T16:30:00.000Z', ...patch }),
+    list: () => [{ id: 'job', name: 'Job watch', threadId: 'owner' }] };
+  const created = JSON.parse(await run({ action: 'add', name: 'Job watch', cron: 'every 30m', prompt: 'Watch' }, { scheduler, scheduleThreadId: 'owner' }));
+  assert.equal(created.nextRunLocal, 'Mon 26 Oct, 22:00 (Asia/Calcutta)', '21:30 IST must never be reported as 16:00 local');
+  const updated = JSON.parse(await run({ action: 'update', id: 'Job watch', patch: { prompt: 'Watch again' } }, { scheduler, scheduleThreadId: 'owner' }));
+  assert.equal(updated.nextRunLocal, 'Mon 26 Oct, 22:00 (Asia/Calcutta)');
+  const paused = JSON.parse(await run({ action: 'add', name: 'Paused', cron: 'every 30m', prompt: 'Watch' }, { scheduler: { add: input => ({ id: 'job', name: input.name, nextRunAt: null }) }, scheduleThreadId: 'owner' }));
+  assert.equal(paused.nextRunLocal, 'not scheduled (paused)');
+});
