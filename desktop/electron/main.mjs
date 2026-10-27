@@ -22,6 +22,8 @@ import { CAPTURE_ACTIONS, CAPTURE_EVENT } from '../browser-helper/protocol.mjs';
 import { CHATGPT_CONNECTION_ACTIONS } from '../shared/chatgpt-browser.mjs';
 import { chatgptResourcePaths } from './chatgpt-resources.mjs';
 import { desktopCredentialFile } from './credential-profile.mjs';
+import { VOICE_ACTIONS } from '../shared/voice.mjs';
+import { runVoiceAction } from './voice-actions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -490,6 +492,12 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     };
   }
   await current.init();
+  if (Object.values(VOICE_ACTIONS).includes(action)) {
+    return runVoiceAction({ engine: current, action, payload, focus: state => {
+      showWindow();
+      current.emit({ type: 'voice-focus', threadId: state.threadId });
+    } });
+  }
   if (Object.values(CAPTURE_ACTIONS).includes(action)) {
     return runCaptureAction({
       action, payload, surface: fromIsland ? 'island' : 'main', sourceId: event.sender.id,

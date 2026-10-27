@@ -6,6 +6,9 @@ const providers = new Set(['copilot', 'groq', 'kilo', 'custom', CHATGPT_BROWSER_
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
+export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice']); // Private API keys and the discovered microphone preference.
+const MICROPHONE_NAME_CHARS = 200; // Characters: matches the bounded device label in the voice protocol.
+for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
 keys.add('secretScrubbing');
 keys.add('secretWarningSeen');
 
@@ -80,7 +83,7 @@ function validatePatch(patch) {
       clean[key] = [...new Set(value)];
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
-      const limit = key === 'model' || key === 'imageModel' ? 200 : 4096;
+      const limit = key === 'micDevice' ? MICROPHONE_NAME_CHARS : key === 'model' || key === 'imageModel' ? 200 : 4096;
       const text = value.trim();
       if (text.length > limit) throw new Error(`${key} is too long`);
       clean[key] = text;
@@ -91,6 +94,7 @@ function validatePatch(patch) {
 
 export function applyDesktopSettings(base, saved = {}) {
   const config = { ...base };
+  for (const key of VOICE_SETTINGS_KEYS) if (own(saved, key)) config[key] = saved[key];
   if (own(saved, 'provider')) {
     config.provider = saved.provider;
     // API_BASE from .env otherwise wins over PROVIDER in the shared bootstrap.
@@ -193,6 +197,9 @@ export class DesktopSettingsStore {
       hasGroqKey: Boolean(own(this.data, 'groqApiKey') ? this.data.groqApiKey : config.groqApiKey),
       hasKiloKey: Boolean(this.data.kiloApiKey || (provider === 'kilo' && config.apiKey)),
       hasComposioKey: Boolean(own(this.data, 'composioApiKey') ? this.data.composioApiKey : config.composioApiKey),
+      hasSarvamKey: Boolean(own(this.data, 'sarvamApiKey') ? this.data.sarvamApiKey : config.sarvamApiKey),
+      hasBasetenKey: Boolean(own(this.data, 'basetenApiKey') ? this.data.basetenApiKey : config.basetenApiKey),
+      micDevice: own(this.data, 'micDevice') ? this.data.micDevice : config.micDevice || '',
     };
   }
 }

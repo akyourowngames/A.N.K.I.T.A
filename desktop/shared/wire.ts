@@ -1,5 +1,7 @@
 import type { COMPUTER_USE_CHANGED } from './computer-use.mjs';
 import type { CHATGPT_CONNECTION_CHANGED, ChatGptConnectionState } from './chatgpt-browser.mjs';
+import type { VoiceState } from './voice.mjs';
+export type { VoiceState, VoiceStatus } from './voice.mjs';
 
 export type Teammate = {
   id: string; name: string; color: string; emoji: string; persona: string;
@@ -10,6 +12,7 @@ export type Teammate = {
 export type Model = { id: string; name?: string; vendor?: string; context?: number; tools?: boolean };
 export type DesktopSkill = { name: string; description: string; suggestedTools: string; body: string; enabled: boolean };
 export type DesktopPreferences = {
+  hasSarvamKey?: boolean; hasBasetenKey?: boolean; micDevice?: string;
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
@@ -21,6 +24,7 @@ export type DesktopPreferences = {
 export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
+  sarvamApiKey?: string; basetenApiKey?: string; micDevice?: string;
   imageApiKey?: string; unsplashAccessKey?: string; pixabayApiKey?: string;
 };
 export type DesktopSettingsResult = {
@@ -100,6 +104,8 @@ export type UpdateEvent =
   | { type: 'error'; message: string };
 
 export type EngineEvent = (
+  | { type: 'voice-state'; state: VoiceState }
+  | { type: 'voice-focus'; threadId: string | null }
   | { type: 'companion-capture-ready'; capture: CompanionCaptureItem }
   | { type: 'secret-notice'; message: string }
   | { type: 'schedule-changed'; jobs: Routine[] }
