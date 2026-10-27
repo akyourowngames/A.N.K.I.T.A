@@ -139,9 +139,9 @@ Response: `{ transcript, language_code, language_probability }`.
 
 | Field | Value | Why |
 |---|---|---|
-| `text` | ≤ 2500 chars (v4-flash) | Chunk with the existing sentence splitter |
+| `text` | chunked at 2000 chars (Bulbul's documented cap is 2500) | Reuses the existing sentence splitter, so nothing is truncated |
 | `model` | `bulbul:v4-flash` | ₹1 per 1,000 chars vs ₹3 for v3 |
-| `language_code` | `hi-IN` when STT detected Hindi, else `en-IN` | Matches what the user spoke |
+| `language_code` | chosen from the reply text, not raw detection | see the note below — detection is unstable |
 | `speaker` | `sanchita_hi_assistant` / `sanchita_en_companion` / `ishita_enhi_companion` | Assistant-style personas |
 | `output_audio_codec` | `mp3` | Reuses `playMp3` unchanged |
 | `speech_sample_rate` | `22050` | Default; playback handles it |
@@ -156,6 +156,21 @@ Response: `{ audios: [base64] }` → `Buffer.from(base64, "base64")`.
 - STT on a short English clip: **193 ms**.
 - A Devanagari-input clip came back in Devanagari; script follows the audio. Keep the
   keyterms list and test with the actual filming voice.
+
+**Two findings from repeated runs — both changed the design:**
+
+1. **Auto-detect language is not stable on Hinglish.** The same clip came back `hi-IN`
+   (confidence 0.998) on one run, `hi-IN` 0.904, and `pa-IN` 0.453 on another. The
+   *transcript* stayed correct every time; only the language label drifted. So the TTS
+   language is **not** taken from detection alone: `chooseSarvamLanguage()` reads the
+   reply's own script (Devanagari → `hi-IN`), then treats a detected `hi-*` as "speak
+   Hindi", a detected `en-*` as "speak English", and anything else as the configured
+   fallback. Speaking Hinglish with a Punjabi voice would have been the failure mode.
+2. **The assistant's own name is sometimes misheard.** `Ankita` came back as `Anpeta`
+   once, with `Ankita` already in `keyterms`. Keyterms bias, they do not guarantee. This
+   is why the transcript is printed before anything runs, and why no demo take may show a
+   mishearing. Command words (VS Code, workspace, folder names) were correct in every run
+   across both scripts.
 
 **Limits and cost** (Sarvam docs): STT REST is for clips under 30 s; 60 requests/min on
 pay-as-you-go; TTS same 60/min. Free credits **₹100, never expiring**. STT ₹0.49/min,
@@ -303,16 +318,17 @@ repo, the docs, or chat.
 
 | File | Change | Size |
 |---|---|---|
-| `src/channels/voice.mjs` | `transcribeSarvam`, `synthesizeSarvam`, provider resolution, language → speaker map | ~120 lines |
-| `src/core/config.mjs` | new keys, provider enums, defaults | ~25 lines |
+| `src/channels/voice.mjs` | `transcribeSarvam`, `synthesizeSarvam`, `transcribeAudio`, provider/stt resolution, `chooseSarvamLanguage` | ~200 lines — **done** |
+| `src/core/config.mjs` | new keys, provider enums, defaults | ~30 lines — **done** |
 | `src/core/provider.mjs` | `baseten` preset | ~10 lines |
-| `src/core/cli.mjs` | provider-aware `voiceReady`/`transcribeWav`/`synthesizeSpeech`; job hooks in `runTurn` + `voiceLoop`; `/task` command | ~120 lines |
+| `src/core/cli.mjs` | provider-aware `voiceReady`/`transcribeWav`/`synthesizeSpeech`; job hooks in `runTurn` + `voiceLoop`; `/task` command | ~130 lines — **voice half done** |
 | `src/automation/voice-task.mjs` | new: record, state machine, labels, throttle | ~250 lines |
 | `src/tooling/job-ui.mjs` | render voice-task cards without touching process jobs | ~40 lines |
-| `.env.example` | document new names | ~15 lines |
+| `.env.example` | document new names | ~20 lines — **done** |
+| `scripts/verify-sarvam-voice.mjs` | live round-trip check, repeatable | new — **done** |
 | `README.md` | "new work" section, old vs new table | ~40 lines |
 | `docs/guides/voice-delegation.md` | user-facing how-to | new |
-| `test/channels/voice.test.mjs` | Sarvam request/response/error tests | ~120 lines |
+| `test/channels/voice.test.mjs` | Sarvam request/response/error tests | ~170 lines — **done** |
 | `test/automation/voice-task.test.mjs` | state machine, labels, throttle | ~120 lines |
 
 Deliberately **not** touched: the desktop app, the scheduler, the Telegram channel, the
@@ -340,7 +356,7 @@ Sunday 1 Nov are full days. Features freeze 3 Nov.
 | Day | Work | Gate (do not proceed otherwise) |
 |---|---|---|
 | **Tue 27 (tonight)** | ~~Put `BASETEN_API_KEY` in `.env`; smoke test~~ **DONE** — key present, `-1026` slug 200, tool calling verified, Sarvam round trip verified. Remaining: listen to one TTS clip | **Cleared**, except the by-ear voice check |
-| **Wed 28** | Sarvam STT/TTS in `voice.mjs`; provider-aware voice gate; unit tests; `/voice` uses Sarvam | Live Hinglish utterance → correct transcript → spoken reply, three times |
+| **Wed 28** | ~~Sarvam STT/TTS in `voice.mjs`; provider-aware voice gate; unit tests~~ **DONE early on 27 Oct** (see §18). Remaining: the same through the mic in `/voice` | Live Hinglish utterance → correct transcript → spoken reply, three times |
 | **Thu 29** | `voice-task.mjs`; job card; steps from tool calls; spoken final report | One spoken command opens VS Code, creates the folder/files, speaks the report |
 | **Fri 30** | Spoken step updates, approval status, failure paths, `/task` list | Three deliberate failures do not break the demo |
 | **Sat 31 (full)** | Hinglish demo flow ×3 in a row; English backup take; film rough shots | 3/3 clean runs |
@@ -442,6 +458,46 @@ uncommitted. Do not start hackathon work on top of that.
 - Desktop island integration effort; estimated, not measured.
 - Hackathon rubric details; the PDF's tables were placeholders.
 - Baseten pricing and the two credit pots; PDF claims only.
+
+## 18a. Implementation status — Sarvam voice (2026-10-27)
+
+Shipped on `feat/voice-delegation`:
+
+| Piece | Where | State |
+|---|---|---|
+| Sarvam STT (`saaras:v4`, `translit`, keyterms) | `src/channels/voice.mjs` `transcribeSarvam` | done |
+| Sarvam TTS (`bulbul:v4-flash`, MP3) | `src/channels/voice.mjs` `synthesizeSarvam` | done |
+| Provider-agnostic transcription | `src/channels/voice.mjs` `transcribeAudio` | done |
+| Language selection that survives jumpy detection | `src/channels/voice.mjs` `chooseSarvamLanguage` | done |
+| Provider-aware voice gate (no longer Groq-only) | `src/core/cli.mjs` `voiceReady` | done |
+| Config keys + `.env.example` documentation | `src/core/config.mjs`, `.env.example` | done |
+| Repeatable live check | `scripts/verify-sarvam-voice.mjs` | done |
+
+Verification actually run:
+
+- `node --test test/channels/voice.test.mjs` → **41/41 pass** (13 new Sarvam tests:
+  form fields and auth header, keyterms handling, 403 wording, one-retry-on-429, base64
+  decode, chunking above the 2000-char cap, empty-audio error, provider/speaker/language
+  resolution, config defaults).
+- `node --test test/channels test/core` → **358/358 pass**.
+- `node --test test/automation` → **106/106 pass** (the daemon imports the changed
+  voice helpers).
+- `node scripts/verify-sarvam-voice.mjs` → **2/2** real round trips through the real
+  modules: MP3 → 16 kHz mono WAV (what `startRecording` writes) → transcript, then the
+  reply direction in the chosen voice. Latest run: Hinglish 1.09 s TTS / 251 ms STT,
+  `hi-IN` at 0.982; English 0.87 s TTS / 269 ms STT, `en-IN` at 1.0.
+- `node chat.mjs --config` shows the new rows and never prints a key value.
+
+Still open:
+
+- The **mic** path (`/voice` with a real voice) has not been exercised — the module-level
+  round trip is audio-equivalent, but a human has to speak. Gate for Wed: three clean
+  runs, by ear.
+- Nobody has listened to Bulbul's pronunciation of English words inside Hinglish. That is
+  the one judgement only the owner's ears can make, and it decides
+  `sanchita_hi_assistant` vs `ishita_enhi_companion`.
+- `.env` now sets `STT_PROVIDER=sarvam` and `TTS_PROVIDER=sarvam` so the build runs on
+  Sarvam; deleting those two lines restores Groq/Edge exactly.
 
 ## 19. Sources
 

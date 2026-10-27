@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_SUMMARY_NOTE } from "../channels/voice.mjs";
+import { DEFAULT_SUMMARY_NOTE, DEFAULT_SARVAM_STT_MODEL, DEFAULT_SARVAM_STT_MODE, DEFAULT_SARVAM_TTS_MODEL, DEFAULT_SARVAM_SPEAKER_HI, DEFAULT_SARVAM_SPEAKER_EN, DEFAULT_SARVAM_TTS_LANGUAGE, parseKeyterms } from "../channels/voice.mjs";
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
 import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
 
@@ -99,9 +99,20 @@ const DEFAULTS = {
   heartbeatDailyLimit: HEARTBEAT_DAILY_LIMIT,
   heartbeatCooldownMinutes: HEARTBEAT_COOLDOWN_MINUTES,
   groqApiKey: "",
+  sarvamApiKey: "",
+  // "auto" keeps Groq (existing behaviour) unless Sarvam is the only key set.
+  sttProvider: "auto",
   sttModel: "whisper-large-v3-turbo",
+  sarvamSttModel: DEFAULT_SARVAM_STT_MODEL,
+  sarvamSttMode: DEFAULT_SARVAM_STT_MODE,
+  sarvamKeyterms: [],
   ttsProvider: "edge",
   ttsModel: "canopylabs/orpheus-v1-english",
+  sarvamTtsModel: DEFAULT_SARVAM_TTS_MODEL,
+  sarvamSpeakerHi: DEFAULT_SARVAM_SPEAKER_HI,
+  sarvamSpeakerEn: DEFAULT_SARVAM_SPEAKER_EN,
+  // Used only when neither the reply text nor the transcript settles a language.
+  sarvamTtsLanguage: DEFAULT_SARVAM_TTS_LANGUAGE,
   ttsVoice: "",
   ttsRate: "+0%",
   speak: false,
@@ -368,12 +379,35 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
       return Number.isFinite(n) && n >= 0 ? Math.min(1440, Math.floor(n)) : DEFAULTS.heartbeatCooldownMinutes;
     })(),
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
+    sarvamApiKey: pick("SARVAM_API_KEY") || DEFAULTS.sarvamApiKey,
+    sttProvider: (() => {
+      const v = String(pick("STT_PROVIDER") || DEFAULTS.sttProvider).toLowerCase();
+      return ["auto", "groq", "sarvam"].includes(v) ? v : DEFAULTS.sttProvider;
+    })(),
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,
+    sarvamSttModel: pick("SARVAM_STT_MODEL") || DEFAULTS.sarvamSttModel,
+    // `translit` keeps Hinglish in Latin script; `transcribe`/`verbatim` are the
+    // other documented modes, so anything unknown falls back to the default.
+    sarvamSttMode: (() => {
+      const v = String(pick("SARVAM_STT_MODE") || DEFAULTS.sarvamSttMode).toLowerCase();
+      return ["translit", "transcribe", "verbatim", "codemix"].includes(v) ? v : DEFAULTS.sarvamSttMode;
+    })(),
+    // Bias recognition toward the assistant's own name unless the user
+    // overrides the list; names are the words recognisers mangle most.
+    sarvamKeyterms: parseKeyterms(pick("SARVAM_KEYTERMS") ?? (pick("AGENT_NAME") || DEFAULTS.agentName)),
     ttsProvider: (() => {
       const v = String(pick("TTS_PROVIDER") || DEFAULTS.ttsProvider).toLowerCase();
-      return ["auto", "groq", "edge"].includes(v) ? v : DEFAULTS.ttsProvider;
+      return ["auto", "groq", "edge", "sarvam"].includes(v) ? v : DEFAULTS.ttsProvider;
     })(),
     ttsModel: pick("TTS_MODEL") || DEFAULTS.ttsModel,
+    sarvamTtsModel: pick("SARVAM_TTS_MODEL") || DEFAULTS.sarvamTtsModel,
+    sarvamSpeakerHi: pick("SARVAM_TTS_SPEAKER_HI") || DEFAULTS.sarvamSpeakerHi,
+    sarvamSpeakerEn: pick("SARVAM_TTS_SPEAKER_EN") || DEFAULTS.sarvamSpeakerEn,
+    // A BCP-47-ish tag like hi-IN / en-IN; anything malformed falls back.
+    sarvamTtsLanguage: (() => {
+      const v = String(pick("SARVAM_TTS_LANGUAGE") || DEFAULTS.sarvamTtsLanguage).trim();
+      return /^[a-z]{2}-[A-Z]{2}$/.test(v) ? v : DEFAULTS.sarvamTtsLanguage;
+    })(),
     ttsVoice: pick("TTS_VOICE") || DEFAULTS.ttsVoice,
     ttsRate: (() => {
       const v = String(pick("TTS_RATE") || DEFAULTS.ttsRate).trim();

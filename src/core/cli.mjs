@@ -58,13 +58,18 @@ import {
   detectMic,
   openVoiceInput,
   createTurnDetector,
-  transcribeGroq,
+  transcribeAudio,
+  synthesizeSarvam,
   synthesizeEdge,
   synthesizeGroq,
   listEdgeVoices,
   GROQ_VOICES,
   resolveTtsProvider,
   resolveTtsVoice,
+  resolveSarvamSpeaker,
+  chooseSarvamLanguage,
+  resolveSttProvider,
+  sttKeysMissing,
   playMp3,
   stopPlayback,
   stripForSpeech,
@@ -390,9 +395,14 @@ export async function main() {
         ? `${config.toolProvider || provider.name} · ${config.toolModel || "(provider default)"}`
         : "(off)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
+      ["SARVAM_API_KEY", config.sarvamApiKey ? "(set)" : "(not set)"],
+      ["STT_PROVIDER", config.sttProvider],
       ["STT_MODEL", config.sttModel],
+      ["SARVAM_STT", `${config.sarvamSttModel} · ${config.sarvamSttMode}`],
+      ["SARVAM_KEYTERMS", config.sarvamKeyterms.length ? config.sarvamKeyterms.join(", ") : "(none)"],
       ["TTS_PROVIDER", config.ttsProvider],
       ["TTS_MODEL", config.ttsModel],
+      ["SARVAM_TTS", `${config.sarvamTtsModel} · ${config.sarvamTtsLanguage}`],
       ["TTS_VOICE", config.ttsVoice || "(provider default)"],
       ["TTS_RATE", config.ttsRate],
       ["SPEAK", config.speak ? "on" : "off"],
@@ -799,6 +809,10 @@ export async function main() {
     return outcome;
   };
 
+  // Language the last transcription reported, so a reply is spoken in the
+  // language the user actually used rather than a fixed one.
+  let speechLanguage = "";
+
   const speechOpts = () => ({
     address: config.voiceAddress,
     maxItems: config.voiceSpeakItems,
@@ -813,6 +827,26 @@ export async function main() {
     if (provider === "groq" && !config.groqApiKey) {
       term.line(c.dim("  (tts: set GROQ_API_KEY in .env, or TTS_PROVIDER=edge)"));
       return null;
+    }
+    if (provider === "sarvam") {
+      if (!config.sarvamApiKey) {
+        term.line(c.dim("  (tts: set SARVAM_API_KEY in .env, or TTS_PROVIDER=edge)"));
+        return null;
+      }
+      // The reply's script decides the voice; the transcript language is only a
+      // hint, because Hinglish auto-detect is not stable between runs.
+      const languageCode = chooseSarvamLanguage({
+        text: clean,
+        detected: speechLanguage,
+        fallback: config.sarvamTtsLanguage,
+      });
+      return synthesizeSarvam({
+        apiKey: config.sarvamApiKey,
+        model: config.sarvamTtsModel,
+        speaker: resolveSarvamSpeaker(config, languageCode),
+        languageCode,
+        text: clean,
+      });
     }
     return provider === "groq"
       ? synthesizeGroq({
@@ -857,8 +891,11 @@ export async function main() {
     if (opts.model) config.model = opts.model;
     if (opts.maxTokens) { config.maxTokens = opts.maxTokens; config.maxTokensExplicit = true; }
     agent.config = config;
-    if (!config.groqApiKey) {
-      term.line(c.red("  voice needs GROQ_API_KEY in .env (free key at console.groq.com)."));
+    const missing = sttKeysMissing(config);
+    if (missing) {
+      term.line(c.red(`  voice needs ${missing} in .env for speech-to-text (STT_PROVIDER=${resolveSttProvider(config)}).`));
+      term.line(c.dim("  sarvam: SARVAM_API_KEY + STT_PROVIDER=sarvam (best for Hinglish)"));
+      term.line(c.dim("  groq:   GROQ_API_KEY   + STT_PROVIDER=groq   (free at console.groq.com)"));
       term.line(c.dim("  add it, then run /voice again - no restart needed."));
       return false;
     }
@@ -868,13 +905,10 @@ export async function main() {
   const transcribeWav = async (wav) => {
     term.write(c.dim("  transcribing…"));
     try {
-      const text = await transcribeGroq({
-        apiKey: config.groqApiKey,
-        model: config.sttModel,
-        wavPath: wav,
-      });
+      const result = await transcribeAudio({ config, wavPath: wav });
       term.write("\r\x1b[K");
-      return text;
+      if (result.languageCode) speechLanguage = result.languageCode;
+      return result.text;
     } catch (err) {
       term.write("\r\x1b[K");
       term.line(c.red(`  stt: ${err.message}`));
