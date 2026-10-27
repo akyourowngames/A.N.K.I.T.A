@@ -100,6 +100,11 @@ const DEFAULTS = {
   heartbeatCooldownMinutes: HEARTBEAT_COOLDOWN_MINUTES,
   groqApiKey: "",
   sarvamApiKey: "",
+  basetenApiKey: "",
+  // Voice turns may use a different provider/model for latency; empty = same.
+  voiceProvider: "",
+  voiceModel: "",
+  voiceApiBase: "",
   // "auto" keeps Groq (existing behaviour) unless Sarvam is the only key set.
   sttProvider: "auto",
   sttModel: "whisper-large-v3-turbo",
@@ -380,6 +385,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     })(),
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sarvamApiKey: pick("SARVAM_API_KEY") || DEFAULTS.sarvamApiKey,
+    basetenApiKey: pick("BASETEN_API_KEY") || DEFAULTS.basetenApiKey,
+    // A named provider preset for voice-only turns (see VOICE_PROVIDER).
+    voiceProvider: (pick("VOICE_PROVIDER") || DEFAULTS.voiceProvider).trim().toLowerCase(),
+    voiceModel: pick("VOICE_MODEL") || DEFAULTS.voiceModel,
+    voiceApiBase: pick("VOICE_API_BASE") || DEFAULTS.voiceApiBase,
     sttProvider: (() => {
       const v = String(pick("STT_PROVIDER") || DEFAULTS.sttProvider).toLowerCase();
       return ["auto", "groq", "sarvam"].includes(v) ? v : DEFAULTS.sttProvider;

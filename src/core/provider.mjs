@@ -77,6 +77,13 @@ export function pickModel(models, wanted = "", useTools = true) {
 }
 
 /**
+ * Baseten's Meta Model API serves Muse Spark Open under a pinned slug. The
+ * unpinned `meta-models/muse-spark-open` returns 403 in this workspace, so the
+ * pin is the default rather than a fallback.
+ */
+export const BASETEN_DEFAULT_MODEL = "meta-models/muse-spark-open-1026";
+
+/**
  * Named OpenAI-compatible gateways. "copilot" is handled by the CLI's GitHub
  * device flow; every other entry is a plain CompatibleClient target. A preset
  * only supplies defaults, so an explicit API_BASE / API_KEY / MODEL still wins.
@@ -102,6 +109,16 @@ export const PROVIDERS = {
     // The key is the same GROQ_API_KEY already used for Whisper/Orpheus, so it
     // lives in config.groqApiKey rather than being duplicated into API_KEY.
     keyConfig: "groqApiKey",
+    keyless: false,
+  },
+  baseten: {
+    label: "Baseten (Meta Model APIs)",
+    apiBase: "https://inference.baseten.co/v1",
+    // Measured 2026-10-27 on this machine: ~3.3s per short tool-using turn,
+    // versus ~5.6s for the Kilo free routes. The pinned `-1026` slug is the one
+    // that answers; the unpinned slug returns 403 in this workspace.
+    defaultModel: BASETEN_DEFAULT_MODEL,
+    keyConfig: "basetenApiKey",
     keyless: false,
   },
 };
