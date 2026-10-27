@@ -34,6 +34,31 @@ That screen prints only whether a key exists, never the value.
 
 ## Test 1 — no microphone (30 seconds)
 
+### Faster voice-only replies
+
+Keep your usual typed-chat settings and add these local settings:
+
+```dotenv
+VOICE_PROVIDER=baseten
+VOICE_MODEL=meta-models/muse-spark-open-1026
+BASETEN_API_KEY=...
+VOICE_SILENCE_MS=800
+```
+
+The voice planner uses low reasoning effort. It reserves enough output tokens for
+reasoning before the spoken answer. A short acknowledgement is prepared when voice
+mode starts, then played from memory while the planner works. It means "I heard you",
+not "the work is done". The answer still takes time to plan and speak.
+
+The 800 ms pause is local to this demo setup; the shipped default stays 1200 ms.
+If it cuts off a natural pause, increase it again. Missing Baseten credentials stop
+voice mode with a message; they do not silently select a non-Meta planner.
+
+If a key was exposed in chat, rotate it in the provider dashboard and replace it
+locally. Never paste it into a conversation.
+
+### Speech round trip
+
 ```bash
 node scripts/verify-sarvam-voice.mjs
 ```

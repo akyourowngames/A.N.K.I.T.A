@@ -82,6 +82,23 @@ export function pickModel(models, wanted = "", useTools = true) {
  * pin is the default rather than a fallback.
  */
 export const BASETEN_DEFAULT_MODEL = "meta-models/muse-spark-open-1026";
+export const BASETEN_BASE_URL = "https://inference.baseten.co/v1";
+export const BASETEN_MIN_TOKENS = 400; // Output tokens: reasoning consumes smaller budgets before answering.
+export const BASETEN_DEFAULT_TOKENS = 1024; // Output tokens: short voice replies plus reasoning headroom.
+export const BASETEN_REASONING_EFFORT = "low"; // Lowest supported effort reduces voice response delay.
+export const BASETEN_REASONING_LEVELS = [BASETEN_REASONING_EFFORT, "medium", "high", "xhigh"];
+
+/** Provider-specific request settings; other providers retain their own defaults. */
+export function providerClientOptions(provider, config = {}) {
+  if (provider?.name !== "baseten") return {};
+  return {
+    requestDefaults: {
+      max_tokens: Math.max(BASETEN_MIN_TOKENS, config.basetenMaxTokens || BASETEN_DEFAULT_TOKENS),
+      reasoning_effort: config.basetenReasoningEffort || BASETEN_REASONING_EFFORT,
+    },
+    minMaxTokens: BASETEN_MIN_TOKENS,
+  };
+}
 
 /**
  * Named OpenAI-compatible gateways. "copilot" is handled by the CLI's GitHub
@@ -113,7 +130,7 @@ export const PROVIDERS = {
   },
   baseten: {
     label: "Baseten (Meta Model APIs)",
-    apiBase: "https://inference.baseten.co/v1",
+    apiBase: BASETEN_BASE_URL,
     // Measured 2026-10-27 on this machine: ~3.3s per short tool-using turn,
     // versus ~5.6s for the Kilo free routes. The pinned `-1026` slug is the one
     // that answers; the unpinned slug returns 403 in this workspace.
@@ -144,13 +161,15 @@ export function resolveProvider(name) {
  * baseUrl, headers(stream), ensureToken(), models().
  */
 export class CompatibleClient {
-  constructor({ apiBase, apiKey = "", model = "", contextWindow = null, freeOnly = false } = {}) {
+  constructor({ apiBase, apiKey = "", model = "", contextWindow = null, freeOnly = false, requestDefaults = {}, minMaxTokens = 0 } = {}) {
     if (!apiBase) throw new Error("API_BASE is required for a custom endpoint.");
     this._base = String(apiBase).replace(/\/$/, "");
     this.apiKey = apiKey;
     this.configuredModel = model;
     this.contextWindow = contextWindow;
     this.freeOnly = freeOnly;
+    this.requestDefaults = requestDefaults;
+    this.minMaxTokens = minMaxTokens;
     this.modelCapabilities = new Map();
   }
 

@@ -1,4 +1,4 @@
-import { CompatibleClient, resolveProvider, pickModel } from './provider.mjs';
+import { CompatibleClient, resolveProvider, pickModel, providerClientOptions } from './provider.mjs';
 import { CopilotClient, resolveGithubToken, deviceLogin, writeAuth } from './auth.mjs';
 
 /** Shared provider bootstrap for terminal and desktop front ends. */
@@ -16,14 +16,14 @@ export async function createSession({
   if (!provider) throw new Error(`Unknown provider "${config.provider}"`);
   if (provider.name === 'custom' && !config.apiBase) throw new Error('Custom provider API URL is required');
   if (provider.name !== 'copilot' && !config.apiBase) {
-    config.apiBase = provider.apiBase;
+    config.apiBase = (provider.name === 'baseten' && config.basetenBaseUrl) || provider.apiBase;
     config.apiKey ||= provider.apiKey || (provider.keyConfig && config[provider.keyConfig]) || '';
-    config.model ||= provider.defaultModel || '';
+    config.model ||= (provider.name === 'baseten' && config.basetenModel) || provider.defaultModel || '';
   }
 
   let client;
   if (config.apiBase) {
-    client = new CompatibleClientClass({ apiBase: config.apiBase, apiKey: config.apiKey, model: config.model, contextWindow: config.contextWindow, freeOnly: Boolean(provider.anonymousFreeOnly && config.apiBase === provider.apiBase) });
+    client = new CompatibleClientClass({ apiBase: config.apiBase, apiKey: config.apiKey, model: config.model, contextWindow: config.contextWindow, freeOnly: Boolean(provider.anonymousFreeOnly && config.apiBase === provider.apiBase), ...providerClientOptions(provider, config) });
   } else {
     let token = resolveToken();
     if (!token) {
@@ -42,7 +42,7 @@ export async function createSession({
     const base = config.toolApiBase || selected.apiBase;
     if (base) {
       const key = config.toolApiKey || selected.apiKey || (selected.keyConfig && config[selected.keyConfig]) || '';
-      tool = { client: new CompatibleClientClass({ apiBase: base, apiKey: key, model, contextWindow: config.contextWindow }), model };
+      tool = { client: new CompatibleClientClass({ apiBase: base, apiKey: key, model, contextWindow: config.contextWindow, ...providerClientOptions(selected, config) }), model };
     } else if (client instanceof CopilotClientClass) {
       tool = { client, model };
     } else {

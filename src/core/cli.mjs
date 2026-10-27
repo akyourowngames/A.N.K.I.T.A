@@ -34,7 +34,8 @@ import { Daemon } from "../automation/daemon.mjs";
 import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
 import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
 import { describeCron } from "../automation/cron.mjs";
-import { pickModel, resolveProvider, CompatibleClient } from "./provider.mjs";
+import { pickModel, resolveProvider } from "./provider.mjs";
+import { createVoiceBrain, withVoiceBrain, createAcknowledgements } from './voice-session.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
@@ -370,11 +371,11 @@ export async function main() {
     process.exit(2);
   }
   if (provider.name !== "copilot" && !config.apiBase) {
-    config.apiBase = provider.apiBase;
+    config.apiBase = (provider.name === 'baseten' && config.basetenBaseUrl) || provider.apiBase;
     if (!config.apiKey && provider.apiKey) config.apiKey = provider.apiKey;
     // Some gateways reuse an existing key (Groq shares GROQ_API_KEY with voice).
     if (!config.apiKey && provider.keyConfig && config[provider.keyConfig]) config.apiKey = config[provider.keyConfig];
-    if (!config.model && provider.defaultModel) config.model = provider.defaultModel;
+    if (!config.model && provider.defaultModel) config.model = (provider.name === 'baseten' && config.basetenModel) || provider.defaultModel;
   }
 
   if (opts.showConfig) {
@@ -395,6 +396,10 @@ export async function main() {
         ? `${config.toolProvider || provider.name} · ${config.toolModel || "(provider default)"}`
         : "(off)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
+      ["BASETEN_API_KEY", config.basetenApiKey ? "(set)" : "(not set)"],
+      ["VOICE_PROVIDER", config.voiceProvider || "(same as chat)"],
+      ["VOICE_MODEL", config.voiceModel || "(provider default)"],
+      ["VOICE_API_BASE", config.voiceApiBase || "(provider default)"],
       ["SARVAM_API_KEY", config.sarvamApiKey ? "(set)" : "(not set)"],
       ["STT_PROVIDER", config.sttProvider],
       ["STT_MODEL", config.sttModel],
@@ -460,34 +465,6 @@ export async function main() {
     process.exit(1);
   }
   const { client, tool, models, model, picked } = session;
-
-  /**
-   * Voice turns may run on a different, faster provider. Measured on this
-   * machine, a short tool-using turn took ~3.3s on Baseten's Muse Spark versus
-   * ~5.6s on the Kilo free routes, and voice is where a second is felt. Empty
-   * VOICE_PROVIDER keeps chat and voice on the same model.
-   */
-  const voiceBrain = (() => {
-    const name = String(config.voiceProvider || "").trim().toLowerCase();
-    if (!name) return null;
-    const selected = resolveProvider(name);
-    if (!selected) {
-      console.log(c.yellow(`  unknown VOICE_PROVIDER "${name}" - voice turns use ${model}`));
-      return null;
-    }
-    const apiBase = selected.apiBase || config.voiceApiBase || config.apiBase;
-    const apiKey = selected.apiKey || (selected.keyConfig && config[selected.keyConfig]) || "";
-    const voiceModel = config.voiceModel || selected.defaultModel || model;
-    if (!apiBase || !apiKey) {
-      console.log(c.yellow(`  VOICE_PROVIDER "${name}" needs an API base and key - voice turns use ${model}`));
-      return null;
-    }
-    return {
-      client: new CompatibleClient({ apiBase, apiKey, model: voiceModel, contextWindow: config.contextWindow }),
-      model: voiceModel,
-      label: selected.label || name,
-    };
-  })();
 
   if (opts.listModels) {
     console.log(c.bold(`\n${models.length} models\n`));
@@ -850,7 +827,7 @@ export async function main() {
     noteTemplate: config.voiceSummaryNote,
   });
 
-  const synthesizeSpeech = async (clean) => {
+  const synthesizeSpeech = async (clean, detected = speechLanguage) => {
     const provider = resolveTtsProvider(config);
     if (provider === "groq" && !config.groqApiKey) {
       term.line(c.dim("  (tts: set GROQ_API_KEY in .env, or TTS_PROVIDER=edge)"));
@@ -865,7 +842,7 @@ export async function main() {
       // hint, because Hinglish auto-detect is not stable between runs.
       const languageCode = chooseSarvamLanguage({
         text: clean,
-        detected: speechLanguage,
+        detected,
         fallback: config.sarvamTtsLanguage,
       });
       return synthesizeSarvam({
@@ -1157,40 +1134,16 @@ export async function main() {
     }
   };
 
-  // A reply starts with the model, which takes seconds, so a short cached line
-  // covers the gap. Synthesized once per voice session and replayed from
-  // memory afterwards; three short lines cost a fraction of a paisa.
-  const ACK_LINES = ["Haan.", "Dekh rahi hoon.", "Theek hai."];
-  let ackClips = [];
-  let ackCursor = 0;
-  const prewarmAcks = async () => {
-    const clips = await Promise.all(ACK_LINES.map((line) => synthesizeSpeech(line).catch(() => null)));
-    ackClips = clips.filter(Boolean);
-  };
-  const nextAck = () => {
-    if (!ackClips.length) return null;
-    const clip = ackClips[ackCursor % ackClips.length];
-    ackCursor += 1;
-    return clip;
-  };
-
-  /** Run one turn on the voice-only model, then put the chat model back. */
-  const runVoiceTurn = async (text) => {
-    if (!voiceBrain) return runTurn(text);
-    const savedClient = agent.client;
-    const savedModel = agent.model;
-    agent.client = voiceBrain.client;
-    agent.model = voiceBrain.model;
-    try {
-      return await runTurn(text);
-    } finally {
-      agent.client = savedClient;
-      agent.model = savedModel;
-    }
-  };
-
   const voiceLoop = async () => {
     if (!voiceReady()) return;
+    let voiceBrain;
+    try {
+      voiceBrain = createVoiceBrain(config, { client: agent.client, model: agent.model });
+    } catch (error) {
+      term.line(c.red(`  ${error.message}`));
+      return;
+    }
+    const acknowledgements = createAcknowledgements({ synthesize: synthesizeSpeech });
     voiceActive = true;
     const handsFree = config.voiceVad;
     term.line(
@@ -1203,7 +1156,7 @@ export async function main() {
     let pending = null;
     let routing = null;
     // Pay the acknowledgement cost on entry, not on the first reply.
-    await prewarmAcks();
+    await acknowledgements.prewarm();
     if (voiceBrain) {
       term.line(c.dim(`  voice answers use ${voiceBrain.label} · ${voiceBrain.model}`));
     }
@@ -1240,9 +1193,10 @@ export async function main() {
         term.line(`${c.magenta(config.username)} ${c.dim("›")} ${clean}`);
         // Start a short acknowledgement immediately; the model's answer is
         // seconds away and silence reads as "it didn't hear me".
-        const ack = nextAck();
-        const ackPlayback = ack ? playMp3(ack).catch(() => {}) : Promise.resolve();
-        const outcome = await runVoiceTurn(clean);
+        const ack = acknowledgements.next(speechLanguage);
+        if (ack) term.line(c.dim(`  ${ack.text}`));
+        const ackPlayback = ack ? playMp3(ack.audio).catch(() => {}) : Promise.resolve();
+        const outcome = await withVoiceBrain(agent, voiceBrain, () => runTurn(clean));
         await ackPlayback;
         term.line("");
         try {

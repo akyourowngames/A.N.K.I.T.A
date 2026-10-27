@@ -1,6 +1,6 @@
 # Voice Delegation — Meta Global AI Developer Hackathon Plan
 
-> Status: plan only, nothing implemented (2026-10-27).
+> Status: terminal implementation in progress (2026-10-27); microphone and desktop gates remain open.
 > Target: Meta Global AI Developer Hackathon 2026, track Indie Developer, theme
 > **Build for Your World**. Building period 27 Oct – 4 Nov 2026.
 > Deadline: 4 Nov 9:00 PM ET = **5 Nov 07:30 IST**. Plan submits the evening of 4 Nov IST.
@@ -498,6 +498,35 @@ Still open:
   `sanchita_hi_assistant` vs `ishita_enhi_companion`.
 - `.env` now sets `STT_PROVIDER=sarvam` and `TTS_PROVIDER=sarvam` so the build runs on
   Sarvam; deleting those two lines restores Groq/Edge exactly.
+
+## 18b. Voice latency continuation (2026-10-27)
+
+- Inherited uncommitted latency work was checkpointed as `d36ded6` before further edits.
+  This is a WIP checkpoint, not a completion claim.
+- Voice-only provider resolution now happens after `/voice` reloads configuration.
+  Invalid/missing planner credentials stop voice entry instead of silently switching away
+  from Meta. Typed chat keeps its own provider and model.
+- Voice turns pin the complete tool loop to the selected planner and restore the chat
+  client, tool model and active-model fields even after an exception or cancellation.
+- Baseten sends `reasoning_effort=low`, a default 1024 output-token budget, and a
+  400-token floor even if a smaller explicit cap is requested. Other providers keep
+  their existing request settings. Endpoint overrides now win over preset endpoints.
+- Short acknowledgement clips are cached before listening, in Hindi and English;
+  failed clips are skipped. Each acknowledgement is printed as well as played.
+- Local ignored `.env` now selects `VOICE_PROVIDER=baseten`, the pinned voice model,
+  and `VOICE_SILENCE_MS=800`. This last setting saves 400 ms relative to the previous
+  1200 ms pause, but still needs the owner's mic test for premature cut-offs.
+- New regressions: **5/5** failed before implementation, then **5/5** passed;
+  combined provider/voice-session run **19/19** passed.
+- Live request through the real `Agent` + voice-only client: **1121 ms to first text,
+  1142 ms total**, answer `I am ready`, pinned Meta model. This measures model response,
+  **not microphone-to-first-sound latency**. Historical timings in §7 used different
+  prompts; they are not a controlled before/after comparison.
+- The current checkout had a Baseten key but **no Sarvam key** at continuation time.
+  Owner is restoring it locally. Speech checks and the real three-run mic gate remain
+  open; no desktop/island work is authorized by this result.
+- The previous conversation exposed a Baseten key. Owner was asked to rotate it;
+  no secret values are printed by these checks or committed.
 
 ## 19. Sources
 

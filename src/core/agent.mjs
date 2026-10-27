@@ -858,6 +858,7 @@ export class Agent {
 
     const request = (cli, mdl, retries) => {
       const body = {
+        ...cli.requestDefaults,
         model: mdl,
         messages: messagesForModel(withMemoryContext(this.config.browserHistoryCompaction === true ? compactBrowserHistory(this.messages, {
           evidence: this.config.browserEvidenceRetention === true ? this.browserEvidence?.items || [] : [], notice: this.browserEvidence?.notice,
@@ -870,6 +871,7 @@ export class Agent {
       // Only cap the output when the user asked for it; otherwise let the
       // model/provider decide the reply length.
       if (this.config.maxTokensExplicit) body.max_tokens = this.config.maxTokens;
+      if (cli.minMaxTokens) body.max_tokens = Math.max(cli.minMaxTokens, body.max_tokens || cli.minMaxTokens);
       if (this.config.temperature != null) body.temperature = this.config.temperature;
       if (useTools) {
         body.tools = this.currentSpecs();

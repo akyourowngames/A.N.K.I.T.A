@@ -4,6 +4,7 @@ import path from "node:path";
 import { DEFAULT_SUMMARY_NOTE, DEFAULT_SARVAM_STT_MODEL, DEFAULT_SARVAM_STT_MODE, DEFAULT_SARVAM_TTS_MODEL, DEFAULT_SARVAM_SPEAKER_HI, DEFAULT_SARVAM_SPEAKER_EN, DEFAULT_SARVAM_TTS_LANGUAGE, parseKeyterms } from "../channels/voice.mjs";
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
 import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
+import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS } from './provider.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -386,6 +387,13 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
     sarvamApiKey: pick("SARVAM_API_KEY") || DEFAULTS.sarvamApiKey,
     basetenApiKey: pick("BASETEN_API_KEY") || DEFAULTS.basetenApiKey,
+    basetenBaseUrl: pick("BASETEN_BASE_URL") || BASETEN_BASE_URL,
+    basetenModel: pick("BASETEN_MODEL") || BASETEN_DEFAULT_MODEL,
+    basetenMaxTokens: Math.max(BASETEN_MIN_TOKENS, posInt(pick("BASETEN_MAX_TOKENS"), BASETEN_DEFAULT_TOKENS)),
+    basetenReasoningEffort: (() => {
+      const value = String(pick("BASETEN_REASONING_EFFORT") || '').trim().toLowerCase();
+      return BASETEN_REASONING_LEVELS.includes(value) ? value : BASETEN_REASONING_EFFORT;
+    })(),
     // A named provider preset for voice-only turns (see VOICE_PROVIDER).
     voiceProvider: (pick("VOICE_PROVIDER") || DEFAULTS.voiceProvider).trim().toLowerCase(),
     voiceModel: pick("VOICE_MODEL") || DEFAULTS.voiceModel,
