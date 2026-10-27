@@ -21,7 +21,7 @@ import { messageCost, trimMessages } from "./history.mjs";
 import { TOOL_RESULT_MODE } from '../integrations/chatgpt-browser/protocol.mjs';
 import { compactBrowserHistory } from './browser-context.mjs';
 import { focusAllows, TOOL_FOCUS_GUIDANCE, BROWSER_DISCOVERY_GUIDANCE } from './tool-focus.mjs';
-import { providerError, responseError } from './provider-errors.mjs';
+import { providerError, responseError, assertCompleteGeneration } from './provider-errors.mjs';
 import { loadSkills, skillPromptLines, activeAutomaticSkills } from './skills.mjs';
 import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 import { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } from '../../tools/browser/screenshots.mjs';
@@ -930,10 +930,11 @@ export class Agent {
     if (ctype.includes("application/json")) {
       const data = await res.json();
       if (data.error) throw providerError(data);
+      this.recordUsage(data.usage, onUsage);
+      assertCompleteGeneration(data.choices?.[0]?.finish_reason);
       const msg = data.choices?.[0]?.message || {};
       if (msg.content) onDelta?.(msg.content);
       if (msg.reasoning_content || msg.reasoning_text) onReasoning?.(msg.reasoning_content || msg.reasoning_text);
-      this.recordUsage(data.usage, onUsage);
       return { content: msg.content || "", toolCalls: msg.tool_calls || [], model: served };
     }
 
@@ -944,11 +945,17 @@ export class Agent {
     const acc = [];
     let finished = false;
     let doneMarker = false;
+    let finishReason = null;
 
     const consume = (json) => {
       if (json.error) throw providerError(json);
       this.recordUsage(json.usage, onUsage);
-      if (json.choices?.[0]?.finish_reason) finished = true;
+      if (json.choices?.[0]?.finish_reason) {
+        // Usage may arrive in a separate frame after this one. Drain it before
+        // rejecting a capped proposal; it still must never reach tool execution.
+        finishReason ||= json.choices[0].finish_reason;
+        finished = true;
+      }
       const delta = json.choices?.[0]?.delta;
       if (!delta) return;
       if (delta.content) {
@@ -1004,10 +1011,12 @@ export class Agent {
       error.code = 'STREAM_INCOMPLETE'; throw error;
     }
     } catch (error) {
+      assertCompleteGeneration(finishReason);
       if (!signal.aborted && error.name !== 'SyntaxError') error.code ||= 'STREAM_DISCONNECTED';
       throw error;
     } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
 
+    assertCompleteGeneration(finishReason);
     return { content, toolCalls: acc.filter(Boolean), model: served };
   }
 

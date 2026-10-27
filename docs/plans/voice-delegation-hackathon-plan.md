@@ -298,7 +298,7 @@ environment (`pick()` in `src/core/config.mjs` already checks both).
 | `BASETEN_API_KEY` | empty | Planner key; never committed |
 | `BASETEN_BASE_URL` | `https://inference.baseten.co/v1` | Override for testing |
 | `BASETEN_MODEL` | `meta-models/muse-spark-open-1026` | Planner slug (verified; no-suffix slug 403s) |
-| `BASETEN_MAX_TOKENS` | `1024` | Floor for reasoning overhead; small values truncate into garbage |
+| `BASETEN_MAX_TOKENS` | `4096` | Generation room for file/tool arguments and reasoning; spoken replies stay brief |
 | `BASETEN_REASONING_EFFORT` | `low` | `low|medium|high|xhigh` |
 | `SARVAM_API_KEY` | empty | Read from env if already set |
 | `STT_PROVIDER` | `groq` | `groq|sarvam` |
@@ -765,6 +765,76 @@ remain unmeasured. This comparison uses short conversation turns and simulated m
 input, not the owner's full active session. Existing Edge 403, recognition errors
 and strict recovered-tool-failure reporting remain as recorded above. `poem.txt`
 is preserved untouched and untracked.
+
+## 18f. Save-findings requests exhausted the planner budget (2026-10-27)
+
+Owner report: conversation, Wi-Fi lookup and research completed, but two requests
+to save the findings to Markdown failed with `The planner returned no final report.`
+Saved records `3f74c03f-deaf-49d0-a033-7c5991716f03` and
+`7cc68683-bc6a-48a1-ab14-a3ded23e6e51` contain only completed recall steps, no
+write step, empty summaries, and durations **6211/4785 ms**. No file write from those
+requests is claimed. The research claims themselves were not audited in this fix.
+
+Diagnosis:
+
+- Replayed the saved conversation through the real planner without executing its
+  proposals. With the prior **1024-token** budget, two of three streamed requests
+  ended with `finish_reason: length`, **1024 completion tokens**, empty content and
+  no tool calls, in **4543/4295 ms**. The remaining take produced a complete tool
+  request at **960 tokens**. A nonstream 1024-token probe happened to fit, confirming
+  this is output-length dependent, not a reliable endpoint/authentication failure.
+- File content is part of the generated tool-call arguments. Limiting spoken reply
+  length with a tiny generation budget therefore also prevented longer file saves.
+  The parser previously treated any finish reason, including `length`, as ordinary
+  completion, so the task tracker could only report the generic empty final reply.
+
+Fix:
+
+- Baseten's named default output budget is now **4096 tokens**. Explicit token
+  settings remain respected. The existing voice instruction and final two-sentence
+  speech cap remain in place; a larger allowance does not request a longer reply.
+- Both streaming and JSON responses reject `length` completion with
+  `provider_output_limit` and a clear explanation. No partial proposal is executed,
+  even if its JSON happens to be valid. The same capped request is not retried as
+  a network failure; earlier completed tools are not rerun.
+- Billed usage is retained, including an SSE usage-only trailer after the finish
+  frame. A review caught the initial early throw losing that trailer; its regression
+  first observed **0 instead of 1024** completion tokens, then passed after deferring
+  rejection until the trailer is read. A stream failure after a known length stop
+  retains the output-limit classification rather than triggering a network retry.
+- `.env.example` and setup guidance show the new default. No key or owner file was
+  changed; `poem.txt` remains untracked and untouched.
+
+Live verification:
+
+- Replayed the same saved conversation with the new **4096-token** setting, without
+  executing proposals: **3/3** complete, valid `write_file` requests in
+  **4391/4340/3965 ms**. Completion counts **2203/3716/1807 tokens**, argument lengths
+  **3898/3764/3307 characters**. These requests would exceed the old allowance.
+- `node scripts/verify-voice-delegation.mjs --planner-only --long-report` → **3/3**
+  real write/read/approval runs. Each saved **5502 characters** to a temporary
+  Markdown file, compared its entire content, then returned a short final report.
+  Task times **5833/5439/5830 ms**. The fixture is explicitly synthetic, not a
+  security advisory; temporary workspaces are removed.
+- `node scripts/verify-voice-latency.mjs` → **3/3**, two sentences each, final-player
+  handoffs **2512/2247/2327 ms** with real model/TTS/discovery and simulated input.
+  No recording or playback; the physical demonstration gate remains open.
+- Final affected-suite command:
+  `node --test --test-concurrency=1 --test-reporter=spec "test/channels/*.test.mjs"
+  "test/core/*.test.mjs" "test/automation/*.test.mjs"` → **518 tests, 518 pass,
+  0 fail/cancelled/skipped**, **160078 ms**, exit 0. Ignored trace:
+  `.voice-report-verification.log`. The focused stream/session checks passed
+  **25/25**; the real CLI fixture includes the clear output-limit error, no file
+  write, no identical retry and unaffected typed chat. All six transport/proposal
+  regressions first failed before the guard; the request-budget regression first
+  observed **1024 instead of 4096**. Syntax checks, literal review and
+  `git diff --check` passed. No new environment, endpoint or device assumptions.
+
+Remaining limits: reports exceeding the configured output budget can still fail,
+but now identify the cause and cannot execute their cut-off proposal. Full original
+MCP connections and physical headset interaction were not replayed. This fix does
+not audit the security advice, recover the user's missing file automatically, or
+claim the original failed requests succeeded.
 
 ## 19. Sources
 

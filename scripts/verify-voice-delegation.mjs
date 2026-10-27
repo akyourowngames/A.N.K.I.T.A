@@ -1,7 +1,7 @@
 /**
  * Real Sarvam -> Meta planner -> file tools -> Sarvam check, without a microphone.
  * Does not clear the three-run physical mic/VS Code demonstration gate.
- * Usage: node scripts/verify-voice-delegation.mjs [--planner-only] [--play]
+ * Usage: node scripts/verify-voice-delegation.mjs [--planner-only] [--long-report] [--play]
  * All files live in an OS temporary workspace; keys are never printed.
  */
 import fs from 'node:fs';
@@ -27,6 +27,13 @@ const flags = new Set(process.argv.slice(2));
 const plannerOnly = flags.has('--planner-only');
 const shouldPlay = flags.has('--play');
 const narrationOnly = flags.has('--narration-only');
+const LONG_REPORT_SECTIONS = 18; // Script-only sections: exercise file arguments larger than the old 1024-token cap.
+const expectedContent = flags.has('--long-report') ? '# Synthetic report for voice save verification\n\n' +
+  Array.from({ length: LONG_REPORT_SECTIONS }, (_, index) => `## Finding ${index + 1}\n\n` +
+    `This is synthetic test evidence for section ${index + 1}, not a real security advisory. ` +
+    'Preserve the full observation, the affected component, the validation steps, and the expected follow-up. ' +
+    'Check the source before making a claim, record what actually ran, and keep unresolved questions visible.\n\n').join('')
+  : EXPECTED_CONTENT;
 const loaded = loadConfig();
 const secrets = configuredSecrets(loaded);
 const config = { ...loaded, voiceProvider: 'baseten', tools: true, autoApprove: false,
@@ -75,7 +82,7 @@ try {
   for (let round = 1; round <= ROUNDS; round++) {
     const workspace = path.join(root, `take-${round}`);
     fs.mkdirSync(workspace);
-    const target = path.join(workspace, 'demo-note.txt');
+    const target = path.join(workspace, flags.has('--long-report') ? 'findings.md' : 'demo-note.txt');
     const store = new VoiceTaskStore({ directory: path.join(workspace, 'tasks'), secrets });
     let heard = { text: SPOKEN_REQUEST, languageCode: 'hi-IN', confidence: null };
     let sttMs = null;
@@ -127,7 +134,7 @@ try {
       run: async (observer, task) => {
         active = task;
         const text = await withVoiceBrain(agent, brain, () => agent.send(
-          `${heard.text}\nFor this isolated test: write exactly "${EXPECTED_CONTENT}" to ${target}, then read that file with read_file. ` +
+          `${heard.text}\nFor this isolated test: write exactly ${JSON.stringify(expectedContent)} to ${target}, then read that file with read_file. ` +
           'Use both real tools, then give one short Hinglish sentence. Do not merely describe a plan.',
           { ...observer, onDelta: () => { firstText ??= performance.now(); } }));
         return { text, error: agent.cancelled() ? 'cancelled' : null };
@@ -135,7 +142,7 @@ try {
     });
     await ackPlayback;
     assert.equal(task.status, 'done', task.error || task.summary);
-    assert.equal(fs.readFileSync(target, 'utf8').trim(), EXPECTED_CONTENT);
+    assert.equal(fs.readFileSync(target, 'utf8').trim(), expectedContent.trim());
     for (const tool of ['write_file', 'read_file']) assert.ok(task.steps.some(step => step.tool === tool && step.state === 'done'), `${tool} must have a real successful step.`);
     assert.ok(approvals > 0, 'The existing write approval gate must run.');
     let reportMs = null;
@@ -152,7 +159,7 @@ try {
     console.log(renderVoiceTask(task));
     rows.push({ round, model: brain.model, audioSeconds, sttMs, ackSelectedMs: Number(ackSelectedMs.toFixed(3)), ackBytes: ack?.audio.length ?? null,
       firstTextMs: Math.round(firstText - started), taskMs: task.endedAt - task.startedAt,
-      steps: task.steps.length, approvals, progressLines, progressAudio, reportMs, reportBytes, status: task.status });
+      steps: task.steps.length, approvals, progressLines, progressAudio, reportMs, reportBytes, savedCharacters: expectedContent.length, status: task.status });
   }
   console.table(rows);
   console.log(`OK: ${rows.length}/${ROUNDS} ${plannerOnly ? 'planner-only' : 'synthetic speech'} delegations. Physical mic/VS Code gate: NOT RUN.`);

@@ -156,6 +156,7 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 | `Sarvam STT 429` | More than 60 requests a minute | Wait a moment; it retries once on its own |
 | `VOICE_PROVIDER=baseten needs BASETEN_API_KEY` | Missing planner key | Save the key locally, then enter voice mode again |
 | `403: API error 403` | Planner rejected the key/model route | Check the key and pinned model; the failed request stays saved |
+| `The model hit its output limit ...` | A generated answer or file did not fit the allowance | Restart after this update; default `BASETEN_MAX_TOKENS` is now 4096. If explicitly set smaller, increase it before retrying |
 | Voice task is `cancelled` | Work was stopped | Read its partial steps before retrying |
 | `no microphone found` | Windows cannot see a mic | Check Settings → Privacy → Microphone, or set `MIC_DEVICE` |
 | Transcript is right but silent | Speaker or Bluetooth routing | Unplug the headset, or try `/say hello` |
@@ -206,6 +207,10 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
   content belongs in its file or artifact. If the model rambles, final speech still
   stops after two sentences, including Hindi sentence endings. The full result stays
   printed and saved. Typed chat and `/say` keep their existing settings.
+- **Files have a separate allowance from speech length.** The planner can use up to
+  `BASETEN_MAX_TOKENS` (4096 by default) for reasoning and tool arguments, including
+  file contents. The old 1024-token default could stop a save before it produced a
+  write request. A cut-off request now fails clearly and is never executed partly.
 - **Reply preparation overlaps.** The chosen microphone is discovered once per voice
   session and refreshed after a device failure. Final speech preparation and
   interruption-input startup run together. A three-turn service check measured
@@ -223,6 +228,12 @@ To measure real model/speech preparation without recording or playing audio:
 
 ```bash
 node scripts/verify-voice-latency.mjs
+```
+
+To check a longer Markdown save using real tools in temporary folders:
+
+```bash
+node scripts/verify-voice-delegation.mjs --planner-only --long-report
 ```
 
 The microphone startup is simulated in that check; repeat the live headset test

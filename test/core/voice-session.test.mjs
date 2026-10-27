@@ -94,6 +94,10 @@ test('Baseten requests use low reasoning and a safe token floor; other clients s
   await agent.streamAttempt();
   assert.equal(requests[1].reasoning_effort, undefined);
   assert.equal(requests[1].max_tokens, undefined);
+  agent.client = brain.client;
+  await agent.streamAttempt();
+  assert.equal(requests[2].max_tokens, 4096, 'file content shares the generation budget and must not be capped like spoken text');
+  assert.equal(voice.voiceReplyForSpeech('Saved the file. It has your findings. Anything else?'), 'Saved the file. It has your findings.');
 });
 
 test('acknowledgements warm once, skip failed clips and rotate in the spoken language', async () => {

@@ -23,9 +23,12 @@ async function runCli(t, mode) {
     if (mode === 'failure' && body.model === 'voice-model') { response.statusCode = 403; response.end('Planner access denied'); return; }
     const voice = body.model === 'voice-model';
     if (voice) {
-      assert.equal(body.reasoning_effort, 'low'); assert.ok(body.max_tokens >= 400);
+      assert.equal(body.reasoning_effort, 'low'); assert.equal(body.max_tokens, 4096);
       assert.match(body.messages[0].content, /one or two short sentences/);
     } else assert.ok(!body.messages[0].content.includes('Voice conversation:'));
+    if (voice && mode === 'output-limit') {
+      response.end(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }] })); return;
+    }
     const tool = voice && !body.messages.some(message => message.role === 'tool');
     if (voice && !tool && ['narration', 'tail-cancel'].includes(mode)) await new Promise(resolve => setTimeout(resolve, 100));
     response.end(JSON.stringify({ choices: [{ message: tool ? {
@@ -179,7 +182,7 @@ test('an overlong model reply is saved in full but spoken as only two sentences'
   assert.ok(!result.stdout.includes('PLAYED: Workspace tayyar hai. File is ready. Want'), result.stdout);
 });
 
-for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'cancel', 'approval-cancel', 'tail-cancel']) test(`real CLI voice loop: ${mode}, saved task, then unchanged typed chat`, async t => {
+for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'output-limit', 'cancel', 'approval-cancel', 'tail-cancel']) test(`real CLI voice loop: ${mode}, saved task, then unchanged typed chat`, async t => {
   const result = await runCli(t, mode);
   assert.equal(result.records.length, 1);
   const task = result.records[0];
@@ -207,6 +210,12 @@ for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'cancel', 
   } else if (mode === 'failure') {
     assert.match(task.error, /403/);
     assert.ok(!result.stdout.includes('token refreshed'));
+  } else if (mode === 'output-limit') {
+    assert.match(task.error, /output limit/);
+    assert.ok(!task.error.includes('no final report'));
+    assert.equal(result.written, null);
+    assert.equal(result.models.filter(model => model === 'voice-model').length, 1);
+    assert.match(result.stdout, /PLAYED: Work did not finish\. The model hit its output limit/);
   } else {
     assert.match(result.stdout, /PLAYED: Cancelled/);
     assert.ok(!result.stdout.includes('PLAYED: Workspace tayyar hai.'));
