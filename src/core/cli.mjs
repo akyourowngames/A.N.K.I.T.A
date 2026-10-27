@@ -36,7 +36,7 @@ import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
 import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
-import { createVoiceBrain, withVoiceBrain, createAcknowledgements } from './voice-session.mjs';
+import { createVoiceBrain, withVoiceBrain, createAcknowledgements, createVoiceMicrophone, voiceReplyForSpeech } from './voice-session.mjs';
 import { createVoiceNarrator } from './voice-narrator.mjs';
 import { VoiceTaskStore, runVoiceTask, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
 import { VOICE_TASK_DIRECTORY } from '../automation/voice-task-policy.mjs';
@@ -844,6 +844,8 @@ export async function main({ voiceIO = {} } = {}) {
   // language the user actually used rather than a fixed one.
   let speechLanguage = "";
   let speechConfidence = null;
+  let voiceMicrophone = null;
+  const selectedMicrophone = () => voiceMicrophone ? voiceMicrophone.get() : detectMic(config.micDevice);
 
   const speechOpts = () => ({
     address: config.voiceAddress,
@@ -960,7 +962,7 @@ export async function main({ voiceIO = {} } = {}) {
     const wav = tmpVoiceFile("wav");
     let mic;
     try {
-      mic = await detectMic(config.micDevice);
+      mic = await selectedMicrophone();
     } catch (err) {
       term.line(c.red(`  mic: ${err.message}`));
       return "";
@@ -973,6 +975,10 @@ export async function main({ voiceIO = {} } = {}) {
     let input = null;
     for (let attempt = 0; attempt < 2 && !input; attempt++) {
       try {
+        if (attempt > 0) {
+          mic = await selectedMicrophone();
+          if (!mic) return '';
+        }
         const candidate = openVoiceInput({
           device: mic.name,
           outFile: wav,
@@ -982,6 +988,7 @@ export async function main({ voiceIO = {} } = {}) {
         await candidate.ready;
         input = candidate;
       } catch (err) {
+        voiceMicrophone?.invalidate();
         if (attempt === 0) {
           // A Bluetooth device can still be releasing from the previous turn.
           await new Promise((r) => setTimeout(r, 400));
@@ -1053,23 +1060,8 @@ export async function main({ voiceIO = {} } = {}) {
    * playback and the interruption becomes the next turn.
    */
   const speakWithBargeIn = async (text) => {
-    const clean = summarizeForSpeech(text, speechOpts());
+    const clean = voiceReplyForSpeech(text, { maxChars: config.voiceSpeakMaxChars });
     if (!clean) return { bargedIn: false };
-
-    let audio;
-    try {
-      audio = await synthesizeSpeech(clean);
-    } catch (err) {
-      term.line(c.dim(`  (tts: ${err.message})`));
-      return { bargedIn: false };
-    }
-    if (!audio) return { bargedIn: false };
-    if (!config.voiceBargeIn) {
-      try {
-        await playMp3(audio);
-      } catch {}
-      return { bargedIn: false };
-    }
 
     const wav = tmpVoiceFile("wav");
     let input = null;
@@ -1083,23 +1075,30 @@ export async function main({ voiceIO = {} } = {}) {
         return false;
       }
     };
+    let interrupted = false;
+    cancelHook = () => { interrupted = true; stopPlayback(); };
     try {
-      const mic = await detectMic(config.micDevice);
-      if (mic) {
-        input = openVoiceInput({
-          device: mic.name,
-          outFile: wav,
-          noiseDb: config.voiceBargeDb,
-          silenceSec: config.voiceSilenceMs / 1000,
-        });
-        await input.ready;
-      }
-    } catch {
-      input = null;
-    }
-
-    cancelHook = () => stopPlayback();
-    try {
+      // Synthesis and interruption-input startup are independent. Paying their
+      // waits together also avoids a fresh hardware scan after audio is ready.
+      const prepareInput = async () => {
+        if (!config.voiceBargeIn) return;
+        try {
+          const mic = await selectedMicrophone();
+          if (!mic) return;
+          input = openVoiceInput({ device: mic.name, outFile: wav,
+            noiseDb: config.voiceBargeDb, silenceSec: config.voiceSilenceMs / 1000 });
+          await input.ready;
+        } catch {
+          voiceMicrophone?.invalidate();
+          await stopInput();
+          input = null;
+        }
+      };
+      const [audio] = await Promise.all([
+        synthesizeSpeech(clean).catch(err => { term.line(c.dim(`  (tts: ${err.message})`)); return null; }),
+        prepareInput(),
+      ]);
+      if (!audio || interrupted) return { bargedIn: false };
       const playback = playMp3(audio).catch(() => {});
       if (!input) {
         await playback;
@@ -1174,6 +1173,7 @@ export async function main({ voiceIO = {} } = {}) {
       return;
     }
     const acknowledgements = createAcknowledgements({ synthesize: synthesizeSpeech });
+    voiceMicrophone = createVoiceMicrophone({ detect: detectMic, preferred: config.micDevice });
     const narrate = voiceIO.narrate || createVoiceNarrator({
       client: voiceBrain?.client || agent.client, model: voiceBrain?.model || agent.model, secrets: configuredSecrets(config),
     });
@@ -1202,7 +1202,7 @@ export async function main({ voiceIO = {} } = {}) {
       // barge-in replies silent. Point playback at its Hands-Free endpoint.
       if (config.voiceBargeIn && config.voiceHfpRouting) {
         try {
-          const mic = await detectMic(config.micDevice);
+          const mic = await selectedMicrophone();
           if (mic) routing = useHandsFreePlayback(mic.name);
           if (routing) {
             term.line(c.dim(`  speech via "${routing.device.name}" so barge-in stays audible`));
@@ -1283,6 +1283,7 @@ export async function main({ voiceIO = {} } = {}) {
       voiceActive = false;
       cancelHook = null;
       activeVoiceTask = null;
+      voiceMicrophone = null;
     }
   };
 

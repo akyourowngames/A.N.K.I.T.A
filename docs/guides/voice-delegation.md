@@ -201,12 +201,34 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
   counters are hidden by default. The transcript, spoken updates and final report
   remain. `/task <id>` shows the recorded steps; `VOICE_VERBOSE=on` restores debugging
   output. Typed chat keeps its existing display.
+- **Replies stay brief.** Voice asks the model for one or two short sentences:
+  the answer or work result, with essential failures and permissions. Longer requested
+  content belongs in its file or artifact. If the model rambles, final speech still
+  stops after two sentences, including Hindi sentence endings. The full result stays
+  printed and saved. Typed chat and `/say` keep their existing settings.
+- **Reply preparation overlaps.** The chosen microphone is discovered once per voice
+  session and refreshed after a device failure. Final speech preparation and
+  interruption-input startup run together. A three-turn service check measured
+  2.16–3.02 seconds from transcript to audio-player handoff, compared with
+  3.61–4.69 seconds before. This skips real recording/playback and does not include
+  pause detection, transcription or physical headset latency.
 
 To check generated English/Hinglish updates without opening the microphone:
 
 ```bash
 node scripts/verify-voice-delegation.mjs --narration-only
 ```
+
+To measure real model/speech preparation without recording or playing audio:
+
+```bash
+node scripts/verify-voice-latency.mjs
+```
+
+The microphone startup is simulated in that check; repeat the live headset test
+before claiming a speech-to-ear timing. The full generated-speech/file check most
+recently passed two takes and misheard a command noun on the third, so the physical
+three-clean-take gate remains open.
 
 Add `--play` only after leaving any other listening voice session, so Ankita does not
 mistake the test speaker audio for a new request. A running terminal needs restarting

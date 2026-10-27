@@ -1,4 +1,5 @@
 import { CompatibleClient, resolveProvider, providerClientOptions, BASETEN_DEFAULT_MODEL, BASETEN_CONTEXT_WINDOW } from './provider.mjs';
+import { stripForSpeech } from '../channels/voice.mjs';
 
 // Short spoken receipts, never a claim that delegated work has finished.
 const ACK_LINES = {
@@ -6,6 +7,33 @@ const ACK_LINES = {
   'en-IN': ['Okay.', 'Taking a look.', 'All right.'],
 };
 const DEFAULT_ACK_LANGUAGE = 'en-IN'; // English backup when detection is absent or unsupported.
+const VOICE_REPLY_MAX_SENTENCES = 2; // Complete sentences: the owner's limit for conversational voice replies.
+const VOICE_SENTENCE_BOUNDARY = /(?<=[.!?])\s+|(?<=[।॥])\s*/u; // Hindi danda is a sentence ending, including without a space.
+const VOICE_SPEAKABLE_CHARACTER = /[\p{L}\p{N}]/u; // Ignore punctuation-only Markdown list markers after speech cleanup.
+const VOICE_REPLY_INSTRUCTIONS = `Voice conversation: answer in one or two short sentences, at most two spoken lines. Be crisp and directly answer the request in the user's language.
+Skip greetings, repeated questions, lists, recaps and extra offers unless requested. Put any longer details in the requested file or artifact; briefly say where they are.
+For work, report the result and any essential failure or permission needed. Never hide a failure or claim an action succeeded without evidence.`;
+
+/** Keep the full report on screen; enforce brevity at the speech boundary too. */
+export function voiceReplyForSpeech(text, { maxChars = Infinity } = {}) {
+  return stripForSpeech(text, maxChars).split(VOICE_SENTENCE_BOUNDARY)
+    .map(sentence => sentence.trim()).filter(sentence => VOICE_SPEAKABLE_CHARACTER.test(sentence))
+    .slice(0, VOICE_REPLY_MAX_SENTENCES).join(' ');
+}
+
+/** One runtime discovery per voice session; unplug/reopen failures force rediscovery. */
+export function createVoiceMicrophone({ detect, preferred = '' }) {
+  let discovery;
+  return {
+    get() {
+      return discovery ||= Promise.resolve().then(() => detect(preferred)).then(microphone => {
+        if (!microphone) discovery = null;
+        return microphone;
+      }, error => { discovery = null; throw error; });
+    },
+    invalidate() { discovery = null; },
+  };
+}
 
 /** Resolve only voice settings; an explicit broken setup must not silently change planners. */
 export function createVoiceBrain(config, current = {}) {
@@ -33,11 +61,13 @@ export function createVoiceBrain(config, current = {}) {
 
 /** Pin every model round to the voice planner; restore the typed session even on abort. */
 export async function withVoiceBrain(agent, brain, run) {
-  if (!brain) return run();
-  const fields = ['client', 'model', 'contextWindow', 'tool', '_activeModelClient', '_activeModel'];
+  const fields = ['client', 'model', 'contextWindow', 'tool', '_activeModelClient', '_activeModel', 'systemSuffix'];
   const saved = fields.map(key => [key, Object.hasOwn(agent, key), agent[key]]);
-  Object.assign(agent, { client: brain.client, model: brain.model, tool: null });
-  if (brain.contextWindow) agent.contextWindow = brain.contextWindow;
+  agent.systemSuffix = [agent.systemSuffix, VOICE_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
+  if (brain) {
+    Object.assign(agent, { client: brain.client, model: brain.model, tool: null });
+    if (brain.contextWindow) agent.contextWindow = brain.contextWindow;
+  }
   try {
     return await run();
   } finally {

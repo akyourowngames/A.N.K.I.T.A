@@ -693,6 +693,79 @@ retry outcome and proof of a visible Notepad window are recorded findings, not f
 or claimed verified by this speech polish. Existing Edge 403 and Sarvam retention /
 Baseten balance questions remain as recorded above.
 
+## 18e. Reply delay and brief voice answers (2026-10-27)
+
+Owner feedback: speech boundaries improved, but final replies still had a 5–10 s
+gap. Voice replies must be crisp: one or two short sentences, without repeated
+greetings, recaps or extra offers. This continuation changes terminal voice only.
+
+Cause and changes:
+
+- The prior CLI synthesized the final audio, then scanned for the microphone again,
+  then waited for interruption input startup. Real read-only discovery probes took
+  **1040/537/665 ms**. `openVoiceInput` also has an existing **1000 ms** startup guard.
+  These independent waits were on the final answer's serial path.
+- Microphone discovery is now shared within each voice session, including capture,
+  headset routing and interruption input. A failed device invalidates it so the
+  next attempt discovers devices again. No device names or OS assumptions are added.
+- Final speech synthesis and interruption-input startup now run together. Failure
+  closes the attempted input; Ctrl+C during preparation drops the late audio and
+  closes the input. Started progress sentences still finish with their existing gap.
+- A scoped voice instruction asks for one or two short sentences and puts longer
+  requested content in the artifact. Essential failures and permissions remain
+  required. Existing instructions are preserved; typed turns restore their own
+  style and provider. No second model call is added to shorten the answer.
+- One live response still produced three sentences despite that instruction. Final
+  TTS now also takes only the first two sentences, while the printed/saved report
+  remains whole. The voice-specific boundary includes Hindi danda punctuation;
+  failures retain their leading failure notice. No extra summary-note sentences
+  are appended. `/say` and typed speech retain their existing settings.
+
+Reproduction and evidence:
+
+- The real CLI fixture first failed because `REPORT_SYNTH_READY` preceded
+  `BARGE_OPEN`; discovery ran three times. It now opens input while speech is being
+  prepared and discovers once per session. Additional cases cover disconnected
+  input cleanup, forced rediscovery, cancellation before playback, provider request
+  instructions and typed-chat isolation.
+- A read-only review found retry rediscovery could throw outside the recording
+  handler. A rejecting-detector regression first exited the CLI with code 1; retry
+  discovery now uses that same handler and can recover on the next capture.
+- `node scripts/verify-voice-latency.mjs` exercises the actual CLI, real Meta model,
+  real Sarvam synthesis and real device discovery. It simulates the existing
+  1000 ms microphone startup and skips audio playback/recording. It measures from
+  the supplied transcript to final-player handoff, excluding STT, pause detection,
+  audio-device startup and actual hearing. No keys, prompts or answers are logged.
+- The same script against a disposable tracked snapshot of **b1b540a1** measured
+  **4074/4694/3613 ms**. Latest updated run measured **3024/2164/2349 ms**, **3/3**,
+  with **two sentences in each response** and **one device discovery** across all
+  three turns. Median preparation fell from **4074 to 2349 ms** (about **42%**).
+  Earlier updated runs included **2218/2157/2246 ms** and **2374/2697/2117 ms**; cloud
+  timing varies. These measurements do not prove physical headset latency.
+- Final affected suite:
+  `node --test --test-concurrency=1 --test-reporter=spec "test/channels/*.test.mjs"
+  "test/core/*.test.mjs" "test/automation/*.test.mjs"` → **510 tests, 510 pass,
+  0 fail/cancelled/skipped**, **123412 ms**, exit 0. Full ignored trace:
+  `.voice-latency-verification.log`. Focused CLI/session checks passed **21/21**.
+  The cap regression first spoke the third sentence, then passed after the cap;
+  Hindi punctuation likewise reproduced before its scoped boundary fix. A real
+  Hindi Sarvam synthesis of the two-sentence result returned **39288 bytes**;
+  playback was skipped. Syntax checks and `git diff --check` passed. Source literal
+  review found only named voice policy constants, protocol/format values and
+  test/script fixtures; no new inline provider/device/environment assumptions.
+- The generated-speech/file verifier completed two real STT → file write/read →
+  speech runs, then failed its command-noun check on take three. It is **2/3**, not
+  a clean three-take pass. This existing recognition risk remains open; no STT model
+  or keyword settings changed. The separate real planner/file check passed **3/3**,
+  with actual write/read steps and approval, at **3439/3291/3139 ms** task time.
+
+Remaining gaps: restart and listen on the physical headset; repeat the three clean
+workspace demonstrations; loaded long conversation/MCP latency and packaged desktop
+remain unmeasured. This comparison uses short conversation turns and simulated mic
+input, not the owner's full active session. Existing Edge 403, recognition errors
+and strict recovered-tool-failure reporting remain as recorded above. `poem.txt`
+is preserved untouched and untracked.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).

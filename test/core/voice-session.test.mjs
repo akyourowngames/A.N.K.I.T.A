@@ -37,7 +37,7 @@ test('voice endpoint override wins and its key never comes from the chat provide
 });
 
 test('voice turn pins the whole tool loop and restores chat after success or failure', async () => {
-  const agent = { client: {}, model: 'chat', contextWindow: 32768, tool: { model: 'other' }, _activeModelClient: {}, _activeModel: 'previous' };
+  const agent = { client: {}, model: 'chat', systemSuffix: 'Keep existing safety instructions.', contextWindow: 32768, tool: { model: 'other' }, _activeModelClient: {}, _activeModel: 'previous' };
   const saved = { ...agent };
   const brain = { client: {}, model: 'voice', contextWindow: 131072 };
   for (const fail of [false, true]) {
@@ -46,6 +46,9 @@ test('voice turn pins the whole tool loop and restores chat after success or fai
       assert.equal(agent.model, brain.model);
       assert.equal(agent.contextWindow, brain.contextWindow);
       assert.equal(agent.tool, null, 'a configured non-Meta tool model cannot take over');
+      assert.ok(agent.systemSuffix.startsWith(saved.systemSuffix));
+      assert.match(agent.systemSuffix, /one or two short sentences/i);
+      assert.match(agent.systemSuffix, /details/i);
       agent._activeModelClient = brain.client;
       agent._activeModel = brain.model;
       if (fail) throw new Error('fixture failure');
@@ -55,6 +58,23 @@ test('voice turn pins the whole tool loop and restores chat after success or fai
     else assert.equal(await run, 'spoken answer');
     assert.deepEqual(agent, saved);
   }
+});
+
+test('voice brevity applies even without a separate voice provider and leaves typed instructions intact', async () => {
+  const agent = {};
+  await voice.withVoiceBrain(agent, null, async () => {
+    assert.match(agent.systemSuffix, /one or two short sentences/i);
+  });
+  assert.deepEqual(agent, {});
+});
+
+test('spoken voice replies keep two complete sentences even if the model ignores brevity', () => {
+  assert.equal(voice.voiceReplyForSpeech('File ready hai. It has your poem. Want anything else?'), 'File ready hai. It has your poem.');
+  assert.equal(voice.voiceReplyForSpeech('Work did not finish. Permission was denied. The model claimed success.'), 'Work did not finish. Permission was denied.');
+  assert.equal(voice.voiceReplyForSpeech('- First item.\n- Second item.\n- Third item.'), 'First item. Second item.');
+  assert.equal(voice.voiceReplyForSpeech('```js\nsecret()\n```'), '');
+  assert.equal(voice.voiceReplyForSpeech('फाइल तैयार है। कविता सेव है। और कुछ चाहिए?'), 'फाइल तैयार है। कविता सेव है।');
+  assert.equal(voice.voiceReplyForSpeech('हो गया।फाइल सेव है।तीसरी बात।'), 'हो गया। फाइल सेव है।');
 });
 
 test('Baseten requests use low reasoning and a safe token floor; other clients stay unchanged', async t => {
@@ -96,4 +116,20 @@ test('acknowledgements warm once, skip failed clips and rotate in the spoken lan
   const silent = voice.createAcknowledgements({ synthesize: async () => null });
   await silent.prewarm();
   assert.equal(silent.next('hi-IN'), null);
+});
+
+test('microphone discovery is shared within a voice session and refreshed after device failure', async () => {
+  let calls = 0;
+  const microphone = voice.createVoiceMicrophone({ preferred: 'selected', detect: async preferred => {
+    assert.equal(preferred, 'selected');
+    calls++;
+    return { name: `device-${calls}` };
+  } });
+  assert.deepEqual(await Promise.all([microphone.get(), microphone.get()]), [{ name: 'device-1' }, { name: 'device-1' }]);
+  assert.equal(calls, 1);
+  microphone.invalidate();
+  assert.deepEqual(await microphone.get(), { name: 'device-2' });
+  const missing = voice.createVoiceMicrophone({ detect: async () => { throw new Error('unplugged'); } });
+  await assert.rejects(missing.get(), /unplugged/);
+  await assert.rejects(missing.get(), /unplugged/);
 });
