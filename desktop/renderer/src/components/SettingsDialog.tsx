@@ -9,12 +9,14 @@ import { ChatGptConnection } from './ChatGptConnection';
 import { PhonePairingSettings } from './PhonePairingSettings';
 import { StatusPill } from './StatusPill';
 import { cleanErrorMessage } from '../../../shared/error-notices.mjs';
+import { VoiceSettings } from './voice/VoiceSettings';
 
-export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about' | 'voice';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
   { id: 'providers', label: 'Providers', icon: 'key' },
+  { id: 'voice', label: 'Voice', icon: 'mic' },
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
@@ -258,6 +260,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
       <main className="settings-main">
         <div className="settings-top"><span>Settings / {tabs.find(item => item.id === tab)?.label}</span><button type="button" className="icon-button" onClick={onClose} aria-label="Close settings"><Icon name="close" size={17} /></button></div>
         <div className="settings-scroll" key={tab}>
+          {tab === 'voice' && <VoiceSettings preferences={preferences} onSaved={onSaved} />}
           {tab === 'model' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="cube" size={20} /></span><h1 id="settings-title">Model</h1><p>Choose the default model for new conversations.</p></div>
             <section className="settings-panel settings-model-choice"><div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="cube" size={19} /></span><div><h2>Conversation model</h2><p>Your starting point for new teammates.</p></div><span className="settings-value-tag">{providers.find(item => item.id === preferences.provider)?.name || preferences.provider}</span></div><label className="settings-label" htmlFor="settings-model">Default model</label>

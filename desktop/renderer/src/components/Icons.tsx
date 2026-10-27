@@ -3,6 +3,9 @@ import type { ReactNode } from 'react';
 export function Icon({ name, size = 18, stroke = 1.8 }: { name: string; size?: number; stroke?: number }) {
   const shared = { width: size, height: size, viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: stroke, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const, 'aria-hidden': true as const };
   const paths: Record<string, ReactNode> = {
+    mic: <><rect x="9" y="3" width="6" height="12" rx="3" /><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3M9 22h6" /></>,
+    micOff: <><path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 1v4M5 10v2a7 7 0 0 0 12 5M19 10v2M12 19v3M9 22h6" /></>,
+    phoneEnd: <><path d="M4 14v3H1v-4c6-6 16-6 22 0v4h-3v-3l-4-2H8l-4 2Z" /></>,
     chat: <><path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5H4l-1 1v-9.5A8.5 8.5 0 0 1 11.5 3H13a8 8 0 0 1 8 8.5Z" /><path d="M8 10h8M8 14h5" /></>,
     clock: <><circle cx="12" cy="12" r="9" /><path d="M12 7v5l3 2" /></>,
     pulse: <path d="M2 12h5l3-8 4 16 3-8h5" />,

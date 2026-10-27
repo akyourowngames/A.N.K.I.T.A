@@ -29,6 +29,8 @@ import { PaletteModal } from './components/PaletteModal';
 import { CAPTURE_UI_EVENTS } from '../../browser-helper/protocol.mjs';
 import { COMPOSE_EVENT, sidebarWidth as normalizeSidebarWidth } from '../../shared/desktop-layout.mjs';
 import { DESKTOP_ACTIONS } from '../../../src/palette/index.mjs';
+import { useVoice } from './components/voice/useVoice';
+import { VoicePanel } from './components/voice/VoicePanel';
 
 type Bootstrap = { teammates: Teammate[]; models: Model[]; settings: { username: string; provider: string; model: string; tools: string[] }; preferences?: DesktopPreferences; version?: string; contract?: number; chrome: string; jobs: Routine[] };
 type UiState = { selectedId?: string | null; sidebarWidth?: number; sidebarOpen?: boolean };
@@ -52,6 +54,20 @@ export default function App() {
   const [confirm, setConfirm] = useState<{ action: 'clear' | 'delete'; id: string; name: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
   const [view, setView] = useState<'chat' | 'plugins' | 'projects'>('chat');
+  const voice = useVoice();
+  const [voiceOpen, setVoiceOpen] = useState(false);
+  const previousVoiceThread = useRef<string | null>(null);
+  const voiceStateRef = useRef(voice.state); voiceStateRef.current = voice.state;
+  useEffect(() => {
+    const previous = previousVoiceThread.current;
+    previousVoiceThread.current = state.selectedId;
+    if (previous && previous !== state.selectedId) {
+      setVoiceOpen(voiceStateRef.current.active && voiceStateRef.current.threadId === state.selectedId);
+      if (voiceStateRef.current.active && voiceStateRef.current.threadId !== state.selectedId) void voice.end();
+    }
+  }, [state.selectedId]);
+  const endVoice = useCallback(() => { setVoiceOpen(false); void voice.end(); }, [voice.act]);
+  const startVoice = () => { if (state.selectedId) { setVoiceOpen(true); void voice.start(state.selectedId); } };
   const [pluginsSection, setPluginsSection] = useState<'apps' | 'skills'>('apps');
   const [projects, setProjects] = useState<Project[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
@@ -103,6 +119,7 @@ export default function App() {
   useEffect(() => {
     if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
     const unsubscribe = window.ankita.onEvent(event => {
+      if (event.type === 'voice-focus' && event.threadId) { dispatch({ type: 'select', id: event.threadId }); setView('chat'); setVoiceOpen(true); }
       dispatch({ type: 'event', event });
       if (event.type === 'companion-capture-ready' && event.capture.surface === 'main') { dispatch({ type: 'select', id: event.capture.threadId }); setView('chat'); }
       if (event.type === 'settings-updated') setPreferences(event.preferences);
@@ -388,6 +405,8 @@ export default function App() {
       width={sidebarWidth} collapsed={!sidebarOpen} onCollapse={() => setSidebarOpen(false)} onResize={setSidebarWidth}
     />
     {view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} toolsRevision={toolsRevision} initialSection={pluginsSection} /> : view === 'projects' ? <ProjectsPage projects={projects} selectedThread={selected} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onRefresh={refreshProjects} onAssign={assignProject} /> : <ChatPane
+      onVoice={voiceOpen ? endVoice : startVoice}
+      voicePanel={voiceOpen ? <VoicePanel voice={voice.state} error={voice.error} busy={voice.busy} onEnd={endVoice} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onStart={startVoice} onIsland={() => void window.ankita.windowAction('minimize')} onSettings={() => setSettingsTab('voice')} /> : undefined}
       teammate={selected} messages={messages}
       jobs={threadJobs} onEditJob={editJob}
       running={Boolean(state.selectedId && state.running[state.selectedId])}
