@@ -1,6 +1,6 @@
 # Desktop Voice Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Deliver the approved full voice panel and floating-island voice experience using real Sarvam/Meta work.
 
@@ -42,12 +42,12 @@
 - `listMicrophones()` discovers runtime device names; `detectMic(preferred)` reuses it.
 - `openVoiceInput(options)` keeps its handle/ready/stop contract and optionally emits `{type:'level',level}` from measured ffmpeg RMS metadata alongside existing silence events.
 
-- [ ] Write state tests asserting clamped levels, bounded captions, safe defaults and unchanged immutable input.
-- [ ] Write audio parser tests for mixed RMS/silence chunks, `-inf`, malformed levels and the optional filter flag preserving old capture.
-- [ ] Run focused tests and confirm new behavior fails before implementation.
-- [ ] Add named voice state/size/rate policy constants, parser and optional metering.
-- [ ] Run `node --test --test-concurrency=1 test/desktop/voice-state.test.mjs test/channels/voice.test.mjs`; all pass.
-- [ ] Commit shared contract and audio signals.
+- [x] Write state tests asserting clamped levels, bounded captions, safe defaults and unchanged immutable input.
+- [x] Write audio parser tests for mixed RMS/silence chunks, `-inf`, malformed levels and the optional filter flag preserving old capture.
+- [x] Run focused tests and confirm new behavior fails before implementation.
+- [x] Add named voice state/size/rate policy constants, parser and optional metering.
+- [x] Run `node --test --test-concurrency=1 test/desktop/voice-state.test.mjs test/channels/voice.test.mjs`; all pass.
+- [x] Commit shared contract and audio signals.
 
 ### Task 2: Main-process session coordinator
 
@@ -55,13 +55,13 @@
 
 **Interfaces:** `DesktopVoice({engine,getConfig,emit,directory,io})` exposes `snapshot()`, `start({threadId})`, `end()`, `pause()`, `resume()`, `cancelWork()`, `close()`. IO is injectable for hardware-free tests and defaults to existing voice channel exports. Engine contract: `runVoiceTurn(threadId,text,observer,brain) -> Promise<{text,error}>`, `cancel(threadId)`, thread existence/busy checks and captured approval observation.
 
-- [ ] Write lifecycle tests: one capture/session; finalized transcript -> real run observer -> short speech; pause prevents restart; barge-in stops reply and submits once.
-- [ ] Write stale-callback tests: end/restart during STT, synthesis, progress or pending approval cannot act on the new session.
-- [ ] Write continuation tests: end closes audio but leaves work; cancel aborts work; empty input recaptures; failures stop input and show recovery.
-- [ ] Write cross-surface snapshot tests: a second start on the same thread reuses the session; another thread cannot silently take over; deleted owner ends session.
-- [ ] Run tests red, implement the coordinator with captured session/turn controllers, existing ack/narrator/task/brain helpers and bounded meter events.
-- [ ] Run `node --test --test-concurrency=1 test/desktop/voice.test.mjs`; all pass.
-- [ ] Commit coordinator.
+- [x] Write lifecycle tests: one capture/session; finalized transcript -> real run observer -> short speech; pause prevents restart; barge-in stops reply and submits once.
+- [x] Write stale-callback tests: end/restart during STT, synthesis, progress or pending approval cannot act on the new session.
+- [x] Write continuation tests: end closes audio but leaves work; cancel aborts work; empty input recaptures; failures stop input and show recovery.
+- [x] Write cross-surface snapshot tests: a second start on the same thread reuses the session; another thread cannot silently take over; deleted owner ends session.
+- [x] Run tests red, implement the coordinator with captured session/turn controllers, existing ack/narrator/task/brain helpers and bounded meter events.
+- [x] Run `node --test --test-concurrency=1 test/desktop/voice.test.mjs`; all pass.
+- [x] Commit coordinator.
 
 ### Task 3: Desktop engine, settings and IPC
 
@@ -69,13 +69,13 @@
 
 **Interfaces:** Engine exposes lazy `voice()` coordinator, `voiceStatus()` readiness/device/snapshot view and `runVoiceTurn` from Task 2. Existing `send` gains private voice/observer options so its promise remains the one task execution path. IPC maps `VOICE_ACTIONS`; public events include typed voice snapshot updates. Settings add Sarvam/Baseten keys and microphone preference via existing local API-key storage patterns, exposing only presence flags to renderers.
 
-- [ ] Write tests asserting voice override through tools, restored native provider/style, third-argument tool verdict forwarding, existing transcript/file receipts and approval pause.
-- [ ] Write tests rejecting browser-provider voice, busy/nonexistent thread, unsafe/oversized payloads and settings changes that would invalidate a live session.
-- [ ] Write settings tests: env keys work, explicit saved values win, public view never includes keys, mic selection persists.
-- [ ] Run tests red; implement engine adapter/IPC/settings without duplicating model execution or routing typed requests through voice.
-- [ ] End voice when its thread changes/deletes; close coordinator during shutdown. Preserve in-flight work when end merely stops audio.
-- [ ] Run focused engine/settings suites and build; all pass.
-- [ ] Commit engine/settings bridge.
+- [x] Write tests asserting voice override through tools, restored native provider/style, third-argument tool verdict forwarding, existing transcript/file receipts and approval pause.
+- [x] Write tests rejecting browser-provider voice, busy/nonexistent thread, unsafe/oversized payloads and settings changes that would invalidate a live session.
+- [x] Write settings tests: env keys work, explicit saved values win, public view never includes keys, mic selection persists.
+- [x] Run tests red; implement engine adapter/IPC/settings without duplicating model execution or routing typed requests through voice.
+- [x] End voice when its thread changes/deletes; close coordinator during shutdown. Preserve in-flight work when end merely stops audio.
+- [x] Run focused engine/settings suites and build; all pass.
+- [x] Commit engine/settings bridge.
 
 ### Task 4: Orb, captions, full panel and island
 
@@ -83,13 +83,13 @@
 
 **Interfaces:** `useVoice()` subscribes to `VOICE_EVENT`, loads a late-subscriber snapshot and calls typed `VOICE_ACTIONS`. `VoiceOrb({phase,inputLevel,compact})` owns only rendering. `VoicePanel({voice,onEnd,onPause,onResume,onCancel,onIsland,onSettings})` displays real state and controls. Island uses the same hook/orb; no renderer opens audio devices.
 
-- [ ] Write UI fixture assertions for exact latest text, clear listening/working/speaking/error states, controls, long Hindi captions and no model reasoning/tool dumps in the panel.
-- [ ] Add checks for main/island snapshot handoff, keyboard escape/focus, reduced motion and WebGL fallback.
-- [ ] Run fixture red; implement approved layout, original sphere, bounded animation, caption transitions and one task update.
-- [ ] Wire selected conversation start and voice settings; changing selection ends voice rather than moving ownership. Island approval UI takes precedence.
-- [ ] Build and run browser fixture at wide/narrow sizes, reduced motion and WebGL unavailable; capture screenshots of main and island.
-- [ ] Critique screenshots against the approved preview and fix actual spacing/contrast/control issues.
-- [ ] Commit polished voice surfaces.
+- [x] Write UI fixture assertions for exact latest text, clear listening/working/speaking/error states, controls, long Hindi captions and no model reasoning/tool dumps in the panel.
+- [x] Add checks for main/island snapshot handoff, keyboard escape/focus, reduced motion and WebGL fallback.
+- [x] Run fixture red; implement approved layout, original sphere, bounded animation, caption transitions and one task update.
+- [x] Wire selected conversation start and voice settings; changing selection ends voice rather than moving ownership. Island approval UI takes precedence.
+- [x] Build and run browser fixture at wide/narrow sizes, reduced motion and WebGL unavailable; capture screenshots of main and island.
+- [x] Critique screenshots against the approved preview and fix actual spacing/contrast/control issues.
+- [x] Commit polished voice surfaces.
 
 ### Task 5: Real desktop verification and review
 

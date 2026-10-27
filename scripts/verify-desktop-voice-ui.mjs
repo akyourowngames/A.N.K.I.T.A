@@ -140,6 +140,13 @@ try {
   await small.getByText('Microphone disconnected. Connect it and try again.', { exact: true }).waitFor();
   await small.getByRole('button', { name: 'Try voice again' }).waitFor();
   receipt.views.push('narrow Hindi captions, reduced motion, WebGL fallback, recoverable error');
+  const short = await pageFor({ width: 1280, height: 703 });
+  await short.getByRole('button', { name: 'Start voice conversation' }).click();
+  await patch(short, { phase: 'speaking', captionRole: 'assistant', caption: 'Your poem is ready. I saved the complete file in this conversation for you to read.' });
+  await short.getByText('Your poem is ready. I saved the complete file in this conversation for you to read.', { exact: true }).waitFor();
+  const lines = await short.locator('.voice-caption').evaluate(element => ({ text: element.getBoundingClientRect().height, box: element.parentElement.getBoundingClientRect().height }));
+  assert.ok(lines.box >= lines.text, `short-window caption clipped: ${JSON.stringify(lines)}`);
+  receipt.assertions.push('short window preserves both caption lines');
   assert.deepEqual(errors, []);
   console.log('DESKTOP_VOICE_UI_OK', JSON.stringify({ ...receipt, pageErrors: errors.length, captures }));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

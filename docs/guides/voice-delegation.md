@@ -1,5 +1,54 @@
 # Voice in and out (Sarvam)
 
+## Desktop voice
+
+Choose a conversation, then **Voice** in its header. The full panel shows an
+original blue/lilac orb, the latest finalized words and one work update. Use
+**Continue in island** to minimize the app and keep the same voice session in the
+floating companion. **Open conversation** returns to that session's owner.
+
+- **Pause microphone** stops recording; **Resume microphone** starts it again.
+- **End voice** stops microphone and speech. Already delegated work continues
+  in the original conversation, with its normal transcript and file receipts.
+- **Stop work** cancels the current delegated task.
+- Selecting another conversation ends voice. Existing permission prompts still
+  require an answer and take priority over the island's voice view.
+
+Open **Settings → Voice** for Sarvam/Baseten keys and the discovered microphone
+list. Existing environment keys work too. Saved desktop values override them.
+Keys use the app's existing private local API-key settings file; this is not a
+promise of encrypted storage. Public settings expose presence flags only.
+Voice uses Sarvam and the configured voice planner; typed-chat settings stay
+separate. ChatGPT Browser conversations do not support this desktop voice path.
+
+The orb follows measured microphone RMS while recording. Its speaking motion
+shows actual playback state, not a claimed output-audio measurement. Captions
+appear after REST transcription completes; there are no fabricated interim words.
+Motion respects reduced-motion settings and stops in hidden windows. WebGL loss
+uses a static CSS fallback.
+
+Repeatable checks, from the feature worktree:
+
+```bash
+node --test --test-concurrency=1 test/desktop/voice-state.test.mjs test/desktop/voice.test.mjs test/desktop/voice-engine.test.mjs test/desktop/voice-ui.test.mjs
+npm run desktop:build
+node scripts/verify-desktop-voice-ui.mjs
+node scripts/verify-desktop-voice.mjs --env /path/to/your/local/.env
+```
+
+The last script uses real configured Sarvam/Meta services and file tools inside
+Electron with disposable app data. Microphone/VAD are generated fixtures and the
+MP3 player handoff is captured without speaker playback. This does not prove
+physical headset duplex, interruption accuracy, packaged deployment or the
+owner's three-clean-workspace gate. In a generated Hinglish take, Sarvam heard
+“Markdown” as “mark count”; the simpler saved-poem request tests the file path,
+not recognition of that technical noun.
+
+Desktop voice is a separate review branch based on PR #70. No release, tag or
+default-branch merge is part of this work.
+
+## Terminal voice
+
 Ankita can listen and answer out loud in Hindi, Hinglish or English. Speech-to-text
 and text-to-speech run through **Sarvam AI**, which handles code-switched Hinglish far
 better than an English-first recogniser.

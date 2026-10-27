@@ -129,6 +129,7 @@ export class DesktopVoice {
     const detector = this.io.createTurnDetector();
     let finish;
     let interrupted = false;
+    let heardSpeech = false;
     let ended = false;
     const done = new Promise(resolve => { finish = () => { ended = true; resolve(); }; });
     const entry = { finish, handle: null, stopping: null };
@@ -147,6 +148,7 @@ export class DesktopVoice {
           }
           if (barge && !interrupted && (!session.playingAt || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
           const action = detector.feed(event);
+          if (action === 'speech') heardSpeech = true;
           if (action === 'speech' && barge && !interrupted) { interrupted = true; onSpeech?.(); }
           if (action === 'end') finish();
         } });
@@ -160,7 +162,7 @@ export class DesktopVoice {
       entry.handle.child?.removeListener('close', disconnected);
       const recorded = await this.stopInput(session);
       if (entry.error) throw entry.error;
-      if (!recorded || !this.owns(session) || session.paused || (barge && !interrupted)) return null;
+      if (!recorded || !heardSpeech || !this.owns(session) || session.paused || (barge && !interrupted)) return null;
       this.publish(session, { phase: 'transcribing' });
       const heard = await abortable(this.io.transcribeAudio({ config: session.config, wavPath: outFile }), session.audio.signal);
       return this.owns(session) && heard?.text?.trim() ? heard : null;

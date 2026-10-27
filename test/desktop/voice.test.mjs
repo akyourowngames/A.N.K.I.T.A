@@ -117,6 +117,15 @@ test('empty transcript recaptures and deleting the owner closes its microphone',
   assert.equal(h.voice.snapshot().active, false); assert.ok(h.inputs.every(input => input.stopped));
 });
 
+test('a silent capture deadline does not send audio for transcription or delegate a request', async t => {
+  let transcriptions = 0;
+  const h = harness(t, { transcribe: async () => { transcriptions++; return { text: 'Hallucinated from silence' }; } });
+  h.config.voiceMaxUtteranceMs = 20;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.inputs.length >= 2);
+  assert.equal(transcriptions, 0); assert.equal(h.calls.length, 0);
+});
+
 test('device opening failure becomes a recoverable public error', async t => {
   const h = harness(t, { open: () => { throw new Error('Device unavailable'); } });
   await h.voice.start({ threadId: 'owner' });

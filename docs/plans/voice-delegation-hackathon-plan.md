@@ -836,6 +836,56 @@ MCP connections and physical headset interaction were not replayed. This fix doe
 not audit the security advice, recover the user's missing file automatically, or
 claim the original failed requests succeeded.
 
+## 18g. Desktop voice panel and island (2026-10-27)
+
+Built in an isolated `feat/desktop-voice-orb` worktree from committed PR #70.
+The owner approved a blue/lilac fluid orb, animated short captions, a full app
+panel and the same session in the floating island. This is new hackathon work;
+existing desktop layout, capture/playback, permissions and agent tools are reused.
+PR #70 remains the separate all-pending terminal/heartbeat/phone-pairing snapshot.
+
+One main-process coordinator owns audio and the conversation. Real ffmpeg RMS
+drives input motion. Existing desktop turns provide model/tool/approval/history
+receipts; voice temporarily uses the configured Baseten Meta planner and concise
+style, then restores the typed model. No new dependency or CSP exception was added.
+The public cross-window state is bounded and excludes credentials/tool payloads.
+
+End voice closes audio while already delegated work continues on the original
+thread. Stop work cancels it. Switching threads ends voice; permission UI retains
+priority, and restoring from the island selects its owner. Silent capture deadlines
+do not send audio to STT. Late transcription/synthesis cannot enter a new session.
+Settings add private local Sarvam/Baseten key entry and microphone discovery.
+ChatGPT Browser voice is explicitly unsupported in this pass.
+
+Evidence:
+
+- New lifecycle, engine, shared-state, audio and UI checks passed. Each new behavior
+  was exercised red before implementation; final focused counts are recorded below.
+- Desktop typecheck and Vite build passed. Browser fixture:
+  `node scripts/verify-desktop-voice-ui.mjs` → `DESKTOP_VOICE_UI_OK`, **0 page errors**,
+  covering main/island, permission priority, owner restoration, short/narrow windows,
+  Hindi text, reduced motion, WebGL fallback, pause/resume and end/cancel controls.
+- A shorter-window caption check first measured **84 px text in a 57.078125 px box**.
+  Reserving caption space and reducing the orb at short heights made it pass.
+- `node scripts/verify-desktop-voice.mjs --env <local-env>` →
+  `DESKTOP_VOICE_NATIVE_OK`: real Sarvam generated speech → STT → Meta
+  `meta-models/muse-spark-open-1026` → actual write/read tools → **208-character
+  kavita.txt**, **2 real MP3 handoffs**, **13327 ms** including UI/native evidence,
+  **0 page errors**. Typed model restored to the separate fixture model. Actual
+  Electron main and late-subscriber island screenshots were inspected.
+- The first broad test command discovered 25 failures in ignored generated launch
+  website fixtures; those files are outside the tracked app change. A tracked-source
+  run passed 1600 tests, with one process-ancestry fixture failure after its launcher
+  exited; the same process suite passed **2/2** under a live launcher. The final
+  desktop-branch serial suite is recorded separately before delivery.
+
+Limits: native input/VAD are generated fixtures and speaker handoffs are captured,
+not a physical headset test. One generated Hinglish take misheard “Markdown” as
+“mark count”; the successful request asked for a generic saved poem and does not
+claim that technical noun passed. Physical barge-in, the owner's three-clean-workspace
+gate, packaged distribution and current GPU-driver coverage remain open. Browser
+fallback/motion fixtures do not close those gates. No merge, tag or release performed.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).
