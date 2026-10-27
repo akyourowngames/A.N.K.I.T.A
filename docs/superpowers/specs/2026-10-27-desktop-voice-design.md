@@ -1,6 +1,6 @@
 # Desktop voice for Ankita
 
-Status: design for review; product implementation has not started.
+Status: owner approved the displayed design and polished-motion build on 2026-10-27.
 
 ## Owner request and authorization
 
