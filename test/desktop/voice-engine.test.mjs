@@ -78,6 +78,12 @@ test('voice IPC rejects unknown fields and oversized owner IDs', async () => {
   await assert.rejects(actions.runVoiceAction({ engine, action: 'voiceStart', payload: { threadId: 'owner', apiKey: 'bad' } }), /payload/i);
   await assert.rejects(actions.runVoiceAction({ engine, action: 'voiceStart', payload: { threadId: 'x'.repeat(201) } }), /conversation/i);
   assert.deepEqual(await actions.runVoiceAction({ engine, action: 'voiceStart', payload: { threadId: 'owner' } }), { threadId: 'owner' });
+  const focus = [];
+  const view = { sessionId: 'session', threadId: 'owner' };
+  const focusedEngine = { voice: () => ({ snapshot: () => view }) };
+  await assert.rejects(actions.runVoiceAction({ engine: focusedEngine, action: 'voiceShowMain', payload: { settings: 'true' } }), /payload/);
+  await actions.runVoiceAction({ engine: focusedEngine, action: 'voiceShowMain', payload: { settings: true }, focus: (...args) => focus.push(args) });
+  assert.deepEqual(focus, [[view, { settings: true }]]);
 });
 
 test('live voice blocks setup changes that would invalidate the session', async t => {
@@ -101,4 +107,16 @@ test('failed voice turns restore typed settings and keep ordinary sends on the t
   assert.equal(h.engine.agentFor(h.id).model, 'typed-model');
   h.engine.config.provider = 'chatgpt-browser';
   await assert.rejects(h.engine.runVoiceTurn(h.id, 'Voice', {}, null), /API-backed/);
+});
+
+test('shutdown starts native-control cancellation before waiting for voice audio to close', async t => {
+  const h = await fixture(t);
+  let release; const audioClosing = new Promise(resolve => { release = resolve; });
+  let computerClosed = false;
+  h.engine._voice = { close: () => audioClosing };
+  h.engine.computerUse.close = async () => { computerClosed = true; };
+  const closing = h.engine.close();
+  await Promise.resolve();
+  try { assert.equal(computerClosed, true); }
+  finally { release(); await closing; }
 });

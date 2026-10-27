@@ -1,5 +1,6 @@
 /** Public desktop voice protocol. Audio and credentials stay in the main process. */
 export const VOICE_EVENT = 'voice-state';
+export const VOICE_API_REQUIRED_MESSAGE = 'Voice needs an API-backed conversation. Choose a model in Settings first.'; // Shared setup guard for status, session start and direct engine calls.
 export const VOICE_ACTIONS = Object.freeze({ status: 'voiceStatus', start: 'voiceStart', end: 'voiceEnd',
   pause: 'voicePause', resume: 'voiceResume', cancel: 'voiceCancel', focus: 'voiceShowMain' });
 export const VOICE_CAPTION_CHARS = 1200; // Characters: bound a displayed utterance; the full transcript stays in chat.

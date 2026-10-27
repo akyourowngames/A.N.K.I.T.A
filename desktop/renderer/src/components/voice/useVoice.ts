@@ -9,7 +9,9 @@ export function useVoice() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const alive = useRef(false);
-  const apply = useCallback((next: VoiceState) => {
+  const apply = useCallback((next: VoiceState | undefined) => {
+    // Older/minimal bridges can omit this optional capability; never put an invalid snapshot in React state.
+    if (!next || !Number.isSafeInteger(next.revision)) return;
     if (alive.current) setState(current => next.revision >= current.revision ? next : current);
   }, []);
   useEffect(() => {
@@ -20,7 +22,7 @@ export function useVoice() {
     void window.ankita.invoke<VoiceStatus>(VOICE_ACTIONS.status).then(result => apply(result.state)).catch(() => {});
     return () => { alive.current = false; off(); };
   }, [apply]);
-  const act = useCallback(async (action: string, payload?: { threadId: string }) => {
+  const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean }) => {
     setBusy(true); setError('');
     try { const next = await window.ankita.invoke<VoiceState>(action, payload); apply(next); return next; }
     catch (cause) { if (alive.current) setError(cleanErrorMessage(cause)); return null; }
@@ -29,5 +31,5 @@ export function useVoice() {
   return { state, error, busy, act,
     start: (threadId: string) => act(VOICE_ACTIONS.start, { threadId }),
     end: () => act(VOICE_ACTIONS.end), pause: () => act(VOICE_ACTIONS.pause), resume: () => act(VOICE_ACTIONS.resume),
-    cancel: () => act(VOICE_ACTIONS.cancel), focus: () => act(VOICE_ACTIONS.focus) };
+    cancel: () => act(VOICE_ACTIONS.cancel), focus: (settings = false) => act(VOICE_ACTIONS.focus, settings ? { settings: true } : undefined) };
 }

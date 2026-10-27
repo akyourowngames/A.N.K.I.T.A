@@ -1,6 +1,6 @@
 # Desktop Voice Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Deliver the approved full voice panel and floating-island voice experience using real Sarvam/Meta work.
 
@@ -96,10 +96,10 @@
 **Files:** Update `docs/guides/voice-delegation.md`, hackathon plan and this execution checklist; add live desktop voice verifier only where existing scripts cannot exercise the engine.
 
 - [ ] Run relevant serial channel/core/automation/desktop suites plus `npm run desktop:build` and `git diff --check`.
-- [ ] Run real configured model/Sarvam/file tool round trips through desktop adapter; no key/log/media artifacts staged.
-- [ ] Open the actual desktop runtime with isolated test data, inspect full-panel/island behavior and capture actual rendered evidence. Keep simulated mic/playback clearly labelled.
-- [ ] Record physical mic, headset/barge-in and packaged limits honestly; do not replace the owner's three-clean-workspace gate with fixtures.
-- [ ] Request independent whole-branch review, resolve important findings with regressions, update evidence and commit.
+- [x] Run real configured model/Sarvam/file tool round trips through desktop adapter; no key/log/media artifacts staged.
+- [x] Open the actual desktop runtime with isolated test data, inspect full-panel/island behavior and capture actual rendered evidence. Keep simulated mic/playback clearly labelled.
+- [x] Record physical mic, headset/barge-in and packaged limits honestly; do not replace the owner's three-clean-workspace gate with fixtures.
+- [x] Request independent whole-branch review, resolve important findings with regressions, update evidence and commit.
 - [ ] Report PR #70 status separately from desktop integration; no merge/release.
 
 ## Baseline evidence

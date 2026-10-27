@@ -67,7 +67,7 @@ const load = file => import(url.pathToFileURL(path.join(root, file)).href);
  state.windows.push(main);
  ipcMain.handle('engine:invoke', async (event, action, payload) => {
    if (!state.windows.some(window => window.webContents === event.sender) || event.senderFrame !== event.sender.mainFrame) throw new Error('Untrusted verification sender');
-   if (Object.values(VOICE_ACTIONS).includes(action)) return runVoiceAction({ engine, action, payload, focus: voice => engine.emit({ type: 'voice-focus', threadId: voice.threadId }) });
+   if (Object.values(VOICE_ACTIONS).includes(action)) return runVoiceAction({ engine, action, payload, focus: (voice, options) => engine.emit({ type: 'voice-focus', threadId: voice.threadId, settings: options.settings }) });
    if (action === 'initialize') return { ...engine.settingsPayload(), teammates: engine.listTeammates(), version, contract: IPC_CONTRACT, chrome: 'native', jobs: [] };
    if (action === 'listTeammates') return engine.listTeammates();
    if (action === 'loadThread') return engine.loadThread(payload.id);
@@ -81,7 +81,13 @@ const load = file => import(url.pathToFileURL(path.join(root, file)).href);
    if (action === 'browserSessionView') return { mode: null, status: 'idle', step: '', tabs: [], screenshot: null };
    return {};
  });
- ipcMain.handle('window:action', async () => true); ipcMain.handle('island:action', async () => true);
+ ipcMain.handle('window:action', async () => true);
+ ipcMain.handle('island:action', async (event, action) => {
+   const owner = state.windows.find(window => window.webContents === event.sender);
+   if (!owner) throw new Error('Untrusted island sender');
+   if (action === 'focus-on' || action === 'focus-off') owner.setFocusable(action === 'focus-on');
+   return true;
+ });
  await main.loadFile(path.join(root, 'desktop/renderer/dist/index.html'));
  state.workspace = workspace; state.ready = true;
 })().catch(error => { console.error(error.message); app.exit(1); });
@@ -126,17 +132,22 @@ try {
     const path = process.getBuiltinModule('node:path');
     const require = process.getBuiltinModule('node:module').createRequire(path.join(root, 'package.json'));
     const { BrowserWindow } = require('electron'); const state = globalThis.voiceVerification;
-    const island = new BrowserWindow({ show: true, width: 640, height: 420, frame: false, webPreferences: { preload: path.join(root, 'desktop/electron/preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
+    const island = new BrowserWindow({ show: true, width: 640, height: 420, frame: false, focusable: false, webPreferences: { preload: path.join(root, 'desktop/electron/preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, backgroundThrottling: false } });
     state.windows.push(island); await island.loadFile(path.join(root, 'desktop/renderer/dist/island.html')); island.showInactive();
   }, { root: ROOT });
   const island = app.windows().at(-1);
   await island.getByRole('button', { name: 'End voice', exact: true }).waitFor({ timeout: TIMEOUT_MS });
   await island.waitForTimeout(700); await island.screenshot({ path: path.join(captures, 'voice-native-island.png') });
-  await island.getByRole('button', { name: 'End voice', exact: true }).click();
+  assert.equal(await app.evaluate(() => globalThis.voiceVerification.windows.at(-1).isFocusable()), true);
+  await app.evaluate(() => globalThis.voiceVerification.windows.at(-1).focus());
+  await island.getByRole('button', { name: 'Pause microphone' }).focus();
+  await island.keyboard.press('Tab');
+  assert.equal(await island.getByRole('button', { name: 'End voice', exact: true }).evaluate(element => element === document.activeElement), true);
+  await island.keyboard.press('Space');
   await until(() => app.evaluate(() => !globalThis.voiceVerification.engine.voice().snapshot().active));
   assert.deepEqual(pageErrors, []);
   console.log('DESKTOP_VOICE_NATIVE_OK', JSON.stringify({ task: result.voice.task.status, files: result.files, model: result.model, typedModel: result.typedModel,
-    realSpeechHandoffs: result.playedBytes.length, elapsedMs: Date.now() - started, input: 'generated Sarvam speech, simulated VAD', playback: 'captured MP3 handoff, no speaker', pageErrors: 0 }));
+    realSpeechHandoffs: result.playedBytes.length, elapsedMs: Date.now() - started, input: 'generated Sarvam speech, simulated VAD', playback: 'captured MP3 handoff, no speaker', nativeKeyboardEnd: true, pageErrors: 0 }));
 } finally {
   if (app) { await app.evaluate(async () => { await globalThis.voiceVerification?.engine.close(); }).catch(() => {}); await app.close().catch(() => {}); }
   fs.rmSync(directory, { recursive: true, force: true });

@@ -5,6 +5,7 @@ export type VoiceState = { sessionId: string | null; threadId: string | null; ac
   error: string | null; microphone: string; revision: number };
 export type VoiceStatus = { state: VoiceState; ready: boolean; issues: string[]; microphones: { name: string; alt?: string }[]; microphone: string };
 export const VOICE_EVENT: 'voice-state';
+export const VOICE_API_REQUIRED_MESSAGE: string;
 export const VOICE_ACTIONS: Readonly<{ status: 'voiceStatus'; start: 'voiceStart'; end: 'voiceEnd'; pause: 'voicePause'; resume: 'voiceResume'; cancel: 'voiceCancel'; focus: 'voiceShowMain' }>;
 export const VOICE_CAPTION_CHARS: number;
 export const VOICE_UPDATE_CHARS: number;

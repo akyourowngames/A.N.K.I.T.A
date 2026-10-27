@@ -1,13 +1,13 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
+import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom', CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice']); // Private API keys and the discovered microphone preference.
-const MICROPHONE_NAME_CHARS = 200; // Characters: matches the bounded device label in the voice protocol.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
 keys.add('secretScrubbing');
 keys.add('secretWarningSeen');
@@ -83,7 +83,7 @@ function validatePatch(patch) {
       clean[key] = [...new Set(value)];
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
-      const limit = key === 'micDevice' ? MICROPHONE_NAME_CHARS : key === 'model' || key === 'imageModel' ? 200 : 4096;
+      const limit = key === 'micDevice' ? VOICE_DEVICE_CHARS : key === 'model' || key === 'imageModel' ? 200 : 4096;
       const text = value.trim();
       if (text.length > limit) throw new Error(`${key} is too long`);
       clean[key] = text;

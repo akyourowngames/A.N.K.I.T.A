@@ -35,7 +35,7 @@ import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, t
 import { DesktopVoice } from './voice.mjs';
 import { withVoiceBrain } from '../../src/core/voice-session.mjs';
 import { VOICE_TASK_DIRECTORY } from '../../src/automation/voice-task-policy.mjs';
-import { emptyVoiceState } from '../shared/voice.mjs';
+import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
 import { TelegramBot } from '../../src/channels/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
@@ -1195,7 +1195,7 @@ export class DesktopEngine {
   }
   voiceStatus() { return this.voice().status(); }
   async runVoiceTurn(id, text, observer, brain) {
-    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error('Voice needs an API-backed conversation. Choose a model in Settings first.');
+    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
     const submission = this.send(id, text, null, { surface: 'voice', voiceBrain: brain, voiceObserver: observer });
     const work = this.turns.get(id);
     await submission;
@@ -1335,9 +1335,8 @@ export class DesktopEngine {
   }
 
   async close() {
-    await this._voice?.close();
-    await this.chatgptBrowser?.close();
-    await this.computerUse?.close();
+    // Start every owner cancellation before awaiting audio/device teardown.
+    await Promise.all([this._voice?.close(), this.chatgptBrowser?.close(), this.computerUse?.close()]);
     await this.scheduler?.stop();
     if (this.projectFileWatcher) { fs.unwatchFile(this.projectsFile, this.projectFileWatcher); this.projectFileWatcher = null; }
     await this.channels.stopAll().catch(() => {});

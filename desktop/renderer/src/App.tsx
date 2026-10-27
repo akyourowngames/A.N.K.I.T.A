@@ -57,12 +57,19 @@ export default function App() {
   const voice = useVoice();
   const [voiceOpen, setVoiceOpen] = useState(false);
   const previousVoiceThread = useRef<string | null>(null);
+  const revealedVoiceSession = useRef<string | null>(null);
   const voiceStateRef = useRef(voice.state); voiceStateRef.current = voice.state;
+  useEffect(() => {
+    const recovered = voice.state;
+    if (!state.settings || !state.teammates.some(item => item.id === recovered.threadId) || !recovered.sessionId || !recovered.threadId || (!recovered.active && recovered.phase !== 'error') || revealedVoiceSession.current === recovered.sessionId) return;
+    revealedVoiceSession.current = recovered.sessionId;
+    dispatch({ type: 'select', id: recovered.threadId }); setView('chat'); setVoiceOpen(true);
+  }, [voice.state.sessionId, voice.state.threadId, voice.state.active, voice.state.phase, state.settings, state.teammates]);
   useEffect(() => {
     const previous = previousVoiceThread.current;
     previousVoiceThread.current = state.selectedId;
     if (previous && previous !== state.selectedId) {
-      setVoiceOpen(voiceStateRef.current.active && voiceStateRef.current.threadId === state.selectedId);
+      setVoiceOpen((voiceStateRef.current.active || voiceStateRef.current.phase === 'error') && voiceStateRef.current.threadId === state.selectedId);
       if (voiceStateRef.current.active && voiceStateRef.current.threadId !== state.selectedId) void voice.end();
     }
   }, [state.selectedId]);
@@ -119,7 +126,7 @@ export default function App() {
   useEffect(() => {
     if (!window.ankita) { dispatch({ type: 'event', event: { type: 'error', threadId: null, message: 'Open Ankita with npm run desktop:dev or npm run desktop:start.' } }); return; }
     const unsubscribe = window.ankita.onEvent(event => {
-      if (event.type === 'voice-focus' && event.threadId) { dispatch({ type: 'select', id: event.threadId }); setView('chat'); setVoiceOpen(true); }
+      if (event.type === 'voice-focus' && event.threadId) { dispatch({ type: 'select', id: event.threadId }); setView('chat'); setVoiceOpen(true); if (event.settings) setSettingsTab('voice'); }
       dispatch({ type: 'event', event });
       if (event.type === 'companion-capture-ready' && event.capture.surface === 'main') { dispatch({ type: 'select', id: event.capture.threadId }); setView('chat'); }
       if (event.type === 'settings-updated') setPreferences(event.preferences);

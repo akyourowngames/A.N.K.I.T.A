@@ -43,7 +43,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
       </> : <button ref={end} className="voice-start" onClick={onStart} disabled={busy || !onStart}><Icon name="mic" size={18} />{busy ? 'Getting ready…' : 'Try voice again'}</button>}
       {working && <button className="voice-control voice-stop" onClick={onCancel} disabled={busy} aria-label="Stop work" title="Cancel this task"><Icon name="stop" size={14} /><span>Stop work</span></button>}
     </div>
-    <div className="voice-panel-foot">{compact ? <button className="voice-text-button" onClick={onFocus}>Open conversation <Icon name="external" size={13} /></button>
+    <div className="voice-panel-foot">{compact ? <><button className="voice-text-button" onClick={onFocus}>Open conversation <Icon name="external" size={13} /></button>{issue && <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={13} /> Voice settings</button>}</>
       : <><span>{working ? 'End voice keeps your work running.' : voice.active ? 'Your words. A little momentum.' : 'Your conversation stays right here.'}</span><button className="voice-text-button" onClick={onIsland}><Icon name="panel" size={14} /> Continue in island</button></>}
     </div>
   </section>;

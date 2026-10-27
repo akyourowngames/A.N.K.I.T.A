@@ -46,7 +46,7 @@ const clampLook = (v: number) => Math.max(-1, Math.min(1, v));
 
 export function Island() {
   const voice = useVoice();
-  const voiceVisible = voice.state.active && !voice.error;
+  const voiceVisible = voice.state.active || voice.state.phase === 'error';
   const reducedMotion = useReducedMotion();
   const chat = useIslandChat();
   const [jobs, setJobs] = useState<Routine[]>([]);
@@ -186,7 +186,7 @@ export function Island() {
   useEffect(() => {
     const want = view === 'home' ? (showVoice || TALL_VIEWS.includes(activeView) ? 'home-chat' : 'home-expanded') : view === 'petit' ? 'petit' : 'tuck';
     if (want !== sizeRef.current) { sizeRef.current = want; void window.ankita.islandAction(want, { animate: !reducedMotion }).catch(() => {}); }
-    void window.ankita.islandAction(view === 'home' && (activeView === 'prompt' || activeView === 'approval' || activeView === 'settings') ? 'focus-on' : 'focus-off').catch(() => {});
+    void window.ankita.islandAction(view === 'home' && (showVoice || activeView === 'prompt' || activeView === 'approval' || activeView === 'settings') ? 'focus-on' : 'focus-off').catch(() => {});
   }, [view, activeView, reducedMotion, showVoice]);
   useEffect(() => { if (voiceVisible) { clearTimers(); setView('home'); } }, [voiceVisible, clearTimers]);
   useEffect(() => {
@@ -290,7 +290,7 @@ export function Island() {
       {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
         <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
       </button> : <div className="island-body" data-home-view={activeView}>
-        {showVoice ? <VoicePanel compact voice={voice.state} error={voice.error} busy={voice.busy} onEnd={voice.end} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onFocus={voice.focus} /> : <>
+        {showVoice ? <VoicePanel compact voice={voice.state} error={voice.error} busy={voice.busy} onEnd={voice.end} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onStart={voice.state.threadId ? () => voice.start(voice.state.threadId!) : undefined} onSettings={() => voice.focus(true)} onFocus={() => voice.focus()} /> : <>
         {activeView === 'approval' && <ApprovalView items={approvals} answer={answer} pendingId={pendingApproval} error={approvalError} />}
         {activeView === 'overview' && <Overview activities={activities} selectedId={focusId} onFocus={id => { setFocusId(id); chat.selectTeammate(id); }}
           onCaptureDrag={(event, id) => { setFocusId(id); chat.selectTeammate(id); if (capture.start(event, id)) pose('grab'); }}

@@ -164,8 +164,9 @@ or mutate that provider. This is a stated limitation, not claimed parity.
 5. Live configured-service runs exercise speech -> Meta -> file tools -> short
    report. Automated audio fixtures do not prove physical headset behavior. The
    owner completes the remaining microphone/workspace gate before filming.
-6. No release/tag/version bump or merge is performed. Integration goes to its own
-   reviewable branch; PR #70 remains the committed terminal/pending-work snapshot.
+6. No release/tag/version bump or default-branch merge is performed. Integration
+   is built and reviewed in its own worktree, then added to PR #70 under the
+   owner's instruction to include all pending changes in one review.
 
 ## Non-goals
 

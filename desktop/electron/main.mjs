@@ -493,9 +493,9 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
   }
   await current.init();
   if (Object.values(VOICE_ACTIONS).includes(action)) {
-    return runVoiceAction({ engine: current, action, payload, focus: state => {
+    return runVoiceAction({ engine: current, action, payload, focus: (state, options) => {
       showWindow();
-      current.emit({ type: 'voice-focus', threadId: state.threadId });
+      current.emit({ type: 'voice-focus', threadId: state.threadId, settings: options.settings });
     } });
   }
   if (Object.values(CAPTURE_ACTIONS).includes(action)) {

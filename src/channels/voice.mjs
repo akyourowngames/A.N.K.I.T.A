@@ -1140,7 +1140,9 @@ export function stopPlayback() {
   currentPlayer = null;
 }
 
-export async function playMp3(mp3, { signal } = {}) {
+export const VOICE_PLAYBACK_ERROR = 'Could not play speech. Check your output device and try voice again.'; // Actionable message; native player details stay out of spoken captions.
+
+export async function playMp3(mp3, { signal, rejectOnFailure = false, spawnImpl = spawn } = {}) {
   stopPlayback();
   const generation = playbackGeneration;
   if (signal?.aborted) return;
@@ -1149,14 +1151,15 @@ export async function playMp3(mp3, { signal } = {}) {
     await fs.promises.writeFile(file, mp3, { signal });
     // Stop or a newer playback may arrive while the audio is being written.
     if (signal?.aborted || generation !== playbackGeneration) return;
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       let child;
       try {
-        child = spawn("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", file], {
+        child = spawnImpl("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", file], {
           windowsHide: true,
           stdio: "ignore",
         });
-      } catch {
+      } catch (error) {
+        if (rejectOnFailure && !signal?.aborted && generation === playbackGeneration) return reject(new Error(VOICE_PLAYBACK_ERROR, { cause: error }));
         return resolve();
       }
       currentPlayer = child;
@@ -1165,13 +1168,17 @@ export async function playMp3(mp3, { signal } = {}) {
           child.kill("SIGKILL");
         } catch {}
       };
-      const done = () => {
+      let settled = false;
+      const done = (error) => {
+        if (settled) return;
+        settled = true;
         signal?.removeEventListener("abort", cancel);
         if (currentPlayer === child) currentPlayer = null;
-        resolve();
+        if (error && rejectOnFailure && !signal?.aborted && generation === playbackGeneration) reject(new Error(VOICE_PLAYBACK_ERROR, { cause: error }));
+        else resolve();
       };
       child.on("error", done);
-      child.on("close", done);
+      child.on("close", code => done(code === 0 ? null : new Error(VOICE_PLAYBACK_ERROR)));
       signal?.addEventListener("abort", cancel, { once: true });
     });
   } catch (error) {

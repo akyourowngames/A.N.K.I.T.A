@@ -4,8 +4,9 @@ const THREAD_ID_CHARS = 200; // Characters: bound IPC ownership identifiers befo
 /** The renderer can name an existing owner, never send credentials or executable configuration. */
 export async function runVoiceAction({ engine, action, payload, focus = () => {} }) {
   if (payload != null && (typeof payload !== 'object' || Array.isArray(payload))) throw new Error('Invalid voice payload.');
-  const allowed = action === VOICE_ACTIONS.start ? ['threadId'] : [];
+  const allowed = action === VOICE_ACTIONS.start ? ['threadId'] : action === VOICE_ACTIONS.focus ? ['settings'] : [];
   if (Object.keys(payload || {}).some(key => !allowed.includes(key))) throw new Error('Invalid voice payload.');
+  if (payload && Object.hasOwn(payload, 'settings') && typeof payload.settings !== 'boolean') throw new Error('Invalid voice payload.');
   if (action === VOICE_ACTIONS.start) {
     const id = payload?.threadId;
     if (typeof id !== 'string' || !id.trim() || id.length > THREAD_ID_CHARS || /[\x00-\x1f]/.test(id)) throw new Error('Choose a valid conversation for voice.');
@@ -18,7 +19,7 @@ export async function runVoiceAction({ engine, action, payload, focus = () => {}
     case VOICE_ACTIONS.pause: return voice.pause();
     case VOICE_ACTIONS.resume: return voice.resume();
     case VOICE_ACTIONS.cancel: return voice.cancelWork();
-    case VOICE_ACTIONS.focus: await focus(voice.snapshot()); return voice.snapshot();
+    case VOICE_ACTIONS.focus: await focus(voice.snapshot(), { settings: payload?.settings === true }); return voice.snapshot();
     default: throw new Error('Unknown voice action.');
   }
 }

@@ -44,8 +44,10 @@ owner's three-clean-workspace gate. In a generated Hinglish take, Sarvam heard
 “Markdown” as “mark count”; the simpler saved-poem request tests the file path,
 not recognition of that technical noun.
 
-Desktop voice is a separate review branch based on PR #70. No release, tag or
-default-branch merge is part of this work.
+Desktop voice was built in a separate worktree from PR #70, then added to the same
+PR under the owner's instruction to include all pending work. No release, tag or
+default-branch merge is part of this work. Starting voice is currently done in the
+app; the island continues that session and can retry it after an error.
 
 ## Terminal voice
 

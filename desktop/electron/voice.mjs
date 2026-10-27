@@ -7,7 +7,7 @@ import { createVoiceBrain, createAcknowledgements, voiceReplyForSpeech } from '.
 import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
 import { VoiceTaskStore, runVoiceTask, voiceTaskReport } from '../../src/automation/voice-task.mjs';
-import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS } from '../shared/voice.mjs';
+import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 
 const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner without changing typed-chat settings.
@@ -15,9 +15,10 @@ const DESKTOP_SPEECH_PROVIDER = 'sarvam'; // Both speech directions use the conf
 const PUBLIC_STEPS = 12; // Most recent observed actions shown in a bounded cross-window snapshot.
 const WAV_EXTENSION = 'wav'; // Existing channel helper expects an extension without a dot.
 const MILLISECONDS_PER_SECOND = 1000;
+const END_VOICE_PATTERN = /^(exit|quit|end voice)[.!?]?$/i; // Only a complete explicit exit phrase ends a session.
 const ERRORS = Object.freeze({ owner: 'Choose an existing conversation to start voice.', busy: 'This conversation is already working. Wait for it to finish.',
   takeover: 'End voice in the other conversation first.', key: 'Add your Sarvam key in Voice settings.',
-  browser: 'Voice needs an API-backed conversation. Choose a model in Settings first.',
+  browser: VOICE_API_REQUIRED_MESSAGE,
   audio: 'Voice needs ffmpeg and ffplay. Install them, then try again.', mic: 'No microphone found. Connect one and try again.',
   ended: 'Voice ended.', disconnected: 'The microphone disconnected. Check it and start voice again.' });
 const abortError = () => new DOMException(ERRORS.ended, 'AbortError');
@@ -154,7 +155,12 @@ export class DesktopVoice {
         } });
       const disconnected = () => { entry.error = new Error(ERRORS.disconnected); finish(); };
       entry.handle.child?.once('close', disconnected);
-      await abortable(entry.handle.ready, session.audio.signal);
+      try { await abortable(entry.handle.ready, session.audio.signal); }
+      catch (error) {
+        // A pause deliberately closes a starting ffmpeg child; its normal exit is not a device failure.
+        if (entry.stopping || session.paused || !this.owns(session)) return null;
+        throw error;
+      }
       if (!this.owns(session) || session.paused) finish();
       if (!barge && !ended) this.publish(session, { phase: 'listening', update: '' });
       timeout = setTimeout(finish, session.config.voiceMaxUtteranceMs);
@@ -180,7 +186,7 @@ export class DesktopVoice {
       heard ||= await this.capture(session);
       if (!heard || !this.owns(session)) continue;
       const text = heard.text.trim();
-      if (/^(exit|quit|end voice)[.!?]?$/i.test(text)) { await this.end(); return; }
+      if (END_VOICE_PATTERN.test(text)) { await this.end(); return; }
       session.language = heard.languageCode || '';
       this.publish(session, { caption: text, captionRole: 'user', phase: 'working', error: null });
       const task = await this.delegate(session, heard);
@@ -232,7 +238,7 @@ export class DesktopVoice {
 
   async play(session, audio, signal = session.audio.signal) {
     if (!this.owns(session) || signal.aborted) return;
-    await this.io.playMp3(audio, { signal });
+    await this.io.playMp3(audio, { signal, rejectOnFailure: true });
     if (!signal.aborted && session.config.voiceSpeechGapMs > 0) await abortable(wait(session.config.voiceSpeechGapMs), signal);
   }
 

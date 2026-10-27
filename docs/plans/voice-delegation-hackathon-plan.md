@@ -842,7 +842,9 @@ Built in an isolated `feat/desktop-voice-orb` worktree from committed PR #70.
 The owner approved a blue/lilac fluid orb, animated short captions, a full app
 panel and the same session in the floating island. This is new hackathon work;
 existing desktop layout, capture/playback, permissions and agent tools are reused.
-PR #70 remains the separate all-pending terminal/heartbeat/phone-pairing snapshot.
+The independently reviewed desktop commits are added to PR #70 under the owner's
+instruction to include all pending changes. The original committed terminal,
+heartbeat and phone-pairing baseline remains identifiable at `b88b1f5d`.
 
 One main-process coordinator owns audio and the conversation. Real ffmpeg RMS
 drives input motion. Existing desktop turns provide model/tool/approval/history
@@ -869,10 +871,23 @@ Evidence:
   Reserving caption space and reducing the orb at short heights made it pass.
 - `node scripts/verify-desktop-voice.mjs --env <local-env>` →
   `DESKTOP_VOICE_NATIVE_OK`: real Sarvam generated speech → STT → Meta
-  `meta-models/muse-spark-open-1026` → actual write/read tools → **208-character
-  kavita.txt**, **2 real MP3 handoffs**, **13327 ms** including UI/native evidence,
+  `meta-models/muse-spark-open-1026` → actual write/read tools → **246-character
+  kavita.txt**, **2 real MP3 handoffs**, **14009 ms** including UI/native evidence,
   **0 page errors**. Typed model restored to the separate fixture model. Actual
-  Electron main and late-subscriber island screenshots were inspected.
+  Electron main and late-subscriber island screenshots were inspected. The real
+  island became focusable and Tab/Space ended voice through its button.
+- The independent review found five important recovery issues: main remount,
+  inactive island errors, pausing during input startup, native island focus and
+  swallowed player failures. Each has a red-to-green regression. The final focused
+  channel/desktop/settings/native-control set passed **98/98** with no skips.
+  Strict player error reporting is opt-in for desktop; intentional cancellation
+  and existing best-effort callers retain their behavior.
+- The first desktop-branch full suite ran **1628 tests: 1619 pass, 8 fail, 1 skip**.
+  Seven failures came from applying an absent optional voice snapshot in existing
+  UI bridges; one came from delaying native-control cancellation behind audio
+  shutdown. Both were reproduced and fixed. All seven affected UI fixtures passed
+  in a focused rerun; native-control/voice-engine checks passed **15/15**. The final
+  all-source serial rerun follows the combined review fix pass.
 - The first broad test command discovered 25 failures in ignored generated launch
   website fixtures; those files are outside the tracked app change. A tracked-source
   run passed 1600 tests, with one process-ancestry fixture failure after its launcher
@@ -883,8 +898,8 @@ Limits: native input/VAD are generated fixtures and speaker handoffs are capture
 not a physical headset test. One generated Hinglish take misheard “Markdown” as
 “mark count”; the successful request asked for a generic saved poem and does not
 claim that technical noun passed. Physical barge-in, the owner's three-clean-workspace
-gate, packaged distribution and current GPU-driver coverage remain open. Browser
-fallback/motion fixtures do not close those gates. No merge, tag or release performed.
+  gate, packaged distribution and current GPU-driver coverage remain open. Browser
+  fallback/motion fixtures do not close those gates. No default-branch merge, tag or release performed.
 
 ## 19. Sources
 

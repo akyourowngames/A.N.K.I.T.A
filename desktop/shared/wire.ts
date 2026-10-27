@@ -105,7 +105,7 @@ export type UpdateEvent =
 
 export type EngineEvent = (
   | { type: 'voice-state'; state: VoiceState }
-  | { type: 'voice-focus'; threadId: string | null }
+  | { type: 'voice-focus'; threadId: string | null; settings?: boolean }
   | { type: 'companion-capture-ready'; capture: CompanionCaptureItem }
   | { type: 'secret-notice'; message: string }
   | { type: 'schedule-changed'; jobs: Routine[] }

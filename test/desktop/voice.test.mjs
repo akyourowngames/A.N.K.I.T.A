@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { EventEmitter } from 'node:events';
 
 const module_ = await import('../../desktop/electron/voice.mjs').catch(() => ({}));
 const WAIT_MS = 2500; // Fixture deadline; hardware/cloud are supplied as controlled IO.
@@ -131,6 +132,36 @@ test('device opening failure becomes a recoverable public error', async t => {
   await h.voice.start({ threadId: 'owner' });
   await until(() => h.voice.snapshot().phase === 'error');
   assert.equal(h.voice.snapshot().active, false); assert.match(h.voice.snapshot().error, /Device unavailable/);
+});
+
+test('pausing a microphone that is still starting preserves the session and resumes one replacement', async t => {
+  let opens = 0;
+  const h = harness(t, { open: options => {
+    opens++;
+    const child = new EventEmitter();
+    let reject;
+    const ready = opens === 1 ? new Promise((_resolve, fail) => { reject = fail; }) : Promise.resolve();
+    const input = { child, options, ready, stopped: false, stop: async () => {
+      input.stopped = true; reject?.(new Error('ffmpeg exited immediately (code 0)')); child.emit('close', 0); return false;
+    } };
+    h.inputs.push(input); return input;
+  } });
+  await h.voice.start({ threadId: 'owner' }); await until(() => opens === 1);
+  await h.voice.pause(); await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(h.voice.snapshot().active, true); assert.equal(h.voice.snapshot().phase, 'paused');
+  await h.voice.resume(); await until(() => h.voice.snapshot().phase === 'listening');
+  assert.equal(opens, 2);
+});
+
+test('desktop checks player failures and retains a recoverable audio error', async t => {
+  const h = harness(t, { play: async audio => { if (audio.toString().startsWith('Note ready')) throw new Error('Speech playback failed.'); } });
+  const original = h.voice.io.playMp3;
+  const policies = [];
+  h.voice.io.playMp3 = (audio, options) => { policies.push(options.rejectOnFailure); return original(audio, options); };
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.voice.snapshot().phase === 'error');
+  assert.equal(h.voice.snapshot().active, false); assert.match(h.voice.snapshot().error, /playback failed/);
+  assert.ok(policies.length && policies.every(Boolean));
 });
 
 test('one desktop voice session drives real task observers and two-sentence playback', async t => {

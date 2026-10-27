@@ -25,11 +25,11 @@ const browser = await chromium.launch({ headless: true });
 const errors = [];
 const receipt = { views: [], assertions: [] };
 
-async function pageFor({ island = false, width = 1280, height = 850, reduced = false, fallback = false, initial = emptyVoiceState() } = {}) {
+async function pageFor({ island = false, width = 1280, height = 850, reduced = false, fallback = false, initial = emptyVoiceState(), statusUnavailable = false } = {}) {
   const page = await browser.newPage({ viewport: { width, height }, reducedMotion: reduced ? 'reduce' : 'no-preference' });
   page.on('pageerror', error => { errors.push(error.message); console.error('VOICE_FIXTURE_PAGE_ERROR', error.message); });
   page.setDefaultTimeout(10000);
-  await page.addInitScript(({ contract, version, fallback, initial }) => {
+  await page.addInitScript(({ contract, version, fallback, initial, statusUnavailable }) => {
     if (fallback) {
       const original = HTMLCanvasElement.prototype.getContext;
       HTMLCanvasElement.prototype.getContext = function (type, ...args) { return String(type).includes('webgl') ? null : original.call(this, type, ...args); };
@@ -50,13 +50,13 @@ async function pageFor({ island = false, width = 1280, height = 850, reduced = f
         window.__voiceCalls.push({ action, payload });
         if (action === 'initialize') return { teammates, models: [{ id: 'fixture-model' }], settings, preferences, version, contract, chrome: 'native', jobs: [] };
         if (action === 'listTeammates') return teammates;
-        if (action === 'voiceStatus') return { state: voice, ready: true, issues: [], microphones: [{ name: 'Headset microphone' }], microphone: '' };
-        if (action === 'voiceStart') { window.__voicePatch({ ...voice, active: true, sessionId: 'fixture-session', threadId: payload.threadId, phase: 'listening', microphone: 'Headset microphone' }); return voice; }
+        if (action === 'voiceStatus') return statusUnavailable ? {} : { state: voice, ready: true, issues: [], microphones: [{ name: 'Headset microphone' }], microphone: '' };
+        if (action === 'voiceStart') { window.__voicePatch({ ...voice, active: true, error: null, sessionId: 'fixture-session', threadId: payload.threadId, phase: 'listening', microphone: 'Headset microphone' }); return voice; }
         if (action === 'voicePause') { window.__voicePatch({ paused: true, phase: 'paused', inputLevel: 0 }); return voice; }
         if (action === 'voiceResume') { window.__voicePatch({ paused: false, phase: 'listening' }); return voice; }
         if (action === 'voiceEnd') { window.__voicePatch({ active: false, phase: 'idle', inputLevel: 0 }); return voice; }
         if (action === 'voiceCancel') { window.__voicePatch({ task: { ...voice.task, status: 'cancelled' } }); return voice; }
-        if (action === 'voiceShowMain') { emit({ type: 'voice-focus', threadId: voice.threadId }); return voice; }
+        if (action === 'voiceShowMain') { emit({ type: 'voice-focus', threadId: voice.threadId, settings: payload?.settings === true }); return voice; }
         if (action === 'islandSnapshot') return { teammates, threads: teammates.map(item => ({ id: item.id, running: false, messages: [] })), voice, sequence: 0 };
         if (['loadThread', 'listProjects', 'scheduleList', 'approvalList', 'skillsList', 'listSkills'].includes(action)) return [];
         if (action === 'chatGptConnectionState') return {};
@@ -71,7 +71,7 @@ async function pageFor({ island = false, width = 1280, height = 850, reduced = f
       windowAction: async action => { window.__voiceCalls.push({ action }); return true; },
       openExternal: async () => true, version: async () => version,
     };
-  }, { contract: IPC_CONTRACT, version, fallback, initial });
+  }, { contract: IPC_CONTRACT, version, fallback, initial, statusUnavailable });
   await page.goto(`${target}/${island ? 'island.html' : ''}`);
   return page;
 }
@@ -100,6 +100,7 @@ try {
   await island.getByRole('button', { name: 'End voice', exact: true }).waitFor();
   assert.equal(await island.locator('.voice-caption').innerText(), snapshot.caption);
   await island.waitForTimeout(700); await island.screenshot({ path: path.join(captures, 'voice-island-speaking.png') });
+  const voiceFocusEnabled = await island.evaluate(() => window.__voiceCalls.some(call => call.action === 'focus-on'));
   await island.evaluate(() => window.__voiceEmit({ type: 'approval-request', threadId: 'chief', requestId: 'permission', toolName: 'Write file', detail: 'Allow this file to be saved?' }));
   await island.getByText('Allow this file to be saved?', { exact: false }).waitFor();
   assert.equal(await island.getByRole('button', { name: 'End voice', exact: true }).count(), 0);
@@ -147,6 +148,33 @@ try {
   const lines = await short.locator('.voice-caption').evaluate(element => ({ text: element.getBoundingClientRect().height, box: element.parentElement.getBoundingClientRect().height }));
   assert.ok(lines.box >= lines.text, `short-window caption clipped: ${JSON.stringify(lines)}`);
   receipt.assertions.push('short window preserves both caption lines');
+  const unavailable = await pageFor({ statusUnavailable: true });
+  await unavailable.getByRole('button', { name: 'Start voice conversation' }).waitFor();
+  const unavailableIsland = await pageFor({ island: true, statusUnavailable: true });
+  await unavailableIsland.locator('.island').waitFor();
+  receipt.assertions.push('an unavailable voice snapshot cannot blank either renderer');
+  const recoveryChecks = [];
+  const remount = await pageFor({ initial: { ...snapshot, task } });
+  await remount.locator('.chat-header').waitFor(); await remount.waitForTimeout(150);
+  recoveryChecks.push({ name: 'active main remount restores end controls', ok: await remount.getByRole('button', { name: 'End voice', exact: true }).count() === 1 });
+  assert.equal(await remount.evaluate(() => window.__voiceCalls.filter(call => call.action === 'voiceStart').length), 0);
+  const otherOwner = await pageFor({ initial: { ...snapshot, threadId: 'other', task } });
+  await otherOwner.getByRole('button', { name: 'End voice', exact: true }).waitFor();
+  assert.equal(await otherOwner.locator('.header-name-line h2').innerText(), 'Studio');
+  assert.ok(!await otherOwner.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceStart' || call.action === 'voiceEnd')));
+  const failedIsland = await pageFor({ island: true, width: 640, height: 420, initial: { ...snapshot, active: false, phase: 'error', error: 'Microphone disconnected. Try voice again.' } });
+  await failedIsland.locator('.island').waitFor(); await failedIsland.waitForTimeout(150);
+  recoveryChecks.push({ name: 'island retains inactive microphone error', ok: await failedIsland.getByText('Microphone disconnected. Try voice again.', { exact: true }).count() === 1 });
+  const retry = failedIsland.getByRole('button', { name: 'Try voice again', exact: true });
+  recoveryChecks.push({ name: 'island retry is enabled', ok: await retry.count() === 1 && await retry.isEnabled() });
+  recoveryChecks.push({ name: 'island has voice settings recovery', ok: await failedIsland.getByRole('button', { name: 'Voice settings', exact: true }).count() === 1 });
+  recoveryChecks.push({ name: 'expanded voice enables native focus', ok: voiceFocusEnabled });
+  assert.deepEqual(recoveryChecks.filter(check => !check.ok), []);
+  await failedIsland.getByRole('button', { name: 'Voice settings', exact: true }).click();
+  assert.ok(await failedIsland.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceShowMain' && call.payload?.settings === true)));
+  await retry.click();
+  assert.ok(await failedIsland.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceStart' && call.payload?.threadId === 'chief')));
+  receipt.assertions.push('active remount, island error/retry/settings and keyboard-focus recovery');
   assert.deepEqual(errors, []);
   console.log('DESKTOP_VOICE_UI_OK', JSON.stringify({ ...receipt, pageErrors: errors.length, captures }));
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }
