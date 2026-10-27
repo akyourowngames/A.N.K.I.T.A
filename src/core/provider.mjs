@@ -82,6 +82,7 @@ export function pickModel(models, wanted = "", useTools = true) {
  * pin is the default rather than a fallback.
  */
 export const BASETEN_DEFAULT_MODEL = "meta-models/muse-spark-open-1026";
+export const BASETEN_CONTEXT_WINDOW = 1_048_576; // Tokens: Baseten's documented full Muse Spark window (dev.meta.ai/docs/muse-spark-open/deploy).
 export const BASETEN_BASE_URL = "https://inference.baseten.co/v1";
 export const BASETEN_MIN_TOKENS = 400; // Output tokens: reasoning consumes smaller budgets before answering.
 export const BASETEN_DEFAULT_TOKENS = 1024; // Output tokens: short voice replies plus reasoning headroom.

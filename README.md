@@ -26,6 +26,30 @@ They use the same agent runtime and tools. Desktop teammates have separate
 threads, personas and drafts; assign a project to give a teammate its working
 folder and shared context.
 
+## Voice delegation build — 27 Oct–4 Nov 2026
+
+The terminal build for the Meta hackathon is in progress. Speak a Hinglish request in
+`/voice`: Ankita shows what it heard, tracks the real work steps, saves the result,
+and speaks its report. `/task` lists saved requests; `/task <id>` shows one in detail.
+
+| Already existed before this build | Added during this build |
+| --- | --- |
+| Mic recording, pause detection, playback and barge-in | Sarvam speech recognition and speech generation for Hinglish |
+| Agent tool execution and action approvals | A saved voice-task record with actual steps, approval status and final report |
+| Provider support and typed chat | Voice-only Muse Spark Open via Baseten, low reasoning effort and cached acknowledgements |
+| Process jobs and scheduled tasks | Separate voice-task tracking and throttled spoken progress |
+
+The terminal stays busy during a delegated request. You can switch apps, but this
+build does not run a second conversation alongside the request. Desktop/island work
+is gated on three clean physical-microphone demonstrations and has not been added.
+Automated checks with generated audio do not clear that gate.
+
+Sarvam supplies speech; the Meta model plans the work through real tool calls.
+The usual providers remain available. See the [voice guide](docs/guides/voice-delegation.md)
+for setup and tests, and the [dated plan](docs/plans/voice-delegation-hackathon-plan.md)
+for evidence and the remaining gates. No pre-existing voice feature is claimed as
+new hackathon work.
+
 ## What's new in 2.6.0
 
 Use your already-open ChatGPT conversation from ANKITA. Messages, attachments

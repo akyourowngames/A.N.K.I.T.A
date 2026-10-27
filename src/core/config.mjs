@@ -5,6 +5,7 @@ import { DEFAULT_SUMMARY_NOTE, DEFAULT_SARVAM_STT_MODEL, DEFAULT_SARVAM_STT_MODE
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
 import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
 import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS } from './provider.mjs';
+import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS } from '../automation/voice-task-policy.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -398,6 +399,9 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     voiceProvider: (pick("VOICE_PROVIDER") || DEFAULTS.voiceProvider).trim().toLowerCase(),
     voiceModel: pick("VOICE_MODEL") || DEFAULTS.voiceModel,
     voiceApiBase: pick("VOICE_API_BASE") || DEFAULTS.voiceApiBase,
+    voiceContextWindow: posInt(pick('VOICE_CONTEXT_WINDOW'), 0), // Tokens; zero uses the selected provider's window.
+    voiceTaskLimit: posInt(pick('VOICE_TASK_LIMIT'), VOICE_TASK_LIMIT),
+    voiceJobSpeakMinIntervalMs: posInt(pick('VOICE_JOB_SPEAK_MIN_INTERVAL_MS'), VOICE_JOB_SPEAK_MIN_INTERVAL_MS),
     sttProvider: (() => {
       const v = String(pick("STT_PROVIDER") || DEFAULTS.sttProvider).toLowerCase();
       return ["auto", "groq", "sarvam"].includes(v) ? v : DEFAULTS.sttProvider;

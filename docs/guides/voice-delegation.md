@@ -82,9 +82,14 @@ Then, inside the app:
 2. Say: **"Ankita, VS Code kholo aur mera workspace set up karo."** Pause. The pause
    sends the turn; you do not press Enter.
 3. The transcript prints as `yourname › Ankita, VS Code kholo...` **before** anything
-   runs. Read it. If it is wrong, say `exit` and start over.
-4. Ankita answers, and the reply is spoken.
-5. Say `exit` to leave voice mode, or talk over the reply to interrupt it (barge-in).
+   runs. Read it. If it is wrong, press Ctrl+C immediately, then re-record. Displaying
+   the transcript does not itself pause execution or prove that the words are correct.
+4. A saved voice-task card appears. Its steps come from real tool calls. The normal
+   action approval prompt still decides whether work may proceed; `/auto off` enables
+   those prompts if your setup currently approves automatically.
+5. Ankita speaks the final report. A declined or failed action is reported as failed,
+   even if the planner claims success. The record remains available after a restart.
+6. Say `exit` to leave voice mode, or talk over the final reply to interrupt it (barge-in).
 
 Three clean runs in a row is the gate before any filming. A take that shows a misheard
 word is never usable, however good the rest looks.
@@ -94,12 +99,43 @@ word is never usable, however good the rest looks.
 | Command | What it does |
 |---|---|
 | `/voice` | Hands-free loop: pause to send, barge-in, spoken replies |
+| `/task` | List saved voice requests (separate from shell-process jobs) |
+| `/task <id>` | Show the transcript, steps, status and final report for one request |
 | `/say <text>` | Speak one line aloud — the fastest way to judge the voice |
 | `/speak on` / `/speak off` | Read every typed reply aloud |
 | `--voice` | Start straight into the voice loop |
 
 `/say` is the quickest sound check: it skips transcription entirely, so if it sounds
 wrong the problem is the voice, not the ears.
+
+### Full service check without a microphone
+
+```bash
+node scripts/verify-voice-delegation.mjs
+```
+
+This runs three generated Hinglish requests through Sarvam, the Meta planner, real
+file-writing and reading tools, saved task records, and a generated spoken report.
+It checks the key command words and reads the file back. It uses a temporary folder
+and automatically approves only its own test file writes. `--planner-only` skips
+speech services; `--play` plays the prepared audio so you can judge the voice.
+
+This is a service check, not a recording of a person speaking. It never clears the
+physical mic/VS Code gate. Its acknowledgement timing measures selecting prepared
+audio from memory, not when sound reaches your ear.
+
+### The three-run mic gate
+
+Start Ankita, enter `/voice`, then say the workspace request above. Repeat it with
+three different folder names so each take does real work. A clean take requires:
+
+- The transcript matches the command you spoke.
+- VS Code opens and the requested files really appear.
+- The final voice report agrees with the visible result and sounds clear in Hinglish.
+- The saved request shows the actual completed steps.
+
+If a take fails, fix the cause and restart the count. Keep one English backup take.
+Do not film a mishearing or substitute the generated-audio check for this gate.
 
 ## What "working" looks like
 
@@ -118,15 +154,20 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 | `voice needs SARVAM_API_KEY ...` | No key for the selected engine | Add the key, run `/voice` again — no restart needed |
 | `Sarvam STT 403: key rejected` | Key deleted, rotated or wrong | New key in `.env` |
 | `Sarvam STT 429` | More than 60 requests a minute | Wait a moment; it retries once on its own |
+| `VOICE_PROVIDER=baseten needs BASETEN_API_KEY` | Missing planner key | Save the key locally, then enter voice mode again |
+| `403: API error 403` | Planner rejected the key/model route | Check the key and pinned model; the failed request stays saved |
+| Voice task is `cancelled` | Work was stopped | Read its partial steps before retrying |
 | `no microphone found` | Windows cannot see a mic | Check Settings → Privacy → Microphone, or set `MIC_DEVICE` |
 | Transcript is right but silent | Speaker or Bluetooth routing | Unplug the headset, or try `/say hello` |
 | Wrong word, again and again | Recognition, not the code | Speak a bit slower; add the word to `SARVAM_KEYTERMS` |
+| `Edge TTS handshake failed: HTTP 403` | The backup voice service rejected this connection | Keep Sarvam configured; the result still prints if both voices fail |
 
 ## Known limits, stated plainly
 
-- **The assistant's name is sometimes misheard.** "Ankita" came back as "Anpeta" once
-  even though the name was in the keyword hints. Command words were correct every time.
-  The transcript is shown first for exactly this reason.
+- **Words can be misheard.** "Ankita" came back as "Anpeta" once despite keyword hints;
+  a later test phrase "demo note" was also misheard. The final generated-audio check
+  preserved "workspace" and "file" in all three takes and now checks those words.
+  The transcript is shown first for visibility, not as proof it is correct.
 - **The detected language label drifts** on Hinglish — the same clip was labelled Hindi,
   Hindi, then Punjabi. The words were always right. The spoken reply therefore follows
   the reply's own writing, not the label.
@@ -135,3 +176,16 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 - **Recording over 30 seconds** is outside the documented limit for the REST
   endpoint; the app sends one utterance at a time, so this only matters if the pause
   detection is disabled.
+- **The terminal is busy during work.** You can switch to another app, but cannot
+  start a second Ankita conversation. `/task` can show saved status while work runs;
+  Ctrl+C stops the current request. Voice barge-in listens during the final report,
+  not while the tools are working.
+- **Saved tasks are bounded.** The latest 20 are kept under the configured user
+  storage folder; `VOICE_TASK_LIMIT` changes that count. Configured keys and
+  credential-shaped text are hidden in the saved records. Raw tool arguments and
+  results are not copied into those records.
+- **Progress speech is optional.** Updates are spaced by
+  `VOICE_JOB_SPEAK_MIN_INTERVAL_MS` (2500 ms by default), skipped while other progress
+  or the acknowledgement is playing, and discarded at approval/completion boundaries.
+  Failed or slow progress speech cannot turn completed work into a failure or delay
+  cancellation. The final report still prints if speech fails.

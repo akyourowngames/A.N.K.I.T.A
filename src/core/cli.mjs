@@ -6,6 +6,7 @@ import { extractMemory } from '../memory/memory-extract.mjs';
 import { recordTurn, saveSession } from './sessions.mjs';
 import {
   loadConfig,
+  CONFIG_DIR,
   ensureDirs,
   AUTH_FILE,
   HISTORY_FILE,
@@ -36,6 +37,9 @@ import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-po
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
 import { createVoiceBrain, withVoiceBrain, createAcknowledgements } from './voice-session.mjs';
+import { VoiceTaskStore, runVoiceTask, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
+import { VOICE_TASK_DIRECTORY } from '../automation/voice-task-policy.mjs';
+import { configuredSecrets } from './redact.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
@@ -52,30 +56,7 @@ import {
 import { LiveRenderer } from "./markdown.mjs";
 import { names as toolNames, cleanupJobs, displayArgs } from "../../tools/index.mjs";
 import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from '../tooling/job-ui.mjs';
-import {
-  voiceRuntimeCheck,
-  audioDeps,
-  tmpVoiceFile,
-  detectMic,
-  openVoiceInput,
-  createTurnDetector,
-  transcribeAudio,
-  synthesizeSarvam,
-  synthesizeEdge,
-  synthesizeGroq,
-  listEdgeVoices,
-  GROQ_VOICES,
-  resolveTtsProvider,
-  resolveTtsVoice,
-  resolveSarvamSpeaker,
-  chooseSarvamLanguage,
-  resolveSttProvider,
-  sttKeysMissing,
-  playMp3,
-  stopPlayback,
-  stripForSpeech,
-  summarizeForSpeech,
-} from "../channels/voice.mjs";
+import * as voiceChannel from '../channels/voice.mjs';
 import { useHandsFreePlayback } from "../channels/audio-device.mjs";
 
 function packageVersion() {
@@ -327,7 +308,17 @@ export function makeCompleter(models) {
   };
 }
 
-export async function main() {
+export async function main({ voiceIO = {} } = {}) {
+  // Injectable device boundary lets the full terminal loop run in tests without
+  // recording a person, playing sound, or spending speech-provider credits.
+  const {
+    voiceRuntimeCheck, audioDeps, tmpVoiceFile, detectMic, openVoiceInput,
+    createTurnDetector, transcribeAudio, synthesizeSarvam, synthesizeEdge,
+    synthesizeGroq, listEdgeVoices, GROQ_VOICES, resolveTtsProvider,
+    resolveTtsVoice, resolveSarvamSpeaker, chooseSarvamLanguage,
+    resolveSttProvider, sttKeysMissing, playMp3, stopPlayback,
+    stripForSpeech, summarizeForSpeech,
+  } = { ...voiceChannel, ...voiceIO };
   try { if (await runLocalCommand(process.argv.slice(2))) return; }
   catch (error) { console.error(error.message); process.exitCode = 2; return; }
   const opts = parseArgs(process.argv.slice(2));
@@ -525,6 +516,8 @@ export async function main() {
   // The REPL is one session at a time, so a single slot is enough to attach
   // sub-agent progress to the turn currently streaming.
   let activeOutcome = null;
+  let activeVoiceTask = null;
+  const taskStore = () => new VoiceTaskStore({ directory: path.join(CONFIG_DIR, VOICE_TASK_DIRECTORY), limit: config.voiceTaskLimit, secrets: configuredSecrets(config) });
 
   const agent = new Agent({
     client,
@@ -556,27 +549,45 @@ export async function main() {
     print: (s) => term.line(s),
     write: (s) => term.write(s),
     confirm: async (toolName, detail) => {
-      term.line("");
-      term.line(c.yellow(`  ── ${toolName} ` + "─".repeat(Math.max(0, 40 - toolName.length))));
-      term.line(
-        detail
-          .split("\n")
-          .map((l) => "  " + l)
-          .join("\n")
-      );
-      term.line(c.yellow("  " + "─".repeat(44)));
-      const answer = (await term.ask("  allow? [y]es / [n]o / [a]lways / [q]uit > ")) ?? "";
-      const a = answer.trim().toLowerCase();
-      if (a === "a" || a === "always") {
-        agent.autoApprove = true;
-        term.line(c.dim("  auto-approve on"));
-        return true;
-      }
-      if (a === "q" || a === "quit") {
-        term.line(c.dim("bye"));
-        process.exit(0);
-      }
-      return a === "y" || a === "yes";
+      // ToolHost can finish cancellation before TTS settles. Keep the requesting
+      // turn's signal/task, never the mutable agent fields of a later request.
+      const requestingTask = activeVoiceTask;
+      const requestingSignal = agent.abort?.signal;
+      const stale = () => requestingSignal?.aborted || (requestingTask && activeVoiceTask !== requestingTask);
+      const ask = async () => {
+        if (stale()) return false;
+        term.line("");
+        term.line(c.yellow(`  ── ${toolName} ` + "─".repeat(Math.max(0, 40 - toolName.length))));
+        term.line(detail.split("\n").map(l => "  " + l).join("\n"));
+        term.line(c.yellow("  " + "─".repeat(44)));
+        const answer = (await term.ask("  allow? [y]es / [n]o / [a]lways / [q]uit > ")) ?? "";
+        if (stale()) return false;
+        const a = answer.trim().toLowerCase();
+        if (a === "a" || a === "always") {
+          agent.autoApprove = true;
+          term.line(c.dim("  auto-approve on"));
+          return true;
+        }
+        if (a === "q" || a === "quit") {
+          if (activeVoiceTask) agent.cancel();
+          else { term.line(c.dim("bye")); process.exit(0); }
+          return false;
+        }
+        return a === "y" || a === "yes";
+      };
+      if (!requestingTask) return ask();
+      return requestingTask.approval(toolName, async () => {
+        const line = `Permission chahiye · ${toolName}`;
+        term.line(c.yellow(`  ${line}`));
+        // Stop progress/ack playback before the authoritative terminal question.
+        stopPlayback();
+        try {
+          const audio = await synthesizeSpeech(line);
+          if (audio && !stale()) await playMp3(audio, { signal: requestingSignal });
+        } catch (error) { term.line(c.dim(`  (tts: ${error.message})`)); }
+        if (stale()) return false;
+        return ask();
+      });
     },
   });
   agent.model = model;
@@ -683,6 +694,11 @@ export async function main() {
   };
   // Job controls remain usable during model/tool work and do not become chat input.
   term.interceptLine = line => {
+    if (busy && String(line).trim().split(/\s+/, 1)[0] === VOICE_TASK_COMMAND) {
+      try { term.notify(voiceTaskCommand(line, taskStore())); }
+      catch (error) { term.notify(`Voice task: ${error.message}`); }
+      return true;
+    }
     if (!busy || !isJobCommand(line)) return false;
     void runJobCommand(line, { state: agent.state, cwd: agent.cwd, config: agent.config })
       .then(result => term.notify(result)).catch(err => term.notify(`Error: ${err.message}`));
@@ -696,6 +712,7 @@ export async function main() {
       const hook = cancelHook;
       cancelHook = null;
       term.cancelPending();
+      stopPlayback();
       hook?.();
       term.line(c.dim("\n  cancelling..."));
       return;
@@ -709,7 +726,7 @@ export async function main() {
     return `${c.magenta(config.agentName)}${count ? c.dim(` [${count} running | /jobs]`) : ''} ${c.dim("›")} `;
   };
 
-  const runTurn = async (text) => {
+  const runTurn = async (text, observer = null) => {
     busy = true;
     const started = Date.now();
     const outcome = { text: "", thinking: "", toolCalls: [], subagents: [], error: null };
@@ -760,6 +777,7 @@ export async function main() {
           renderer = null;
         },
         onToolCall: (call) => {
+          observer?.onToolCall(call);
           let parsed = call.function.arguments;
           try {
             parsed = JSON.parse(call.function.arguments);
@@ -769,7 +787,8 @@ export async function main() {
           if (!show) return;
           term.line(c.cyan(`  → ${call.function.name}(${short(parsed, 140)})`));
         },
-        onToolResult: (call, result) => {
+        onToolResult: (call, result, verdict) => {
+          observer?.onToolResult(call, result, verdict);
           const entry = outcome.toolCalls.find((e) => e.ref === call);
           if (entry) entry.result = result;
           if (!show) return;
@@ -777,6 +796,7 @@ export async function main() {
         },
         onUsage: () => {},
       });
+      if (agent.cancelled()) outcome.error = 'cancelled';
       if (spoke && show) {
         const secs = ((Date.now() - started) / 1000).toFixed(1);
         const u = agent.turnUsage;
@@ -793,15 +813,15 @@ export async function main() {
       if (err.name === "AbortError") {
         if (show) term.line(c.dim("  (cancelled)"));
         outcome.error = "cancelled";
-      } else if (err.status === 401 || err.status === 403) {
+      } else if (!observer && provider.name === 'copilot' && (err.status === 401 || err.status === 403)) {
         try {
           await client.ensureToken(true);
         } catch {}
         if (show) term.line(c.yellow("  token refreshed - send that again."));
         outcome.error = "unauthorized (token refreshed, resend)";
       } else {
-        if (show) term.line(c.red("  error: " + err.message));
-        outcome.error = err.message;
+        outcome.error = `${err.status ? `${err.status}: ` : ''}${err.message}`;
+        if (show) term.line(c.red("  error: " + outcome.error));
       }
     } finally {
       spin?.stop();
@@ -817,6 +837,7 @@ export async function main() {
   // Language the last transcription reported, so a reply is spoken in the
   // language the user actually used rather than a fixed one.
   let speechLanguage = "";
+  let speechConfidence = null;
 
   const speechOpts = () => ({
     address: config.voiceAddress,
@@ -829,14 +850,15 @@ export async function main() {
 
   const synthesizeSpeech = async (clean, detected = speechLanguage) => {
     const provider = resolveTtsProvider(config);
+    const edge = () => synthesizeEdge({ voice: resolveTtsVoice(config, 'edge'), rate: config.ttsRate, text: clean });
     if (provider === "groq" && !config.groqApiKey) {
       term.line(c.dim("  (tts: set GROQ_API_KEY in .env, or TTS_PROVIDER=edge)"));
       return null;
     }
     if (provider === "sarvam") {
       if (!config.sarvamApiKey) {
-        term.line(c.dim("  (tts: set SARVAM_API_KEY in .env, or TTS_PROVIDER=edge)"));
-        return null;
+        term.line(c.dim("  (tts: SARVAM_API_KEY missing; using Edge)"));
+        return edge();
       }
       // The reply's script decides the voice; the transcript language is only a
       // hint, because Hinglish auto-detect is not stable between runs.
@@ -845,13 +867,18 @@ export async function main() {
         detected,
         fallback: config.sarvamTtsLanguage,
       });
-      return synthesizeSarvam({
-        apiKey: config.sarvamApiKey,
-        model: config.sarvamTtsModel,
-        speaker: resolveSarvamSpeaker(config, languageCode),
-        languageCode,
-        text: clean,
-      });
+      try {
+        return await synthesizeSarvam({
+          apiKey: config.sarvamApiKey,
+          model: config.sarvamTtsModel,
+          speaker: resolveSarvamSpeaker(config, languageCode),
+          languageCode,
+          text: clean,
+        });
+      } catch (error) {
+        term.line(c.dim(`  (tts: ${error.message}; using Edge)`));
+        return edge();
+      }
     }
     return provider === "groq"
       ? synthesizeGroq({
@@ -860,11 +887,7 @@ export async function main() {
           voice: resolveTtsVoice(config, "groq"),
           text: clean,
         })
-      : synthesizeEdge({
-          voice: resolveTtsVoice(config, "edge"),
-          rate: config.ttsRate,
-          text: clean,
-        });
+      : edge();
   };
 
   /** Speak a reply. Long lists/paragraphs are summarized unless `full`. */
@@ -913,6 +936,7 @@ export async function main() {
       const result = await transcribeAudio({ config, wavPath: wav });
       term.write("\r\x1b[K");
       if (result.languageCode) speechLanguage = result.languageCode;
+      speechConfidence = result.confidence ?? null;
       return result.text;
     } catch (err) {
       term.write("\r\x1b[K");
@@ -1155,12 +1179,16 @@ export async function main() {
     );
     let pending = null;
     let routing = null;
-    // Pay the acknowledgement cost on entry, not on the first reply.
-    await acknowledgements.prewarm();
     if (voiceBrain) {
       term.line(c.dim(`  voice answers use ${voiceBrain.label} · ${voiceBrain.model}`));
     }
     try {
+      // Pay acknowledgement synthesis before opening the microphone.
+      let cancelledDuringWarmup = false;
+      cancelHook = () => { cancelledDuringWarmup = true; };
+      await acknowledgements.prewarm();
+      cancelHook = null;
+      if (cancelledDuringWarmup) return;
       // A Bluetooth headset drops A2DP while its mic is open, which would make
       // barge-in replies silent. Point playback at its Hands-Free endpoint.
       if (config.voiceBargeIn && config.voiceHfpRouting) {
@@ -1195,15 +1223,41 @@ export async function main() {
         // seconds away and silence reads as "it didn't hear me".
         const ack = acknowledgements.next(speechLanguage);
         if (ack) term.line(c.dim(`  ${ack.text}`));
-        const ackPlayback = ack ? playMp3(ack.audio).catch(() => {}) : Promise.resolve();
-        const outcome = await withVoiceBrain(agent, voiceBrain, () => runTurn(clean));
-        await ackPlayback;
+        let ackPlaying = Boolean(ack);
+        const ackPlayback = (ack ? playMp3(ack.audio).catch(() => {}) : Promise.resolve()).finally(() => { ackPlaying = false; });
+        let result;
+        try {
+          result = await runVoiceTask({
+            store: taskStore(), transcript: clean, language: speechLanguage, confidence: speechConfidence,
+            minIntervalMs: config.voiceJobSpeakMinIntervalMs, isPlaying: () => ackPlaying,
+            onTrackingError: () => agent.cancel(),
+            onUpdate: record => term.line(c.dim(`  [voice task ${record.id}] ${record.status} · ${record.steps.filter(step => step.state === 'done').length}/${record.steps.length} steps`)),
+            speak: async (line, { signal }) => {
+              term.line(c.dim(`  ${line}`));
+              const audio = await synthesizeSpeech(line);
+              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled()) await playMp3(audio, { signal });
+            },
+            run: (observer, task) => {
+              activeVoiceTask = task;
+              return withVoiceBrain(agent, voiceBrain, () => runTurn(clean, observer));
+            },
+          });
+        } catch (error) {
+          term.line(c.red(`  Voice task could not be saved: ${error.message}`));
+        } finally {
+          await ackPlayback;
+          activeVoiceTask = null;
+        }
+        if (!result) continue;
+        const { outcome, task } = result;
+        term.line(renderVoiceTask(task));
         term.line("");
         try {
           writeSession(AUTOSAVE_NAME);
         } catch {}
-        if (outcome && !outcome.error && outcome.text) {
-          const r = await speakWithBargeIn(outcome.text);
+        const report = voiceTaskReport(task);
+        if (report) {
+          const r = await speakWithBargeIn(report);
           if (r.bargedIn && r.text && r.text.trim()) pending = r.text.trim();
         }
       }
@@ -1211,6 +1265,7 @@ export async function main() {
       routing?.restore();
       voiceActive = false;
       cancelHook = null;
+      activeVoiceTask = null;
     }
   };
 
@@ -1404,6 +1459,11 @@ export async function main() {
     if (raw === null) break;
     const input = raw.trim();
     if (!input) continue;
+    if (input.split(/\s+/, 1)[0] === VOICE_TASK_COMMAND) {
+      try { term.line(voiceTaskCommand(input, taskStore())); }
+      catch (error) { term.line(`Voice task: ${error.message}`); }
+      continue;
+    }
     if (isJobCommand(input)) {
       try { term.line(await runJobCommand(input, { state: agent.state, cwd: agent.cwd, config: agent.config })); }
       catch (err) { term.line(`Error: ${err.message}`); }

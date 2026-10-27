@@ -37,13 +37,14 @@ test('voice endpoint override wins and its key never comes from the chat provide
 });
 
 test('voice turn pins the whole tool loop and restores chat after success or failure', async () => {
-  const agent = { client: {}, model: 'chat', tool: { model: 'other' }, _activeModelClient: {}, _activeModel: 'previous' };
+  const agent = { client: {}, model: 'chat', contextWindow: 32768, tool: { model: 'other' }, _activeModelClient: {}, _activeModel: 'previous' };
   const saved = { ...agent };
-  const brain = { client: {}, model: 'voice' };
+  const brain = { client: {}, model: 'voice', contextWindow: 131072 };
   for (const fail of [false, true]) {
     const run = voice.withVoiceBrain(agent, brain, async () => {
       assert.equal(agent.client, brain.client);
       assert.equal(agent.model, brain.model);
+      assert.equal(agent.contextWindow, brain.contextWindow);
       assert.equal(agent.tool, null, 'a configured non-Meta tool model cannot take over');
       agent._activeModelClient = brain.client;
       agent._activeModel = brain.model;

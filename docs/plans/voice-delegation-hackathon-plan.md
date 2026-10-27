@@ -340,7 +340,7 @@ default provider behaviour.
 |---|---|---|
 | Sarvam key missing/expired | `voiceReady` explains exactly what to set, typed prompt still works | screenshot + log line |
 | STT 429/5xx | one retry with backoff, then "didn't catch that" and a re-record prompt | log + retry |
-| Mishearing | transcript is printed **before** execution; nothing runs on a wrong transcript without confirmation | video shot |
+| Mishearing | transcript prints **before** execution; this does not validate it or pause the turn. Ctrl+C stops work; action approval remains authoritative when auto-approve is off | video shot |
 | TTS fails | report prints; job status still `done` | log |
 | Baseten 401/402/404 | job fails fast with the exact status; no fake progress | log |
 | Baseten 529/429 | bounded retry, then fail with a plain message | log |
@@ -527,6 +527,103 @@ Still open:
   open; no desktop/island work is authorized by this result.
 - The previous conversation exposed a Baseten key. Owner was asked to rotate it;
   no secret values are printed by these checks or committed.
+
+## 18c. Tracked terminal delegation continuation (2026-10-27)
+
+Implemented after the latency checkpoint `542cf9c`:
+
+- `src/automation/voice-task.mjs` stores bounded atomic records under
+  `CONFIG_DIR/voice-tasks`, with transcript/language/confidence, actual tool steps,
+  approval state, summary, error and start/end times. `/task [id]` reads them.
+- The CLI supplies an observer to the existing turn runner. No JSON plan, second
+  agent or parallel conversation is introduced. Process-job controls are unchanged.
+- Progress speech is throttled and never queued. Approval/completion cancels stale
+  progress playback; even synthesis that ignores cancellation cannot hold the task
+  open. Its already-issued network request may still finish in the background.
+- Approval callbacks capture the original task and abort signal, so a cancelled
+  permission clip cannot reopen a question during a later turn. Existing action
+  approvals remain authoritative. An explicit planner rejection stays a failed job;
+  it does not refresh an unrelated chat token or switch away from Meta.
+- The voice planner temporarily uses its own context budget and restores the typed
+  budget afterward. The pinned Muse model uses the documented full window unless
+  the owner supplies `VOICE_CONTEXT_WINDOW` or an explicit shared context limit.
+  Source: [Meta's Baseten deployment guide](https://dev.meta.ai/docs/muse-spark-open/deploy).
+  The original full-CLI reproduction wrote a file then failed with
+  `The current request/tool schema exceeds the model context budget`; the new
+  context-switch regression and full CLI success path now pass.
+- Configured secrets and credential-shaped strings are redacted **before JSON
+  encoding**. Raw tool arguments/results are excluded. Failed work cannot speak a
+  planner-generated success claim as its whole report; core verification verdicts
+  are also carried into step state.
+- Sarvam synthesis errors now try the existing Edge engine, with a visible fallback
+  message. If both fail, the saved/printed report remains. A simulated Sarvam outage
+  through the real CLI confirms fallback and an unchanged successful task result.
+
+Evidence from this continuation:
+
+- `node --test --test-concurrency=1 test/automation/voice-task.test.mjs
+  test/core/voice-session.test.mjs test/core/voice-cli.test.mjs` exercises durable
+  state, parallel result correlation, denial, failure, cancellation, failed storage,
+  stalled speech, secret-shaped text and restoration of typed chat. Latest individual
+  runs: **17/17 task tests**, **5/5 voice-session tests**, **6/6 CLI tests**.
+- The CLI tests run the actual terminal loop and real file tools against a local HTTP
+  model fixture, with fake mic/synthesis/playback. They cover success, Sarvam failure,
+  planner 403, cancellation and cancellation during delayed approval speech.
+- Final affected-suite run:
+  `node --test --test-concurrency=1 --test-reporter=spec "test/channels/*.test.mjs"
+  "test/core/*.test.mjs" "test/automation/*.test.mjs"` → **493 tests, 493 pass,
+  0 fail, 0 cancelled, 0 skipped**, **111927 ms**, exit 0. Full local trace:
+  ignored `.voice-verification.log`. `node --check src/core/cli.mjs` and
+  `git diff --check` also passed. The whole repository/packaged desktop suite was
+  not run; these are the affected channel/core/automation suites.
+- Real Sarvam check: **2/2** Hinglish/English round trips. Latest successful values:
+  STT **277/789 ms**, report TTS **830/813 ms**. One earlier request was rejected as
+  longer than 30 seconds; subsequent probed clips were short, and the original check
+  passed on repetition. Its original cause is **unresolved**, not claimed fixed.
+- `node scripts/verify-voice-delegation.mjs` completed **3/3 synthetic speech
+  delegations** through real Sarvam, real pinned Meta planning, real `write_file` /
+  `read_file`, actual approval callbacks, durable records and final report synthesis.
+  Final transcripts all preserved `Workspace mein ek file banao aur usko padhkar batao.`
+  Latest STT **309/268/292 ms**; task durations **3378/3408/3658 ms**; report synthesis
+  **1376/1011/1000 ms**. Ack cache lookup **0.068/0.008/0.009 ms** is memory selection,
+  **not audible onset**. Playback was not requested in that run. Short progress clips
+  were cancelled at the approval/completion boundary; no live step audio is claimed.
+- A real typed one-shot returned `ok: true`, model `reflection/beam-free`, text
+  `Hey there, krish!`, **1629 ms**. The pre-existing configured StepFun route was
+  unavailable, so the ordinary Kilo resolver chose that free model; voice did not
+  alter the typed provider.
+- An independent read-only review found stale approval, JSON redaction, misleading
+  spoken success and stalled progress finalization issues. Each has a failing
+  reproduction followed by a passing regression in this continuation.
+- Literal review: endpoints/models/context sizes and retention/speech timing defaults
+  are named constants or configuration. Tool verbs, statuses and command vocabulary
+  are protocol/UI values. Fixture paths, fixed sample content and timings used for
+  testing remain in tests/scripts. `.env` is ignored and no key values are staged.
+
+Remaining gates and limitations:
+
+- **Physical microphone gate: 0/3 observed here.** The owner is ready to try it.
+  Actual headset routing, audible first-response latency, Hinglish pronunciation,
+  physical Ctrl+C/barge-in, actual VS Code opening and three clean mic takes still
+  need the owner. Generated-audio service runs do not clear this gate.
+- The terminal remains occupied while work runs. No true concurrent chat or
+  desktop/island bridge has been built. No packaged desktop verification is claimed.
+- Node 24 on Windows hit a libuv assertion at forced process exit in the fixture's
+  zero-duration fake-audio runs. The fixture captures the requested exit and lets
+  sockets close naturally; production teardown was not changed. Physical terminal
+  shutdown remains part of the owner check; this is not claimed fixed.
+- Live Edge synthesis was attempted after the fallback routing test and returned
+  `Edge TTS handshake failed: HTTP 403`. Fallback routing is stub-driven **6/6** CLI
+  coverage; the existing Edge service is currently unavailable here. Sarvam live
+  speech passes; if both speech engines fail, output remains printed/saved. No Edge
+  service repair or claim of working live fallback is included in this scope.
+- Transcript display is visibility, not validation. It does not stop auto-approved
+  work. Use Ctrl+C on a mishearing and action approval prompts when needed. A draft
+  test phrase `demo note` was misheard twice; the final verifier asserts its command
+  nouns so those takes cannot pass silently.
+- No controlled identical-prompt before/after microphone-to-sound benchmark has
+  been performed. Sarvam retention terms and Baseten balance/pricing remain open
+  from §18. The earlier exposed Baseten key still needs rotation by its owner.
 
 ## 19. Sources
 

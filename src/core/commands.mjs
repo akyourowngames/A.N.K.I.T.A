@@ -9,6 +9,7 @@ export const USAGE_LABEL_WIDTH = 22;
 
 /** Discoverability line printed under the startup banner. */
 export const BANNER_HINT = "type /help · /commands for everything";
+export const VOICE_TASK_COMMAND = '/task'; // Saved voice delegation records; distinct from process jobs.
 
 /** Offline entry points; shared by terminal help and the generated cheat sheet. */
 export const LOCAL_COMMANDS = [
@@ -94,6 +95,7 @@ export const SLASH_GROUPS = [
     items: [
       { name: "/mic", desc: "dictate one message (auto-sends on pause)" },
       { name: "/voice", desc: "hands-free loop: VAD, barge-in, spoken replies" },
+      { name: VOICE_TASK_COMMAND, args: '[id]', desc: 'list saved voice requests or show one request and its steps' },
       { name: "/say", args: "<text>", desc: "speak text aloud (Edge TTS)" },
       { name: "/speak", args: "on|off", desc: "auto-speak every reply" },
       { name: "/voices", args: "[filter]", desc: "list Edge TTS voices" },

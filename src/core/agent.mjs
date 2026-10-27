@@ -1442,7 +1442,7 @@ export class Agent {
         const verdict = verdictFor(call?.function?.name, args || {}, result, this.mcp);
         const footer = verificationFooter(verdict);
         try {
-          onToolResult?.(call, result);
+          onToolResult?.(call, result, verdict);
         } catch {}
         traceAgent({ event: 'tool_result', ...metadata, duration_ms: Date.now() - started, success: verdict?.ok === false ? false : !isToolFailure(result), verified: verdict?.ok ?? null, error: verdict?.ok === false || isToolFailure(result) ? 'tool_error' : undefined }, this.config);
         try {
