@@ -625,6 +625,74 @@ Remaining gates and limitations:
   been performed. Sarvam retention terms and Baseten balance/pricing remain open
   from §18. The earlier exposed Baseten key still needs rotation by its owner.
 
+## 18d. First-mic feedback: natural speech and clean boundaries (2026-10-27)
+
+The owner ran real microphone conversation turns and a request to write a poem and
+open it in Notepad. Feedback: the final voice sounded good and tool execution was
+fast, but intermediate speech cut off and ran into the next sentence. The fixed
+spoken labels were too robotic. This is a real delivery bug, not just presentation.
+The three-clean-workspace-demo gate remains open.
+
+Reproduction and fix:
+
+- The prior `runVoiceTask` interrupted all progress at approval/completion. Regressions
+  reproduced that a currently playing line was aborted and permission did not wait.
+  Speech now distinguishes preparation from playback: stale preparation is cancelled,
+  started playback finishes, and a configurable **300 ms gap** separates clips.
+  Ctrl+C interrupts immediately. A named **15000 ms playback ceiling** handles a
+  stuck progress player without an unlimited completion wait.
+- Tool names are now record labels only. A separate compact request to the chosen
+  voice model generates one short sentence from the transcript and observed action.
+  It runs beside tool execution, receives no tool arguments/file contents or memory,
+  makes no tool calls, and has a **3000 ms deadline**. Internal recall/discovery/todo
+  work is not narrated. The cached acknowledgement remains an immediate receipt.
+- Every **10000 ms** of active long work may generate a fresh waiting update.
+  Timer/throttle settings are named config values. No reminders run while awaiting
+  permission, and no fabricated finish time is allowed. No true concurrent chat or
+  daemon has been introduced.
+- Voice mode hides reasoning/raw tool dumps and repeated counters by default; full
+  step records remain available through `/task`. `VOICE_VERBOSE=on` opts into traces.
+  The final spoken text now comes from `Agent.send`'s returned final reply; earlier
+  tool preambles cannot be concatenated into it, including on cancellation.
+- A fresh review found cancellation during the new completion grace period could
+  still save success. The regression first returned `done` instead of `cancelled`;
+  finalization now rechecks the requesting turn after playback settles. The real CLI
+  fixture also cancels during this gap and confirms there is no spoken success.
+- Generic compatible providers now inherit only their own request defaults. A
+  regression rejects accidental injection of Baseten-only reasoning settings.
+
+Verification:
+
+- Targeted scheduler/narrator/CLI checks cover ordered playback, spacing, hanging
+  synthesis/player, proactive timers, approval, cancellation during completion,
+  hidden reasoning and intermediate content, safe narration inputs and provider
+  portability. Final affected-suite command:
+  `node --test --test-concurrency=1 --test-reporter=spec "test/channels/*.test.mjs"
+  "test/core/*.test.mjs" "test/automation/*.test.mjs"` → **502 tests, 502 pass,
+  0 fail, 0 cancelled, 0 skipped**, **129019 ms**, exit 0. Ignored full trace:
+  `.voice-polish-verification.log`. The actual CLI fixture subset passed **8/8**.
+  Syntax checks for the CLI, task controller, narrator and verifier, plus
+  `git diff --check`, passed.
+- `node scripts/verify-voice-delegation.mjs --narration-only` → **3/3** real model
+  updates and real Sarvam audio (playback skipped). Latest English step/wait model
+  times **2499/1747 ms**; Hinglish **2682 ms**. Generated examples:
+  `Writing your random poem and getting Notepad ready, I'll let you know when it's done.`
+  and `Aapki kavita likhne ka kaam chal raha hai, pura hote hi yahin update karungi.`
+  Audio sizes **84427/88189/63947 bytes**. One prior live probe returned no acceptable
+  narration; optional updates can be skipped on deadline/length/provider failure.
+  This does not fail the work or delay its final report.
+- The generated `poem.txt` from the owner's test is kept untracked and untouched.
+  No recordings, keys or local verification logs are staged. All prior source work
+  was committed before this polish; no implementation is based on the poem artifact.
+
+Still uncovered: by-ear/headset verification of the new sentence spacing and natural
+updates after restarting the old process; a full physical workspace demo; packaged
+desktop checks. The earlier Notepad request retried after a workspace-boundary error,
+so its task remained failed even though a later write/launch succeeded. That strict
+retry outcome and proof of a visible Notepad window are recorded findings, not fixed
+or claimed verified by this speech polish. Existing Edge 403 and Sarvam retention /
+Baseten balance questions remain as recorded above.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).

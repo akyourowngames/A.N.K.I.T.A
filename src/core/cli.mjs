@@ -37,6 +37,7 @@ import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-po
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
 import { createVoiceBrain, withVoiceBrain, createAcknowledgements } from './voice-session.mjs';
+import { createVoiceNarrator } from './voice-narrator.mjs';
 import { VoiceTaskStore, runVoiceTask, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
 import { VOICE_TASK_DIRECTORY } from '../automation/voice-task-policy.mjs';
 import { configuredSecrets } from './redact.mjs';
@@ -517,6 +518,7 @@ export async function main({ voiceIO = {} } = {}) {
   // sub-agent progress to the turn currently streaming.
   let activeOutcome = null;
   let activeVoiceTask = null;
+  let voiceAckPlayback = Promise.resolve();
   const taskStore = () => new VoiceTaskStore({ directory: path.join(CONFIG_DIR, VOICE_TASK_DIRECTORY), limit: config.voiceTaskLimit, secrets: configuredSecrets(config) });
 
   const agent = new Agent({
@@ -579,8 +581,9 @@ export async function main({ voiceIO = {} } = {}) {
       return requestingTask.approval(toolName, async () => {
         const line = `Permission chahiye · ${toolName}`;
         term.line(c.yellow(`  ${line}`));
-        // Stop progress/ack playback before the authoritative terminal question.
-        stopPlayback();
+        // Let the acknowledgement and any already-playing progress sentence finish.
+        await voiceAckPlayback;
+        if (stale()) return false;
         try {
           const audio = await synthesizeSpeech(line);
           if (audio && !stale()) await playMp3(audio, { signal: requestingSignal });
@@ -713,6 +716,7 @@ export async function main({ voiceIO = {} } = {}) {
       cancelHook = null;
       term.cancelPending();
       stopPlayback();
+      activeVoiceTask?.interruptSpeech?.();
       hook?.();
       term.line(c.dim("\n  cancelling..."));
       return;
@@ -731,13 +735,13 @@ export async function main({ voiceIO = {} } = {}) {
     const started = Date.now();
     const outcome = { text: "", thinking: "", toolCalls: [], subagents: [], error: null };
     activeOutcome = outcome;
-    const show = !opts.json;
+    const show = !opts.json && (!observer || config.voiceVerbose);
     let spin = null;
     let renderer = null;
     let spoke = false;
 
     try {
-      await agent.send(text, {
+      const reply = await agent.send(text, {
         onMessageStart: () => {
           if (show && !spoke && !opts.prompt) spin = spinner("thinking");
           if (!plain) {
@@ -746,7 +750,7 @@ export async function main({ voiceIO = {} } = {}) {
           }
         },
         onDelta: (d) => {
-          outcome.text += d;
+          if (!observer) outcome.text += d;
           if (!show) return;
           if (plain) {
             if (d) {
@@ -796,6 +800,8 @@ export async function main({ voiceIO = {} } = {}) {
         },
         onUsage: () => {},
       });
+      // The agent's returned final message excludes intermediate tool preambles.
+      if (observer && typeof reply === 'string') outcome.text = reply;
       if (agent.cancelled()) outcome.error = 'cancelled';
       if (spoke && show) {
         const secs = ((Date.now() - started) / 1000).toFixed(1);
@@ -1168,6 +1174,9 @@ export async function main({ voiceIO = {} } = {}) {
       return;
     }
     const acknowledgements = createAcknowledgements({ synthesize: synthesizeSpeech });
+    const narrate = voiceIO.narrate || createVoiceNarrator({
+      client: voiceBrain?.client || agent.client, model: voiceBrain?.model || agent.model, secrets: configuredSecrets(config),
+    });
     voiceActive = true;
     const handsFree = config.voiceVad;
     term.line(
@@ -1223,19 +1232,27 @@ export async function main({ voiceIO = {} } = {}) {
         // seconds away and silence reads as "it didn't hear me".
         const ack = acknowledgements.next(speechLanguage);
         if (ack) term.line(c.dim(`  ${ack.text}`));
-        let ackPlaying = Boolean(ack);
-        const ackPlayback = (ack ? playMp3(ack.audio).catch(() => {}) : Promise.resolve()).finally(() => { ackPlaying = false; });
+        const ackPlayback = ack ? playMp3(ack.audio).catch(() => {}).then(() =>
+          new Promise(resolve => setTimeout(resolve, config.voiceSpeechGapMs))) : Promise.resolve();
+        voiceAckPlayback = ackPlayback;
         let result;
         try {
           result = await runVoiceTask({
             store: taskStore(), transcript: clean, language: speechLanguage, confidence: speechConfidence,
-            minIntervalMs: config.voiceJobSpeakMinIntervalMs, isPlaying: () => ackPlaying,
+            minIntervalMs: config.voiceJobSpeakMinIntervalMs,
+            gapMs: config.voiceSpeechGapMs, waitUpdateMs: config.voiceJobWaitUpdateMs,
             onTrackingError: () => agent.cancel(),
-            onUpdate: record => term.line(c.dim(`  [voice task ${record.id}] ${record.status} · ${record.steps.filter(step => step.state === 'done').length}/${record.steps.length} steps`)),
-            speak: async (line, { signal }) => {
+            isCancelled: () => agent.cancelled(),
+            onUpdate: record => {
+              if (config.voiceVerbose || record.status === 'queued') term.line(c.dim(`  [voice task ${record.id}] ${record.status}`));
+            },
+            speak: async (event, { signal, beginPlayback }) => {
+              const line = await narrate(event, { signal });
+              if (!line || signal.aborted) return;
               term.line(c.dim(`  ${line}`));
               const audio = await synthesizeSpeech(line);
-              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled()) await playMp3(audio, { signal });
+              await ackPlayback;
+              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled() && beginPlayback()) await playMp3(audio, { signal });
             },
             run: (observer, task) => {
               activeVoiceTask = task;
@@ -1250,7 +1267,7 @@ export async function main({ voiceIO = {} } = {}) {
         }
         if (!result) continue;
         const { outcome, task } = result;
-        term.line(renderVoiceTask(task));
+        term.line(config.voiceVerbose ? renderVoiceTask(task) : `[voice task ${task.id}] ${task.status}\n${voiceTaskReport(task)}`);
         term.line("");
         try {
           writeSession(AUTOSAVE_NAME);

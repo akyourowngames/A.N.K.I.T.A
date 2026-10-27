@@ -115,6 +115,94 @@ test('speech drops overlapping and too-frequent progress, drains before the fina
   assert.deepEqual(spoken, ['First', 'Second']);
 });
 
+test('normal completion finishes a sentence already playing; cancellation stops it', async () => {
+  let release; let signal;
+  const speech = api.createStepSpeech({ gapMs: 0, speak: (_line, options) => {
+    signal = options.signal;
+    options.beginPlayback();
+    return new Promise(resolve => { release = resolve; });
+  } });
+  speech.offer('A complete sentence.');
+  let finished = false;
+  const settling = speech.finish().then(() => { finished = true; });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(signal.aborted, false);
+  assert.equal(finished, false);
+  release(); await settling;
+  speech.offer('Another sentence.');
+  speech.interrupt();
+  assert.equal(signal.aborted, true);
+  await speech.drain();
+});
+
+test('permission waits for the current sentence and progress never speaks internal recall labels', { timeout: 2000 }, async t => {
+  const store = storeFor(t);
+  const events = [];
+  let release; let begun;
+  const playing = new Promise(resolve => { begun = resolve; });
+  const run = api.runVoiceTask({ store, transcript: 'Write a poem', gapMs: 0, speak: (event, options) => {
+    events.push(event);
+    options.beginPlayback(); begun();
+    return new Promise(resolve => { release = resolve; });
+  }, run: async (observer, task) => {
+    observer.onToolCall(call('memory', 'recall')); observer.onToolResult(call('memory'), 'Memory');
+    observer.onToolCall(call('write', 'write_file'));
+    const approval = task.approval('write_file', async () => { events.push('approval'); return true; });
+    await playing;
+    assert.equal(events.includes('approval'), false);
+    release(); await approval;
+    observer.onToolResult(call('write'), 'Written');
+    return { text: 'Done.' };
+  } });
+  await run;
+  assert.equal(events[0].kind, 'step');
+  assert.equal(events[0].call.function.name, 'write_file');
+  assert.equal(events.at(-1), 'approval');
+});
+
+test('long work gets proactive waiting events and timers stop when work ends', async t => {
+  const store = storeFor(t);
+  const events = [];
+  await api.runVoiceTask({ store, transcript: 'Write a longer poem', gapMs: 0, minIntervalMs: 0, waitUpdateMs: 10,
+    speak: async (event, options) => { events.push(event); options.beginPlayback(); },
+    run: async () => { await new Promise(resolve => setTimeout(resolve, 45)); return { text: 'Ready.' }; },
+  });
+  assert.ok(events.some(event => event.kind === 'waiting' && event.transcript.includes('poem')));
+  const count = events.length;
+  await new Promise(resolve => setTimeout(resolve, 25));
+  assert.equal(events.length, count);
+});
+
+test('the gap separates finished clips and an unresponsive player has a ceiling', async () => {
+  const started = Date.now();
+  const speech = api.createStepSpeech({ gapMs: 20, speak: async (_line, { beginPlayback }) => { beginPlayback(); } });
+  speech.offer('Complete.'); await speech.drain();
+  assert.ok(Date.now() - started >= 15);
+  let signal;
+  const stuck = api.createStepSpeech({ gapMs: 0, maxPlaybackMs: 20, speak: (_line, options) => {
+    signal = options.signal; options.beginPlayback(); return new Promise(() => {});
+  } });
+  stuck.offer('A sentence.'); await stuck.finish();
+  assert.ok(signal.aborted);
+});
+
+test('cancellation while the last progress sentence finishes cannot become a success report', async t => {
+  const store = storeFor(t);
+  const controller = new AbortController();
+  const { task } = await api.runVoiceTask({ store, transcript: 'Write', signal: controller.signal, gapMs: 0,
+    speak: (_event, options) => {
+      options.beginPlayback();
+      setImmediate(() => controller.abort());
+      return new Promise(() => {});
+    }, run: async observer => {
+      observer.onToolCall(call('a', 'write_file')); observer.onToolResult(call('a'), 'Written');
+      return { text: 'Done.', error: null };
+    },
+  });
+  assert.equal(task.status, 'cancelled');
+  assert.equal(api.voiceTaskReport(task), 'Cancelled.');
+});
+
 test('speech failure cannot fail a successful task and late progress is not queued', async t => {
   const store = storeFor(t);
   const { task } = await api.runVoiceTask({ store, transcript: 'Read', speak: async () => { throw new Error('speaker offline'); },

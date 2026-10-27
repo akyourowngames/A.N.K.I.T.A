@@ -5,12 +5,13 @@ import { stripVTControlCharacters } from 'node:util';
 import { redactText } from '../core/redact.mjs';
 import { isToolFailure } from '../core/verify.mjs';
 import { VOICE_TASK_COMMAND } from '../core/commands.mjs';
-import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS } from './voice-task-policy.mjs';
+import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_PROGRESS_PLAYBACK_MAX_MS } from './voice-task-policy.mjs';
 
 export { VOICE_TASK_COMMAND };
 const RECORD_SUFFIX = '.json';
 const ID_PATTERN = /^[a-f\d-]{36}$/i; // UUIDs only: command arguments cannot escape the task directory.
 const FINAL_STATES = new Set(['done', 'failed', 'cancelled']);
+const SILENT_TOOLS = new Set(['recall', 'remember', 'project_memory', 'find_tools', 'write_todos']); // Internal bookkeeping is never a spoken work update.
 const TOOL_VERBS = new Map([
   ['read_file', 'Read'], ['list_dir', 'Read'], ['search_files', 'Read'], ['glob', 'Read'],
   ['write_file', 'Write'], ['edit_file', 'Write'], ['edit_lines', 'Write'], ['apply_patch', 'Write'],
@@ -71,19 +72,35 @@ export class VoiceTaskStore {
   }
 }
 
-/** Progress is best effort, never queued, and cannot overlap itself or an acknowledgement. */
-export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_JOB_SPEAK_MIN_INTERVAL_MS, isPlaying = () => false } = {}) {
+/** Best-effort preparation is disposable; call beginPlayback before playing so a started sentence can finish. */
+export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_JOB_SPEAK_MIN_INTERVAL_MS, gapMs = VOICE_SPEECH_GAP_MS, maxPlaybackMs = VOICE_PROGRESS_PLAYBACK_MAX_MS, isPlaying = () => false } = {}) {
   let pending = null;
   let controller = null;
   let lastStarted = -Infinity;
-  return {
+  let active = null;
+  const speech = {
     offer(text) {
       if (!speak || pending || isPlaying() || now() - lastStarted < minIntervalMs) return false;
       lastStarted = now();
       controller = new AbortController();
+      const state = { playing: false, controller };
+      active = state;
       const { signal } = controller;
       let work;
-      try { work = Promise.resolve(speak(text, { signal })).catch(() => {}); }
+      let playbackTimer;
+      const beginPlayback = () => {
+        if (signal.aborted) return false;
+        state.playing = true;
+        playbackTimer = setTimeout(() => state.controller.abort(), maxPlaybackMs);
+        return true;
+      };
+      try { work = Promise.resolve(speak(text, { signal, beginPlayback })).catch(() => {}).then(async () => {
+        if (state.playing && !signal.aborted && gapMs > 0) await new Promise(resolve => {
+          const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
+          const timer = setTimeout(finish, gapMs);
+          signal.addEventListener('abort', finish, { once: true });
+        });
+      }); }
       catch { work = Promise.resolve(); }
       // Synthesis may ignore AbortSignal. Detach it on interruption so optional
       // speech cannot hold a completed/cancelled task open until a network timeout.
@@ -95,12 +112,17 @@ export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_
         void work.then(finish);
       });
       const current = pending;
-      void current.finally(() => { if (pending === current) pending = null; });
+      void current.finally(() => { clearTimeout(playbackTimer); if (pending === current) { pending = null; active = null; } });
       return true;
     },
     interrupt() { controller?.abort(); },
     async drain() { await pending; },
+    async finish({ cancelled = false } = {}) {
+      if (cancelled || !active?.playing) speech.interrupt();
+      await speech.drain();
+    },
   };
+  return speech;
 }
 
 class VoiceTask {
@@ -126,7 +148,7 @@ class VoiceTask {
     if (FINAL_STATES.has(this.record.status)) return false;
     this.record.status = 'waiting_for_approval';
     this.persist();
-    this.onApproval?.();
+    await this.onApproval?.();
     try { return await ask(tool); }
     finally {
       if (!FINAL_STATES.has(this.record.status)) { this.record.status = 'running'; this.persist(); }
@@ -162,10 +184,17 @@ class VoiceTask {
 }
 
 /** One agent turn, with a durable observer. No invented JSON plan or second agent. */
-export async function runVoiceTask({ store, transcript, language, confidence, run, onUpdate, speak, minIntervalMs, isPlaying, now, onTrackingError }) {
-  const speech = createStepSpeech({ speak, minIntervalMs, isPlaying, now });
-  const task = new VoiceTask({ store, transcript, language, confidence, onUpdate, now, onApproval: () => speech.interrupt() });
+export async function runVoiceTask({ store, transcript, language, confidence, run, onUpdate, speak, minIntervalMs, gapMs, waitUpdateMs = VOICE_JOB_WAIT_UPDATE_MS, isPlaying, now = Date.now, onTrackingError, signal, isCancelled = () => false }) {
+  const speech = createStepSpeech({ speak, minIntervalMs, gapMs, isPlaying, now });
+  const task = new VoiceTask({ store, transcript, language, confidence, onUpdate, now, onApproval: () => speech.finish() });
+  task.interruptSpeech = () => speech.interrupt();
   task.start();
+  const cancelSpeech = () => speech.interrupt();
+  signal?.addEventListener('abort', cancelSpeech, { once: true });
+  const waitTimer = speak ? setInterval(() => {
+    if (task.record.status === 'running') speech.offer({ kind: 'waiting', transcript, elapsedMs: now() - task.record.startedAt, steps: task.record.steps });
+  }, waitUpdateMs) : null;
+  waitTimer?.unref();
   let outcome;
   let storageError;
   const observe = action => {
@@ -175,7 +204,10 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   };
   try {
     outcome = await run({
-      onToolCall: call => observe(() => { task.onToolCall(call); speech.offer(voiceStepLabel(call.function?.name)); }),
+      onToolCall: call => observe(() => {
+        task.onToolCall(call);
+        if (!SILENT_TOOLS.has(call.function?.name)) speech.offer({ kind: 'step', transcript, call });
+      }),
       onToolResult: (call, result, verdict) => observe(() => task.onToolResult(call, result, verdict)),
     }, task);
     if (storageError) throw storageError;
@@ -183,9 +215,11 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   } catch (error) {
     outcome = { text: '', error: error.name === 'AbortError' ? TASK_ERRORS.cancelled : error.message };
   } finally {
-    speech.interrupt();
-    await speech.drain();
+    clearInterval(waitTimer);
+    await speech.finish({ cancelled: outcome?.error === TASK_ERRORS.cancelled || signal?.aborted || isCancelled() });
+    signal?.removeEventListener('abort', cancelSpeech);
   }
+  if (signal?.aborted || isCancelled()) outcome = { ...outcome, error: TASK_ERRORS.cancelled };
   task.finish(outcome);
   return { task: store.get(task.record.id), outcome };
 }

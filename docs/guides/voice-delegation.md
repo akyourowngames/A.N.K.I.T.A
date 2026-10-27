@@ -185,7 +185,29 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
   credential-shaped text are hidden in the saved records. Raw tool arguments and
   results are not copied into those records.
 - **Progress speech is optional.** Updates are spaced by
-  `VOICE_JOB_SPEAK_MIN_INTERVAL_MS` (2500 ms by default), skipped while other progress
-  or the acknowledgement is playing, and discarded at approval/completion boundaries.
-  Failed or slow progress speech cannot turn completed work into a failure or delay
-  cancellation. The final report still prints if speech fails.
+  `VOICE_JOB_SPEAK_MIN_INTERVAL_MS` (2500 ms by default). The voice model writes a short
+  update from your request and the actual action, without receiving file contents or
+  the conversation's memory. It does not read tool labels aloud. These optional model
+  calls use extra provider usage and run alongside the work.
+- **Sentences finish cleanly.** A line already playing finishes before an approval or
+  final report; `VOICE_SPEECH_GAP_MS` adds a 300 ms pause. Outdated speech still being
+  prepared is dropped. Ctrl+C stops speech immediately; a stuck progress player has
+  a 15-second ceiling. Slow preparation cannot hold a completed job open.
+- **Long work gets a reminder.** Every `VOICE_JOB_WAIT_UPDATE_MS` (10000 ms by default),
+  active work can generate a brief update saying it is still underway. No reminder
+  runs while waiting for approval. Updates never promise an invented finish time.
+  A failed, late or overlong narration response is skipped; the final report remains.
+- **Voice mode is quiet on screen.** Internal reasoning, raw arguments and repeated
+  counters are hidden by default. The transcript, spoken updates and final report
+  remain. `/task <id>` shows the recorded steps; `VOICE_VERBOSE=on` restores debugging
+  output. Typed chat keeps its existing display.
+
+To check generated English/Hinglish updates without opening the microphone:
+
+```bash
+node scripts/verify-voice-delegation.mjs --narration-only
+```
+
+Add `--play` only after leaving any other listening voice session, so Ankita does not
+mistake the test speaker audio for a new request. A running terminal needs restarting
+to load code changes.

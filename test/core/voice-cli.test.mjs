@@ -23,8 +23,9 @@ async function runCli(t, mode) {
     const voice = body.model === 'voice-model';
     if (voice) { assert.equal(body.reasoning_effort, 'low'); assert.ok(body.max_tokens >= 400); }
     const tool = voice && !body.messages.some(message => message.role === 'tool');
+    if (voice && !tool && ['narration', 'tail-cancel'].includes(mode)) await new Promise(resolve => setTimeout(resolve, 100));
     response.end(JSON.stringify({ choices: [{ message: tool ? {
-      role: 'assistant', content: '', tool_calls: [{ id: 'write-1', type: 'function', function: {
+      role: 'assistant', content: 'Intermediate tool preamble.', reasoning_content: 'HIDDEN REASONING', tool_calls: [{ id: 'write-1', type: 'function', function: {
         name: 'write_file', arguments: JSON.stringify({ path: file, content: 'Workspace ready' }),
       } }],
     } : { role: 'assistant', content: voice ? 'Workspace tayyar hai.' : 'Hi from chat.' } }] }));
@@ -37,7 +38,8 @@ async function runCli(t, mode) {
     'VOICE_MODEL=voice-model', 'VOICE_CONTEXT_WINDOW=131072', `VOICE_API_BASE=${endpoint}`, 'BASETEN_API_KEY=fixture-planner',
     'STT_PROVIDER=sarvam', `SARVAM_API_KEY=${mode === 'probe' ? '' : 'fixture-speech'}`, 'TTS_PROVIDER=sarvam',
     'TOOL_PROVIDER=kilo', 'TOOL_MODEL=unwanted-tool-model', `TOOL_API_BASE=${endpoint}`,
-    'AUTO_APPROVE=off', 'VOICE_BARGE_IN=off', 'VOICE_HFP_ROUTING=off', 'MEMORY_CONSOLIDATION=off',
+    `AUTO_APPROVE=${['narration', 'tail-cancel'].includes(mode) ? 'on' : 'off'}`, 'VOICE_BARGE_IN=off', 'VOICE_HFP_ROUTING=off', 'MEMORY_CONSOLIDATION=off',
+    'VOICE_SPEECH_GAP_MS=5',
     'EMBEDDINGS=off', 'PROJECT_AUTO_DETECT=off', 'PROJECT_WORK_CAPTURE=off', 'PROJECT_AUTO_MAINTENANCE=off',
     'SUBAGENTS_ENABLED=off',
   ].join('\n'));
@@ -78,7 +80,17 @@ async function runCli(t, mode) {
         return Buffer.from(text);
       },
       synthesizeEdge: async ({text}) => Buffer.from(text),
-      playMp3: async audio => { console.log('PLAYED: ' + audio.toString()); },
+      narrate: async () => "I'm writing your workspace note now.",
+      playMp3: async (audio, {signal} = {}) => {
+        console.log('PLAYED: ' + audio.toString());
+        const tail = ${JSON.stringify(mode)} === 'tail-cancel' && audio.toString().includes('writing your workspace note');
+        if (tail) setTimeout(() => process.emit('SIGINT'), 150);
+        await new Promise(resolve => {
+          const timer = setTimeout(resolve, tail ? 250 : 20);
+          signal?.addEventListener('abort', () => { clearTimeout(timer); resolve(); }, {once: true});
+        });
+        console.log('ENDED: ' + audio.toString());
+      },
       stopPlayback: () => {},
     } }); } catch (error) { if (error !== requestedExit) throw error; }
   `);
@@ -110,27 +122,37 @@ test('CLI voice devices can be supplied without opening a physical microphone', 
   assert.match(result.stdout, /VOICE_IO_PROBE/);
 });
 
-for (const mode of ['success', 'tts-failure', 'failure', 'cancel', 'approval-cancel']) test(`real CLI voice loop: ${mode}, saved task, then unchanged typed chat`, async t => {
+for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'cancel', 'approval-cancel', 'tail-cancel']) test(`real CLI voice loop: ${mode}, saved task, then unchanged typed chat`, async t => {
   const result = await runCli(t, mode);
   assert.equal(result.records.length, 1);
   const task = result.records[0];
-  assert.equal(task.status, ['success', 'tts-failure'].includes(mode) ? 'done' : mode.includes('cancel') ? 'cancelled' : 'failed', JSON.stringify(task) + '\n' + result.stdout);
+  assert.equal(task.status, ['success', 'narration', 'tts-failure'].includes(mode) ? 'done' : mode.includes('cancel') ? 'cancelled' : 'failed', JSON.stringify(task) + '\n' + result.stdout);
   assert.equal(task.transcript, 'Workspace kholo');
   assert.match(result.stdout, /PLAYED: Haan\./);
   assert.match(result.stdout, new RegExp(task.id));
   assert.match(result.stdout, /Hi from chat/);
   assert.equal(result.models.at(-1), 'typed-model');
   assert.ok(!result.models.includes('unwanted-tool-model'));
-  if (['success', 'tts-failure'].includes(mode)) {
+  assert.ok(!result.stdout.includes('HIDDEN REASONING'));
+  assert.ok(!task.summary.includes('Intermediate tool preamble'));
+  assert.ok(!result.stdout.includes('→ write_file'));
+  if (['success', 'narration', 'tts-failure'].includes(mode)) {
     assert.equal(result.written, 'Workspace ready');
-    assert.match(result.stdout, /waiting_for_approval/);
+    if (mode !== 'narration') assert.match(result.stdout, /Permission chahiye/);
     assert.match(result.stdout, /PLAYED: Workspace tayyar hai/);
     if (mode === 'tts-failure') assert.match(result.stdout, /using Edge/);
+    if (mode === 'narration') {
+      const end = result.stdout.indexOf("ENDED: I'm writing your workspace note now.");
+      assert.ok(end > 0, result.stdout);
+      assert.ok(end < result.stdout.indexOf('PLAYED: Workspace tayyar hai.'), result.stdout);
+      assert.ok(!result.stdout.includes('PLAYED: Write · write_file'));
+    }
   } else if (mode === 'failure') {
     assert.match(task.error, /403/);
     assert.ok(!result.stdout.includes('token refreshed'));
   } else {
     assert.match(result.stdout, /PLAYED: Cancelled/);
+    assert.ok(!result.stdout.includes('PLAYED: Workspace tayyar hai.'));
     if (mode === 'approval-cancel') {
       assert.ok(!result.stdout.includes('PLAYED: Permission'), result.stdout);
       assert.ok(!result.stdout.includes('allow?'), result.stdout);

@@ -13,6 +13,7 @@ import { loadConfig } from '../src/core/config.mjs';
 import { Agent } from '../src/core/agent.mjs';
 import { configuredSecrets, redactText } from '../src/core/redact.mjs';
 import { createVoiceBrain, withVoiceBrain, createAcknowledgements } from '../src/core/voice-session.mjs';
+import { createVoiceNarrator } from '../src/core/voice-narrator.mjs';
 import { VoiceTaskStore, runVoiceTask, renderVoiceTask } from '../src/automation/voice-task.mjs';
 import { synthesizeSarvam, transcribeAudio, chooseSarvamLanguage, resolveSarvamSpeaker, playMp3, summarizeForSpeech } from '../src/channels/voice.mjs';
 
@@ -25,6 +26,7 @@ const COMMAND_WORDS = [/workspace/i, /file/i]; // Fail synthetic takes whose com
 const flags = new Set(process.argv.slice(2));
 const plannerOnly = flags.has('--planner-only');
 const shouldPlay = flags.has('--play');
+const narrationOnly = flags.has('--narration-only');
 const loaded = loadConfig();
 const secrets = configuredSecrets(loaded);
 const config = { ...loaded, voiceProvider: 'baseten', tools: true, autoApprove: false,
@@ -40,8 +42,33 @@ const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-delegation-live-'));
 const synthesize = (text, language = 'hi-IN') => synthesizeSarvam({ apiKey: config.sarvamApiKey,
   model: config.sarvamTtsModel, speaker: resolveSarvamSpeaker(config, language), languageCode: language, text });
 const acknowledgements = createAcknowledgements({ synthesize });
+const narrate = createVoiceNarrator({ client: brain.client, model: brain.model, secrets,
+  onDiagnostic: flags.has('--narration-only') ? data => console.log(JSON.stringify({ stage: 'narration-diagnostic', ...data })) : undefined,
+});
 const rows = [];
 try {
+  if (narrationOnly) {
+    const narrationCases = [
+      { kind: 'step', transcript: 'Write a random poem and open it in Notepad.', call: { function: { name: 'write_file' } } },
+      { kind: 'waiting', transcript: 'Write a random poem and open it in Notepad.', elapsedMs: 12000, steps: [{ tool: 'write_file', state: 'running' }] },
+      { kind: 'step', transcript: 'Ek kavita likho aur Notepad mein kholo.', language: 'hi-IN', call: { function: { name: 'write_file' } } },
+    ];
+    for (const event of narrationCases) {
+      const started = performance.now();
+      const line = await narrate(event);
+      if (!line) { rows.push({ kind: event.kind, ok: false }); console.error('Narration was skipped; see diagnostic above.'); continue; }
+      assert.ok(!line.includes('write_file'));
+      const modelMs = Math.round(performance.now() - started);
+      const audio = await synthesize(line, chooseSarvamLanguage({ text: line, detected: event.language || 'en-IN' }));
+      assert.ok(audio.length);
+      if (shouldPlay) await playMp3(audio);
+      console.log(JSON.stringify({ kind: event.kind, line, modelMs, audioBytes: audio.length, played: shouldPlay }));
+      rows.push({ kind: event.kind, ok: true });
+    }
+    assert.ok(rows.every(row => row.ok), 'Some live narration probes were skipped or failed.');
+    console.log(`OK: ${narrationCases.length}/${narrationCases.length} generated narration lines and real Sarvam speech.`);
+    process.exitCode = 0;
+  } else {
   const warmStarted = performance.now();
   if (!plannerOnly) await acknowledgements.prewarm();
   console.log(JSON.stringify({ stage: 'ack-warmup', ms: Math.round(performance.now() - warmStarted), microphone: false }));
@@ -90,10 +117,12 @@ try {
     const started = performance.now();
     const { task } = await runVoiceTask({ store, transcript: heard.text, language: heard.languageCode, confidence: heard.confidence,
       onTrackingError: () => agent.cancel(), isPlaying: () => ackPlaying,
-      speak: plannerOnly ? undefined : async (line, { signal }) => {
+      speak: plannerOnly ? undefined : async (event, { signal, beginPlayback }) => {
+        const line = await narrate(event, { signal });
+        if (!line || signal.aborted) return;
         progressLines++;
         const audio = await synthesize(line, chooseSarvamLanguage({ text: line, detected: heard.languageCode }));
-        if (!signal.aborted) { progressAudio += audio.length; if (shouldPlay) await playMp3(audio, { signal }); }
+        if (!signal.aborted) { progressAudio += audio.length; if (shouldPlay && beginPlayback()) await playMp3(audio, { signal }); }
       },
       run: async (observer, task) => {
         active = task;
@@ -127,6 +156,7 @@ try {
   }
   console.table(rows);
   console.log(`OK: ${rows.length}/${ROUNDS} ${plannerOnly ? 'planner-only' : 'synthetic speech'} delegations. Physical mic/VS Code gate: NOT RUN.`);
+  }
 } catch (error) {
   console.error(redactText(error.message, { secrets }));
   process.exitCode = 1;
