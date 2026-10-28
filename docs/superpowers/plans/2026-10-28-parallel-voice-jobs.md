@@ -83,7 +83,7 @@ checkpoint was **64/64**; host/audio/UI wiring is now complete.
   explicitly test both colliding and disjoint work, and retain physical limits.
 - [x] Request one fresh review for this new parallel scope, resolve substantive
   findings with regressions, and record rulings/deferred polish.
-- [ ] Update guide/hackathon evidence and PR #70. Feature push only; no merge/release.
+- [x] Update guide/hackathon evidence and PR #70. Feature push only; no merge/release.
 
 Final evidence: **928/928** affected serial checks; desktop build and both-view
 browser check pass, zero page errors. Three real Meta/Sarvam/file jobs prove
