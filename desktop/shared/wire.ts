@@ -134,7 +134,7 @@ export type EngineEvent = (
   | { type: 'approval-resolved'; requestId: string }
   | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
-  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine'; attachments?: { name: string; image?: boolean }[] }
+  | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine' | 'voice'; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string }
   | { type: 'skills-loaded'; threadId: string; turnId: string; names: string[] }
   | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
@@ -142,7 +142,7 @@ export type EngineEvent = (
   | { type: 'tool-call'; threadId: string; callId: string; name: string; args: unknown }
   | { type: 'tool-result'; threadId: string; callId: string; text: string; isError: boolean }
   | { type: 'usage'; threadId: string; prompt_tokens?: number; completion_tokens?: number; estimated_cost?: number }
-  | { type: 'approval-request'; requestId: string; threadId: string; toolName: string; detail: string; routineId?: string; runId?: string; expiresAt?: string; subagentId?: string; subagentType?: string; subagentDescription?: string }
+  | { type: 'approval-request'; requestId: string; threadId: string; toolName: string; detail: string; routineId?: string; runId?: string; expiresAt?: string; subagentId?: string; subagentType?: string; subagentDescription?: string; voiceTaskId?: string }
   | { type: 'thread-cleared'; threadId: string }
   | { type: 'error'; threadId: string | null; message: string }
   | SubagentEvent

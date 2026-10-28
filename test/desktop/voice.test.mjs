@@ -21,6 +21,13 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
     voiceSpeechGapMs: 0, voiceJobWaitUpdateMs: 100000, voiceJobSpeakMinIntervalMs: 0, voiceTaskLimit: 20, voiceSpeakMaxChars: 1200 };
   const h = { inputs: [], played: [], events: [], calls: [], transcripts: [], cancelled: 0, stops: 0, synth: [] };
   const engine = { turns: new Map(), listTeammates: () => [{ id: 'owner' }, { id: 'other' }],
+    captureVoiceContext: () => ({}),
+    async runVoiceJob(entry, options) {
+      entry.cancelWorker = () => { h.cancelled++; };
+      options.observer.approval = (tool, ask) => options.task.approval(tool, ask);
+      return this.runVoiceTurn(entry.ownerId, entry.transcript, options.observer);
+    },
+    async deliverVoiceJob() {},
     async runVoiceTurn(id, text, observer) {
       h.calls.push({ id, text }); this.turns.set(id, true);
       try {
@@ -58,6 +65,20 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
   t.after(() => h.voice.close());
   return h;
 }
+
+test('same-session voice accepts a second request and reports it while the first job remains blocked', async t => {
+  const first = defer();
+  const h = harness(t, { run: () => h.calls.length === 1 ? first.promise : Promise.resolve({ text: 'Second note saved.' }) });
+  await h.voice.start({ threadId: 'owner' }); await h.say('First slow poem');
+  await until(() => h.calls.length === 1);
+  await h.say('Second fast note');
+  await until(() => h.played.includes('Second note saved.'));
+  assert.equal(h.calls.length, 2);
+  assert.ok(h.voice.snapshot().jobs.some(job => job.status === 'running'));
+  first.resolve({ text: 'First poem saved.' });
+  await until(() => h.played.includes('First poem saved.'));
+  assert.equal(h.voice.snapshot().jobs.filter(job => job.status === 'done').length, 2);
+});
 
 test('barge-in stops current speech and submits the completed interruption exactly once', async t => {
   const h = harness(t, { barge: true, play: async (audio, signal) => {
@@ -232,9 +253,9 @@ test('late synthesis after ending cannot play or reopen capture', async t => {
   const h = harness(t, { synthesize: text => text.startsWith('Note ready') ? pending.promise : Buffer.from(text) });
   await h.voice.start({ threadId: 'owner' }); await h.say();
   await until(() => h.synth.some(text => text.startsWith('Note ready')));
-  await h.voice.end(); pending.resolve(Buffer.from('STALE AUDIO'));
+  await h.voice.end(); const capturesAtEnd = h.inputs.length; pending.resolve(Buffer.from('STALE AUDIO'));
   await new Promise(resolve => setTimeout(resolve, 20));
-  assert.ok(!h.played.includes('STALE AUDIO')); assert.equal(h.inputs.length, 1);
+  assert.ok(!h.played.includes('STALE AUDIO')); assert.equal(h.inputs.length, capturesAtEnd);
 });
 
 test('task failures stay audible and recorded rather than speaking only the model success claim', async t => {

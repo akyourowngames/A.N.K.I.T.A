@@ -5,7 +5,7 @@ const source = file => fs.readFileSync(new URL(`../../desktop/renderer/src/${fil
 
 test('voice surface provides real captions, separate audio/work controls and accessible status', () => {
   const panel = source('components/voice/VoicePanel.tsx');
-  for (const label of ['End voice', 'Stop work', 'Continue in island', 'role="status"', 'VoiceCaptions', 'onPause', 'onResume']) assert.ok(panel.includes(label), label);
+  for (const label of ['End voice', 'Stop all work', 'Continue in island', 'role="status"', 'VoiceCaptions', 'onPause', 'onResume', 'onCancel(job.id)', 'Voice jobs']) assert.ok(panel.includes(label), label);
   assert.ok(!panel.includes('onReasoning'));
 });
 test('orb uses bounded original WebGL, releases resources and honors reduced motion', () => {

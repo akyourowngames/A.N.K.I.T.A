@@ -5,18 +5,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
 import { DesktopSettingsStore, applyDesktopSettings } from '../../desktop/electron/settings.mjs';
+import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
+import { VoiceTaskStore } from '../../src/automation/voice-task.mjs';
 const actions = await import('../../desktop/electron/voice-actions.mjs').catch(() => ({}));
 
 async function fixture(t, send) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-engine-'));
   const events = [];
   class FixtureAgent {
-    constructor(options) { this.confirm = options.confirm; this.config = options.config; this.messages = []; this.state = {}; this.client = options.client; this.systemSuffix = 'Original style'; }
+    constructor(options) { this.confirm = options.confirm; this.config = options.config; this.messages = []; this.state = { jobs: new Map() }; this.client = options.client; this.model = options.config.model; this.cwd = options.workspacePath || directory; this.systemSuffix = 'Original style'; }
     async send(text, callbacks) {
       this.messages.push({ role: 'user', content: text });
-      callbacks.onMessageStart();
+      callbacks.onMessageStart?.();
       await send?.(this, callbacks);
-      callbacks.onDelta('Saved.'); callbacks.onMessageEnd();
+      callbacks.onDelta?.('Saved.'); callbacks.onMessageEnd?.();
       this.messages.push({ role: 'assistant', content: 'Saved.' }); return 'Saved.';
     }
     refreshPrompt() {}
@@ -48,6 +50,37 @@ test('desktop voice uses existing turn/history with voice override and restores 
   assert.equal(h.engine.loadThread(h.id).at(-1).content, 'Saved.');
   assert.equal(JSON.parse(fs.readFileSync(h.engine.sessionFile(h.id))).model, 'typed-model');
   assert.ok(h.events.some(event => event.type === 'turn-start' && event.model === 'voice-model'));
+});
+
+test('parallel engine uses fresh voice agents and delivers atomic results only when typed history is idle', async t => {
+  const observed = [];
+  const h = await fixture(t, agent => { observed.push(agent); });
+  const parent = h.engine.agentFor(h.id), typedMessages = parent.messages;
+  const jobs = new VoiceJobs({ store: new VoiceTaskStore({ directory: path.join(h.engine.sessionsDir, 'voice-fixture') }),
+    run: (entry, options) => h.engine.runVoiceJob(entry, { ...options, brain: { client: {}, model: 'voice-model' }, jobs }),
+    onComplete: task => h.engine.deliverVoiceJob(task) });
+  t.after(() => jobs.close());
+  h.engine.turns.set(h.id, Promise.resolve());
+  const a = await jobs.submit({ ownerId: h.id, transcript: 'First poem', context: h.engine.captureVoiceContext(h.id) });
+  const b = await jobs.submit({ ownerId: h.id, transcript: 'Second note', context: h.engine.captureVoiceContext(h.id) });
+  await Promise.all([jobs.waitFor(a.id, { ownerId: h.id }), jobs.waitFor(b.id, { ownerId: h.id })]);
+  assert.notEqual(observed[0], observed[1]); assert.ok(observed.every(agent => agent !== parent));
+  assert.equal(parent.messages, typedMessages); assert.equal(parent.messages.length, 0);
+  h.engine.turns.delete(h.id); h.engine.flushVoiceDeliveries(h.id);
+  assert.deepEqual(parent.messages.map(message => message.role), ['user', 'assistant', 'user', 'assistant']);
+  assert.equal(parent.model, 'typed-model');
+  assert.equal(h.engine.loadThread(h.id).filter(message => message.role === 'assistant').length, 2);
+  assert.equal(observed.length, 2, 'delivery needs no additional planner call');
+});
+
+test('voice cancel IPC accepts one task or explicit all and refuses ambiguous payloads', async () => {
+  const calls = [], engine = { voice: () => ({ cancelWork: payload => { calls.push(payload); return payload; } }) };
+  await actions.runVoiceAction({ engine, action: 'voiceCancel', payload: { taskId: 'job-id' } });
+  await actions.runVoiceAction({ engine, action: 'voiceCancel', payload: { all: true } });
+  assert.deepEqual(calls, [{ taskId: 'job-id' }, { all: true }]);
+  for (const payload of [{ taskId: 'x', all: true }, { all: 'yes' }, { taskId: '' }, { taskId: 'x'.repeat(201) }]) {
+    await assert.rejects(actions.runVoiceAction({ engine, action: 'voiceCancel', payload }), /payload/);
+  }
 });
 
 test('voice approvals wrap the normal permission request without bypassing it', async t => {

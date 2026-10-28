@@ -24,3 +24,11 @@ test('voice phase labels describe listening, work, pause and errors without a fa
   }
   assert.notEqual(voice.VOICE_ACTIONS.end, voice.VOICE_ACTIONS.cancel);
 });
+
+test('parallel snapshots bound rows and remove private worker fields', () => {
+  const job = { id: 'job', label: 'request', status: 'running', steps: [], summary: '', context: { apiKey: 'private-worker-secret' } };
+  const view = voice.voiceStatePatch(voice.emptyVoiceState(), { jobs: Array(100).fill(job), task: job });
+  assert.equal(view.jobs.length, voice.VOICE_PUBLIC_JOBS);
+  assert.equal(view.jobs[0].label, 'request');
+  assert.ok(!JSON.stringify(view).includes('private-worker-secret'));
+});

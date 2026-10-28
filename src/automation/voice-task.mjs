@@ -209,6 +209,7 @@ class VoiceTask {
     this.record.status = cancelled ? 'cancelled' : error ? 'failed' : 'done';
     this.record.error = error;
     this.record.summary = outcome.text || '';
+    if (typeof outcome.model === 'string') this.record.model = outcome.model;
     this.record.endedAt = this.now();
     this.record.waitingFor = null;
     for (const step of this.record.steps) if (step.state === 'running') step.state = cancelled ? 'cancelled' : 'failed';
@@ -224,7 +225,7 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   task.start();
   const contexts = new Map(); // Per-job ephemeral labels; raw arguments/results never enter saved records.
   const steps = () => task.record.steps.filter(step => !SILENT_TOOLS.has(step.tool)).map(step => ({ ...contexts.get(step.callId), state: step.state }));
-  const event = (kind, call, phase) => ({ kind, transcript, phase, action: call && { ...contexts.get(call.id) }, steps: steps() });
+  const event = (kind, call, phase) => ({ kind, taskId: task.record.id, transcript, phase, action: call && { ...contexts.get(call.id) }, steps: steps() });
   const cancelSpeech = () => speech.interrupt();
   signal?.addEventListener('abort', cancelSpeech, { once: true });
   const waitTimer = speak ? setInterval(() => {

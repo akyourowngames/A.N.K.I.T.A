@@ -22,7 +22,7 @@ export function useVoice() {
     void window.ankita.invoke<VoiceStatus>(VOICE_ACTIONS.status).then(result => apply(result.state)).catch(() => {});
     return () => { alive.current = false; off(); };
   }, [apply]);
-  const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean }) => {
+  const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean; taskId?: string; all?: boolean }) => {
     setBusy(true); setError('');
     try { const next = await window.ankita.invoke<VoiceState>(action, payload); apply(next); return next; }
     catch (cause) { if (alive.current) setError(cleanErrorMessage(cause)); return null; }
@@ -31,5 +31,5 @@ export function useVoice() {
   return { state, error, busy, act,
     start: (threadId: string) => act(VOICE_ACTIONS.start, { threadId }),
     end: () => act(VOICE_ACTIONS.end), pause: () => act(VOICE_ACTIONS.pause), resume: () => act(VOICE_ACTIONS.resume),
-    cancel: () => act(VOICE_ACTIONS.cancel), focus: (settings = false) => act(VOICE_ACTIONS.focus, settings ? { settings: true } : undefined) };
+    cancel: (taskId?: string) => act(VOICE_ACTIONS.cancel, taskId ? { taskId } : { all: true }), focus: (settings = false) => act(VOICE_ACTIONS.focus, settings ? { settings: true } : undefined) };
 }

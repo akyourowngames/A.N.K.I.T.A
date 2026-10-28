@@ -110,7 +110,7 @@ try {
   await app.evaluate(() => { const input = globalThis.voiceVerification.inputs.at(-1); input.options.onEvent({ type: 'silence_end', at: 1 }); input.options.onEvent({ type: 'silence_start', at: 2 }); });
   await until(() => app.evaluate(() => {
     const state = globalThis.voiceVerification; const voice = state.engine.voice().snapshot();
-    return voice.task && !['queued', 'running', 'waiting_for_approval'].includes(voice.task.status) && voice.phase === 'listening';
+    return voice.task && !['queued', 'running', 'waiting_for_approval', 'waiting_for_resource'].includes(voice.task.status) && voice.phase === 'listening' && state.playedBytes.length >= 2;
   }));
   const result = await app.evaluate(() => {
     const state = globalThis.voiceVerification, voice = state.engine.voice().snapshot();

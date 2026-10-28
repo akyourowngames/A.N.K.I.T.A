@@ -34,6 +34,8 @@ import { CREDENTIAL_STORE_FILENAME } from '../../src/integrations/browser-creden
 import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS } from './settings.mjs';
 import { DesktopVoice } from './voice.mjs';
 import { withVoiceBrain } from '../../src/core/voice-session.mjs';
+import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
+import { voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VOICE_TASK_DIRECTORY } from '../../src/automation/voice-task-policy.mjs';
 import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
@@ -940,6 +942,7 @@ export class DesktopEngine {
     }
   }
   async flushRoutineDeliveries(id) {
+    this.flushVoiceDeliveries(id);
     for (const receipt of this.routineDeliveries.values()) if (receipt.threadId === id) await this.deliverRoutine(receipt);
     await this.scheduler?.retryDeliveries();
   }
@@ -1194,6 +1197,71 @@ export class DesktopEngine {
       directory: path.join(path.dirname(this.teammates.file), VOICE_TASK_DIRECTORY) });
   }
   voiceStatus() { return this.voice().status(); }
+  captureVoiceContext(id) {
+    const parent = this.agentFor(id);
+    return captureVoiceContext(parent, { messages: this._savedThread(id).messages,
+      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile } });
+  }
+  async runVoiceJob(entry, { jobs, brain, ...options }) {
+    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
+    const pending = new Set();
+    const files = new Map();
+    const denyOwn = () => { for (const id of pending) this.approvals.respond(id, 'no'); pending.clear(); };
+    options.signal.addEventListener('abort', denyOwn, { once: true });
+    try {
+      return await runVoiceWorker(entry, options, { AgentClass: this.AgentClass, brain,
+        acquire: (...args) => jobs.acquire(...args), autoApprove: () => this.config.autoApprove === true,
+        confirm: async (name, detail, _entry, signal) => {
+          if (signal.aborted) return false;
+          let requestId;
+          try { return await this.approvals.request(entry.ownerId, name, detail, { voiceTaskId: entry.id,
+            onRegistered: id => { requestId = id; pending.add(id); if (signal.aborted) this.approvals.respond(id, 'no'); } }); }
+          finally { pending.delete(requestId); }
+        },
+        toolContext: { beforeComputerAction: (record, opts) => this.computerUse.preparePointer(record, opts),
+          onToolStart: (call, ctx) => files.set(call.id, captureToolFiles(call.name, call.arguments, ctx.cwd)) },
+        callbacks: { onToolResult: (call, result) => {
+          const pendingFiles = files.get(call.id) || []; files.delete(call.id);
+          if (!/^(Error\b|Not run:|The user denied|Action cancelled)/i.test(String(result || ''))) {
+            const changes = completedFileDiffs(pendingFiles);
+            if (changes.length) {
+              if (!this.reviewChanges.has(entry.ownerId)) this.reviewChanges.set(entry.ownerId, new Map());
+              for (const change of changes) this.reviewChanges.get(entry.ownerId).set(change.path, change);
+            }
+          }
+          if (WORKSPACE_EFFECT_TOOLS.includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: entry.ownerId, open: GENERATED_ARTIFACT_TOOLS.includes(call.function?.name) });
+        } },
+      });
+    } finally { options.signal.removeEventListener('abort', denyOwn); denyOwn(); }
+  }
+  async deliverVoiceJob(task) {
+    if (!this.teammates.find(task.ownerId)) return false;
+    this.voiceDeliveries ||= new Map();
+    this.voiceDeliveries.set(task.id, task);
+    return this.flushVoiceDeliveries(task.ownerId);
+  }
+  flushVoiceDeliveries(id) {
+    if (this.turns.has(id) || !this.teammates.find(id)) return false;
+    const agent = this.agents.get(id) || this.agentFor(id);
+    for (const task of this.voiceDeliveries?.values() || []) {
+      if (task.ownerId !== id) continue;
+      const content = voiceTaskReport(task), turnId = task.id, messageId = randomUUID();
+      const text = this.secretHistory.clean(task.transcript);
+      // Passive atomic pair: no model request and no interleaved worker tool-call history.
+      agent.messages.push({ role: 'user', content: text }, { role: 'assistant', content: this.secretHistory.clean(content) });
+      saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages,
+        todos: agent.state?.todos || [], projectId: agent.projectId }, { transform: this.secretHistory.clean });
+      this.voiceDeliveries.delete(task.id);
+      this.emit({ type: 'turn-start', threadId: id, turnId, model: task.model || agent.model, text, source: 'voice' });
+      this.emit({ type: 'message-start', threadId: id, messageId });
+      this.emit({ type: 'assistant-delta', threadId: id, messageId, text: this.secretHistory.clean(content) });
+      this.emit({ type: 'message-end', threadId: id, messageId });
+      this.emit({ type: 'turn-end', threadId: id, turnId });
+      this.teammates.touch(id, this.secretHistory.clean(content));
+    }
+    this.emit({ type: 'teammates-changed' });
+    return true;
+  }
   async runVoiceTurn(id, text, observer, brain) {
     if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
     const submission = this.send(id, text, null, { surface: 'voice', voiceBrain: brain, voiceObserver: observer });

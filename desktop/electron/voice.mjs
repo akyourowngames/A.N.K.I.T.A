@@ -6,7 +6,9 @@ import { useHandsFreePlayback } from '../../src/channels/audio-device.mjs';
 import { createVoiceBrain, createAcknowledgements, voiceReplyForSpeech } from '../../src/core/voice-session.mjs';
 import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
-import { VoiceTaskStore, runVoiceTask, voiceTaskReport } from '../../src/automation/voice-task.mjs';
+import { VoiceTaskStore, voiceTaskReport } from '../../src/automation/voice-task.mjs';
+import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
+import { VoiceSpeechQueue } from '../../src/automation/voice-speech-queue.mjs';
 import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 
@@ -45,7 +47,18 @@ export class DesktopVoice {
     this.io = { ...channel, useHandsFreePlayback, ...io };
     this.state = emptyVoiceState();
     this.current = null;
-    this.work = new Set();
+    const config = getConfig();
+    this.jobs = new VoiceJobs({ store: new VoiceTaskStore({ directory, limit: config.voiceTaskLimit, secrets: configuredSecrets(config) }),
+      concurrency: config.voiceMaxParallelJobs,
+      run: (entry, options) => engine.runVoiceJob(entry, { ...options, brain: entry.context.audioSession.brain, jobs: this.jobs }),
+      onUpdate: task => this.updateJobs(task.ownerId),
+      onComplete: async task => {
+        await engine.deliverVoiceJob(task);
+        const session = this.jobs.entries.get(task.id)?.context.audioSession;
+        if (session && this.owns(session)) this.report(session, task);
+      },
+      onError: error => { if (this.current) this.publish(this.current, { error: error.message }); },
+    });
   }
 
   snapshot() { return structuredClone(this.state); }
@@ -58,6 +71,7 @@ export class DesktopVoice {
     try { this.emit({ type: VOICE_EVENT, state: this.snapshot() }); } catch { /* A closed window does not own the job. */ }
   }
   owns(session) { return this.current === session && !session.audio.signal.aborted; }
+  restingPhase(session) { return this.jobs.list(session.threadId).some(job => job.status === 'waiting_for_approval') ? 'approval' : 'listening'; }
 
   async status() {
     const config = this.getConfig();
@@ -79,7 +93,6 @@ export class DesktopVoice {
       return this.snapshot();
     }
     if (!this.engine.listTeammates().some(thread => thread.id === threadId)) throw new Error(ERRORS.owner);
-    if (this.engine.turns.has(threadId)) throw new Error(ERRORS.busy);
     const config = { ...this.getConfig(), sttProvider: DESKTOP_SPEECH_PROVIDER, ttsProvider: DESKTOP_SPEECH_PROVIDER };
     if (config.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(ERRORS.browser);
     if (!config.sarvamApiKey) throw new Error(ERRORS.key);
@@ -106,6 +119,18 @@ export class DesktopVoice {
     session.acks = createAcknowledgements({ synthesize: (text, language) => this.synthesize(session, text, language) });
     session.narrate = this.io.narrate || createVoiceNarrator({ client: session.brain?.client || this.engine.client,
       model: session.brain?.model || this.engine.model, secrets: configuredSecrets(session.config) });
+    session.speech = new VoiceSpeechQueue({ gapMs: session.config.voiceSpeechGapMs, historyLimit: session.config.voiceTaskLimit,
+      play: (audio, { signal }) => this.io.playMp3(audio, { signal, rejectOnFailure: true }), stop: () => this.io.stopPlayback(),
+      onStart: item => {
+        session.playingAt = Date.now();
+        const line = item.line?.text || '';
+        const phase = this.restingPhase(session) === 'approval' ? 'approval' : 'speaking';
+        this.publish(session, item.kind === 'progress' ? { phase, update: line } :
+          { phase, caption: line, captionRole: 'assistant', update: '' });
+      },
+      onFinish: () => { session.playingAt = 0; if (this.owns(session) && !session.paused) this.publish(session, { phase: this.restingPhase(session) }); },
+      onError: error => this.fail(session, error),
+    });
     await abortable(session.acks.prewarm(), session.audio.signal);
     if (session.config.voiceHfpRouting && this.owns(session)) session.routing = this.io.useHandsFreePlayback(session.microphone.name);
   }
@@ -147,9 +172,12 @@ export class DesktopVoice {
           if (event.type === 'level' && Date.now() - session.lastMeterAt >= VOICE_METER_INTERVAL_MS) {
             session.lastMeterAt = Date.now(); this.publish(session, { inputLevel: event.level });
           }
-          if (barge && !interrupted && (!session.playingAt || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
+          if (session.playingAt && (!session.config.voiceBargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
           const action = detector.feed(event);
-          if (action === 'speech') heardSpeech = true;
+          if (action === 'speech') {
+            heardSpeech = true; session.userSpeaking = true;
+            session.speech?.interrupt();
+          }
           if (action === 'speech' && barge && !interrupted) { interrupted = true; onSpeech?.(); }
           if (action === 'end') finish();
         } });
@@ -162,7 +190,7 @@ export class DesktopVoice {
         throw error;
       }
       if (!this.owns(session) || session.paused) finish();
-      if (!barge && !ended) this.publish(session, { phase: 'listening', update: '' });
+      if (!barge && !ended && !session.playingAt) this.publish(session, { phase: this.restingPhase(session), update: '' });
       timeout = setTimeout(finish, session.config.voiceMaxUtteranceMs);
       await done;
       entry.handle.child?.removeListener('close', disconnected);
@@ -184,119 +212,94 @@ export class DesktopVoice {
     while (this.owns(session)) {
       if (session.paused) { await wait(VOICE_POLL_MS); continue; }
       heard ||= await this.capture(session);
-      if (!heard || !this.owns(session)) continue;
+      if (!heard || !this.owns(session)) {
+        if (this.owns(session) && !session.paused) { session.userSpeaking = false; session.speech.resume(); }
+        continue;
+      }
       const text = heard.text.trim();
       if (END_VOICE_PATTERN.test(text)) { await this.end(); return; }
       session.language = heard.languageCode || '';
       this.publish(session, { caption: text, captionRole: 'user', phase: 'working', error: null });
-      const task = await this.delegate(session, heard);
+      await this.delegate(session, heard);
       heard = null;
       if (!this.owns(session)) return;
-      const report = voiceReplyForSpeech(voiceTaskReport(task), { maxChars: session.config.voiceSpeakMaxChars });
-      if (report) heard = await this.reply(session, report);
+      session.userSpeaking = false;
+      session.speech.resume();
     }
   }
 
   async delegate(session, heard) {
     const config = session.config;
-    const controller = new AbortController();
-    session.taskAbort = controller;
-    const store = new VoiceTaskStore({ directory: this.directory, limit: config.voiceTaskLimit, secrets: configuredSecrets(config) });
     const ack = session.acks.next(session.language);
-    const acknowledgement = ack ? this.play(session, ack.audio).catch(() => {}) : Promise.resolve();
-    const work = { session, controller };
-    this.work.add(work);
-    try {
-      const result = await runVoiceTask({ store, transcript: heard.text, language: heard.languageCode, confidence: heard.confidence,
-        signal: controller.signal, minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: config.voiceSpeechGapMs,
-        waitUpdateMs: config.voiceJobWaitUpdateMs,
-        onUpdate: task => {
-          session.taskRecord = task;
-          this.publish(session, { task: { id: task.id, status: task.status, summary: task.summary.slice(0, VOICE_CAPTION_CHARS), error: task.error?.slice(0, VOICE_ERROR_CHARS) || null,
-            steps: task.steps.slice(-PUBLIC_STEPS).map(({ index, label, tool, state }) => ({ index, label: label.slice(0, VOICE_UPDATE_CHARS), tool: tool.slice(0, VOICE_UPDATE_CHARS), state })) },
-            ...(task.status === 'waiting_for_approval' ? { phase: 'approval' } : this.owns(session) ? { phase: 'working' } : {}) });
-        },
-        speak: async (event, { signal, beginPlayback }) => {
-          const combined = AbortSignal.any([signal, session.audio.signal]);
-          const line = await abortable(session.narrate(event, { signal: combined }), combined);
-          if (!line || !this.owns(session)) return;
-          const audio = await abortable(this.synthesize(session, line), combined);
-          await acknowledgement;
-          if (combined.aborted || !this.owns(session) || !beginPlayback(line)) return;
-          this.publish(session, { update: line });
-          await this.play(session, audio, combined);
-        },
-        run: (observer, task) => {
-          session.task = task;
-          observer.approval = (tool, ask) => task.approval(tool, ask);
-          return this.engine.runVoiceTurn(session.threadId, heard.text, observer, session.brain);
-        } });
-      await acknowledgement;
-      return result.task;
-    } finally { this.work.delete(work); session.task = null; session.taskAbort = null; }
+    const context = { ...this.engine.captureVoiceContext(session.threadId), audioSession: session };
+    const task = await this.jobs.submit({ ownerId: session.threadId, transcript: heard.text, language: heard.languageCode,
+      confidence: heard.confidence, context,
+      speech: { minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: 0, waitUpdateMs: config.voiceJobWaitUpdateMs },
+      speak: (event, options) => this.progress(session, event, options),
+    });
+    if (ack) void session.speech.offer({ jobId: task.id, kind: 'receipt', line: { text: ack.text }, prepare: async () => ack.audio, signal: session.audio.signal });
+    return task;
   }
 
-  async play(session, audio, signal = session.audio.signal) {
-    if (!this.owns(session) || signal.aborted) return;
-    await this.io.playMp3(audio, { signal, rejectOnFailure: true });
-    if (!signal.aborted && session.config.voiceSpeechGapMs > 0) await abortable(wait(session.config.voiceSpeechGapMs), signal);
+  updateJobs(ownerId) {
+    const session = this.current;
+    if (!session || session.threadId !== ownerId) return;
+    const jobs = this.jobs.list(ownerId).map(task => ({ id: task.id, label: task.label, status: task.status, resourcesHeld: task.resourcesHeld,
+      waitingFor: task.waitingFor, summary: task.summary.slice(0, VOICE_CAPTION_CHARS), error: task.error?.slice(0, VOICE_ERROR_CHARS) || null,
+      steps: task.steps.slice(-PUBLIC_STEPS).map(({ index, label, tool, state }) => ({ index, label: label.slice(0, VOICE_UPDATE_CHARS), tool: tool.slice(0, VOICE_UPDATE_CHARS), state })) }));
+    this.publish(session, { jobs, task: jobs[0] || null,
+      ...(this.owns(session) && !session.paused ? jobs.some(job => job.status === 'waiting_for_approval') ? { phase: 'approval' } :
+        this.state.phase === 'approval' ? { phase: session.playingAt ? 'speaking' : 'listening' } : {} : {}) });
   }
 
-  async reply(session, text) {
-    const controller = new AbortController();
-    const signal = AbortSignal.any([controller.signal, session.audio.signal]);
-    let speech;
-    let capture;
-    let barge = false;
-    try {
-      const synthesis = abortable(this.synthesize(session, text), signal);
-      // Prepare the barge-in input alongside TTS, so ffmpeg startup adds no extra wait before speech.
-      if (session.config.voiceBargeIn && !session.paused) {
-        capture = this.capture(session, { barge: true, onSpeech: () => { barge = true; controller.abort(); this.io.stopPlayback(); } });
-        // Attach immediately; a device failure must not become an unhandled rejection during TTS.
-        capture.catch(() => {});
-      }
-      speech = await synthesis;
-      if (!this.owns(session)) return null;
-      this.publish(session, { phase: 'speaking', caption: text, captionRole: 'assistant', update: '' });
-      session.playingAt = Date.now();
-      await this.play(session, speech, signal);
-    } catch (error) { if (error.name !== 'AbortError') throw error; }
-    finally { session.playingAt = 0; if (!barge) await this.stopInput(session); }
-    if (capture) return await capture;
-    return null;
+  progress(session, event, { signal, beginPlayback }) {
+    const combined = AbortSignal.any([signal, session.audio.signal]), line = { text: '' };
+    return session.speech.offer({ jobId: event.taskId, kind: 'progress', signal: combined, line,
+      prepare: async queueSignal => {
+        line.text = await session.narrate(event, { signal: queueSignal });
+        return line.text && this.owns(session) ? this.synthesize(session, line.text) : null;
+      }, beginPlayback: () => this.owns(session) && beginPlayback(line.text) });
+  }
+
+  report(session, task) {
+    const text = voiceReplyForSpeech(voiceTaskReport(task), { maxChars: session.config.voiceSpeakMaxChars });
+    if (!text) return;
+    void session.speech.offer({ jobId: task.id, kind: 'report', signal: session.audio.signal, line: { text },
+      prepare: () => this.synthesize(session, text, task.language) });
   }
 
   async pause() {
     const session = this.current;
     if (!session || !this.owns(session)) return this.snapshot();
     session.paused = true;
+    session.speech?.interrupt();
     this.publish(session, { paused: true, phase: 'paused', inputLevel: 0 });
     await this.stopInput(session);
     return this.snapshot();
   }
   async resume() {
     const session = this.current;
-    if (session && this.owns(session)) { session.paused = false; this.publish(session, { paused: false, phase: session.task ? 'working' : 'starting' }); }
+    if (session && this.owns(session)) { session.paused = false; session.speech?.resume(); this.publish(session, { paused: false, phase: 'starting' }); }
     return this.snapshot();
   }
   async end() {
     const session = this.current;
     if (!session) return this.snapshot();
-    session.audio.abort(); session.task?.interruptSpeech(); this.io.stopPlayback();
+    session.audio.abort(); this.io.stopPlayback();
+    await session.speech?.close();
     this.publish(session, { active: false, paused: false, phase: 'idle', inputLevel: 0, update: '' });
     await this.stopInput(session);
     session.routing?.restore?.(); session.routing = null;
     return this.snapshot();
   }
-  async cancelWork() {
+  async cancelWork({ taskId, all = false } = {}) {
     const session = this.current;
-    if (!session?.taskAbort) return this.snapshot();
-    session.taskAbort.abort(); session.task?.interruptSpeech(); this.io.stopPlayback();
-    this.engine.cancel(session.threadId);
+    if (!session) return this.snapshot();
+    if (all) this.jobs.cancelOwner(session.threadId);
+    else if (taskId || this.state.task?.id) this.jobs.cancel(taskId || this.state.task.id, { ownerId: session.threadId });
     return this.snapshot();
   }
-  async ownerDeleted(threadId) { if (this.current?.threadId === threadId) await this.end(); }
+  async ownerDeleted(threadId) { this.jobs.cancelOwner(threadId); if (this.current?.threadId === threadId) await this.end(); }
   async fail(session, error) {
     if (error.name === 'AbortError' || !this.owns(session)) return;
     await this.end();
@@ -304,6 +307,6 @@ export class DesktopVoice {
   }
   async close() {
     await this.end();
-    for (const work of this.work) { work.controller.abort(); this.engine.cancel(work.session.threadId); }
+    await this.jobs.close();
   }
 }

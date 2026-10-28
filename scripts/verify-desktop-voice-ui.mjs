@@ -92,7 +92,7 @@ try {
   assert.ok(await main.locator('.voice-orb').evaluate(element => new DOMMatrix(getComputedStyle(element).transform).a > 1), 'listening responds to measured input');
   await patch(main, { inputLevel: 0 });
   await patch(main, { phase: 'working', task, caption: 'Ek chhoti si poem likho aur file mein save kar do.', captionRole: 'user', update: 'Poem likh rahi hoon, phir file save kar dungi.' });
-  await main.getByRole('button', { name: 'Stop work', exact: true }).waitFor();
+  await main.getByRole('button', { name: 'Stop all work', exact: true }).waitFor();
   await main.getByText('Poem likh rahi hoon, phir file save kar dungi.', { exact: true }).waitFor();
   await main.waitForTimeout(700); await main.screenshot({ path: path.join(captures, 'voice-main-working.png') });
   await main.getByRole('button', { name: 'Pause microphone' }).click();
@@ -103,7 +103,7 @@ try {
   assert.equal(await main.locator('.voice-orb-complete').count(), 1, 'successful work gets a completion pulse');
   assert.equal(await main.locator('.voice-orb-complete').evaluate(element => getComputedStyle(element).animationIterationCount), '1');
   assert.equal(await main.locator('.voice-orb canvas').evaluate(element => getComputedStyle(element).animationName), 'voice-orb-speak');
-  assert.equal(await main.getByRole('button', { name: 'Stop work', exact: true }).count(), 0);
+  assert.equal(await main.getByRole('button', { name: 'Stop all work', exact: true }).count(), 0);
   await main.waitForTimeout(700); await main.screenshot({ path: path.join(captures, 'voice-main-speaking.png') });
   receipt.views.push('wide main: listening, working, speaking');
   const snapshot = await main.evaluate(() => window.__voiceSnapshot());
@@ -120,7 +120,7 @@ try {
   await main.getByRole('button', { name: 'Continue in island' }).click();
   assert.ok(await main.evaluate(() => window.__voiceCalls.some(call => call.action === 'minimize')));
   await patch(main, { phase: 'working', task });
-  await main.getByRole('button', { name: 'Stop work', exact: true }).click();
+  await main.getByRole('button', { name: 'Stop all work', exact: true }).click();
   await main.getByText('Work stopped', { exact: true }).waitFor();
   await patch(main, { phase: 'working', task });
   await main.keyboard.press('Escape');
@@ -128,6 +128,17 @@ try {
   const ended = await main.evaluate(() => window.__voiceSnapshot());
   assert.equal(ended.active, false); assert.equal(ended.task.status, 'running');
   receipt.assertions.push('Escape ends audio; delegated work remains running');
+  await main.getByRole('button', { name: 'Start voice conversation' }).click();
+  const parallel = [{ ...task, id: 'poem', label: 'Save a poem' }, { ...task, id: 'research', label: 'Research PHP', status: 'waiting_for_resource', waitingFor: 'Waiting for a shared app.' }];
+  await patch(main, { phase: 'listening', task: parallel[0], jobs: parallel });
+  await main.getByRole('button', { name: 'Stop Save a poem', exact: true }).click();
+  assert.ok(await main.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceCancel' && call.payload?.taskId === 'poem')));
+  await main.getByRole('button', { name: 'Stop all work', exact: true }).click();
+  assert.ok(await main.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceCancel' && call.payload?.all === true)));
+  await main.screenshot({ path: path.join(captures, 'voice-parallel-jobs.png') });
+  receipt.assertions.push('separate parallel job rows, individual stop ID and explicit Stop all payload');
+  await patch(main, { jobs: [], task });
+  await main.keyboard.press('Escape');
   await main.getByRole('button', { name: 'Start voice conversation' }).click();
   await main.getByText('Studio', { exact: true }).click();
   await main.getByRole('button', { name: 'Start voice conversation' }).waitFor();

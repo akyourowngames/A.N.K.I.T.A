@@ -42,12 +42,13 @@ export class ApprovalRegistry {
         subagentId: entry.subagentId,
         subagentType: entry.subagentType,
         subagentDescription: entry.subagentDescription,
+        voiceTaskId: entry.voiceTaskId,
       }));
   }
 
   cancelThread(threadId) {
     for (const [id, entry] of this.pending) {
-      if (entry.threadId !== threadId || entry.routineId) continue;
+      if (entry.threadId !== threadId || entry.routineId || entry.voiceTaskId) continue;
       this.pending.delete(id);
       entry.resolve(false);
     }

@@ -1,7 +1,7 @@
 export type VoicePhase = 'idle' | 'starting' | 'listening' | 'transcribing' | 'working' | 'speaking' | 'approval' | 'paused' | 'error';
-export type VoiceTaskView = { id: string; status: string; steps: { index: number; label: string; tool: string; state: string }[]; summary: string; error: string | null };
+export type VoiceTaskView = { id: string; status: string; label?: string; waitingFor?: string | null; resourcesHeld?: boolean; steps: { index: number; label: string; tool: string; state: string }[]; summary: string; error: string | null };
 export type VoiceState = { sessionId: string | null; threadId: string | null; active: boolean; paused: boolean; phase: VoicePhase;
-  caption: string; captionRole: 'user' | 'assistant'; update: string; inputLevel: number; task: VoiceTaskView | null;
+  caption: string; captionRole: 'user' | 'assistant'; update: string; inputLevel: number; task: VoiceTaskView | null; jobs: VoiceTaskView[];
   error: string | null; microphone: string; revision: number };
 export type VoiceStatus = { state: VoiceState; ready: boolean; issues: string[]; microphones: { name: string; alt?: string }[]; microphone: string };
 export const VOICE_EVENT: 'voice-state';
@@ -14,6 +14,7 @@ export const VOICE_DEVICE_CHARS: number;
 export const VOICE_METER_INTERVAL_MS: number;
 export const VOICE_BARGE_GUARD_MS: number;
 export const VOICE_POLL_MS: number;
+export const VOICE_PUBLIC_JOBS: number;
 export const VOICE_PHASE_LABELS: Readonly<Record<VoicePhase, string>>;
 export function emptyVoiceState(): VoiceState;
 export function voiceStatePatch(state: VoiceState, patch: Partial<VoiceState>): VoiceState;
