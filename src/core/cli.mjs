@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { randomUUID } from 'node:crypto';
 import { NotificationDelivery } from '../automation/notify.mjs';
 import { MemoryConsolidator } from '../memory/consolidate.mjs';
 import { extractMemory } from '../memory/memory-extract.mjs';
@@ -36,10 +37,13 @@ import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
 import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
-import { createVoiceBrain, withVoiceBrain, createAcknowledgements, createVoiceMicrophone, voiceReplyForSpeech } from './voice-session.mjs';
+import { createVoiceBrain, createAcknowledgements, createVoiceMicrophone, voiceReplyForSpeech } from './voice-session.mjs';
+import { captureVoiceContext, runVoiceWorker } from './voice-worker.mjs';
+import { VoiceJobs } from '../automation/voice-jobs.mjs';
+import { VoiceSpeechQueue } from '../automation/voice-speech-queue.mjs';
 import { createVoiceNarrator } from './voice-narrator.mjs';
-import { VoiceTaskStore, runVoiceTask, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
-import { VOICE_TASK_DIRECTORY } from '../automation/voice-task-policy.mjs';
+import { VoiceTaskStore, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
+import { VOICE_TASK_DIRECTORY, VOICE_PROGRESS_POLL_MS } from '../automation/voice-task-policy.mjs';
 import { configuredSecrets } from './redact.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
@@ -517,9 +521,33 @@ export async function main({ voiceIO = {} } = {}) {
   // The REPL is one session at a time, so a single slot is enough to attach
   // sub-agent progress to the turn currently streaming.
   let activeOutcome = null;
-  let activeVoiceTask = null;
-  let voiceAckPlayback = Promise.resolve();
+  let voiceJobs = null;
+  let voiceAudio = null;
+  let voiceOwner = randomUUID();
+  const voiceMail = new Map();
+  const detachedVoiceOwners = new Map();
+  let pendingVoiceApproval = null;
+  let voiceApprovalTail = Promise.resolve();
   const taskStore = () => new VoiceTaskStore({ directory: path.join(CONFIG_DIR, VOICE_TASK_DIRECTORY), limit: config.voiceTaskLimit, secrets: configuredSecrets(config) });
+
+  function detachVoiceOwner() {
+    if (voiceJobs?.list(voiceOwner).length) detachedVoiceOwners.set(voiceOwner, {
+      messages: sanitizeMessages(agent.messages), model: agent.model, projectId: agent.projectId,
+    });
+    voiceOwner = randomUUID();
+  }
+  function flushVoiceMail() {
+    for (const task of voiceMail.values()) {
+      if (task.ownerId === voiceOwner && busy) continue;
+      const detached = task.ownerId !== voiceOwner ? detachedVoiceOwners.get(task.ownerId) : null;
+      if (task.ownerId !== voiceOwner && !detached) continue;
+      const messages = detached?.messages || agent.messages;
+      messages.push({ role: 'user', content: task.transcript }, { role: 'assistant', content: voiceTaskReport(task) });
+      if (detached) saveSession(sessionPath(`voice-${task.ownerId}`), { ...detached, messages, savedAt: new Date().toISOString() });
+      else writeSession(AUTOSAVE_NAME);
+      voiceMail.delete(task.id);
+    }
+  }
 
   const agent = new Agent({
     client,
@@ -551,46 +579,17 @@ export async function main({ voiceIO = {} } = {}) {
     print: (s) => term.line(s),
     write: (s) => term.write(s),
     confirm: async (toolName, detail) => {
-      // ToolHost can finish cancellation before TTS settles. Keep the requesting
-      // turn's signal/task, never the mutable agent fields of a later request.
-      const requestingTask = activeVoiceTask;
-      const requestingSignal = agent.abort?.signal;
-      const stale = () => requestingSignal?.aborted || (requestingTask && activeVoiceTask !== requestingTask);
-      const ask = async () => {
-        if (stale()) return false;
-        term.line("");
-        term.line(c.yellow(`  ── ${toolName} ` + "─".repeat(Math.max(0, 40 - toolName.length))));
-        term.line(detail.split("\n").map(l => "  " + l).join("\n"));
-        term.line(c.yellow("  " + "─".repeat(44)));
-        const answer = (await term.ask("  allow? [y]es / [n]o / [a]lways / [q]uit > ")) ?? "";
-        if (stale()) return false;
-        const a = answer.trim().toLowerCase();
-        if (a === "a" || a === "always") {
-          agent.autoApprove = true;
-          term.line(c.dim("  auto-approve on"));
-          return true;
-        }
-        if (a === "q" || a === "quit") {
-          if (activeVoiceTask) agent.cancel();
-          else { term.line(c.dim("bye")); process.exit(0); }
-          return false;
-        }
-        return a === "y" || a === "yes";
-      };
-      if (!requestingTask) return ask();
-      return requestingTask.approval(toolName, async () => {
-        const line = `Permission chahiye · ${toolName}`;
-        term.line(c.yellow(`  ${line}`));
-        // Let the acknowledgement and any already-playing progress sentence finish.
-        await voiceAckPlayback;
-        if (stale()) return false;
-        try {
-          const audio = await synthesizeSpeech(line);
-          if (audio && !stale()) await playMp3(audio, { signal: requestingSignal });
-        } catch (error) { term.line(c.dim(`  (tts: ${error.message})`)); }
-        if (stale()) return false;
-        return ask();
-      });
+      const signal = agent.abort?.signal;
+      if (signal?.aborted) return false;
+      term.line('');
+      term.line(c.yellow(`  ── ${toolName} ` + '─'.repeat(Math.max(0, 40 - toolName.length))));
+      term.line(detail.split('\n').map(line => '  ' + line).join('\n'));
+      const answer = (await term.ask('  allow? [y]es / [n]o / [a]lways / [q]uit > ')) ?? '';
+      if (signal?.aborted) return false;
+      const value = answer.trim().toLowerCase();
+      if (value === 'a' || value === 'always') { agent.autoApprove = true; term.line(c.dim('  auto-approve on')); return true; }
+      if (value === 'q' || value === 'quit') { await shutdown(0); return false; }
+      return value === 'y' || value === 'yes';
     },
   });
   agent.model = model;
@@ -628,6 +627,7 @@ export async function main({ voiceIO = {} } = {}) {
       throw new Error(`"${label}" is not a readable session file.`);
     }
     const restored = sanitizeMessages(data.messages.filter((m) => m.role !== "system"));
+    detachVoiceOwner();
     agent.clear();
     agent.messages.push(...restored);
     if (data.model) agent.model = data.model;
@@ -635,6 +635,8 @@ export async function main({ voiceIO = {} } = {}) {
   };
 
   const shutdown = async (code = 0) => {
+    await voiceJobs?.close();
+    flushVoiceMail();
     try {
       writeSession(AUTOSAVE_NAME);
     } catch {}
@@ -697,6 +699,10 @@ export async function main({ voiceIO = {} } = {}) {
   };
   // Job controls remain usable during model/tool work and do not become chat input.
   term.interceptLine = line => {
+    const approvalAnswer = String(line).trim().toLowerCase();
+    if (pendingVoiceApproval && ['y', 'yes', 'n', 'no', 'a', 'always', 'q', 'quit'].includes(approvalAnswer)) {
+      pendingVoiceApproval.resolve(approvalAnswer); return true;
+    }
     if (busy && String(line).trim().split(/\s+/, 1)[0] === VOICE_TASK_COMMAND) {
       try { term.notify(voiceTaskCommand(line, taskStore())); }
       catch (error) { term.notify(`Voice task: ${error.message}`); }
@@ -711,12 +717,12 @@ export async function main({ voiceIO = {} } = {}) {
   let cancelHook = null;
   if (!opts.daemon) process.on("SIGINT", () => {
     if (busy || voiceActive) {
+      if (voiceActive) voiceJobs?.cancelOwner(voiceOwner);
       agent.cancel();
       const hook = cancelHook;
       cancelHook = null;
       term.cancelPending();
       stopPlayback();
-      activeVoiceTask?.interruptSpeech?.();
       hook?.();
       term.line(c.dim("\n  cancelling..."));
       return;
@@ -835,6 +841,7 @@ export async function main({ voiceIO = {} } = {}) {
       renderer = null;
       activeOutcome = null;
       busy = false;
+      flushVoiceMail();
       showJobNotices();
     }
     return outcome;
@@ -958,334 +965,191 @@ export async function main({ voiceIO = {} } = {}) {
    * otherwise Enter sends. Enter always force-sends, Ctrl+C cancels.
    * Returns the transcript, "" (nothing usable), or null (cancelled).
    */
-  const captureTurn = async ({ handsFree = false } = {}) => {
-    const wav = tmpVoiceFile("wav");
-    let mic;
+  const CAPTURE_PAUSED = Symbol('voice permission or interruption');
+  const CAPTURE_RETRY_MS = 400; // Milliseconds: let the audio device release before retrying a failed startup.
+  const CAPTURE_POLL_MS = 120; // Milliseconds: existing VAD deadline/cancel responsiveness.
+  const CAPTURE_TICK_MS = 250; // Milliseconds: terminal meter refresh without excessive output.
+  const INTERRUPT_GUARD_MS = 400; // Milliseconds: ignore playback-start transients before accepting barge-in.
+  const captureTurn = async ({ handsFree = false, session } = {}) => {
+    const wav = tmpVoiceFile('wav');
+    let input, reason = null, enterPending = false, finished;
+    const stopped = new Promise(resolve => { finished = resolve; });
+    const capture = { stopped, pause() { reason = 'approval'; if (enterPending) term.cancelPending(); } };
+    if (session) session.capture = capture;
+    let tick, poll;
     try {
-      mic = await selectedMicrophone();
-    } catch (err) {
-      term.line(c.red(`  mic: ${err.message}`));
-      return "";
-    }
-    if (!mic) {
-      term.line(c.red("  no microphone found (set MIC_DEVICE in .env to pick one)."));
-      return "";
-    }
-
-    let input = null;
-    for (let attempt = 0; attempt < 2 && !input; attempt++) {
-      try {
-        if (attempt > 0) {
-          mic = await selectedMicrophone();
-          if (!mic) return '';
+      if (session?.approvals) return CAPTURE_PAUSED;
+      for (let attempt = 0; attempt < 2 && !input; attempt++) {
+        try {
+          const mic = await selectedMicrophone();
+          if (!mic) { term.line(c.red('  no microphone found (set MIC_DEVICE in .env).')); return ''; }
+          const candidate = openVoiceInput({ device: mic.name, outFile: wav, noiseDb: config.voiceNoiseDb,
+            silenceSec: config.voiceSilenceMs / 1000 });
+          input = candidate;
+          await candidate.ready;
+        } catch (error) {
+          voiceMicrophone?.invalidate();
+          await input?.stop().catch(() => {}); input = null;
+          if (attempt === 0) { await new Promise(resolve => setTimeout(resolve, CAPTURE_RETRY_MS)); continue; }
+          term.line(c.red(`  mic: ${error.message}`)); return '';
         }
-        const candidate = openVoiceInput({
-          device: mic.name,
-          outFile: wav,
-          noiseDb: config.voiceNoiseDb,
-          silenceSec: config.voiceSilenceMs / 1000,
-        });
-        await candidate.ready;
-        input = candidate;
-      } catch (err) {
-        voiceMicrophone?.invalidate();
-        if (attempt === 0) {
-          // A Bluetooth device can still be releasing from the previous turn.
-          await new Promise((r) => setTimeout(r, 400));
-          continue;
-        }
-        term.line(c.red(`  mic: ${err.message}`));
-        return "";
       }
-    }
-
-    const started = Date.now();
-    let reason = null;
-    const detector = createTurnDetector();
-    input.onEvent = (ev) => {
-      if (reason !== null) return;
-      if (detector.feed(ev) === "end") reason = "silence";
-    };
-
-    const hint = handsFree ? "pause to send" : "Enter to send";
-    const tick = setInterval(() => {
-      const secs = Math.floor((Date.now() - started) / 1000);
-      const label = handsFree && !detector.heard ? "speak now" : "listening";
-      term.write(`\r  ${label}… ${secs}s  (${hint}, Ctrl+C to cancel)\x1b[K`);
-    }, 250);
-    cancelHook = () => {
-      reason = "cancel";
-    };
-
-    await new Promise((resolve) => {
-      const poll = setInterval(() => {
-        if (reason !== null) {
-          clearInterval(poll);
-          resolve();
-        } else if (handsFree && Date.now() - started > config.voiceMaxUtteranceMs) {
-          reason = "max";
-          clearInterval(poll);
-          resolve();
-        }
-      }, 120);
-      term.ask("").then((line) => {
-        if (reason === null) reason = line === null ? "cancel" : "enter";
-        clearInterval(poll);
-        resolve();
+      if (reason === 'approval' || session?.approvals) return CAPTURE_PAUSED;
+      const started = Date.now(), detector = createTurnDetector();
+      input.onEvent = event => {
+        if (reason !== null) return;
+        if (session?.playingAt && (!config.voiceBargeIn || Date.now() - session.playingAt < INTERRUPT_GUARD_MS)) return;
+        const action = detector.feed(event);
+        if (action === 'speech') session?.speech.interrupt();
+        if (action === 'end') reason = 'silence';
+      };
+      const hint = handsFree ? 'pause to send' : 'Enter to send';
+      tick = setInterval(() => term.write(`\r  listening… ${Math.floor((Date.now() - started) / 1000)}s  (${hint}, Ctrl+C to stop work)\x1b[K`), CAPTURE_TICK_MS);
+      cancelHook = () => {
+        reason = voiceJobs?.list(voiceOwner).some(job => !['done', 'failed', 'cancelled'].includes(job.status) || job.resourcesHeld) ? 'interrupted' : 'cancel';
+      };
+      await new Promise(resolve => {
+        poll = setInterval(() => {
+          if (reason !== null) resolve();
+          else if (handsFree && Date.now() - started > config.voiceMaxUtteranceMs) { reason = 'max'; resolve(); }
+        }, CAPTURE_POLL_MS);
+        enterPending = true;
+        term.ask('').then(line => { if (reason === null) reason = line === null ? 'cancel' : 'enter'; resolve(); });
       });
-    });
-
-    cancelHook = null;
-    term.cancelPending();
-    clearInterval(tick);
-    term.write("\r\x1b[K");
-    const ok = await input.stop();
-
-    try {
-      if (reason === "cancel") return null;
-      if (!ok) {
-        term.line(c.red("  recording failed (nothing captured)."));
-        return "";
-      }
+      enterPending = false; term.cancelPending();
+      if (reason === 'approval' || reason === 'interrupted') return CAPTURE_PAUSED;
+      if (reason === 'cancel') return null;
+      const ok = await input.stop(); input = null;
+      if (!ok) { term.line(c.red('  recording failed (nothing captured).')); return ''; }
       return await transcribeWav(wav);
     } finally {
-      try {
-        fs.unlinkSync(wav);
-      } catch {}
+      clearInterval(tick); clearInterval(poll); cancelHook = null;
+      await input?.stop().catch(() => {});
+      if (session?.capture === capture) session.capture = null;
+      fs.rmSync(wav, { force: true }); finished();
     }
   };
 
-  /**
-   * Speak a reply while listening for barge-in: talking over the reply stops
-   * playback and the interruption becomes the next turn.
-   */
-  const speakWithBargeIn = async (text) => {
-    const clean = voiceReplyForSpeech(text, { maxChars: config.voiceSpeakMaxChars });
-    if (!clean) return { bargedIn: false };
-
-    const wav = tmpVoiceFile("wav");
-    let input = null;
-    let stopped = false;
-    const stopInput = async () => {
-      if (!input || stopped) return false;
-      stopped = true;
+  const voiceConfirm = (toolName, detail, entry, signal) => {
+    const request = voiceApprovalTail.then(async () => {
+      if (signal.aborted) return false;
+      const audio = voiceAudio;
+      if (audio) { audio.approvals++; audio.capture?.pause(); await audio.capture?.stopped; audio.speech.resume(); }
+      let answer;
       try {
-        return await input.stop();
-      } catch {
-        return false;
-      }
-    };
-    let interrupted = false;
-    cancelHook = () => { interrupted = true; stopPlayback(); };
-    try {
-      // Synthesis and interruption-input startup are independent. Paying their
-      // waits together also avoids a fresh hardware scan after audio is ready.
-      const prepareInput = async () => {
-        if (!config.voiceBargeIn) return;
-        try {
-          const mic = await selectedMicrophone();
-          if (!mic) return;
-          input = openVoiceInput({ device: mic.name, outFile: wav,
-            noiseDb: config.voiceBargeDb, silenceSec: config.voiceSilenceMs / 1000 });
-          await input.ready;
-        } catch {
-          voiceMicrophone?.invalidate();
-          await stopInput();
-          input = null;
-        }
-      };
-      const [audio] = await Promise.all([
-        synthesizeSpeech(clean).catch(err => { term.line(c.dim(`  (tts: ${err.message})`)); return null; }),
-        prepareInput(),
-      ]);
-      if (!audio || interrupted) return { bargedIn: false };
-      const playback = playMp3(audio).catch(() => {});
-      if (!input) {
-        await playback;
-        return { bargedIn: false };
-      }
-
-      const bargeAt = Date.now();
-      let phase = "listen";
-      let barged = false;
-      let reason = null;
-      const detector = createTurnDetector();
-      input.onEvent = (ev) => {
-        const signal = detector.feed(ev);
-        if (phase === "listen") {
-          if (signal === "speech" && Date.now() - bargeAt > 400) {
-            barged = true;
-            phase = "capture";
-          }
-        } else if (signal === "end") {
-          reason = "silence";
-        }
-      };
-
-      const winner = await new Promise((resolve) => {
-        const poll = setInterval(() => {
-          if (barged) {
-            clearInterval(poll);
-            resolve("barge");
-          }
-        }, 80);
-        playback.then(() => {
-          clearInterval(poll);
-          resolve("done");
+        const line = `Permission chahiye · ${toolName}`;
+        term.line(c.yellow(`  [voice task ${entry.id}] ${line}`));
+        if (audio && !audio.controller.signal.aborted) await audio.speech.offer({ jobId: entry.id, kind: 'receipt',
+          signal: AbortSignal.any([signal, audio.controller.signal]),
+          prepare: () => synthesizeSpeech(line), line: { text: line } });
+        if (signal.aborted) return false;
+        term.line(detail);
+        answer = await new Promise(resolve => {
+          const abort = () => resolve('no');
+          pendingVoiceApproval = { id: entry.id, resolve };
+          signal.addEventListener('abort', abort, { once: true });
+          entry.clearApproval = () => signal.removeEventListener('abort', abort);
+          if (signal.aborted) resolve('no');
+          else term.line('  allow? [y]es / [n]o / [a]lways / [q]uit > ');
         });
-      });
-
-      if (winner === "done") {
-        await stopInput();
-        return { bargedIn: false };
+        if (signal.aborted) return false;
+        if (answer === 'a' || answer === 'always') { agent.autoApprove = true; return true; }
+        if (answer === 'q' || answer === 'quit') { voiceJobs.cancel(entry.id, { ownerId: entry.ownerId }); return false; }
+        return answer === 'y' || answer === 'yes';
+      } finally {
+        entry.clearApproval?.(); delete entry.clearApproval;
+        if (pendingVoiceApproval?.id === entry.id) pendingVoiceApproval = null;
+        if (audio) audio.approvals--;
       }
-
-      stopPlayback();
-      term.write(c.dim("  (interrupted) "));
-      const started = Date.now();
-      await new Promise((resolve) => {
-        const poll = setInterval(() => {
-          if (reason !== null || Date.now() - started > config.voiceMaxUtteranceMs) {
-            clearInterval(poll);
-            resolve();
-          }
-        }, 120);
-      });
-      const ok = await stopInput();
-      if (!ok) return { bargedIn: true, text: "" };
-      return { bargedIn: true, text: await transcribeWav(wav) };
-    } finally {
-      await stopInput();
-      cancelHook = null;
-      try {
-        fs.unlinkSync(wav);
-      } catch {}
-    }
+    });
+    voiceApprovalTail = request.catch(() => {});
+    return request;
   };
 
   const voiceLoop = async () => {
     if (!voiceReady()) return;
-    let voiceBrain;
-    try {
-      voiceBrain = createVoiceBrain(config, { client: agent.client, model: agent.model });
-    } catch (error) {
-      term.line(c.red(`  ${error.message}`));
-      return;
-    }
-    const acknowledgements = createAcknowledgements({ synthesize: synthesizeSpeech });
-    voiceMicrophone = createVoiceMicrophone({ detect: detectMic, preferred: config.micDevice });
-    const narrate = voiceIO.narrate || createVoiceNarrator({
-      client: voiceBrain?.client || agent.client, model: voiceBrain?.model || agent.model, secrets: configuredSecrets(config),
+    let brain;
+    try { brain = createVoiceBrain(config, { client: agent.client, model: agent.model }); }
+    catch (error) { term.line(c.red(`  ${error.message}`)); return; }
+    const session = { brain, controller: new AbortController(), approvals: 0, capture: null, playingAt: 0 };
+    voiceAudio = session;
+    const owns = () => voiceAudio === session && !session.controller.signal.aborted;
+    session.speech = new VoiceSpeechQueue({ gapMs: config.voiceSpeechGapMs, historyLimit: config.voiceTaskLimit,
+      play: (audio, { signal }) => playMp3(audio, { signal, rejectOnFailure: true }), stop: stopPlayback,
+      onStart: () => { session.playingAt = Date.now(); }, onFinish: () => { session.playingAt = 0; },
+      onError: error => term.line(c.red(`  speech: ${error.message}`)),
     });
+    voiceJobs ||= new VoiceJobs({ store: taskStore(), concurrency: config.voiceMaxParallelJobs,
+      run: (entry, options) => runVoiceWorker(entry, options, { brain: entry.context.audioSession.brain,
+        acquire: (...args) => voiceJobs.acquire(...args), autoApprove: () => agent.autoApprove,
+        confirm: voiceConfirm,
+      }),
+      onUpdate: record => {
+        if (config.voiceVerbose || ['queued', 'waiting_for_resource', 'waiting_for_approval'].includes(record.status)) term.notify(c.dim(`  [voice task ${record.id}] ${record.status}${record.waitingFor ? ' · ' + record.waitingFor : ''}`));
+      },
+      onComplete: task => {
+        voiceMail.set(task.id, task); flushVoiceMail();
+        term.notify(config.voiceVerbose ? renderVoiceTask(task) : `[voice task ${task.id}] ${task.status} · ${task.label}\n${voiceTaskReport(task)}`);
+        const audio = voiceJobs.entries.get(task.id)?.context.audioSession;
+        const report = voiceReplyForSpeech(voiceTaskReport(task), { maxChars: config.voiceSpeakMaxChars });
+        if (audio && voiceAudio === audio && !audio.controller.signal.aborted && report) void audio.speech.offer({
+          jobId: task.id, kind: 'report', signal: audio.controller.signal,
+          prepare: () => synthesizeSpeech(report, task.language), line: { text: report } });
+      },
+      onError: error => term.notify(c.red(`  voice job: ${error.message}`)),
+    });
+    const acks = createAcknowledgements({ synthesize: synthesizeSpeech });
+    const narrate = voiceIO.narrate || createVoiceNarrator({ client: brain?.client || agent.client, model: brain?.model || agent.model, secrets: configuredSecrets(config) });
+    voiceMicrophone = createVoiceMicrophone({ detect: detectMic, preferred: config.micDevice });
     voiceActive = true;
-    const handsFree = config.voiceVad;
-    term.line(
-      c.dim(
-        handsFree
-          ? '  voice mode — just speak; pause to send. Interrupt anytime. Say "exit" to leave.'
-          : '  voice mode — speak, press Enter to send each turn. Say "exit" to leave.'
-      )
-    );
-    let pending = null;
-    let routing = null;
-    if (voiceBrain) {
-      term.line(c.dim(`  voice answers use ${voiceBrain.label} · ${voiceBrain.model}`));
-    }
+    term.line(c.dim(config.voiceVad ? '  voice mode — just speak; pause to send. Jobs run together. Say exit to leave.' : '  voice mode — speak, press Enter to send. Jobs run together. Say exit to leave.'));
+    if (brain) term.line(c.dim(`  voice answers use ${brain.label} · ${brain.model}`));
+    let routing;
     try {
-      // Pay acknowledgement synthesis before opening the microphone.
-      let cancelledDuringWarmup = false;
-      cancelHook = () => { cancelledDuringWarmup = true; };
-      await acknowledgements.prewarm();
-      cancelHook = null;
-      if (cancelledDuringWarmup) return;
-      // A Bluetooth headset drops A2DP while its mic is open, which would make
-      // barge-in replies silent. Point playback at its Hands-Free endpoint.
+      let cancelled = false;
+      cancelHook = () => { cancelled = true; };
+      await acks.prewarm(); cancelHook = null;
+      if (cancelled) return;
       if (config.voiceBargeIn && config.voiceHfpRouting) {
-        try {
-          const mic = await selectedMicrophone();
-          if (mic) routing = useHandsFreePlayback(mic.name);
-          if (routing) {
-            term.line(c.dim(`  speech via "${routing.device.name}" so barge-in stays audible`));
-          }
-        } catch {}
+        const mic = await selectedMicrophone();
+        if (mic) routing = useHandsFreePlayback(mic.name);
       }
-      while (true) {
-        let said;
-        if (pending !== null) {
-          said = pending;
-          pending = null;
-        } else {
-          said = await captureTurn({ handsFree });
-          if (said === null) {
-            term.line(c.dim("  (cancelled)"));
-            break;
-          }
-        }
-        const clean = String(said || "").trim();
-        if (!clean) continue;
-        if (/^(exit|quit|stop|goodbye|bye)[.!]?$/i.test(clean)) {
-          term.line(c.dim("  leaving voice mode."));
-          break;
-        }
-        term.line(`${c.magenta(config.username)} ${c.dim("›")} ${clean}`);
-        // Start a short acknowledgement immediately; the model's answer is
-        // seconds away and silence reads as "it didn't hear me".
-        const ack = acknowledgements.next(speechLanguage);
-        if (ack) term.line(c.dim(`  ${ack.text}`));
-        const ackPlayback = ack ? playMp3(ack.audio).catch(() => {}).then(() =>
-          new Promise(resolve => setTimeout(resolve, config.voiceSpeechGapMs))) : Promise.resolve();
-        voiceAckPlayback = ackPlayback;
-        let result;
+      while (owns()) {
+        if (session.approvals) { await new Promise(resolve => setTimeout(resolve, VOICE_PROGRESS_POLL_MS)); continue; }
+        const said = await captureTurn({ handsFree: config.voiceVad, session });
+        if (said === CAPTURE_PAUSED) { session.speech.resume(); continue; }
+        if (said === null) { term.line(c.dim('  leaving voice mode.')); break; }
+        const clean = String(said || '').trim();
+        if (!clean) { session.speech.resume(); continue; }
+        if (/^(exit|quit|end voice|goodbye|bye)[.!?]?$/i.test(clean)) { term.line(c.dim('  leaving voice mode.')); break; }
+        term.line(`${c.magenta(config.username)} ${c.dim('›')} ${clean}`);
+        const language = speechLanguage;
         try {
-          result = await runVoiceTask({
-            store: taskStore(), transcript: clean, language: speechLanguage, confidence: speechConfidence,
-            minIntervalMs: config.voiceJobSpeakMinIntervalMs,
-            gapMs: config.voiceSpeechGapMs, waitUpdateMs: config.voiceJobWaitUpdateMs,
-            onTrackingError: () => agent.cancel(),
-            isCancelled: () => agent.cancelled(),
-            onUpdate: record => {
-              if (config.voiceVerbose || record.status === 'queued') term.line(c.dim(`  [voice task ${record.id}] ${record.status}`));
-            },
-            speak: async (event, { signal, beginPlayback }) => {
-              const line = await narrate(event, { signal });
-              if (!line || signal.aborted) return;
-              const audio = await synthesizeSpeech(line);
-              await ackPlayback;
-              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled() && beginPlayback(line)) {
-                term.line(c.dim(`  ${line}`));
-                await playMp3(audio, { signal });
-              }
-            },
-            run: (observer, task) => {
-              activeVoiceTask = task;
-              return withVoiceBrain(agent, voiceBrain, () => runTurn(clean, observer));
+          const context = { ...captureVoiceContext(agent), audioSession: session };
+          const record = await voiceJobs.submit({ ownerId: voiceOwner, transcript: clean, language, confidence: speechConfidence, context,
+            speech: { minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: 0, waitUpdateMs: config.voiceJobWaitUpdateMs },
+            speak: (event, { signal, beginPlayback }) => {
+              const line = { text: '' };
+              return session.speech.offer({ jobId: event.taskId, kind: 'progress', line,
+                signal: AbortSignal.any([signal, session.controller.signal]),
+                prepare: async queueSignal => {
+                  line.text = await narrate(event, { signal: queueSignal });
+                  return line.text ? synthesizeSpeech(line.text, language) : null;
+                }, beginPlayback: () => {
+                  if (!owns() || !beginPlayback(line.text)) return false;
+                  term.line(c.dim(`  ${line.text}`)); return true;
+                } });
             },
           });
-        } catch (error) {
-          term.line(c.red(`  Voice task could not be saved: ${error.message}`));
-        } finally {
-          await ackPlayback;
-          activeVoiceTask = null;
-        }
-        if (!result) continue;
-        const { outcome, task } = result;
-        term.line(config.voiceVerbose ? renderVoiceTask(task) : `[voice task ${task.id}] ${task.status}\n${voiceTaskReport(task)}`);
-        term.line("");
-        try {
-          writeSession(AUTOSAVE_NAME);
-        } catch {}
-        const report = voiceTaskReport(task);
-        if (report) {
-          const r = await speakWithBargeIn(report);
-          if (r.bargedIn && r.text && r.text.trim()) pending = r.text.trim();
-        }
+          const ack = acks.next(language);
+          if (ack) { term.line(c.dim(`  ${ack.text}`)); void session.speech.offer({ jobId: record.id, kind: 'receipt', prepare: async () => ack.audio, signal: session.controller.signal }); }
+        } catch (error) { term.line(c.red(`  Voice request: ${error.message}`)); }
+        session.speech.resume();
       }
     } finally {
-      routing?.restore();
-      voiceActive = false;
-      cancelHook = null;
-      activeVoiceTask = null;
-      voiceMicrophone = null;
+      session.controller.abort(); await session.speech.close();
+      routing?.restore(); voiceActive = false; cancelHook = null; voiceMicrophone = null;
+      if (voiceAudio === session) voiceAudio = null;
     }
   };
 
@@ -1659,6 +1523,7 @@ export async function main({ voiceIO = {} } = {}) {
       }
 
       case "/clear":
+        detachVoiceOwner();
         agent.clear();
         term.line(c.dim("  conversation cleared"));
         break;
