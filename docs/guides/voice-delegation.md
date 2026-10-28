@@ -118,10 +118,14 @@ different background request. Ctrl+C stops active voice work; with none running,
 Clearing/loading a terminal chat keeps earlier work's results in its own saved
 `voice-<owner>` conversation rather than appending them to the new chat.
 
-If a successful planner response contains no answer, voice retries once. After any
-observed tool call, that retry has tools disabled and can only report from the
-existing evidence; it cannot repeat a write or launch. Two empty responses remain
-an explicit failure. Provider/permission/output-limit errors are not blindly retried.
+If a successful planner response has neither text nor actions, voice retries that
+unexecuted decision once, keeping the existing tool receipts and remaining actions
+available. It does not restart the task or append an empty assistant turn. The
+recovery budget is one across the entire request. A second blank decision reports
+a distinct provider-empty error; access, quota and output-limit failures keep their
+own errors. Ordinary typed requests retain their existing policy. The earlier
+report-only recovery could strand work after a blank intermediate decision; the
+28 October follow-up replaces it.
 
 A failed read-only source with other useful results is shown as **Partial result**,
 with the failed step preserved. A failed write, denied action or planner error
@@ -135,6 +139,8 @@ Additional repeatable checks:
 node scripts/verify-voice-suite.mjs
 node scripts/verify-voice-parallel-primitives.mjs
 node scripts/verify-parallel-voice.mjs --env /path/to/your/local/.env
+node scripts/verify-voice-second-request.mjs --env /path/to/your/local/.env
+node scripts/verify-voice-second-request.mjs --env /path/to/your/local/.env --inject-empty
 ```
 
 The live parallel check uses real Sarvam STT/TTS, Meta planning and file tools.
@@ -142,6 +148,12 @@ An intentionally held first file proves an independent job finishes and a
 conflicting edit waits without losing the poem. It captures three actual MP3
 handoffs with peak one player. Generated input receives explicit fixture filenames
 after STT; this is not a physical microphone or perfect filename-recognition claim.
+
+The second-request check uses two real concurrent Meta workers, actual web search
+and disposable files. `--inject-empty` discards one unexecuted model decision after
+the research save, then checks that read-back still finishes. This is controlled
+fault injection over real services, not a claim that Baseten emitted the injected
+blank reply. Neither version records the microphone or launches an editor.
 
 ## Terminal voice
 

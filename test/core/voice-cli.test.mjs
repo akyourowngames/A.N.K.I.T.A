@@ -233,7 +233,7 @@ for (const mode of ['empty-first', 'empty-final', 'empty-twice']) test(`CLI ${mo
   assert.equal(task.steps.filter(step => step.tool === 'write_file').length, mode === 'empty-twice' ? 0 : 1);
   assert.equal(result.models.filter(model => model === 'voice-model').length, mode === 'empty-twice' ? 2 : 3);
   assert.equal(result.models.at(-1), 'typed-model');
-  if (mode === 'empty-twice') assert.match(task.error, /empty answer after one retry/);
+  if (mode === 'empty-twice') assert.match(task.error, /provider returned no answer or action after one recovery attempt/i);
 });
 
 for (const mode of ['end-running', 'clear-running']) test(`CLI ${mode} keeps work owned and its completed history separate from a typed turn`, async t => {

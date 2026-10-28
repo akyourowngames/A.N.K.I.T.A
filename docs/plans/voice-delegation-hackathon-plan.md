@@ -1088,6 +1088,62 @@ in §18g remain visible. This is new 28 October hackathon work, built on the sep
 identifiable inherited baseline. Same draft PR #70; no merge/release. Unrelated
 pending edits and user-authored files in both checkouts are preserved.
 
+## 18j. Empty intermediate voice decisions (28 October)
+
+Owner reported that the second request could return no planner report. The saved
+older empty record has zero actions and no raw HTTP response, so its precise
+upstream cause is unavailable. The newest screenshot pair is a different captured
+state: poem job `3b0e7124` has a 428-character report and retained command resources;
+research job `bf5d9976` has completed search/page-read steps and is waiting on a
+retrying file write. That does not disprove the separate empty-reply report. Do not
+assign an HTTP cause to either without a response trace, or call the open-command
+wait fixed by this change.
+
+Reproduction found a concrete flaw in our previous recovery: if a valid blank
+model response arrived between actions, `runVoiceWorker` restarted `Agent.send`
+with tools disabled. A second request could save its draft, then report without
+finishing the requested final save. Controlled real HTTP reproductions failed in
+both JSON and SSE transports: the requested final file did not exist. The previous
+retry also appended an empty assistant message to the next request.
+
+The one-retry budget now belongs to the model decision loop, enabled only in fresh
+voice workers. A blank successful decision is retried before it enters history or
+executes anything, with existing receipts and tools intact. It never restarts the
+Agent turn or resets action limits/counters. One retry total per request; a second
+blank produces `provider_empty_response`. Authentication/quota/length errors and
+ordinary typed requests keep their own policies. The two old fake-Agent tests
+asserted the flawed report-only behavior; real HTTP/file regressions replace them.
+
+Evidence:
+
+- JSON/SSE intermediate blank reproductions: RED missing final file → GREEN both
+  files saved exactly once, no empty assistant history, both concurrent reports.
+- Two blanks: exactly two provider requests, no file action, explicit provider-empty
+  failure. Ordinary typed blank: one request, unchanged policy.
+- Focused stream/worker/terminal set: **50/50**, no skips, **42670.9331 ms**.
+- `verify-voice-second-request.mjs --env <local-env>`: real concurrent Meta poem and
+  AI-research jobs both returned reports and saved/read their separate files. All
+  model requests returned HTTP 200 with real text or tool decisions; this sample
+  did not reproduce an upstream Baseten blank.
+- Same real-service script with `--inject-empty`: one controlled blank after the
+  research save, followed by successful model continuation/read-back. Both files
+  existed and both reports survived. One separate web source failed, so research
+  correctly remained partial. The trace explicitly marks injection; it does not
+  falsely attribute that blank to the cloud provider.
+- Desktop typecheck/Vite build passed (403 modules). Full project `npm test`
+  (`node --test --test-concurrency=1`) → **1703 tests: 1702 pass, 0 fail,
+  0 cancelled, 1 skip**, **725895.3614 ms**, exit 0. The skipped case is
+  POSIX executable-permission/mode changes on Windows, not a passing result. Literal review
+  and `git diff --check` passed. No credentials, generated reports or trace logs
+  are included in the commit.
+
+Remaining limits: no physical audio or editor launch in this planner-isolation
+check; intermittent upstream behavior is not guaranteed away. Existing long-lived
+command/file-access waiting is a separate observed path, unchanged in this fix.
+No action result or real HTTP error is relabelled successful. Original checkout
+speed edits and user-authored documents are preserved. Update draft PR #70 only;
+no merge, app version bump, tag or release.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).

@@ -22,7 +22,7 @@ import { messageCost, trimMessages } from "./history.mjs";
 import { TOOL_RESULT_MODE } from '../integrations/chatgpt-browser/protocol.mjs';
 import { compactBrowserHistory } from './browser-context.mjs';
 import { focusAllows, TOOL_FOCUS_GUIDANCE, BROWSER_DISCOVERY_GUIDANCE } from './tool-focus.mjs';
-import { providerError, responseError, assertCompleteGeneration } from './provider-errors.mjs';
+import { providerError, responseError, assertCompleteGeneration, emptyResponseError } from './provider-errors.mjs';
 import { loadSkills, skillPromptLines, activeAutomaticSkills } from './skills.mjs';
 import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 import { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } from '../../tools/browser/screenshots.mjs';
@@ -841,6 +841,15 @@ export class Agent {
           onDelta: attempt === 0 ? text => { emitted += text; options.onDelta?.(text); } : undefined,
           onReasoning: attempt === 0 ? options.onReasoning : undefined,
         });
+        if (this.config.retryEmptyResponse && !result.content?.trim() && !result.toolCalls?.length) {
+          if (this.cancelled()) throw this.abort.signal.reason;
+          if (this.emptyResponseRetried) throw emptyResponseError();
+          this.emptyResponseRetried = true;
+          // No proposal has entered history or execution yet. Retry this decision
+          // with the same tool receipts; completed actions cannot be replayed here.
+          attempt--;
+          continue;
+        }
         if (attempt) {
           if (result.content.startsWith(emitted)) options.onDelta?.(result.content.slice(emitted.length));
           else {
@@ -1162,6 +1171,7 @@ export class Agent {
     this.requestId = randomUUID();
     this.requestStarted = Date.now();
     this.totalToolCalls = 0;
+    this.emptyResponseRetried = false; // One empty-decision retry across this request, enabled only by the voice worker.
     this.requestMetrics = [];
     this.state.toolFocusTransitions = [];
     this.terminationReason = null;

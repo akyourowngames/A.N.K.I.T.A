@@ -3,7 +3,9 @@ const ERROR_ENVELOPE_BYTES = 16_384;
 const HTTP_ERROR_MIN = 400; // HTTP status range eligible for provider error metadata.
 const HTTP_ERROR_MAX = 599;
 const PROVIDER_OUTPUT_LIMIT = 'provider_output_limit'; // Error code: generation length stops are not network interruptions.
+const PROVIDER_EMPTY_RESPONSE = 'provider_empty_response'; // Error code: successful transport with no model text or action after bounded recovery.
 const MESSAGES = Object.freeze({
+  [PROVIDER_EMPTY_RESPONSE]: 'The provider returned no answer or action after one recovery attempt. Please retry this request.',
   [PROVIDER_OUTPUT_LIMIT]: 'The model hit its output limit before finishing the answer or file. Increase the output limit and retry.',
   provider_rate_limit: 'The provider is rate-limiting this model. Wait before retrying or choose another eligible model.',
   provider_quota: 'The provider reports exhausted credits or quota. Check your account balance or choose an eligible free model.',
@@ -14,6 +16,13 @@ const MESSAGES = Object.freeze({
   provider_unavailable: 'The provider or its upstream model is unavailable. Retry later or choose another model.',
   provider_generation: 'The provider failed to generate a reply. Check model availability and account access before retrying.',
 });
+
+/** An empty successful generation is distinct from access, quota and transport failures. */
+export function emptyResponseError() {
+  const error = new Error(MESSAGES[PROVIDER_EMPTY_RESPONSE]);
+  error.code = PROVIDER_EMPTY_RESPONSE;
+  return error;
+}
 
 /** Length-limited proposals, including valid partial tool calls, cannot be executed. */
 export function assertCompleteGeneration(finishReason) {
