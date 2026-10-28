@@ -95,12 +95,13 @@
 
 **Files:** Update `docs/guides/voice-delegation.md`, hackathon plan and this execution checklist; add live desktop voice verifier only where existing scripts cannot exercise the engine.
 
-- [ ] Run relevant serial channel/core/automation/desktop suites plus `npm run desktop:build` and `git diff --check`.
+- [x] Run relevant serial channel/core/automation/desktop suites plus `npm run desktop:build` and `git diff --check`.
 - [x] Run real configured model/Sarvam/file tool round trips through desktop adapter; no key/log/media artifacts staged.
 - [x] Open the actual desktop runtime with isolated test data, inspect full-panel/island behavior and capture actual rendered evidence. Keep simulated mic/playback clearly labelled.
 - [x] Record physical mic, headset/barge-in and packaged limits honestly; do not replace the owner's three-clean-workspace gate with fixtures.
 - [x] Request independent whole-branch review, resolve important findings with regressions, update evidence and commit.
-- [ ] Report PR #70 status separately from desktop integration; no merge/release.
+- [x] PR #70 updated with desktop integration and progress fixes at `10691a03`;
+  still open/draft, base `ankita`. No default-branch merge or release.
 
 ## Baseline evidence
 
@@ -122,5 +123,9 @@
   Session isolation passed. The owner explicitly requested parallel execution
   for voice, superseding both offered serial policies; implement this separately
   with isolated workers, ordered speech and resource-conflict coverage.
-- [ ] Re-run affected serial tests/build/UI, update evidence, and include the fixes
+- [x] Re-run affected serial tests/build/UI, update evidence, and include the fixes
   in draft PR #70 without merging or releasing.
+
+The new parallel-voice request supersedes the old one-turn-at-a-time limit and is
+tracked in its own 28 October design/plan. The completed desktop/progress snapshot
+is preserved in PR #70; the follow-up will update the same draft.
