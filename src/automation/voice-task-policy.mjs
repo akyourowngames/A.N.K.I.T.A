@@ -10,3 +10,4 @@ export const VOICE_MAX_PARALLEL_JOBS = 4; // Workers: several independent spoken
 export const VOICE_PARALLEL_JOBS_LIMIT = 8; // Workers: explicit configuration still has a finite per-process ceiling.
 export const VOICE_CONTROL_TURNS = 1; // Reserved worker: status/cancellation remains available when ordinary work is full.
 export const VOICE_JOBS_TOOL = 'voice_jobs'; // Private voice capability, shared with progress suppression and worker registration.
+export const VOICE_FINAL_STATES = Object.freeze(['done', 'partial', 'failed', 'cancelled']); // Terminal task states; partial retains useful findings without claiming every step succeeded.

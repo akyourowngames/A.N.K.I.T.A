@@ -7,11 +7,13 @@ import { isToolFailure } from '../core/verify.mjs';
 import { VOICE_TASK_COMMAND } from '../core/commands.mjs';
 import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_PROGRESS_PLAYBACK_MAX_MS, VOICE_PROGRESS_POLL_MS, VOICE_JOBS_TOOL } from './voice-task-policy.mjs';
 import { voiceActionContext, voiceResultConfirmation } from './voice-progress.mjs';
+import { get } from '../../tools/index.mjs';
+import { VOICE_FINAL_STATES } from './voice-task-policy.mjs';
 
 export { VOICE_TASK_COMMAND };
 const RECORD_SUFFIX = '.json';
 const ID_PATTERN = /^[a-f\d-]{36}$/i; // UUIDs only: command arguments cannot escape the task directory.
-const FINAL_STATES = new Set(['done', 'failed', 'cancelled']);
+const FINAL_STATES = new Set(VOICE_FINAL_STATES);
 const SILENT_TOOLS = new Set(['recall', 'remember', 'project_memory', 'find_tools', 'write_todos', VOICE_JOBS_TOOL]); // Internal bookkeeping is never a spoken work update.
 const TOOL_VERBS = new Map([
   ['read_file', 'Read'], ['list_dir', 'Read'], ['search_files', 'Read'], ['glob', 'Read'],
@@ -22,6 +24,7 @@ const TASK_ERRORS = {
   empty: 'The planner returned no final report.',
   steps: 'One or more work steps failed. Read the report before retrying.',
   cancelled: 'cancelled',
+  partial: 'Some sources could not be read.',
 };
 const cleanLine = value => stripVTControlCharacters(String(value ?? '')).replace(/[\r\n\x00-\x1f\x7f]/g, ' ');
 
@@ -206,8 +209,12 @@ class VoiceTask {
     const cancelled = outcome.error === TASK_ERRORS.cancelled;
     const error = outcome.error || (!outcome.text?.trim() ? TASK_ERRORS.empty : null) ||
       (this.record.steps.some(step => step.state !== 'done') ? TASK_ERRORS.steps : null);
-    this.record.status = cancelled ? 'cancelled' : error ? 'failed' : 'done';
-    this.record.error = error;
+    const failures = this.record.steps.filter(step => step.state !== 'done');
+    const partial = !outcome.error && Boolean(outcome.text?.trim()) && failures.length > 0 &&
+      failures.every(step => step.state === 'failed' && get(step.tool)?.readOnly === true) &&
+      this.record.steps.some(step => step.state === 'done' && !SILENT_TOOLS.has(step.tool));
+    this.record.status = cancelled ? 'cancelled' : partial ? 'partial' : error ? 'failed' : 'done';
+    this.record.error = partial ? TASK_ERRORS.partial : error;
     this.record.summary = outcome.text || '';
     if (typeof outcome.model === 'string') this.record.model = outcome.model;
     this.record.endedAt = this.now();
@@ -290,6 +297,7 @@ export function renderVoiceTask(task) {
 /** A failed/denied action must remain audible even if the planner overclaims success. */
 export function voiceTaskReport(task) {
   if (task.status === 'cancelled') return 'Cancelled.';
+  if (task.status === 'partial') return `${TASK_ERRORS.partial} ${task.summary || ''}`.trim();
   if (task.status === 'failed') return `Work did not finish. ${task.error || ''} ${task.summary || ''}`.trim();
   return task.summary || '';
 }

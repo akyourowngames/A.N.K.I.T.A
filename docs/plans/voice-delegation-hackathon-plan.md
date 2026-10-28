@@ -1011,6 +1011,26 @@ Evidence so far:
   model unchanged, keyboard End and **0 page errors**. Browser fixture covers new
   individual/all job payloads as well as prior main/island motion/recovery checks.
 
+Screenshot (1784) follow-up: saved records showed a completed web search and one
+page read, followed by a failed second page read; that job had a 1300-character
+report, so it was not an empty planner or proven worker collision. An older
+separate job had a truly empty final reply. No raw source response was retained,
+so the historical page-read failure cannot honestly be called an API collision
+or assigned a specific HTTP cause. New read-only failures with useful findings
+become partial results, keeping failed steps visible; failed writes/permissions
+remain failed. Voice retries an empty successful model response once; after any
+tool call that recovery is report-only, with tools disabled. Three controlled real
+CLI HTTP cases passed, including two empty replies remaining failed and no
+repeated write. The 1366×768 renderer reproduction measured a **−71.046875 px**
+work-line/job-list gap before the fix; its after check now passes with separate
+space, wrapped request titles, status badges and expandable per-job results.
+The user's separate pending speed edits in the original checkout are untouched.
+
+The first broad affected run reported **910 tests: 906 pass, 4 fail, 0 skip**.
+All four were the new optional runtime-tool lookup assuming a context in existing
+context-budget fixtures. Focused reproduction showed the TypeError; optional
+lookup fixed it, with **11/11** relevant checks passing. A final rerun follows.
+
 Final affected-suite/review results are recorded below when complete. The previous
 full-suite Windows cleanup failure and physical/headset/package gates in §18g
 remain visible. This is new 28 October hackathon work, built on the separately

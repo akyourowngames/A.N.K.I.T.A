@@ -110,6 +110,17 @@ prompt at a time. Ctrl+C stops active voice work; with none running, it ends voi
 Clearing/loading a terminal chat keeps earlier work's results in its own saved
 `voice-<owner>` conversation rather than appending them to the new chat.
 
+If a successful planner response contains no answer, voice retries once. After any
+observed tool call, that retry has tools disabled and can only report from the
+existing evidence; it cannot repeat a write or launch. Two empty responses remain
+an explicit failure. Provider/permission/output-limit errors are not blindly retried.
+
+A failed read-only source with other useful results is shown as **Partial result**,
+with the failed step preserved. A failed write, denied action or planner error
+remains failed. Open a job row for its result, gap and completed-action count.
+Request names wrap to two lines, and the list scrolls within reserved space so
+work updates and controls cannot overlap at shorter window heights.
+
 Additional repeatable checks:
 
 ```bash

@@ -7,7 +7,7 @@ import { Icon } from '../Icons';
 import './voice.css';
 
 const ACTIVE_TASK = new Set(['queued', 'running', 'waiting_for_approval', 'waiting_for_resource', 'cancelling']);
-const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Working', waiting_for_approval: 'Permission needed', waiting_for_resource: 'Waiting for shared access', cancelling: 'Stopping', done: 'Done', failed: 'Needs attention', cancelled: 'Stopped' };
+const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Working', waiting_for_approval: 'Permission needed', waiting_for_resource: 'Waiting for access', cancelling: 'Stopping', done: 'Done', partial: 'Partial result', failed: 'Needs attention', cancelled: 'Stopped' };
 const PLACEHOLDERS = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
   transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '', approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
 
@@ -29,7 +29,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     const key = (event: KeyboardEvent) => { if (event.key === 'Escape' && !document.querySelector('[aria-modal="true"]')) { event.preventDefault(); onEnd(); } };
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [compact, onEnd]);
-  return <section className={`voice-panel ${compact ? 'voice-panel-compact' : ''}`} aria-label="Voice conversation" data-phase={phase}>
+  return <section className={`voice-panel ${compact ? 'voice-panel-compact' : ''} ${jobs.length ? 'voice-panel-with-jobs' : ''}`} aria-label="Voice conversation" data-phase={phase}>
     {!compact && <div className="voice-panel-top">
       <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={15} /> Voice settings</button></div>}
     <div className="voice-stage">
@@ -37,13 +37,21 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
       <div className="voice-phase" data-phase={phase}><i />{VOICE_PHASE_LABELS[phase]}</div>
       <VoiceCaptions text={voice.caption || PLACEHOLDERS[phase]} role={voice.captionRole} />
       <div className="voice-work-line" role="status" aria-live="polite" aria-atomic="true">
-        {issue ? <span className="voice-error">{issue}</span> : voice.phase === 'approval' ? 'Review the permission request to continue.' : voice.update || (working ? 'Work is continuing in this conversation.' : voice.task?.status === 'done' ? 'Done · saved in this conversation' : voice.task?.status === 'failed' ? 'Work needs attention · see the conversation' : voice.task?.status === 'cancelled' ? 'Work stopped' : voice.paused ? 'Microphone is off' : 'Speak naturally. Pause to send.')}
+        {issue ? <span className="voice-error">{issue}</span> : voice.phase === 'approval' ? 'Review the permission request to continue.' : voice.update || (working ? 'You can give me another request.' : voice.task?.status === 'done' ? 'Done · saved in this conversation' : voice.task?.status === 'partial' ? 'Some findings are ready · open the result below' : voice.task?.status === 'failed' ? 'Work needs attention · see the conversation' : voice.task?.status === 'cancelled' ? 'Work stopped' : voice.paused ? 'Microphone is off' : 'Speak naturally. Pause to send.')}
       </div>
     </div>
     {jobs.length > 0 && <div className="voice-jobs" aria-label="Voice jobs">
-      <div className="voice-jobs-heading"><span>{activeJobs.length ? `${activeJobs.length} working` : 'Recent work'}</span>{working && <span>Keep talking · tasks run together</span>}</div>
+      <div className="voice-jobs-heading"><span>{activeJobs.length ? 'In progress' : 'Recent results'} <b>{activeJobs.length || visibleJobs.length}</b></span><span>Open a request for details</span></div>
       {visibleJobs.map(job => <div className="voice-job" key={job.id} data-status={job.status}>
-        <span className="voice-job-dot" /><div><span className="voice-job-name">{job.label || 'Voice request'}</span><small>{job.resourcesHeld ? 'Command still running' : JOB_STATE[job.status] || job.status}{job.waitingFor ? ` · ${job.waitingFor}` : ''}</small></div>
+        <span className="voice-job-dot" /><div><details className="voice-job-details"><summary title={job.label || 'Voice request'}>
+          <span className="voice-job-name">{job.label || 'Voice request'}</span><span className="voice-job-status">{job.resourcesHeld ? 'Command active' : JOB_STATE[job.status] || job.status}</span>
+        </summary><div className="voice-job-result">
+          {job.waitingFor && <p>{job.waitingFor}</p>}
+          {job.resourcesHeld && <p>The report is ready. Its command still holds shared access until it exits or you stop it.</p>}
+          {job.error && <p className="voice-job-issue">{job.error}</p>}
+          {job.summary && <p>{job.summary}</p>}
+          {job.steps.length > 0 && <small>{job.steps.filter(step => step.state === 'done').length} of {job.steps.length} actions completed</small>}
+        </div></details></div>
         {(ACTIVE_TASK.has(job.status) || job.resourcesHeld) && <button className="voice-job-stop" onClick={() => onCancel(job.id)} disabled={busy || job.status === 'cancelling'} aria-label={`Stop ${job.label || 'voice request'}`}><Icon name="stop" size={12} /></button>}
       </div>)}
     </div>}

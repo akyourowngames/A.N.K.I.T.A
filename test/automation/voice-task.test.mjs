@@ -53,6 +53,24 @@ test('approval stays authoritative and its waiting status is persisted before as
   assert.match(task.summary, /declined/);
 });
 
+test('a failed read source keeps useful findings as partial, while a failed write stays failed', async t => {
+  const store = storeFor(t);
+  for (const [failedTool, expected] of [['web_fetch', 'partial'], ['write_file', 'failed']]) {
+    const { task } = await api.runVoiceTask({ store, transcript: 'Research and save', run: async observer => {
+      const success = call('source', 'web_search'), failed = call('failed', failedTool);
+      observer.onToolCall(success); observer.onToolResult(success, 'Observed source findings');
+      observer.onToolCall(failed); observer.onToolResult(failed, 'Error: HTTP 403');
+      return { text: 'I found useful results in the source I could read.' };
+    } });
+    assert.equal(task.status, expected);
+    if (expected === 'partial') {
+      assert.match(api.voiceTaskReport(task), /Some sources could not be read/);
+      assert.match(api.voiceTaskReport(task), /useful results/);
+      assert.equal(task.steps.find(step => step.callId === 'failed').state, 'failed');
+    }
+  }
+});
+
 for (const [name, run, expected] of [
   ['planner failure', async () => { throw new Error('Baseten 403'); }, 'failed'],
   ['empty reply', async () => ({ text: '' }), 'failed'],

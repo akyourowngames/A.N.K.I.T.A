@@ -43,7 +43,7 @@ import { VoiceJobs } from '../automation/voice-jobs.mjs';
 import { VoiceSpeechQueue } from '../automation/voice-speech-queue.mjs';
 import { createVoiceNarrator } from './voice-narrator.mjs';
 import { VoiceTaskStore, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
-import { VOICE_TASK_DIRECTORY, VOICE_PROGRESS_POLL_MS } from '../automation/voice-task-policy.mjs';
+import { VOICE_TASK_DIRECTORY, VOICE_PROGRESS_POLL_MS, VOICE_FINAL_STATES } from '../automation/voice-task-policy.mjs';
 import { configuredSecrets } from './redact.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
@@ -546,7 +546,7 @@ export async function main({ voiceIO = {} } = {}) {
       if (detached) saveSession(sessionPath(`voice-${task.ownerId}`), { ...detached, messages, savedAt: new Date().toISOString() });
       else writeSession(AUTOSAVE_NAME);
       voiceMail.delete(task.id);
-      if (detached && !voiceJobs.list(task.ownerId).some(job => !['done', 'failed', 'cancelled'].includes(job.status))) detachedVoiceOwners.delete(task.ownerId);
+      if (detached && !voiceJobs.list(task.ownerId).some(job => !VOICE_FINAL_STATES.includes(job.status))) detachedVoiceOwners.delete(task.ownerId);
     }
   }
 
@@ -1007,7 +1007,7 @@ export async function main({ voiceIO = {} } = {}) {
       const hint = handsFree ? 'pause to send' : 'Enter to send';
       tick = setInterval(() => term.write(`\r  listening… ${Math.floor((Date.now() - started) / 1000)}s  (${hint}, Ctrl+C to stop work)\x1b[K`), CAPTURE_TICK_MS);
       cancelHook = () => {
-        reason = voiceJobs?.list(voiceOwner).some(job => !['done', 'failed', 'cancelled'].includes(job.status) || job.resourcesHeld) ? 'interrupted' : 'cancel';
+        reason = voiceJobs?.list(voiceOwner).some(job => !VOICE_FINAL_STATES.includes(job.status) || job.resourcesHeld) ? 'interrupted' : 'cancel';
       };
       await new Promise(resolve => {
         poll = setInterval(() => {

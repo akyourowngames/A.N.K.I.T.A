@@ -74,3 +74,26 @@ test('a real live shell child remains owned after the voice report and is confir
   await entry.resourceHold.stop(); await entry.resourceHold.promise;
   assert.equal([...entry.worker.state.jobs.values()].every(job => job.done), true);
 });
+
+test('an empty planner answer gets one bounded continuation, without replaying tool actions', async t => {
+  const dir = fixture(t), parent = new Agent({ client: {}, config: { tools: true }, memoryEnabled: false, workspacePath: dir });
+  const rounds = [];
+  class EmptyAgent extends Agent { async send(text, callbacks) {
+    rounds.push({ text, tools: this.useTools });
+    if (rounds.length === 1) { callbacks.onToolCall({ id: 'saved', function: { name: 'write_file', arguments: '{}' } }); return ''; }
+    return 'The poem was saved.';
+  } }
+  const entry = { id: 'empty', ownerId: 'owner', transcript: 'save poem', context: captureVoiceContext(parent) };
+  const result = await runVoiceWorker(entry, { signal: new AbortController().signal, observer: {}, controlTool }, { AgentClass: EmptyAgent });
+  assert.equal(result.text, 'The poem was saved.');
+  assert.deepEqual(rounds, [{ text: 'save poem', tools: true }, { text: null, tools: false }]);
+});
+
+test('an empty first decision may retry tools once and a second empty result stays failed', async t => {
+  const dir = fixture(t), parent = new Agent({ client: {}, config: { tools: true }, memoryEnabled: false, workspacePath: dir });
+  let calls = 0;
+  class EmptyAgent extends Agent { async send() { calls++; assert.equal(this.useTools, true); return ''; } }
+  const entry = { id: 'empty-twice', ownerId: 'owner', transcript: 'save poem', context: captureVoiceContext(parent) };
+  const result = await runVoiceWorker(entry, { signal: new AbortController().signal, observer: {}, controlTool }, { AgentClass: EmptyAgent });
+  assert.equal(calls, 2); assert.match(result.error, /empty.*retry/i);
+});

@@ -15,6 +15,7 @@ async function runCli(t, mode) {
   const runtime = path.join(directory, 'config');
   const file = path.join(directory, 'note.txt');
   const models = [];
+  let emittedEmpty = false;
   const server = http.createServer(async (request, response) => {
     response.setHeader('Content-Type', 'application/json');
     if (request.url.endsWith('/models')) { response.end(JSON.stringify({ data: [{ id: 'typed-model', context_length: 131072, supported_parameters: ['tools'] }] })); return; }
@@ -28,6 +29,10 @@ async function runCli(t, mode) {
     } else assert.ok(!body.messages[0].content.includes('Voice conversation:'));
     if (voice && mode === 'output-limit') {
       response.end(JSON.stringify({ choices: [{ message: { content: '' }, finish_reason: 'length' }] })); return;
+    }
+    if (voice && (mode === 'empty-twice' || (!emittedEmpty && (mode === 'empty-first' || (mode === 'empty-final' && body.messages.some(message => message.role === 'tool')))))) {
+      emittedEmpty = true;
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'stop' }] })); return;
     }
     if (voice && mode === 'controls') {
       assert.ok(body.tools.some(tool => tool.function.name === 'voice_jobs'));
@@ -197,6 +202,16 @@ test('real CLI status and stop use the private live job capability while the ear
   assert.match(result.stdout, /PLAYED: First task is running/);
   assert.match(result.stdout, /PLAYED: First task stopped/);
   assert.equal(result.models.at(-1), 'typed-model');
+});
+
+for (const mode of ['empty-first', 'empty-final', 'empty-twice']) test(`CLI ${mode} retries an empty successful response once without repeating a file action`, async t => {
+  const result = await runCli(t, mode);
+  const task = result.records[0];
+  assert.equal(task.status, mode === 'empty-twice' ? 'failed' : 'done', result.stdout);
+  assert.equal(task.steps.filter(step => step.tool === 'write_file').length, mode === 'empty-twice' ? 0 : 1);
+  assert.equal(result.models.filter(model => model === 'voice-model').length, mode === 'empty-twice' ? 2 : 3);
+  assert.equal(result.models.at(-1), 'typed-model');
+  if (mode === 'empty-twice') assert.match(task.error, /empty answer after one retry/);
 });
 
 for (const mode of ['end-running', 'clear-running']) test(`CLI ${mode} keeps work owned and its completed history separate from a typed turn`, async t => {

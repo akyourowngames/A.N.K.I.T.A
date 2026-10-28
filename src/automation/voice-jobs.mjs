@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runVoiceTask } from './voice-task.mjs';
 import { VoiceResourceBroker } from './voice-resources.mjs';
-import { VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT, VOICE_CONTROL_TURNS, VOICE_JOBS_TOOL } from './voice-task-policy.mjs';
+import { VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT, VOICE_CONTROL_TURNS, VOICE_JOBS_TOOL, VOICE_FINAL_STATES } from './voice-task-policy.mjs';
 import { redactText } from '../core/redact.mjs';
 
 export { VOICE_JOBS_TOOL };
@@ -151,7 +151,7 @@ export class VoiceJobs {
     const entry = this.entries.get(id);
     if (!entry) {
       const task = this.result(id, { ownerId });
-      if (!['done', 'failed', 'cancelled'].includes(task.status)) throw new Error('That voice job is no longer running here.');
+      if (!VOICE_FINAL_STATES.includes(task.status)) throw new Error('That voice job is no longer running here.');
       return { task, outcome: { text: task.summary, error: task.error } };
     }
     this.find(id, ownerId);

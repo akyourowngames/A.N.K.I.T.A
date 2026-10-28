@@ -137,6 +137,25 @@ try {
   assert.ok(await main.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceCancel' && call.payload?.all === true)));
   await main.screenshot({ path: path.join(captures, 'voice-parallel-jobs.png') });
   receipt.assertions.push('separate parallel job rows, individual stop ID and explicit Stop all payload');
+  await main.setViewportSize({ width: 1366, height: 768 });
+  await patch(main, { caption: 'Some sources could not be read. Other findings are ready.',
+    jobs: [{ ...task, id: 'long', label: 'Fetch my saved details and write them into a file, then open the document for me.' },
+      { ...task, id: 'partial', label: 'Search the latest AI news and save the findings for me.', status: 'partial', summary: 'Useful findings are ready.', error: 'Some sources could not be read.' },
+      { ...task, id: 'chat', label: 'Hello Ankita, how are you?', status: 'done' }] });
+  const crowded = await main.locator('.voice-panel').evaluate(panel => {
+    const work = panel.querySelector('.voice-work-line').getBoundingClientRect(), jobs = panel.querySelector('.voice-jobs').getBoundingClientRect(), controls = panel.querySelector('.voice-controls').getBoundingClientRect();
+    return { gap: jobs.top - work.bottom, jobsBottom: jobs.bottom, controlsTop: controls.top };
+  });
+  assert.ok(crowded.gap >= 8, JSON.stringify(crowded));
+  assert.ok(crowded.controlsTop >= crowded.jobsBottom, JSON.stringify(crowded));
+  await main.waitForTimeout(700);
+  await main.screenshot({ path: path.join(captures, 'voice-parallel-jobs-short-window.png') });
+  await main.locator('.voice-job[data-status=partial] summary').focus();
+  await main.keyboard.press('Enter');
+  await main.getByText('Useful findings are ready.', { exact: true }).waitFor();
+  assert.equal(await main.locator('.voice-job[data-status=partial] details[open]').count(), 1);
+  await main.screenshot({ path: path.join(captures, 'voice-parallel-partial-result.png') });
+  receipt.assertions.push('1366x768 long requests do not overlap; partial results open with the keyboard');
   await patch(main, { jobs: Array.from({ length: 6 }, (_, index) => ({ ...task, id: `many-${index}`, label: `Request ${index + 1}` })) });
   await main.getByRole('button', { name: 'Stop Request 6', exact: true }).scrollIntoViewIfNeeded();
   assert.equal(await main.getByRole('button', { name: 'Stop Request 6', exact: true }).count(), 1, 'every active job stays reachable beyond the first rows');
