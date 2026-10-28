@@ -9,6 +9,7 @@ import { createTurnAudit, noteToolUse, noteFileEffects, finishTurnAudit } from '
 import { PROJECT_WORK_GUIDANCE, UNTRACKED_REPO_GUIDANCE } from '../memory/project-guidance.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from '../memory/memory-context.mjs';
+import { runtimeVoiceSpecs, runtimeVoiceTool } from './runtime-tools.mjs';
 import { warmRecall } from '../../tools/personal/recall.mjs';
 import { specs, coreSpecs, specsFor, get, isReadOnly, coreNames, names as toolNames, categoryOfTool, CATEGORIES } from "../../tools/index.mjs";
 import { createSubagentRuntime } from './subagents/runtime.mjs';
@@ -682,6 +683,10 @@ export class Agent {
     }
     core = core.filter(spec => focusAllows(this.state, spec.function?.name));
     optional = optional.map(group => ({ ...group, specs: group.specs.filter(spec => focusAllows(this.state, spec.function?.name)) })).filter(group => group.specs.length);
+    // Supplied only by the voice host. Ordinary agents keep their existing catalogue.
+    core = [...core, ...runtimeVoiceSpecs(this.toolContext).filter(spec =>
+      (!this.allowedTools || this.allowedTools.has(spec.function.name)) &&
+      (runtimeVoiceTool(this.toolContext, spec.function.name)?.alwaysAvailable === true || focusAllows(this.state, spec.function.name)))];
     if (this.config?.backgroundJob) {
       const jobSpec = spec => spec.function.name === 'browser' ? backgroundBrowserSpec
         : spec.function.name === 'schedule' && backgroundScheduleSpec ? backgroundScheduleSpec : spec;

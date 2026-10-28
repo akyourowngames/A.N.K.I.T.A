@@ -11,6 +11,14 @@ const voice = await import('../../src/core/voice-session.mjs').catch(() => ({}))
 const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-session-'));
 test.after(() => fs.rmSync(temporary, { recursive: true, force: true }));
 
+test('parallel voice capacity is bounded separately from typed subagents', () => {
+  const file = path.join(temporary, 'parallel.env');
+  fs.writeFileSync(file, 'VOICE_MAX_PARALLEL_JOBS=99\nSUBAGENTS_ENABLED=off\n');
+  assert.equal(loadConfig(file, { globalEnvFile: path.join(temporary, 'absent') }).voiceMaxParallelJobs, 8);
+  fs.writeFileSync(file, 'VOICE_MAX_PARALLEL_JOBS=2\n');
+  assert.equal(loadConfig(file, { globalEnvFile: path.join(temporary, 'absent') }).voiceMaxParallelJobs, 2);
+});
+
 test('Baseten and voice settings load separately from typed chat settings', () => {
   const file = path.join(temporary, '.env');
   fs.writeFileSync(file, 'PROVIDER=kilo\nMODEL=typed-model\nVOICE_PROVIDER=Baseten\nVOICE_MODEL=voice-model\nVOICE_API_BASE=https://voice.invalid/v1\nBASETEN_API_KEY=fixture-key\nBASETEN_MAX_TOKENS=32\nBASETEN_REASONING_EFFORT=invalid\n');

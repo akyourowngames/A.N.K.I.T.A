@@ -9,3 +9,4 @@ export const VOICE_PROGRESS_POLL_MS = 80; // Milliseconds: retry the newest upda
 export const VOICE_MAX_PARALLEL_JOBS = 4; // Workers: several independent spoken tasks without unbounded provider requests.
 export const VOICE_PARALLEL_JOBS_LIMIT = 8; // Workers: explicit configuration still has a finite per-process ceiling.
 export const VOICE_CONTROL_TURNS = 1; // Reserved worker: status/cancellation remains available when ordinary work is full.
+export const VOICE_JOBS_TOOL = 'voice_jobs'; // Private voice capability, shared with progress suppression and worker registration.

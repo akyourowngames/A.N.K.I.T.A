@@ -21,6 +21,7 @@ import { c, preview, short, clip } from './ui.mjs';
 import { renderDiff } from '../../tools/shared/_diff.mjs';
 import { name as TOOL_DISCOVERY_NAME } from '../../tools/find-tools.mjs';
 import { SUBAGENT_TOOL } from './subagents/registry.mjs';
+import { runtimeVoiceTool, runtimeToolFlag } from './runtime-tools.mjs';
 
 export const TOOL_UI = { ...c, preview, short, clip };
 TOOL_UI.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: TOOL_UI, ...opts });
@@ -145,14 +146,15 @@ export class ToolHost {
       if (!ctx.toolAvailability.has(name)) return textResult('Error: this tool is unavailable on the current native surface.');
     }
     if (!args || typeof args !== 'object' || Array.isArray(args)) return textResult('Error: arguments must be an object.');
-    if (!focusAllows(ctx.state, name)) return textResult('Error: This tool is outside the current tool focus. Use find_tools with scope="general" to explicitly change methods before executing it.');
+    if (!focusAllows(ctx.state, name) && runtimeVoiceTool(ctx, name)?.alwaysAvailable !== true) return textResult('Error: This tool is outside the current tool focus. Use find_tools with scope="general" to explicitly change methods before executing it.');
     if (ctx.allowedTools && !ctx.allowedTools.has(name)) return textResult(ctx.backgroundToolScope
       ? 'Error: This tool is not available in background browser jobs.'
       : 'Error: This tool is not available in this execution context.');
     this.onEvent?.({ type: 'tool-call', call });
     let result;
     try {
-      result = String(name).startsWith(MCP_PREFIX)
+      if (ctx.beforeToolExecute) await ctx.beforeToolExecute(call, ctx);
+      result = combined.aborted ? textResult(CANCELLED) : String(name).startsWith(MCP_PREFIX)
         ? await this.executeMcp(call, args, ctx, state, resultMode, budget)
         : await this.executeLocal(call, args, ctx, state, resultMode, budget);
     } catch (error) { result = textResult(`Error while running ${name}: ${error.message}`); }
@@ -190,6 +192,8 @@ export class ToolHost {
       if (ok !== true) return textResult(DENIED);
     }
     if (ctx.signal.aborted) return textResult(CANCELLED);
+    if (ctx.onToolStart) await ctx.onToolStart(call, ctx);
+    if (ctx.signal.aborted) return textResult(CANCELLED);
     if (!mcp.callToolResult) return textResult(await mcp.callTool(name, args, { signal: ctx.signal }));
     const result = await mcp.callToolResult(name, args, { signal: ctx.signal });
     const raw = result?.raw ?? result;
@@ -203,9 +207,10 @@ export class ToolHost {
   }
 
   async executeLocal(call, args, ctx, state, resultMode, budget) {
-    const tool = get(call.name);
+    const native = get(call.name);
+    const tool = native || runtimeVoiceTool(ctx, call.name);
     if (!tool) return textResult(`Error: unknown tool "${call.name}".`);
-    if (ctx.readOnly && !isReadOnly(tool.name, args, ctx)) return textResult(READ_ONLY_DENIAL);
+    if (ctx.readOnly && !(native ? isReadOnly(tool.name, args, ctx) : runtimeToolFlag(tool, 'readOnly', args, ctx) === true)) return textResult(READ_ONLY_DENIAL);
     if (tool.name === 'skill' && !(ctx.skillsInteractive ?? ctx.skillsEnabled)) return textResult('Error: skills are available only in interactive chats.');
     if (tool.name === 'skill' && ctx.disabledSkills?.has(String(args.name || '').trim().toLowerCase())) return textResult(`Error: skill "${args.name}" is disabled in Plugins > Skills.`);
     if (tool.name === 'web_search') {
@@ -220,7 +225,7 @@ export class ToolHost {
       if (ctx.config.browserProgressTracking === true) state.browserProgress = recordBrowserProgress(state.browserProgress, result, { maxRepeats: MAX_REPEAT_CALLS });
     };
     const automatic = automaticApproval(ctx);
-    if (needsApproval(tool.name, args, ctx)) {
+    if (native ? needsApproval(tool.name, args, ctx) : runtimeToolFlag(tool, 'needsApproval', args, ctx) !== false) {
       if (automatic && tool.neverAutoApprove?.(args, ctx) === true) return textResult(`Error: ${tool.name} can change approval settings, which auto-approve is not allowed to do. Ask the user to run it interactively.`);
       const preview = tool.approval ? await tool.approval(args, ctx, ctx.ui) : null;
       const detail = redactText(typeof preview === 'string' && preview.trim() ? preview :
@@ -239,6 +244,8 @@ export class ToolHost {
       if ((state.browserActionsThisTurn || 0) + cost > limit) return textResult(`Error: Browser primitive action budget (${limit} this turn) is exhausted. Inspect existing receipts and report unfinished work.`);
       state.browserActionsThisTurn = (state.browserActionsThisTurn || 0) + cost;
     }
+    if (ctx.onToolStart) await ctx.onToolStart(call, ctx);
+    if (ctx.signal.aborted) return textResult(CANCELLED);
     let output = FILE_WORKER_TOOLS.has(tool.name) ? await runFileToolInWorker(tool.name, args, ctx) : await tool.run(args, ctx);
     if (tool.name === 'browser' && typeof output === 'string' && !isToolFailure(output)) {
       const guidance = [ctx.config.browserProgressTracking === true ? state.browserProgress?.guidance : null,
