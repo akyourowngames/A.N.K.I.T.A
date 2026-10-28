@@ -1029,12 +1029,64 @@ The user's separate pending speed edits in the original checkout are untouched.
 The first broad affected run reported **910 tests: 906 pass, 4 fail, 0 skip**.
 All four were the new optional runtime-tool lookup assuming a context in existing
 context-budget fixtures. Focused reproduction showed the TypeError; optional
-lookup fixed it, with **11/11** relevant checks passing. A final rerun follows.
+lookup fixed it, with **11/11** relevant checks passing. The pre-review rerun
+passed **918/918** with no skips.
 
-Final affected-suite/review results are recorded below when complete. The previous
-full-suite Windows cleanup failure and physical/headset/package gates in §18g
-remain visible. This is new 28 October hackathon work, built on the separately
-identifiable inherited baseline. Update the same draft PR #70; no merge/release.
+Final affected serial run: `node scripts/verify-voice-suite.mjs` → **928 tests,
+928 pass, 0 fail/cancelled/skipped**, **271581.7456 ms**, exit 0, `VOICE_SUITE_OK`.
+Desktop typecheck/Vite build passed (403 modules). Browser check returned
+`DESKTOP_VOICE_UI_OK`, **0 page errors**, including long parallel requests at
+1366×768, keyboard-expanded partial results, six reachable active jobs and exact
+permission ownership/resolution in both app and island. The post-review live
+parallel check again returned `PARALLEL_VOICE_LIVE_OK`: three real Meta/file jobs,
+real Sarvam STT and three TTS handoffs, same-file wait, preserved poem and one
+captured player. It does not prove microphone/speaker duplex.
+
+One fresh review found seven Important defects, each reproduced RED→GREEN in one
+fix pass: enclosing-repository Git/generated-file lease gaps; competing typed/voice
+permission prompts; another completion clearing a live permission; cancellation
+leaving a stale island prompt; ignored owner Always grants; reports stranded behind
+routine delivery; and older active jobs hidden by recent results. Ten regressions
+cover them, and the focused fix set passed **89/89**, no skips. The complete affected
+set above passed after all fixes. No re-review or new dependencies.
+
+Execution decisions and costs, in decision order:
+
+1. Fresh existing Agent per utterance, no classifier hop: lower overhead; requires
+   bounded private controls and completed-history snapshots.
+2. Coordinate participating voice jobs only: preserves typed/scheduled behavior;
+   external writers remain outside these guards.
+3. Four ordinary workers (configurable 1–8), one control-only slot at capacity:
+   status/stop stays available; extra new work must wait for room.
+4. Tracked live commands retain file/UI access after reporting: ongoing effects
+   stay protected; long-lived shell-launched apps can hold later jobs up.
+5. Disable automatic recall/nested delegation per worker, retain explicit recall,
+   and serialize opaque connected interactions: avoids hidden worker state;
+   conservative waiting and detached-process limits remain.
+6. Append passive request/report pairs at owner idle, without another model call:
+   typed tool protocols stay coherent; detailed steps live in the task audit.
+7. One typed/voice permission prompt owner pauses capture: prevents mixed answers;
+   permission responses require the keyboard.
+8. Useful findings plus failed read-only sources are partial: results survive;
+   source gaps remain visible and need follow-up.
+9. Retry one empty successful response, report-only after observed tool calls:
+   avoids repeated writes; rare extra request and unfinished-action limits remain.
+10. Physical microphone/headset/speaker behavior stays an owner gate: generated
+    input/captured output proves service flow; echo/barge-in still needs a real take.
+11. Packaged behavior/general cloud timing remain limited: live configured services
+    ran; package/GPU acceptance and variable timing prevent an instant guarantee.
+12. Detached external processes and unchanged typed/scheduled collisions remain
+    outside voice coordination: no OS-wide collision or rollback guarantee.
+13. Pre-existing skipped-tool accounting at execution limits is unchanged: separate
+    from this feature; existing execution-limit reporting semantics remain.
+
+Deferred minor: collapsed island ordinary status text; expanded voice view shows
+actual captions/jobs. No new minor findings from the final parallel review.
+
+The previous full-suite Windows cleanup failure and physical/headset/package gates
+in §18g remain visible. This is new 28 October hackathon work, built on the separately
+identifiable inherited baseline. Same draft PR #70; no merge/release. Unrelated
+pending edits and user-authored files in both checkouts are preserved.
 
 ## 19. Sources
 

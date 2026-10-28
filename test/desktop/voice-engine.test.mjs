@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { build } from 'esbuild';
+import { fileURLToPath } from 'node:url';
+import { Agent } from '../../src/core/agent.mjs';
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
 import { DesktopSettingsStore, applyDesktopSettings } from '../../desktop/electron/settings.mjs';
 import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
@@ -31,8 +34,70 @@ async function fixture(t, send) {
     mcp: { reconcile: async () => {}, summaries: () => [], closeAll: async () => {} }, emit: event => events.push(event) });
   await engine.init();
   t.after(async () => { await engine.close(); fs.rmSync(directory, { recursive: true, force: true }); });
-  return { engine, id: engine.listTeammates()[0].id, events };
+  return { engine, id: engine.listTeammates()[0].id, events, directory };
 }
+
+test('a passive voice result and a normal typed ending preserve another voice job permission', async () => {
+  const { outputFiles } = await build({ entryPoints: [fileURLToPath(new URL('../../desktop/renderer/src/state/store.ts', import.meta.url))], bundle: true, write: false, platform: 'node', format: 'esm' });
+  const { reducer, initialState } = await import(`data:text/javascript;base64,${Buffer.from(outputFiles[0].text).toString('base64')}`);
+  for (const source of ['voice', undefined]) {
+    let state = reducer(initialState, { type: 'event', event: { type: 'approval-request', requestId: 'B', threadId: 'owner', voiceTaskId: 'job-B', toolName: 'write_file', detail: 'Allow B?' } });
+    state = reducer(state, { type: 'event', event: { type: 'turn-end', threadId: 'owner', turnId: 'job-A', source } });
+    assert.equal(state.approvals.some(item => item.requestId === 'B'), true);
+  }
+});
+
+test('cancelling one voice permission emits its exact resolution and preserves another request', async t => {
+  const h = await fixture(t);
+  h.engine.AgentClass = class extends Agent { async send() { this.abort = new AbortController(); await this.confirm('write_file', 'Allow own write?'); return 'Permission resolved.'; } };
+  const other = h.engine.approvals.request(h.id, 'write_file', 'Allow other?', { voiceTaskId: 'other-job' });
+  const controller = new AbortController();
+  const entry = { id: 'own-job', ownerId: h.id, transcript: 'Write', context: h.engine.captureVoiceContext(h.id) };
+  const work = h.engine.runVoiceJob(entry, { signal: controller.signal, observer: {}, controlTool: {}, jobs: { acquire: async () => {} } });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const ownRequest = h.events.find(event => event.type === 'approval-request' && event.voiceTaskId === entry.id);
+  assert.ok(ownRequest);
+  controller.abort(); await work;
+  assert.equal(h.engine.approvals.pending.has(ownRequest.requestId), false);
+  assert.ok(h.events.some(event => event.type === 'approval-resolved' && event.requestId === ownRequest.requestId));
+  assert.equal(h.engine.approvals.pending.size, 1);
+  h.engine.approvals.cancelAll(); await other;
+});
+
+for (const preGranted of [false, true]) test(`voice file actions follow the owner Always grant (existing=${preGranted})`, async t => {
+  const h = await fixture(t);
+  h.engine.AgentClass = class extends Agent { async send(_text, callbacks) {
+    this.abort = new AbortController();
+    for (const name of ['one.txt', 'two.txt']) {
+      const call = { id: name, type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: name, content: 'confirmed' }) } };
+      callbacks.onToolCall(call); const result = await this.runToolCall(call); callbacks.onToolResult(call, result);
+    }
+    return 'Both files saved.';
+  } };
+  const parent = h.engine.agentFor(h.id); parent.setProject('', null, h.directory); parent.autoApprove = preGranted;
+  let requests = 0;
+  const off = h.engine.onEvent(event => { if (event.type === 'approval-request') { requests++; h.engine.respondApproval(event.requestId, 'always'); } });
+  t.after(off);
+  const entry = { id: 'always-job', ownerId: h.id, transcript: 'Save two notes', context: h.engine.captureVoiceContext(h.id) };
+  await h.engine.runVoiceJob(entry, { signal: new AbortController().signal, observer: {}, controlTool: {}, jobs: { acquire: async () => {} } });
+  assert.equal(requests, preGranted ? 0 : 1);
+  assert.equal(fs.readFileSync(path.join(h.directory, 'two.txt'), 'utf8'), 'confirmed');
+});
+
+for (const failRoutine of [false, true]) test(`voice mail drains when a scheduled delivery becomes idle (failed=${failRoutine})`, async t => {
+  const h = await fixture(t), parent = h.engine.agentFor(h.id);
+  let release, started;
+  const held = new Promise(resolve => { release = resolve; }), entered = new Promise(resolve => { started = resolve; });
+  parent.streamTurn = async () => { started(); await held; if (failRoutine) throw new Error('fixture routine failure'); return { content: 'Routine ready.', toolCalls: [] }; };
+  const routine = h.engine.deliverRoutine({ threadId: h.id, routineId: 'routine', runId: `run-${failRoutine}`, name: 'fixture', text: 'Observed evidence', status: 'done' });
+  void routine.catch(() => {});
+  await entered;
+  await h.engine.deliverVoiceJob({ ownerId: h.id, id: 'voice-report', transcript: 'Voice request', status: 'done', summary: 'Voice work ready.', steps: [] });
+  assert.equal(h.engine.voiceDeliveries.size, 1);
+  release(); await routine.catch(() => {});
+  assert.equal(h.engine.voiceDeliveries.size, 0);
+  assert.ok(parent.messages.some(message => message.content === 'Voice work ready.'));
+});
 
 test('desktop voice uses existing turn/history with voice override and restores typed model/style', async t => {
   const observed = [];

@@ -43,7 +43,7 @@ import { VoiceJobs } from '../automation/voice-jobs.mjs';
 import { VoiceSpeechQueue } from '../automation/voice-speech-queue.mjs';
 import { createVoiceNarrator } from './voice-narrator.mjs';
 import { VoiceTaskStore, renderVoiceTask, voiceTaskReport, voiceTaskCommand, VOICE_TASK_COMMAND } from '../automation/voice-task.mjs';
-import { VOICE_TASK_DIRECTORY, VOICE_PROGRESS_POLL_MS, VOICE_FINAL_STATES } from '../automation/voice-task-policy.mjs';
+import { VOICE_TASK_DIRECTORY, VOICE_PROGRESS_POLL_MS, VOICE_FINAL_STATES, VOICE_BARGE_GUARD_MS } from '../automation/voice-task-policy.mjs';
 import { configuredSecrets } from './redact.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
@@ -527,8 +527,14 @@ export async function main({ voiceIO = {} } = {}) {
   const voiceMail = new Map();
   const detachedVoiceOwners = new Map();
   let pendingVoiceApproval = null;
-  let voiceApprovalTail = Promise.resolve();
+  let approvalTail = Promise.resolve();
   const taskStore = () => new VoiceTaskStore({ directory: path.join(CONFIG_DIR, VOICE_TASK_DIRECTORY), limit: config.voiceTaskLimit, secrets: configuredSecrets(config) });
+  const queueApproval = ask => {
+    const work = approvalTail.then(ask);
+    approvalTail = work.catch(() => {});
+    return work;
+  }; // One prompt owner across typed and voice requests, including work continuing after End voice.
+
 
   function detachVoiceOwner() {
     if (voiceJobs?.list(voiceOwner).length) detachedVoiceOwners.set(voiceOwner, {
@@ -579,18 +585,20 @@ export async function main({ voiceIO = {} } = {}) {
     },
     print: (s) => term.line(s),
     write: (s) => term.write(s),
-    confirm: async (toolName, detail) => {
+    confirm: (toolName, detail) => {
       const signal = agent.abort?.signal;
-      if (signal?.aborted) return false;
-      term.line('');
-      term.line(c.yellow(`  ── ${toolName} ` + '─'.repeat(Math.max(0, 40 - toolName.length))));
-      term.line(detail.split('\n').map(line => '  ' + line).join('\n'));
-      const answer = (await term.ask('  allow? [y]es / [n]o / [a]lways / [q]uit > ')) ?? '';
-      if (signal?.aborted) return false;
-      const value = answer.trim().toLowerCase();
-      if (value === 'a' || value === 'always') { agent.autoApprove = true; term.line(c.dim('  auto-approve on')); return true; }
-      if (value === 'q' || value === 'quit') { await shutdown(0); return false; }
-      return value === 'y' || value === 'yes';
+      return queueApproval(async () => {
+        if (signal?.aborted) return false;
+        term.line('');
+        term.line(c.yellow(`  ── ${toolName} ` + '─'.repeat(Math.max(0, 40 - toolName.length))));
+        term.line(detail.split('\n').map(line => '  ' + line).join('\n'));
+        const answer = (await term.ask('  allow? [y]es / [n]o / [a]lways / [q]uit > ')) ?? '';
+        if (signal?.aborted) return false;
+        const value = answer.trim().toLowerCase();
+        if (value === 'a' || value === 'always') { agent.autoApprove = true; term.line(c.dim('  auto-approve on')); return true; }
+        if (value === 'q' || value === 'quit') { await shutdown(0); return false; }
+        return value === 'y' || value === 'yes';
+      });
     },
   });
   agent.model = model;
@@ -970,7 +978,6 @@ export async function main({ voiceIO = {} } = {}) {
   const CAPTURE_RETRY_MS = 400; // Milliseconds: let the audio device release before retrying a failed startup.
   const CAPTURE_POLL_MS = 120; // Milliseconds: existing VAD deadline/cancel responsiveness.
   const CAPTURE_TICK_MS = 250; // Milliseconds: terminal meter refresh without excessive output.
-  const INTERRUPT_GUARD_MS = 400; // Milliseconds: ignore playback-start transients before accepting barge-in.
   const captureTurn = async ({ handsFree = false, session } = {}) => {
     const wav = tmpVoiceFile('wav');
     let input, reason = null, enterPending = false, finished;
@@ -999,7 +1006,7 @@ export async function main({ voiceIO = {} } = {}) {
       const started = Date.now(), detector = createTurnDetector();
       input.onEvent = event => {
         if (reason !== null) return;
-        if (session?.playingAt && (!config.voiceBargeIn || Date.now() - session.playingAt < INTERRUPT_GUARD_MS)) return;
+        if (session?.playingAt && (!config.voiceBargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
         const action = detector.feed(event);
         if (action === 'speech') session?.speech.interrupt();
         if (action === 'end') reason = 'silence';
@@ -1032,7 +1039,7 @@ export async function main({ voiceIO = {} } = {}) {
   };
 
   const voiceConfirm = (toolName, detail, entry, signal) => {
-    const request = voiceApprovalTail.then(async () => {
+    return queueApproval(async () => {
       if (signal.aborted) return false;
       const audio = voiceAudio;
       if (audio) { audio.approvals++; audio.capture?.pause(); await audio.capture?.stopped; audio.speech.resume(); }
@@ -1063,8 +1070,6 @@ export async function main({ voiceIO = {} } = {}) {
         if (audio) audio.approvals--;
       }
     });
-    voiceApprovalTail = request.catch(() => {});
-    return request;
   };
 
   const voiceLoop = async () => {

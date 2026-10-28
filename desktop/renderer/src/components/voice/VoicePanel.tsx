@@ -1,12 +1,11 @@
 import { useEffect, useRef } from 'react';
 import type { VoiceState } from '../../../../shared/voice.mjs';
-import { VOICE_PHASE_LABELS } from '../../../../shared/voice.mjs';
+import { VOICE_PHASE_LABELS, voiceTaskActive } from '../../../../shared/voice.mjs';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceCaptions } from './VoiceCaptions';
 import { Icon } from '../Icons';
 import './voice.css';
 
-const ACTIVE_TASK = new Set(['queued', 'running', 'waiting_for_approval', 'waiting_for_resource', 'cancelling']);
 const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Working', waiting_for_approval: 'Permission needed', waiting_for_resource: 'Waiting for access', cancelling: 'Stopping', done: 'Done', partial: 'Partial result', failed: 'Needs attention', cancelled: 'Stopped' };
 const PLACEHOLDERS = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
   transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '', approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
@@ -19,8 +18,8 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
   const end = useRef<HTMLButtonElement>(null);
   const phase = error ? 'error' : voice.phase;
   const jobs = voice.jobs?.length ? voice.jobs : voice.task ? [voice.task] : [];
-  const activeJobs = jobs.filter(job => ACTIVE_TASK.has(job.status) || job.resourcesHeld);
-  const visibleJobs = [...activeJobs, ...jobs.filter(job => !ACTIVE_TASK.has(job.status) && !job.resourcesHeld).slice(0, compact ? 1 : 2)];
+  const activeJobs = jobs.filter(voiceTaskActive);
+  const visibleJobs = [...activeJobs, ...jobs.filter(job => !voiceTaskActive(job)).slice(0, compact ? 1 : 2)];
   const working = activeJobs.length > 0;
   const issue = error || voice.error;
   useEffect(() => { if (!compact) end.current?.focus({ preventScroll: true }); }, [compact]);
@@ -52,7 +51,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
           {job.summary && <p>{job.summary}</p>}
           {job.steps.length > 0 && <small>{job.steps.filter(step => step.state === 'done').length} of {job.steps.length} actions completed</small>}
         </div></details></div>
-        {(ACTIVE_TASK.has(job.status) || job.resourcesHeld) && <button className="voice-job-stop" onClick={() => onCancel(job.id)} disabled={busy || job.status === 'cancelling'} aria-label={`Stop ${job.label || 'voice request'}`}><Icon name="stop" size={12} /></button>}
+        {voiceTaskActive(job) && <button className="voice-job-stop" onClick={() => onCancel(job.id)} disabled={busy || job.status === 'cancelling'} aria-label={`Stop ${job.label || 'voice request'}`}><Icon name="stop" size={12} /></button>}
       </div>)}
     </div>}
     <div className="voice-controls">

@@ -3,6 +3,9 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
+import { ToolHost } from '../../src/core/tool-host.mjs';
+import { VoiceResourceBroker } from '../../src/automation/voice-resources.mjs';
 import { Agent } from '../../src/core/agent.mjs';
 import { captureVoiceContext, runVoiceWorker, voiceCallResources } from '../../src/core/voice-worker.mjs';
 
@@ -96,4 +99,32 @@ test('an empty first decision may retry tools once and a second empty result sta
   const entry = { id: 'empty-twice', ownerId: 'owner', transcript: 'save poem', context: captureVoiceContext(parent) };
   const result = await runVoiceWorker(entry, { signal: new AbortController().signal, observer: {}, controlTool }, { AgentClass: EmptyAgent });
   assert.equal(calls, 2); assert.match(result.error, /empty.*retry/i);
+});
+
+test('structured Git restores from a nested directory wait for another voice file lease', async t => {
+  const root = fixture(t), nested = path.join(root, 'nested'); fs.mkdirSync(nested);
+  const git = args => { const result = spawnSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }); assert.equal(result.status, 0, result.stderr); };
+  git(['init']); fs.writeFileSync(path.join(root, 'note.txt'), 'baseline'); git(['add', 'note.txt']);
+  git(['-c', 'user.name=Fixture', '-c', 'user.email=fixture@example.invalid', 'commit', '-m', 'fixture']);
+  fs.writeFileSync(path.join(root, 'note.txt'), 'saved by first voice job');
+  const broker = new VoiceResourceBroker();
+  await broker.acquire('editor', await voiceCallResources({ name: 'write_file', arguments: { path: path.join(root, 'note.txt') } }, { cwd: root }));
+  let started = false;
+  const call = { id: 'restore', name: 'git', arguments: { action: 'restore', paths: ['../note.txt'] } };
+  const ctx = { cwd: nested, workspacePath: nested, config: { autoApprove: true }, state: { activatedTools: new Set() } };
+  const pending = (async () => { await broker.acquire('restore', await voiceCallResources(call, ctx)); started = true; return new ToolHost({ context: ctx }).execute(call); })();
+  try {
+    await new Promise(resolve => setTimeout(resolve, 40));
+    assert.equal(started, false, 'Git must not enter execution while another voice job owns a file in its repository');
+    assert.equal(fs.readFileSync(path.join(root, 'note.txt'), 'utf8'), 'saved by first voice job');
+  } finally { broker.release('editor'); await pending; broker.release('restore'); }
+  assert.equal(fs.readFileSync(path.join(root, 'note.txt'), 'utf8'), 'baseline');
+});
+
+test('directory creation and generated file effects acquire filesystem leases too', async t => {
+  const cwd = fixture(t);
+  for (const name of ['create_dir', 'image_generate', 'image_download']) {
+    const leases = await voiceCallResources({ name, arguments: { path: 'new-dir' } }, { cwd });
+    assert.ok(leases.some(resource => resource.kind === 'path'), name);
+  }
 });

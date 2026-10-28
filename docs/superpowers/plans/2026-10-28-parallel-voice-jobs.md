@@ -42,12 +42,10 @@ player in this check is simulated; no physical microphone or speaker was used.
 
 ### Task 2: Isolated voice workers and controls
 
-Manager checkpoint (not yet wired to Agent/audio/UI): seven job-lifecycle checks
-pass, and **64/64** combined job/resource/speech/task/narrator/desktop checks pass.
-They cover B finishing while A stays blocked, independent cancellation, a reserved
-control turn at capacity, real predecessor results, active-record retention, live
-command lease retention and failing result observers. Actual fresh-Agent/tool-host
-binding and real process cleanup remain in this task before it is marked complete.
+Completed: fresh Agents/private tools/resource gates preserve permissions and
+isolate histories. Worker/resource/host checks passed **116/116**, including a real
+temporary file and a real tracked child confirmed stopped. The earlier manager-only
+checkpoint was **64/64**; host/audio/UI wiring is now complete.
 
 - [x] Fail tests proving two requests cannot share mutable history/client/abort state.
 - [x] Add voice-only private job-control specs/execution and optional resource/start
@@ -79,10 +77,16 @@ binding and real process cleanup remain in this task before it is marked complet
 
 ### Task 5: Evidence and draft PR
 
-- [ ] Run affected serial suites/build/whitespace checks. Keep any unrelated full-run
+- [x] Run affected serial suites/build/whitespace checks. Keep any unrelated full-run
   failure visible rather than saying the whole repository is green.
-- [ ] Run real Meta/Sarvam/file parallel round trips with synthetic mic/player,
+- [x] Run real Meta/Sarvam/file parallel round trips with synthetic mic/player,
   explicitly test both colliding and disjoint work, and retain physical limits.
-- [ ] Request one fresh review for this new parallel scope, resolve substantive
+- [x] Request one fresh review for this new parallel scope, resolve substantive
   findings with regressions, and record rulings/deferred polish.
 - [ ] Update guide/hackathon evidence and PR #70. Feature push only; no merge/release.
+
+Final evidence: **928/928** affected serial checks; desktop build and both-view
+browser check pass, zero page errors. Three real Meta/Sarvam/file jobs prove
+independent and conflicting work; one fresh review, seven substantive fixes, ten
+RED→GREEN regressions. Full details, decisions and remaining limits: hackathon
+plan §18i. The same draft PR is the only intended publication.

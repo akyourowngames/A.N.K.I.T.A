@@ -34,6 +34,13 @@ async function runCli(t, mode) {
       emittedEmpty = true;
       response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'stop' }] })); return;
     }
+    if (mode === 'mixed-approval' && !voice) {
+      const done = body.messages.some(message => message.role === 'tool' && message.tool_call_id === 'typed-write');
+      response.end(JSON.stringify({ choices: [{ message: done ? { role: 'assistant', content: 'Hi from chat.' } : {
+        role: 'assistant', content: '', tool_calls: [{ id: 'typed-write', type: 'function', function: { name: 'write_file', arguments: JSON.stringify({ path: path.join(directory, 'typed-note.txt'), content: 'Typed request approved' }) } }],
+      } }] })); return;
+    }
+    if (mode === 'mixed-approval' && voice && !body.messages.some(message => message.role === 'tool')) await new Promise(resolve => setTimeout(resolve, 250));
     if (voice && mode === 'controls') {
       assert.ok(body.tools.some(tool => tool.function.name === 'voice_jobs'));
       const user = body.messages.findLast(message => message.role === 'user')?.content;
@@ -148,19 +155,27 @@ async function runCli(t, mode) {
   const child = spawn(process.execPath, [harness], { cwd: directory, env: { ...process.env, CONFIG_DIR: runtime, NO_COLOR: '1', SARVAM_API_KEY: '', BASETEN_API_KEY: '' }, stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true });
   let stdout = ''; let stderr = ''; let captures = 0; let approval = false; let typed = false;
   let pendingCapture = false;
+  let promptsBeforeAnswer = 0, firstDenied = false, secondAnswered = false;
   child.stdout.on('data', data => {
     stdout += data;
     const seen = stdout.split('CAPTURE_READY').length - 1;
     while (captures < seen) {
       captures++;
-      if (captures === 1 || (['parallel', 'end-running', 'clear-running', 'controls'].includes(mode) && captures === 2)) child.stdin.write('\n');
+      if (captures === 1 || (['parallel', 'end-running', 'clear-running', 'controls', 'mixed-approval'].includes(mode) && captures === 2)) child.stdin.write('\n');
       else pendingCapture = true;
     }
     const readyReports = (stdout.match(/ENDED: (?:Workspace tayyar hai|Work did not finish|Cancelled|First task is running|First task stopped)/g) || []).length;
     const reportsNeeded = mode === 'controls' ? captures === 3 ? 1 : 3 : mode === 'parallel' ? 2 : 1;
     if (pendingCapture && readyReports >= reportsNeeded) { pendingCapture = false; child.stdin.write('\n'); }
-    if (!approval && stdout.includes('allow?')) { approval = true; child.stdin.write('y\n'); }
-    if (!typed && (stdout.includes('leaving voice mode') || stdout.includes('VOICE_IO_PROBE') || stdout.includes('voice needs SARVAM_API_KEY'))) {
+    if (mode === 'mixed-approval') {
+      const prompts = stdout.split('allow?').length - 1;
+      if (!typed && prompts >= 1) {
+        typed = true; child.stdin.write('Typed file request\n');
+        setTimeout(() => { promptsBeforeAnswer = stdout.split('allow?').length - 1; firstDenied = true; child.stdin.write('n\n'); }, 200);
+      }
+      if (firstDenied && prompts >= 2 && !secondAnswered) { secondAnswered = true; child.stdin.end('y\n/task\n/exit\n'); }
+    } else if (!approval && stdout.includes('allow?')) { approval = true; child.stdin.write('y\n'); }
+    if (mode !== 'mixed-approval' && !typed && (stdout.includes('leaving voice mode') || stdout.includes('VOICE_IO_PROBE') || stdout.includes('voice needs SARVAM_API_KEY'))) {
       typed = true; child.stdin.end(`${mode === 'clear-running' ? '/clear\n' : ''}Say hello\n/task\n/exit\n`);
     }
   });
@@ -175,7 +190,7 @@ async function runCli(t, mode) {
   const records = fs.existsSync(tasks) ? fs.readdirSync(tasks).filter(name => name.endsWith('.json')).map(name => JSON.parse(fs.readFileSync(path.join(tasks, name), 'utf8'))) : [];
   const sessions = path.join(runtime, 'sessions');
   const history = fs.existsSync(sessions) ? fs.readdirSync(sessions).filter(name => name.endsWith('.json')).map(name => ({ name, ...JSON.parse(fs.readFileSync(path.join(sessions, name), 'utf8')) })) : [];
-  return { stdout, models, records, history, written: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null };
+  return { stdout, models, records, history, promptsBeforeAnswer, typedWritten: fs.existsSync(path.join(directory, 'typed-note.txt')), written: fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : null };
 }
 
 test('CLI voice devices can be supplied without opening a physical microphone', async t => {
@@ -202,6 +217,13 @@ test('real CLI status and stop use the private live job capability while the ear
   assert.match(result.stdout, /PLAYED: First task is running/);
   assert.match(result.stdout, /PLAYED: First task stopped/);
   assert.equal(result.models.at(-1), 'typed-model');
+});
+
+test('ended voice and typed tool approvals share one prompt owner without stealing an answer', async t => {
+  const result = await runCli(t, 'mixed-approval');
+  assert.equal(result.promptsBeforeAnswer, 1, result.stdout);
+  assert.equal(result.written, null, 'the first, voice permission was denied');
+  assert.equal(result.typedWritten, true, 'the second, typed permission was approved');
 });
 
 for (const mode of ['empty-first', 'empty-final', 'empty-twice']) test(`CLI ${mode} retries an empty successful response once without repeating a file action`, async t => {

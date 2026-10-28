@@ -330,7 +330,8 @@ export class DesktopEngine {
     this.pendingFileEdits = new Map();
     this.turns = new Map();
     this.turnIds = new Map();
-    this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
+    this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }),
+      requestId => this.emit({ type: 'approval-resolved', requestId }));
     this.secureStore = new SecureStore({ file: credentialFile, safeStorage });
     this.secretHistory = new SecretHistory(this.secureStore);
     // Grant metadata is not secret, so it lives in its own file; the token goes
@@ -938,6 +939,7 @@ export class DesktopEngine {
     try { const result = await work; completed = true; return result; }
     finally {
       this.turns.delete(id);
+      this.flushVoiceDeliveries(id);
       if (completed && this.routineDeliveries.size) void this.flushRoutineDeliveries(id).catch(error => this.emit({ type: 'scheduler-error', message: error.message }));
     }
   }
@@ -1210,7 +1212,7 @@ export class DesktopEngine {
     options.signal.addEventListener('abort', denyOwn, { once: true });
     try {
       return await runVoiceWorker(entry, options, { AgentClass: this.AgentClass, brain,
-        acquire: (...args) => jobs.acquire(...args), autoApprove: () => this.config.autoApprove === true,
+        acquire: (...args) => jobs.acquire(...args), autoApprove: () => (this.agents.get(entry.ownerId)?.autoApprove ?? this.config.autoApprove) === true,
         confirm: async (name, detail, _entry, signal) => {
           if (signal.aborted) return false;
           let requestId;
@@ -1256,7 +1258,7 @@ export class DesktopEngine {
       this.emit({ type: 'message-start', threadId: id, messageId });
       this.emit({ type: 'assistant-delta', threadId: id, messageId, text: this.secretHistory.clean(content) });
       this.emit({ type: 'message-end', threadId: id, messageId });
-      this.emit({ type: 'turn-end', threadId: id, turnId });
+      this.emit({ type: 'turn-end', threadId: id, turnId, source: 'voice' });
       this.teammates.touch(id, this.secretHistory.clean(content));
     }
     this.emit({ type: 'teammates-changed' });

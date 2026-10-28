@@ -9,12 +9,11 @@ import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
 import { VoiceTaskStore, voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
 import { VoiceSpeechQueue } from '../../src/automation/voice-speech-queue.mjs';
-import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
+import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE, VOICE_PUBLIC_STEPS } from '../shared/voice.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 
 const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner without changing typed-chat settings.
 const DESKTOP_SPEECH_PROVIDER = 'sarvam'; // Both speech directions use the configured Sarvam credentials.
-const PUBLIC_STEPS = 12; // Most recent observed actions shown in a bounded cross-window snapshot.
 const WAV_EXTENSION = 'wav'; // Existing channel helper expects an extension without a dot.
 const MILLISECONDS_PER_SECOND = 1000;
 const END_VOICE_PATTERN = /^(exit|quit|end voice)[.!?]?$/i; // Only a complete explicit exit phrase ends a session.
@@ -246,7 +245,7 @@ export class DesktopVoice {
     if (!session || session.threadId !== ownerId) return;
     const jobs = this.jobs.list(ownerId).map(task => ({ id: task.id, label: task.label, status: task.status, resourcesHeld: task.resourcesHeld,
       waitingFor: task.waitingFor, summary: task.summary.slice(0, VOICE_CAPTION_CHARS), error: task.error?.slice(0, VOICE_ERROR_CHARS) || null,
-      steps: task.steps.slice(-PUBLIC_STEPS).map(({ index, label, tool, state }) => ({ index, label: label.slice(0, VOICE_UPDATE_CHARS), tool: tool.slice(0, VOICE_UPDATE_CHARS), state })) }));
+      steps: task.steps.slice(-VOICE_PUBLIC_STEPS).map(({ index, label, tool, state }) => ({ index, label: label.slice(0, VOICE_UPDATE_CHARS), tool: tool.slice(0, VOICE_UPDATE_CHARS), state })) }));
     this.publish(session, { jobs, task: jobs[0] || null,
       ...(this.owns(session) && !session.paused ? jobs.some(job => job.status === 'waiting_for_approval') ? { phase: 'approval' } :
         this.state.phase === 'approval' ? { phase: session.playingAt ? 'speaking' : 'listening' } : {} : {}) });

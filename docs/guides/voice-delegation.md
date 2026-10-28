@@ -68,6 +68,12 @@ not an all-suite-green claim. The pull request stays draft for the remaining
 physical acceptance checks. A minor polish gap remains: the collapsed island uses
 its ordinary status text; expand it to see the actual voice phase and caption.
 
+Latest parallel follow-up: **928/928** affected serial checks, no skips; desktop
+build and both-view browser checks pass with zero page errors. Three real
+Meta/Sarvam/file jobs prove independent completion, shared-file waiting and one
+player. The fresh review found seven substantive issues, now covered by ten
+failing-before/passing-after regressions. Physical and packaged limits above remain.
+
 ### Accurate work updates and overlapping tasks
 
 Work updates are generated, not a fixed script. The short initial acknowledgement
@@ -92,7 +98,8 @@ stop a named job. Typed-chat concurrency and provider selection are unchanged.
 status/stop-only turn when all ordinary workers are occupied.
 
 Independent files run together. Conflicting file paths wait for the job holding
-them, including read/modify/write sequences and known path aliases. Browser/native
+them, including read/modify/write sequences and known path aliases. Structured
+Git operations protect their enclosing repository, even from a subdirectory. Browser/native
 app actions and opaque connected interactions share exclusive access. Shell
 commands hold the workspace and app access conservatively; a tracked command still
 running after its report retains that access until it exits or is confirmed stopped.
@@ -105,8 +112,9 @@ cannot play after its step becomes obsolete. Ending voice keeps results in the
 original conversation and prevents its old session from speaking over a replacement.
 Completed results enter a typed conversation only when it is idle, as complete
 request/report pairs. Worker tool steps stay in their separate task records.
-Terminal permissions briefly pause capture and take typed yes/no answers, one
-prompt at a time. Ctrl+C stops active voice work; with none running, it ends voice.
+Terminal permissions briefly pause capture and take typed yes/no answers.
+Typed and voice requests share one prompt owner, so an answer cannot go to a
+different background request. Ctrl+C stops active voice work; with none running, it ends voice.
 Clearing/loading a terminal chat keeps earlier work's results in its own saved
 `voice-<owner>` conversation rather than appending them to the new chat.
 
@@ -124,6 +132,7 @@ work updates and controls cannot overlap at shorter window heights.
 Additional repeatable checks:
 
 ```bash
+node scripts/verify-voice-suite.mjs
 node scripts/verify-voice-parallel-primitives.mjs
 node scripts/verify-parallel-voice.mjs --env /path/to/your/local/.env
 ```
@@ -313,10 +322,10 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 - **Recording over 30 seconds** is outside the documented limit for the REST
   endpoint; the app sends one utterance at a time, so this only matters if the pause
   detection is disabled.
-- **The terminal is busy during work.** You can switch to another app, but cannot
-  start a second Ankita conversation. `/task` can show saved status while work runs;
-  Ctrl+C stops the current request. Voice barge-in listens during the final report,
-  not while the tools are working.
+- **Voice jobs run in parallel.** Keep speaking while earlier work runs, or ask
+  for status and a specific cancellation. Say `exit` to end audio while work
+  continues; Ctrl+C stops active voice jobs. Typed chat retains its own turn policy.
+  Participating voice jobs coordinate shared files/apps; external work does not.
 - **Saved tasks are bounded.** The latest 20 are kept under the configured user
   storage folder; `VOICE_TASK_LIMIT` changes that count. Configured keys and
   credential-shaped text are hidden in the saved records. Raw tool arguments and

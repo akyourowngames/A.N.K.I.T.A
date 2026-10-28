@@ -32,3 +32,13 @@ test('parallel snapshots bound rows and remove private worker fields', () => {
   assert.equal(view.jobs[0].label, 'request');
   assert.ok(!JSON.stringify(view).includes('private-worker-secret'));
 });
+
+test('older running jobs and command holders remain visible before recent results fill the snapshot', () => {
+  const job = { id: 'recent', status: 'done', steps: [], summary: '' };
+  const jobs = [...Array.from({ length: voice.VOICE_PUBLIC_JOBS }, (_, index) => ({ ...job, id: `done-${index}` })),
+    { ...job, id: 'older-running', status: 'running' }, { ...job, id: 'older-command', resourcesHeld: true }];
+  const view = voice.voiceStatePatch(voice.emptyVoiceState(), { jobs });
+  assert.equal(view.jobs.length, voice.VOICE_PUBLIC_JOBS);
+  assert.ok(view.jobs.some(job => job.id === 'older-running'));
+  assert.ok(view.jobs.some(job => job.id === 'older-command'));
+});

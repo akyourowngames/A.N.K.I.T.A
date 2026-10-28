@@ -156,6 +156,24 @@ try {
   assert.equal(await main.locator('.voice-job[data-status=partial] details[open]').count(), 1);
   await main.screenshot({ path: path.join(captures, 'voice-parallel-partial-result.png') });
   receipt.assertions.push('1366x768 long requests do not overlap; partial results open with the keyboard');
+  const multiIsland = await pageFor({ island: true, width: 640, height: 420, initial: await main.evaluate(() => window.__voiceSnapshot()) });
+  await multiIsland.getByRole('button', { name: 'End voice', exact: true }).waitFor();
+  const compactJobs = await multiIsland.locator('.voice-panel').evaluate(panel => {
+    const work = panel.querySelector('.voice-work-line').getBoundingClientRect(), jobs = panel.querySelector('.voice-jobs').getBoundingClientRect(), controls = panel.querySelector('.voice-controls').getBoundingClientRect();
+    return { gap: jobs.top - work.bottom, jobsBottom: jobs.bottom, controlsTop: controls.top };
+  });
+  assert.ok(compactJobs.gap >= 0 && compactJobs.controlsTop >= compactJobs.jobsBottom, JSON.stringify(compactJobs));
+  await multiIsland.waitForTimeout(700);
+  await multiIsland.screenshot({ path: path.join(captures, 'voice-parallel-island.png') });
+  for (const page of [main, multiIsland]) {
+    await page.evaluate(() => window.__voiceEmit({ type: 'approval-request', requestId: 'job-B-permission', threadId: 'chief', voiceTaskId: 'job-B', toolName: 'Write file', detail: 'Allow the second voice job to save its file?' }));
+    await page.getByText('Allow the second voice job to save its file?', { exact: false }).waitFor();
+    await page.evaluate(() => window.__voiceEmit({ type: 'turn-end', threadId: 'chief', turnId: 'job-A', source: 'voice' }));
+    assert.equal(await page.getByText('Allow the second voice job to save its file?', { exact: false }).count(), 1);
+    await page.evaluate(() => window.__voiceEmit({ type: 'approval-resolved', requestId: 'job-B-permission' }));
+    await page.getByText('Allow the second voice job to save its file?', { exact: false }).waitFor({ state: 'hidden' });
+  }
+  receipt.assertions.push('another job finishing preserves live permission; exact resolution clears both surfaces');
   await patch(main, { jobs: Array.from({ length: 6 }, (_, index) => ({ ...task, id: `many-${index}`, label: `Request ${index + 1}` })) });
   await main.getByRole('button', { name: 'Stop Request 6', exact: true }).scrollIntoViewIfNeeded();
   assert.equal(await main.getByRole('button', { name: 'Stop Request 6', exact: true }).count(), 1, 'every active job stays reachable beyond the first rows');

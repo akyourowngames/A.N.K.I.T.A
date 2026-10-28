@@ -15,6 +15,8 @@ export const VOICE_METER_INTERVAL_MS: number;
 export const VOICE_BARGE_GUARD_MS: number;
 export const VOICE_POLL_MS: number;
 export const VOICE_PUBLIC_JOBS: number;
+export const VOICE_PUBLIC_STEPS: number;
 export const VOICE_PHASE_LABELS: Readonly<Record<VoicePhase, string>>;
 export function emptyVoiceState(): VoiceState;
+export function voiceTaskActive(task: VoiceTaskView | null): boolean;
 export function voiceStatePatch(state: VoiceState, patch: Partial<VoiceState>): VoiceState;

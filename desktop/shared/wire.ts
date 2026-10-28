@@ -135,7 +135,7 @@ export type EngineEvent = (
   | { type: 'workspace-changed'; threadId: string; open?: boolean }
   | { type: 'model-changed'; threadId: string; model: string }
   | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine' | 'voice'; attachments?: { name: string; image?: boolean }[] }
-  | { type: 'turn-end'; threadId: string; turnId: string }
+  | { type: 'turn-end'; threadId: string; turnId: string; source?: 'voice' }
   | { type: 'skills-loaded'; threadId: string; turnId: string; names: string[] }
   | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }
