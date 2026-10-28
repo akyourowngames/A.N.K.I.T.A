@@ -3,7 +3,7 @@
 ## Desktop voice
 
 Choose a conversation, then **Voice** in its header. The full panel shows an
-original blue/lilac orb, the latest finalized words and one work update. Use
+original dark-pearl orb, the latest finalized words and one work update. Use
 **Continue in island** to minimize the app and keep the same voice session in the
 floating companion. **Open conversation** returns to that session's owner.
 
@@ -27,6 +27,14 @@ appear after REST transcription completes; there are no fabricated interim words
 Motion respects reduced-motion settings and stops in hidden windows. WebGL loss
 uses a static CSS fallback.
 
+The final orb is smooth dark pearl with a soft silver edge, the owner's final
+28 October choice. There is no mesh or liquid distortion. Listening follows the
+mic level; recognition and working have distinct moving rim lights; speaking
+gently pulses; a completed task flashes once. Failed work cannot show that success
+pulse. Both surfaces share the material and state cues. Rendering is capped at
+30 frames per second and 640 pixels per axis; reduced motion stays still and hidden
+cues pause, including fallback. No reference image or new dependency ships.
+
 Repeatable checks, from the feature worktree:
 
 ```bash
@@ -48,6 +56,16 @@ Desktop voice was built in a separate worktree from PR #70, then added to the sa
 PR under the owner's instruction to include all pending work. No release, tag or
 default-branch merge is part of this work. Starting voice is currently done in the
 app; the island continues that session and can retry it after an error.
+
+Verification record, 28 October: focused channel/desktop/settings/native-control
+checks passed **168/168**; the desktop build, browser main/island fixture and real
+Sarvam/Meta/file Electron check passed. The last full tracked-source run reported
+**1635 tests: 1633 pass, 1 fail, 1 skip**. Its only failure was Windows `EPERM`
+during the unchanged browser-observations fixture's temporary-folder cleanup;
+both observations passed, and rerunning that same file passed **2/2**. This is
+not an all-suite-green claim. The pull request stays draft for the remaining
+physical acceptance checks. A minor polish gap remains: the collapsed island uses
+its ordinary status text; expand it to see the actual voice phase and caption.
 
 ## Terminal voice
 

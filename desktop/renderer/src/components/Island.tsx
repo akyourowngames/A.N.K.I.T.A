@@ -271,7 +271,7 @@ export function Island() {
       const id = selectedTeammate?.id || chat.teammateId; if (id) chat.selectTeammate(id); void chat.addFiles(Array.from(event.target.files || []), id); event.target.value = '';
     }} />
     {home && <div className="island-toolbar">
-      {showVoice ? <span className="voice-eyebrow"><i /> ANKITA <b>/</b> VOICE</span> : <Header view={activeView} soundOn={soundOn} onNavigate={navigate} onDrop={attach} onToggleSound={toggleSound} />}
+      {showVoice ? <span className="voice-eyebrow"><i /> Ankita</span> : <Header view={activeView} soundOn={soundOn} onNavigate={navigate} onDrop={attach} onToggleSound={toggleSound} />}
       <span className="island-live-status" role="status">{showVoice ? 'Voice · same conversation' : status}</span>
       <button className="island-tab" aria-label="Open Ankita" title="Open desktop" onClick={restore}><Icon name="arrowUpRight" size={14} /></button>
       <button className="island-tab" aria-label="Collapse island" title="Collapse (Esc)" onClick={closeHome}><Icon name="chevronRight" size={14} stroke={2} /></button>
@@ -286,7 +286,7 @@ export function Island() {
         <MascotFile interaction={interaction} />
         {home && <span className="island-mascot-name" title={selectedTeammate?.name}>{selectedTeammate?.name || 'Ankita'}</span>}
       </div>}
-      {showVoice && !home && <button className="voice-island-peek" aria-label="Expand voice" onClick={() => openHome()}><VoiceOrb phase={voice.state.phase} inputLevel={voice.state.inputLevel} compact /></button>}
+      {showVoice && !home && <button className="voice-island-peek" aria-label="Expand voice" onClick={() => openHome()}><VoiceOrb phase={voice.state.phase} inputLevel={voice.state.inputLevel} compact task={voice.state.task} /></button>}
       {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
         <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
       </button> : <div className="island-body" data-home-view={activeView}>

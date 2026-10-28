@@ -7,7 +7,7 @@ import { Icon } from '../Icons';
 import './voice.css';
 
 const ACTIVE_TASK = new Set(['queued', 'running', 'waiting_for_approval']);
-const PLACEHOLDERS = { idle: 'A little space to think out loud.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
+const PLACEHOLDERS = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
   transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '', approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
 
 export function VoicePanel({ voice, error = '', busy = false, compact = false, onEnd, onPause, onResume, onCancel, onIsland, onSettings, onStart, onFocus }: {
@@ -26,10 +26,10 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     window.addEventListener('keydown', key); return () => window.removeEventListener('keydown', key);
   }, [compact, onEnd]);
   return <section className={`voice-panel ${compact ? 'voice-panel-compact' : ''}`} aria-label="Voice conversation" data-phase={phase}>
-    {!compact && <div className="voice-panel-top"><span className="voice-eyebrow"><i /> ANKITA <b>/</b> VOICE</span>
+    {!compact && <div className="voice-panel-top">
       <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={15} /> Voice settings</button></div>}
     <div className="voice-stage">
-      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} />
+      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} task={voice.task} />
       <div className="voice-phase" data-phase={phase}><i />{VOICE_PHASE_LABELS[phase]}</div>
       <VoiceCaptions text={voice.caption || PLACEHOLDERS[phase]} role={voice.captionRole} />
       <div className="voice-work-line" role="status" aria-live="polite" aria-atomic="true">
@@ -44,7 +44,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
       {working && <button className="voice-control voice-stop" onClick={onCancel} disabled={busy} aria-label="Stop work" title="Cancel this task"><Icon name="stop" size={14} /><span>Stop work</span></button>}
     </div>
     <div className="voice-panel-foot">{compact ? <><button className="voice-text-button" onClick={onFocus}>Open conversation <Icon name="external" size={13} /></button>{issue && <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={13} /> Voice settings</button>}</>
-      : <><span>{working ? 'End voice keeps your work running.' : voice.active ? 'Your words. A little momentum.' : 'Your conversation stays right here.'}</span><button className="voice-text-button" onClick={onIsland}><Icon name="panel" size={14} /> Continue in island</button></>}
+      : <><span>{working ? 'End voice keeps your work running.' : ''}</span><button className="voice-text-button" onClick={onIsland}><Icon name="panel" size={14} /> Continue in island</button></>}
     </div>
   </section>;
 }

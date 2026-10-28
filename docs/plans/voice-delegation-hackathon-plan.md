@@ -836,11 +836,17 @@ MCP connections and physical headset interaction were not replayed. This fix doe
 not audit the security advice, recover the user's missing file automatically, or
 claim the original failed requests succeeded.
 
-## 18g. Desktop voice panel and island (2026-10-27)
+## 18g. Desktop voice panel and island (2026-10-27–28)
 
 Built in an isolated `feat/desktop-voice-orb` worktree from committed PR #70.
 The owner approved a blue/lilac fluid orb, animated short captions, a full app
-panel and the same session in the floating island. This is new hackathon work;
+panel and the same session in the floating island. On 28 October they rejected
+the first orb and liquid-looking contour study, then explicitly chose smooth dark
+pearl with a soft silver edge. The final original shader has no mesh or liquid
+folds. Mic level drives listening, recognition/work get distinct moving rim lights,
+speaking pulses gently, and a completed task gets a single confirmation ring.
+Reduced motion stays still and CSS supplies a static fallback; hidden cues pause.
+No supplied reference bitmap is bundled. This is new hackathon work;
 existing desktop layout, capture/playback, permissions and agent tools are reused.
 The independently reviewed desktop commits are added to PR #70 under the owner's
 instruction to include all pending changes. The original committed terminal,
@@ -871,8 +877,8 @@ Evidence:
   Reserving caption space and reducing the orb at short heights made it pass.
 - `node scripts/verify-desktop-voice.mjs --env <local-env>` →
   `DESKTOP_VOICE_NATIVE_OK`: real Sarvam generated speech → STT → Meta
-  `meta-models/muse-spark-open-1026` → actual write/read tools → **246-character
-  kavita.txt**, **2 real MP3 handoffs**, **14009 ms** including UI/native evidence,
+  `meta-models/muse-spark-open-1026` → actual write/read tools → **269-character
+  kavita.txt**, **2 real MP3 handoffs**, **13507 ms** including UI/native evidence,
   **0 page errors**. Typed model restored to the separate fixture model. Actual
   Electron main and late-subscriber island screenshots were inspected. The real
   island became focusable and Tab/Space ended voice through its button.
@@ -887,19 +893,33 @@ Evidence:
   UI bridges; one came from delaying native-control cancellation behind audio
   shutdown. Both were reproduced and fixed. All seven affected UI fixtures passed
   in a focused rerun; native-control/voice-engine checks passed **15/15**. The final
-  all-source serial rerun follows the combined review fix pass.
+  all-source serial rerun after the combined fixes reported **1635 tests: 1633
+  pass, 1 fail, 1 skip**. The only failure was an `EPERM` after-hook removing an
+  unchanged browser-observations temporary directory on Windows. Both actual
+  observations passed; the same file rerun passed **2/2**. No all-suite-green
+  claim is made and no unrelated cleanup code was changed.
 - The first broad test command discovered 25 failures in ignored generated launch
   website fixtures; those files are outside the tracked app change. A tracked-source
   run passed 1600 tests, with one process-ancestry fixture failure after its launcher
   exited; the same process suite passed **2/2** under a live launcher. The final
-  desktop-branch serial suite is recorded separately before delivery.
+  desktop-branch serial suite is recorded above.
+- Final dark-pearl desktop build passed; the browser fixture returned
+  `DESKTOP_VOICE_UI_OK`, **0 page errors**, including successful shader compilation
+  in both surfaces, distinct state cues, success-only motion, hidden fallback cues
+  and identical reduced-motion frames. Actual wide-panel and compact-island
+  screenshots were inspected after the owner's final material choice.
+- The final focused voice/channel/core/automation/desktop/provider/settings set
+  passed **168/168** with no skips after the material/state-animation revision.
 
 Limits: native input/VAD are generated fixtures and speaker handoffs are captured,
 not a physical headset test. One generated Hinglish take misheard “Markdown” as
 “mark count”; the successful request asked for a generic saved poem and does not
 claim that technical noun passed. Physical barge-in, the owner's three-clean-workspace
-  gate, packaged distribution and current GPU-driver coverage remain open. Browser
-  fallback/motion fixtures do not close those gates. No default-branch merge, tag or release performed.
+gate, packaged distribution and current GPU-driver coverage remain open. Browser
+fallback/motion fixtures do not close those gates. A minor deferred polish issue is
+the collapsed island's ordinary status text; the expanded voice view is accurate.
+The app starts a fresh voice session; the island continues or retries that session.
+PR #70 remains draft. No default-branch merge, tag or release performed.
 
 ## 19. Sources
 

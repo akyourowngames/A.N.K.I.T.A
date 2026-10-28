@@ -1,6 +1,7 @@
 # Desktop voice for Ankita
 
-Status: owner approved the displayed design and polished-motion build on 2026-10-27.
+Status: owner approved both surfaces and polished motion on 2026-10-27; revised
+the orb direction on 2026-10-28 using two supplied screenshots.
 
 ## Owner request and authorization
 
@@ -32,7 +33,7 @@ The selected teammate/project remains the owner of the request. A focused panel
 fills the conversation area while preserving the app's navigation. It contains:
 
 - A restrained header: teammate identity, return to chat, and Continue in island.
-- One large, original pearl/glass orb with ice-blue and lilac currents. This is the
+- One large, original smooth dark-pearl orb with a soft silver rim. This is the
   memorable visual; the rest of the panel stays quiet.
 - A plain phase label: Getting ready, Listening, Transcribing, Working, Speaking,
   Permission needed, Paused or an actionable error. Text accompanies every color.
@@ -66,6 +67,17 @@ is described as a real signal.
   theme tokens. Light appearance remains readable through the same theme system.
 - Center alignment for orb/captions; left alignment for task details and errors.
   Generous empty space, no decorative statistics, no nested card grid.
+- Final owner choice, 2026-10-28: smooth dark pearl with a soft silver edge.
+  The owner rejected the liquid-looking contour study after supplying references;
+  remove both warped folds and mesh. Author the smooth geometry procedurally; do
+  not ship either screenshot or third-party artwork. Material swatches are neutral
+  ink/slate/frost/pearl/silver; existing blue remains a control/status accent. Keep
+  the full panel's header and footer quiet.
+- State motion: measured mic level expands listening; recognition and tool work
+  have distinct-speed moving rim lights; real speaking state gently pulses; only
+  a completed task triggers one outward confirmation ring. Failed/cancelled tasks
+  do not get success motion. Hidden animation pauses, including CSS fallback;
+  reduced motion uses static cues. Speaking is not claimed to measure output audio.
 - An original WebGL shader is preferred for the fluid sphere, with a static/CSS
   fallback if WebGL fails. No new rendering dependency is required. Bound resolution
   and frame rate, stop hidden animation, and respect reduced motion. The small island
@@ -74,9 +86,10 @@ is described as a real signal.
   motion shows the complete new text without word-by-word movement. Screen readers
   receive complete sentences rather than repeated announcements for each word.
 
-The orb is visually informed by audio-reactive state visualization in ElevenLabs'
-official Orb documentation, https://ui.elevenlabs.io/docs/components/orb. This is
-an original Ankita implementation, not a new ElevenLabs voice dependency.
+The initial interaction study used ElevenLabs' official Orb documentation,
+https://ui.elevenlabs.io/docs/components/orb. The final material follows the owner's
+explicit smooth dark-pearl choice. This is original Ankita geometry and shading,
+without an ElevenLabs voice dependency or copied reference asset.
 
 ## Floating island
 
