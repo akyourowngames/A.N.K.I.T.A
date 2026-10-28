@@ -26,12 +26,19 @@ typed-history delivery races and completed reports queued during user speech.
 
 ### Task 1: Resource broker and one speaker
 
-- [ ] Write failing tests for disjoint/shared canonical paths, read/write sequences,
+- [x] Write failing tests for disjoint/shared canonical paths, read/write sequences,
   parent/child aliases, cancellation, cycles and opaque interaction serialization.
-- [ ] Write failing speech tests for simultaneous completion, latest progress,
+- [x] Write failing speech tests for simultaneous completion, latest progress,
   interrupted/ended sessions, ordering and no overlap during preparation/playback.
-- [ ] Implement bounded shared primitives with injected IO and named policy values.
-- [ ] Run their serial tests and a disposable file/audio-ownership round trip; commit.
+- [x] Implement bounded shared primitives with injected IO and named policy values.
+- [x] Run their serial tests and a disposable file/audio-ownership round trip; commit.
+
+Task 1 evidence: **13/13** serial tests pass, no skips. Initial missing primitives
+failed 11 tests; dangling-alias and duplicate-report regressions each failed before
+their fixes. `node scripts/verify-voice-parallel-primitives.mjs` returned
+`VOICE_PARALLEL_PRIMITIVES_OK`: independent file work peaked at **2**, a shared-file
+increment ended at **2**, peak players **1**, two distinct reports retained. The
+player in this check is simulated; no physical microphone or speaker was used.
 
 ### Task 2: Isolated voice workers and controls
 
