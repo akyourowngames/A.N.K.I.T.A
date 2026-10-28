@@ -85,6 +85,15 @@ test('spoken voice replies keep two complete sentences even if the model ignores
   assert.equal(voice.voiceReplyForSpeech('हो गया।फाइल सेव है।तीसरी बात।'), 'हो गया। फाइल सेव है।');
 });
 
+test('report clips follow complete English and Hindi sentences and prepare lazily', async () => {
+  const prepared = [];
+  const item = voice.createVoiceReportSpeech({ jobId: 'report', text: 'पहला वाक्य।Second sentence. Third sentence.', turn: 4,
+    synthesize: async text => { prepared.push(text); return Buffer.from(text); } });
+  assert.equal(item.kind, 'report'); assert.equal(item.turn, 4);
+  assert.deepEqual(item.parts.map(part => part.text), ['पहला वाक्य।', 'Second sentence.']);
+  assert.deepEqual(prepared, []); assert.ok((await item.parts[1].prepare()).length); assert.deepEqual(prepared, ['Second sentence.']);
+});
+
 test('Baseten requests use low reasoning and a safe token floor; other clients stay unchanged', async t => {
   const requests = [];
   t.mock.method(globalThis, 'fetch', async (_url, opts) => {

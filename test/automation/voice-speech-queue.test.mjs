@@ -62,3 +62,102 @@ test('duplicate completion notifications cannot repeat a spoken job report', asy
   assert.equal(await queue.offer(entry('poem:late-duplicate')), false);
   assert.deepEqual(heard, ['poem:done']); await queue.close();
 });
+
+test('a genuine request suspends the interrupted report instead of forcing it ahead of other results', async () => {
+  const heard = [];
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async (audio, { signal }) => {
+    heard.push(audio); if (audio === 'A') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  const a = queue.offer(entry('A')); await tick(); const b = queue.offer(entry('B'));
+  const turn = queue.interrupt(); queue.acceptTurn(turn); queue.resume(); await tick();
+  assert.deepEqual(heard, ['A'], 'wait for the interruption decision, not an automatic replay');
+  queue.finishTurn(turn); await b; await a;
+  assert.deepEqual(heard, ['A', 'B']);
+  assert.equal(queue.reportState().find(report => report.id === 'A').state, 'suspended');
+  await queue.close();
+});
+
+test('a false interruption resumes only the unfinished cached sentence with one player', async () => {
+  const heard = []; let active = 0, peak = 0, second = 0, preparations = 0;
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async (audio, { signal }) => {
+    active++; peak = Math.max(peak, active); heard.push(audio);
+    if (audio === 'second' && second++ === 0) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    active--;
+  } });
+  const pending = queue.offer(entry('A', 'report', { parts: ['first', 'second'].map(text => ({ text, prepare: async () => { preparations++; return text; } })) }));
+  await tick(); const turn = queue.interrupt(); await tick();
+  assert.equal(queue.reportState()[0].completedText, 'first');
+  await queue.falseInterruption(turn); await queue.drain(); await pending;
+  assert.deepEqual(heard, ['first', 'second', 'second']); assert.equal(preparations, 2); assert.equal(peak, 1);
+  await queue.close();
+});
+
+test('planner next dismisses the current speech and selects an actual queued result', async () => {
+  const heard = [];
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async (audio, { signal }) => {
+    heard.push(audio); if (audio === 'A') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  void queue.offer(entry('A')); await tick(); const b = queue.offer(entry('B')), c = queue.offer(entry('C'));
+  const turn = queue.interrupt(); queue.acceptTurn(turn); queue.resume();
+  const result = await queue.controlReport('next', { turn }); await Promise.all([b, c]);
+  assert.equal(result.id, 'B'); assert.deepEqual(heard, ['A', 'B', 'C']);
+  assert.equal(queue.reportState().find(report => report.id === 'A').state, 'dismissed');
+  await queue.close();
+});
+
+test('explicit resume keeps completed sentences while repeat deliberately starts the chosen report over', async () => {
+  const heard = []; let second = 0;
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async (audio, { signal }) => {
+    heard.push(audio); if (audio === 'two' && second++ === 0) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  void queue.offer(entry('A', 'report', { parts: ['one', 'two'].map(text => ({ text, prepare: async () => text })) }));
+  await tick(); const turn = queue.interrupt(); queue.acceptTurn(turn); queue.resume();
+  await queue.controlReport('resume', { turn, id: 'A' }); await queue.drain();
+  assert.deepEqual(heard, ['one', 'two', 'two']);
+  await queue.controlReport('repeat', { turn, id: 'A' }); await queue.drain();
+  assert.deepEqual(heard, ['one', 'two', 'two', 'one', 'two']); await queue.close();
+});
+
+test('a previous planner cannot change report selection after a newer interruption', async () => {
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async () => {} });
+  await queue.offer(entry('A')); const old = queue.interrupt(); queue.acceptTurn(old);
+  const current = queue.interrupt(); queue.acceptTurn(current); queue.resume();
+  await assert.rejects(queue.controlReport('repeat', { id: 'A', turn: old }), /older|stale/i);
+  await queue.falseInterruption(old); assert.equal(queue.gatedTurn, current);
+  queue.finishTurn(current); await queue.close();
+});
+
+test('an interrupt during the completed final sentence gap never repeats that finished report', async () => {
+  const heard = [];
+  const queue = new api.VoiceSpeechQueue({ gapMs: 100, play: async audio => { heard.push(audio); } });
+  const a = queue.offer(entry('A')); await tick(); const turn = queue.interrupt();
+  await queue.falseInterruption(turn); await a; await queue.drain();
+  assert.deepEqual(heard, ['A']); assert.equal(queue.reportState()[0].state, 'delivered'); await queue.close();
+});
+
+test('late synthesis from a suspended report stays inaudible while next plays', async () => {
+  const late = defer(), heard = [];
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async audio => { heard.push(audio); } });
+  const a = queue.offer(entry('A', 'report', { prepare: () => late.promise })); await tick();
+  const b = queue.offer(entry('B')); const turn = queue.interrupt(); queue.acceptTurn(turn); queue.resume();
+  await queue.controlReport('next', { turn }); late.resolve('obsolete A'); await Promise.all([a, b]);
+  assert.deepEqual(heard, ['B']); await queue.close();
+});
+
+test('report memory expires old results and closing invalidates controls and retained audio', async () => {
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, historyLimit: 2, play: async () => {} });
+  for (const id of ['A', 'B', 'C']) await queue.offer(entry(id));
+  assert.deepEqual(queue.reportState().map(report => report.id), ['B', 'C']);
+  const turn = queue.interrupt(); queue.acceptTurn(turn);
+  await assert.rejects(queue.controlReport('repeat', { id: 'A', turn }), /not found|expired/i);
+  await queue.close(); assert.deepEqual(queue.reportState(), []);
+  await assert.rejects(queue.controlReport('next', { turn }), /ended|closed/i);
+});
+
+test('the next report sentence prepares during current playback instead of adding another synthesis gap', async () => {
+  const release = defer(), entered = defer(), prepared = [];
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async audio => { if (audio === 'one') { entered.resolve(); await release.promise; } } });
+  const report = queue.offer(entry('A', 'report', { parts: ['one', 'two'].map(text => ({ text, prepare: async () => { prepared.push(text); return text; } })) }));
+  try { await entered.promise; await tick(); assert.deepEqual([...prepared], ['one', 'two']); }
+  finally { release.resolve(); await report; await queue.close(); }
+});

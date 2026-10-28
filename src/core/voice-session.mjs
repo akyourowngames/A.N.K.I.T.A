@@ -14,11 +14,19 @@ const VOICE_REPLY_INSTRUCTIONS = `Voice conversation: answer in one or two short
 Skip greetings, repeated questions, lists, recaps and extra offers unless requested. Put any longer details in the requested file or artifact; briefly say where they are.
 For work, report the result and any essential failure or permission needed. Never hide a failure or claim an action succeeded without evidence.`;
 
-/** Keep the full report on screen; enforce brevity at the speech boundary too. */
-export function voiceReplyForSpeech(text, { maxChars = Infinity } = {}) {
+/** Keep complete sentence boundaries for both speech limits and resumable report clips. */
+export function voiceReplySentences(text, { maxChars = Infinity } = {}) {
   return stripForSpeech(text, maxChars).split(VOICE_SENTENCE_BOUNDARY)
     .map(sentence => sentence.trim()).filter(sentence => VOICE_SPEAKABLE_CHARACTER.test(sentence))
-    .slice(0, VOICE_REPLY_MAX_SENTENCES).join(' ');
+    .slice(0, VOICE_REPLY_MAX_SENTENCES);
+}
+export function voiceReplyForSpeech(text, options) { return voiceReplySentences(text, options).join(' '); }
+
+/** Cache one short clip per sentence in the queue; synthesis begins only when selected. */
+export function createVoiceReportSpeech({ jobId, label, text, synthesize, signal, turn, maxChars = Infinity }) {
+  const parts = voiceReplySentences(text, { maxChars }).map(text => ({ text, prepare: () => synthesize(text) }));
+  return { jobId, label, kind: 'report', text: parts.map(part => part.text).join(' '),
+    parts, prepare: parts[0]?.prepare || (async () => null), signal, turn, line: { text: parts.map(part => part.text).join(' ') } };
 }
 
 /** One runtime discovery per voice session; unplug/reopen failures force rediscovery. */
