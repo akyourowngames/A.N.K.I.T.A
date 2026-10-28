@@ -222,7 +222,7 @@ export class DesktopVoice {
           if (!line || !this.owns(session)) return;
           const audio = await abortable(this.synthesize(session, line), combined);
           await acknowledgement;
-          if (combined.aborted || !this.owns(session) || !beginPlayback()) return;
+          if (combined.aborted || !this.owns(session) || !beginPlayback(line)) return;
           this.publish(session, { update: line });
           await this.play(session, audio, combined);
         },

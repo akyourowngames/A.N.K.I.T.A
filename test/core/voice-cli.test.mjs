@@ -47,6 +47,7 @@ async function runCli(t, mode) {
     'TOOL_PROVIDER=kilo', 'TOOL_MODEL=unwanted-tool-model', `TOOL_API_BASE=${endpoint}`,
     `AUTO_APPROVE=${['narration', 'tail-cancel'].includes(mode) || BARGE_MODES.has(mode) ? 'on' : 'off'}`, `VOICE_BARGE_IN=${BARGE_MODES.has(mode) ? 'on' : 'off'}`, 'VOICE_HFP_ROUTING=off', 'MEMORY_CONSOLIDATION=off',
     'VOICE_SPEECH_GAP_MS=5',
+    'VOICE_JOB_SPEAK_MIN_INTERVAL_MS=1', // Fixture rate: exercise the result update without a real multi-second task.
     'EMBEDDINGS=off', 'PROJECT_AUTO_DETECT=off', 'PROJECT_WORK_CAPTURE=off', 'PROJECT_AUTO_MAINTENANCE=off',
     'SUBAGENTS_ENABLED=off',
   ].join('\n'));
@@ -104,10 +105,10 @@ async function runCli(t, mode) {
         return Buffer.from(text);
       },
       synthesizeEdge: async ({text}) => Buffer.from(text),
-      narrate: async () => "I'm writing your workspace note now.",
+      narrate: async event => event.phase === 'completed' ? 'Your workspace note is saved.' : "I'm writing your workspace note now.",
       playMp3: async (audio, {signal} = {}) => {
         console.log('PLAYED: ' + audio.toString());
-        const tail = ${JSON.stringify(mode)} === 'tail-cancel' && audio.toString().includes('writing your workspace note');
+        const tail = ${JSON.stringify(mode)} === 'tail-cancel' && audio.toString() === 'Your workspace note is saved.';
         if (tail) setTimeout(() => process.emit('SIGINT'), 150);
         await new Promise(resolve => {
           const timer = setTimeout(resolve, tail ? 250 : 20);
@@ -202,10 +203,11 @@ for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'output-li
     assert.match(result.stdout, /PLAYED: Workspace tayyar hai/);
     if (mode === 'tts-failure') assert.match(result.stdout, /using Edge/);
     if (mode === 'narration') {
-      const end = result.stdout.indexOf("ENDED: I'm writing your workspace note now.");
+      const end = result.stdout.indexOf('ENDED: Your workspace note is saved.');
       assert.ok(end > 0, result.stdout);
       assert.ok(end < result.stdout.indexOf('PLAYED: Workspace tayyar hai.'), result.stdout);
       assert.ok(!result.stdout.includes('PLAYED: Write · write_file'));
+      assert.ok(!result.stdout.includes("PLAYED: I'm writing your workspace note now."), 'the superseded writing update must be dropped');
     }
   } else if (mode === 'failure') {
     assert.match(task.error, /403/);

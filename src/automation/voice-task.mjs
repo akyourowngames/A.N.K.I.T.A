@@ -5,7 +5,8 @@ import { stripVTControlCharacters } from 'node:util';
 import { redactText } from '../core/redact.mjs';
 import { isToolFailure } from '../core/verify.mjs';
 import { VOICE_TASK_COMMAND } from '../core/commands.mjs';
-import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_PROGRESS_PLAYBACK_MAX_MS } from './voice-task-policy.mjs';
+import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_PROGRESS_PLAYBACK_MAX_MS, VOICE_PROGRESS_POLL_MS } from './voice-task-policy.mjs';
+import { voiceActionContext, voiceResultConfirmation } from './voice-progress.mjs';
 
 export { VOICE_TASK_COMMAND };
 const RECORD_SUFFIX = '.json';
@@ -78,9 +79,19 @@ export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_
   let controller = null;
   let lastStarted = -Infinity;
   let active = null;
+  let queued = null, queueTimer = null, finishing = false, previousUpdate = '';
+  const clearQueue = () => { queued = null; clearTimeout(queueTimer); queueTimer = null; };
+  const pump = () => {
+    if (!queued || pending || finishing) return;
+    const delay = Math.max(isPlaying() ? VOICE_PROGRESS_POLL_MS : 0, minIntervalMs - (now() - lastStarted));
+    if (delay) {
+      clearTimeout(queueTimer); queueTimer = setTimeout(() => { queueTimer = null; pump(); }, delay); queueTimer.unref?.(); return;
+    }
+    const item = queued; queued = null; speech.offer(item);
+  };
   const speech = {
     offer(text) {
-      if (!speak || pending || isPlaying() || now() - lastStarted < minIntervalMs) return false;
+      if (!speak || finishing || queued || pending || isPlaying() || now() - lastStarted < minIntervalMs) return false;
       lastStarted = now();
       controller = new AbortController();
       const state = { playing: false, controller };
@@ -88,13 +99,15 @@ export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_
       const { signal } = controller;
       let work;
       let playbackTimer;
-      const beginPlayback = () => {
-        if (signal.aborted) return false;
+      const beginPlayback = line => {
+        if (signal.aborted || (line && line === previousUpdate)) return false;
+        if (typeof line === 'string') previousUpdate = line;
         state.playing = true;
         playbackTimer = setTimeout(() => state.controller.abort(), maxPlaybackMs);
         return true;
       };
-      try { work = Promise.resolve(speak(text, { signal, beginPlayback })).catch(() => {}).then(async () => {
+      const event = text && typeof text === 'object' ? { ...text, previousUpdate } : text;
+      try { work = Promise.resolve(speak(event, { signal, beginPlayback })).catch(() => {}).then(async () => {
         if (state.playing && !signal.aborted && gapMs > 0) await new Promise(resolve => {
           const finish = () => { clearTimeout(timer); signal.removeEventListener('abort', finish); resolve(); };
           const timer = setTimeout(finish, gapMs);
@@ -112,12 +125,19 @@ export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_
         void work.then(finish);
       });
       const current = pending;
-      void current.finally(() => { clearTimeout(playbackTimer); if (pending === current) { pending = null; active = null; } });
+      void current.finally(() => { clearTimeout(playbackTimer); if (pending === current) { pending = null; active = null; pump(); } });
       return true;
     },
-    interrupt() { controller?.abort(); },
+    refresh(text) {
+      if (!speak || finishing) return false;
+      queued = text;
+      if (active && !active.playing) active.controller.abort();
+      pump(); return true;
+    },
+    interrupt() { clearQueue(); controller?.abort(); },
     async drain() { await pending; },
-    async finish({ cancelled = false } = {}) {
+    async finish({ cancelled = false, final = false } = {}) {
+      finishing = final; clearQueue();
       if (cancelled || !active?.playing) speech.interrupt();
       await speech.drain();
     },
@@ -189,10 +209,13 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   const task = new VoiceTask({ store, transcript, language, confidence, onUpdate, now, onApproval: () => speech.finish() });
   task.interruptSpeech = () => speech.interrupt();
   task.start();
+  const contexts = new Map(); // Per-job ephemeral labels; raw arguments/results never enter saved records.
+  const steps = () => task.record.steps.filter(step => !SILENT_TOOLS.has(step.tool)).map(step => ({ ...contexts.get(step.callId), state: step.state }));
+  const event = (kind, call, phase) => ({ kind, transcript, phase, action: call && { ...contexts.get(call.id) }, steps: steps() });
   const cancelSpeech = () => speech.interrupt();
   signal?.addEventListener('abort', cancelSpeech, { once: true });
   const waitTimer = speak ? setInterval(() => {
-    if (task.record.status === 'running') speech.offer({ kind: 'waiting', transcript, elapsedMs: now() - task.record.startedAt, steps: task.record.steps });
+    if (task.record.status === 'running') speech.offer({ ...event('waiting'), elapsedMs: now() - task.record.startedAt });
   }, waitUpdateMs) : null;
   waitTimer?.unref();
   let outcome;
@@ -205,10 +228,21 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   try {
     outcome = await run({
       onToolCall: call => observe(() => {
+        if (contexts.has(call.id) || FINAL_STATES.has(task.record.status)) return;
         task.onToolCall(call);
-        if (!SILENT_TOOLS.has(call.function?.name)) speech.offer({ kind: 'step', transcript, call });
+        contexts.set(call.id, voiceActionContext(call));
+        if (task.record.status === 'running' && !SILENT_TOOLS.has(call.function?.name)) speech.refresh({ ...event('step', call, 'started'), call: { id: call.id, function: { name: call.function?.name } } });
       }),
-      onToolResult: (call, result, verdict) => observe(() => task.onToolResult(call, result, verdict)),
+      onToolResult: (call, result, verdict) => observe(() => {
+        if (task.record.steps.find(item => item.callId === call.id)?.state !== 'running') return;
+        task.onToolResult(call, result, verdict);
+        const step = task.record.steps.find(item => item.callId === call.id);
+        const context = contexts.get(call.id);
+        if (!step || !context) return;
+        context.confirmation = voiceResultConfirmation(context, step.state, result, verdict);
+        const phase = context.confirmation === 'submitted' ? 'submitted' : step.state === 'failed' ? 'failed' : 'completed';
+        if (task.record.status === 'running' && !SILENT_TOOLS.has(context.tool)) speech.refresh(event('step_result', call, phase));
+      }),
     }, task);
     if (storageError) throw storageError;
     outcome ||= {};
@@ -216,7 +250,7 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
     outcome = { text: '', error: error.name === 'AbortError' ? TASK_ERRORS.cancelled : error.message };
   } finally {
     clearInterval(waitTimer);
-    await speech.finish({ cancelled: outcome?.error === TASK_ERRORS.cancelled || signal?.aborted || isCancelled() });
+    await speech.finish({ cancelled: outcome?.error === TASK_ERRORS.cancelled || signal?.aborted || isCancelled(), final: true });
     signal?.removeEventListener('abort', cancelSpeech);
   }
   if (signal?.aborted || isCancelled()) outcome = { ...outcome, error: TASK_ERRORS.cancelled };

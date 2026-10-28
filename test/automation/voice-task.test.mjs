@@ -117,7 +117,7 @@ test('speech drops overlapping and too-frequent progress, drains before the fina
 
 test('normal completion finishes a sentence already playing; cancellation stops it', async () => {
   let release; let signal;
-  const speech = api.createStepSpeech({ gapMs: 0, speak: (_line, options) => {
+  const speech = api.createStepSpeech({ minIntervalMs: 0, gapMs: 0, speak: (_line, options) => {
     signal = options.signal;
     options.beginPlayback();
     return new Promise(resolve => { release = resolve; });
@@ -129,7 +129,7 @@ test('normal completion finishes a sentence already playing; cancellation stops 
   assert.equal(signal.aborted, false);
   assert.equal(finished, false);
   release(); await settling;
-  speech.offer('Another sentence.');
+  assert.equal(speech.offer('Another sentence.'), true, 'a permission drain must allow later progress');
   speech.interrupt();
   assert.equal(signal.aborted, true);
   await speech.drain();
@@ -298,4 +298,54 @@ test('the core verification verdict can fail a step even without an error prefix
   } });
   assert.equal(task.status, 'failed');
   assert.equal(task.steps[0].state, 'failed');
+});
+
+test('new observed work replaces unplayed stale progress and carries confirmed prior steps', async t => {
+  const store = storeFor(t);
+  const observed = [];
+  let firstSignal;
+  const { task } = await api.runVoiceTask({ store, transcript: 'Write a poem and open it in Notepad', minIntervalMs: 0, gapMs: 0,
+    speak: async (event, options) => {
+      observed.push(event);
+      firstSignal ||= options.signal;
+      if (observed.length === 1) await new Promise(resolve => options.signal.addEventListener('abort', resolve, { once: true }));
+    }, run: async observer => {
+      const write = { id: 'write', function: { name: 'write_file', arguments: JSON.stringify({ path: 'private/poem.txt', content: 'PRIVATE POEM BODY' }) } };
+      observer.onToolCall(write);
+      await new Promise(resolve => setImmediate(resolve));
+      observer.onToolCall(write);
+      assert.equal(firstSignal.aborted, false, 'a duplicate hook is not a new work step');
+      observer.onToolResult(write, 'Created', { ok: true });
+      const open = { id: 'open', function: { name: 'run_command', arguments: JSON.stringify({ command: 'notepad "private/poem.txt"', background: true }) } };
+      observer.onToolCall(open);
+      assert.equal(firstSignal.aborted, true, 'the old writing line must not play after writing finished');
+      await new Promise(resolve => setImmediate(resolve));
+      const latest = observed.at(-1);
+      assert.equal(latest.action.program, 'notepad');
+      assert.equal(latest.steps[0].state, 'done');
+      assert.equal(latest.steps[0].target, 'poem.txt');
+      assert.equal(latest.steps[0].confirmation, 'confirmed');
+      assert.ok(!JSON.stringify(latest).includes('PRIVATE POEM BODY'));
+      observer.onToolResult(open, 'job 1: running', { ok: null });
+      return { text: 'Saved. Launch requested.' };
+    } });
+  assert.equal(task.status, 'done', task.error);
+});
+
+test('progress coalesces while a sentence plays and never delays the final report with queued updates', async t => {
+  let release;
+  const spoken = [];
+  const speech = api.createStepSpeech({ minIntervalMs: 0, gapMs: 0, speak: (line, { beginPlayback }) => {
+    spoken.push(line); beginPlayback(line);
+    return new Promise(resolve => { release = resolve; });
+  } });
+  t.after(() => speech.interrupt());
+  speech.offer('First sentence.');
+  speech.refresh('Obsolete next step.');
+  speech.refresh('Latest actual step.');
+  release(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(spoken, ['First sentence.', 'Latest actual step.']);
+  speech.refresh('Do not queue behind the final.');
+  const finish = speech.finish(); release(); await finish;
+  assert.deepEqual(spoken, ['First sentence.', 'Latest actual step.']);
 });

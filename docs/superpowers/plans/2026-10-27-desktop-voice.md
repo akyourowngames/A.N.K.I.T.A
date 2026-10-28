@@ -107,3 +107,20 @@
 - Existing desktop build passed in this worktree before product edits (Vite build 10.18 s).
 - PR #70 full repository suite is running; existing website tests have reported missing `/App.tsx` SSR input. Investigate baseline/source ownership separately; do not label the entire run green or silently repair unrelated website content.
 - Execution method: native in this session, with independent review. The owner approved the design and said to build it; no further execution-method approval is needed.
+
+### Owner follow-up: accurate progress and overlapping tasks (28 October)
+
+- [x] Reproduce late progress: a started write update can still be prepared after
+  the write finished and the next action began. Record the failing trace.
+- [x] Supply bounded action context and confirmed result states without file
+  contents, command arguments, raw results or secrets in the narrator request.
+- [x] Keep only the newest pending progress update, finish a sentence already
+  playing, and drop obsolete preparation before playback. Final reports retain priority.
+- [x] Add completion/context and delayed-preparation regression checks; run real
+  configured narration and file-path checks.
+- [x] Explain and exercise simultaneous completion/session ownership.
+  Session isolation passed. The owner explicitly requested parallel execution
+  for voice, superseding both offered serial policies; implement this separately
+  with isolated workers, ordered speech and resource-conflict coverage.
+- [ ] Re-run affected serial tests/build/UI, update evidence, and include the fixes
+  in draft PR #70 without merging or releasing.

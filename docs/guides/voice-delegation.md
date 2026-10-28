@@ -58,7 +58,7 @@ default-branch merge is part of this work. Starting voice is currently done in t
 app; the island continues that session and can retry it after an error.
 
 Verification record, 28 October: focused channel/desktop/settings/native-control
-checks passed **168/168**; the desktop build, browser main/island fixture and real
+checks passed **175/175**; the desktop build, browser main/island fixture and real
 Sarvam/Meta/file Electron check passed. The last full tracked-source run reported
 **1635 tests: 1633 pass, 1 fail, 1 skip**. Its only failure was Windows `EPERM`
 during the unchanged browser-observations fixture's temporary-folder cleanup;
@@ -66,6 +66,31 @@ both observations passed, and rerunning that same file passed **2/2**. This is
 not an all-suite-green claim. The pull request stays draft for the remaining
 physical acceptance checks. A minor polish gap remains: the collapsed island uses
 its ordinary status text; expand it to see the actual voice phase and caption.
+
+### Accurate work updates and overlapping tasks
+
+Work updates are generated, not a fixed script. The short initial acknowledgement
+is cached. Each generated update now receives safe action names, file/program
+basenames, and the observed starting/completed/failed/submitted states. File bodies,
+full paths, command arguments and raw results stay out of this extra model request.
+Saving a file and requesting an editor launch are different facts: a launch receipt
+does not prove the window opened. The model is explicitly told this distinction.
+
+Only the latest unplayed update is kept. If a step finishes while its speech is
+still being prepared, that preparation is cancelled. A sentence already playing
+finishes cleanly; permission and final reports take priority over queued updates.
+Very quick steps may have no spoken update rather than a late, incorrect one.
+Narration has its own small output allowance and a three-second deadline; a slow
+optional update is skipped without delaying the task or final report.
+
+There is one current voice speaker. Ending voice leaves that job's results in its
+original conversation; it cannot speak over a replacement session. A controlled
+same-tick completion check preserved both distinct task records and spoke only the
+current session's result. This is audio/session isolation, not a file lock:
+separate conversations can still change the same file or app. A queue-or-busy
+policy is being replaced by the owner's requested parallel voice execution,
+with separate workers and resource guards. Until that follow-up passes its own
+checks, no shared-file/app collision guarantee is claimed.
 
 ## Terminal voice
 

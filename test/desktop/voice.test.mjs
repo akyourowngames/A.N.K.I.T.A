@@ -187,6 +187,27 @@ test('main and island starting the same owner reuse one microphone; another owne
   assert.equal(h.inputs.length, 1);
 });
 
+test('simultaneous completion stays with each task and only the current session speaks', async t => {
+  const first = defer(), second = defer();
+  const h = harness(t, { run: () => h.calls.length === 1 ? first.promise : second.promise });
+  await h.voice.start({ threadId: 'owner' }); await h.say('First poem');
+  await until(() => h.calls.length === 1);
+  const firstId = h.voice.snapshot().task.id;
+  await h.voice.end();
+  await h.voice.start({ threadId: 'other' }); await h.say('Second poem');
+  await until(() => h.calls.length === 2);
+  const secondId = h.voice.snapshot().task.id;
+  first.resolve({ text: 'First poem saved.', error: null });
+  second.resolve({ text: 'Second poem saved.', error: null });
+  await until(() => h.played.includes('Second poem saved.'));
+  assert.ok(!h.played.includes('First poem saved.'), 'an ended session cannot speak over its replacement');
+  assert.notEqual(firstId, secondId);
+  assert.equal(h.voice.snapshot().threadId, 'other');
+  assert.equal(h.voice.snapshot().task.id, secondId);
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.directory, `${firstId}.json`))).summary, 'First poem saved.');
+  assert.equal(JSON.parse(fs.readFileSync(path.join(h.directory, `${secondId}.json`))).summary, 'Second poem saved.');
+});
+
 test('pause closes capture and resume opens exactly one replacement', async t => {
   const h = harness(t); await h.voice.start({ threadId: 'owner' });
   await until(() => h.voice.snapshot().phase === 'listening');

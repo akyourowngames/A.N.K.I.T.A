@@ -56,9 +56,14 @@ const rows = [];
 try {
   if (narrationOnly) {
     const narrationCases = [
-      { kind: 'step', transcript: 'Write a random poem and open it in Notepad.', call: { function: { name: 'write_file' } } },
-      { kind: 'waiting', transcript: 'Write a random poem and open it in Notepad.', elapsedMs: 12000, steps: [{ tool: 'write_file', state: 'running' }] },
-      { kind: 'step', transcript: 'Ek kavita likho aur Notepad mein kholo.', language: 'hi-IN', call: { function: { name: 'write_file' } } },
+      { kind: 'step', phase: 'started', transcript: 'Write a random poem and open it in Notepad.', call: { function: { name: 'write_file', arguments: JSON.stringify({ path: 'poem.txt' }) } } },
+      { kind: 'step', phase: 'started', transcript: 'Write a random poem and open it in Notepad.',
+        call: { function: { name: 'run_command', arguments: JSON.stringify({ command: 'notepad poem.txt', background: true }) } },
+        steps: [{ tool: 'write_file', target: 'poem.txt', state: 'done', confirmation: 'confirmed' }, { tool: 'run_command', program: 'notepad', state: 'running' }],
+        previousUpdate: 'I am saving your poem.' },
+      { kind: 'waiting', transcript: 'Write a random poem and open it in Notepad.', elapsedMs: 12000, steps: [{ tool: 'write_file', target: 'poem.txt', state: 'done', confirmation: 'confirmed' }, { tool: 'run_command', program: 'notepad', background: true, state: 'done', confirmation: 'submitted' }] },
+      { kind: 'step_result', phase: 'completed', transcript: 'Ek kavita likho aur Notepad mein kholo.', language: 'hi-IN',
+        action: { tool: 'write_file', target: 'kavita.txt' }, steps: [{ tool: 'write_file', target: 'kavita.txt', state: 'done', confirmation: 'confirmed' }] },
     ];
     for (const event of narrationCases) {
       const started = performance.now();

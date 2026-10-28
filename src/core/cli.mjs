@@ -1249,10 +1249,12 @@ export async function main({ voiceIO = {} } = {}) {
             speak: async (event, { signal, beginPlayback }) => {
               const line = await narrate(event, { signal });
               if (!line || signal.aborted) return;
-              term.line(c.dim(`  ${line}`));
               const audio = await synthesizeSpeech(line);
               await ackPlayback;
-              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled() && beginPlayback()) await playMp3(audio, { signal });
+              if (audio && !signal.aborted && activeVoiceTask?.record.status === 'running' && !agent.cancelled() && beginPlayback(line)) {
+                term.line(c.dim(`  ${line}`));
+                await playMp3(audio, { signal });
+              }
             },
             run: (observer, task) => {
               activeVoiceTask = task;

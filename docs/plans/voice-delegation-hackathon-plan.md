@@ -921,6 +921,45 @@ the collapsed island's ordinary status text; the expanded voice view is accurate
 The app starts a fresh voice session; the island continues or retries that session.
 PR #70 remains draft. No default-branch merge, tag or release performed.
 
+## 18h. Accurate progress and simultaneous completion (28 October)
+
+Owner report: the voice described writing/opening vaguely and could repeat an
+obsolete action. Reproduction failed three regressions: a write preparation was
+not aborted when the write finished, there was no latest-update coalescing, and
+the narrator had neither completed-file facts nor the launch executable context.
+
+The observer now supplies bounded, ephemeral file/program basenames and actual
+step states. Raw file contents, command arguments/results and full paths are not
+sent to narration or persisted as task metadata. A live command which yields a
+background job is only `submitted`, including an implicit foreground-to-background
+yield. The narrator distinguishes disk saves from app typing and launch requests
+from a visible app opening. It receives the previous actually played update.
+
+Newer steps/results replace unplayed preparation. Only one newest pending update
+survives while a sentence plays; approval/final reports drop that queue. Finished
+sentences retain their gap. The terminal prints an update only when playback
+actually begins. Fast steps can be silent rather than describe stale work.
+Optional narration uses a separate compact output budget and still fails silently
+at its three-second deadline rather than holding up a result.
+
+Evidence: three failing-before regressions became green; the focused voice/core/
+automation/desktop/provider/settings set passed **175/175** with no skips. A real
+Meta/Sarvam narration check first passed **4/4** English/Hinglish cases, including
+“Poem saved, now opening it in Notepad” and “Kavita file save ho gayi hai, Notepad
+mein kholna abhi baaki hai.” A repeated run skipped its final optional line at the
+three-second deadline; that is recorded as a timeout, not an all-pass result.
+
+A same-tick two-task completion regression preserved both task IDs/reports and
+allowed only the current session to speak; the ended session remained silent.
+Separate conversations still have no general shared-file/app lock. The owner was
+asked about overlap and explicitly requested parallel voice execution rather than
+either serial option. That supersedes the earlier concurrency deferral; build
+isolated workers, a single speaker and shared-resource guards as a separate
+follow-up. Until it passes, no concurrency/file-lock guarantee or physical
+microphone acceptance is claimed. Optional narration also encountered a skipped
+empty response in a compact-budget probe; keep enough allowance for mandatory
+reasoning and retain the deadline/skip behavior.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).
