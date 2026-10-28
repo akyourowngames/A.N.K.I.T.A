@@ -137,6 +137,9 @@ try {
   assert.ok(await main.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceCancel' && call.payload?.all === true)));
   await main.screenshot({ path: path.join(captures, 'voice-parallel-jobs.png') });
   receipt.assertions.push('separate parallel job rows, individual stop ID and explicit Stop all payload');
+  await patch(main, { jobs: Array.from({ length: 6 }, (_, index) => ({ ...task, id: `many-${index}`, label: `Request ${index + 1}` })) });
+  await main.getByRole('button', { name: 'Stop Request 6', exact: true }).scrollIntoViewIfNeeded();
+  assert.equal(await main.getByRole('button', { name: 'Stop Request 6', exact: true }).count(), 1, 'every active job stays reachable beyond the first rows');
   await patch(main, { jobs: [], task });
   await main.keyboard.press('Escape');
   await main.getByRole('button', { name: 'Start voice conversation' }).click();

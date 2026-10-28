@@ -80,8 +80,13 @@ export class VoiceJobs {
       onUpdate: record => { entry.record = record; this.emit(entry); },
       run: async (observer, task) => {
         entry.task = task;
-        const outcome = await this.run(entry, { observer, task, signal: entry.controller.signal, controlTool: this.controlTool({ ownerId, requesterId: id }) });
-        return entry.failure ? { ...outcome, error: entry.failure } : outcome;
+        try {
+          const outcome = await this.run(entry, { observer, task, signal: entry.controller.signal, controlTool: this.controlTool({ ownerId, requesterId: id }) });
+          return entry.failure ? { ...outcome, error: entry.failure } : outcome;
+        } catch (error) {
+          if (entry.failure) return { text: '', error: entry.failure };
+          throw error;
+        }
       },
     }).then(result => {
       entry.record = result.task; entry.finished = true; this.retainOrRelease(entry); this.emit(entry);

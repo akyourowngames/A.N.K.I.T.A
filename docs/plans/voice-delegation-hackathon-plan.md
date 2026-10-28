@@ -960,6 +960,62 @@ microphone acceptance is claimed. Optional narration also encountered a skipped
 empty response in a compact-budget probe; keep enough allowance for mandatory
 reasoning and retain the deadline/skip behavior.
 
+## 18i. Parallel voice execution (28 October)
+
+The owner's explicit parallel-voice instruction supersedes the earlier deferred
+concurrency and proposed serial queue/busy policy. New voice requests now run in
+fresh Agents with separate history, abort signals, captured workspaces and normal
+permissions. Typed/scheduled turns keep their existing execution policy. Private
+`voice_jobs` controls expose live same-owner status/results/dependencies and
+individual/all cancellation only to voice workers. Four ordinary workers by
+default (configurable 1–8) retain one reserved control-only turn at capacity.
+
+Canonical path leases protect participating voice read/modify/write sequences;
+disjoint native files overlap. Shared browser/native UI and opaque MCP interactions
+serialize, including screenshots. Opaque shell/patch writes hold the workspace
+conservatively. Cyclic waits fail clearly and release the affected worker. A live
+tracked shell child retains its leases after the report until confirmed closed or
+stopped. Detached/untracked external processes and unmodified typed/scheduled work
+are outside these guards; there is no OS-wide file lock or rollback promise.
+
+Desktop and terminal capture accept another utterance without awaiting its job.
+One shared speech queue gives reports priority and coalesces obsolete progress.
+Actual-start observations happen after resource access and permission; a requested
+action cannot be narrated as already executing while waiting. Full panel and island
+share bounded job rows, individual Stop and explicit Stop all. The approved pearl
+and state motion remain. IPC contract is 10; app version remains unchanged.
+
+Completed reports append passive atomic request/report pairs only when the owning
+typed conversation is idle, without an extra model call or mixed tool protocols.
+Ending audio keeps work; owner deletion/shutdown cancels owned workers. Terminal
+permissions temporarily pause capture and accept serialized typed answers. Clearing
+or loading a chat preserves older work in its saved original conversation.
+
+Evidence so far:
+
+- Task 2 worker/resource/host/permission set: **116/116** serial, no skips, including
+  an actual temporary file write and a real tracked shell child confirmed stopped.
+- Task 3 desktop set: **40/40** serial, no skips. Controlled same-session capture
+  proves B speaks before blocked A finishes. Original typed model/history stay
+  separate. Public snapshots strip private worker fields; invalid cancel IPC fails.
+- Task 4 terminal/core/channel/automation set: **126/126**, no skips. Real CLI
+  fixtures exercise overlap, live status and individual cancellation, approval and
+  interruption cases, End voice during work and clear-chat result ownership.
+- `verify-parallel-voice.mjs --env <local-env>` → `PARALLEL_VOICE_LIVE_OK`: **3 real
+  Meta/file jobs**, independent completion before deliberately held A is released,
+  an observed same-file wait and preserved poem, real Sarvam STT, **3 real TTS MP3
+  handoffs**, **peak players 1**. Generated input has explicit fixture filenames
+  added after transcription; no physical microphone/speaker was used.
+- Native desktop rerun → `DESKTOP_VOICE_NATIVE_OK`: **240-character kavita.txt**,
+  real Sarvam/Meta, **2 MP3 handoffs**, **13376 ms** including native checks, typed
+  model unchanged, keyboard End and **0 page errors**. Browser fixture covers new
+  individual/all job payloads as well as prior main/island motion/recovery checks.
+
+Final affected-suite/review results are recorded below when complete. The previous
+full-suite Windows cleanup failure and physical/headset/package gates in §18g
+remain visible. This is new 28 October hackathon work, built on the separately
+identifiable inherited baseline. Update the same draft PR #70; no merge/release.
+
 ## 19. Sources
 
 - Local PDF `meta-hackathon-voice-plan.pdf` (participant guide claims, schedule, deadlines).

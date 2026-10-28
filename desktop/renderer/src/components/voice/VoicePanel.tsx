@@ -20,6 +20,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
   const phase = error ? 'error' : voice.phase;
   const jobs = voice.jobs?.length ? voice.jobs : voice.task ? [voice.task] : [];
   const activeJobs = jobs.filter(job => ACTIVE_TASK.has(job.status) || job.resourcesHeld);
+  const visibleJobs = [...activeJobs, ...jobs.filter(job => !ACTIVE_TASK.has(job.status) && !job.resourcesHeld).slice(0, compact ? 1 : 2)];
   const working = activeJobs.length > 0;
   const issue = error || voice.error;
   useEffect(() => { if (!compact) end.current?.focus({ preventScroll: true }); }, [compact]);
@@ -41,7 +42,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     </div>
     {jobs.length > 0 && <div className="voice-jobs" aria-label="Voice jobs">
       <div className="voice-jobs-heading"><span>{activeJobs.length ? `${activeJobs.length} working` : 'Recent work'}</span>{working && <span>Keep talking · tasks run together</span>}</div>
-      {jobs.slice(0, compact ? 2 : 4).map(job => <div className="voice-job" key={job.id} data-status={job.status}>
+      {visibleJobs.map(job => <div className="voice-job" key={job.id} data-status={job.status}>
         <span className="voice-job-dot" /><div><span className="voice-job-name">{job.label || 'Voice request'}</span><small>{job.resourcesHeld ? 'Command still running' : JOB_STATE[job.status] || job.status}{job.waitingFor ? ` · ${job.waitingFor}` : ''}</small></div>
         {(ACTIVE_TASK.has(job.status) || job.resourcesHeld) && <button className="voice-job-stop" onClick={() => onCancel(job.id)} disabled={busy || job.status === 'cancelling'} aria-label={`Stop ${job.label || 'voice request'}`}><Icon name="stop" size={12} /></button>}
       </div>)}

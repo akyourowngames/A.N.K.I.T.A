@@ -9,8 +9,9 @@ floating companion. **Open conversation** returns to that session's owner.
 
 - **Pause microphone** stops recording; **Resume microphone** starts it again.
 - **End voice** stops microphone and speech. Already delegated work continues
-  in the original conversation, with its normal transcript and file receipts.
-- **Stop work** cancels the current delegated task.
+  in the original conversation, with its report and saved task steps.
+- Each job row has its own **Stop** button. **Stop all** cancels all voice jobs
+  in that conversation; ordinary typed and scheduled work keep their own controls.
 - Selecting another conversation ends voice. Existing permission prompts still
   require an answer and take priority over the island's voice view.
 
@@ -83,14 +84,44 @@ Very quick steps may have no spoken update rather than a late, incorrect one.
 Narration has its own small output allowance and a three-second deadline; a slow
 optional update is skipped without delaying the task or final report.
 
-There is one current voice speaker. Ending voice leaves that job's results in its
-original conversation; it cannot speak over a replacement session. A controlled
-same-tick completion check preserved both distinct task records and spoke only the
-current session's result. This is audio/session isolation, not a file lock:
-separate conversations can still change the same file or app. A queue-or-busy
-policy is being replaced by the owner's requested parallel voice execution,
-with separate workers and resource guards. Until that follow-up passes its own
-checks, no shared-file/app collision guarantee is claimed.
+Voice now accepts another request while earlier jobs work. Each request gets a
+fresh worker, its own cancellation and captured conversation/workspace. The same
+Meta planner can check live jobs, retrieve a report, wait for needed findings or
+stop a named job. Typed-chat concurrency and provider selection are unchanged.
+`VOICE_MAX_PARALLEL_JOBS` defaults to **4** (configurable **1–8**), with one extra
+status/stop-only turn when all ordinary workers are occupied.
+
+Independent files run together. Conflicting file paths wait for the job holding
+them, including read/modify/write sequences and known path aliases. Browser/native
+app actions and opaque connected interactions share exclusive access. Shell
+commands hold the workspace and app access conservatively; a tracked command still
+running after its report retains that access until it exits or is confirmed stopped.
+Long-lived shell-launched apps can therefore keep later app/file jobs waiting.
+These guards coordinate participating voice jobs, not arbitrary external programs
+or unchanged typed/scheduled jobs. They do not undo actions already completed.
+
+All reports use one speaker. Interrupted reports can wait their turn; progress
+cannot play after its step becomes obsolete. Ending voice keeps results in the
+original conversation and prevents its old session from speaking over a replacement.
+Completed results enter a typed conversation only when it is idle, as complete
+request/report pairs. Worker tool steps stay in their separate task records.
+Terminal permissions briefly pause capture and take typed yes/no answers, one
+prompt at a time. Ctrl+C stops active voice work; with none running, it ends voice.
+Clearing/loading a terminal chat keeps earlier work's results in its own saved
+`voice-<owner>` conversation rather than appending them to the new chat.
+
+Additional repeatable checks:
+
+```bash
+node scripts/verify-voice-parallel-primitives.mjs
+node scripts/verify-parallel-voice.mjs --env /path/to/your/local/.env
+```
+
+The live parallel check uses real Sarvam STT/TTS, Meta planning and file tools.
+An intentionally held first file proves an independent job finishes and a
+conflicting edit waits without losing the poem. It captures three actual MP3
+handoffs with peak one player. Generated input receives explicit fixture filenames
+after STT; this is not a physical microphone or perfect filename-recognition claim.
 
 ## Terminal voice
 

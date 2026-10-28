@@ -18,6 +18,13 @@ function contextFor(t, extra = {}) {
 }
 const agentFor = extra => new Agent({ client: {}, config: { tools: true }, memoryEnabled: false, skillsEnabled: false, autoProject: false, ...extra });
 
+test('an ordinary host with no optional tool context still offers its normal catalog', () => {
+  const agent = agentFor();
+  delete agent.toolContext;
+  assert.ok(agent.currentSpecs().some(spec => spec.function.name === 'read_file'));
+  assert.ok(!agent.currentSpecs().some(spec => spec.function.name === VOICE_JOBS_TOOL));
+});
+
 test('voice control specs are private to the supplied worker and available at ordinary-tool capacity', () => {
   const tool = privateTool();
   const ordinary = agentFor();

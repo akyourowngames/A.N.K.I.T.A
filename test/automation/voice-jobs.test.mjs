@@ -15,6 +15,21 @@ function poolFor(t, options) {
   return pool;
 }
 
+test('a cyclic resource wait retains its real cause when the worker aborts to release leases', async t => {
+  const pool = poolFor(t, { run: async entry => {
+    entry.cancelWorker = () => {};
+    await pool.acquire(entry.id, [{ kind: 'shared', key: 'one', mode: 'write' }]);
+    try {
+      entry.failure = 'Cyclic voice resource wait detected. Retry after another job finishes.';
+      throw new DOMException('Worker stopped for a resource cycle.', 'AbortError');
+    } catch (error) { throw error; }
+  } });
+  const job = await pool.submit({ ownerId: 'owner', transcript: 'conflicting edit' });
+  const result = await pool.waitFor(job.id, { ownerId: 'owner' });
+  assert.equal(result.task.status, 'failed');
+  assert.match(result.task.error, /Cyclic voice resource wait/);
+});
+
 test('second voice job finishes while the first stays blocked, with separate IDs and abort signals', async t => {
   const hold = defer(); const starts = [];
   const pool = poolFor(t, { run: async (job, { signal }) => {

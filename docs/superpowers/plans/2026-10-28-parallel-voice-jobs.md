@@ -49,33 +49,33 @@ control turn at capacity, real predecessor results, active-record retention, liv
 command lease retention and failing result observers. Actual fresh-Agent/tool-host
 binding and real process cleanup remain in this task before it is marked complete.
 
-- [ ] Fail tests proving two requests cannot share mutable history/client/abort state.
-- [ ] Add voice-only private job-control specs/execution and optional resource/start
+- [x] Fail tests proving two requests cannot share mutable history/client/abort state.
+- [x] Add voice-only private job-control specs/execution and optional resource/start
   hooks to the existing Agent/ToolHost; test unmodified typed path and permissions.
-- [ ] Implement bounded job manager, durable IDs, status/results/dependencies,
+- [x] Implement bounded job manager, durable IDs, status/results/dependencies,
   individual/all cancellation and process/resource cleanup. Protect active records.
-- [ ] Run worker/tool-host/core regressions and real file concurrency checks; commit.
+- [x] Run worker/tool-host/core regressions and real file concurrency checks; commit.
 
 ### Task 3: Desktop parallel voice and job UI
 
-- [ ] Fail a controlled capture test where B must finish while A stays blocked.
-- [ ] Adapt DesktopVoice/engine to isolated workers, one speaker and idle history
+- [x] Fail a controlled capture test where B must finish while A stays blocked.
+- [x] Adapt DesktopVoice/engine to isolated workers, one speaker and idle history
   delivery; keep continuous request acceptance while work is running.
-- [ ] Add bounded jobs and validated cancellation payloads; keep one audio owner and
+- [x] Add bounded jobs and validated cancellation payloads; keep one audio owner and
   reject stale callbacks after owner switch/delete/end/restart.
-- [ ] Add active-job rows and per-job/Stop all controls in panel/island with keyboard,
+- [x] Add active-job rows and per-job/Stop all controls in panel/island with keyboard,
   error/permission priority, reduced-motion/fallback and existing orb preserved.
-- [ ] Run desktop serial/build/browser/native fixtures; record exact evidence; commit.
+- [x] Run desktop serial/build/browser/native fixtures; record exact evidence; commit.
 
 ### Task 4: Terminal parity
 
-- [ ] Fail real CLI fixtures for overlapping jobs, short status/cancel turns,
+- [x] Fail real CLI fixtures for overlapping jobs, short status/cancel turns,
   queued nonoverlapping reports and unchanged typed provider/history afterward.
-- [ ] Reuse shared job/resource/speech primitives with fresh workers; dispatch
+- [x] Reuse shared job/resource/speech primitives with fresh workers; dispatch
   spoken work without awaiting it, preserve capture/barge-in and end/exit semantics.
-- [ ] Keep finished results in the original conversation using an idle mailbox;
+- [x] Keep finished results in the original conversation using an idle mailbox;
   Ctrl+C/cancel and process shutdown clean up their exact owned work.
-- [ ] Run CLI/core/channel/automation checks and live isolated file tasks; commit.
+- [x] Run CLI/core/channel/automation checks and live isolated file tasks; commit.
 
 ### Task 5: Evidence and draft PR
 

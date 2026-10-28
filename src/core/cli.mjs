@@ -546,6 +546,7 @@ export async function main({ voiceIO = {} } = {}) {
       if (detached) saveSession(sessionPath(`voice-${task.ownerId}`), { ...detached, messages, savedAt: new Date().toISOString() });
       else writeSession(AUTOSAVE_NAME);
       voiceMail.delete(task.id);
+      if (detached && !voiceJobs.list(task.ownerId).some(job => !['done', 'failed', 'cancelled'].includes(job.status))) detachedVoiceOwners.delete(task.ownerId);
     }
   }
 
