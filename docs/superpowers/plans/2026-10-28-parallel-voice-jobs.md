@@ -42,6 +42,13 @@ player in this check is simulated; no physical microphone or speaker was used.
 
 ### Task 2: Isolated voice workers and controls
 
+Manager checkpoint (not yet wired to Agent/audio/UI): seven job-lifecycle checks
+pass, and **64/64** combined job/resource/speech/task/narrator/desktop checks pass.
+They cover B finishing while A stays blocked, independent cancellation, a reserved
+control turn at capacity, real predecessor results, active-record retention, live
+command lease retention and failing result observers. Actual fresh-Agent/tool-host
+binding and real process cleanup remain in this task before it is marked complete.
+
 - [ ] Fail tests proving two requests cannot share mutable history/client/abort state.
 - [ ] Add voice-only private job-control specs/execution and optional resource/start
   hooks to the existing Agent/ToolHost; test unmodified typed path and permissions.

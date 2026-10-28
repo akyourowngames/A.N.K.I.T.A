@@ -6,3 +6,6 @@ export const VOICE_SPEECH_GAP_MS = 300; // Milliseconds of breathing room betwee
 export const VOICE_JOB_WAIT_UPDATE_MS = 10000; // Milliseconds: reassure during long work without flooding short turns.
 export const VOICE_PROGRESS_PLAYBACK_MAX_MS = 15000; // Milliseconds: bound a stuck player for a maximum twenty-word update.
 export const VOICE_PROGRESS_POLL_MS = 80; // Milliseconds: retry the newest update while an acknowledgement owns playback.
+export const VOICE_MAX_PARALLEL_JOBS = 4; // Workers: several independent spoken tasks without unbounded provider requests.
+export const VOICE_PARALLEL_JOBS_LIMIT = 8; // Workers: explicit configuration still has a finite per-process ceiling.
+export const VOICE_CONTROL_TURNS = 1; // Reserved worker: status/cancellation remains available when ordinary work is full.

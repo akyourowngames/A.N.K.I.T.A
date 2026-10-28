@@ -68,7 +68,10 @@ export class VoiceTaskStore {
       fs.rmSync(temporary, { force: true });
     }
     const older = this.list().filter(item => item.id !== record.id);
-    for (const item of older.slice(this.limit - 1)) fs.unlinkSync(path.join(this.directory, item.id + RECORD_SUFFIX));
+    const active = older.filter(item => !FINAL_STATES.has(item.status) || item.resourcesHeld);
+    const finished = older.filter(item => FINAL_STATES.has(item.status) && !item.resourcesHeld);
+    // Retention is a soft bound while jobs run: never erase another worker's live audit trail.
+    for (const item of finished.slice(Math.max(0, this.limit - 1 - active.length))) fs.unlinkSync(path.join(this.directory, item.id + RECORD_SUFFIX));
     return safe;
   }
 }
@@ -146,13 +149,14 @@ export function createStepSpeech({ speak, now = Date.now, minIntervalMs = VOICE_
 }
 
 class VoiceTask {
-  constructor({ store, transcript, language = '', confidence = null, onUpdate, now = Date.now, onApproval }) {
+  constructor({ store, transcript, language = '', confidence = null, onUpdate, now = Date.now, onApproval, taskId, ownerId }) {
     this.store = store;
     this.now = now;
     this.onUpdate = onUpdate;
     this.onApproval = onApproval;
-    this.record = { id: randomUUID(), transcript, language, confidence, status: 'queued', steps: [],
-      startedAt: now(), endedAt: null, summary: '', error: null };
+    if (taskId != null && !ID_PATTERN.test(taskId)) throw new Error('Invalid voice task identity.');
+    this.record = { id: taskId || randomUUID(), ...(ownerId ? { ownerId } : {}), transcript, language, confidence, status: 'queued', steps: [],
+      startedAt: now(), endedAt: null, summary: '', error: null, waitingFor: null };
     this.persist();
   }
 
@@ -164,6 +168,14 @@ class VoiceTask {
 
   start() { this.record.status = 'running'; this.persist(); }
 
+  resourceWait(message) {
+    if (FINAL_STATES.has(this.record.status)) return;
+    const waitingFor = message ? cleanLine(message) : null;
+    const status = this.record.status === 'waiting_for_approval' ? this.record.status : waitingFor ? 'waiting_for_resource' : 'running';
+    if (this.record.waitingFor === waitingFor && this.record.status === status) return;
+    this.record.waitingFor = waitingFor; this.record.status = status; this.persist();
+  }
+
   async approval(tool, ask) {
     if (FINAL_STATES.has(this.record.status)) return false;
     this.record.status = 'waiting_for_approval';
@@ -171,7 +183,7 @@ class VoiceTask {
     await this.onApproval?.();
     try { return await ask(tool); }
     finally {
-      if (!FINAL_STATES.has(this.record.status)) { this.record.status = 'running'; this.persist(); }
+      if (!FINAL_STATES.has(this.record.status)) { this.record.status = this.record.waitingFor ? 'waiting_for_resource' : 'running'; this.persist(); }
     }
   }
 
@@ -198,15 +210,16 @@ class VoiceTask {
     this.record.error = error;
     this.record.summary = outcome.text || '';
     this.record.endedAt = this.now();
+    this.record.waitingFor = null;
     for (const step of this.record.steps) if (step.state === 'running') step.state = cancelled ? 'cancelled' : 'failed';
     this.persist();
   }
 }
 
 /** One agent turn, with a durable observer. No invented JSON plan or second agent. */
-export async function runVoiceTask({ store, transcript, language, confidence, run, onUpdate, speak, minIntervalMs, gapMs, waitUpdateMs = VOICE_JOB_WAIT_UPDATE_MS, isPlaying, now = Date.now, onTrackingError, signal, isCancelled = () => false }) {
+export async function runVoiceTask({ store, transcript, language, confidence, run, onUpdate, speak, minIntervalMs, gapMs, waitUpdateMs = VOICE_JOB_WAIT_UPDATE_MS, isPlaying, now = Date.now, onTrackingError, signal, isCancelled = () => false, taskId, ownerId }) {
   const speech = createStepSpeech({ speak, minIntervalMs, gapMs, isPlaying, now });
-  const task = new VoiceTask({ store, transcript, language, confidence, onUpdate, now, onApproval: () => speech.finish() });
+  const task = new VoiceTask({ store, transcript, language, confidence, onUpdate, now, onApproval: () => speech.finish(), taskId, ownerId });
   task.interruptSpeech = () => speech.interrupt();
   task.start();
   const contexts = new Map(); // Per-job ephemeral labels; raw arguments/results never enter saved records.
@@ -215,7 +228,7 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
   const cancelSpeech = () => speech.interrupt();
   signal?.addEventListener('abort', cancelSpeech, { once: true });
   const waitTimer = speak ? setInterval(() => {
-    if (task.record.status === 'running') speech.offer({ ...event('waiting'), elapsedMs: now() - task.record.startedAt });
+    if (['running', 'waiting_for_resource'].includes(task.record.status)) speech.offer({ ...event('waiting'), waitingFor: task.record.waitingFor, elapsedMs: now() - task.record.startedAt });
   }, waitUpdateMs) : null;
   waitTimer?.unref();
   let outcome;
@@ -231,7 +244,13 @@ export async function runVoiceTask({ store, transcript, language, confidence, ru
         if (contexts.has(call.id) || FINAL_STATES.has(task.record.status)) return;
         task.onToolCall(call);
         contexts.set(call.id, voiceActionContext(call));
-        if (task.record.status === 'running' && !SILENT_TOOLS.has(call.function?.name)) speech.refresh({ ...event('step', call, 'started'), call: { id: call.id, function: { name: call.function?.name } } });
+        if (task.record.status === 'running' && !SILENT_TOOLS.has(call.function?.name)) speech.refresh({ ...event('step', call, 'requested'), call: { id: call.id, function: { name: call.function?.name } } });
+      }),
+      onToolStart: call => observe(() => {
+        const context = contexts.get(call.id);
+        if (!context || context.started || task.record.steps.find(item => item.callId === call.id)?.state !== 'running') return;
+        context.started = true;
+        if (task.record.status === 'running' && !SILENT_TOOLS.has(context.tool)) speech.refresh(event('step', call, 'started'));
       }),
       onToolResult: (call, result, verdict) => observe(() => {
         if (task.record.steps.find(item => item.callId === call.id)?.state !== 'running') return;

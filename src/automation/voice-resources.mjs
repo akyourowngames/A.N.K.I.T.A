@@ -123,4 +123,13 @@ export class VoiceResourceBroker {
     for (const request of removed) { request.signal?.removeEventListener('abort', request.abort); request.reject(abortError()); }
     this.pump();
   }
+
+  /** Hand finished-turn leases to its still-running command without an unlock gap. */
+  transfer(jobId, holderId, { exclude = [] } = {}) {
+    const held = this.held.get(jobId) || [];
+    const keep = resource => exclude.some(item => item.kind === resource.kind && item.key === resource.key);
+    const moving = held.filter(resource => !keep(resource));
+    this.held.set(jobId, held.filter(keep));
+    this.held.set(holderId, [...(this.held.get(holderId) || []), ...moving]);
+  }
 }

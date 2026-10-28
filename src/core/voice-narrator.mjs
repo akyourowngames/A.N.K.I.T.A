@@ -9,7 +9,8 @@ const NARRATION_MAX_STEPS = 3; // Recent observed steps: keep optional status re
 const NARRATION_MAX_TOKENS = 1024; // Output tokens including mandatory model reasoning; separate from large file generation.
 const NARRATION_PROMPT = `You are Ankita speaking directly to the person who requested work. Write one brief, natural spoken progress update in their language (Hinglish when they use Hinglish).
 Describe only the observed action/state and recent completed steps. The request is intent, not evidence of work done or the order of actions.
-Distinguish starting, completed, failed and still running. When a file write completed and a launch is starting, acknowledge the saved file before describing the launch.
+Distinguish requested, starting, completed, failed, submitted and still running. Requested means preparation, not execution: permission or a shared resource may still be pending. Never say an action is underway until its started observation.
+When a file write completed and a launch is starting, acknowledge the saved file before describing the launch. If waitingFor is present, explain that actual wait rather than pretending the blocked action is executing.
 A write_file saves directly to disk; it is not typing inside an app. A background run_command receipt only acknowledges submission: it does not prove an app is open or a process finished. Do not claim those effects without confirmation.
 Never narrate the entire request as if all of it is happening now. Do not repeat the previous update. If there is no useful supported change, output an empty response.
 For waiting updates, reassure them that work is continuing and you will report here when this request finishes; never invent a time estimate.
@@ -27,6 +28,7 @@ export function createVoiceNarrator({ client, model, secrets = [], timeoutMs = V
     const data = {
       kind: event.kind,
       phase: event.phase,
+      waitingFor: event.waitingFor && redactText(String(event.waitingFor), { secrets }).slice(0, NARRATION_MAX_CHARS),
       request: redactText(String(event.transcript || ''), { secrets }).slice(0, REQUEST_MAX_CHARS),
       action: fact(event.action || voiceActionContext(event.call)),
       elapsedSeconds: event.elapsedMs == null ? undefined : Math.floor(event.elapsedMs / 1000),
