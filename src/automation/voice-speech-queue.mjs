@@ -1,4 +1,4 @@
-import { VOICE_SPEECH_GAP_MS, VOICE_TASK_LIMIT } from './voice-task-policy.mjs';
+import { VOICE_SPEECH_GAP_MS, VOICE_TASK_LIMIT, VOICE_REPORT_ACTIONS, VOICE_REPORT_ERRORS } from './voice-task-policy.mjs';
 
 const MAX_SPEECH_PENDING = 24; // Clips: completed jobs plus a few interactive receipts, without an unbounded backlog.
 const PRIORITY = Object.freeze({ receipt: 4, reply: 3, report: 2, progress: 0 });
@@ -180,32 +180,33 @@ export class VoiceSpeechQueue {
     this.queue.push(entry); return true;
   }
   async controlReport(action, { id, turn } = {}) {
-    if (this.closed) throw new Error('This voice session has ended.');
-    if (turn !== this.turn) throw new Error('This speech control belongs to an older interruption.');
+    if (this.closed) throw new Error(VOICE_REPORT_ERRORS.ended);
+    if (turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
     await this.interruption?.stopped;
-    if (this.closed) throw new Error('This voice session has ended.');
-    if (turn !== this.turn) throw new Error('This speech control belongs to an older interruption.');
+    if (this.closed) throw new Error(VOICE_REPORT_ERRORS.ended);
+    if (turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
     const interrupted = this.interruption?.entry;
+    let available;
     let entry = id ? this.reports.get(id) : interrupted || [...this.reports.values()].reverse().find(item => item.state === 'suspended');
     if (id && !entry) throw new Error('Spoken report not found or expired in this session.');
-    if (action === 'next') {
+    if (action === VOICE_REPORT_ACTIONS.next) {
       if (interrupted?.state === 'suspended') interrupted.state = 'dismissed';
       entry = [...this.queue].sort((a, b) => a.order - b.order).find(item => item.kind === 'report');
       if (entry) entry.selected = true;
-    } else if (action === 'dismiss') {
+    } else if (action === VOICE_REPORT_ACTIONS.dismiss) {
       if (entry) { this.drop(item => item === entry); entry.state = 'dismissed'; }
-    } else if (action === 'resume' || action === 'repeat') {
+    } else if (action === VOICE_REPORT_ACTIONS.resume || action === VOICE_REPORT_ACTIONS.repeat) {
       entry ||= [...this.reports.values()].at(-1);
       if (!entry) throw new Error('No spoken report is available in this session.');
       if (this.active?.kind === 'report') {
         this.active.park = true; this.active.controller.abort(); this.stopOwned();
         await this.running;
-        if (this.closed || turn !== this.turn) throw new Error('This speech control belongs to an older interruption.');
+        if (this.closed || turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
       }
-      this.enqueueReport(entry, action === 'repeat');
+      available = this.enqueueReport(entry, action === VOICE_REPORT_ACTIONS.repeat);
     } else throw new Error('Unknown spoken report action.');
     this.releaseTurn(turn); this.pump();
-    return { action, id: entry?.jobId || null, available: Boolean(entry), reports: this.reportState() };
+    return { action, id: entry?.jobId || null, available: available ?? Boolean(entry), reports: this.reportState() };
   }
   resume() { if (!this.closed) { this.paused = false; this.pump(); } }
   settled() { if (!this.active && !this.queue.length) for (const resolve of this.waiters.splice(0)) resolve(); }

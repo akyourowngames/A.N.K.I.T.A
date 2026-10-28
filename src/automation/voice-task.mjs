@@ -8,13 +8,13 @@ import { VOICE_TASK_COMMAND } from '../core/commands.mjs';
 import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_PROGRESS_PLAYBACK_MAX_MS, VOICE_PROGRESS_POLL_MS, VOICE_JOBS_TOOL } from './voice-task-policy.mjs';
 import { voiceActionContext, voiceResultConfirmation } from './voice-progress.mjs';
 import { get } from '../../tools/index.mjs';
-import { VOICE_FINAL_STATES } from './voice-task-policy.mjs';
+import { VOICE_FINAL_STATES, VOICE_REPORTS_TOOL } from './voice-task-policy.mjs';
 
 export { VOICE_TASK_COMMAND };
 const RECORD_SUFFIX = '.json';
 const ID_PATTERN = /^[a-f\d-]{36}$/i; // UUIDs only: command arguments cannot escape the task directory.
 const FINAL_STATES = new Set(VOICE_FINAL_STATES);
-const SILENT_TOOLS = new Set(['recall', 'remember', 'project_memory', 'find_tools', 'write_todos', VOICE_JOBS_TOOL]); // Internal bookkeeping is never a spoken work update.
+const SILENT_TOOLS = new Set(['recall', 'remember', 'project_memory', 'find_tools', 'write_todos', VOICE_JOBS_TOOL, VOICE_REPORTS_TOOL]); // Internal bookkeeping is never a spoken work update.
 const TOOL_VERBS = new Map([
   ['read_file', 'Read'], ['list_dir', 'Read'], ['search_files', 'Read'], ['glob', 'Read'],
   ['write_file', 'Write'], ['edit_file', 'Write'], ['edit_lines', 'Write'], ['apply_patch', 'Write'],
