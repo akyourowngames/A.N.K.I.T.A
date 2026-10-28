@@ -37,7 +37,7 @@ import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
 import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
 import { describeCron } from "../automation/cron.mjs";
 import { pickModel, resolveProvider } from "./provider.mjs";
-import { createVoiceBrain, createAcknowledgements, createVoiceMicrophone, voiceReplyForSpeech } from './voice-session.mjs';
+import { createVoiceBrain, createAcknowledgements, createVoiceMicrophone, createVoiceReportSpeech, voiceReplyForSpeech } from './voice-session.mjs';
 import { captureVoiceContext, runVoiceWorker } from './voice-worker.mjs';
 import { VoiceJobs } from '../automation/voice-jobs.mjs';
 import { VoiceSpeechQueue } from '../automation/voice-speech-queue.mjs';
@@ -980,7 +980,8 @@ export async function main({ voiceIO = {} } = {}) {
   const CAPTURE_TICK_MS = 250; // Milliseconds: terminal meter refresh without excessive output.
   const captureTurn = async ({ handsFree = false, session } = {}) => {
     const wav = tmpVoiceFile('wav');
-    let input, reason = null, enterPending = false, finished;
+    let input, reason = null, enterPending = false, finished, speechTurn, usable = false;
+    if (session) session.captureSpeechTurn = undefined;
     const stopped = new Promise(resolve => { finished = resolve; });
     const capture = { stopped, pause() { reason = 'approval'; if (enterPending) term.cancelPending(); } };
     if (session) session.capture = capture;
@@ -1008,7 +1009,7 @@ export async function main({ voiceIO = {} } = {}) {
         if (reason !== null) return;
         if (session?.playingAt && (!config.voiceBargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
         const action = detector.feed(event);
-        if (action === 'speech') session?.speech.interrupt();
+        if (action === 'speech' && session && speechTurn === undefined) speechTurn = session.speech.interrupt();
         if (action === 'end') reason = 'silence';
       };
       const hint = handsFree ? 'pause to send' : 'Enter to send';
@@ -1029,8 +1030,17 @@ export async function main({ voiceIO = {} } = {}) {
       if (reason === 'cancel') return null;
       const ok = await input.stop(); input = null;
       if (!ok) { term.line(c.red('  recording failed (nothing captured).')); return ''; }
-      return await transcribeWav(wav);
+      const transcript = await transcribeWav(wav);
+      if (session && transcript?.trim()) {
+        speechTurn ??= session.speech.interrupt();
+        session.captureSpeechTurn = speechTurn; usable = true;
+      }
+      return transcript;
     } finally {
+      if (session && !usable && speechTurn !== undefined) {
+        if (reason === 'approval') session.pendingFalseTurn = speechTurn;
+        else if (reason !== 'cancel') await session.speech.falseInterruption(speechTurn);
+      }
       clearInterval(tick); clearInterval(poll); cancelHook = null;
       await input?.stop().catch(() => {});
       if (session?.capture === capture) session.capture = null;
@@ -1067,7 +1077,13 @@ export async function main({ voiceIO = {} } = {}) {
       } finally {
         entry.clearApproval?.(); delete entry.clearApproval;
         if (pendingVoiceApproval?.id === entry.id) pendingVoiceApproval = null;
-        if (audio) audio.approvals--;
+        if (audio) {
+          audio.approvals--;
+          if (!audio.approvals && audio.pendingFalseTurn !== undefined) {
+            const turn = audio.pendingFalseTurn; delete audio.pendingFalseTurn;
+            await audio.speech.falseInterruption(turn);
+          }
+        }
       }
     });
   };
@@ -1093,14 +1109,18 @@ export async function main({ voiceIO = {} } = {}) {
       onUpdate: record => {
         if (config.voiceVerbose || ['queued', 'waiting_for_resource', 'waiting_for_approval'].includes(record.status)) term.notify(c.dim(`  [voice task ${record.id}] ${record.status}${record.waitingFor ? ' · ' + record.waitingFor : ''}`));
       },
-      onComplete: task => {
+      onComplete: (task, result) => {
         voiceMail.set(task.id, task); flushVoiceMail();
         term.notify(config.voiceVerbose ? renderVoiceTask(task) : `[voice task ${task.id}] ${task.status} · ${task.label}\n${voiceTaskReport(task)}`);
-        const audio = voiceJobs.entries.get(task.id)?.context.audioSession;
-        const report = voiceReplyForSpeech(voiceTaskReport(task), { maxChars: config.voiceSpeakMaxChars });
-        if (audio && voiceAudio === audio && !audio.controller.signal.aborted && report) void audio.speech.offer({
-          jobId: task.id, kind: 'report', signal: audio.controller.signal,
-          prepare: () => synthesizeSpeech(report, task.language), line: { text: report } });
+        const context = voiceJobs.entries.get(task.id)?.context;
+        const audio = context?.audioSession;
+        if (audio && voiceAudio === audio && !audio.controller.signal.aborted) {
+          const report = createVoiceReportSpeech({ jobId: task.id, label: task.label, text: voiceTaskReport(task),
+            maxChars: config.voiceSpeakMaxChars, signal: audio.controller.signal, turn: context.speech?.turn,
+            synthesize: text => synthesizeSpeech(text, task.language) });
+          if (report && !(task.status === 'done' && result.outcome.speechHandled)) void audio.speech.offer(report);
+          audio.speech.finishTurn(context.speech?.turn);
+        }
       },
       onError: error => term.notify(c.red(`  voice job: ${error.message}`)),
     });
@@ -1129,14 +1149,16 @@ export async function main({ voiceIO = {} } = {}) {
         if (!clean) { session.speech.resume(); continue; }
         if (/^(exit|quit|end voice|goodbye|bye)[.!?]?$/i.test(clean)) { term.line(c.dim('  leaving voice mode.')); break; }
         term.line(`${c.magenta(config.username)} ${c.dim('›')} ${clean}`);
-        const language = speechLanguage;
+        const language = speechLanguage, turn = session.captureSpeechTurn;
+        session.speech.acceptTurn(turn);
         try {
-          const context = { ...captureVoiceContext(agent), audioSession: session };
+          const context = { ...captureVoiceContext(agent), audioSession: session,
+            speech: { queue: session.speech, turn, signal: session.controller.signal } };
           const record = await voiceJobs.submit({ ownerId: voiceOwner, transcript: clean, language, confidence: speechConfidence, context,
             speech: { minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: 0, waitUpdateMs: config.voiceJobWaitUpdateMs },
             speak: (event, { signal, beginPlayback }) => {
               const line = { text: '' };
-              return session.speech.offer({ jobId: event.taskId, kind: 'progress', line,
+              return session.speech.offer({ jobId: event.taskId, kind: 'progress', turn, line,
                 signal: AbortSignal.any([signal, session.controller.signal]),
                 prepare: async queueSignal => {
                   line.text = await narrate(event, { signal: queueSignal });
@@ -1148,8 +1170,8 @@ export async function main({ voiceIO = {} } = {}) {
             },
           });
           const ack = acks.next(language);
-          if (ack) { term.line(c.dim(`  ${ack.text}`)); void session.speech.offer({ jobId: record.id, kind: 'receipt', prepare: async () => ack.audio, signal: session.controller.signal }); }
-        } catch (error) { term.line(c.red(`  Voice request: ${error.message}`)); }
+          if (ack) { term.line(c.dim(`  ${ack.text}`)); void session.speech.offer({ jobId: record.id, kind: 'receipt', turn, prepare: async () => ack.audio, signal: session.controller.signal }); }
+        } catch (error) { session.speech.finishTurn(turn); term.line(c.red(`  Voice request: ${error.message}`)); }
         session.speech.resume();
       }
     } finally {

@@ -25,13 +25,13 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
     async runVoiceJob(entry, options) {
       entry.cancelWorker = () => { h.cancelled++; };
       options.observer.approval = (tool, ask) => options.task.approval(tool, ask);
-      return this.runVoiceTurn(entry.ownerId, entry.transcript, options.observer);
+      return this.runVoiceTurn(entry.ownerId, entry.transcript, options.observer, entry, options);
     },
     async deliverVoiceJob() {},
-    async runVoiceTurn(id, text, observer) {
+    async runVoiceTurn(id, text, observer, entry, options) {
       h.calls.push({ id, text }); this.turns.set(id, true);
       try {
-        if (run) return await run(observer);
+        if (run) return await run(observer, entry, options);
         const call = { id: 'write', function: { name: 'write_file', arguments: '{}' } };
         observer.onToolCall(call); observer.onToolResult(call, 'Created', { ok: true });
         return { text: 'Note ready. Saved it. Anything else?', error: null };
@@ -188,7 +188,9 @@ test('desktop checks player failures and retains a recoverable audio error', asy
 test('one desktop voice session drives real task observers and two-sentence playback', async t => {
   const h = harness(t);
   await h.voice.start({ threadId: 'owner' }); await h.say();
-  await until(() => h.played.includes('Note ready. Saved it.'));
+  await until(() => h.played.includes('Saved it.'));
+  assert.ok(h.played.includes('Note ready.'));
+  assert.ok(h.played.indexOf('Note ready.') < h.played.indexOf('Saved it.'));
   assert.equal(h.calls.length, 1);
   assert.equal(h.calls[0].id, 'owner');
   assert.equal(h.voice.snapshot().task.status, 'done');
@@ -272,4 +274,88 @@ test('missing credentials and unknown threads fail before any microphone opens',
   assert.equal(h.inputs.length, 0);
   h.config.sarvamApiKey = 'fixture-speech';
   await assert.rejects(h.voice.start({ threadId: 'missing' }), /conversation|teammate/i);
+});
+
+async function interruptSpeaking(h, text) {
+  await new Promise(resolve => setTimeout(resolve, 420)); // Beyond the shared echo guard, while the fixture player is held.
+  h.transcripts.push(text);
+  const input = h.inputs.at(-1);
+  input.options.onEvent({ type: 'silence_end', at: 1 });
+  input.options.onEvent({ type: 'silence_start', at: 2 });
+}
+
+test('genuine new desktop request suspends the old report instead of replaying it', async t => {
+  const contexts = [];
+  const h = harness(t, { barge: true, run: async (_observer, entry) => {
+    contexts.push(entry.context.speech);
+    return { text: contexts.length === 1 ? 'First result. More details.' : 'Second answer.' };
+  }, play: async (audio, signal) => {
+    if (audio.toString().startsWith('First result')) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  await h.voice.start({ threadId: 'owner' }); await h.say('First task');
+  await until(() => h.played.some(text => text.startsWith('First result')));
+  await interruptSpeaking(h, 'Another question');
+  await until(() => h.played.includes('Second answer.'));
+  assert.ok(contexts.every(context => context?.queue && Number.isInteger(context.turn)));
+  assert.equal(h.played.filter(text => text.startsWith('First result')).length, 1);
+  assert.ok(!h.played.includes('More details.'));
+  assert.equal(h.voice.current.speech.reportState().find(row => row.label === 'First task').state, 'suspended');
+  assert.equal(h.voice.snapshot().jobs.filter(job => job.status === 'done').length, 2);
+});
+
+test('blank desktop interruption resumes the unfinished sentence without repeating delivered sentences', async t => {
+  let transcriptions = 0, interrupted = false;
+  const h = harness(t, { barge: true, run: async () => ({ text: 'First result. More details.' }),
+    transcribe: async () => ({ text: ++transcriptions === 1 ? 'First task' : '' }),
+    play: async (audio, signal) => {
+      if (audio.toString() === 'More details.' && !interrupted) { interrupted = true; await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); }
+    } });
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.played.includes('More details.'));
+  await interruptSpeaking(h, '');
+  await until(() => h.played.filter(text => text === 'More details.').length === 2);
+  assert.equal(h.played.filter(text => text === 'First result.').length, 1);
+  assert.equal(h.calls.length, 1);
+});
+
+test('speech selection skips redundant desktop confirmation but mixed work and failures remain audible', async t => {
+  const outcomes = [{ text: 'Selection scheduled.', speechHandled: true },
+    { text: 'Saved mixed work.', speechHandled: false }, { text: 'Selection scheduled.', error: 'Control failed.', speechHandled: true }];
+  const h = harness(t, { run: async () => outcomes.shift() });
+  await h.voice.start({ threadId: 'owner' }); await h.say('Next result');
+  await until(() => h.voice.snapshot().task?.status === 'done');
+  await h.say('Save a note too'); await until(() => h.played.includes('Saved mixed work.'));
+  await h.say('Unavailable control'); await until(() => h.played.includes('Work did not finish.'));
+  assert.ok(!h.played.includes('Selection scheduled.'));
+  assert.ok(h.played.includes('Control failed.'));
+});
+
+test('older desktop completion cannot release a newer interruption hold', async t => {
+  const old = defer(), newer = defer();
+  const h = harness(t, { run: () => h.calls.length === 1 ? old.promise : newer.promise });
+  await h.voice.start({ threadId: 'owner' }); await h.say('Old work'); await until(() => h.calls.length === 1);
+  await h.say('New question'); await until(() => h.calls.length === 2);
+  old.resolve({ text: 'Old completed.' });
+  await until(() => h.voice.snapshot().jobs.some(job => job.summary === 'Old completed.'));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.ok(!h.played.includes('Old completed.'));
+  newer.resolve({ text: 'New answer.' });
+  await until(() => h.played.includes('Old completed.'));
+  assert.ok(h.played.indexOf('New answer.') < h.played.indexOf('Old completed.'));
+});
+
+test('manual desktop pause during a tentative interruption preserves the unfinished report', async t => {
+  let held = false;
+  const h = harness(t, { barge: true, run: async () => ({ text: 'First result. More details.' }), play: async (audio, signal) => {
+    if (audio.toString() === 'More details.' && !held) { held = true; await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })); }
+  } });
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.played.includes('More details.'));
+  await new Promise(resolve => setTimeout(resolve, 420));
+  h.inputs.at(-1).options.onEvent({ type: 'silence_end', at: 1 });
+  await h.voice.pause();
+  await h.voice.resume();
+  await until(() => h.played.filter(text => text === 'More details.').length === 2);
+  assert.equal(h.played.filter(text => text === 'First result.').length, 1);
+  assert.equal(h.calls.length, 1);
 });

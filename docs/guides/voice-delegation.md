@@ -155,6 +155,45 @@ the research save, then checks that read-back still finishes. This is controlled
 fault injection over real services, not a claim that Baseten emitted the injected
 blank reply. Neither version records the microphone or launches an editor.
 
+## Interrupting a spoken report
+
+Speaking stops the current audio immediately after the existing echo guard. Once
+transcription arrives, the same Meta planner uses the interrupted report, the
+sentences already delivered and the ready results to decide what you mean. There
+is no list of trigger phrases and no extra classifier request.
+
+- A new question or task leaves the old report suspended. It is not reread after
+  the new reply; its work and saved result remain available.
+- A noise-only interruption with no transcript resumes the unfinished sentence.
+  Completed sentences are not repeated. Audio has no word alignment, so the
+  interrupted sentence can restart.
+- Ask naturally to continue, repeat, skip the spoken result or hear the next ready
+  report. Skipping speech never cancels work. Only an explicit work cancellation
+  uses the separate job control.
+- Ambiguous words depend on context: “okay, then what?” can mean continue or move
+  on. No system can guarantee every interpretation; the planner can ask when the
+  intended choice is unclear. This build does not infer intent from loudness.
+- Pausing the microphone preserves the report. End voice closes audio and its
+  speech controls while delegated work continues in its original conversation.
+
+Terminal, app and island share the same report rules and one player. Cached short
+sentence clips track delivery, with at most one following sentence prepared ahead.
+A late older planner cannot change a newer interruption's speech selection.
+
+Repeatable cloud check:
+
+```bash
+node scripts/verify-voice-interruption.mjs --env /path/to/your/local/.env
+```
+
+On 28 October this passed six generated English/Hinglish requests through real
+Sarvam STT/TTS and Meta speech controls: next, resume, repeat, dismiss, a new question
+and ambiguous “okay, then what?”. The last chose resume in that fixture; this is
+an observed decision, not a universal rule. Output was captured sentence MP3
+handoffs with peak one player. Physical echo, real interruptions and a packaged
+app remain separate checks. With your headset, interrupt a report with a new
+question, then ask to continue the earlier report; also test a cough and mic pause.
+
 ## Terminal voice
 
 Ankita can listen and answer out loud in Hindi, Hinglish or English. Speech-to-text

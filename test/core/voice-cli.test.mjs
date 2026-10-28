@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 
 const CLI_URL = new URL('../../src/core/cli.mjs', import.meta.url).href;
 const CHILD_TIMEOUT_MS = 15000; // Test-only ceiling: no real microphone or cloud service is used.
-const BARGE_MODES = new Set(['latency', 'latency-mic-failure', 'latency-cancel']);
+const BARGE_MODES = new Set(['latency', 'latency-mic-failure', 'latency-cancel', 'report-interruption']);
 async function runCli(t, mode) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-cli-'));
   t.after(() => fs.rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
@@ -59,6 +59,10 @@ async function runCli(t, mode) {
       } else reply('First task stopped.');
       return;
     }
+    if (voice && mode === 'report-interruption') {
+      assert.ok(body.tools.some(tool => tool.function.name === 'voice_reports'));
+      response.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: body.messages.findLast(message => message.role === 'user')?.content === 'First report' ? 'First result. More detail.' : 'Second answer.' } }] })); return;
+    }
     const tool = voice && !body.messages.some(message => message.role === 'tool');
     if (voice && !tool && ['narration', 'tail-cancel'].includes(mode)) await new Promise(resolve => setTimeout(resolve, 100));
     if (voice && mode === 'parallel' && body.messages.at(-1)?.content === 'First slow note') await new Promise(resolve => setTimeout(resolve, 400));
@@ -89,7 +93,7 @@ async function runCli(t, mode) {
     import fs from 'node:fs';
     import { main } from ${JSON.stringify(CLI_URL)};
     let capture = 0;
-    let inputCount = 0;
+    let inputCount = 0; let latestInput;
     let discoveryCount = 0;
     const fetchOriginal = globalThis.fetch;
     globalThis.fetch = async (url, options) => {
@@ -117,12 +121,12 @@ async function runCli(t, mode) {
         const barge = ++inputCount === 2 && ${BARGE_MODES.has(mode)};
         if (barge) console.log('BARGE_OPEN');
         const failed = (barge && ${JSON.stringify(mode)} === 'latency-mic-failure') || (inputCount === 1 && ${JSON.stringify(mode)} === 'capture-refresh-failure');
-        return {
+        return latestInput = {
           ready: failed ? Promise.reject(new Error('fixture mic disconnected')) : Promise.resolve().then(() => console.log('CAPTURE_READY')),
           stop: async () => { if (barge) console.log('BARGE_STOPPED'); return true; },
         };
       },
-      transcribeAudio: async () => ({ text: ${JSON.stringify(mode)} === 'controls' ? ['Slow research', 'What is running?', 'Stop first task', 'exit'][capture++] : ${JSON.stringify(mode)} === 'parallel' ? ['First slow note', 'Second fast note', 'exit'][capture++] : capture++ ? 'exit' : 'Workspace kholo', languageCode: 'hi-IN', confidence: 0.99 }),
+      transcribeAudio: async () => ({ text: ${JSON.stringify(mode)} === 'report-interruption' ? ['First report', 'New question', 'exit'][capture++] : ${JSON.stringify(mode)} === 'controls' ? ['Slow research', 'What is running?', 'Stop first task', 'exit'][capture++] : ${JSON.stringify(mode)} === 'parallel' ? ['First slow note', 'Second fast note', 'exit'][capture++] : capture++ ? 'exit' : 'Workspace kholo', languageCode: 'hi-IN', confidence: 0.99 }),
       synthesizeSarvam: async ({text}) => {
         if (${BARGE_MODES.has(mode)} && text === 'Workspace tayyar hai.') {
           console.log('REPORT_SYNTH_START');
@@ -141,6 +145,10 @@ async function runCli(t, mode) {
       narrate: async event => event.phase === 'completed' ? 'Your workspace note is saved.' : "I'm writing your workspace note now.",
       playMp3: async (audio, {signal} = {}) => {
         console.log('PLAYED: ' + audio.toString());
+        if (${JSON.stringify(mode)} === 'report-interruption' && audio.toString().startsWith('First result')) {
+          setTimeout(() => { latestInput.onEvent?.({type:'silence_end', at:1}); latestInput.onEvent?.({type:'silence_start', at:2}); }, 420);
+          await new Promise(resolve => signal.addEventListener('abort', resolve, {once:true}));
+        }
         const tail = ${JSON.stringify(mode)} === 'tail-cancel' && audio.toString() === 'Your workspace note is saved.';
         if (tail) setTimeout(() => process.emit('SIGINT'), 150);
         await new Promise(resolve => {
@@ -164,8 +172,8 @@ async function runCli(t, mode) {
       if (captures === 1 || (['parallel', 'end-running', 'clear-running', 'controls', 'mixed-approval'].includes(mode) && captures === 2)) child.stdin.write('\n');
       else pendingCapture = true;
     }
-    const readyReports = (stdout.match(/ENDED: (?:Workspace tayyar hai|Work did not finish|Cancelled|First task is running|First task stopped)/g) || []).length;
-    const reportsNeeded = mode === 'controls' ? captures === 3 ? 1 : 3 : mode === 'parallel' ? 2 : 1;
+    const readyReports = (stdout.match(/ENDED: (?:File is ready|The model hit its output limit|Second answer|Workspace tayyar hai|Work did not finish|Cancelled|First task is running|First task stopped)/g) || []).length;
+    const reportsNeeded = ['verbose-reply', 'output-limit'].includes(mode) ? 2 : mode === 'controls' ? captures === 3 ? 1 : 3 : mode === 'parallel' ? 2 : 1;
     if (pendingCapture && readyReports >= reportsNeeded) { pendingCapture = false; child.stdin.write('\n'); }
     if (mode === 'mixed-approval') {
       const prompts = stdout.split('allow?').length - 1;
@@ -280,7 +288,8 @@ test('a failed microphone rediscovery stays inside voice mode and can recover on
 test('an overlong model reply is saved in full but spoken as only two sentences', async t => {
   const result = await runCli(t, 'verbose-reply');
   assert.equal(result.records[0].summary, 'Workspace tayyar hai. File is ready. Want anything else?');
-  assert.match(result.stdout, /PLAYED: Workspace tayyar hai\. File is ready\.\n/);
+  assert.match(result.stdout, /PLAYED: Workspace tayyar hai\.\n/);
+  assert.match(result.stdout, /PLAYED: File is ready\.\n/);
   assert.ok(!result.stdout.includes('PLAYED: Workspace tayyar hai. File is ready. Want'), result.stdout);
 });
 
@@ -318,7 +327,8 @@ for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'output-li
     assert.ok(!task.error.includes('no final report'));
     assert.equal(result.written, null);
     assert.equal(result.models.filter(model => model === 'voice-model').length, 1);
-    assert.match(result.stdout, /PLAYED: Work did not finish\. The model hit its output limit/);
+    assert.match(result.stdout, /PLAYED: Work did not finish\./);
+    assert.match(result.stdout, /PLAYED: The model hit its output limit/);
   } else {
     assert.match(result.stdout, /PLAYED: Cancelled/);
     assert.ok(!result.stdout.includes('PLAYED: Workspace tayyar hai.'));
@@ -328,4 +338,14 @@ for (const mode of ['success', 'narration', 'tts-failure', 'failure', 'output-li
       assert.equal(result.written, null);
     }
   }
+});
+
+test('real CLI barge-in leaves interrupted speech suspended and delivers the new answer', async t => {
+  const result = await runCli(t, 'report-interruption');
+  assert.equal(result.records.length, 2, result.stdout);
+  assert.ok(result.records.every(record => record.status === 'done'), result.stdout);
+  assert.equal(result.stdout.split('PLAYED: First result').length - 1, 1, result.stdout);
+  assert.ok(!result.stdout.includes('PLAYED: More detail.'), result.stdout);
+  assert.match(result.stdout, /PLAYED: Second answer\./);
+  assert.equal(result.models.at(-1), 'typed-model');
 });

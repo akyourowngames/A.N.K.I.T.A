@@ -1158,3 +1158,38 @@ no merge, app version bump, tag or release.
   `docs/plans/desktop-background-jobs-plan.md`.
 - Prior art: `ShashwatJain29/hermes-sarvam-voice` (Sarvam provider plugin),
   `DINAKAR-S/voice-agent-starter-kit` (LiveKit + Sarvam streaming).
+
+
+## 18k. Context-aware report interruption (28 October)
+
+New hackathon work: the shared single-player queue now parks an interrupted
+report rather than automatically replaying it. Sentence clips retain completed
+speech and prefetch only one sentence. The existing Meta worker receives bounded,
+untrusted delivery context and a private `voice_reports` control; it interprets
+intent without a trigger-phrase list or separate classifier. Older turn/session
+controls cannot act on a newer interruption. A substantive tool start releases
+other ready reports during long work; successful speech-only selections suppress
+redundant confirmation, while mixed work and failed controls still speak a result.
+
+Terminal and desktop/island pass the same per-utterance token. Blank transcription
+restores only the unfinished sentence; real requests keep old speech suspended.
+Manual mic pause and End remain separate from work cancellation. Original checkout
+speed edits and four untracked user documents remain untouched.
+
+Evidence so far:
+- Host checks: **46/46**, no failures/skips, real CLI child process + local HTTP,
+  desktop controlled recorder/player; genuine/false interruptions, mixed controls,
+  late completion, tentative interruption plus manual pause, permission and End.
+- `verify-voice-interruption.mjs`: **6/6 real Sarvam/Meta cases**, including Hinglish
+  next, English resume/repeat/dismiss, new question and contextual “okay, then what?”.
+  The ambiguous case chose resume; no claim that every use of that phrase should.
+  Completed first sentence played once except explicit repeat; peak one player.
+- Desktop build: **403 modules**, exit zero. Full suite, renderer/native checks
+  and fresh final review recorded below when complete.
+
+Rulings: sentence-boundary resume can replay the unfinished sentence because MP3
+has no word timing. Existing VAD plus contextual planning avoids a new provider,
+with no prosody/loudness-based intent claim. The speech hold releases when real
+external work starts so long tasks cannot silence other finished reports; those
+reports may speak while the external tool runs. Physical headset/Hinglish duplex
+and packaged installer acceptance remain unverified.
