@@ -106,7 +106,8 @@ export function reducer(state: State, action: Action): State {
     ...state,
     running: { ...state.running, [event.threadId]: false },
     unread: event.threadId === state.selectedId ? state.unread : { ...state.unread, [event.threadId]: true },
-    approvals: state.approvals.filter(item => item.threadId !== event.threadId),
+    approvals: state.approvals.filter(item => item.threadId !== event.threadId ||
+      (item.voiceTaskId ? item.voiceTaskId !== event.turnId : event.source === 'voice')),
   };
   if (event.type === 'skills-loaded') return {
     ...state, loadedSkills: { ...state.loadedSkills, [event.threadId]: [...new Set([...(state.loadedSkills[event.threadId] || []), ...event.names])] },

@@ -1,8 +1,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { DEFAULT_SUMMARY_NOTE } from "../channels/voice.mjs";
+import { DEFAULT_SUMMARY_NOTE, DEFAULT_SARVAM_STT_MODEL, DEFAULT_SARVAM_STT_MODE, DEFAULT_SARVAM_TTS_MODEL, DEFAULT_SARVAM_SPEAKER_HI, DEFAULT_SARVAM_SPEAKER_EN, DEFAULT_SARVAM_TTS_LANGUAGE, parseKeyterms } from "../channels/voice.mjs";
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
+import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
+import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS } from './provider.mjs';
+import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT } from '../automation/voice-task-policy.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -95,10 +98,28 @@ const DEFAULTS = {
   watchAlertLlm: true,
   watchAlertPrompt: "",
   briefingPrompt: "",
+  heartbeatDailyLimit: HEARTBEAT_DAILY_LIMIT,
+  heartbeatCooldownMinutes: HEARTBEAT_COOLDOWN_MINUTES,
   groqApiKey: "",
+  sarvamApiKey: "",
+  basetenApiKey: "",
+  // Voice turns may use a different provider/model for latency; empty = same.
+  voiceProvider: "",
+  voiceModel: "",
+  voiceApiBase: "",
+  // "auto" keeps Groq (existing behaviour) unless Sarvam is the only key set.
+  sttProvider: "auto",
   sttModel: "whisper-large-v3-turbo",
+  sarvamSttModel: DEFAULT_SARVAM_STT_MODEL,
+  sarvamSttMode: DEFAULT_SARVAM_STT_MODE,
+  sarvamKeyterms: [],
   ttsProvider: "edge",
   ttsModel: "canopylabs/orpheus-v1-english",
+  sarvamTtsModel: DEFAULT_SARVAM_TTS_MODEL,
+  sarvamSpeakerHi: DEFAULT_SARVAM_SPEAKER_HI,
+  sarvamSpeakerEn: DEFAULT_SARVAM_SPEAKER_EN,
+  // Used only when neither the reply text nor the transcript settles a language.
+  sarvamTtsLanguage: DEFAULT_SARVAM_TTS_LANGUAGE,
   ttsVoice: "",
   ttsRate: "+0%",
   speak: false,
@@ -359,13 +380,60 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     projectTodoSyncMax: Math.min(20, posInt(pick("PROJECT_TODO_SYNC_MAX"), 5)),
     projectInlineMinChars: Math.min(100000, posInt(pick("PROJECT_INLINE_MIN_CHARS"), 400)),
     briefingPrompt: pick("BRIEFING_PROMPT") || "",
+    heartbeatDailyLimit: Math.min(24, Math.max(1, posInt(pick("HEARTBEAT_DAILY_LIMIT"), DEFAULTS.heartbeatDailyLimit))),
+    heartbeatCooldownMinutes: (() => {
+      const n = Number(pick("HEARTBEAT_COOLDOWN_MINUTES") ?? DEFAULTS.heartbeatCooldownMinutes);
+      return Number.isFinite(n) && n >= 0 ? Math.min(1440, Math.floor(n)) : DEFAULTS.heartbeatCooldownMinutes;
+    })(),
     groqApiKey: pick("GROQ_API_KEY") || DEFAULTS.groqApiKey,
+    sarvamApiKey: pick("SARVAM_API_KEY") || DEFAULTS.sarvamApiKey,
+    basetenApiKey: pick("BASETEN_API_KEY") || DEFAULTS.basetenApiKey,
+    basetenBaseUrl: pick("BASETEN_BASE_URL") || BASETEN_BASE_URL,
+    basetenModel: pick("BASETEN_MODEL") || BASETEN_DEFAULT_MODEL,
+    basetenMaxTokens: Math.max(BASETEN_MIN_TOKENS, posInt(pick("BASETEN_MAX_TOKENS"), BASETEN_DEFAULT_TOKENS)),
+    basetenReasoningEffort: (() => {
+      const value = String(pick("BASETEN_REASONING_EFFORT") || '').trim().toLowerCase();
+      return BASETEN_REASONING_LEVELS.includes(value) ? value : BASETEN_REASONING_EFFORT;
+    })(),
+    // A named provider preset for voice-only turns (see VOICE_PROVIDER).
+    voiceProvider: (pick("VOICE_PROVIDER") || DEFAULTS.voiceProvider).trim().toLowerCase(),
+    voiceModel: pick("VOICE_MODEL") || DEFAULTS.voiceModel,
+    voiceApiBase: pick("VOICE_API_BASE") || DEFAULTS.voiceApiBase,
+    voiceContextWindow: posInt(pick('VOICE_CONTEXT_WINDOW'), 0), // Tokens; zero uses the selected provider's window.
+    voiceTaskLimit: posInt(pick('VOICE_TASK_LIMIT'), VOICE_TASK_LIMIT),
+    voiceMaxParallelJobs: clampInt(pick('VOICE_MAX_PARALLEL_JOBS'), 1, VOICE_PARALLEL_JOBS_LIMIT, VOICE_MAX_PARALLEL_JOBS), // Independent voice workers, plus one status/stop-only turn at capacity.
+    voiceJobSpeakMinIntervalMs: posInt(pick('VOICE_JOB_SPEAK_MIN_INTERVAL_MS'), VOICE_JOB_SPEAK_MIN_INTERVAL_MS),
+    voiceJobWaitUpdateMs: posInt(pick('VOICE_JOB_WAIT_UPDATE_MS'), VOICE_JOB_WAIT_UPDATE_MS),
+    voiceSpeechGapMs: posInt(pick('VOICE_SPEECH_GAP_MS'), VOICE_SPEECH_GAP_MS),
+    voiceVerbose: onOff(pick('VOICE_VERBOSE'), false), // Quiet spoken interaction; detailed records remain under /task.
+    sttProvider: (() => {
+      const v = String(pick("STT_PROVIDER") || DEFAULTS.sttProvider).toLowerCase();
+      return ["auto", "groq", "sarvam"].includes(v) ? v : DEFAULTS.sttProvider;
+    })(),
     sttModel: pick("STT_MODEL") || DEFAULTS.sttModel,
+    sarvamSttModel: pick("SARVAM_STT_MODEL") || DEFAULTS.sarvamSttModel,
+    // `translit` keeps Hinglish in Latin script; `transcribe`/`verbatim` are the
+    // other documented modes, so anything unknown falls back to the default.
+    sarvamSttMode: (() => {
+      const v = String(pick("SARVAM_STT_MODE") || DEFAULTS.sarvamSttMode).toLowerCase();
+      return ["translit", "transcribe", "verbatim", "codemix"].includes(v) ? v : DEFAULTS.sarvamSttMode;
+    })(),
+    // Bias recognition toward the assistant's own name unless the user
+    // overrides the list; names are the words recognisers mangle most.
+    sarvamKeyterms: parseKeyterms(pick("SARVAM_KEYTERMS") ?? (pick("AGENT_NAME") || DEFAULTS.agentName)),
     ttsProvider: (() => {
       const v = String(pick("TTS_PROVIDER") || DEFAULTS.ttsProvider).toLowerCase();
-      return ["auto", "groq", "edge"].includes(v) ? v : DEFAULTS.ttsProvider;
+      return ["auto", "groq", "edge", "sarvam"].includes(v) ? v : DEFAULTS.ttsProvider;
     })(),
     ttsModel: pick("TTS_MODEL") || DEFAULTS.ttsModel,
+    sarvamTtsModel: pick("SARVAM_TTS_MODEL") || DEFAULTS.sarvamTtsModel,
+    sarvamSpeakerHi: pick("SARVAM_TTS_SPEAKER_HI") || DEFAULTS.sarvamSpeakerHi,
+    sarvamSpeakerEn: pick("SARVAM_TTS_SPEAKER_EN") || DEFAULTS.sarvamSpeakerEn,
+    // A BCP-47-ish tag like hi-IN / en-IN; anything malformed falls back.
+    sarvamTtsLanguage: (() => {
+      const v = String(pick("SARVAM_TTS_LANGUAGE") || DEFAULTS.sarvamTtsLanguage).trim();
+      return /^[a-z]{2}-[A-Z]{2}$/.test(v) ? v : DEFAULTS.sarvamTtsLanguage;
+    })(),
     ttsVoice: pick("TTS_VOICE") || DEFAULTS.ttsVoice,
     ttsRate: (() => {
       const v = String(pick("TTS_RATE") || DEFAULTS.ttsRate).trim();

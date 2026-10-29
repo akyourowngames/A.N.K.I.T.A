@@ -6,17 +6,21 @@ import { TeammateAvatar } from './TeammateAvatar';
 import { nextRunLabel } from '../lib/jobs';
 import { CHATGPT_BROWSER_PROVIDER, CHATGPT_BROWSER_LABEL, CHATGPT_CURRENT_MODEL_LABEL } from '../../../shared/chatgpt-browser.mjs';
 import { ChatGptConnection } from './ChatGptConnection';
+import { PhonePairingSettings } from './PhonePairingSettings';
 import { StatusPill } from './StatusPill';
 import { cleanErrorMessage } from '../../../shared/error-notices.mjs';
+import { VoiceSettings } from './voice/VoiceSettings';
 
-export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'background' | 'privacy' | 'appearance' | 'about';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about' | 'voice';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
   { id: 'providers', label: 'Providers', icon: 'key' },
+  { id: 'voice', label: 'Voice', icon: 'mic' },
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
+  { id: 'phone', label: 'Phone', icon: 'phone' },
   { id: 'background', label: 'Background jobs', icon: 'clock' },
   { id: 'privacy', label: 'Privacy', icon: 'shield' },
   { id: 'appearance', label: 'Appearance', icon: 'palette' },
@@ -256,6 +260,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
       <main className="settings-main">
         <div className="settings-top"><span>Settings / {tabs.find(item => item.id === tab)?.label}</span><button type="button" className="icon-button" onClick={onClose} aria-label="Close settings"><Icon name="close" size={17} /></button></div>
         <div className="settings-scroll" key={tab}>
+          {tab === 'voice' && <VoiceSettings preferences={preferences} onSaved={onSaved} />}
           {tab === 'model' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="cube" size={20} /></span><h1 id="settings-title">Model</h1><p>Choose the default model for new conversations.</p></div>
             <section className="settings-panel settings-model-choice"><div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="cube" size={19} /></span><div><h2>Conversation model</h2><p>Your starting point for new teammates.</p></div><span className="settings-value-tag">{providers.find(item => item.id === preferences.provider)?.name || preferences.provider}</span></div><label className="settings-label" htmlFor="settings-model">Default model</label>
@@ -391,6 +396,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               <button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save profile'}</button>
             </div>
           </div>}
+          {tab === 'phone' && <PhonePairingSettings />}
           {tab === 'background' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="clock" size={20} /></span><h1 id="settings-title">Background jobs</h1><p>The routine work, handled by your teammates.</p></div>
             <div className="settings-job-overview" aria-label="Scheduled task status"><div><strong>{jobs.length}</strong><span>Scheduled</span></div><div><strong>{activeJobs}</strong><span>Enabled</span></div><div><strong>{runningJobs}</strong><span>Running</span></div></div>

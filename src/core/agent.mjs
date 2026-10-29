@@ -9,6 +9,7 @@ import { createTurnAudit, noteToolUse, noteFileEffects, finishTurnAudit } from '
 import { PROJECT_WORK_GUIDANCE, UNTRACKED_REPO_GUIDANCE } from '../memory/project-guidance.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from '../memory/memory-context.mjs';
+import { runtimeVoiceSpecs, runtimeVoiceTool } from './runtime-tools.mjs';
 import { warmRecall } from '../../tools/personal/recall.mjs';
 import { specs, coreSpecs, specsFor, get, isReadOnly, coreNames, names as toolNames, categoryOfTool, CATEGORIES } from "../../tools/index.mjs";
 import { createSubagentRuntime } from './subagents/runtime.mjs';
@@ -21,7 +22,7 @@ import { messageCost, trimMessages } from "./history.mjs";
 import { TOOL_RESULT_MODE } from '../integrations/chatgpt-browser/protocol.mjs';
 import { compactBrowserHistory } from './browser-context.mjs';
 import { focusAllows, TOOL_FOCUS_GUIDANCE, BROWSER_DISCOVERY_GUIDANCE } from './tool-focus.mjs';
-import { providerError, responseError } from './provider-errors.mjs';
+import { providerError, responseError, assertCompleteGeneration, emptyResponseError } from './provider-errors.mjs';
 import { loadSkills, skillPromptLines, activeAutomaticSkills } from './skills.mjs';
 import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 import { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } from '../../tools/browser/screenshots.mjs';
@@ -29,7 +30,7 @@ import { managedMcpSummaries, isBrowserMcpTool } from '../integrations/browser-r
 import { parseToolName } from '../integrations/mcp-manager.mjs';
 import { attachMcpImages, MAX_MCP_IMAGES_PER_TURN, messagesForModel } from '../integrations/mcp-images.mjs';
 import { COMPUTER_MCP_ID, COMPUTER_DIRECT_CONFIG, COMPUTER_GUIDANCE, COMPUTER_READ_TOOLS, COMPUTER_TOOLS, computerObservationTargets, formatComputerTargets } from '../integrations/computer-use.mjs';
-import { BACKGROUND_JOB_PROMPT, BACKGROUND_BROWSER_PROMPT, DEFAULT_JOB_ALLOW, JOB_EXECUTION_COMPLETE, SCHEDULE_TASK_GUIDANCE } from '../automation/job-policy.mjs';
+import { BACKGROUND_JOB_PROMPT, BACKGROUND_BROWSER_PROMPT, DEFAULT_JOB_ALLOW, JOB_EXECUTION_COMPLETE, SCHEDULE_TASK_GUIDANCE, backgroundScheduleSpec as jobScheduleSpec } from '../automation/job-policy.mjs';
 
 const foregroundBrowserSpec = specs.find(spec => spec.function.name === 'browser');
 const backgroundBrowserSpec = { ...foregroundBrowserSpec, function: { ...foregroundBrowserSpec.function,
@@ -38,6 +39,8 @@ const backgroundBrowserSpec = { ...foregroundBrowserSpec, function: { ...foregro
     mode: { ...foregroundBrowserSpec.function.parameters.properties.mode, enum: [DEFAULT_JOB_ALLOW.mode], description: 'This job uses its own isolated Chromium profile; omit mode or use isolated.' },
   } },
 } }; // Shared immutable variant keeps job schemas accurate without changing foreground backends.
+const foregroundScheduleSpec = specs.find(spec => spec.function.name === 'schedule');
+const backgroundScheduleSpec = foregroundScheduleSpec ? jobScheduleSpec(foregroundScheduleSpec) : null; // Same tool, only list and needs_input advertised to a job.
 
 // Consecutive tool rounds allowed for one user request before the runtime stops
 // asking and has the model answer with what it has. This is a control-flow
@@ -680,8 +683,13 @@ export class Agent {
     }
     core = core.filter(spec => focusAllows(this.state, spec.function?.name));
     optional = optional.map(group => ({ ...group, specs: group.specs.filter(spec => focusAllows(this.state, spec.function?.name)) })).filter(group => group.specs.length);
+    // Supplied only by the voice host. Ordinary agents keep their existing catalogue.
+    core = [...core, ...runtimeVoiceSpecs(this.toolContext).filter(spec =>
+      (!this.allowedTools || this.allowedTools.has(spec.function.name)) &&
+      (runtimeVoiceTool(this.toolContext, spec.function.name)?.alwaysAvailable === true || focusAllows(this.state, spec.function.name)))];
     if (this.config?.backgroundJob) {
-      const jobSpec = spec => spec.function.name === 'browser' ? backgroundBrowserSpec : spec;
+      const jobSpec = spec => spec.function.name === 'browser' ? backgroundBrowserSpec
+        : spec.function.name === 'schedule' && backgroundScheduleSpec ? backgroundScheduleSpec : spec;
       core = core.map(jobSpec); optional = optional.map(group => ({ ...group, specs: group.specs.map(jobSpec) }));
     }
     return { core, optional };
@@ -833,6 +841,15 @@ export class Agent {
           onDelta: attempt === 0 ? text => { emitted += text; options.onDelta?.(text); } : undefined,
           onReasoning: attempt === 0 ? options.onReasoning : undefined,
         });
+        if (this.config.retryEmptyResponse && !result.content?.trim() && !result.toolCalls?.length) {
+          if (this.cancelled()) throw this.abort.signal.reason;
+          if (this.emptyResponseRetried) throw emptyResponseError();
+          this.emptyResponseRetried = true;
+          // No proposal has entered history or execution yet. Retry this decision
+          // with the same tool receipts; completed actions cannot be replayed here.
+          attempt--;
+          continue;
+        }
         if (attempt) {
           if (result.content.startsWith(emitted)) options.onDelta?.(result.content.slice(emitted.length));
           else {
@@ -855,6 +872,7 @@ export class Agent {
 
     const request = (cli, mdl, retries) => {
       const body = {
+        ...cli.requestDefaults,
         model: mdl,
         messages: messagesForModel(withMemoryContext(this.config.browserHistoryCompaction === true ? compactBrowserHistory(this.messages, {
           evidence: this.config.browserEvidenceRetention === true ? this.browserEvidence?.items || [] : [], notice: this.browserEvidence?.notice,
@@ -867,6 +885,7 @@ export class Agent {
       // Only cap the output when the user asked for it; otherwise let the
       // model/provider decide the reply length.
       if (this.config.maxTokensExplicit) body.max_tokens = this.config.maxTokens;
+      if (cli.minMaxTokens) body.max_tokens = Math.max(cli.minMaxTokens, body.max_tokens || cli.minMaxTokens);
       if (this.config.temperature != null) body.temperature = this.config.temperature;
       if (useTools) {
         body.tools = this.currentSpecs();
@@ -925,10 +944,11 @@ export class Agent {
     if (ctype.includes("application/json")) {
       const data = await res.json();
       if (data.error) throw providerError(data);
+      this.recordUsage(data.usage, onUsage);
+      assertCompleteGeneration(data.choices?.[0]?.finish_reason);
       const msg = data.choices?.[0]?.message || {};
       if (msg.content) onDelta?.(msg.content);
       if (msg.reasoning_content || msg.reasoning_text) onReasoning?.(msg.reasoning_content || msg.reasoning_text);
-      this.recordUsage(data.usage, onUsage);
       return { content: msg.content || "", toolCalls: msg.tool_calls || [], model: served };
     }
 
@@ -939,11 +959,17 @@ export class Agent {
     const acc = [];
     let finished = false;
     let doneMarker = false;
+    let finishReason = null;
 
     const consume = (json) => {
       if (json.error) throw providerError(json);
       this.recordUsage(json.usage, onUsage);
-      if (json.choices?.[0]?.finish_reason) finished = true;
+      if (json.choices?.[0]?.finish_reason) {
+        // Usage may arrive in a separate frame after this one. Drain it before
+        // rejecting a capped proposal; it still must never reach tool execution.
+        finishReason ||= json.choices[0].finish_reason;
+        finished = true;
+      }
       const delta = json.choices?.[0]?.delta;
       if (!delta) return;
       if (delta.content) {
@@ -999,10 +1025,12 @@ export class Agent {
       error.code = 'STREAM_INCOMPLETE'; throw error;
     }
     } catch (error) {
+      assertCompleteGeneration(finishReason);
       if (!signal.aborted && error.name !== 'SyntaxError') error.code ||= 'STREAM_DISCONNECTED';
       throw error;
     } finally { void reader.cancel().catch(() => {}); reader.releaseLock(); }
 
+    assertCompleteGeneration(finishReason);
     return { content, toolCalls: acc.filter(Boolean), model: served };
   }
 
@@ -1143,6 +1171,7 @@ export class Agent {
     this.requestId = randomUUID();
     this.requestStarted = Date.now();
     this.totalToolCalls = 0;
+    this.emptyResponseRetried = false; // One empty-decision retry across this request, enabled only by the voice worker.
     this.requestMetrics = [];
     this.state.toolFocusTransitions = [];
     this.terminationReason = null;
@@ -1437,7 +1466,7 @@ export class Agent {
         const verdict = verdictFor(call?.function?.name, args || {}, result, this.mcp);
         const footer = verificationFooter(verdict);
         try {
-          onToolResult?.(call, result);
+          onToolResult?.(call, result, verdict);
         } catch {}
         traceAgent({ event: 'tool_result', ...metadata, duration_ms: Date.now() - started, success: verdict?.ok === false ? false : !isToolFailure(result), verified: verdict?.ok ?? null, error: verdict?.ok === false || isToolFailure(result) ? 'tool_error' : undefined }, this.config);
         try {

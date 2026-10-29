@@ -31,7 +31,13 @@ import { SecureStore } from './secure-store.mjs';
 import { CredentialRequests } from './credential-requests.mjs';
 import { BrowserCredentials } from './browser-credentials.mjs';
 import { CREDENTIAL_STORE_FILENAME } from '../../src/integrations/browser-credentials.mjs';
-import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider } from './settings.mjs';
+import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS } from './settings.mjs';
+import { DesktopVoice } from './voice.mjs';
+import { withVoiceBrain } from '../../src/core/voice-session.mjs';
+import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
+import { voiceTaskReport } from '../../src/automation/voice-task.mjs';
+import { VOICE_TASK_DIRECTORY } from '../../src/automation/voice-task-policy.mjs';
+import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
 import { TelegramBot } from '../../src/channels/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
@@ -302,6 +308,7 @@ export class DesktopEngine {
     // (approvals included) without the emit path calling back into itself.
     this._emit = emit;
     this.eventSequence = 0; // Monotonic event count; a startup snapshot must not replay already captured deltas.
+    this.eventListeners = new Set(); // In-process observers (the phone bridge) that do not need IPC.
     this.islandState = { threads: {} };
     this.emit = (event) => {
       if (['error', 'scheduler-error', 'scheduler-stopped'].includes(event.type) && this.secretHistory) {
@@ -315,6 +322,7 @@ export class DesktopEngine {
       }
       this.islandState = reduceIslandState(this.islandState, event);
       try { this._emit(event); } catch {}
+      for (const listener of this.eventListeners) { try { listener(event); } catch {} }
       try { this.channels?.handleEngineEvent(event); } catch {}
     };
     this.agents = new Map();
@@ -322,7 +330,8 @@ export class DesktopEngine {
     this.pendingFileEdits = new Map();
     this.turns = new Map();
     this.turnIds = new Map();
-    this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }));
+    this.approvals = new ApprovalRegistry(event => this.emit({ type: 'approval-request', ...event }),
+      requestId => this.emit({ type: 'approval-resolved', requestId }));
     this.secureStore = new SecureStore({ file: credentialFile, safeStorage });
     this.secretHistory = new SecretHistory(this.secureStore);
     // Grant metadata is not secret, so it lives in its own file; the token goes
@@ -535,6 +544,7 @@ export class DesktopEngine {
 
   async saveDesktopSettings(patch) {
     const next = this.desktopSettings.preview(patch);
+    const voiceSetupChanged = VOICE_SETTINGS_KEYS.some(key => Object.hasOwn(patch, key));
     if (Object.hasOwn(patch, 'provider') && patch.provider !== this.provider?.name && !Object.hasOwn(patch, 'model')) next.model = '';
     const nextConfig = applyDesktopSettings(this.baseConfig, next);
     const active = this.provider?.name || 'copilot';
@@ -543,6 +553,7 @@ export class DesktopEngine {
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
     const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
+    if ((voiceSetupChanged || reconnect || tune || Object.hasOwn(patch, 'model')) && this._voice?.snapshot().active) throw new Error('End voice before changing its setup or provider.');
     if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
     if (reconnect) {
       const session = await this.connectProvider(nextConfig);
@@ -587,6 +598,7 @@ export class DesktopEngine {
       this.config.composioApiKey = nextConfig.composioApiKey;
       void this.connectTools();
     }
+    for (const key of VOICE_SETTINGS_KEYS) if (Object.hasOwn(patch, key)) this.config[key] = nextConfig[key];
     const payload = this.settingsPayload();
     this.secretHistory.enabled = this.desktopSettings.data.secretScrubbing !== false;
     this.emit({ type: 'settings-updated', ...payload });
@@ -927,10 +939,12 @@ export class DesktopEngine {
     try { const result = await work; completed = true; return result; }
     finally {
       this.turns.delete(id);
+      this.flushVoiceDeliveries(id);
       if (completed && this.routineDeliveries.size) void this.flushRoutineDeliveries(id).catch(error => this.emit({ type: 'scheduler-error', message: error.message }));
     }
   }
   async flushRoutineDeliveries(id) {
+    this.flushVoiceDeliveries(id);
     for (const receipt of this.routineDeliveries.values()) if (receipt.threadId === id) await this.deliverRoutine(receipt);
     await this.scheduler?.retryDeliveries();
   }
@@ -960,7 +974,7 @@ export class DesktopEngine {
     const history = hydrateIslandState({ threads });
     const state = { threads: Object.fromEntries(teammates.map(teammate => [teammate.id,
       this.islandState.threads[teammate.id] || history.threads[teammate.id]])) };
-    return { teammates, threads, state, sequence: this.eventSequence };
+    return { teammates, threads, state, voice: this._voice?.snapshot() || emptyVoiceState(), sequence: this.eventSequence };
   }
 
   loadThread(id) {
@@ -1017,7 +1031,10 @@ export class DesktopEngine {
       skillsEnabled: true,
       disabledSkills: this.desktopSettings.data.disabledSkills || [],
       journal: turn => recordTurn(turn, { timeZone: config.timeZone, transform: this.secretHistory.clean }),
-      confirm: (name, detail, metadata) => this.approvals.request(id, name, detail, metadata),
+      confirm: (name, detail, metadata) => {
+        const ask = () => this.approvals.request(id, name, detail, metadata);
+        return this.voiceObservers?.get(id)?.approval?.(name, ask) ?? ask();
+      },
       // Child prompts, results and summaries reach the renderer and the channel
       // bridge, so scrub them exactly like parent output before emitting.
       onSubagentEvent: event => this.emit(this.secretHistory.clean({ ...event, threadId: id, turnId: this.turnIds?.get(id) || null })),
@@ -1079,7 +1096,7 @@ export class DesktopEngine {
     this.emit({ type: 'projects-changed' });
   }
 
-  async send(id, text, attachments = null, { surface = 'desktop' } = {}) {
+  async send(id, text, attachments = null, { surface = 'desktop', voiceBrain, voiceObserver } = {}) {
     const prompt = String(text || '').trim();
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
     if (this.config?.provider === CHATGPT_BROWSER_PROVIDER && this.chatgptBrowser?.kind === CHATGPT_BROWSER_PROVIDER) return this.sendBrowser(id, prompt, attachments, { surface });
@@ -1091,9 +1108,10 @@ export class DesktopEngine {
     // Cap attachments against this teammate's window, not a fixed number.
     const files = attachmentPayload(attachments, { contextWindow: agent.contextWindow || this.config.contextWindow });
     if (!prompt && !files.length) throw new Error('Write a message or attach a file first');
+    if (voiceObserver) { this.voiceObservers ||= new Map(); this.voiceObservers.set(id, voiceObserver); }
     const turnId = randomUUID();
     this.turnIds.set(id, turnId);
-    this.emit({ type: 'turn-start', threadId: id, turnId, model: agent.model, text: this.secretHistory.clean(prompt), attachments: files.map(file => ({ name: file.name, image: Boolean(file.dataUrl) })) });
+    this.emit({ type: 'turn-start', threadId: id, turnId, model: voiceBrain?.model || agent.model, text: this.secretHistory.clean(prompt), attachments: files.map(file => ({ name: file.name, image: Boolean(file.dataUrl) })) });
     let currentMessageId = null;
     const callbacks = {
       onMessageStart: () => { this.browserManager.reportPhase('thinking', id); currentMessageId = randomUUID(); this.emit({ type: 'message-start', threadId: id, messageId: currentMessageId }); },
@@ -1104,13 +1122,15 @@ export class DesktopEngine {
       onUsage: usage => this.emit({ type: 'usage', threadId: id, ...usage }),
       onSkillsLoaded: names => this.emit({ type: 'skills-loaded', threadId: id, turnId, names }),
       onToolCall: call => {
+        voiceObserver?.onToolCall?.(call);
         const name = call.function?.name || 'tool';
         let args = {};
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
         this.pendingFileEdits.set(`${id}:${call.id}`, captureToolFiles(name, args, agent.cwd));
         this.emit({ type: 'tool-call', threadId: id, callId: call.id, name, args: this.secretHistory.clean(displayArgs(name, args)) });
       },
-      onToolResult: (call, result) => {
+      onToolResult: (call, result, verdict) => {
+        voiceObserver?.onToolResult?.(call, result, verdict);
         const pendingKey = `${id}:${call.id}`;
         const pending = this.pendingFileEdits.get(pendingKey) || [];
         this.pendingFileEdits.delete(pendingKey);
@@ -1138,7 +1158,8 @@ export class DesktopEngine {
       const notice = await this.secretHistory.prepare(prompt);
       if (notice.stored.length) this.emit({ type: 'secret-notice', message: `Saved securely: ${notice.stored.join(', ')}.` });
       else if (notice.redacted && !this.secretNoticeSeen && this.secretHistory.enabled) { this.secretNoticeSeen = true; this.emit({ type: 'secret-notice', message: 'Secrets in this conversation are removed from saved history.' }); }
-      return agent.send(prompt, { ...callbacks, attachments: files });
+      const run = () => agent.send(prompt, { ...callbacks, attachments: files });
+      return voiceObserver ? withVoiceBrain(agent, voiceBrain, run) : run();
     }).then(reply => {
       this.browserManager.reportPhase('finished', id);
       this.teammates.touch(id, this.secretHistory.clean(reply || prompt));
@@ -1152,6 +1173,7 @@ export class DesktopEngine {
       // The island style flag must not leak into later turns or the saved
       // session on this thread: scrub it before persisting.
       agent.islandTurn = false;
+      this.voiceObservers?.delete(id);
       try { agent.refreshPrompt(); } catch { /* next turn rebuilds it anyway */ }
       saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages, todos: agent.state?.todos || [], projectId: agent.projectId, journaled: agent.journalComplete }, { transform: this.secretHistory.clean });
       this.turns.delete(id);
@@ -1171,6 +1193,91 @@ export class DesktopEngine {
   }
 
   waitForTurn(id) { return this.turns.get(id) || Promise.resolve(); }
+
+  voice() {
+    return this._voice ||= new DesktopVoice({ engine: this, getConfig: () => this.config, emit: event => this.emit(this.secretHistory.clean(event)),
+      directory: path.join(path.dirname(this.teammates.file), VOICE_TASK_DIRECTORY) });
+  }
+  voiceStatus() { return this.voice().status(); }
+  captureVoiceContext(id) {
+    const parent = this.agentFor(id);
+    return captureVoiceContext(parent, { messages: this._savedThread(id).messages,
+      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile } });
+  }
+  async runVoiceJob(entry, { jobs, brain, ...options }) {
+    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
+    const pending = new Set();
+    const files = new Map();
+    const denyOwn = () => { for (const id of pending) this.approvals.respond(id, 'no'); pending.clear(); };
+    options.signal.addEventListener('abort', denyOwn, { once: true });
+    try {
+      return await runVoiceWorker(entry, options, { AgentClass: this.AgentClass, brain,
+        acquire: (...args) => jobs.acquire(...args), autoApprove: () => (this.agents.get(entry.ownerId)?.autoApprove ?? this.config.autoApprove) === true,
+        confirm: async (name, detail, _entry, signal) => {
+          if (signal.aborted) return false;
+          let requestId;
+          try { return await this.approvals.request(entry.ownerId, name, detail, { voiceTaskId: entry.id,
+            onRegistered: id => { requestId = id; pending.add(id); if (signal.aborted) this.approvals.respond(id, 'no'); } }); }
+          finally { pending.delete(requestId); }
+        },
+        toolContext: { beforeComputerAction: (record, opts) => this.computerUse.preparePointer(record, opts),
+          onToolStart: (call, ctx) => files.set(call.id, captureToolFiles(call.name, call.arguments, ctx.cwd)) },
+        callbacks: { onToolResult: (call, result) => {
+          const pendingFiles = files.get(call.id) || []; files.delete(call.id);
+          if (!/^(Error\b|Not run:|The user denied|Action cancelled)/i.test(String(result || ''))) {
+            const changes = completedFileDiffs(pendingFiles);
+            if (changes.length) {
+              if (!this.reviewChanges.has(entry.ownerId)) this.reviewChanges.set(entry.ownerId, new Map());
+              for (const change of changes) this.reviewChanges.get(entry.ownerId).set(change.path, change);
+            }
+          }
+          if (WORKSPACE_EFFECT_TOOLS.includes(call.function?.name)) this.emit({ type: 'workspace-changed', threadId: entry.ownerId, open: GENERATED_ARTIFACT_TOOLS.includes(call.function?.name) });
+        } },
+      });
+    } finally { options.signal.removeEventListener('abort', denyOwn); denyOwn(); }
+  }
+  async deliverVoiceJob(task) {
+    if (!this.teammates.find(task.ownerId)) return false;
+    this.voiceDeliveries ||= new Map();
+    this.voiceDeliveries.set(task.id, task);
+    return this.flushVoiceDeliveries(task.ownerId);
+  }
+  flushVoiceDeliveries(id) {
+    if (this.turns.has(id) || !this.teammates.find(id)) return false;
+    const agent = this.agents.get(id) || this.agentFor(id);
+    for (const task of this.voiceDeliveries?.values() || []) {
+      if (task.ownerId !== id) continue;
+      const content = voiceTaskReport(task), turnId = task.id, messageId = randomUUID();
+      const text = this.secretHistory.clean(task.transcript);
+      // Passive atomic pair: no model request and no interleaved worker tool-call history.
+      agent.messages.push({ role: 'user', content: text }, { role: 'assistant', content: this.secretHistory.clean(content) });
+      saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: agent.model, messages: agent.messages,
+        todos: agent.state?.todos || [], projectId: agent.projectId }, { transform: this.secretHistory.clean });
+      this.voiceDeliveries.delete(task.id);
+      this.emit({ type: 'turn-start', threadId: id, turnId, model: task.model || agent.model, text, source: 'voice' });
+      this.emit({ type: 'message-start', threadId: id, messageId });
+      this.emit({ type: 'assistant-delta', threadId: id, messageId, text: this.secretHistory.clean(content) });
+      this.emit({ type: 'message-end', threadId: id, messageId });
+      this.emit({ type: 'turn-end', threadId: id, turnId, source: 'voice' });
+      this.teammates.touch(id, this.secretHistory.clean(content));
+    }
+    this.emit({ type: 'teammates-changed' });
+    return true;
+  }
+  async runVoiceTurn(id, text, observer, brain) {
+    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
+    const submission = this.send(id, text, null, { surface: 'voice', voiceBrain: brain, voiceObserver: observer });
+    const work = this.turns.get(id);
+    await submission;
+    try { return { text: await work, error: null }; }
+    catch (error) { return { text: '', error: error.name === 'AbortError' ? 'cancelled' : error.message }; }
+  }
+
+  /** Observe the same stream the renderer receives, without another IPC hop. */
+  onEvent(callback) {
+    this.eventListeners.add(callback);
+    return () => this.eventListeners.delete(callback);
+  }
 
   async resumeBrowser(id, operationId) {
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
@@ -1283,6 +1390,7 @@ export class DesktopEngine {
   }
 
   async deleteTeammate(id) {
+    await this._voice?.ownerDeleted(id);
     if (this.turns.has(id)) {
       this.cancel(id);
       await this.turns.get(id)?.catch(() => {});
@@ -1297,8 +1405,8 @@ export class DesktopEngine {
   }
 
   async close() {
-    await this.chatgptBrowser?.close();
-    await this.computerUse?.close();
+    // Start every owner cancellation before awaiting audio/device teardown.
+    await Promise.all([this._voice?.close(), this.chatgptBrowser?.close(), this.computerUse?.close()]);
     await this.scheduler?.stop();
     if (this.projectFileWatcher) { fs.unwatchFile(this.projectsFile, this.projectFileWatcher); this.projectFileWatcher = null; }
     await this.channels.stopAll().catch(() => {});

@@ -10,7 +10,37 @@ function mockFetch(t, replies) {
   t.after(() => { globalThis.fetch = original; });
   return () => calls;
 }
+
+test('an output-limit SSE response records the separate usage trailer before rejecting', async t => {
+  const usage = { prompt_tokens: 4000, completion_tokens: 1024 };
+  const calls = mockFetch(t, [sse([
+    { choices: [{ delta: {}, finish_reason: 'length' }] }, { choices: [], usage }, '[DONE]',
+  ])]);
+  const agent = makeAgent();
+  await assert.rejects(agent.send('Save the findings'), { code: 'provider_output_limit' });
+  assert.equal(agent.turnUsage.completion_tokens, usage.completion_tokens);
+  assert.equal(agent.turnUsage.prompt_tokens, usage.prompt_tokens);
+  assert.equal(calls(), 1);
+});
 const makeAgent = () => new Agent({ client: { baseUrl: 'https://test.invalid', headers: () => ({}) }, config: { tools: false, historyMessages: 40, historyLines: 40, maxTokens: 1000, memoryConsolidation: false } });
+
+for (const transport of ['SSE', 'JSON']) {
+  for (const proposed of ['empty', 'text', 'tool']) test(`${transport} output-limit responses fail clearly without executing an incomplete proposal: ${proposed}`, async t => {
+    const call = { id: 'partial-write', type: 'function', function: { name: 'write_file', arguments: '{"path":"note.md","content":"Partial findings"}' } };
+    const message = { content: proposed === 'text' ? 'I saved' : '', ...(proposed === 'tool' ? { tool_calls: [call] } : {}) };
+    const usage = { prompt_tokens: 4000, completion_tokens: 1024 };
+    const response = transport === 'JSON'
+      ? Response.json({ choices: [{ message, finish_reason: 'length' }], usage })
+      : sse([{ choices: [{ delta: { ...message, tool_calls: message.tool_calls?.map(call => ({ ...call, index: 0 })) }, finish_reason: 'length' }], usage }, '[DONE]']);
+    const calls = mockFetch(t, [response]);
+    const agent = makeAgent(); let executions = 0;
+    agent.runToolCall = async () => { executions++; return 'Saved'; };
+    await assert.rejects(agent.send('Save the findings'), error => error.code === 'provider_output_limit' && /output limit/i.test(error.message));
+    assert.equal(executions, 0, 'even valid JSON from a limited response must not run');
+    assert.equal(calls(), 1, 'repeating the identical capped request cannot repair a length stop');
+    assert.equal(agent.turnUsage.completion_tokens, usage.completion_tokens, 'failed generation still counts billed usage');
+  });
+}
 
 for (const [label, response] of [
   ['SSE', () => sse([delta('Partial'), { error: { code: 429, message: 'private-key-account' } }, '[DONE]'])],

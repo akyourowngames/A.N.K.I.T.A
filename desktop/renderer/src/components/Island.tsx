@@ -20,6 +20,9 @@ import { MascotFile } from './MascotFile';
 import { CAPTURE_UI_EVENTS } from '../../../browser-helper/protocol.mjs';
 import { MASCOT_DRAG_HINT } from '../../../shared/companion-copy.mjs';
 import { describeErrorNotice } from '../../../shared/error-notices.mjs';
+import { useVoice } from './voice/useVoice';
+import { VoicePanel } from './voice/VoicePanel';
+import { VoiceOrb } from './voice/VoiceOrb';
 
 type IslandApproval = ApprovalItem & { threadId?: string | null; routineId?: string };
 const FLASH_MS = 4000; // Milliseconds; completion/error expression before returning to live work.
@@ -42,6 +45,8 @@ const STATE_GLOW: Record<MascotState, string> = {
 const clampLook = (v: number) => Math.max(-1, Math.min(1, v));
 
 export function Island() {
+  const voice = useVoice();
+  const voiceVisible = voice.state.active || voice.state.phase === 'error';
   const reducedMotion = useReducedMotion();
   const chat = useIslandChat();
   const [jobs, setJobs] = useState<Routine[]>([]);
@@ -81,7 +86,7 @@ export function Island() {
   const runningJobs = jobs.filter(job => job.running);
   const runningCount = activeThreads.length + runningJobs.filter(job => !activeThreads.some(item => item.id === job.threadId)).length;
   const engaged = useRef(false);
-  engaged.current = approvals.length > 0 || chat.reading || chat.sending || interaction.phase !== 'rest' || Boolean(chat.input.trim() || chat.attachments.length);
+  engaged.current = voiceVisible || approvals.length > 0 || chat.reading || chat.sending || interaction.phase !== 'rest' || Boolean(chat.input.trim() || chat.attachments.length);
 
   const clearTimers = useCallback(() => {
     if (tuckTimer.current !== null) window.clearTimeout(tuckTimer.current);
@@ -172,16 +177,18 @@ export function Island() {
   const routedView: IslandHomeView = approvals.length ? 'approval' : runningCount ? 'overview' : 'empty';
   // Alerts always win over a manually selected tab; approval answers stay visible.
   const activeView: IslandHomeView = approvals.length ? 'approval' : navView || (errorCard ? 'error' : flash === 'finished' && !runningCount ? 'finished' : routedView);
+  const showVoice = voiceVisible && !approvals.length;
   const liveStates = activeThreads.map(item => islandThreadState(chat.state.threads[item.id]));
   const botState: MascotState = approvals.length ? 'approval' : flash === 'error' ? 'error'
     : liveStates.includes('searching') ? 'searching' : liveStates.includes('working') ? 'working'
     : runningCount ? (activeThreads.length ? 'thinking' : 'working') : flash === 'finished' ? 'finished' : 'idle';
 
   useEffect(() => {
-    const want = view === 'home' ? (TALL_VIEWS.includes(activeView) ? 'home-chat' : 'home-expanded') : view === 'petit' ? 'petit' : 'tuck';
+    const want = view === 'home' ? (showVoice || TALL_VIEWS.includes(activeView) ? 'home-chat' : 'home-expanded') : view === 'petit' ? 'petit' : 'tuck';
     if (want !== sizeRef.current) { sizeRef.current = want; void window.ankita.islandAction(want, { animate: !reducedMotion }).catch(() => {}); }
-    void window.ankita.islandAction(view === 'home' && (activeView === 'prompt' || activeView === 'approval' || activeView === 'settings') ? 'focus-on' : 'focus-off').catch(() => {});
-  }, [view, activeView, reducedMotion]);
+    void window.ankita.islandAction(view === 'home' && (showVoice || activeView === 'prompt' || activeView === 'approval' || activeView === 'settings') ? 'focus-on' : 'focus-off').catch(() => {});
+  }, [view, activeView, reducedMotion, showVoice]);
+  useEffect(() => { if (voiceVisible) { clearTimers(); setView('home'); } }, [voiceVisible, clearTimers]);
   useEffect(() => {
     if (!approvals.length && autoHome.current && view === 'home') closeHome();
   }, [approvals.length, view, closeHome]);
@@ -252,7 +259,7 @@ export function Island() {
     }, HOME_COLLAPSE_MS);
     else if (!runningCount && !flash) tuckTimer.current = window.setTimeout(() => setView('tucked'), TUCK_DELAY_MS);
   };
-  return <div className={'island ' + (home ? 'island-home' : 'island-petit') + (dragOver ? ' is-dragging' : '')}
+  return <div className={'island ' + (home ? 'island-home' : 'island-petit') + (showVoice ? ' island-voice-shell' : '') + (dragOver ? ' is-dragging' : '')}
     data-mascot-state={botState} data-shell-view={view} style={{ '--wash': STATE_GLOW[botState] } as CSSProperties}
     onMouseEnter={() => { clearTimers(); if (view === 'tucked') { setView('petit'); playSound('peek'); } }}
     onMouseLeave={leave}
@@ -264,13 +271,13 @@ export function Island() {
       const id = selectedTeammate?.id || chat.teammateId; if (id) chat.selectTeammate(id); void chat.addFiles(Array.from(event.target.files || []), id); event.target.value = '';
     }} />
     {home && <div className="island-toolbar">
-      <Header view={activeView} soundOn={soundOn} onNavigate={navigate} onDrop={attach} onToggleSound={toggleSound} />
-      <span className="island-live-status" role="status">{status}</span>
+      {showVoice ? <span className="voice-eyebrow"><i /> Ankita</span> : <Header view={activeView} soundOn={soundOn} onNavigate={navigate} onDrop={attach} onToggleSound={toggleSound} />}
+      <span className="island-live-status" role="status">{showVoice ? 'Voice · same conversation' : status}</span>
       <button className="island-tab" aria-label="Open Ankita" title="Open desktop" onClick={restore}><Icon name="arrowUpRight" size={14} /></button>
       <button className="island-tab" aria-label="Collapse island" title="Collapse (Esc)" onClick={closeHome}><Icon name="chevronRight" size={14} stroke={2} /></button>
     </div>}
     <div className="island-content">
-      <div className="island-mascot" ref={mascotBox} draggable title={MASCOT_DRAG_HINT}
+      {!showVoice && <div className="island-mascot" ref={mascotBox} draggable title={MASCOT_DRAG_HINT}
         onMouseEnter={() => { if (!capture.setup?.paired) void capture.refresh({ quiet: true }); }}
         onDragStart={event => { if (capture.start(event, selectedTeammate?.id || null)) pose('grab'); }}
         onDragEnd={event => { capture.end(event); reset(); }}>
@@ -278,10 +285,12 @@ export function Island() {
         <Mascot state={botState} lookRef={lookRef} size={home ? MASCOT_HOME_PX : MASCOT_PETIT_PX} awake={view !== 'tucked'} interaction={interaction} color={selectedTeammate?.color} />
         <MascotFile interaction={interaction} />
         {home && <span className="island-mascot-name" title={selectedTeammate?.name}>{selectedTeammate?.name || 'Ankita'}</span>}
-      </div>
+      </div>}
+      {showVoice && !home && <button className="voice-island-peek" aria-label="Expand voice" onClick={() => openHome()}><VoiceOrb phase={voice.state.phase} inputLevel={voice.state.inputLevel} compact task={voice.state.task} /></button>}
       {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
         <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
       </button> : <div className="island-body" data-home-view={activeView}>
+        {showVoice ? <VoicePanel compact voice={voice.state} error={voice.error} busy={voice.busy} onEnd={voice.end} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onStart={voice.state.threadId ? () => voice.start(voice.state.threadId!) : undefined} onSettings={() => voice.focus(true)} onFocus={() => voice.focus()} /> : <>
         {activeView === 'approval' && <ApprovalView items={approvals} answer={answer} pendingId={pendingApproval} error={approvalError} />}
         {activeView === 'overview' && <Overview activities={activities} selectedId={focusId} onFocus={id => { setFocusId(id); chat.selectTeammate(id); }}
           onCaptureDrag={(event, id) => { setFocusId(id); chat.selectTeammate(id); if (capture.start(event, id)) pose('grab'); }}
@@ -293,6 +302,7 @@ export function Island() {
           onOpen={() => navigate('prompt')} onOk={() => { setFlash(null); setNavView(null); }} />}
         {activeView === 'prompt' && <Prompt chat={chat} onAttach={attach} />}
         {activeView === 'settings' && <SettingsMini soundOn={soundOn} onToggleSound={toggleSound} />}
+        </>}
       </div>}
     </div>
     {dragOver && <div className="island-drop-hint" role="status">Feed {selectedTeammate?.name || 'Ankita'} a file</div>}

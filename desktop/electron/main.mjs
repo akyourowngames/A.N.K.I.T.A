@@ -15,11 +15,15 @@ import { BROWSER_PREVIEW_POLL } from '../shared/browser-progress.mjs';
 import { CONFIG_DIR } from '../../src/core/config.mjs';
 import { shutdownFileToolWorkers } from '../../src/tooling/tool-worker.mjs';
 import { CompanionCapture } from './companion-capture.mjs';
+import { PhonePairing } from './phone-pairing.mjs';
+import { PHONE_PAIRING_ACTIONS, PAIRING_CONFIG_FILE, PAIRING_DEVICES_FILE } from '../shared/phone-pairing.mjs';
 import { runCaptureAction } from './capture-actions.mjs';
 import { CAPTURE_ACTIONS, CAPTURE_EVENT } from '../browser-helper/protocol.mjs';
 import { CHATGPT_CONNECTION_ACTIONS } from '../shared/chatgpt-browser.mjs';
 import { chatgptResourcePaths } from './chatgpt-resources.mjs';
 import { desktopCredentialFile } from './credential-profile.mjs';
+import { VOICE_ACTIONS } from '../shared/voice.mjs';
+import { runVoiceAction } from './voice-actions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -48,8 +52,14 @@ let quitting = false;
 let drainingQuit = false;
 let companionCapture = null;
 let captureStartup = null;
+let phonePairing = null;
 const CAPTURE_CONFIG_FILE = 'companion-capture.json'; // Private bridge port and paired-helper credentials in CONFIG_DIR.
 const HELPER_DIRECTORY = 'browser-helper'; // Real unpacked directory for Chrome/Edge's Load unpacked command.
+const PAIRING_NOTIFICATION = Object.freeze({ title: 'Pairing request', body: name => `${name} wants to connect to ${APP_NAME}. Approve it in Settings.` }); // Shown only while the window is out of sight.
+function sendToWindows(event) {
+  if (window && !window.isDestroyed()) window.webContents.send('engine:event', event);
+  if (island && !island.isDestroyed()) island.webContents.send('engine:event', event);
+}
 function captureService(current) {
   if (!captureStartup) {
     companionCapture = new CompanionCapture({ configFile: path.join(CONFIG_DIR, CAPTURE_CONFIG_FILE),
@@ -405,8 +415,7 @@ function createWindow() {
       return result.canceled ? null : result.filePaths[0] || null;
     },
     emit: event => {
-      if (window && !window.isDestroyed()) window.webContents.send('engine:event', event);
-      if (island && !island.isDestroyed()) island.webContents.send('engine:event', event);
+      sendToWindows(event);
       if (tray && event.type === 'schedule-changed') tray.setToolTip(`${APP_NAME} — ${event.jobs.filter(job => job.running).length} running, ${event.jobs.filter(job => job.needsApproval).length} need approval`);
       if ((event.type === 'routine-failed' || (event.type === 'approval-request' && event.routineId)) && (!window?.isVisible() || !window?.isFocused()) && Notification.isSupported()) {
         const notification = new Notification({ title: event.type === 'routine-failed' ? 'Scheduled job needs attention' : 'Scheduled job needs approval', body: event.detail || event.text || 'Open Ankita to review the job.' });
@@ -414,6 +423,26 @@ function createWindow() {
       }
     },
   });
+
+  // Same assistant, separate per-phone credentials: the pairing bridge only
+  // forwards turns into the engine the desktop is already running.
+  if (phonePairing) phonePairing.engine = engine;
+  else {
+    phonePairing = new PhonePairing({
+      configFile: path.join(CONFIG_DIR, PAIRING_CONFIG_FILE),
+      devicesFile: path.join(CONFIG_DIR, PAIRING_DEVICES_FILE),
+      safeStorage, engine,
+      emit: event => {
+        sendToWindows(event);
+        if (event.type === 'phone-pairing-request' && (!window?.isVisible() || !window?.isFocused()) && Notification.isSupported()) {
+          const notification = new Notification({ title: PAIRING_NOTIFICATION.title, body: PAIRING_NOTIFICATION.body(event.deviceName) });
+          notification.on('click', showWindow); notification.show();
+        }
+      },
+    });
+    // Certificate generation yields before its RSA work so the window paints first.
+    void phonePairing.start();
+  }
 
   updater = setupUpdater({
     isPackaged: app.isPackaged,
@@ -431,6 +460,11 @@ function createWindow() {
 function requiredEngine() {
   if (!engine) throw new Error('Desktop engine is not ready');
   return engine;
+}
+
+function requiredPhonePairing() {
+  if (!phonePairing) throw new Error('Phone pairing is not ready');
+  return phonePairing;
 }
 
 ipcMain.handle('engine:invoke', async (event, action, payload) => {
@@ -458,6 +492,12 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     };
   }
   await current.init();
+  if (Object.values(VOICE_ACTIONS).includes(action)) {
+    return runVoiceAction({ engine: current, action, payload, focus: (state, options) => {
+      showWindow();
+      current.emit({ type: 'voice-focus', threadId: state.threadId, settings: options.settings });
+    } });
+  }
   if (Object.values(CAPTURE_ACTIONS).includes(action)) {
     return runCaptureAction({
       action, payload, surface: fromIsland ? 'island' : 'main', sourceId: event.sender.id,
@@ -603,6 +643,45 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'browserSessionDialog': return current.browserScope(payload?.scope).decideDialog(payload);
     case 'browserSessionSelectTab': return current.browserScope(payload?.scope).selectTab(payload?.tab);
     case 'appInfo': return { version: app.getVersion(), contract: IPC_CONTRACT };
+    case PHONE_PAIRING_ACTIONS.status: return requiredPhonePairing().snapshot();
+    case PHONE_PAIRING_ACTIONS.restart: {
+      const pairing = requiredPhonePairing();
+      await pairing.restart();
+      return pairing.snapshot();
+    }
+    case PHONE_PAIRING_ACTIONS.invite: return requiredPhonePairing().createInvitation();
+    case PHONE_PAIRING_ACTIONS.cancelInvite:
+      requiredPhonePairing().cancelInvitation();
+      return requiredPhonePairing().snapshot();
+    case PHONE_PAIRING_ACTIONS.respond: {
+      const pairing = requiredPhonePairing();
+      await pairing.respondPairing(payload?.requestId, payload?.approve === true, payload?.teammateId || null);
+      return pairing.snapshot();
+    }
+    case PHONE_PAIRING_ACTIONS.revoke: {
+      const pairing = requiredPhonePairing();
+      await pairing.revokeDevice(payload?.deviceId);
+      return pairing.snapshot();
+    }
+    case PHONE_PAIRING_ACTIONS.assign: {
+      const pairing = requiredPhonePairing();
+      await pairing.assignDevice(payload?.deviceId, payload?.teammateId);
+      return pairing.snapshot();
+    }
+    case PHONE_PAIRING_ACTIONS.selectAddress: return requiredPhonePairing().selectAddress(payload?.address ?? null);
+    case PHONE_PAIRING_ACTIONS.saveCertificate: {
+      const certificate = requiredPhonePairing().certificate();
+      if (!certificate) throw new Error('The pairing certificate is not ready yet.');
+      const options = {
+        title: 'Save the Ankita pairing certificate',
+        defaultPath: path.join(app.getPath('downloads'), certificate.fileName),
+        filters: [{ name: 'Certificate', extensions: ['crt'] }],
+      };
+      const result = window ? await dialog.showSaveDialog(window, options) : await dialog.showSaveDialog(options);
+      if (result.canceled || !result.filePath) return { canceled: true };
+      fs.writeFileSync(result.filePath, certificate.pem);
+      return { canceled: false, path: result.filePath };
+    }
     default: throw new Error('Unknown desktop action');
   }
 });
@@ -693,7 +772,7 @@ if (!gotLock) {
     event.preventDefault(); if (drainingQuit) return; drainingQuit = true;
     hideIsland();
     stopCursorFeed();
-    void Promise.allSettled([Promise.resolve(engine?.close()), Promise.resolve(companionCapture?.close())]).finally(() => {
+    void Promise.allSettled([Promise.resolve(engine?.close()), Promise.resolve(companionCapture?.close()), Promise.resolve(phonePairing?.close())]).finally(() => {
       quitting = true;
       // Windows refuses app.quit while the resident island remains non-closable; normal use still keeps it protected.
       if (island && !island.isDestroyed()) island.setClosable(true);

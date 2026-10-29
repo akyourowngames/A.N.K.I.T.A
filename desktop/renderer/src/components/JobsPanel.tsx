@@ -3,7 +3,7 @@ import type { Routine, Teammate } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { jobNeedsAttention, jobStatusSummary, nextRunLabel } from '../lib/jobs';
 import { JobCard } from './JobCard';
-import { JOB_EXECUTION_BOUNDED } from '../../../../src/automation/job-policy.mjs';
+import { JOB_EXECUTION_BOUNDED, heartbeatRunLabel } from '../../../../src/automation/job-policy.mjs';
 import { relativeTime } from '../lib/relative-time';
 import { TeammateAvatar } from './TeammateAvatar';
 
@@ -46,7 +46,7 @@ export function JobsPanel({ jobs, teammates, threadId, selectedId, onChoose, onE
   const attention = jobs.filter(jobNeedsAttention).length;
   const summary = jobStatusSummary(jobs);
   const teammateName = selected ? teammates.find(item => item.id === selected.threadId)?.name || 'Choose a teammate' : '';
-  const lastRun = selected ? selected.lastStatus?.replaceAll('-', ' ') || 'Not run yet' : '';
+  const lastRun = selected ? heartbeatRunLabel(selected.lastStatus, selected.lastReason) || selected.lastStatus?.replaceAll('-', ' ') || 'Not run yet' : '';
   const act = async (action: string, payload: object) => { setBusy(true); setError(''); try { await window.ankita.invoke(action, payload); } catch (cause) { setError(cause instanceof Error ? cause.message : String(cause)); } finally { setBusy(false); } };
   return <aside className="jobs-panel" aria-label="Upcoming scheduled jobs">
     <header>

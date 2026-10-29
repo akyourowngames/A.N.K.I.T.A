@@ -7,6 +7,43 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Voice across terminal, desktop and island
+
+Sarvam supplies Hinglish speech recognition and speech generation, while a
+voice-only Baseten Meta planner keeps typed-chat provider settings separate.
+Each request records what was heard, actual tool steps and the final result.
+The desktop panel and island share one voice session, a smooth dark-pearl orb,
+short captions and microphone/end/work-stop controls.
+
+Voice jobs now run in parallel with fresh workers and coordinated access to
+shared files and apps. Independent work can finish while another job waits;
+ending voice closes audio and leaves its delegated work in the original
+conversation. A shared speaker drops obsolete progress and keeps reports apart.
+
+Interrupting a report suspends it. The same planner can choose the next ready
+result, continue from the unfinished sentence, repeat or dismiss speech without
+cancelling work. Completed sentences are retained; mixed speech controls and
+questions keep their separate answer audible. Old or cancelled controls cannot
+change a newer selection. One empty model decision retries inside the existing
+turn without repeating completed file actions; an unavailable research source
+can retain useful findings as a partial result.
+
+### Heartbeat and local phone pairing
+
+Heartbeat cards carry stable topics and context, with deduplication, daily limits
+and quiet-hour digests. Desktop phone pairing uses local TLS certificates,
+short-lived invitations, explicit approval and revocable per-device keys. It
+routes phone requests into the live teammate's tools, permissions and history;
+physical-phone and certificate-store limits remain in the phone guide.
+
+This work is integrated through [PR #70](https://github.com/akyourowngames/A.N.K.I.T.A/pull/70)
+without changing the app version or creating a new installer release. The owner
+reported voice working and approved integration on 29 October. That acceptance
+does not turn generated-audio checks into measured physical-headset or packaged
+proof. Intent can still be chosen incorrectly by the planner. See the
+[voice setup and limits](../guides/voice-delegation.md) and
+[dated verification record](../plans/voice-delegation-hackathon-plan.md).
+
 ## 2.7.1 — 2026-10-26
 
 ### Desktop 2.7.0 startup fix

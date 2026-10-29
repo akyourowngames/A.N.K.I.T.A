@@ -67,8 +67,25 @@ finish delivery without asking the model to write the same update again.
 Ask Ankita to create a heartbeat. Its default interval is every 30 minutes, with
 editable timing and instructions. It checks the teammate's existing proactive and
 project context while that teammate is idle. `HEARTBEAT_OK` produces a quiet receipt
-without another chat message. Useful updates are delivered once; heartbeat does
-not create more scheduled jobs by itself.
+without another chat message, even when the model adds a sentence after the marker.
+Empty or boilerplate answers also stay quiet.
+
+A useful update arrives as a structured card with a stable topic key, a short
+summary and a small memory for the next check. The same key is not repeated for six
+hours, and at most four proactive messages are delivered per local day; urgent
+updates skip only the daily limit. During `QUIET_HOURS` updates are held and the
+first check after quiet hours delivers one digest. Adjust the limits with
+`HEARTBEAT_DAILY_LIMIT` and `HEARTBEAT_COOLDOWN_MINUTES`. Heartbeat does not create
+more scheduled jobs by itself.
+
+A heartbeat worker can list this teammate's jobs with their real last status, so a
+check that reports failures observes them rather than guessing. Its prompt should
+state the objective and what counts as notable; the app supplies the output format,
+silence handling and memory, so a prompt that scripts exact reply text conflicts
+with that contract. A silent check still records why it said nothing — "Checked —
+nothing to report" or "Checked — already reported" — in the job's last-run line, and
+held updates show their reason too. When you create or update a job, the reply
+quotes the next run in the job's own time zone; the raw value is UTC.
 
 **Watch live** opens the job's browser stage. **Stop** or **Close and stop browser**
 stops that job. Stopping a foreground chat does not cancel a background
@@ -95,11 +112,15 @@ after a later failed run. It must still observe the current value before reporti
 
 **Use explicit limits** is optional in advanced settings (`executionPolicy=bounded`
 in the tool). Its defaults are three active minutes, 48 runs, 50,000 tokens and
-60 active minutes per day. Heartbeats default to this bounded policy. Exceeding
-an explicit limit pauses the routine; day rollover does not resume it. Legacy
-regular desktop jobs use completion execution after reload; old budget-paused jobs
-stay paused until you choose **Resume**. **Run now** can test a paused job without
-resuming its recurring schedule.
+60 active minutes per day. Heartbeats default to this bounded policy with much larger
+gates sized for a full day of five-minute checks (300 runs, 15,000,000 tokens,
+900 active minutes): the owner pays their own model usage, so the gate stops a runaway
+loop rather than rationing checks. A heartbeat that reaches its own gate pauses and
+resumes with the next day; an ordinary job stopped by an explicit limit stays paused
+until you choose **Resume**. Budgets written by older builds and never edited are
+upgraded to the current defaults when the job loads. Legacy regular desktop jobs use
+completion execution after reload. **Run now** can test a paused job
+without resuming its recurring schedule.
 
 After sleep, a scheduled fire up to 30 minutes late runs once and reports the
 lateness. Older fires are marked missed. Overlapping fires are marked busy.

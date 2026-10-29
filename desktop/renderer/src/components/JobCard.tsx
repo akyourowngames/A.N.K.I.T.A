@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import type { JobReceipt, Routine } from '../../../shared/wire';
+import { heartbeatRunLabel } from '../../../../src/automation/job-policy.mjs';
 import { Icon } from './Icons';
 import { relativeTime } from '../lib/relative-time';
 
@@ -7,14 +8,17 @@ import { relativeTime } from '../lib/relative-time';
 // a plain-language status and how long ago it happened; raw details stay folded.
 const RECEIPT_STATUS_LABELS: Record<string, string> = {
   ok: 'Completed',
+  quiet: 'Checked',
+  held: 'Held',
   'disabled-mid-run': 'Paused mid-run',
   'needs-review': 'Needs review',
   failed: 'Needs review',
   missed: 'Missed',
 };
+const CALM_STATUSES = ['ok', 'quiet', 'held', 'disabled-mid-run']; // Silence is a decision, not a failure.
 
 function receiptStatus(receipt: JobReceipt) {
-  const ok = ['ok', 'disabled-mid-run'].includes(receipt.status);
+  const ok = CALM_STATUSES.includes(receipt.status);
   return { ok, label: RECEIPT_STATUS_LABELS[receipt.status] || receipt.status.replaceAll('-', ' ') };
 }
 
@@ -23,6 +27,7 @@ export function JobCard({ receipt, compact = false }: { receipt: JobReceipt; com
   const at = new Date(receipt.at);
   const full = at.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
   const proofUrl = receipt.proof?.url;
+  const text = receipt.text || heartbeatRunLabel(receipt.status, receipt.reason); // A silent check still says why.
   return <section className={`scheduled-result ${compact ? 'compact' : ''} ${ok ? '' : 'needs-review'}`} aria-label={`Scheduled job ${receipt.name}`}>
     <div className="scheduled-result-heading">
       <span className={`scheduled-result-badge ${ok ? 'ok' : 'review'}`}><Icon name={ok ? 'check' : 'alert'} size={12} />{label}</span>
@@ -30,8 +35,8 @@ export function JobCard({ receipt, compact = false }: { receipt: JobReceipt; com
       <time title={full}>{relativeTime(receipt.at)}</time>
     </div>
     {receipt.ownerMissing && <p className="job-owner-warning">Owner was deleted. Choose a teammate in job settings.</p>}
-    {compact && <details className="job-proof"><summary><Icon name="eye" size={13} /> Run details and browser proof</summary><p>{receipt.text}</p>{receipt.proof?.screenshot && <img src={receipt.proof.screenshot} alt={`Browser proof for ${receipt.name}`} />}</details>}
-    {!compact && <p className="scheduled-result-text">{receipt.text}</p>}
+    {compact && <details className="job-proof"><summary><Icon name="eye" size={13} /> Run details and browser proof</summary>{text && <p>{text}</p>}{receipt.proof?.screenshot && <img src={receipt.proof.screenshot} alt={`Browser proof for ${receipt.name}`} />}</details>}
+    {!compact && text && <p className="scheduled-result-text">{text}</p>}
     {!compact && receipt.proof?.screenshot && <details className="job-proof"><summary><Icon name="eye" size={13} /> View browser proof</summary><img src={receipt.proof.screenshot} alt={`Browser proof for ${receipt.name}`} /></details>}
     {proofUrl && <button type="button" className="job-link" onClick={() => void window.ankita.openExternal(proofUrl)}>{proofUrl}<Icon name="external" size={12} /></button>}
   </section>;

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import type { BrowserSessionView, ChatMessage, Model, Project, Teammate, Routine } from '../../../shared/wire';
 import type { SubagentActivity } from '../../../shared/subagent-state.mjs';
 import type { Usage } from '../state/store';
@@ -23,7 +23,8 @@ const STARTERS = [
   { icon: 'chat', label: 'Explore an idea', text: 'Help me explore an idea: ' },
 ]; // User-editable draft starters; none starts a model request.
 
-export function ChatPane({ teammate, messages, running, models, projects, defaultModel, provider, usage, loadedSkills, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onCreate, onClear, onDelete, jobs, onEditJob, onCommand, commandsRevision, subagents, subagentOpen, onToggleSubagent, onOpenSubagent }: {
+export function ChatPane({ teammate, messages, running, models, projects, defaultModel, provider, usage, loadedSkills, chrome, sidebarOpen, reviewOpen, browserRun, onToggleSidebar, onToggleReview, onOpenBrowser, onOpenBrowserPlugins, onProject, onOpenProjects, onSend, onStop, onModel, onEdit, onCreate, onClear, onDelete, jobs, onEditJob, onCommand, commandsRevision, subagents, subagentOpen, onToggleSubagent, onOpenSubagent, voicePanel, onVoice }: {
+  voicePanel?: ReactNode; onVoice?: () => void;
   jobs: Routine[]; onEditJob: (id?: string) => void;
   teammate: Teammate | null; messages: ChatMessage[]; running: boolean; models: Model[]; defaultModel: string; provider?: string;
   projects: Project[]; usage?: Usage; chrome: string; sidebarOpen: boolean; reviewOpen: boolean; onToggleSidebar: () => void; onToggleReview: () => void; onProject: (id: string | null) => void; onOpenProjects: () => void;
@@ -106,11 +107,12 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
         <div className="header-identity"><CompanionStatus messages={messages} running={running} teammate={teammate} /><div className="header-copy"><div className="header-name-line"><h2 title={teammate.name}>{teammate.name}</h2></div><p title={instructions || teammate.persona} role={instructions ? 'status' : undefined}>{instructions || teammate.persona || 'Your teammate'}</p></div></div>
       </div>
       <div className="header-actions no-drag">
+        <button className="voice-launch" onClick={onVoice} disabled={!onVoice || (running && !voicePanel)} aria-label={voicePanel ? 'Back to conversation' : 'Start voice conversation'} title="Talk with Ankita"><Icon name={voicePanel ? 'chat' : 'mic'} size={15} /><span>{voicePanel ? 'Conversation' : 'Voice'}</span></button>
         <button className="icon-button palette-launcher" onClick={() => window.dispatchEvent(new Event('ankita:palette'))} aria-label="Open command palette" title="Commands, skills and tasks (Ctrl+K)"><Icon name="search" size={16} /></button>
         <div className="menu-wrap"><button className="icon-button header-more" aria-label="Conversation options" aria-expanded={menu} onClick={() => setMenu(!menu)}><Icon name="more" size={19} /></button>{menu && <div className="header-menu" role="menu"><button onClick={() => { setMenu(false); onEdit(); }}><Icon name="edit" size={16} /> Edit teammate</button><button onClick={() => { setMenu(false); onClear(); }}><Icon name="panel" size={16} /> Clear conversation</button><button onClick={() => { setMenu(false); setHelperOpen(true); }}><Icon name="browser" size={16} /> Browser helper</button><span className="menu-divider" /><button className="danger" onClick={() => { setMenu(false); onDelete(); }}><Icon name="trash" size={16} /> Delete teammate</button></div>}</div>
       </div>
     </header>
-    <div className="chat-context-bar">
+    {voicePanel || <><div className="chat-context-bar">
       <div className="project-picker"><button className="project-picker-button" onClick={() => setProjectMenu(!projectMenu)} aria-expanded={projectMenu} title="Choose this teammate's project"><Icon name="folder" size={15} /><span>{assignedProject?.name || 'Choose project'}</span><Icon name="chevron" size={13} /></button>{projectMenu && <div className="project-picker-menu"><span>Work in</span><button className={!teammate.projectId ? 'active' : ''} disabled={running} onClick={() => { onProject(null); setProjectMenu(false); }}>No project</button>{projects.filter(project => !project.archived).map(project => <button key={project.id} className={teammate.projectId === project.id ? 'active' : ''} disabled={running} onClick={() => { onProject(project.id); setProjectMenu(false); }}><strong>{project.name}</strong><small>{project.path || project.summary || 'Project context'}</small></button>)}<button className="project-picker-manage" onClick={() => { setProjectMenu(false); onOpenProjects(); }}>Manage projects <Icon name="arrowRight" size={14} /></button></div>}</div>
       <div className="context-actions">
         {tokens > 0 && <span className="usage-chip" title="Tokens used in this conversation">{formatTokens(tokens)} tokens{usage && usage.estimated_cost > 0 ? ` · $${usage.estimated_cost.toFixed(4)}` : ''}</span>}
@@ -128,6 +130,7 @@ export function ChatPane({ teammate, messages, running, models, projects, defaul
     </div></div>
     {!atBottom && <button className="jump-to-bottom" onClick={jump} aria-label="Jump to latest"><Icon name="chevron" size={17} /><span>Latest</span></button>}
     <Composer threadId={teammate.id} name={teammate.name} messages={messages} running={running} sendDisabled={needsReplyCheck} models={models} model={teammate.model || defaultModel} provider={provider} projects={projects} projectId={teammate.projectId} commandsRevision={commandsRevision} onProject={onProject} onCommand={onCommand} onModel={onModel} onSend={onSend} onStop={onStop} />
+    </>}
     {helperOpen && <div className="modal-backdrop no-drag" onClick={event => { if (event.target === event.currentTarget) setHelperOpen(false); }}>
       <div className="helper-dialog" role="dialog" aria-modal="true" aria-labelledby="browser-helper-title">
         <div className="helper-dialog-head"><h2 id="browser-helper-title">Browser helper</h2><button type="button" className="icon-button" aria-label="Close browser helper" autoFocus onClick={() => setHelperOpen(false)}><Icon name="close" size={16} /></button></div>

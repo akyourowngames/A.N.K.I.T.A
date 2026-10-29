@@ -7,6 +7,45 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ## [Unreleased]
 
+### Added
+
+- **Hinglish voice delegation.** Sarvam speech recognition and speech generation
+  work with a voice-only Baseten Meta planner, separate from typed-chat settings.
+  Spoken requests retain their transcript, actual tool steps and final result.
+- **Desktop and island voice.** A smooth dark-pearl orb follows listening,
+  recognition, work and playback states, with short animated captions, microphone
+  controls and one shared session across the app and floating island.
+- **Parallel voice requests.** Independent jobs can work together; conflicting
+  voice file/app actions wait for shared access. Each request has its own Stop
+  control, and End voice closes audio while delegated work continues.
+- **Contextual speech controls.** The existing planner can select the next ready
+  report, resume an unfinished sentence, repeat or dismiss speech without
+  cancelling work. New requests leave interrupted speech suspended by default.
+- **Quieter heartbeat updates and phone pairing.** Proactive cards support topic
+  deduplication, daily limits and quiet-hour digests. Local-network phone pairing
+  uses a per-computer certificate, desktop approval and revocable device keys.
+  See the [phone guide](docs/guides/phone-pairing.md) and
+  [scheduled-work guide](docs/guides/desktop-jobs.md).
+
+### Fixed
+
+- Empty voice-planner decisions retry once inside the same request, keeping
+  completed actions and remaining work instead of restarting the task.
+- Work updates use observed action state; obsolete updates are discarded and
+  final replies stay short. Useful research with an unavailable source remains
+  visibly partial rather than being described as fully complete.
+- Interrupted reports retain completed sentences, cancelled or older speech
+  choices cannot change a newer selection, and mixed requests keep any separate
+  answer audible instead of replacing it with a selection confirmation.
+
+### Setup and limits
+
+These are source changes for [PR #70](https://github.com/akyourowngames/A.N.K.I.T.A/pull/70),
+not a new packaged release. Provider setup and the verification record are in the
+[voice guide](docs/guides/voice-delegation.md). Recognition and planner choices can
+still be wrong; an unfinished sentence can restart on resume. Generated-audio
+checks do not establish physical headset or installed-package acceptance.
+
 ## [2.7.1] - 2026-10-26
 
 ### Fixed

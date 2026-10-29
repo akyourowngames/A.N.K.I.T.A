@@ -1,8 +1,9 @@
 import { randomUUID } from 'node:crypto';
 
 export class ApprovalRegistry {
-  constructor(onRequest = () => {}) {
+  constructor(onRequest = () => {}, onResolved = () => {}) {
     this.onRequest = onRequest;
+    this.onResolved = onResolved;
     this.pending = new Map();
   }
 
@@ -23,6 +24,7 @@ export class ApprovalRegistry {
     if (!entry) return false;
     this.pending.delete(requestId);
     entry.resolve(answer === 'yes' || answer === 'always');
+    this.onResolved(requestId);
     return true;
   }
 
@@ -42,19 +44,18 @@ export class ApprovalRegistry {
         subagentId: entry.subagentId,
         subagentType: entry.subagentType,
         subagentDescription: entry.subagentDescription,
+        voiceTaskId: entry.voiceTaskId,
       }));
   }
 
   cancelThread(threadId) {
     for (const [id, entry] of this.pending) {
-      if (entry.threadId !== threadId || entry.routineId) continue;
-      this.pending.delete(id);
-      entry.resolve(false);
+      if (entry.threadId !== threadId || entry.routineId || entry.voiceTaskId) continue;
+      this.respond(id, 'no');
     }
   }
 
   cancelAll() {
-    for (const entry of this.pending.values()) entry.resolve(false);
-    this.pending.clear();
+    for (const id of [...this.pending.keys()]) this.respond(id, 'no');
   }
 }

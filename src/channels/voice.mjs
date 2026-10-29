@@ -8,9 +8,10 @@ import { spawn, spawnSync } from "node:child_process";
 /**
  * Voice I/O for the CLI. Zero npm dependencies:
  * - mic + playback need the ffmpeg/ffplay binaries on PATH
- * - speech-to-text uses Groq's Whisper API (needs GROQ_API_KEY)
+ * - speech-to-text uses Groq's Whisper API (needs GROQ_API_KEY) or Sarvam
+ *   AI's Saaras model (needs SARVAM_API_KEY, much better on Hinglish)
  * - text-to-speech uses Microsoft Edge's free endpoint (no key) over a
- *   WebSocket, which Node 22+ provides globally
+ *   WebSocket, which Node 22+ provides globally, or Groq/Sarvam
  */
 
 export const DEFAULT_STT_MODEL = "whisper-large-v3-turbo";
@@ -19,6 +20,33 @@ export const DEFAULT_GROQ_VOICE = "tara";
 export const DEFAULT_EDGE_VOICE = "en-US-AriaNeural";
 export const GROQ_TRANSCRIBE_URL = "https://api.groq.com/openai/v1/audio/transcriptions";
 export const GROQ_SPEECH_URL = "https://api.groq.com/openai/v1/audio/speech";
+
+/* Sarvam AI (https://docs.sarvam.ai). One base URL, a custom auth header and
+ * base64 audio in the response, so it needs its own code path rather than an
+ * OpenAI-compatible base-URL swap. */
+export const SARVAM_API_BASE = "https://api.sarvam.ai";
+export const SARVAM_STT_URL = `${SARVAM_API_BASE}/speech-to-text`;
+export const SARVAM_TTS_URL = `${SARVAM_API_BASE}/text-to-speech`;
+/** Sarvam's auth header name; NOT `Authorization: Bearer`. */
+export const SARVAM_AUTH_HEADER = "api-subscription-key";
+export const DEFAULT_SARVAM_STT_MODEL = "saaras:v4";
+/** `translit` keeps Hinglish commands in Latin script, which keeps tool and
+ *  path names readable when they are echoed back. */
+export const DEFAULT_SARVAM_STT_MODE = "translit";
+export const DEFAULT_SARVAM_TTS_MODEL = "bulbul:v4-flash";
+export const DEFAULT_SARVAM_SPEAKER_HI = "sanchita_hi_assistant";
+export const DEFAULT_SARVAM_SPEAKER_EN = "sanchita_en_companion";
+/** Spoken language when neither the text nor the transcript says otherwise. */
+export const DEFAULT_SARVAM_TTS_LANGUAGE = "en-IN";
+/** Devanagari block; a Hindi reply should never be read by an English voice. */
+const DEVANAGARI = /[\u0900-\u097F]/;
+/** Hard per-request cap for bulbul:v4-flash; longer text must be chunked. */
+export const SARVAM_TTS_MAX_CHARS = 2000;
+/** Documented cap on `keyterms`, used to bias recognition of names/tools. */
+export const SARVAM_MAX_KEYTERMS = 50;
+/** Retry once on 429/5xx; Sarvam's pay-as-you-go tier allows 60 req/min. */
+export const SARVAM_RETRY_STATUSES = [429, 500, 502, 503, 504];
+export const SARVAM_RETRY_DELAY_MS = 700;
 
 /** Orpheus English voices (Groq TTS). */
 export const GROQ_VOICES = [
@@ -33,16 +61,75 @@ export const GROQ_VOICES = [
   { id: "austin", gender: "Male" },
 ];
 
-/** "auto" picks groq when a key exists, else edge. */
+/** "auto" picks groq when a key exists, else edge. Sarvam is opt-in only. */
 export function resolveTtsProvider(config) {
   const want = String(config.ttsProvider || "auto").toLowerCase();
-  if (want === "groq" || want === "edge") return want;
+  if (want === "groq" || want === "edge" || want === "sarvam") return want;
   return config.groqApiKey ? "groq" : "edge";
 }
 
-export function resolveTtsVoice(config, provider) {
+export function resolveTtsVoice(config, provider, languageCode = "") {
   if (config.ttsVoice) return config.ttsVoice;
+  if (provider === "sarvam") return resolveSarvamSpeaker(config, languageCode);
   return provider === "groq" ? DEFAULT_GROQ_VOICE : DEFAULT_EDGE_VOICE;
+}
+
+/**
+ * Sarvam speakers are per language, so the voice follows whatever the
+ * transcriber detected: Hindi audio gets the Hindi assistant voice rather than
+ * an English speaker mangling Devanagari.
+ */
+export function resolveSarvamSpeaker(config, languageCode = "") {
+  if (config?.ttsVoice) return config.ttsVoice;
+  const hindi = /^hi(-|$)/i.test(String(languageCode || ""));
+  return hindi
+    ? config?.sarvamSpeakerHi || DEFAULT_SARVAM_SPEAKER_HI
+    : config?.sarvamSpeakerEn || DEFAULT_SARVAM_SPEAKER_EN;
+}
+
+/**
+ * Pick the language Bulbul should speak in.
+ *
+ * Auto-detect on Hinglish is not stable — the same clip came back as hi-IN one
+ * run and pa-IN the next. Speaking Hinglish with a Punjabi voice would mangle
+ * it, so the reply's own script decides first, and the transcript language is
+ * only a hint: Devanagari -> Hindi, otherwise Hindi speech still means a Hindi
+ * voice reading Latin-script Hinglish.
+ */
+export function chooseSarvamLanguage({ text = "", detected = "", fallback = DEFAULT_SARVAM_TTS_LANGUAGE } = {}) {
+  if (DEVANAGARI.test(String(text))) return "hi-IN";
+  const lang = String(detected || "").toLowerCase();
+  if (lang.startsWith("hi")) return "hi-IN";
+  if (lang.startsWith("en")) return "en-IN";
+  return fallback;
+}
+
+/**
+ * "auto" keeps today's behaviour (Groq when a key exists) and only switches to
+ * Sarvam when it is the sole key available. An explicit STT_PROVIDER wins.
+ */
+export function resolveSttProvider(config) {
+  const want = String(config.sttProvider || "auto").toLowerCase();
+  if (want === "groq" || want === "sarvam") return want;
+  if (!config.groqApiKey && config.sarvamApiKey) return "sarvam";
+  return "groq";
+}
+
+/** Which STT providers this config can actually call right now. */
+export function sttKeysMissing(config) {
+  const provider = resolveSttProvider(config);
+  if (provider === "sarvam" && !config.sarvamApiKey) return "SARVAM_API_KEY";
+  if (provider === "groq" && !config.groqApiKey) return "GROQ_API_KEY";
+  return "";
+}
+
+/** Split a comma/space separated SARVAM_KEYTERMS value into Sarvam's array. */
+export function parseKeyterms(value) {
+  const list = Array.isArray(value) ? value : String(value ?? "").split(/[,;\n]/);
+  return list
+    .map((term) => String(term ?? "").trim())
+    .filter(Boolean)
+    .slice(0, SARVAM_MAX_KEYTERMS);
 }
 const EDGE_VOICES_URL =
   "https://speech.platform.bing.com/consumer/speech/synthesize/readaloud/voices/list?trustedclienttoken=6A5AA1D4EAFF4E9FB37E23D68491D6F4";
@@ -101,7 +188,7 @@ export function parseMicList(stderr) {
   return devices.filter((d) => d.kind === "audio").map(({ name, alt }) => ({ name, alt }));
 }
 
-export async function detectMic(preferred = "") {
+export async function listMicrophones() {
   const args =
     process.platform === "win32"
       ? ["-hide_banner", "-list_devices", "true", "-f", "dshow", "-i", "dummy"]
@@ -113,7 +200,11 @@ export async function detectMic(preferred = "") {
     child.on("error", () => resolve(""));
     child.on("close", () => resolve(stderr));
   });
-  const mics = parseMicList(out);
+  return parseMicList(out);
+}
+
+export async function detectMic(preferred = "") {
+  const mics = await listMicrophones();
   if (preferred) {
     const hit =
       mics.find((m) => m.name.toLowerCase().includes(preferred.toLowerCase())) ||
@@ -235,13 +326,13 @@ export function parseSilenceLine(line) {
 }
 
 /** Stateful line splitter: feed stderr chunks, get parsed events back. */
-export function createSilenceParser() {
+export function createSilenceParser(parseLine = parseSilenceLine) {
   let buf = "";
   const drain = () => {
     const events = [];
     let nl;
     while ((nl = buf.indexOf("\n")) >= 0) {
-      const ev = parseSilenceLine(buf.slice(0, nl));
+      const ev = parseLine(buf.slice(0, nl));
       buf = buf.slice(nl + 1);
       if (ev) events.push(ev);
     }
@@ -253,11 +344,32 @@ export function createSilenceParser() {
       return drain();
     },
     flush() {
-      const ev = parseSilenceLine(buf);
+      const ev = parseLine(buf);
       buf = "";
       return ev ? [ev] : [];
     },
   };
+}
+
+const VOICE_RMS_METADATA = 'lavfi.astats.Overall.RMS_level'; // ffmpeg astats protocol key, shared by filter and parser.
+const VOICE_RMS_LINE = new RegExp(`${VOICE_RMS_METADATA.replaceAll('.', '\\.')}=(-inf|-?\\d+(?:\\.\\d+)?)(?:\\s|$)`);
+const VOICE_RMS_FLOOR_DB = -65; // dBFS: ignore the quiet device floor for visual movement, independent of VAD.
+const VOICE_RMS_CEILING_DB = -12; // dBFS: normal loud speech fills the visual range before clipping.
+const VOICE_METER_FILTER = `astats=metadata=1:reset=1,ametadata=print:key=${VOICE_RMS_METADATA}`;
+
+export function buildVoiceInputFilter(options = {}) {
+  const silence = buildSilenceFilter(options);
+  return options.meter ? `${silence},${VOICE_METER_FILTER}` : silence;
+}
+
+export function createVoiceMeterParser() {
+  return createSilenceParser(line => {
+    const match = String(line).match(VOICE_RMS_LINE);
+    if (!match) return null;
+    const db = Number(match[1]);
+    const level = Number.isFinite(db) ? Math.max(0, Math.min(1, (db - VOICE_RMS_FLOOR_DB) / (VOICE_RMS_CEILING_DB - VOICE_RMS_FLOOR_DB))) : 0;
+    return { type: 'level', level };
+  });
 }
 
 /** Parse a full stderr blob into silence events (order preserved). */
@@ -301,14 +413,14 @@ export function createTurnDetector() {
  * rejects if ffmpeg dies immediately (bad device); assign `onEvent`
  * after creation to receive { type: 'silence_start' | 'silence_end', at }.
  */
-export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent } = {}) {
+export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent, meter = false } = {}) {
   const args = [
     "-hide_banner",
     "-loglevel",
     "info",
     ...micInputArgs(device),
     "-af",
-    buildSilenceFilter({ noiseDb, silenceSec }),
+    buildVoiceInputFilter({ noiseDb, silenceSec, meter }),
     "-ac",
     "1",
     "-ar",
@@ -320,12 +432,14 @@ export function openVoiceInput({ device, outFile, noiseDb, silenceSec, onEvent }
   ];
   const child = spawn("ffmpeg", args, { windowsHide: true, stdio: ["pipe", "ignore", "pipe"] });
   const parser = createSilenceParser();
+  const meterParser = meter ? createVoiceMeterParser() : null;
   const handle = { child, onEvent: typeof onEvent === "function" ? onEvent : null, stderr: "" };
 
   child.stderr?.on("data", (d) => {
     const text = d.toString();
     handle.stderr += text;
     for (const ev of parser.push(text)) handle.onEvent?.(ev);
+    if (meterParser) for (const ev of meterParser.push(text)) handle.onEvent?.(ev);
   });
 
   handle.ready = new Promise((resolve, reject) => {
@@ -864,6 +978,154 @@ export async function synthesizeGroq({ apiKey, model = DEFAULT_TTS_MODEL, voice 
 }
 
 /* ------------------------------------------------------------------ */
+/* Sarvam AI — STT (Saaras) and TTS (Bulbul)                           */
+/*                                                                     */
+/* Chosen for Hinglish: Saaras auto-detects code-switched speech far   */
+/* better than an English-first Whisper model, and Bulbul speaks Indian */
+/* languages with an Indian accent. Both are plain REST calls, so no   */
+/* SDK is vendored.                                                    */
+/* ------------------------------------------------------------------ */
+
+/** Turn the two actionable Sarvam errors into instructions; pass the rest through. */
+function sarvamError(kind, status, body) {
+  const detail = String(body ?? "").replace(/\s+/g, " ").slice(0, 220);
+  if (status === 401 || status === 403) {
+    return new Error(
+      `Sarvam ${kind} ${status}: key rejected. Set SARVAM_API_KEY in .env (dashboard.sarvam.ai), ` +
+        `or switch back with STT_PROVIDER=groq / TTS_PROVIDER=edge. ${detail}`
+    );
+  }
+  if (status === 429) {
+    return new Error(`Sarvam ${kind} 429: rate limit (60 req/min on pay-as-you-go). Retry in a moment. ${detail}`);
+  }
+  return new Error(`Sarvam ${kind} ${status}: ${detail}`);
+}
+
+/** One fetch helper: timeout, one retry on 429/5xx, clear errors. */
+async function sarvamFetch(url, init, { kind, timeoutMs }) {
+  for (let attempt = 0; ; attempt++) {
+    let res;
+    try {
+      res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+    } catch (err) {
+      if (err.name === "TimeoutError" || err.name === "AbortError") {
+        throw new Error(`Sarvam ${kind} timeout after ${timeoutMs}ms`);
+      }
+      throw err;
+    }
+    if (res.ok) return res;
+    const body = await res.text();
+    const retryable = SARVAM_RETRY_STATUSES.includes(res.status);
+    if (!retryable || attempt > 0) throw sarvamError(kind, res.status, body);
+    await new Promise((resolve) => setTimeout(resolve, SARVAM_RETRY_DELAY_MS));
+  }
+}
+
+/**
+ * Transcribe one recorded clip. Returns the transcript plus the detected
+ * language so the caller can pick a matching TTS speaker. The WAV the mic
+ * recorder already writes (16 kHz mono PCM) needs no conversion.
+ */
+export async function transcribeSarvam({
+  apiKey,
+  model = DEFAULT_SARVAM_STT_MODEL,
+  wavPath,
+  languageCode = "unknown",
+  mode = DEFAULT_SARVAM_STT_MODE,
+  keyterms = [],
+  timeoutMs = 60000,
+} = {}) {
+  if (!apiKey) throw new Error("set SARVAM_API_KEY in .env (dashboard.sarvam.ai)");
+  const buf = await fs.promises.readFile(wavPath);
+  const form = new FormData();
+  form.append("file", new Blob([buf], { type: "audio/wav" }), "mic.wav");
+  form.append("model", model);
+  form.append("language_code", languageCode || "unknown");
+  if (mode) form.append("mode", mode);
+  const terms = parseKeyterms(keyterms);
+  // Keyterms bias recognition of names and tool vocabulary; they never force a
+  // wrong word, so the list stays a hint.
+  if (terms.length) form.append("keyterms", JSON.stringify(terms));
+  form.append("with_timestamps", "false");
+
+  const res = await sarvamFetch(
+    SARVAM_STT_URL,
+    { method: "POST", headers: { [SARVAM_AUTH_HEADER]: apiKey }, body: form },
+    { kind: "STT", timeoutMs }
+  );
+  const data = await res.json();
+  return {
+    text: String(data.transcript || "").trim(),
+    languageCode: String(data.language_code || languageCode || ""),
+    confidence: typeof data.language_probability === "number" ? data.language_probability : null,
+  };
+}
+
+/** Provider-agnostic transcription so callers never branch on the vendor. */
+export async function transcribeAudio({ config, wavPath }) {
+  const provider = resolveSttProvider(config);
+  if (provider === "sarvam") {
+    const out = await transcribeSarvam({
+      apiKey: config.sarvamApiKey,
+      model: config.sarvamSttModel,
+      wavPath,
+      mode: config.sarvamSttMode,
+      keyterms: config.sarvamKeyterms,
+    });
+    return { ...out, provider };
+  }
+  const text = await transcribeGroq({ apiKey: config.groqApiKey, model: config.sttModel, wavPath });
+  return { text, languageCode: "", confidence: null, provider };
+}
+
+/**
+ * Synthesize speech with Bulbul. MP3 frames concatenate cleanly, so a chunked
+ * reply still plays as one clip through the existing ffplay path.
+ */
+export async function synthesizeSarvam({
+  apiKey,
+  model = DEFAULT_SARVAM_TTS_MODEL,
+  speaker,
+  languageCode = "hi-IN",
+  text,
+  sampleRate,
+  timeoutMs = 60000,
+} = {}) {
+  if (!apiKey) throw new Error("set SARVAM_API_KEY in .env (dashboard.sarvam.ai)");
+  // Keep the markdown stripper's char limit above the per-request cap so a long
+  // reply is chunked (playable) rather than truncated (lost).
+  const clean = stripForSpeech(text, SARVAM_TTS_MAX_CHARS * 4);
+  if (!clean) throw new Error("nothing speakable in that text");
+
+  const chunks = chunkSentences(clean, SARVAM_TTS_MAX_CHARS);
+  const audio = [];
+  for (const chunk of chunks) {
+    const payload = {
+      text: chunk,
+      model,
+      language_code: languageCode || "hi-IN",
+      output_audio_codec: "mp3",
+    };
+    if (speaker) payload.speaker = speaker;
+    if (sampleRate) payload.speech_sample_rate = sampleRate;
+    const res = await sarvamFetch(
+      SARVAM_TTS_URL,
+      {
+        method: "POST",
+        headers: { [SARVAM_AUTH_HEADER]: apiKey, "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      },
+      { kind: "TTS", timeoutMs }
+    );
+    const data = await res.json();
+    const b64 = Array.isArray(data.audios) ? data.audios[0] : "";
+    if (!b64) throw new Error(`Sarvam TTS: empty audio (request ${data.request_id || "unknown"})`);
+    audio.push(Buffer.from(b64, "base64"));
+  }
+  return Buffer.concat(audio);
+}
+
+/* ------------------------------------------------------------------ */
 /* playback                                                            */
 /* ------------------------------------------------------------------ */
 
@@ -878,7 +1140,9 @@ export function stopPlayback() {
   currentPlayer = null;
 }
 
-export async function playMp3(mp3, { signal } = {}) {
+export const VOICE_PLAYBACK_ERROR = 'Could not play speech. Check your output device and try voice again.'; // Actionable message; native player details stay out of spoken captions.
+
+export async function playMp3(mp3, { signal, rejectOnFailure = false, spawnImpl = spawn } = {}) {
   stopPlayback();
   const generation = playbackGeneration;
   if (signal?.aborted) return;
@@ -887,14 +1151,15 @@ export async function playMp3(mp3, { signal } = {}) {
     await fs.promises.writeFile(file, mp3, { signal });
     // Stop or a newer playback may arrive while the audio is being written.
     if (signal?.aborted || generation !== playbackGeneration) return;
-    await new Promise((resolve) => {
+    await new Promise((resolve, reject) => {
       let child;
       try {
-        child = spawn("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", file], {
+        child = spawnImpl("ffplay", ["-nodisp", "-autoexit", "-loglevel", "quiet", file], {
           windowsHide: true,
           stdio: "ignore",
         });
-      } catch {
+      } catch (error) {
+        if (rejectOnFailure && !signal?.aborted && generation === playbackGeneration) return reject(new Error(VOICE_PLAYBACK_ERROR, { cause: error }));
         return resolve();
       }
       currentPlayer = child;
@@ -903,13 +1168,17 @@ export async function playMp3(mp3, { signal } = {}) {
           child.kill("SIGKILL");
         } catch {}
       };
-      const done = () => {
+      let settled = false;
+      const done = (error) => {
+        if (settled) return;
+        settled = true;
         signal?.removeEventListener("abort", cancel);
         if (currentPlayer === child) currentPlayer = null;
-        resolve();
+        if (error && rejectOnFailure && !signal?.aborted && generation === playbackGeneration) reject(new Error(VOICE_PLAYBACK_ERROR, { cause: error }));
+        else resolve();
       };
       child.on("error", done);
-      child.on("close", done);
+      child.on("close", code => done(code === 0 ? null : new Error(VOICE_PLAYBACK_ERROR)));
       signal?.addEventListener("abort", cancel, { once: true });
     });
   } catch (error) {
