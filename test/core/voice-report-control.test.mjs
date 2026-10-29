@@ -164,3 +164,12 @@ test('cancelling explicit repeat during a newly active player shutdown cannot re
   await stoppingPlayer; request.abort(); release(); await rejected; await queue.close();
   assert.deepEqual(heard, ['poem']); assert.equal(control.handled(), false);
 });
+
+test('an unavailable follow-up selection keeps its explanation audible after an earlier selection succeeded', async t => {
+  const h = await speech(t), control = api.createVoiceReportControl({ queue: h.queue, turn: h.turn, signal: h.audio.signal });
+  await control.tool.run({ action: 'dismiss', answerRequired: false }, {});
+  await h.queue.drain(); assert.equal(control.handled(), true);
+  const unavailable = JSON.parse(await control.tool.run({ action: 'next', answerRequired: true }, {}));
+  assert.equal(unavailable.available, false);
+  assert.equal(control.handled(), false, 'a later owed explanation overrides the earlier speech-only completion');
+});

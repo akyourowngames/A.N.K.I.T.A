@@ -1213,3 +1213,31 @@ execution record. A clearer code-switched fixture changes only verification data
 production does not match phrases. The 7-case final run and full-suite totals are
 recorded below after completion. Physical microphone/speaker and packaged installer
 acceptance remain separate from these generated/captured checks.
+
+
+Decisions retained from the implementation/review ledger:
+1. Resume at a sentence boundary, because the existing MP3 player has no word
+   timing. Cost: the unfinished sentence can repeat; completed sentences cannot.
+2. Reuse the current speech detector and contextual Meta planner, with no new
+   provider/classifier. Cost: intent waits for transcription/planning, and real
+   Hinglish headset acceptance remains necessary.
+3. Release the speech hold when substantive external work starts, so long tasks
+   do not silence unrelated ready reports. Cost: those reports may speak while a
+   new task's external tool runs.
+4. Run the full serial project suite as the final task command instead of repeating
+   the overlapping voice-suite wrapper. It includes the wrapper's roots plus the
+   remaining browser/tool fixtures. Cost: no separate wrapper invocation receipt.
+5. The reviewer set exact-word resume and physical/package behavior aside; retain
+   the approved sentence policy and explicit acceptance gaps. Cost: unfinished
+   sentence replay or headset/installer problems require a real device take.
+6. The reviewer set long-work report sharing and the initial cached receipt aside;
+   preserve those approved behaviors. Cost: unrelated completions may speak during
+   external work, and the initial short receipt remains.
+
+No new Minor findings were deferred by the interruption review. The earlier
+collapsed-island status polish item remains outside this follow-up.
+
+Final fix-pass hardening: a later unavailable selection also keeps its explanation
+audible after an earlier selection succeeded. Its direct regression was RED then
+GREEN; the full focused queue/control/worker set is now **46/46**. This is part of
+the same owed-answer fix, with no additional classifier or model request.

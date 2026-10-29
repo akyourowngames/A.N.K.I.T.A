@@ -33,7 +33,8 @@ export function createVoiceReportControl({ queue, turn, signal }) {
         if (args.action === VOICE_REPORT_ACTIONS.status) { await queue.interruption?.stopped; check(ctx); return JSON.stringify(snapshot()); }
         const result = await queue.controlReport(args.action, { id: args.id, turn, signal: AbortSignal.any([signal, ctx?.signal].filter(Boolean)), holdTurn: args.answerRequired !== false });
         check(ctx);
-        if (result.available) { selected = true; answerRequired ||= args.answerRequired !== false; }
+        selected ||= result.available;
+        answerRequired ||= !result.available || args.answerRequired !== false;
         return JSON.stringify({ action: result.action, id: result.id, available: result.available, ...snapshot() });
       },
     },

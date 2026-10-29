@@ -42,7 +42,12 @@ so other completed jobs are not silent for the duration of a long new task.
 The planner's report control is private to the captured audio session and user-turn
 token. It cannot cancel work, access another owner, revive ended sessions or let a
 late previous request skip a newer report. Speech-only control turns update the
-conversation but do not add a redundant spoken acknowledgment.
+conversation but do not add a redundant spoken acknowledgment. The same control
+call explicitly states whether a separate answer is still owed. Routing/status
+checks alone do not force a confirmation; mixed conversational answers and real
+work results stay audible. An omitted decision preserves the final answer, and
+unrelated results wait until that answer is offered. Cancellation is checked
+inside awaited player-stop boundaries, before a selection can take effect.
 
 ## Verification and limits
 
