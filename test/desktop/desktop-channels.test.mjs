@@ -27,8 +27,8 @@ class StubBot {
   async sendTyping(chatId) { this.typing.push(chatId); }
   async sendVoice(chatId) { this.voices.push(chatId); }
   async react(chatId, messageId, emoji) { this.reactions.push({ chatId, messageId, emoji }); }
-  async sendPhoto(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'photo', after: this.sent.length }); }
-  async sendDocument(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'document', after: this.sent.length }); }
+  async sendPhoto(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'photo', after: this.sent.length }); return { message_id: this.files.length }; }
+  async sendDocument(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'document', after: this.sent.length }); return { message_id: this.files.length }; }
   async download() { return Buffer.from('audio'); }
 }
 

@@ -31,7 +31,7 @@ test('CLI channel mirrors progress, artifact sends and cancel without losing app
   await fs.mkdir(path.join(directory, 'downloaded-images'));
   const image = path.join(directory, 'downloaded-images', 'turn.png'); await fs.writeFile(image, 'fixture image');
   const sent = [], reactions = [], files = [];
-  const bot = { enabled: true, sendTyping: async () => {}, react: async (...args) => reactions.push(args), send: async (_id, text) => sent.push(text), sendPhoto: async (_id, bytes) => files.push(bytes) };
+  const bot = { enabled: true, sendTyping: async () => {}, react: async (...args) => reactions.push(args), send: async (_id, text) => { sent.push(text); return [{ message_id: sent.length }]; }, sendPhoto: async (_id, bytes) => { files.push(bytes); return { message_id: files.length }; } };
   const daemon = new Daemon({ store: {}, bot, config: {}, client: {}, runPrompt: async () => '', deliver: async () => {} });
   daemon.saveChat = () => {};
   const agent = { cwd: directory, messages: [], send: async (_prompt, callbacks) => { callbacks.onToolCall({ function: { name: 'browser' } }); agent.messages.push({ role: 'tool', name: 'browser', result: JSON.stringify({ type: 'browser_screenshot', path: image }) }); return 'final'; } };

@@ -1362,7 +1362,7 @@ export class DesktopEngine {
     const entry = this.approvals.pending.get(requestId);
     if (!entry) return false;
     if (answer === 'always') {
-      const agent = this.agents.get(entry.threadId);
+      const agent = this.agents.get(entry.threadId) || this.channels?.surface?.agents?.get(entry.threadId);
       if (agent) agent.autoApprove = true;
       else if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) {
         this.browserAutomaticThreads ??= new Set();

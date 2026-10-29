@@ -56,5 +56,10 @@ test('manifest-generated channel setup preserves drafts, keeps keys private and 
   await page.getByRole('tab', { name: /Telegram/ }).focus(); await page.keyboard.press('End');
   assert.equal(await page.getByRole('tab', { name: /Fixture messenger/ }).getAttribute('aria-selected'), 'true');
   assert.deepEqual(errors, []);
+  if (process.env.ANKITA_CHANNEL_SETTINGS_SCREENSHOT) {
+    await page.setViewportSize({ width: 1100, height: 960 });
+    await page.getByRole('tab', { name: /Slack/ }).click();
+    await page.screenshot({ path: process.env.ANKITA_CHANNEL_SETTINGS_SCREENSHOT, fullPage: true });
+  }
   console.log('CHANNEL_SETTINGS_UI_OK: generated card; secret-safe edits; drafts survive status; save/test; keyboard; 1280/620/390; zero renderer errors.');
 });

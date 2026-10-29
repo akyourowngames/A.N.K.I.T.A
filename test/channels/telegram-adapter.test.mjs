@@ -48,3 +48,22 @@ test('real local HTTP channel round trip preserves bot/sender metadata and sends
   assert.equal(requests.some(x => x.method === 'sendChatAction'), true);
   console.log('TELEGRAM_CHANNEL_HTTP_OK: real HTTP; sender/bot policy; typing; 2 reactions; 1 final reply; clean stop.');
 });
+
+test('Telegram keeps the replay cursor until every input in a poll is durably accepted', async () => {
+  let persisted = 1;
+  const adapter = new TelegramAdapter({ cursor: { get: () => persisted, set: offset => { persisted = offset; } }, bot: { poll: async () => ({ jobs: [{ chatId: 42, messageId: 1, text: 'work' }], offset: 2 }) } });
+  await assert.rejects(adapter.tick({ receive: async () => { throw new Error('ledger busy'); } }), /busy/);
+  assert.equal(persisted, 1); assert.equal(adapter.offset, 1);
+  await adapter.tick({ receive: async () => 1 }); assert.equal(persisted, 2);
+});
+
+test('Telegram shutdown aborts an HTTP authentication request instead of waiting for its timeout', async t => {
+  let arrived; const started = new Promise(resolve => { arrived = resolve; });
+  const apiBase = await server(t, async () => { arrived(); });
+  const adapter = new TelegramAdapter({ botFactory: options => new ChannelTelegramBot({ ...options, apiBase }) });
+  const loop = adapter.start({ settings: { token: 'fixture-token' }, signal: new AbortController().signal, receive() {} });
+  adapter.ready.catch(() => {}); await started;
+  await adapter.stop();
+  await Promise.race([loop, new Promise((_resolve, reject) => { const timer = setTimeout(() => reject(new Error('authentication did not stop promptly')), 1000); timer.unref(); })]);
+  await assert.rejects(adapter.ready);
+});

@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { DesktopChannelSurface } from '../../desktop/electron/channel-surface.mjs';
+import { DesktopEngine } from '../../desktop/electron/engine.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-channel-surface-'));
@@ -52,4 +53,13 @@ test('isolated channel history survives a host restart only in its own session',
   const next = restarted.targetFor('chief', ref);
   await restarted.run({ ...ref, messageId: '2' }, next, 'follow-up', {});
   assert.deepEqual(restarted.agents.get(next).messages.map(x => x.content), ['saved conversation', 'follow-up']);
+});
+
+test('an owner always-approval grants only its isolated channel agent', t => {
+  const { surface, engine, parent } = fixture(t);
+  const target = surface.targetFor('chief', { channel: 'discord', chatId: '42', raw: {} });
+  const agent = surface.agentForTarget(target);
+  engine.channels = { surface }; engine.approvals.pending = new Map([['r', { threadId: target }]]); engine.approvals.respond = () => true;
+  assert.equal(DesktopEngine.prototype.respondApproval.call(engine, 'r', 'always'), true);
+  assert.equal(agent.autoApprove, true); assert.notEqual(parent.autoApprove, true);
 });

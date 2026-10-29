@@ -1,6 +1,6 @@
 import { TelegramBot, parseChatIds, splitMessage, updateToJob, unsupportedMediaJob, UNSUPPORTED_MEDIA_MESSAGE } from './telegram.mjs';
 import { telegramManifest, TELEGRAM_CHANNEL_ID } from './manifests/telegram.mjs';
-import { ACK_STATES, POLL_ERROR_DELAY_MS, POLL_EMPTY_DELAY_MS, REQUEST_TIMEOUT_MS, abortableDelay } from './core/contract.mjs';
+import { ACK_STATES, POLL_ERROR_DELAY_MS, POLL_EMPTY_DELAY_MS, REQUEST_TIMEOUT_MS, SOCKET_OPEN_TIMEOUT_MS, abortableDelay } from './core/contract.mjs';
 import { DeliveryError } from './core/outbox.mjs';
 import { requestJson, httpFailure } from './core/http.mjs';
 
@@ -10,6 +10,10 @@ const SECONDS_TO_MS = 1000; // Milliseconds per API retry-after/poll second.
 
 /** Existing raw transport remains import-compatible; add policy metadata at its edge. */
 export class ChannelTelegramBot extends TelegramBot {
+  async whoami({ signal } = {}) {
+    if (!this.me) this.me = await this.call('getMe', {}, { signal, timeoutMs: SOCKET_OPEN_TIMEOUT_MS });
+    return this.me;
+  }
   async call(method, params = {}, { timeoutMs = REQUEST_TIMEOUT_MS, signal } = {}) {
     if (!this.enabled) throw new DeliveryError('permanent', 'Telegram bot token is not set');
     const multipart = params instanceof FormData;
@@ -92,7 +96,7 @@ export class TelegramAdapter {
     return (async () => {
       try {
         this.bot ||= this.botFactory({ token: ctx.settings.token, allowedChatIds: parseChatIds(ctx.settings.allowedChatIds), ownerChatId: ctx.settings.ownerChatId || null });
-        const me = await this.bot.whoami();
+        const me = await this.bot.whoami({ signal: this.controller.signal });
         resolve({ account: me?.username ? `@${me.username}` : null });
         while (!this.stopping && !this.controller.signal.aborted) {
           try { const count = await this.tick(ctx); if (!count) await abortableDelay(POLL_EMPTY_DELAY_MS, this.controller.signal); }
@@ -114,11 +118,12 @@ export class TelegramAdapter {
     if (this.stopping || ctx.signal?.aborted) return 0;
     if (error) { ctx.status?.({ error }); return 0; }
     ctx.status?.({ error: null });
-    if (offset > 0 && offset !== this.offset) { this.offset = offset; this.cursor?.set?.(offset); }
     for (const job of denied) if (!job.channelMetadata?.bot) await this.send({ ...telegramEnvelope(job), parts: [`This bot is private. Your chat id is ${job.chatId} - add it to Allowed chat ids to allow it.`] }).catch(() => {});
     let routed = 0;
     for (const job of jobs) routed += Number(await ctx.receive(telegramEnvelope(job))) || 0;
     for (const job of unsupported) await ctx.receive(telegramEnvelope({ ...job, kind: 'unsupported' }));
+    // Commit after acceptance. On a partial failure, replayed earlier inputs hit the durable dedupe ledger.
+    if (offset > 0 && offset !== this.offset) { this.offset = offset; this.cursor?.set?.(offset); }
     return routed;
   }
   async send(ref) {

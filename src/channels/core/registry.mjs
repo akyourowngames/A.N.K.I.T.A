@@ -36,6 +36,7 @@ export class ChannelRegistry {
     for (const [key, field] of Object.entries(manifest.fields)) {
       if (!/^[a-zA-Z][a-zA-Z0-9]*$/.test(key) || !FIELD_KINDS.includes(field.kind) || (field.kind === 'enum' && !Array.isArray(field.values))) throw new Error('Invalid channel field');
       if (own(field, 'default')) cleanField(key, field.default, field);
+      if (field.kind === 'secret' && field.default) throw new Error('A secret field default must be empty');
     }
     for (const key of manifest.required || []) if (!own(manifest.fields, key)) throw new Error(`Unknown required channel field: ${key}`);
     const descriptor = structuredClone(manifest);

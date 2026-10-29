@@ -73,3 +73,22 @@ test('a platform retry-after is never shortened to the normal backoff cap', asyn
   } });
   assert.deepEqual(waits, [60_000]);
 });
+
+test('a missing or empty platform receipt stays unknown and is not sent twice', async t => {
+  const outbox = new ChannelOutbox({ file: ledger(t) }); let calls = 0;
+  for (const [index, receipt] of [undefined, {}, { messageId: 'undefined', parts: ['undefined'] }, { messageId: null, parts: [] }].entries()) {
+    const ref = { ...envelope, messageId: `missing-${index}`, parts: ['one'] }, adapter = { send: async () => { calls++; return receipt; } };
+    await assert.rejects(outbox.deliver(ref, adapter), { kind: 'unknown' });
+    await assert.rejects(outbox.deliver(ref, adapter), { kind: 'unknown' });
+  }
+  assert.equal(calls, 4);
+});
+
+test('delivery doctor reports uncertainty and a writer lock without exposing saved content', async t => {
+  const file = ledger(t), outbox = new ChannelOutbox({ file });
+  await assert.rejects(outbox.deliver({ ...envelope, parts: ['private report'] }, { send: async () => { throw new Error('lost receipt'); } }));
+  let report = outbox.doctor(); assert.equal(report.ok, true); assert.equal(report.uncertain, 1);
+  assert.equal(JSON.stringify(report).includes('private report'), false);
+  fs.writeFileSync(`${file}.lock`, ''); report = outbox.doctor(); assert.equal(report.ok, false); assert.match(report.error, /lock/);
+  fs.unlinkSync(`${file}.lock`); fs.writeFileSync(file, '{broken'); assert.equal(outbox.doctor().ok, false);
+});

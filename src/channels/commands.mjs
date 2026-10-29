@@ -12,8 +12,8 @@ export async function runChannelCommand(input, { host }) {
     return entries.map(([key, settings]) => `${key}: ${settings.manifest.label} — ${settings.status.running ? `connected${settings.status.account ? ` as ${settings.status.account}` : ''}` : settings.status.error || 'off'}`).join('\n') + '\nKeep this Ankita session open for connected channels.';
   }
   if (action === 'doctor') {
-    const report = host.store.doctor();
-    return report.ok ? `Channel settings OK.${report.rollbackAvailable ? ' A migration backup is available.' : ''}` : report.error;
+    const report = host.doctor();
+    return report.ok ? `Channel settings and delivery ledger OK.${report.rollbackAvailable ? ' A migration backup is available.' : ''}${report.delivery.uncertain ? ` ${report.delivery.uncertain} send(s) have uncertain outcomes; inspect the conversations before retrying.` : ''}` : report.error;
   }
   if (!id) throw new Error(`Usage: ${CHANNEL_USAGE}`);
   const manifest = host.registry.get(id);

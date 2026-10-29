@@ -18,6 +18,18 @@ function fixture({ channel = 'fixture', caps = [], surface, settings = {} } = {}
 }
 const inbound = (chatId = '42', text = 'hello', messageId = 'message-1') => ({ channel: 'fixture', chatId, messageId, senderId: chatId, text, raw: { isGroup: false } });
 
+test('ending a channel during authentication cannot restore a connected account after shutdown', async () => {
+  const f = fixture(), auth = deferred();
+  f.runtime.running = false; f.adapter.start = () => { f.adapter.ready = auth.promise; };
+  const starting = f.runtime.start(); await f.runtime.stop(); auth.resolve({ account: 'stale-account' }); await starting;
+  assert.equal(f.runtime.account, null); assert.equal(f.runtime.running, false);
+});
+
+test('a transport throwing before readiness becomes a visible stopped connection', async () => {
+  const f = fixture(); f.runtime.running = false; f.adapter.start = () => { throw new Error('Native socket unavailable'); };
+  const status = await f.runtime.start(); assert.equal(status.running, false); assert.match(status.error, /unavailable/);
+});
+
 test('shared runtime denies unlisted senders and ignores replayed input before any agent call', async () => {
   const calls = [];
   const surface = new ChannelSurface({ engine: { send: async (...args) => calls.push(args), waitForTurn: async () => 'result' } });

@@ -24,13 +24,22 @@ export class ChannelRuntime {
     if (this.running) return this.status();
     const settings = this.settings();
     if (!settings.enabled) return this.status();
-    for (const key of this.adapter.manifest.required || []) if (!settings[key]) return this.status();
+    for (const key of this.adapter.manifest.required || []) if (!settings[key]) { this.error = `Enter ${this.adapter.manifest.fields?.[key]?.label || key} before connecting`; this.emit(); return this.status(); }
     this.stopping = false; this.abort = new AbortController(); this.inbox = new ChannelInbox();
     this.running = true;
-    const work = this.adapter.start({ settings, signal: this.abort.signal, receive: message => this.receive(message), status: status => { Object.assign(this, status); this.emit(); } });
+    const abort = this.abort;
+    let work;
+    try {
+      work = this.adapter.start({ settings, signal: abort.signal, receive: message => this.receive(message), status: status => {
+        if (this.abort === abort && !abort.signal.aborted) { Object.assign(this, status); this.emit(); }
+      } });
+    } catch (error) { this.error = error.message; this.running = false; await this.adapter.stop(); this.emit(); return this.status(); }
     this.loopPromise = Promise.resolve(work).catch(error => { if (!this.stopping) { this.error = error.message; this.running = false; this.emit(); } });
-    try { this.account = (await this.adapter.ready)?.account || this.account; this.error = null; }
-    catch (error) { this.error = error.message; this.running = false; await this.adapter.stop(); }
+    try {
+      const ready = await this.adapter.ready;
+      if (this.abort === abort && !abort.signal.aborted && !this.stopping) { this.account = ready?.account || this.account; this.error = null; }
+    }
+    catch (error) { if (this.abort === abort && !abort.signal.aborted) { this.error = error.message; this.running = false; await this.adapter.stop(); } }
     this.emit(); return this.status();
   }
   async stop() {

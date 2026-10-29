@@ -8,6 +8,15 @@ const LEDGER_RECORD_LIMIT = 10_000; // Receipts: fail closed at capacity instead
 const DELIVERY_KINDS = new Set(['rate_limited', 'transient', 'permanent', 'unknown']);
 const EMPTY_LEDGER = () => ({ version: DELIVERY_LEDGER_VERSION, records: {}, deadTargets: {}, inbound: {} });
 const payloadHash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+const INVALID_RECEIPT_IDS = new Set(['undefined', 'null']); // Missing IDs must not become stringified proof of delivery.
+const validReceiptId = id => typeof id === 'string' && Boolean(id.trim()) && !INVALID_RECEIPT_IDS.has(id);
+
+function requireReceipt(receipt) {
+  if (!validReceiptId(receipt?.messageId) || !Array.isArray(receipt.parts) || !receipt.parts.length || !receipt.parts.every(validReceiptId) || !receipt.parts.includes(receipt.messageId)) {
+    throw new DeliveryError('unknown', 'The platform returned no valid delivery receipt; check the conversation before retrying');
+  }
+  return receipt;
+}
 
 export class DeliveryError extends Error {
   constructor(kind, message, { retryAfterMs = null, deadTarget = false } = {}) {
@@ -52,6 +61,16 @@ export class ChannelOutbox {
     this.ledger = new DeliveryLedger(file); this.retryLimit = retryLimit; this.delay = delay; this.chains = new Map();
   }
   inspect() { return this.ledger.read(); }
+  doctor() {
+    try {
+      const value = this.inspect(), records = Object.values(value.records), incoming = Object.values(value.inbound);
+      const locked = Boolean(this.ledger.file && fs.existsSync(`${this.ledger.file}.lock`));
+      const full = records.length >= LEDGER_RECORD_LIMIT || incoming.length >= LEDGER_RECORD_LIMIT;
+      return { ok: !locked && !full, error: locked ? 'Delivery writer lock exists; close other hosts and inspect it before recovery' : full ? 'Delivery ledger is full; stop all hosts and archive receipts before accepting new work' : null,
+        uncertain: records.filter(record => ['unknown', 'inflight'].includes(record?.state)).length,
+        unfinished: incoming.filter(record => record?.state === 'received').length, pausedTargets: Object.keys(value.deadTargets).length };
+    } catch (error) { return { ok: false, error: error.message }; }
+  }
   revive(channel, chatId = null) {
     this.ledger.change(value => { for (const key of Object.keys(value.deadTargets)) if (chatId == null ? key.startsWith(`${channel}:`) : key === sessionKey({ channel, chatId })) delete value.deadTargets[key]; });
   }
@@ -100,12 +119,12 @@ export class ChannelOutbox {
         if (existing) { accepted.push(existing.receipt); sent = true; break; }
         try {
           const ref = { ...envelope, parts: item.type === 'text' ? [item.text] : [], files: [] };
-          const receipt = item.type === 'file'
+          const receipt = requireReceipt(item.type === 'file'
             ? await adapter.upload(ref, item.file, { signal })
-            : await adapter.send(ref, { signal });
+            : await adapter.send(ref, { signal }));
           this.ledger.change(value => {
             if (value.records[key]?.claimId !== claimId) throw new DeliveryError('unknown', 'Delivery claim changed before receipt could be recorded');
-            value.records[key] = { state: 'sent', hash, receipt: receipt || { messageId: null, parts: [] }, at: new Date().toISOString() };
+            value.records[key] = { state: 'sent', hash, receipt, at: new Date().toISOString() };
           });
           accepted.push(receipt); sent = true; break;
         } catch (cause) {

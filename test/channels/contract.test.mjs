@@ -54,3 +54,7 @@ test('adapter capabilities require their implementation instead of silently clai
   assert.throws(() => assertAdapter(adapter), /upload/);
   assert.doesNotThrow(() => assertAdapter({ ...adapter, upload() {} }));
 });
+
+test('a manifest cannot smuggle a saved credential into the public schema as a secret default', () => {
+  assert.throws(() => new ChannelRegistry([{ ...fixture, fields: { ...fixture.fields, secret: { ...fixture.fields.secret, default: 'private-value' } } }]), /secret.*default/i);
+});
