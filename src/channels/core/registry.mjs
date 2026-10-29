@@ -1,5 +1,7 @@
 import { CHANNEL_CAPABILITIES, CHANNEL_ID_PATTERN, FIELD_KINDS, SECRET_CHAR_LIMIT, LIST_CHAR_LIMIT, TEXT_CHAR_LIMIT, assertSerializable, own } from './contract.mjs';
 import { telegramManifest } from '../manifests/telegram.mjs';
+import { discordManifest } from '../manifests/discord.mjs';
+import { slackManifest } from '../manifests/slack.mjs';
 
 export function normalizeList(value, { numericIds = false } = {}) {
   return String(value ?? '').split(/[,\s]+/).filter(Boolean).map(id => numericIds && /^-?\d+$/.test(id) ? String(Number(id)) : id).join(', ');
@@ -97,7 +99,7 @@ export class ChannelRegistry {
   }
 }
 
-export const defaultRegistry = new ChannelRegistry([telegramManifest]);
+export const defaultRegistry = new ChannelRegistry([telegramManifest, discordManifest, slackManifest]);
 
 export function environmentForConfig(config, registry = defaultRegistry) {
   const values = {};

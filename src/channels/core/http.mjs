@@ -20,12 +20,18 @@ export function httpFailure(platform, status, data = {}, headers = null) {
 }
 
 /** No credentials, signed URLs, or upstream response bodies are echoed into errors. */
-export async function requestJson(url, { platform = 'Channel', fetchImpl = fetch, signal, timeoutMs = REQUEST_TIMEOUT_MS, ...options } = {}) {
+export async function requestResponse(url, { platform = 'Channel', fetchImpl = fetch, signal, timeoutMs = REQUEST_TIMEOUT_MS, ...options } = {}) {
   signal?.throwIfAborted();
   const timeout = AbortSignal.timeout(timeoutMs), combined = signal ? AbortSignal.any([signal, timeout]) : timeout;
   let response;
   try { response = await fetchImpl(url, { ...options, redirect: 'error', signal: combined }); }
   catch { throw new DeliveryError('unknown', `${platform} connection ended without a delivery receipt; check the conversation before retrying`); }
+  return response;
+}
+
+export async function requestJson(url, { platform = 'Channel', emptyResponse = false, ...options } = {}) {
+  const response = await requestResponse(url, { platform, ...options });
+  if (response.ok && response.status === 204 && emptyResponse) return { data: {}, status: response.status, headers: response.headers };
   const data = await response.json().catch(() => null);
   if (!response.ok) throw httpFailure(platform, response.status, data, response.headers);
   if (!data || typeof data !== 'object') throw new DeliveryError('unknown', `${platform} returned no readable delivery receipt`);
