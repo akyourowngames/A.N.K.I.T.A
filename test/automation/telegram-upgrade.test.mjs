@@ -6,6 +6,7 @@ import path from 'node:path';
 import { TelegramBot, updateToJob } from '../../src/channels/telegram.mjs';
 import { Daemon } from '../../src/automation/daemon.mjs';
 import { TelegramProgress, readTelegramArtifact, sendTurnArtifacts } from '../../src/channels/telegram-progress.mjs';
+import { DeliveryError } from '../../src/channels/core/outbox.mjs';
 
 test('Telegram transport supports reactions, photo/document multipart upload and unsupported incoming media nudges', async t => {
   const requests = [];
@@ -72,7 +73,7 @@ test('artifact reads reject outside files and symlink escapes; delivery is cappe
   const messages = [];
   for (let index = 0; index < 7; index++) { const image = path.join(cwd, 'generated-images', `${index}.png`); await fs.writeFile(image, 'image'); messages.push({ role: 'tool', name: 'image_generate', result: JSON.stringify({ type: 'generated_image', path: image }) }); }
   let photos = 0, documents = 0;
-  await sendTurnArtifacts({ sendTyping: async () => {}, sendPhoto: async () => { photos++; throw new Error('photo rejected'); }, sendDocument: async () => { documents++; }, send: () => assert.fail('fallback should upload') }, { chatId: 42 }, cwd, messages);
+  await sendTurnArtifacts({ sendTyping: async () => {}, sendPhoto: async () => { photos++; throw new DeliveryError('permanent', 'photo rejected'); }, sendDocument: async () => { documents++; }, send: () => assert.fail('fallback should upload') }, { chatId: 42 }, cwd, messages);
   assert.equal(photos, 5); assert.equal(documents, 5);
 });
 

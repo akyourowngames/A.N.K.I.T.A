@@ -2,10 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash, randomUUID } from 'node:crypto';
 import { writePrivateJson } from './store.mjs';
-import { DELIVERY_LEDGER_VERSION, CHANNEL_RETRY_LIMIT, RETRY_BASE_MS, RETRY_MAX_MS, abortableDelay, sessionKey } from './contract.mjs';
+import { DELIVERY_LEDGER_VERSION, CHANNEL_RETRY_LIMIT, RETRY_BASE_MS, RETRY_MAX_MS, CHANNEL_PRIVATE_MODE, abortableDelay, sessionKey } from './contract.mjs';
 
 const LEDGER_RECORD_LIMIT = 10_000; // Receipts: fail closed at capacity instead of forgetting dedupe evidence.
-const PRIVATE_FILE_MODE = 0o600; // POSIX bits: delivery records include chat identifiers and payload hashes.
 const DELIVERY_KINDS = new Set(['rate_limited', 'transient', 'permanent', 'unknown']);
 const EMPTY_LEDGER = () => ({ version: DELIVERY_LEDGER_VERSION, records: {}, deadTargets: {}, inbound: {} });
 const payloadHash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -35,7 +34,7 @@ class DeliveryLedger {
     if (!this.file) { const value = this.read(), result = fn(value); this.memory = value; return result; }
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const lock = `${this.file}.lock`; let fd;
-    try { fd = fs.openSync(lock, 'wx', PRIVATE_FILE_MODE); }
+    try { fd = fs.openSync(lock, 'wx', CHANNEL_PRIVATE_MODE); }
     catch (error) {
       if (error.code === 'EEXIST') throw new DeliveryError('transient', 'Delivery ledger is busy; retry after checking the other host');
       throw error;

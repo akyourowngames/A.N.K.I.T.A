@@ -1,6 +1,25 @@
 /** One FIFO per conversation and a shared single-flight gate per agent target. */
 export class ChannelInbox {
-  constructor() { this.chains = new Map(); this.targets = new Map(); this.controllers = new Map(); this.generations = new Map(); this.stopped = false; }
+  constructor({ maxConcurrent = Infinity } = {}) {
+    this.chains = new Map(); this.targets = new Map(); this.controllers = new Map(); this.generations = new Map(); this.stopped = false;
+    this.maxConcurrent = maxConcurrent; this.active = 0; this.waiting = [];
+  }
+  acquire(signal) {
+    if (signal.aborted || this.stopped) return Promise.resolve(false);
+    if (this.active < this.maxConcurrent) { this.active++; return Promise.resolve(true); }
+    return new Promise(resolve => {
+      const entry = { signal, resolve, abort: () => { this.waiting = this.waiting.filter(item => item !== entry); resolve(false); } };
+      signal.addEventListener('abort', entry.abort, { once: true }); this.waiting.push(entry);
+    });
+  }
+  release() {
+    this.active--;
+    while (this.waiting.length) {
+      const entry = this.waiting.shift(); entry.signal.removeEventListener('abort', entry.abort);
+      if (entry.signal.aborted || this.stopped) { entry.resolve(false); continue; }
+      this.active++; entry.resolve(true); break;
+    }
+  }
   enqueue(key, work, { target = key, signal } = {}) {
     if (this.stopped) return Promise.reject(new Error('Channel inbox stopped'));
     const generation = this.generations.get(key) || 0;
@@ -16,11 +35,15 @@ export class ChannelInbox {
       const gate = new Promise(resolve => { release = resolve; });
       const held = previousTarget.catch(() => {}).then(() => gate);
       this.targets.set(target, held);
+      let acquired = false;
       try {
         await previousTarget.catch(() => {});
         if (this.stopped || controller.signal.aborted || generation !== (this.generations.get(key) || 0)) return;
+        acquired = await this.acquire(controller.signal);
+        if (!acquired) return;
         return await work({ signal: controller.signal });
       } finally {
+        if (acquired) this.release();
         signal?.removeEventListener('abort', cancel);
         if (this.controllers.get(key) === controller) this.controllers.delete(key);
         release();

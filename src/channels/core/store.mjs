@@ -2,10 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { defaultRegistry } from './registry.mjs';
-import { CHANNEL_STORE_VERSION } from './contract.mjs';
+import { CHANNEL_STORE_VERSION, CHANNEL_PRIVATE_MODE } from './contract.mjs';
 import { TELEGRAM_CHANNEL_ID } from '../manifests/telegram.mjs';
 
-const PRIVATE_FILE_MODE = 0o600; // POSIX permission bits: channel settings contain credentials.
 const LEGACY_VERSION = 1; // The previous desktop { version, channels: { telegram } } format.
 const LEGACY_BACKUP_SUFFIX = '.v1.bak'; // Never replace this recoverable, exact pre-migration copy.
 
@@ -13,9 +12,9 @@ export function writePrivateJson(file, value) {
   fs.mkdirSync(path.dirname(file), { recursive: true });
   const temp = path.join(path.dirname(file), `.${path.basename(file)}.${randomUUID()}.tmp`);
   try {
-    fs.writeFileSync(temp, typeof value === 'string' ? value : JSON.stringify(value, null, 2), { mode: PRIVATE_FILE_MODE, flag: 'wx' });
+    fs.writeFileSync(temp, typeof value === 'string' ? value : JSON.stringify(value, null, 2), { mode: CHANNEL_PRIVATE_MODE, flag: 'wx' });
     fs.renameSync(temp, file);
-    try { fs.chmodSync(file, PRIVATE_FILE_MODE); } catch { /* Windows ACLs manage file access. */ }
+    try { fs.chmodSync(file, CHANNEL_PRIVATE_MODE); } catch { /* Windows ACLs manage file access. */ }
   } finally { try { fs.unlinkSync(temp); } catch {} }
 }
 
@@ -42,7 +41,7 @@ export class ChannelStore {
       this.data = data;
       if (parsed.version !== CHANNEL_STORE_VERSION) {
         const backup = this.file + LEGACY_BACKUP_SUFFIX;
-        if (!fs.existsSync(backup)) fs.writeFileSync(backup, original, { mode: PRIVATE_FILE_MODE, flag: 'wx' });
+        if (!fs.existsSync(backup)) fs.writeFileSync(backup, original, { mode: CHANNEL_PRIVATE_MODE, flag: 'wx' });
         writePrivateJson(this.file, { version: CHANNEL_STORE_VERSION, channels: data });
         this.migrated = true;
       }

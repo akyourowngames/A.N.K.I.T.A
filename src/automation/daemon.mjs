@@ -5,8 +5,16 @@ import { ProjectStore } from '../memory/projects.mjs';
 import { McpStore } from "../integrations/mcp-store.mjs";
 import { ComposioStore } from "../integrations/composio-store.mjs";
 import { Agent } from "../core/agent.mjs";
-import { TelegramProgress, sendTurnArtifacts, isCancelMessage } from '../channels/telegram-progress.mjs';
-import { UNSUPPORTED_MEDIA_MESSAGE } from '../channels/telegram.mjs';
+import { randomUUID, createHash } from 'node:crypto';
+import { ChannelRuntime } from '../channels/core/runtime.mjs';
+import { ChannelOutbox } from '../channels/core/outbox.mjs';
+import { DaemonChannelSurface } from '../channels/core/daemon-surface.mjs';
+import { defaultRegistry } from '../channels/core/registry.mjs';
+import { confirmationSeconds, ownerIdentity } from '../channels/core/policy.mjs';
+import { TELEGRAM_CHANNEL_ID } from '../channels/manifests/telegram.mjs';
+import { TelegramAdapter, telegramEnvelope } from '../channels/telegram-adapter.mjs';
+import { transcribeChannelVoice, speakChannelReply } from '../channels/core/voice.mjs';
+import { CHANNEL_DELIVERY_FILE, CHANNEL_SESSION_PREFIX } from '../channels/core/contract.mjs';
 import { sanitizeMessages } from "../core/history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
@@ -15,16 +23,6 @@ import { numericDelta } from "./routines.mjs";
 import { buildAlertPrompt, renderAlertFallback } from "./alerts.mjs";
 import { recordTurn, saveSession } from '../core/sessions.mjs';
 import { redact } from '../security/secret-scrubber.mjs';
-import {
-  transcribeGroq,
-  synthesizeEdge,
-  synthesizeGroq,
-  convertAudio,
-  voiceRuntimeCheck,
-  resolveTtsProvider,
-  resolveTtsVoice,
-  tmpVoiceFile,
-} from "../channels/voice.mjs";
 
 /**
  * The proactive loop: scheduled routines, URL watches, and a Telegram inbox,
@@ -35,30 +33,10 @@ import {
  * terminal.
  */
 
-const ANSI = /\x1b\[[0-9;]*m/g;
+const DAEMON_CHANNEL_TARGET = 'daemon'; // Surface target label; per-conversation routing is supplied by the daemon port.
 const MAX_ALERT_CHANGES = 100;
 
-/** Approval diffs come from the CLI renderer with colour codes; Telegram wants plain text. */
-export const stripAnsi = (s) => String(s ?? "").replace(ANSI, "");
-
-/** Approval replies are short: "y", "yes", "ok", "always", "a", "n", "no". */
-export function parseApproval(text) {
-  const t = String(text || "").trim().toLowerCase().replace(/[.!]+$/, "");
-  if (!t) return "no";
-  if (/^(a|always|all|yes always|y always|yes all|always allow)$/.test(t)) return "always";
-  if (/^(y|ye|yes|yeah|yep|ok|okay|sure|approve|approved|allow|allowed|go|do it|fine|k)$/.test(t)) return "yes";
-  return "no";
-}
-
-/**
- * True for a bare affirmative ("y", "yes", "ok", "a", "always") and nothing
- * else. Used to catch a late answer to an expired approval so it is not fed
- * to the model as a prompt — which produces "did you mean to type y?".
- */
-export function isBareApproval(text) {
-  const t = String(text || "").trim().toLowerCase().replace(/[.!]+$/, "");
-  return /^(y|ye|yes|yeah|yep|ok|okay|sure|approve|approved|allow|allowed|go|do it|fine|k|a|always|all)$/.test(t);
-}
+export { parseApproval, isBareApproval, stripAnsi } from '../channels/core/policy.mjs';
 
 export class Daemon {
   constructor({
@@ -143,14 +121,31 @@ export class Daemon {
     this.active = 0;
     this.waiting = [];
     // Config is in SECONDS; the floor keeps a typo from making approval impossible.
-    this.confirmTimeoutMs = Math.max(30000, (Number(config.telegramConfirmTimeout) || 300) * 1000);
+    this.confirmTimeoutMs = confirmationSeconds(config.telegramConfirmTimeout) * 1000;
     this.stats = { routinesRun: 0, changesAlerted: 0, messagesHandled: 0, errors: 0 };
+    this.channelSurface = new DaemonChannelSurface(this);
+    const adapter = new TelegramAdapter({ bot: this.bot, cursor: { get: () => this._channelOffset || 0, set: value => { this._channelOffset = value; this.store.setTelegramOffset?.(value); } } });
+    adapter.offset = this.offset; adapter.offsetReady = this.offsetReady;
+    this.channelRuntime = new ChannelRuntime({ adapter, surface: this.channelSurface,
+      getSettings: () => this.telegramChannelSettings(),
+      outbox: new ChannelOutbox({ file: store.file ? path.join(path.dirname(store.file), CHANNEL_DELIVERY_FILE) : null }),
+      log: this.log, approvalTimeoutMs: () => this.confirmTimeoutMs,
+      transcribe: (ref, options) => transcribeChannelVoice(adapter, ref, this.config, options),
+      speak: (ref, text) => speakChannelReply(adapter, ref, text, this.config, this.log),
+      runJob: (ref, options) => this.handleJob(ref.raw?.job || ref, options),
+      settled: (ref, active) => { this.stats.messagesHandled++; if (active.error && !active.cancelled && !this.stopping) this.stats.errors++; this.saveChat(this.channelSurface.targetFor(null, ref)); },
+    });
+    this.channelRuntime.running = Boolean(this.bot); this.channelRuntime.abort = new AbortController();
+    this.chatTurns = this.channelRuntime.activeJobs; this.pending = this.channelRuntime.pending;
+    this.channelRuntimes = new Map([[TELEGRAM_CHANNEL_ID, this.channelRuntime]]);
+    this._dispatchChannel = this.channelRuntime.dispatch.bind(this.channelRuntime);
+    this.channelRuntime.dispatch = ref => this.dispatch(ref);
   }
 
   stop() {
     this.stopping = true;
     this.wake?.();
-    for (const active of this.chatTurns.values()) { active.cancelled = true; void active.progress.stop(); active.agent.cancel?.(); }
+    for (const runtime of this.channelRuntimes.values()) void runtime.stop();
     // Queued turns have no work to drain. Settle their permits as cancelled;
     // active turns keep their slots until their own finally blocks release.
     for (const resolve of this.waiting.splice(0)) resolve(false);
@@ -160,7 +155,9 @@ export class Daemon {
   /* ------------------------- conversation per chat ------------------------ */
 
   sessionFile(chatId) {
-    return path.join(SESSIONS_DIR, `dm-${String(chatId).replace(/[^0-9-]/g, "")}.json`);
+    const key = String(chatId);
+    const name = /^-?\d+$/.test(key) ? `dm-${key}` : CHANNEL_SESSION_PREFIX + createHash('sha256').update(key).digest('hex');
+    return path.join(SESSIONS_DIR, `${name}.json`);
   }
 
   chatAgent(chatId) {
@@ -208,71 +205,39 @@ export class Daemon {
   }
 
   ownerFallbackChat() {
-    const first = String(this.config.telegramAllowedChatIds || "").split(/[,\s]+/).filter(Boolean)[0];
-    return first || null;
+    return ownerIdentity(TELEGRAM_CHANNEL_ID, this.telegramChannelSettings())?.chatId || null;
   }
 
-  /**
-   * Sends the approval question to a chat and resolves when that chat replies.
-   * Returns true to allow. A reply of "always" also flips the chat's agent to
-   * auto-approve for the rest of the session.
-   */
+  telegramChannelSettings() {
+    return {
+      ...defaultRegistry.defaults(TELEGRAM_CHANNEL_ID),
+      ...(this.config.channels?.[TELEGRAM_CHANNEL_ID] || {}),
+      enabled: Boolean(this.bot),
+      token: this.config.telegramBotToken || '',
+      teammateId: DAEMON_CHANNEL_TARGET,
+      ownerChatId: this.config.telegramChatId || '',
+      allowedChatIds: this.config.telegramAllowedChatIds || this.config.telegramChatId || '',
+      voiceReply: Boolean(this.config.telegramVoiceReply),
+      confirmTimeout: confirmationSeconds(this.config.telegramConfirmTimeout),
+    };
+  }
+
+  channelRuntimeFor(id) { return this.channelRuntimes.get(id); }
+
   async confirmFrom(chatId, toolName, detail) {
     if (this.stopping) return false;
-    const key = String(chatId);
-    const agent = this.chatAgents.get(key);
+    const key = String(chatId), agent = this.chatAgents.get(key);
     if (this.config.autoApprove === true || agent?.autoApprove === true) return true;
     if (!this.bot) return false;
-
-    const body = stripAnsi(detail).trim();
-    await this.bot.send(
-      chatId,
-      `Permission needed: ${toolName}\n\n${body}\n\nReply y = allow once, a = always, n = deny` +
-        `\n(times out in ${Math.round(this.confirmTimeoutMs / 60000)} min)`
-    );
-    if (this.stopping) return false;
-
-    this.log(`waiting for ${toolName} approval in chat ${key}`);
-    return new Promise((resolve) => {
-      const entry = {
-        toolName,
-        settle: (answer) => {
-          clearTimeout(entry.timer);
-          if (this.pending.get(key) === entry) this.pending.delete(key);
-          this.log(`${toolName} ${answer === "no" ? "denied" : "approved"} in chat ${key}`);
-          resolve(answer === "yes" || answer === "always");
-        },
-      };
-      entry.timer = setTimeout(() => {
-        const stillWaiting = this.pending.get(key) === entry;
-        entry.settle("no");
-        if (stillWaiting) {
-          this.bot.send(chatId, `No reply, so I skipped ${toolName}.`).catch(() => {});
-        }
-      }, this.confirmTimeoutMs);
-      this.pending.set(key, entry);
-    });
+    const active = [...this.channelRuntime.activeJobs.values()].find(job => job.target === key);
+    const ref = active?.ref || telegramEnvelope({ chatId, messageId: randomUUID(), kind: 'text' });
+    const answer = await this.channelRuntime.requestApproval(ref, { toolName, detail }, active);
+    if (answer === 'always' && agent) agent.autoApprove = true;
+    return answer === 'yes' || answer === 'always';
   }
 
-  /**
-   * If this message is an answer to a pending approval, consume it and return
-   * true so it is not also treated as a new request.
-   */
   resolvePending(job) {
-    const key = String(job.chatId);
-    const waiting = this.pending.get(key);
-    if (!waiting) return false;
-    if (job.kind !== "text") {
-      this.bot?.send(key, `Reply with text (y / n / a) to approve ${waiting.toolName}.`).catch(() => {});
-      return true;
-    }
-    const answer = parseApproval(job.text);
-    if (answer === "always") {
-      const agent = this.chatAgents.get(key);
-      if (agent) agent.autoApprove = true;
-    }
-    waiting.settle(answer);
-    return true;
+    return this.channelRuntime.resolvePending(job.channel ? job : telegramEnvelope(job));
   }
 
   saveChat(chatId) {
@@ -473,168 +438,38 @@ export class Daemon {
 
   /* -------------------------------- inbox -------------------------------- */
 
-  async handleJob(job) {
-    if (this.stopping) return;
-    const agent = this.chatAgent(job.chatId);
-    let prompt = job.text || "";
-    const progress = new TelegramProgress(this.bot, job);
-    const active = { agent, progress, cancelled: false };
-    this.chatTurns.set(String(job.chatId), active);
-    const messageStart = agent.messages?.length || 0;
-    try {
-      if (job.kind === "voice") {
-        if (voiceRuntimeCheck()) throw new Error(voiceRuntimeCheck());
-        if (!this.config.groqApiKey) throw new Error("set GROQ_API_KEY to transcribe voice notes");
-        const ogg = await this.bot.download(job.fileId);
-        if (this.stopping || active.cancelled) return;
-        const wav = await convertAudio(ogg, { to: "wav" });
-        if (this.stopping || active.cancelled) return;
-        const wavPath = tmpVoiceFile('wav');
-        try {
-          await fs.promises.writeFile(wavPath, wav);
-          if (this.stopping || active.cancelled) return;
-          prompt = await transcribeGroq({
-            apiKey: this.config.groqApiKey,
-            model: this.config.sttModel,
-            wavPath,
-          });
-        } finally {
-          try {
-            await fs.promises.unlink(wavPath);
-          } catch {}
-        }
-        if (this.stopping || active.cancelled) return;
-        if (!prompt) {
-          await this.bot.send(job.chatId, "I could not make out that voice note.");
-          return;
-        }
-      }
-
-      await progress.start();
-      if (this.stopping || active.cancelled) return;
-      const reply = await agent.send(prompt, {
-        onToolCall: call => progress.beat({ type: 'tool-call', name: call.function?.name }),
-        onToolResult: (call, result) => progress.beat({ type: 'tool-result', name: call.function?.name, isError: /^Error\b/i.test(String(result)) }),
-      });
-      await progress.stop();
-      if (active.cancelled || this.stopping) return;
-      const text = String(reply || "").trim() || "(no reply)";
-      await this.bot.send(job.chatId, text, { replyTo: job.messageId, messageThreadId: job.messageThreadId });
-      if (agent.messages && agent.cwd) await sendTurnArtifacts(this.bot, job, agent.cwd, agent.messages.slice(messageStart), () => active.cancelled || this.stopping);
-
-      if (this.config.telegramVoiceReply) {
-        await this.speakBack(job.chatId, text);
-      }
-      if (!active.cancelled) await progress.react('complete');
-    } catch (err) {
-      await progress.stop();
-      if (active.cancelled || this.stopping) return;
-      this.stats.errors++;
-      this.log(`dm ${job.chatId} failed: ${err.message}`);
-      try {
-        await this.bot.send(job.chatId, `error: ${err.message}`);
-      } catch {}
-      await progress.react('failed');
-    } finally {
-      await progress.stop();
-      if (this.chatTurns.get(String(job.chatId)) === active) this.chatTurns.delete(String(job.chatId));
-      this.stats.messagesHandled++;
-      this.saveChat(job.chatId);
-    }
+  async handleJob(job, options) {
+    return ChannelRuntime.prototype.handleJob.call(this.channelRuntime, job.channel ? job : telegramEnvelope(job), options);
   }
 
   async speakBack(chatId, text) {
-    try {
-      const provider = resolveTtsProvider(this.config);
-      const audio =
-        provider === "groq"
-          ? await synthesizeGroq({
-              apiKey: this.config.groqApiKey,
-              model: this.config.ttsModel,
-              voice: resolveTtsVoice(this.config, "groq"),
-              text,
-            })
-          : await synthesizeEdge({
-              voice: resolveTtsVoice(this.config, "edge"),
-              rate: this.config.ttsRate,
-              text,
-            });
-      const ogg = await convertAudio(audio, { to: "ogg" });
-      await this.bot.sendVoice(chatId, ogg);
-    } catch (err) {
-      this.log(`voice reply failed: ${err.message}`);
-    }
+    return speakChannelReply(this.channelRuntime.adapter, telegramEnvelope({ chatId }), text, this.config, this.log);
   }
 
   async pollInbox() {
     if (this.stopping || !this.bot) return 0;
-
-    // First ever run: skip whatever backlog is sitting in the bot's queue
-    // rather than answering week-old messages.
-    if (!this.offsetReady) {
-      const drain = await this.bot.poll(-1, { timeoutSec: 0 });
-      this.offsetReady = true;
-      if (!drain.error && drain.offset > 0) {
-        this.offset = drain.offset;
-        this.store.setTelegramOffset(this.offset);
-        this.log(`inbox: skipping backlog, cursor at ${this.offset}`);
-      } else {
-        this.log("inbox: no backlog");
-      }
-      return 0;
-    }
-
-    const { jobs, denied, unsupported, offset, error } = await this.bot.poll(this.offset);
-    if (this.stopping) return 0;
-    if (error) {
-      this.log(`telegram poll: ${error}`);
-      return 0;
-    }
-    if (offset !== this.offset && offset > 0) {
-      this.offset = offset;
-      this.store.setTelegramOffset(offset);
-    }
-    for (const job of denied || []) {
-      try {
-        await this.bot.send(
-          job.chatId,
-          `This bot is private. Your chat id is ${job.chatId} - add it to TELEGRAM_ALLOWED_CHAT_IDS to allow it.`
-        );
-      } catch {}
-    }
-    for (const job of jobs) {
-      if (isCancelMessage(job)) { await this.cancelChatJob(job); continue; }
-      if (this.resolvePending(job)) continue;
-      // A stray "y" with nothing pending is an answer to a question that has
-      // already expired; say so instead of asking the model what it meant.
-      if (job.kind === "text" && isBareApproval(job.text)) {
-        this.bot
-          .send(job.chatId, "Nothing is waiting for approval right now.", { replyTo: job.messageId })
-          .catch(() => {});
-        continue;
-      }
-      this.dispatch(job);
-    }
-    for (const job of unsupported || []) await this.bot.send(job.chatId, UNSUPPORTED_MEDIA_MESSAGE, { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
-    return jobs.length;
+    const runtime = this.channelRuntime, adapter = runtime.adapter;
+    adapter.bot = this.bot; adapter.offset = this.offset; adapter.offsetReady = this.offsetReady;
+    const count = await adapter.tick({
+      signal: runtime.abort.signal,
+      receive: ref => runtime.receive(ref),
+      status: status => { if (status.error) this.log(status.error); },
+    });
+    this.offset = adapter.offset; this.offsetReady = adapter.offsetReady;
+    return count;
   }
 
   async cancelChatJob(job) {
-    const active = this.chatTurns.get(String(job.chatId));
-    if (!active) { await this.bot.send(job.chatId, 'Nothing is running in this chat.', { replyTo: job.messageId }).catch(() => {}); return; }
-    active.cancelled = true; active.agent.cancel?.();
-    this.pending.get(String(job.chatId))?.settle('no');
-    await active.progress.stop(); await active.progress.react('failed');
-    await this.bot.send(job.chatId, 'Stopped this task.', { replyTo: job.messageId, messageThreadId: job.messageThreadId }).catch(() => {});
+    return this.channelRuntime.cancelJob(job.channel ? job : telegramEnvelope(job));
   }
 
-  /**
-   * Runs a job without blocking the poll loop, serialised per chat so two
-   * messages cannot interleave inside one conversation. Staying non-blocking
-   * is what lets an approval reply be received while a turn waits for it.
-   */
   dispatch(job) {
-    return this.chain(`chat:${job.chatId}`, () => this.handleJob(job));
+    const ref = job.channel ? job : telegramEnvelope(job);
+    const key = `chat:${ref.chatId}`;
+    const work = this._dispatchChannel(ref);
+    this.chains.set(key, work);
+    void work.finally(() => { if (this.chains.get(key) === work) this.chains.delete(key); }).catch(() => {});
+    return work;
   }
 
   /** Global concurrency gate for agent turns. */
