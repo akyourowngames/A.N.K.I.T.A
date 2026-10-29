@@ -49,7 +49,7 @@ and physical audibility remain separate acceptance risks.
 - [x] Exercise the live planner with browser and file tools. Use disposable profiles
       and a local media fixture for observed playback; distinguish that from YouTube.
 - [x] Update the guide/changelog and this record with exact evidence and limits.
-- [ ] Review the diff, push a fresh branch and open a new PR; no merge or release.
+- [x] Review the diff, push a fresh branch and open a new PR; no merge or release.
 
 
 ## Verification and review log
@@ -117,3 +117,8 @@ and physical audibility remain separate acceptance risks.
   error kind and the wire endpoint route are named constants; roles, event names,
   HTTP verb and response keys are transport protocol fields. No environment,
   account path, model or site URL is introduced into production defaults.
+
+
+Integration receipt: [PR #71](https://github.com/akyourowngames/A.N.K.I.T.A/pull/71)
+opened for review on branch `fix/voice-tool-execution`, based on merged PR70.
+Implementation commit: `9933a4b`. No merge, version change, tag or release performed.
