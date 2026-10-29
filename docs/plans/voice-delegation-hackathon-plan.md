@@ -1283,3 +1283,36 @@ reliability and physical/package acceptance remain open. No merge or release.
 The earlier interrupted helper left an obsolete child-run receipt; it was excluded.
 Final receipts above are from the completed current-code run and fresh affected set.
 No raw logs, generated media, keys or personal documents are committed.
+
+
+## 18l. Owner acceptance and integration (29 October)
+
+The owner reported the voice flow working and explicitly requested merging PR70,
+with changelog and documentation updates. This supersedes the earlier draft-only
+integration instruction. Both changelogs now describe the delivered voice,
+heartbeat and phone-pairing scope; README no longer says desktop voice or parallel
+requests are absent. The source guide records owner acceptance while preserving
+sampled planner/recognition failures, unfinished-sentence replay and the unmeasured
+physical-headset/three-workspace/installed-package checks.
+
+This integration keeps package.json at 2.7.1 and does not request a new release.
+The existing v2.7.1 release already contains latest.yml; the unchanged release
+workflow therefore skips republishing that version after its normal checks.
+Fresh pre-merge checks are recorded below; PR #70 is the remote merge receipt.
+
+
+Fresh pre-merge verification (29 October):
+- Full serial run: **1737 tests, 1735 pass, 1 fail, 1 skip**, 0 cancelled,
+  786467.1384ms. The real Chrome prompt operation passed with one write; its
+  unchanged file-level cleanup hook then failed with Windows EPERM removing the
+  temporary browser profile. The same file rerun alone passed **1/1**,
+  10117.8079ms, including real Chrome and cleanup. The file is identical to the
+  default branch. This is an intermittent fixture cleanup failure; the complete
+  project run is not reported as green. The skip requires POSIX permission modes.
+- Desktop version checks: **7/7 pass**, 422.904ms. Desktop source build succeeded
+  with **403 modules**. Relative documentation links: **71 resolved**.
+- `git diff --check` passed. This final update changes only five documentation
+  files; package version, application code and release workflow are unchanged.
+- PR70 was mergeable with no required status checks or review gate reported.
+  Owner approval authorizes integration with the explicitly recorded fixture and
+  external speech/model limitations; no unrelated safety or browser code changed.

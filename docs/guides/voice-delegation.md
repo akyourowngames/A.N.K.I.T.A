@@ -36,7 +36,7 @@ pulse. Both surfaces share the material and state cues. Rendering is capped at
 30 frames per second and 640 pixels per axis; reduced motion stays still and hidden
 cues pause, including fallback. No reference image or new dependency ships.
 
-Repeatable checks, from the feature worktree:
+Repeatable checks, from a source checkout:
 
 ```bash
 node --test --test-concurrency=1 test/desktop/voice-state.test.mjs test/desktop/voice.test.mjs test/desktop/voice-engine.test.mjs test/desktop/voice-ui.test.mjs
@@ -54,9 +54,11 @@ owner's three-clean-workspace gate. In a generated Hinglish take, Sarvam heard
 not recognition of that technical noun.
 
 Desktop voice was built in a separate worktree from PR #70, then added to the same
-PR under the owner's instruction to include all pending work. No release, tag or
-default-branch merge is part of this work. Starting voice is currently done in the
-app; the island continues that session and can retry it after an error.
+PR under the owner's instruction to include all pending work. On 29 October the
+owner reported the voice flow working and approved integrating PR #70. The app
+version stays unchanged; this does not publish a new packaged release. Starting
+voice is done in the app; the island continues that session and can retry it after
+an error. The owner's acceptance is not a measured three-run microphone record.
 
 Verification record, 28 October: focused channel/desktop/settings/native-control
 checks passed **175/175**; the desktop build, browser main/island fixture and real
@@ -64,11 +66,12 @@ Sarvam/Meta/file Electron check passed. The last full tracked-source run reporte
 **1635 tests: 1633 pass, 1 fail, 1 skip**. Its only failure was Windows `EPERM`
 during the unchanged browser-observations fixture's temporary-folder cleanup;
 both observations passed, and rerunning that same file passed **2/2**. This is
-not an all-suite-green claim. The pull request stays draft for the remaining
-physical acceptance checks. A minor polish gap remains: the collapsed island uses
-its ordinary status text; expand it to see the actual voice phase and caption.
+not an all-suite-green claim. At that earlier checkpoint the pull request stayed
+draft for physical acceptance; the owner subsequently approved integration on
+29 October. A minor polish gap remains: the collapsed island uses its ordinary
+status text; expand it to see the actual voice phase and caption.
 
-Latest parallel follow-up: **928/928** affected serial checks, no skips; desktop
+Earlier parallel follow-up: **928/928** affected serial checks, no skips; desktop
 build and both-view browser checks pass with zero page errors. Three real
 Meta/Sarvam/file jobs prove independent completion, shared-file waiting and one
 player. The fresh review found seven substantive issues, now covered by ten

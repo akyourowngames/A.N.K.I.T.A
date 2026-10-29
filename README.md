@@ -26,29 +26,38 @@ They use the same agent runtime and tools. Desktop teammates have separate
 threads, personas and drafts; assign a project to give a teammate its working
 folder and shared context.
 
-## Voice delegation build — 27 Oct–4 Nov 2026
+## Voice delegation (source build)
 
-The terminal build for the Meta hackathon is in progress. Speak a Hinglish request in
-`/voice`: Ankita shows what it heard, tracks the real work steps, saves the result,
-and speaks its report. `/task` lists saved requests; `/task <id>` shows one in detail.
+Speak a Hinglish or English request in terminal `/voice`, or choose **Voice** in
+an app conversation. Sarvam handles speech and a voice-only Baseten Meta planner
+handles the work. The desktop panel and floating island share one session, a
+smooth dark-pearl orb, short captions and individual task controls.
 
-| Already existed before this build | Added during this build |
+Give another request while earlier work runs. Independent voice jobs can work in
+parallel; conflicting file and app actions wait for shared access. **End voice**
+stops audio while delegated work continues. **Stop** cancels the chosen job.
+`/task` lists saved requests and `/task <id>` shows their steps and result.
+
+Interrupting a report leaves it suspended while the planner interprets your next
+request. Ask naturally to continue, repeat, skip speech or hear another ready
+result. Completed sentences are retained; the unfinished sentence may restart.
+Speech recognition and planner intent choices can still be wrong.
+
+| Already existed before this build | Added during 27–29 October |
 | --- | --- |
-| Mic recording, pause detection, playback and barge-in | Sarvam speech recognition and speech generation for Hinglish |
-| Agent tool execution and action approvals | A saved voice-task record with actual steps, approval status and final report |
-| Provider support and typed chat | Voice-only Muse Spark Open via Baseten, low reasoning effort and cached acknowledgements |
-| Process jobs and scheduled tasks | Separate voice-task tracking and throttled spoken progress |
+| Mic recording, pause detection, playback and barge-in | Sarvam recognition and speech generation for Hinglish |
+| Agent tools, approvals and typed chat | Separate Meta voice planning and saved request records |
+| Process jobs and scheduled work | Parallel voice workers, shared-access guards and observed spoken updates |
+| Desktop and floating island | Shared voice panel, state animation, captions and contextual report controls |
 
-The terminal stays busy during a delegated request. You can switch apps, but this
-build does not run a second conversation alongside the request. Desktop/island work
-is gated on three clean physical-microphone demonstrations and has not been added.
-Automated checks with generated audio do not clear that gate.
-
-Sarvam supplies speech; the Meta model plans the work through real tool calls.
-The usual providers remain available. See the [voice guide](docs/guides/voice-delegation.md)
-for setup and tests, and the [dated plan](docs/plans/voice-delegation-hackathon-plan.md)
-for evidence and the remaining gates. No pre-existing voice feature is claimed as
-new hackathon work.
+This feature is available from source through
+[PR #70](https://github.com/akyourowngames/A.N.K.I.T.A/pull/70); it is not included
+in the existing 2.7.1 installer. Generated-audio checks do not replace physical
+headset/echo testing or the three clean workspace takes required before filming.
+See the [voice guide](docs/guides/voice-delegation.md) for setup and limits and the
+[dated plan](docs/plans/voice-delegation-hackathon-plan.md) for evidence. Existing
+providers remain available; earlier voice infrastructure is not claimed as new
+hackathon work.
 
 ## What's new in 2.6.0
 
