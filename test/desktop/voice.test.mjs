@@ -40,6 +40,8 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
   };
   const io = {
     audioDeps: () => ({ ffmpeg: true, ffplay: true }),
+    listAudioDevices: () => [{ flow: 'render', id: 'fixture-output', name: 'Fixture speakers' }],
+    getDefaultRenderId: () => 'fixture-output',
     listMicrophones: async () => [{ name: 'Fixture headset' }],
     openVoiceInput(options) {
       if (open) return open(options);
@@ -65,6 +67,93 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
   t.after(() => h.voice.close());
   return h;
 }
+
+test('ending voice during device discovery resolves every pending start without an IPC abort error', async t => {
+  const pending = defer(), h = harness(t);
+  h.voice.io.listMicrophones = () => pending.promise;
+  const first = h.voice.start({ threadId: 'owner' });
+  const second = h.voice.start({ threadId: 'owner' });
+  await h.voice.end();
+  assert.equal((await first).active, false);
+  assert.equal((await second).active, false);
+  pending.resolve([{ name: 'Late microphone' }]);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.inputs.length, 0);
+});
+
+test('startup still reports real device errors', async t => {
+  const h = harness(t);
+  h.voice.io.listMicrophones = async () => { throw new Error('Device discovery failed'); };
+  await assert.rejects(h.voice.start({ threadId: 'owner' }), /Device discovery failed/);
+  assert.equal(h.voice.snapshot().phase, 'error');
+});
+
+test('an unexpected audio AbortError remains visible while the session is live', async t => {
+  const h = harness(t, { open: () => { throw new DOMException('Microphone access aborted unexpectedly', 'AbortError'); } });
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'error');
+  assert.equal(h.voice.snapshot().active, false);
+  assert.match(h.voice.snapshot().error, /Microphone access aborted/);
+});
+
+test('ending during acknowledgement preparation restores the output and suppresses the expected abort', async t => {
+  const pending = defer(), h = harness(t, { synthesize: () => pending.promise });
+  let restored = false;
+  h.config.voiceOutputDevice = 'fixture-output';
+  h.voice.io.usePlaybackDevice = () => ({ restore: () => { restored = true; } });
+  const starting = h.voice.start({ threadId: 'owner' });
+  await until(() => h.synth.length > 0);
+  await h.voice.end();
+  assert.equal((await starting).active, false); assert.equal(restored, true);
+  pending.resolve(Buffer.from('late acknowledgement'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.played.length, 0);
+});
+
+test('speaker test failures restore the previous output and remain actionable', async t => {
+  const h = harness(t, { play: async () => { throw new Error('Speaker unavailable'); } });
+  let restored = false;
+  h.config.voiceOutputDevice = 'fixture-output';
+  h.voice.io.usePlaybackDevice = () => ({ restore: () => { restored = true; } });
+  await assert.rejects(h.voice.testPlayback(), /Speaker unavailable/);
+  assert.equal(restored, true); assert.equal(h.voice.preview, null);
+});
+
+test('speaker test uses saved output, checks playback and restores routing without submitting work', async t => {
+  const h = harness(t), routes = [];
+  h.config.voiceOutputDevice = 'fixture-output';
+  h.voice.io.usePlaybackDevice = id => { routes.push(id); return { restore: () => routes.push('restored') }; };
+  h.voice.io.playMp3 = async (_audio, options) => { assert.equal(options.rejectOnFailure, true); };
+  assert.deepEqual(await h.voice.testPlayback(), { cancelled: false });
+  assert.deepEqual(routes, ['fixture-output', 'restored']);
+  assert.equal(h.calls.length, 0); assert.equal(h.inputs.length, 0);
+  const status = await h.voice.status();
+  assert.deepEqual(status.outputs, [{ id: 'fixture-output', name: 'Fixture speakers' }]);
+  assert.equal(status.defaultOutput, 'Fixture speakers');
+  assert.equal(status.outputDevice, 'fixture-output');
+});
+
+test('a selected output is used by the session and restored on end', async t => {
+  const h = harness(t), routes = [];
+  h.config.voiceOutputDevice = 'fixture-output';
+  h.voice.io.usePlaybackDevice = id => { routes.push(id); return { restore: () => routes.push('restored') }; };
+  await h.voice.start({ threadId: 'owner' });
+  await assert.rejects(h.voice.testPlayback(), /End voice/);
+  await h.voice.end();
+  assert.deepEqual(routes, ['fixture-output', 'restored']);
+});
+
+test('ending a speaker test cancels synthesis, releases output and prevents late playback', async t => {
+  const pending = defer(), h = harness(t, { synthesize: () => pending.promise });
+  const preview = h.voice.testPlayback();
+  await until(() => h.synth.length > 0);
+  await assert.rejects(h.voice.start({ threadId: 'owner' }), /test/i);
+  await h.voice.end();
+  assert.deepEqual(await preview, { cancelled: true });
+  pending.resolve(Buffer.from('late audio'));
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.played.length, 0);
+});
 
 test('same-session voice accepts a second request and reports it while the first job remains blocked', async t => {
   const first = defer();

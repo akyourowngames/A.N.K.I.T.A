@@ -7,6 +7,17 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Desktop voice output and setup
+
+Voice settings reuse the app's existing field, section and save-bar styles, with
+separate microphone and Windows speaker choices. Test speakers plays real Sarvam
+speech through the saved output without sending a planner request or creating a
+job. It reports playback completion without claiming that sound was heard.
+Temporary routing preserves each Windows output role and later manual changes.
+End during startup resolves normally; unexpected audio errors remain visible.
+Settings follow session changes from the island instead of staying locked.
+See the [audio repair record](../plans/2026-10-29-voice-tool-execution.md#desktop-audio-and-settings-follow-up).
+
 ### Voice reports backed by actions
 
 Final voice drafts now receive a compact check from the same active planner,

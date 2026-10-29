@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as channel from '../../src/channels/voice.mjs';
-import { useHandsFreePlayback } from '../../src/channels/audio-device.mjs';
+import { useHandsFreePlayback, usePlaybackDevice, listAudioDevices, getDefaultRenderId } from '../../src/channels/audio-device.mjs';
 import { createVoiceBrain, createAcknowledgements, createVoiceReportSpeech } from '../../src/core/voice-session.mjs';
 import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
@@ -16,6 +16,10 @@ const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner
 const DESKTOP_SPEECH_PROVIDER = 'sarvam'; // Both speech directions use the configured Sarvam credentials.
 const WAV_EXTENSION = 'wav'; // Existing channel helper expects an extension without a dot.
 const MILLISECONDS_PER_SECOND = 1000;
+const PLAYBACK_TEST_LINE = 'Hi, this is Ankita. If you can hear me clearly, your voice output is ready.'; // One short spoken setup check, never a planner request.
+const PLAYBACK_TEST_LANGUAGE = 'en-IN'; // Same Sarvam language path as normal English speech.
+const PLAYBACK_TEST_BUSY = 'Finish the speaker test before starting voice.';
+const PLAYBACK_TEST_ACTIVE = 'End voice before testing your speakers.';
 const END_VOICE_PATTERN = /^(exit|quit|end voice)[.!?]?$/i; // Only a complete explicit exit phrase ends a session.
 const ERRORS = Object.freeze({ owner: 'Choose an existing conversation to start voice.', busy: 'This conversation is already working. Wait for it to finish.',
   takeover: 'End voice in the other conversation first.', key: 'Add your Sarvam key in Voice settings.',
@@ -43,7 +47,7 @@ export class DesktopVoice {
     this.getConfig = getConfig;
     this.emit = emit;
     this.directory = directory;
-    this.io = { ...channel, useHandsFreePlayback, ...io };
+    this.io = { ...channel, useHandsFreePlayback, usePlaybackDevice, listAudioDevices, getDefaultRenderId, ...io };
     this.state = emptyVoiceState();
     this.current = null;
     const config = getConfig();
@@ -86,10 +90,17 @@ export class DesktopVoice {
     if (!deps.ffmpeg || !deps.ffplay) issues.push(ERRORS.audio);
     const microphones = deps.ffmpeg ? await this.io.listMicrophones().catch(() => []) : [];
     if (!microphones.length) issues.push(ERRORS.mic);
-    return { state: this.snapshot(), ready: !issues.length, issues, microphones: microphones.map(mic => ({ name: this.clean(mic.name) })), microphone: config.micDevice || '' };
+    let outputs = [], defaultOutput = '';
+    try {
+      outputs = this.io.listAudioDevices().filter(device => device.flow === 'render').map(({ id, name }) => ({ id, name: this.clean(name) }));
+      defaultOutput = outputs.find(device => device.id === this.io.getDefaultRenderId())?.name || '';
+    } catch (error) { issues.push(this.clean(error.message)); }
+    return { state: this.snapshot(), ready: !issues.length, issues, microphones: microphones.map(mic => ({ name: this.clean(mic.name) })), microphone: config.micDevice || '',
+      outputs, defaultOutput, outputDevice: config.voiceOutputDevice || '' };
   }
 
   async start({ threadId } = {}) {
+    if (this.preview) throw new Error(PLAYBACK_TEST_BUSY);
     if (this.current && this.owns(this.current)) {
       if (this.current.threadId !== threadId) throw new Error(ERRORS.takeover);
       await this.current.ready;
@@ -106,9 +117,12 @@ export class DesktopVoice {
       input: null, task: null, taskAbort: null, lastMeterAt: 0, language: '', routing: null };
     this.current = session;
     this.publish(session, { ...emptyVoiceState(), sessionId: session.id, threadId, active: true, phase: 'starting' });
-    session.ready = this.prepare(session);
-    try { await session.ready; }
-    catch (error) { await this.fail(session, error); throw error; }
+    session.ready = this.prepare(session).catch(async error => {
+      // End during discovery/prewarm is expected, including callers sharing this startup.
+      if (error.name === 'AbortError' && session.audio.signal.aborted) return;
+      await this.fail(session, error); throw error;
+    });
+    await session.ready;
     if (this.owns(session)) session.loop = this.loop(session).catch(error => this.fail(session, error));
     return this.snapshot();
   }
@@ -134,8 +148,38 @@ export class DesktopVoice {
       onFinish: () => { session.playingAt = 0; if (this.owns(session) && !session.paused) this.publish(session, { phase: this.restingPhase(session) }); },
       onError: error => this.fail(session, error),
     });
+    session.routing = this.routeOutput(session.config, session.microphone.name);
     await abortable(session.acks.prewarm(), session.audio.signal);
-    if (session.config.voiceHfpRouting && this.owns(session)) session.routing = this.io.useHandsFreePlayback(session.microphone.name);
+  }
+
+  routeOutput(config, microphone) {
+    if (config.voiceOutputDevice) return this.io.usePlaybackDevice(config.voiceOutputDevice);
+    return config.voiceHfpRouting ? this.io.useHandsFreePlayback(microphone) : null;
+  }
+
+  async testPlayback() {
+    if (this.current && this.owns(this.current)) throw new Error(PLAYBACK_TEST_ACTIVE);
+    if (this.preview) throw new Error(PLAYBACK_TEST_BUSY);
+    const config = { ...this.getConfig() };
+    if (!config.sarvamApiKey) throw new Error(ERRORS.key);
+    if (!this.io.audioDeps().ffplay) throw new Error(ERRORS.audio);
+    const preview = { audio: new AbortController(), config };
+    this.preview = preview;
+    let routing;
+    try {
+      const microphones = await abortable(this.io.listMicrophones(), preview.audio.signal);
+      const preferred = config.micDevice?.toLowerCase();
+      const microphone = (preferred && microphones.find(mic => mic.name.toLowerCase().includes(preferred))) || microphones[0];
+      routing = this.routeOutput(config, microphone?.name);
+      const audio = await abortable(this.synthesize(preview, PLAYBACK_TEST_LINE, PLAYBACK_TEST_LANGUAGE), preview.audio.signal);
+      await this.io.playMp3(audio, { signal: preview.audio.signal, rejectOnFailure: true });
+      return { cancelled: preview.audio.signal.aborted };
+    } catch (error) {
+      if (error.name === 'AbortError' && preview.audio.signal.aborted) return { cancelled: true };
+      throw error;
+    } finally {
+      try { routing?.restore(); } finally { if (this.preview === preview) this.preview = null; }
+    }
   }
 
   async synthesize(session, text, detected = session.language) {
@@ -298,6 +342,7 @@ export class DesktopVoice {
     return this.snapshot();
   }
   async end() {
+    if (this.preview) { this.preview.audio.abort(); this.io.stopPlayback(); }
     const session = this.current;
     if (!session) return this.snapshot();
     session.audio.abort(); this.io.stopPlayback();
@@ -316,7 +361,7 @@ export class DesktopVoice {
   }
   async ownerDeleted(threadId) { this.jobs.cancelOwner(threadId); if (this.current?.threadId === threadId) await this.end(); }
   async fail(session, error) {
-    if (error.name === 'AbortError' || !this.owns(session)) return;
+    if (!this.owns(session)) return;
     await this.end();
     this.publish(session, { phase: 'error', error: error.message });
   }

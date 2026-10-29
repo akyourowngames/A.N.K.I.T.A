@@ -19,6 +19,7 @@ export async function runVoiceAction({ engine, action, payload, focus = () => {}
   if (action === VOICE_ACTIONS.status) return engine.voiceStatus();
   const voice = engine.voice();
   switch (action) {
+    case VOICE_ACTIONS.test: return voice.testPlayback();
     case VOICE_ACTIONS.end: return voice.end();
     case VOICE_ACTIONS.pause: return voice.pause();
     case VOICE_ACTIONS.resume: return voice.resume();

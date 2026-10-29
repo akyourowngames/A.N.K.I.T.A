@@ -7,7 +7,7 @@ const providers = new Set(['copilot', 'groq', 'kilo', 'custom', CHATGPT_BROWSER_
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
-export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice']); // Private API keys and the discovered microphone preference.
+export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice', 'voiceOutputDevice']); // Private API keys and discovered audio-device preferences.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
 keys.add('secretScrubbing');
 keys.add('secretWarningSeen');
@@ -83,7 +83,7 @@ function validatePatch(patch) {
       clean[key] = [...new Set(value)];
     } else {
       if (typeof value !== 'string') throw new Error(`Invalid ${key} value`);
-      const limit = key === 'micDevice' ? VOICE_DEVICE_CHARS : key === 'model' || key === 'imageModel' ? 200 : 4096;
+      const limit = key === 'micDevice' || key === 'voiceOutputDevice' ? VOICE_DEVICE_CHARS : key === 'model' || key === 'imageModel' ? 200 : 4096;
       const text = value.trim();
       if (text.length > limit) throw new Error(`${key} is too long`);
       clean[key] = text;
@@ -200,6 +200,7 @@ export class DesktopSettingsStore {
       hasSarvamKey: Boolean(own(this.data, 'sarvamApiKey') ? this.data.sarvamApiKey : config.sarvamApiKey),
       hasBasetenKey: Boolean(own(this.data, 'basetenApiKey') ? this.data.basetenApiKey : config.basetenApiKey),
       micDevice: own(this.data, 'micDevice') ? this.data.micDevice : config.micDevice || '',
+      voiceOutputDevice: own(this.data, 'voiceOutputDevice') ? this.data.voiceOutputDevice : config.voiceOutputDevice || '',
     };
   }
 }

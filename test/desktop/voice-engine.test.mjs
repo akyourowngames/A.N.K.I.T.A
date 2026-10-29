@@ -162,13 +162,15 @@ test('voice setup saves env overrides privately, including explicitly clearing k
   const store = new DesktopSettingsStore(path.join(directory, 'settings.json'));
   const base = { sarvamApiKey: 'env-speech', basetenApiKey: 'env-meta', micDevice: 'Env mic' };
   assert.equal(store.publicView(base).hasSarvamKey, true);
-  store.update({ sarvamApiKey: 'saved-speech', basetenApiKey: '', micDevice: 'Chosen mic' });
+  store.update({ sarvamApiKey: 'saved-speech', basetenApiKey: '', micDevice: 'Chosen mic', voiceOutputDevice: 'chosen-output' });
   const config = applyDesktopSettings(base, new DesktopSettingsStore(store.file).load().data);
   assert.equal(config.sarvamApiKey, 'saved-speech'); assert.equal(config.basetenApiKey, ''); assert.equal(config.micDevice, 'Chosen mic');
   const view = store.publicView(config);
   assert.equal(view.hasBasetenKey, false); assert.equal(view.micDevice, 'Chosen mic');
+  assert.equal(config.voiceOutputDevice, 'chosen-output'); assert.equal(view.voiceOutputDevice, 'chosen-output');
   assert.ok(!JSON.stringify(view).includes('saved-speech'));
   assert.throws(() => store.preview({ micDevice: 'x'.repeat(201) }), /long/);
+  assert.throws(() => store.preview({ voiceOutputDevice: 'x'.repeat(201) }), /long/);
 });
 
 test('voice IPC rejects unknown fields and oversized owner IDs', async () => {
@@ -182,12 +184,19 @@ test('voice IPC rejects unknown fields and oversized owner IDs', async () => {
   await assert.rejects(actions.runVoiceAction({ engine: focusedEngine, action: 'voiceShowMain', payload: { settings: 'true' } }), /payload/);
   await actions.runVoiceAction({ engine: focusedEngine, action: 'voiceShowMain', payload: { settings: true }, focus: (...args) => focus.push(args) });
   assert.deepEqual(focus, [[view, { settings: true }]]);
+  let tests = 0;
+  const audioEngine = { voice: () => ({ testPlayback: async () => { tests++; return { cancelled: false }; } }) };
+  await assert.rejects(actions.runVoiceAction({ engine: audioEngine, action: 'voiceTestPlayback', payload: { output: 'untrusted-device' } }), /payload/);
+  assert.equal(tests, 0);
+  assert.deepEqual(await actions.runVoiceAction({ engine: audioEngine, action: 'voiceTestPlayback' }), { cancelled: false });
+  assert.equal(tests, 1);
 });
 
 test('live voice blocks setup changes that would invalidate the session', async t => {
   const h = await fixture(t);
   h.engine._voice = { snapshot: () => ({ active: true }), close: async () => {} };
   await assert.rejects(h.engine.saveDesktopSettings({ sarvamApiKey: 'replacement' }), /End voice/i);
+  await assert.rejects(h.engine.saveDesktopSettings({ voiceOutputDevice: 'replacement-output' }), /End voice/i);
   await assert.rejects(h.engine.saveDesktopSettings({ provider: 'groq' }), /End voice/i);
   await assert.rejects(h.engine.saveDesktopSettings({ kiloApiKey: 'replacement' }), /End voice/i);
 });

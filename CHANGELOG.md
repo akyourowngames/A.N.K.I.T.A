@@ -29,6 +29,11 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Desktop Voice settings now have styled full-width fields, a discovered speaker
+  selector and a real speech playback test. Windows output choices are restored
+  per role after voice/test playback, preserving separate call outputs and later
+  manual changes. Ending voice during startup no longer surfaces an expected
+  cancellation as an IPC error; genuine audio failures remain visible.
 - Voice final replies are checked against actual action receipts before display
   or speech. Unsupported completion gets one correction in the same request;
   discovery alone cannot prove that music played or another action finished.

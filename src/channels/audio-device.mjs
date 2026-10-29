@@ -93,10 +93,12 @@ public static class AudioSwitch {
         return pv.pointerValue == IntPtr.Zero ? "" : Marshal.PtrToStringUni(pv.pointerValue);
     }
 
-    public static string GetDefaultRender() {
+    public static string GetDefaultRender() { return GetDefaultRender((int)ERole.eConsole); }
+
+    public static string GetDefaultRender(int role) {
         var e = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
         IMMDevice dev;
-        e.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out dev);
+        e.GetDefaultAudioEndpoint(EDataFlow.eRender, (ERole)role, out dev);
         string id;
         dev.GetId(out id);
         return id;
@@ -127,10 +129,16 @@ public static class AudioSwitch {
         pc.SetDefaultEndpoint(id, ERole.eMultimedia);
         pc.SetDefaultEndpoint(id, ERole.eCommunications);
     }
+
+    public static void SetDefault(string id, int role) {
+        var pc = (IPolicyConfig)new CPolicyConfigClient();
+        pc.SetDefaultEndpoint(id, (ERole)role);
+    }
 }
 `;
 
 const DEVICE_ID_RE = /^\{0\.0\.[01]\.00000000\}\.\{[0-9a-f-]{36}\}$/i;
+const RENDER_ROLES = Object.freeze({ console: 0, multimedia: 1, communications: 2 }); // Core Audio ERole values; preserve each Windows default separately.
 
 function runPowerShell(body, timeoutMs = 20000) {
   const script = `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition @'\n${CSHARP}\n'@; ${body}`;
@@ -168,6 +176,25 @@ export function getDefaultRenderId() {
   return stdout.trim();
 }
 
+/** Snapshot all Windows output defaults in one helper process. */
+export function getDefaultRenderIds() {
+  if (!audioDeviceSupported()) return {};
+  const body = Object.entries(RENDER_ROLES).map(([name, role]) => `Write-Output ('${name}|' + [AudioSwitch]::GetDefaultRender(${role}))`).join('; ');
+  const { code, stdout, stderr } = runPowerShell(body);
+  if (code !== 0) throw new Error(stderr || 'audio defaults lookup failed');
+  return Object.fromEntries(stdout.split(/\r?\n/).filter(Boolean).map(line => line.split('|')));
+}
+
+/** Apply only supplied, validated roles; no device names enter executable helper text. */
+export function setDefaultRenderIds(defaults) {
+  const entries = Object.entries(defaults);
+  if (!audioDeviceSupported() || entries.some(([role, id]) => !Object.hasOwn(RENDER_ROLES, role) || !DEVICE_ID_RE.test(String(id)))) return false;
+  if (!entries.length) return true;
+  const { code, stderr } = runPowerShell(entries.map(([role, id]) => `[AudioSwitch]::SetDefault('${id}', ${RENDER_ROLES[role]})`).join('; '));
+  if (code !== 0) throw new Error(stderr || 'audio defaults set failed');
+  return true;
+}
+
 /** Set the default playback (and communication) endpoint. Returns true on success. */
 export function setDefaultAudioDevice(id) {
   if (!audioDeviceSupported() || !DEVICE_ID_RE.test(String(id))) return false;
@@ -192,30 +219,35 @@ export function findHandsFreePlayback(micName, devices) {
  */
 export function useHandsFreePlayback(micName) {
   if (!audioDeviceSupported() || !micName) return null;
-  let devices;
-  let current;
   try {
-    devices = listAudioDevices();
-    current = getDefaultRenderId();
+    const devices = listAudioDevices();
+    const match = findHandsFreePlayback(micName, devices);
+    return match ? usePlaybackDevice(match.id, { list: () => devices, current: getDefaultRenderIds, set: setDefaultRenderIds }) : null;
   } catch {
     return null;
   }
-  const match = findHandsFreePlayback(micName, devices);
-  if (!match || match.id.toLowerCase() === String(current).toLowerCase()) return null;
-  try {
-    if (!setDefaultAudioDevice(match.id)) return null;
-  } catch {
-    return null;
-  }
+}
+
+const OUTPUT_UNAVAILABLE = 'That speaker is unavailable. Refresh devices and choose another output.';
+
+/** Temporarily select an OS-discovered output; do not undo a later manual device change. */
+export function usePlaybackDevice(id, io = { list: listAudioDevices, current: getDefaultRenderIds, set: setDefaultRenderIds }) {
+  const device = io.list().find(item => item.flow === 'render' && item.id === id);
+  if (!device) throw new Error(OUTPUT_UNAVAILABLE);
+  const previous = io.current();
+  const changed = Object.fromEntries(Object.entries(previous).filter(([, old]) => old.toLowerCase() !== device.id.toLowerCase()).map(([role]) => [role, device.id]));
   let restored = false;
-  return {
-    device: match,
-    restore: () => {
-      if (restored) return;
-      restored = true;
-      try {
-        setDefaultAudioDevice(current);
-      } catch {}
-    },
-  };
+  const route = { device, restore() {
+    if (restored) return;
+    restored = true;
+    try {
+      const current = io.current();
+      const restore = Object.fromEntries(Object.keys(changed).filter(role => current[role]?.toLowerCase() === device.id.toLowerCase()).map(role => [role, previous[role]]));
+      if (Object.keys(restore).length) return io.set(restore);
+    } catch { return false; /* Unplugging the old speaker must not break session teardown. */ }
+  } };
+  try {
+    if (Object.keys(changed).length && !io.set(changed)) throw new Error(OUTPUT_UNAVAILABLE);
+  } catch (error) { route.restore(); throw error; }
+  return route;
 }

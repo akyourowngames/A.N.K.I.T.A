@@ -4,7 +4,7 @@ export { VOICE_BARGE_GUARD_MS };
 export const VOICE_EVENT = 'voice-state';
 export const VOICE_API_REQUIRED_MESSAGE = 'Voice needs an API-backed conversation. Choose a model in Settings first.'; // Shared setup guard for status, session start and direct engine calls.
 export const VOICE_ACTIONS = Object.freeze({ status: 'voiceStatus', start: 'voiceStart', end: 'voiceEnd',
-  pause: 'voicePause', resume: 'voiceResume', cancel: 'voiceCancel', focus: 'voiceShowMain' });
+  pause: 'voicePause', resume: 'voiceResume', cancel: 'voiceCancel', focus: 'voiceShowMain', test: 'voiceTestPlayback' });
 export const VOICE_CAPTION_CHARS = 1200; // Characters: bound a displayed utterance; the full transcript stays in chat.
 export const VOICE_UPDATE_CHARS = 240; // Characters: one current work update, not a raw tool dump.
 export const VOICE_ERROR_CHARS = 360; // Characters: keep an actionable error readable in the island.

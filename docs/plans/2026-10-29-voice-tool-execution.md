@@ -1,5 +1,66 @@
 # Voice tool execution repair — 29 October 2026
 
+## Desktop audio and settings follow-up
+
+Owner report: End during startup logged `AbortError: Voice ended` through
+`engine:invoke`; speech was generated but inaudible; settings fields were cramped
+and inconsistent. The startup reproduction failed with that same stack before
+the fix, then resolved for both concurrent start callers after End. Prewarm
+cancellation is covered separately; genuine device errors and unexpected
+AbortError while still live remain public errors.
+
+Local audio diagnosis found four active Windows outputs. Default playback was
+Airdopes Stereo, while the saved microphone was the laptop Realtek array.
+Outputs were unmuted. Real Sarvam/ffplay playback through Airdopes Hands-Free
+exited 0 but the owner heard nothing. The laptop output test was explicitly
+confirmed audible by the owner. This narrows the fault to output/headset routing;
+it does not prove that the headset path is repaired. No headset-specific default
+is baked into production code.
+
+Changes: discovered Windows speaker selection in private desktop settings;
+Test speakers uses saved config, real Sarvam and strict existing MP3 playback,
+creates no task, and restores routing on success/failure/cancellation. Startup
+and test cannot compete for the audio owner. The renderer reuses existing
+Preferences form styles, theme tokens and save actions. Keys remain blank presence
+indicators in public views. Device choices lock during voice; voice-state events
+unlock them if voice ends from the island, with revision ordering protecting
+against a slow status response. A normal player exit is described as a played
+test, never as proof that it was heard.
+
+Review found two Important issues and one related error-path gap: single-default
+restore could overwrite a distinct call output; a mount-only settings snapshot
+could leave controls locked; a broad AbortError guard could hide a real audio
+failure. All are addressed. Output helpers now snapshot console/multimedia/call
+roles and restore only roles still owned by voice; failed partial switches roll
+back, later manual changes survive, and unplugging a previous output cannot break
+End. HFP automatic routing shares this helper. The stale-settings browser check
+failed before the event fix, and the unexpected-AbortError regression timed out
+before the guard fix; both then passed. Fresh re-review reports no remaining
+Critical/Important findings; its independent voice/output check passed 37/37.
+
+Final focused verification (full suite deliberately not run, as requested):
+
+- `node --test --test-concurrency=1 test/channels/audio-device.test.mjs test/channels/voice.test.mjs test/channels/voice-playback.test.mjs test/desktop/voice.test.mjs test/desktop/voice-engine.test.mjs test/desktop/voice-state.test.mjs test/desktop/voice-ui.test.mjs test/desktop/desktop-settings.test.mjs`
+  — **121 tests, 121 pass, 0 fail, 0 skip**, 9976.6462ms.
+- `npm run desktop:build` — typecheck clean, **403 modules**, exit 0.
+- `node scripts/verify-desktop-voice-ui.mjs --settings-only` —
+  `VOICE_SETTINGS_UI_OK: styled fields; saved output; honest test receipt; 1280/620/390px; zero renderer errors`.
+  Screenshots were visually inspected. One intermediate fixture run overlapped
+  an unfinished build and failed serving changing assets; rerun after the completed
+  build passed. No production change was made for that harness race.
+- Live revised `runVoiceAction` → `DesktopVoice.testPlayback` → Sarvam → ffplay,
+  temporarily seeding a distinct real Windows call output, returned
+  `DESKTOP_VOICE_AUDIO_OK {"output":"Speakers/Headphones (Realtek Audio)","cancelled":false,"allOutputRolesRestored":true,"distinctCallOutputPreserved":true}`.
+  All original output roles were restored in cleanup. An attempted persisted
+  speaker preference was later observed blank while the older app was still
+  running; final live verification used an isolated config override and did not
+  fight the running app's settings. Select and save the working speaker after
+  restarting desktop dev so the updated controller owns settings.
+
+Limits: live Node action/audio path and browser renderer fixture, not a fresh
+packaged-app acceptance run; no physical headset duplex claim; no new full-project
+suite. Main-process changes require restarting desktop dev. No release or merge.
+
 ## Scope and evidence
 
 The owner requested a new polish PR after PR70, starting with skipped tools and

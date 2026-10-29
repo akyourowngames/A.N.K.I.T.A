@@ -15,8 +15,21 @@ floating companion. **Open conversation** returns to that session's owner.
 - Selecting another conversation ends voice. Existing permission prompts still
   require an answer and take priority over the island's voice view.
 
-Open **Settings → Voice** for Sarvam/Baseten keys and the discovered microphone
-list. Existing environment keys work too. Saved desktop values override them.
+Open **Settings → Voice** for Sarvam/Baseten keys and discovered audio devices.
+On Windows, select **Speakers**, save, then use **Test speakers** to hear a short
+real Sarvam reply. The test uses the same saved output routing as voice, without
+starting a planner or job. A successful player exit does not establish audibility;
+if nothing is heard, choose another output. Laptop speakers were heard in the
+29 October owner test; Airdopes Hands-Free was not. Its physical headset path
+remains unconfirmed. Automatic mode keeps the existing system/HFP routing.
+Other systems use their system output.
+
+An explicit speaker choice temporarily changes Windows output during voice/test
+playback. Console, music and call defaults are restored separately afterwards;
+later manual changes are respected. Setup changes and speaker tests wait until
+voice ends. Settings follow changes from the island too. Restart desktop dev after
+updating the main-process audio code; a renderer refresh alone is insufficient.
+Existing environment keys work too. Saved desktop values override them.
 Keys use the app's existing private local API-key settings file; this is not a
 promise of encrypted storage. Public settings expose presence flags only.
 Voice uses Sarvam and the configured voice planner; typed-chat settings stay
@@ -44,6 +57,12 @@ npm run desktop:build
 node scripts/verify-desktop-voice-ui.mjs
 node scripts/verify-desktop-voice.mjs --env /path/to/your/local/.env
 ```
+
+For an audio/settings-only change, use the focused desktop/audio tests and
+`node scripts/verify-desktop-voice-ui.mjs --settings-only` after the desktop build.
+That fixture checks real field geometry, saved speaker/test IPC actions, live
+session locking, and 1280/620/390-pixel layouts. Audio is stubbed in that browser
+fixture; use **Test speakers** for real playback.
 
 The last script uses real configured Sarvam/Meta services and file tools inside
 Electron with disposable app data. Microphone/VAD are generated fixtures and the
@@ -404,7 +423,7 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 | `The model hit its output limit ...` | A generated answer or file did not fit the allowance | Restart after this update; default `BASETEN_MAX_TOKENS` is now 4096. If explicitly set smaller, increase it before retrying |
 | Voice task is `cancelled` | Work was stopped | Read its partial steps before retrying |
 | `no microphone found` | Windows cannot see a mic | Check Settings → Privacy → Microphone, or set `MIC_DEVICE` |
-| Transcript is right but silent | Speaker or Bluetooth routing | Unplug the headset, or try `/say hello` |
+| Transcript is right but silent | Speaker or Bluetooth routing | Desktop: Settings → Voice → Speakers, save, then Test speakers; try laptop output first. Terminal: `/say hello` |
 | Wrong word, again and again | Recognition, not the code | Speak a bit slower; add the word to `SARVAM_KEYTERMS` |
 | `Edge TTS handshake failed: HTTP 403` | The backup voice service rejected this connection | Keep Sarvam configured; the result still prints if both voices fail |
 
