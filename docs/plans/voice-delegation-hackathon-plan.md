@@ -1160,7 +1160,7 @@ no merge, app version bump, tag or release.
   `DINAKAR-S/voice-agent-starter-kit` (LiveKit + Sarvam streaming).
 
 
-## 18k. Context-aware report interruption (28 October)
+## 18k. Context-aware report interruption (28–29 October)
 
 New hackathon work: the shared single-player queue now parks an interrupted
 report rather than automatically replaying it. Sentence clips retain completed
@@ -1193,3 +1193,23 @@ with no prosody/loudness-based intent claim. The speech hold releases when real
 external work starts so long tasks cannot silence other finished reports; those
 reports may speak while the external tool runs. Physical headset/Hinglish duplex
 and packaged installer acceptance remain unverified.
+
+29 October final-review pass: three Important findings were directly reproduced
+and fixed without a second review dispatch. Resuming/repeating an originally
+queued report keeps its original completion promise (including session close).
+Cancellation is checked inside both awaited player boundaries before changing
+selection. The planner now explicitly states `answerRequired` in its existing
+speech-control call; pure status/discovery no longer forces duplicate confirmation,
+and dismissal plus a direct conversational answer cannot silence that answer.
+An omitted decision keeps the answer audible. Unrelated reports wait while that
+answer is still owed; a deliberately selected report can still play. New real
+Agent/HTTP regressions cover the read-only routing, mixed conversation, mixed file
+work and cancellation cases. Focused queue/control/worker checks: **45/45**.
+
+The final live repeats also exposed two external limits: one genuine Meta reply
+was empty after the existing recovery attempt, and one generated Hinglish phrase
+was recognized as a different request. Both failed checks were retained in the
+execution record. A clearer code-switched fixture changes only verification data;
+production does not match phrases. The 7-case final run and full-suite totals are
+recorded below after completion. Physical microphone/speaker and packaged installer
+acceptance remain separate from these generated/captured checks.

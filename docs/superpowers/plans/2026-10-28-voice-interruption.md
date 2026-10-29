@@ -58,4 +58,4 @@
 - [ ] Run focused host checks RED then implement both adapters and run them GREEN.
 - [ ] Run real Meta/Sarvam control/sentence fixture, desktop build/browser checks and serial full project tests; name physical/package gaps.
 - [ ] Run one fresh branch review, resolve substantive findings in one tested pass, record rulings/deferred polish; update docs and draft PR70 without merging.
-- [ ] Final task command: `rtk proxy node scripts/verify-voice-suite.mjs`; commit, preserve worktree, remove only this plan's ignored scratch workspace after recording evidence.
+- [ ] Final task command: `rtk proxy npm test` (the full serial suite includes the voice wrapper scope); commit, preserve worktree, remove only this plan's ignored scratch workspace after recording evidence.

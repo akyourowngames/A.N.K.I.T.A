@@ -161,3 +161,21 @@ test('the next report sentence prepares during current playback instead of addin
   try { await entered.promise; await tick(); assert.deepEqual([...prepared], ['one', 'two']); }
   finally { release.resolve(); await report; await queue.close(); }
 });
+
+for (const action of ['resume', 'repeat']) test(`selecting an unplayed queued report with ${action} settles its original offer`, async () => {
+  const heard = [], queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async audio => { heard.push(audio); } });
+  queue.paused = true;
+  const report = queue.offer(entry('queued'));
+  const turn = queue.interrupt(); queue.acceptTurn(turn);
+  await queue.controlReport(action, { id: 'queued', turn }); queue.resume(); await queue.drain();
+  const settled = await Promise.race([report.then(() => true), tick().then(() => false)]);
+  await queue.close(); assert.deepEqual(heard, ['queued']); assert.equal(settled, true);
+});
+
+for (const action of ['resume', 'repeat']) test(`closing after reselecting a queued report with ${action} settles its original offer`, async () => {
+  const queue = new api.VoiceSpeechQueue({ gapMs: 0, play: async () => assert.fail('paused report must not start') });
+  queue.paused = true; const offered = queue.offer(entry('queued'));
+  const turn = queue.interrupt(); queue.acceptTurn(turn);
+  await queue.controlReport(action, { id: 'queued', turn }); await queue.close();
+  assert.equal(await Promise.race([offered, tick().then(() => 'unsettled')]), false);
+});

@@ -179,6 +179,11 @@ is no list of trigger phrases and no extra classifier request.
 Terminal, app and island share the same report rules and one player. Cached short
 sentence clips track delivery, with at most one following sentence prepared ahead.
 A late older planner cannot change a newer interruption's speech selection.
+The planner also states whether it still owes a separate answer: skipping a report
+and asking a question preserves that answer. Missing that decision keeps the reply
+audible. Checking job status or finding tools alone does not add a redundant
+confirmation; real work and cancellation still keep their result. A cancelled
+speech choice is checked again after the owned player stops.
 
 Repeatable cloud check:
 
@@ -186,10 +191,15 @@ Repeatable cloud check:
 node scripts/verify-voice-interruption.mjs --env /path/to/your/local/.env
 ```
 
-On 28 October this passed six generated English/Hinglish requests through real
-Sarvam STT/TTS and Meta speech controls: next, resume, repeat, dismiss, a new question
-and ambiguous “okay, then what?”. The last chose resume in that fixture; this is
-an observed decision, not a universal rule. Output was captured sentence MP3
+The 28 October run passed six generated English/Hinglish requests through real
+Sarvam STT/TTS and Meta speech controls. The expanded 29 October check also covers
+skipping a report while asking a separate question. Ambiguous “okay, then what?”
+may cause a selection or a short clarification; the prompt asks for clarification
+when the choice is unclear, without a phrase list. These are sampled decisions,
+not a universal interpretation guarantee. During repeats, one planner reply stayed
+empty after its recovery attempt and one generated Hinglish phrase was misheard;
+the check failed honestly. A clearer code-switched next-report fixture was used
+without changing production recognition. Output was captured sentence MP3
 handoffs with peak one player. Physical echo, real interruptions and a packaged
 app remain separate checks. With your headset, interrupt a report with a new
 question, then ask to continue the earlier report; also test a cough and mic pause.

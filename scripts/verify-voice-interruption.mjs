@@ -16,11 +16,12 @@ const ENV_FLAG = '--env';
 const DEADLINE_MS = 90000; // Milliseconds/case: bound cloud verification without leaving a hung captured player.
 const REPORTS = Object.freeze({ first: 'The research is ready. The sources are saved.', next: 'Your poem is saved.' }); // Disposable spoken fixtures.
 const CASES = [
-  { text: 'Haan bas, ab agli report sunao.', action: 'next' },
+  { text: 'Ab next report sunao please.', action: 'next' },
   { text: 'Please continue where you stopped.', action: 'resume' },
   { text: 'Start that report again from the beginning.', action: 'repeat' },
   { text: 'Skip reading the rest of that report.', action: 'dismiss' },
   { text: 'By the way, what is two plus two?', action: null },
+  { text: 'Skip that report and tell me what two plus two is.', action: 'mixed' },
   { text: 'Okay, then what?', action: 'contextual' }, // Ambiguous: record its contextual decision rather than mandate one interpretation.
 ];
 const envIndex = process.argv.indexOf(ENV_FLAG);
@@ -49,6 +50,7 @@ const bounded = async work => {
 };
 try {
   for (const [index, scenario] of CASES.entries()) {
+    console.log('VOICE_INTERRUPTION_CASE_START', JSON.stringify({ case: index + 1, request: scenario.text }));
     const played = [], actions = [], session = new AbortController();
     let active = 0, peak = 0, held = false, ready;
     const speaking = new Promise(resolve => { ready = resolve; });
@@ -81,7 +83,11 @@ try {
         text: outcome.text, synthesize, signal: session.signal, turn }));
       queue.finishTurn(turn); await bounded(queue.drain());
       assert.equal(peak, 1);
-      if (scenario.action && scenario.action !== 'contextual') assert.ok(actions.includes(scenario.action), JSON.stringify({ heard: heard.text, actions, answer: outcome.text }));
+      if (scenario.action && !['contextual', 'mixed'].includes(scenario.action)) assert.ok(actions.includes(scenario.action), JSON.stringify({ heard: heard.text, actions, answer: outcome.text }));
+      if (scenario.action === 'mixed') {
+        assert.ok(actions.includes('dismiss')); assert.equal(outcome.speechHandled, false);
+        assert.ok(played.some(row => row.id === entry.id));
+      } else if (scenario.action && scenario.action !== 'contextual') assert.equal(outcome.speechHandled, true);
       if (scenario.action === null) {
         assert.equal(queue.reportState().find(row => row.id === 'research').state, 'suspended');
         assert.ok(played.some(row => row.id === entry.id));

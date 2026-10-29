@@ -175,16 +175,19 @@ export class VoiceSpeechQueue {
     if (entry.cursor >= entry.parts.length || entry.signal?.aborted) return false;
     this.queue = this.queue.filter(item => item !== entry);
     entry.controller = new AbortController(); entry.begun = false; entry.retry = false; entry.park = false;
-    entry.selected = true; entry.state = 'queued'; entry.resolve = () => {};
+    entry.selected = true; entry.state = 'queued';
     entry.signal?.addEventListener('abort', entry.externalAbort, { once: true });
     this.queue.push(entry); return true;
   }
-  async controlReport(action, { id, turn } = {}) {
-    if (this.closed) throw new Error(VOICE_REPORT_ERRORS.ended);
-    if (turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+  async controlReport(action, { id, turn, signal, holdTurn = false } = {}) {
+    const check = () => {
+      if (this.closed) throw new Error(VOICE_REPORT_ERRORS.ended);
+      if (turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+      if (signal?.aborted) throw new DOMException(VOICE_REPORT_ERRORS.cancelled, 'AbortError');
+    };
+    check();
     await this.interruption?.stopped;
-    if (this.closed) throw new Error(VOICE_REPORT_ERRORS.ended);
-    if (turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+    check();
     const interrupted = this.interruption?.entry;
     let available;
     let entry = id ? this.reports.get(id) : interrupted || [...this.reports.values()].reverse().find(item => item.state === 'suspended');
@@ -201,11 +204,15 @@ export class VoiceSpeechQueue {
       if (this.active?.kind === 'report') {
         this.active.park = true; this.active.controller.abort(); this.stopOwned();
         await this.running;
-        if (this.closed || turn !== this.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+        check();
       }
       available = this.enqueueReport(entry, action === VOICE_REPORT_ACTIONS.repeat);
     } else throw new Error('Unknown spoken report action.');
-    this.releaseTurn(turn); this.pump();
+    if (holdTurn) {
+      // A selected report may play, while unrelated reports wait for the answer still owed.
+      if (entry && action !== VOICE_REPORT_ACTIONS.dismiss) entry.turn = turn;
+    } else this.releaseTurn(turn);
+    this.pump();
     return { action, id: entry?.jobId || null, available: available ?? Boolean(entry), reports: this.reportState() };
   }
   resume() { if (!this.closed) { this.paused = false; this.pump(); } }

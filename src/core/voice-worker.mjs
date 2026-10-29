@@ -100,6 +100,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
       },
       onToolStart: async (call, ctx) => {
         if (!ROUTING_TOOLS.has(call.name)) speech?.queue.releaseTurn(speech.turn);
+        if (!ROUTING_TOOLS.has(call.name) || (call.name === VOICE_JOBS_TOOL && controlTool.readOnly?.(call.arguments) !== true)) otherTools = true;
         observer.onToolStart?.(nativeCall(call)); await toolContext.onToolStart?.(call, ctx);
       },
     },
@@ -114,7 +115,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     onWorker?.(worker);
     const sendOptions = {
       ...callbacks,
-      onToolCall: call => { if (call.function?.name !== VOICE_REPORTS_TOOL) otherTools = true; observer.onToolCall?.(call); callbacks.onToolCall?.(call); },
+      onToolCall: call => { observer.onToolCall?.(call); callbacks.onToolCall?.(call); },
       onToolResult: (call, result, verdict) => { observer.onToolResult?.(call, result, verdict); callbacks.onToolResult?.(call, result, verdict); },
     };
     const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions));
