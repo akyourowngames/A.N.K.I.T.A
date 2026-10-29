@@ -5,6 +5,7 @@ import { WORKSPACE_EFFECT_TOOLS } from './tool-effects.mjs';
 import { sanitizeMessages, trimMessages } from './history.mjs';
 import { withVoiceBrain } from './voice-session.mjs';
 import { createVoiceReportControl } from './voice-report-control.mjs';
+import { createVoiceCompletion } from './voice-completion.mjs';
 import { canonicalVoicePath } from '../automation/voice-resources.mjs';
 import { VOICE_JOBS_TOOL, VOICE_REPORTS_TOOL } from '../automation/voice-task-policy.mjs';
 import { get, isReadOnly } from '../../tools/index.mjs';
@@ -37,7 +38,7 @@ export function captureVoiceContext(parent, { messages = parent.messages, toolCo
   const history = trimMessages(sanitizeMessages(messages || []).filter(message => message.role !== 'system'), HISTORY_MESSAGES, HISTORY_BYTES).filter(message => message.role !== 'system');
   return { client: parent.client, model: parent.model, config: structuredClone(parent.config),
     workspacePath: parent.workspacePath || parent.cwd, project: parent.project, projectId: parent.projectId,
-    history: structuredClone(history), mcp: parent.mcp, browserManager: parent.browserManager,
+    history: structuredClone(history), activatedTools: [...(parent.state?.activatedTools || [])], mcp: parent.mcp, browserManager: parent.browserManager,
     skillsEnabled: parent.skillsEnabled, disabledSkills: [...(parent.disabledSkills || [])], toolContext: { ...toolContext } };
 }
 
@@ -77,6 +78,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
   if (!captured || captured.config?.backgroundJob) throw new Error('Voice needs a captured interactive conversation.');
   const speech = captured.speech;
   const reports = speech ? createVoiceReportControl(speech) : null;
+  const completion = createVoiceCompletion({ transcript: entry.transcript, history: captured.history, controlOnly: entry.controlOnly === true, config: captured.config });
   const runtimeTools = new Map([[VOICE_JOBS_TOOL, controlTool], ...(reports ? [[VOICE_REPORTS_TOOL, reports.tool]] : [])]);
   let otherTools = false;
   let worker;
@@ -92,19 +94,21 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     memoryEnabled: false, autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
     allowedTools: entry.controlOnly ? new Set(runtimeTools.keys()) : null, confirm: approve, print: () => {}, write: () => {},
     systemSuffix: [CONTROL_GUIDANCE, reports?.context, entry.controlOnly && CAPACITY_GUIDANCE].filter(Boolean).join('\n'),
-    toolContext: { ...captured.toolContext, ...toolContext, runtimeTools,
+    toolContext: { ...captured.toolContext, ...toolContext, runtimeTools, responsePolicy: completion.policy,
       beforeToolExecute: async (call, ctx) => {
         if (autoApprove) ctx.autoApprove = autoApprove() === true;
         await acquire?.(entry.id, await voiceCallResources(call, ctx), { callId: call.id, signal: ctx.signal });
         await toolContext.beforeToolExecute?.(call, ctx);
       },
       onToolStart: async (call, ctx) => {
+        completion.started(call);
         if (!ROUTING_TOOLS.has(call.name)) speech?.queue.releaseTurn(speech.turn);
         if (!ROUTING_TOOLS.has(call.name) || (call.name === VOICE_JOBS_TOOL && controlTool.readOnly?.(call.arguments) !== true)) otherTools = true;
         observer.onToolStart?.(nativeCall(call)); await toolContext.onToolStart?.(call, ctx);
       },
     },
   });
+  for (const name of captured.activatedTools || []) worker.state.activatedTools.add(name);
   worker.messages.push(...structuredClone(captured.history));
   entry.worker = worker;
   entry.cancelWorker = async () => { worker.cancel(); if (worker._toolHost) await worker._toolHost.cancel(); };
@@ -115,11 +119,14 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     onWorker?.(worker);
     const sendOptions = {
       ...callbacks,
-      onToolCall: call => { observer.onToolCall?.(call); callbacks.onToolCall?.(call); },
-      onToolResult: (call, result, verdict) => { observer.onToolResult?.(call, result, verdict); callbacks.onToolResult?.(call, result, verdict); },
+      onToolCall: call => { completion.requested(call); observer.onToolCall?.(call); callbacks.onToolCall?.(call); },
+      onToolResult: (call, result, verdict) => {
+        completion.observed(call, result, verdict);
+        observer.onToolResult?.(call, result, verdict); callbacks.onToolResult?.(call, result, verdict);
+      },
     };
     const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions));
-    return { text, model: worker.replyModel || brain?.model || worker.model, speechHandled: Boolean(reports?.handled() && !otherTools) };
+    return { text, error: completion.outcome()?.error || null, model: worker.replyModel || brain?.model || worker.model, speechHandled: Boolean(reports?.handled() && !otherTools && !completion.outcome()?.error) };
   } finally {
     signal?.removeEventListener('abort', abort);
     const active = [...worker.state.jobs.values()].filter(job => !job.done);

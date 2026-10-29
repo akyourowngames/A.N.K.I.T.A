@@ -77,6 +77,40 @@ Meta/Sarvam/file jobs prove independent completion, shared-file waiting and one
 player. The fresh review found seven substantive issues, now covered by ten
 failing-before/passing-after regressions. Physical and packaged limits above remain.
 
+### Checked final replies and tool visibility
+
+Before a final voice reply appears or plays, the active voice planner checks it
+against the original request and actual requested/started/result receipts. If
+work was skipped or the reply overclaims it, the same worker gets one chance to
+finish the remaining work. Completed actions are retained. A second unsupported
+ending, an unavailable check, or a spent work budget ends honestly as unfinished.
+Discovery, a checklist or memory lookup alone cannot prove external work finished.
+This applies across native and connected tools, rather than matching music words.
+
+Fresh workers copy already-discovered tool groups without sharing their mutable
+state or inheriting focus. Other groups remain available through discovery; the
+normal permissions, context limits and enabled-plugin settings still apply.
+
+The check adds one compact model request for each candidate final reply, including
+conversation. Its usage is counted. The deadline covers token preparation and the
+request; cancellation drops late replies. Oversized requests fail safely, while an
+overlong report gets one chance to become concise instead of being silently clipped
+for approval. Older context/results can be omitted or clipped with explicit flags.
+The checker can still misjudge meaning; it is not a guarantee that every claim is true.
+
+Repeatable live checks use the configured Meta key and disposable browser profiles:
+
+```bash
+node scripts/verify-voice-tool-execution.mjs --env /path/to/your/local/.env
+node scripts/verify-voice-tool-execution.mjs --env /path/to/your/local/.env --youtube-only
+```
+
+The default check uses a silent local media player in both browser backends, a
+real file/read-back and a conversation. The optional public YouTube check can fail
+on login, ads, network or playback restrictions; it independently inspects the video
+state rather than trusting the spoken report. Neither proves sound in a headset.
+See the [29 October repair record](../plans/2026-10-29-voice-tool-execution.md).
+
 ### Accurate work updates and overlapping tasks
 
 Work updates are generated, not a fixed script. The short initial acknowledgement

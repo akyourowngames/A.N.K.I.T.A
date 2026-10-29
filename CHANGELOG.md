@@ -29,6 +29,12 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Voice final replies are checked against actual action receipts before display
+  or speech. Unsupported completion gets one correction in the same request;
+  discovery alone cannot prove that music played or another action finished.
+  The check uses the active planner and adds one compact call per draft reply.
+- Fresh voice workers retain discovered built-in and connected tool groups as
+  independent snapshots. Permissions and tool focus still apply normally.
 - Empty voice-planner decisions retry once inside the same request, keeping
   completed actions and remaining work instead of restarting the task.
 - Work updates use observed action state; obsolete updates are discarded and

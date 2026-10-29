@@ -7,6 +7,17 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Voice reports backed by actions
+
+Final voice drafts now receive a compact check from the same active planner,
+using actual action receipts. Skipped work gets one in-turn correction; another
+unsupported ending fails honestly without restarting completed side effects.
+Discovery alone cannot establish playback or other external completion. Fresh
+workers retain discovered built-in/MCP groups as independent snapshots, with
+normal permissions. The check adds a model call per final draft and can still
+misjudge meaning. See the [repair record](../plans/2026-10-29-voice-tool-execution.md)
+for live evidence, latency and remaining limits.
+
 ### Voice across terminal, desktop and island
 
 Sarvam supplies Hinglish speech recognition and speech generation, while a
