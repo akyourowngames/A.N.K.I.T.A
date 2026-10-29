@@ -7,6 +7,22 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Responsive voice setup and speaker feedback protection
+
+Windows device queries and output switching use one lazy background worker.
+Concurrent observers share a five-second scan cache; Refresh invalidates it.
+Ordinary app/island startup reads a cheap session snapshot instead of probing
+devices. Recorded main-loop pause fell from 8208ms to 31ms in Node and 99ms in
+the native Electron check; these are local samples, not a universal latency SLA.
+
+Speaker/unknown outputs close capture before replies and reopen after playback
+drains. Windows-reported headphones can retain interruption after a fresh native
+monitor confirmation. Output/device changes or monitor failure stop current
+speech/capture, discard overlapping transcription and protect the rest of the
+session. Serializable output receipts support restoration across worker restart
+and retry after an interrupted restore. See the
+[performance and feedback record](../plans/2026-10-29-desktop-audio-performance.md).
+
 ### Desktop voice output and setup
 
 Voice settings reuse the app's existing field, section and save-bar styles, with

@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usePlaybackDevice } from '../../src/channels/audio-device.mjs';
+import { usePlaybackDevice, isPrivateAudioOutput } from '../../src/channels/audio-device.mjs';
+
+test('echo protection follows the OS endpoint type, never its brand/name; unknown outputs stay protected', () => {
+  for (const formFactor of [3, 5, 6]) assert.equal(isPrivateAudioOutput({ flow: 'render', formFactor }), true);
+  for (const formFactor of [0, 1, 2, 4, 7, 8, 9, 10, undefined]) assert.equal(isPrivateAudioOutput({ flow: 'render', formFactor, name: 'Headset named by user' }), false);
+  assert.equal(isPrivateAudioOutput({ flow: 'capture', formFactor: 5 }), false);
+  assert.equal(isPrivateAudioOutput(null), false);
+});
 
 function devices() {
   let selected = { console: 'original', multimedia: 'music-output', communications: 'call-output' };

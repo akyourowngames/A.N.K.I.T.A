@@ -42,6 +42,8 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
     audioDeps: () => ({ ffmpeg: true, ffplay: true }),
     listAudioDevices: () => [{ flow: 'render', id: 'fixture-output', name: 'Fixture speakers' }],
     getDefaultRenderId: () => 'fixture-output',
+    playbackIsolated: async () => true,
+    watchPlayback: async () => ({ isolated: true, stop: async () => {} }),
     listMicrophones: async () => [{ name: 'Fixture headset' }],
     openVoiceInput(options) {
       if (open) return open(options);
@@ -86,6 +88,30 @@ test('startup still reports real device errors', async t => {
   h.voice.io.listMicrophones = async () => { throw new Error('Device discovery failed'); };
   await assert.rejects(h.voice.start({ threadId: 'owner' }), /Device discovery failed/);
   assert.equal(h.voice.snapshot().phase, 'error');
+});
+
+test('asynchronous audio checks are awaited and End cancels a pending dependency probe', async t => {
+  const pending = defer(), h = harness(t);
+  h.voice.io.audioDeps = () => pending.promise;
+  const starting = h.voice.start({ threadId: 'owner' });
+  await h.voice.end();
+  assert.equal((await starting).active, false);
+  pending.resolve({ ffmpeg: true, ffplay: true });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(h.inputs.length, 0);
+});
+
+test('a routing operation finishing after End is restored before another session can use audio', async t => {
+  const pending = defer(), h = harness(t);
+  let restored = false;
+  h.config.voiceOutputDevice = 'fixture-output';
+  h.voice.io.usePlaybackDevice = () => pending.promise;
+  const starting = h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.current?.microphone);
+  const ending = h.voice.end();
+  pending.resolve({ restore: async () => { restored = true; } });
+  await Promise.all([starting, ending]);
+  assert.equal(restored, true); assert.equal(h.inputs.length, 0);
 });
 
 test('an unexpected audio AbortError remains visible while the session is live', async t => {
@@ -184,6 +210,57 @@ test('barge-in stops current speech and submits the completed interruption exact
   await until(() => h.calls.length === 2);
   assert.equal(h.calls[1].text, 'Stop, make it shorter');
   assert.equal(h.calls.length, 2);
+});
+
+test('speaker output closes capture before playback and ignores its own voice until listening resumes', async t => {
+  const speaking = defer(), h = harness(t, { barge: true, play: async audio => {
+    if (audio.toString().startsWith('Note ready')) await speaking.promise;
+  } });
+  h.voice.io.playbackIsolated = async () => false;
+  try {
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.played.includes('Note ready.'));
+  const input = h.inputs.at(-1);
+  assert.equal(input.stopped, true, 'microphone must close before sound leaves speakers');
+  const count = h.inputs.length;
+  input.options.onEvent({ type: 'silence_end', at: 1 });
+  input.options.onEvent({ type: 'silence_start', at: 2 });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(h.inputs.length, count, 'no microphone reopening while the speaker is active');
+  assert.equal(h.calls.length, 1, 'speech feedback must not delegate another job');
+  speaking.resolve();
+  await until(() => h.inputs.length > count);
+  await h.say('A genuine second request');
+  await until(() => h.calls.length === 2);
+  assert.equal(h.calls[1].text, 'A genuine second request');
+  } finally { speaking.resolve(); }
+});
+
+test('switching away from headphones interrupts playback and permanently enables speaker protection for this session', async t => {
+  let changed, protectedPlays = 0, stopped = 0;
+  const h = harness(t, { barge: true, play: async (audio, signal) => {
+    if (!audio.toString().startsWith('Note ready')) return;
+    if (h.voice.current.bargeIn) await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+    else { assert.equal(h.voice.current.input, null); protectedPlays++; }
+  } });
+  h.voice.io.watchPlayback = async callback => { changed = callback; return { isolated: true, stop: async () => { stopped++; } }; };
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.played.includes('Note ready.'));
+  changed();
+  await until(() => protectedPlays > 0);
+  assert.equal(h.voice.current.bargeIn, false); assert.equal(h.calls.length, 1);
+  await h.voice.end(); assert.equal(stopped, 1);
+});
+
+test('a headphone change invalidates an already pending transcript instead of treating feedback as a request', async t => {
+  const pending = defer(); let changed;
+  const h = harness(t, { barge: true, transcribe: () => pending.promise });
+  h.voice.io.watchPlayback = async callback => { changed = callback; return { isolated: true, stop: async () => {} }; };
+  await h.voice.start({ threadId: 'owner' }); await h.say();
+  await until(() => h.voice.snapshot().phase === 'transcribing');
+  changed(); pending.resolve({ text: 'Old speaker feedback', languageCode: 'en-IN' });
+  await until(() => h.inputs.length > 1);
+  assert.equal(h.calls.length, 0);
 });
 
 test('cancel work cancels its engine turn and records cancellation', async t => {
@@ -414,7 +491,7 @@ test('speech selection skips redundant desktop confirmation but mixed work and f
   await h.voice.start({ threadId: 'owner' }); await h.say('Next result');
   await until(() => h.voice.snapshot().task?.status === 'done');
   await h.say('Save a note too'); await until(() => h.played.includes('Saved mixed work.'));
-  await h.say('Unavailable control'); await until(() => h.played.includes('Work did not finish.'));
+  await h.say('Unavailable control'); await until(() => h.played.includes('Work did not finish.') && h.played.includes('Control failed.'));
   assert.ok(!h.played.includes('Selection scheduled.'));
   assert.ok(h.played.includes('Control failed.'));
 });

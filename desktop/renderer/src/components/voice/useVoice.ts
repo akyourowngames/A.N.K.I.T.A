@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { VoiceState, VoiceStatus } from '../../../../shared/voice.mjs';
+import type { VoiceState } from '../../../../shared/voice.mjs';
 import { emptyVoiceState, VOICE_ACTIONS, VOICE_EVENT } from '../../../../shared/voice.mjs';
 import { cleanErrorMessage } from '../../../../shared/error-notices.mjs';
 
@@ -19,7 +19,7 @@ export function useVoice() {
     if (!window.ankita) return;
     const off = window.ankita.onEvent(event => { if (event.type === VOICE_EVENT) apply(event.state); });
     // Subscribe before taking a snapshot, so a slow device check cannot roll back newer events.
-    void window.ankita.invoke<VoiceStatus>(VOICE_ACTIONS.status).then(result => apply(result.state)).catch(() => {});
+    void window.ankita.invoke<VoiceState>(VOICE_ACTIONS.snapshot).then(apply).catch(() => {});
     return () => { alive.current = false; off(); };
   }, [apply]);
   const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean; taskId?: string; all?: boolean }) => {

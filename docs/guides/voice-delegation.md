@@ -24,6 +24,23 @@ if nothing is heard, choose another output. Laptop speakers were heard in the
 remains unconfirmed. Automatic mode keeps the existing system/HFP routing.
 Other systems use their system output.
 
+Speaker and unknown-output playback uses turn-taking: the microphone closes
+before audio plays and reopens after a short buffer/echo drain. This prevents
+Ankita's own reply from becoming another job. Windows-reported headphones/headsets
+retain voice interruption only after native monitoring confirms the actual output.
+Changing or disconnecting audio devices stops current speech and overlapping
+recording, then protects the rest of that session; start a new session to confirm
+headphones again. If device classification or monitoring is unavailable, voice
+uses protected turn-taking. This is not acoustic echo cancellation; speaking over
+a speaker reply is intentionally not recorded. Pause/End/Stop controls still work.
+
+Device discovery and routing run in one lazy background worker, shared across the
+main app and island. Reopening settings within five seconds reuses a scan; Refresh
+forces a new scan. Normal app startup only reads voice state and does not launch
+audio probes. A cold OS scan can still take seconds, but it no longer blocks the
+main process. Independent voice jobs retain their existing concurrency limits;
+this change does not create another worker/thread per job.
+
 An explicit speaker choice temporarily changes Windows output during voice/test
 playback. Console, music and call defaults are restored separately afterwards;
 later manual changes are respected. Setup changes and speaker tests wait until
@@ -63,6 +80,18 @@ For an audio/settings-only change, use the focused desktop/audio tests and
 That fixture checks real field geometry, saved speaker/test IPC actions, live
 session locking, and 1280/620/390-pixel layouts. Audio is stubbed in that browser
 fixture; use **Test speakers** for real playback.
+
+Measure real device-scan responsiveness without speech or cloud requests:
+
+```bash
+node scripts/verify-desktop-audio-performance.mjs
+```
+
+Add `--env /path/to/local/.env --play` for a quiet-room check with a real microphone,
+Sarvam reply and speaker playback. It uses a discovered non-private output, creates
+no planner work, restores output choices and checks that no feedback reached
+transcription. The script prints timing/receipt fields, never API keys. See the
+[record and limits](../plans/2026-10-29-desktop-audio-performance.md).
 
 The last script uses real configured Sarvam/Meta services and file tools inside
 Electron with disposable app data. Microphone/VAD are generated fixtures and the

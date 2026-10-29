@@ -190,6 +190,12 @@ test('voice IPC rejects unknown fields and oversized owner IDs', async () => {
   assert.equal(tests, 0);
   assert.deepEqual(await actions.runVoiceAction({ engine: audioEngine, action: 'voiceTestPlayback' }), { cancelled: false });
   assert.equal(tests, 1);
+  let scanned = 0;
+  const viewEngine = { voice: () => ({ snapshot: () => view, status: async options => { scanned++; return options; } }) };
+  assert.deepEqual(await actions.runVoiceAction({ engine: viewEngine, action: 'voiceSnapshot' }), view);
+  assert.equal(scanned, 0, 'opening a voice observer must not launch hardware probes');
+  assert.deepEqual(await actions.runVoiceAction({ engine: viewEngine, action: 'voiceStatus', payload: { refresh: true } }), { refresh: true });
+  await assert.rejects(actions.runVoiceAction({ engine: viewEngine, action: 'voiceStatus', payload: { refresh: 'yes' } }), /payload/);
 });
 
 test('live voice blocks setup changes that would invalidate the session', async t => {

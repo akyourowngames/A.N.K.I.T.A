@@ -29,6 +29,12 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Voice device discovery and routing now run in one shared background worker,
+  with cached scans and cheap app/island state snapshots. Opening Voice settings
+  and testing speakers no longer block the desktop's main thread. Speaker replies
+  pause capture to prevent self-triggered jobs; recognized headphones retain
+  interruption, with native output-change notifications enabling protection if
+  hardware changes. Output restoration can recover after a worker restart.
 - Desktop Voice settings now have styled full-width fields, a discovered speaker
   selector and a real speech playback test. Windows output choices are restored
   per role after voice/test playback, preserving separate call outputs and later

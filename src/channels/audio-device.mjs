@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawnSync, spawn } from "node:child_process";
 
 /**
  * Windows default-audio-device control via the Core Audio API, spoken over
@@ -27,8 +27,8 @@ public static class AudioSwitch {
         int EnumAudioEndpoints(EDataFlow dataFlow, int dwStateMask, out IMMDeviceCollection ppDevices);
         int GetDefaultAudioEndpoint(EDataFlow dataFlow, ERole role, out IMMDevice ppDevice);
         int GetDevice([MarshalAs(UnmanagedType.LPWStr)] string id, out IMMDevice device);
-        int RegisterEndpointNotificationCallback(IntPtr client);
-        int UnregisterEndpointNotificationCallback(IntPtr client);
+        int RegisterEndpointNotificationCallback(IAudioNotification client);
+        int UnregisterEndpointNotificationCallback(IAudioNotification client);
     }
 
     [ComImport, Guid("0BD7A1BE-7A1A-44DB-8397-CC5392387B5E"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -55,12 +55,46 @@ public static class AudioSwitch {
     }
 
     [StructLayout(LayoutKind.Sequential)]
-    private struct PROPERTYKEY { public Guid fmtid; public int pid; }
+    public struct PROPERTYKEY { public Guid fmtid; public int pid; }
+
+    [ComVisible(true), Guid("7991EEC9-7E89-4D85-8390-6C703CEC60C0"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IAudioNotification {
+        [PreserveSig] int OnDeviceStateChanged([MarshalAs(UnmanagedType.LPWStr)] string id, uint state);
+        [PreserveSig] int OnDeviceAdded([MarshalAs(UnmanagedType.LPWStr)] string id);
+        [PreserveSig] int OnDeviceRemoved([MarshalAs(UnmanagedType.LPWStr)] string id);
+        [PreserveSig] int OnDefaultDeviceChanged(int flow, int role, [MarshalAs(UnmanagedType.LPWStr)] string id);
+        [PreserveSig] int OnPropertyValueChanged([MarshalAs(UnmanagedType.LPWStr)] string id, PROPERTYKEY key);
+    }
+    [ComVisible(true), ClassInterface(ClassInterfaceType.None)]
+    public class AudioNotification : IAudioNotification {
+        private int Changed() { Console.WriteLine("changed"); Console.Out.Flush(); return 0; }
+        public int OnDeviceStateChanged(string id, uint state) { return Changed(); }
+        public int OnDeviceAdded(string id) { return Changed(); }
+        public int OnDeviceRemoved(string id) { return Changed(); }
+        public int OnDefaultDeviceChanged(int flow, int role, string id) { return Changed(); }
+        public int OnPropertyValueChanged(string id, PROPERTYKEY key) { return 0; }
+    }
+    public static void WatchOutput() {
+        var e = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
+        var callback = new AudioNotification();
+        e.RegisterEndpointNotificationCallback(callback);
+        try {
+            IMMDevice device; e.GetDefaultAudioEndpoint(EDataFlow.eRender, ERole.eConsole, out device);
+            Console.WriteLine("ready|" + FormFactor(device)); Console.Out.Flush();
+            Console.ReadLine(); // stdin stays open; no polling or repeated helper compilation.
+        } finally { e.UnregisterEndpointNotificationCallback(callback); }
+    }
+
+    // The largest PROPVARIANT union member determines native size: 24 bytes on x64, 16 on x86.
+    [StructLayout(LayoutKind.Sequential)]
+    private struct BLOB { public uint size; public IntPtr data; }
 
     [StructLayout(LayoutKind.Explicit)]
     private struct PROPVARIANT {
         [FieldOffset(0)] public short vt;
         [FieldOffset(8)] public IntPtr pointerValue;
+        [FieldOffset(8)] public uint uintValue;
+        [FieldOffset(8)] public BLOB blob;
     }
 
     [ComImport, Guid("F8679F50-850A-41CF-9C72-430F290290C8"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
@@ -95,6 +129,17 @@ public static class AudioSwitch {
 
     public static string GetDefaultRender() { return GetDefaultRender((int)ERole.eConsole); }
 
+    private const short VariantUnsignedInt = 19; // Native VT_UI4 discriminator.
+    private const uint UnknownFormFactor = 10; // EndpointFormFactor fallback from the Windows ABI.
+    private static uint FormFactor(IMMDevice dev) {
+        try {
+            IPropertyStore store; dev.OpenPropertyStore(0, out store);
+            var key = new PROPERTYKEY(); key.fmtid = new Guid("1da5d803-d492-4edd-8c23-e0c0ffee7f0e"); key.pid = 0;
+            PROPVARIANT value; store.GetValue(ref key, out value);
+            return value.vt == VariantUnsignedInt ? value.uintValue : UnknownFormFactor;
+        } catch { return UnknownFormFactor; }
+    }
+
     public static string GetDefaultRender(int role) {
         var e = (IMMDeviceEnumerator)new MMDeviceEnumeratorComObject();
         IMMDevice dev;
@@ -117,7 +162,7 @@ public static class AudioSwitch {
                 coll.Item(i, out dev);
                 string id;
                 dev.GetId(out id);
-                result.Add(flow + "|" + id + "|" + FriendlyName(dev));
+                result.Add(flow + "|" + id + "|" + FormFactor(dev) + "|" + FriendlyName(dev));
             }
         }
         return result.ToArray();
@@ -139,9 +184,11 @@ public static class AudioSwitch {
 
 const DEVICE_ID_RE = /^\{0\.0\.[01]\.00000000\}\.\{[0-9a-f-]{36}\}$/i;
 const RENDER_ROLES = Object.freeze({ console: 0, multimedia: 1, communications: 2 }); // Core Audio ERole values; preserve each Windows default separately.
+const AUDIO_HELPER_TIMEOUT_MS = 20000; // Milliseconds: native helper startup/operations remain bounded.
+const helperScript = body => `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition @'\n${CSHARP}\n'@; ${body}`;
 
-function runPowerShell(body, timeoutMs = 20000) {
-  const script = `$ErrorActionPreference='Stop'; Add-Type -TypeDefinition @'\n${CSHARP}\n'@; ${body}`;
+function runPowerShell(body, timeoutMs = AUDIO_HELPER_TIMEOUT_MS) {
+  const script = helperScript(body);
   const res = spawnSync(
     "powershell",
     ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script],
@@ -163,8 +210,8 @@ export function listAudioDevices() {
     .split(/\r?\n/)
     .filter(Boolean)
     .map((line) => {
-      const [flow, id, ...rest] = line.split("|");
-      return { flow: flow === "eRender" ? "render" : "capture", id, name: rest.join("|") };
+      const [flow, id, formFactor, ...rest] = line.split("|");
+      return { flow: flow === "eRender" ? "render" : "capture", id, formFactor: Number(formFactor), name: rest.join("|") };
     });
 }
 
@@ -204,6 +251,29 @@ export function setDefaultAudioDevice(id) {
 }
 
 const norm = (s) => String(s || "").toLowerCase().replace(/\s+/g, " ").trim();
+const PRIVATE_OUTPUT_FORMS = new Set([3, 5, 6]); // Core Audio EndpointFormFactor: headphones, headset and handset. Unknown outputs use safe turn-taking.
+export const isPrivateAudioOutput = device => device?.flow === 'render' && PRIVATE_OUTPUT_FORMS.has(device.formFactor);
+
+/** Native endpoint notifications, compiled once per voice session. Failure always disables full-duplex. */
+export function watchAudioOutput(onChange) {
+  if (!audioDeviceSupported()) return { ready: Promise.resolve(false), stop: async () => {} };
+  const child = spawn('powershell', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', helperScript('[AudioSwitch]::WatchOutput()')],
+    { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+  let complete, stopped = false, buffer = '', initialized = false;
+  const ready = new Promise(resolve => { complete = value => { initialized = true; clearTimeout(timer); resolve(value); }; });
+  const timer = setTimeout(() => { complete(false); child.kill(); }, AUDIO_HELPER_TIMEOUT_MS);
+  const closed = new Promise(resolve => child.once('close', () => { if (!initialized) complete(false); if (!stopped) onChange(); resolve(); }));
+  child.on('error', () => { if (!initialized) complete(false); if (!stopped) onChange(); });
+  child.stdout.on('data', chunk => {
+    buffer += chunk.toString();
+    const lines = buffer.split(/\r?\n/); buffer = lines.pop();
+    for (const line of lines) {
+      if (line.startsWith('ready|')) complete(PRIVATE_OUTPUT_FORMS.has(Number(line.split('|')[1])));
+      else if (line === 'changed') onChange();
+    }
+  });
+  return { ready, async stop() { if (!stopped) { stopped = true; child.kill(); } await closed; } };
+}
 
 /** The render endpoint that shares a name with this mic (Bluetooth HFP pair). */
 export function findHandsFreePlayback(micName, devices) {
@@ -237,17 +307,23 @@ export function usePlaybackDevice(id, io = { list: listAudioDevices, current: ge
   const previous = io.current();
   const changed = Object.fromEntries(Object.entries(previous).filter(([, old]) => old.toLowerCase() !== device.id.toLowerCase()).map(([role]) => [role, device.id]));
   let restored = false;
-  const route = { device, restore() {
+  const receipt = { previous, changed, deviceId: device.id };
+  const route = { device, receipt, restore() {
     if (restored) return;
     restored = true;
     try {
-      const current = io.current();
-      const restore = Object.fromEntries(Object.keys(changed).filter(role => current[role]?.toLowerCase() === device.id.toLowerCase()).map(role => [role, previous[role]]));
-      if (Object.keys(restore).length) return io.set(restore);
+      return restorePlaybackDevice(receipt, io);
     } catch { return false; /* Unplugging the old speaker must not break session teardown. */ }
   } };
   try {
     if (Object.keys(changed).length && !io.set(changed)) throw new Error(OUTPUT_UNAVAILABLE);
   } catch (error) { route.restore(); throw error; }
   return route;
+}
+
+/** Serializable restoration proof survives a worker restart; retain later manual role changes. */
+export function restorePlaybackDevice({ previous, changed, deviceId }, io = { current: getDefaultRenderIds, set: setDefaultRenderIds }) {
+  const current = io.current();
+  const restore = Object.fromEntries(Object.keys(changed).filter(role => current[role]?.toLowerCase() === deviceId.toLowerCase()).map(role => [role, previous[role]]));
+  return Object.keys(restore).length ? io.set(restore) : true;
 }

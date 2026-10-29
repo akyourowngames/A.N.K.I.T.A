@@ -22,7 +22,7 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
   const dirty = Boolean(sarvam.trim() || baseten.trim() || mic !== (preferences.micDevice || '') || output !== (preferences.voiceOutputDevice || ''));
   const refresh = async () => {
     setRefreshing(true); setError('');
-    try { acceptStatus(await window.ankita.invoke<VoiceStatus>(VOICE_ACTIONS.status)); }
+    try { acceptStatus(await window.ankita.invoke<VoiceStatus>(VOICE_ACTIONS.status, { refresh: true })); }
     catch (cause) { setError(cleanErrorMessage(cause)); }
     finally { setRefreshing(false); }
   };
@@ -68,7 +68,7 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
       </select><small>Used for your requests and to hear when you interrupt.</small></div>
       <div className="settings-field"><label htmlFor="voice-output">Speakers</label><select id="voice-output" className="settings-select" value={output} disabled={locked || refreshing || !status?.outputs?.length} onChange={event => { setOutput(event.target.value); setNotice(''); }}>
         <option value="">Automatic{status?.defaultOutput ? ` · ${status.defaultOutput}` : ' · system output'}</option>{output && !status?.outputs?.some(item => item.id === output) && <option value={output}>Saved speaker · unavailable</option>}{status?.outputs?.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}
-      </select><small>{status?.outputs?.length ? 'Your choice temporarily becomes the Windows output during voice. It is restored when voice ends.' : 'Uses your system output. Change speakers in your device settings.'}</small></div>
+      </select><small>{status?.outputs?.length ? 'Your choice temporarily becomes the Windows output during voice. It is restored when voice ends.' : 'Uses your system output. Change speakers in your device settings.'}</small><small>Speakers pause listening during replies to prevent feedback. Recognized headphones keep voice interruption.</small></div>
       <div className="voice-settings-audio-actions"><button type="button" className="settings-secondary" disabled={locked || dirty || !preferences.hasSarvamKey} onClick={() => void test()}><Icon name="broadcast" size={14} />{testing ? 'Playing test…' : 'Test speakers'}</button><button type="button" className="settings-text-button" disabled={locked || refreshing} onClick={() => void refresh()}>{refreshing ? 'Refreshing…' : 'Refresh devices'}</button></div>
       <p className="voice-settings-hint">{dirty ? 'Save your changes before testing.' : 'No sound? Try your laptop speakers first, then test your headset.'}</p>
     </section>

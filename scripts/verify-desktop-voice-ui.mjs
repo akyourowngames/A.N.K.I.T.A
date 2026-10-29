@@ -49,7 +49,8 @@ async function pageFor({ island = false, width = 1280, height = 850, reduced = f
       invoke: async (action, payload) => {
         window.__voiceCalls.push({ action, payload });
         if (action === 'initialize') return { teammates, models: [{ id: 'fixture-model' }], settings, preferences, version, contract, chrome: 'native', jobs: [] };
-        if (action === 'listTeammates') return teammates;
+         if (action === 'listTeammates') return teammates;
+         if (action === 'voiceSnapshot') return statusUnavailable ? undefined : voice;
          if (action === 'voiceStatus') return statusUnavailable ? {} : { state: voice, ready: true, issues: [], microphones: [{ name: 'Headset microphone' }], microphone: '',
            outputs: [{ id: 'fixture-speakers', name: 'Laptop speakers' }, { id: 'fixture-headset', name: 'Headset output' }], defaultOutput: 'Laptop speakers', outputDevice: '' };
          if (action === 'voiceTestPlayback') return { cancelled: false };
