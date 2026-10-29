@@ -14,6 +14,7 @@ export const CHANNEL_MAX_CONCURRENT = 4; // Agent turns per host: bound memory/p
 export const CHANNEL_DELIVERY_FILE = 'channel-deliveries.json'; // Shared host directory: restart-safe outbound and inbound receipts.
 export const CHANNEL_SESSION_PREFIX = 'channel-'; // Opaque local session IDs; platform IDs never become paths.
 export const CHANNEL_PRIVATE_MODE = 0o600; // POSIX bits: credentials and delivery records are private to the local user.
+export const CHANNEL_SETTINGS_FILE = 'desktop-channels.json'; // Preserve existing desktop settings while sharing them with terminal setup.
 export const TYPING_INTERVAL_MS = 4000; // Milliseconds: Telegram actions expire after five seconds.
 export const PROGRESS_INTERVAL_MS = 5000; // Milliseconds: bound interim message noise across transports.
 export const PROGRESS_LABEL_CHARS = 80; // Characters: progress contains tool names, never arguments/model text.

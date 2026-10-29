@@ -33,12 +33,15 @@ export type DesktopSettingsResult = {
   models: Model[];
 };
 export type ChannelStatus = { running: boolean; account: string | null; error: string | null };
-export type TelegramChannelPreferences = {
-  enabled: boolean; hasToken: boolean; allowedChatIds: string; ownerChatId: string;
-  teammateId: string | null; voiceReply: boolean; confirmTimeout: number; status: ChannelStatus;
+export type ChannelField = {
+  kind: 'string' | 'secret' | 'bool' | 'list' | 'enum' | 'int' | 'float'; label?: string; help?: string;
+  default?: string | boolean | number | null; values?: string[]; min?: number; max?: number; maxLength?: number;
+  source?: string; section?: string; requiresCapability?: string;
 };
-export type ChannelsView = { telegram: TelegramChannelPreferences };
-export type TelegramChannelUpdate = Partial<Pick<TelegramChannelPreferences, 'enabled' | 'allowedChatIds' | 'ownerChatId' | 'teammateId' | 'voiceReply' | 'confirmTimeout'>> & { token?: string };
+export type ChannelManifest = { id: string; label: string; description?: string; docsUrl?: string; connect: string; required: string[]; capabilities: string[]; fields: Record<string, ChannelField> };
+export type ChannelPreferences = { manifest: ChannelManifest; secrets: Record<string, boolean>; status: ChannelStatus; enabled: boolean; hasToken: boolean; teammateId: string | null; [field: string]: unknown };
+export type ChannelsView = { channels: Record<string, ChannelPreferences>; doctor?: { ok: boolean; error: string | null; migrated: boolean; rollbackAvailable: boolean } };
+export type ChannelUpdate = Record<string, string | boolean | number | null>;
 export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean; logo: string };
 export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; worklog: { at: string; text: string; source?: { kind?: string; sessionId?: string; turnId?: string } }[]; lastWorkAt: string | null; lastUsedAt: string | null };
 export type ChangedFile = { path: string; status: string; untracked: boolean };

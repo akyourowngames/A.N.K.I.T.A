@@ -49,6 +49,8 @@ export const MCP_ID_ACTIONS = ["remove", "enable", "disable", "reload"];
 export const BROWSER_ACTIONS = ["list", "enable isolated", "enable local", "disable isolated", "disable local"];
 export const COMPOSIO_ACTIONS = ["status", "list", "accounts", "search", "connect", "disconnect", "reload", "tiers", "allow", "always", "deny"];
 
+import { CHANNEL_COMMAND, CHANNEL_ACTIONS } from '../channels/commands.mjs';
+
 export const SLASH_GROUPS = [
   {
     title: "General",
@@ -85,6 +87,7 @@ export const SLASH_GROUPS = [
   {
     title: "Connectors",
     items: [
+      { name: CHANNEL_COMMAND, args: CHANNEL_ACTIONS.join('|') + ' [channel]', desc: 'connect and manage messaging channels', actions: CHANNEL_ACTIONS },
       { name: "/mcp", args: MCP_ACTIONS.join("|"), desc: "manage MCP servers", actions: MCP_ACTIONS, idActions: MCP_ID_ACTIONS },
       { name: "/browser", args: "list|enable|disable [isolated|local]", desc: "list, enable, or disable browser plugins", actions: BROWSER_ACTIONS },
       { name: "/composio", args: COMPOSIO_ACTIONS.join("|"), desc: "manage connected apps and approval tiers", actions: COMPOSIO_ACTIONS },

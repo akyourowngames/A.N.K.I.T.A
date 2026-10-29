@@ -39,7 +39,8 @@ import { voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VOICE_TASK_DIRECTORY } from '../../src/automation/voice-task-policy.mjs';
 import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
-import { TelegramBot } from '../../src/channels/telegram.mjs';
+import { environmentForConfig } from '../../src/channels/core/registry.mjs';
+import { CHANNEL_SETTINGS_FILE } from '../../src/channels/core/contract.mjs';
 import { DesktopPlugins } from './plugins.mjs';
 import { DesktopBrowserPlugins } from './browser-plugins.mjs';
 import { DesktopComputerUse } from './computer-use.mjs';
@@ -261,7 +262,7 @@ export class DesktopEngine {
   constructor({
     teammateFile = path.join(CONFIG_DIR, 'desktop-teammates.json'),
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
-    channelsFile = path.join(CONFIG_DIR, 'desktop-channels.json'),
+    channelsFile = path.join(CONFIG_DIR, CHANNEL_SETTINGS_FILE),
     composioFile = COMPOSIO_FILE,
     composioGrantsFile = COMPOSIO_GRANTS_FILE,
     openExternal = null,
@@ -360,7 +361,7 @@ export class DesktopEngine {
     });
     this.computerUse = new DesktopComputerUse({ mcp: this.mcp, onChange: () => this.emit({ type: COMPUTER_USE_CHANGED }) });
     this.channels = new ChannelManager({
-      store: new ChannelStore(channelsFile),
+      store: new ChannelStore(channelsFile, { env: environmentForConfig(config) }),
       engine: this,
       getConfig: () => this.config || {},
       emit: event => this.emit(event),
@@ -621,21 +622,19 @@ export class DesktopEngine {
   getChannels() { return this.channels.publicView(); }
 
   async saveChannelSettings(channel, patch) {
-    if (channel !== 'telegram') throw new Error('Unknown channel');
-    const next = this.channels.store.preview(patch).telegram;
+    const next = this.channels.store.preview(channel, patch)[channel];
     if (next.teammateId && !this.teammates.find(next.teammateId)) throw new Error('Choose an available teammate');
-    const view = await this.channels.save(patch);
+    const view = await this.channels.save(channel, patch);
     return view;
   }
 
   /** Verifies a bot token without persisting it or starting the bridge. */
   async testTelegramChannel(input = {}) {
-    const token = String(input.token || '').trim() || this.channels.store.telegram().token;
-    if (!token) throw new Error('Enter a bot token first');
-    const bot = (this.telegramBotFactory || (options => new TelegramBot(options)))({ token });
-    const me = await bot.whoami();
-    return { username: me?.username || null, name: [me?.first_name, me?.last_name].filter(Boolean).join(' ') || null };
+    return this.testChannel('telegram', input.token ? input : {});
   }
+
+  testChannel(channel, input = {}) { return this.channels.verify(channel, input); }
+  createChannelPairing(channel, senderId) { return this.channels.createPairing(channel, senderId); }
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
   getStartupProfile() { loadSkills(); return startupProfile.format(); }

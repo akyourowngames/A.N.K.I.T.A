@@ -63,6 +63,27 @@ export class ChannelRegistry {
     }
     return { ...result, ...this.validate(id, saved) };
   }
+  legacyDefaults() {
+    const values = {};
+    for (const manifest of this.list()) for (const [key, field] of Object.entries(manifest.fields)) if (field.configKey) values[field.configKey] = this.defaults(manifest.id)[key];
+    return values;
+  }
+  environment(pick) {
+    const channels = {}, aliases = {}, errors = [];
+    for (const manifest of this.list()) {
+      const settings = this.defaults(manifest.id);
+      for (const [key, field] of Object.entries(manifest.fields)) {
+        const raw = field.env ? pick(field.env) ?? (field.fallbackEnv ? pick(field.fallbackEnv) : undefined) : undefined;
+        if (raw != null) {
+          try { settings[key] = cleanField(key, field.kind === 'bool' ? /^(on|true|1|yes)$/i.test(String(raw)) : raw, field); }
+          catch (error) { errors.push({ channel: manifest.id, field: key, error: error.message }); settings.enabled = false; }
+        }
+        if (field.configKey) aliases[field.configKey] = settings[key];
+      }
+      channels[manifest.id] = settings;
+    }
+    return { channels, aliases, errors };
+  }
   publicView(id, config, status = {}) {
     const manifest = this.get(id), settings = this.resolve(id, config), view = { manifest, secrets: {} };
     for (const [key, field] of Object.entries(manifest.fields)) {
@@ -77,3 +98,13 @@ export class ChannelRegistry {
 }
 
 export const defaultRegistry = new ChannelRegistry([telegramManifest]);
+
+export function environmentForConfig(config, registry = defaultRegistry) {
+  const values = {};
+  for (const manifest of registry.list()) for (const [key, field] of Object.entries(manifest.fields)) {
+    if (!field.env) continue;
+    const value = config.channels?.[manifest.id]?.[key] ?? (field.configKey ? config[field.configKey] : undefined);
+    if (value != null) values[field.env] = value;
+  }
+  return key => values[key];
+}

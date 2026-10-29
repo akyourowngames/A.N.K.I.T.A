@@ -20,6 +20,7 @@ import {
   MCP_TIERS_FILE,
   DAEMON_LOG,
   NOTIFY_QUEUE_FILE,
+  CHANNELS_FILE,
 } from "./config.mjs";
 import { ProjectStore, describeProject, describeProjectFull } from "../memory/projects.mjs";
 import { detectProject } from "../memory/project-resolver.mjs";
@@ -31,7 +32,13 @@ import { BrowserPluginStore, CHROME_MCP_ID, browserPluginOverview } from '../int
 import { ComposioStore } from "../integrations/composio-store.mjs";
 import * as composioTool from "../../tools/connectors/composio.mjs";
 import { RoutineStore, describeRoutine, describeWatch } from "../automation/routines.mjs";
-import { TelegramBot, parseChatIds } from "../channels/telegram.mjs";
+import { parseChatIds } from "../channels/telegram.mjs";
+import { ChannelTelegramBot as TelegramBot } from '../channels/telegram-adapter.mjs';
+import { ChannelStore } from '../channels/core/store.mjs';
+import { environmentForConfig } from '../channels/core/registry.mjs';
+import { createCliChannelHost } from '../channels/cli-host.mjs';
+import { runChannelCommand } from '../channels/commands.mjs';
+import { TELEGRAM_CHANNEL_ID } from '../channels/manifests/telegram.mjs';
 import { Daemon } from "../automation/daemon.mjs";
 import { SchedulerOwnership } from '../automation/scheduler-ownership.mjs';
 import { SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS } from '../automation/job-policy.mjs';
@@ -314,6 +321,7 @@ export function makeCompleter(models) {
 }
 
 export async function main({ voiceIO = {} } = {}) {
+  let channelHostRef = null;
   // Injectable device boundary lets the full terminal loop run in tests without
   // recording a person, playing sound, or spending speech-provider credits.
   const {
@@ -644,6 +652,7 @@ export async function main({ voiceIO = {} } = {}) {
   };
 
   const shutdown = async (code = 0) => {
+    await channelHostRef?.stopAll();
     await voiceJobs?.close();
     flushVoiceMail();
     try {
@@ -1225,15 +1234,19 @@ export async function main({ voiceIO = {} } = {}) {
       "Be specific and brief: a few lines, no preamble, no restating this request.";
 
   const store = new RoutineStore(STATE_FILE).load();
+  const channelStore = new ChannelStore(CHANNELS_FILE, { env: environmentForConfig(config) }).load();
+  const telegramSettings = channelStore.get(TELEGRAM_CHANNEL_ID);
   const bot = new TelegramBot({
-    token: config.telegramBotToken,
-    allowedChatIds: parseChatIds(config.telegramAllowedChatIds),
-    ownerChatId: config.telegramChatId,
+    token: telegramSettings.token,
+    allowedChatIds: parseChatIds(telegramSettings.allowedChatIds),
+    ownerChatId: telegramSettings.ownerChatId,
   });
 
   const ownerChat = () => {
-    if (config.telegramChatId) return config.telegramChatId;
-    const allowed = parseChatIds(config.telegramAllowedChatIds);
+    if (!channelStore.doctor().ok) return null;
+    const settings = channelStore.get(TELEGRAM_CHANNEL_ID);
+    if (settings.ownerChatId) return settings.ownerChatId;
+    const allowed = parseChatIds(settings.allowedChatIds);
     return allowed.length ? allowed[0] : null;
   };
 
@@ -1331,6 +1344,7 @@ export async function main({ voiceIO = {} } = {}) {
     });
     const daemon = new Daemon({
       store,
+      channelStore,
       bot,
       config,
       client,
@@ -1971,6 +1985,14 @@ export async function main({ voiceIO = {} } = {}) {
       case "/daemon": {
         term.line(c.dim("  daemon runs as its own process: ankita --daemon"));
         term.line(c.dim(`  routines ${store.routines.length}, watches ${store.watches.length}`));
+        break;
+      }
+
+      case "/channels": {
+        try {
+          channelHostRef ||= createCliChannelHost({ store, channelStore, config, client, model, tool, mcp, runPrompt, deliver, log: text => term.line(c.dim(`  ${text}`)) });
+          term.line(await runChannelCommand(arg, { host: channelHostRef }));
+        } catch (error) { term.line(c.red(`  ${error.message}`)); }
         break;
       }
 

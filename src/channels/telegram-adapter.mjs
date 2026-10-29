@@ -79,6 +79,11 @@ export class TelegramAdapter {
     this.offset = cursor?.get?.() || 0; this.offsetReady = this.offset > 0; this.stopping = false;
   }
   split(text) { return splitMessage(text); }
+  async verify(settings) {
+    const bot = this.botFactory({ token: settings.token });
+    const me = await bot.whoami();
+    return { account: me?.username ? `@${me.username}` : null, username: me?.username || null, name: [me?.first_name, me?.last_name].filter(Boolean).join(' ') || null };
+  }
   start(ctx) {
     this.ctx = ctx; this.stopping = false; this.controller = new AbortController();
     this.onAbort = () => this.controller.abort(ctx.signal.reason);

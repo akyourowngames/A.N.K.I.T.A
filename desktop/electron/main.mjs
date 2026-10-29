@@ -618,6 +618,8 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'getChannels': return current.getChannels();
     case 'saveChannelSettings': return current.saveChannelSettings(payload.channel, payload.patch);
     case 'testTelegramChannel': return current.testTelegramChannel(payload);
+    case 'testChannel': return current.testChannel(payload.channel, payload.input);
+    case 'createChannelPairing': return current.createChannelPairing(payload.channel, payload.senderId);
     case 'pluginsOverview': return current.plugins.overview();
     case 'pluginsCatalog': return current.plugins.catalog(payload);
     case 'pluginsConnect': return current.plugins.connect(payload);

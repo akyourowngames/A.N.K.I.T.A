@@ -10,6 +10,7 @@ export class DaemonChannelSurface extends ChannelSurface {
     Object.assign(port, { agents: host.chatAgents, send: (...args) => this.send(...args), waitForTurn: target => this.waitForTurn(target), cancel: target => this.cancel(target), agentFor: target => host.chatAgent(target) });
   }
   targetFor(_teammateId, ref) { return ref.channel === TELEGRAM_CHANNEL_ID ? String(ref.chatId) : sessionKey(ref); }
+  agentForTarget(target) { return this.host.chatAgent(target); }
   async send(target, text, { owner, ref, signal } = {}) {
     let acquired = false;
     const work = (async () => {

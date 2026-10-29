@@ -151,10 +151,10 @@ test('saving channel settings reconnects and emits the new view without the toke
   const events = [];
   const manager = new ChannelManager({ store, engine: {}, emit: event => events.push(event), botFactory: () => bot });
   manager.load();
-  const view = await manager.save({ enabled: true, token: 'tok', allowedChatIds: '42', teammateId: 'chief' });
-  assert.equal(view.telegram.enabled, true);
-  assert.equal(view.telegram.status.running, true);
-  assert.equal(JSON.stringify(view).includes('tok'), false);
+  const view = await manager.save({ enabled: true, token: 'private-manager-token', allowedChatIds: '42', teammateId: 'chief' });
+  assert.equal(view.channels.telegram.enabled, true);
+  assert.equal(view.channels.telegram.status.running, true);
+  assert.equal(JSON.stringify(view).includes('private-manager-token'), false);
   assert.equal(events.some(event => event.type === 'channels-updated'), true);
   await manager.stopAll();
 });
@@ -174,13 +174,14 @@ test('the desktop engine starts an enabled channel and rejects an unknown teamma
     telegramBotFactory: () => bot,
     emit: event => events.push(event),
   });
+  t.after(() => engine.close());
   await engine.init();
   const teammate = engine.createTeammate({ name: 'Chief', persona: '', color: '#22d3ee', emoji: '🧭' });
   await assert.rejects(engine.saveChannelSettings('telegram', { teammateId: 'missing' }), /available teammate/);
-  const view = await engine.saveChannelSettings('telegram', { enabled: true, token: 'secret', allowedChatIds: '42', teammateId: teammate.id });
-  assert.equal(view.telegram.status.running, true);
-  assert.equal(view.telegram.teammateId, teammate.id);
-  assert.equal(JSON.stringify(view).includes('secret'), false);
+  const view = await engine.saveChannelSettings('telegram', { enabled: true, token: 'private-engine-token', allowedChatIds: '42', teammateId: teammate.id });
+  assert.equal(view.channels.telegram.status.running, true);
+  assert.equal(view.channels.telegram.teammateId, teammate.id);
+  assert.equal(JSON.stringify(view).includes('private-engine-token'), false);
   assert.equal(events.some(event => event.type === 'channels-updated'), true);
   await engine.close();
 });

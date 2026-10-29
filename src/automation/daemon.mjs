@@ -15,6 +15,8 @@ import { TELEGRAM_CHANNEL_ID } from '../channels/manifests/telegram.mjs';
 import { TelegramAdapter, telegramEnvelope } from '../channels/telegram-adapter.mjs';
 import { transcribeChannelVoice, speakChannelReply } from '../channels/core/voice.mjs';
 import { CHANNEL_DELIVERY_FILE, CHANNEL_SESSION_PREFIX } from '../channels/core/contract.mjs';
+import { own } from '../channels/core/contract.mjs';
+import { ChannelHost } from '../channels/core/host.mjs';
 import { sanitizeMessages } from "../core/history.mjs";
 import { checkWatch } from "./watcher.mjs";
 import { describeCron } from "./cron.mjs";
@@ -60,6 +62,8 @@ export class Daemon {
     routineExecutor = null,
     routineSettled = null,
     routinesOnly = false,
+    channelStore = null,
+    channelAdapterFactories = {},
   }) {
     this.store = store;
     this.routineExecutor = routineExecutor;
@@ -67,6 +71,7 @@ export class Daemon {
     this.routinesOnly = routinesOnly;
     this.bot = bot?.enabled ? bot : null;
     this.config = config;
+    this.channelStore = channelStore;
     this.client = client;
     // Same chat/tool-model split as the REPL, so Telegram DMs get it too.
     this.tool = tool;
@@ -140,6 +145,14 @@ export class Daemon {
     this.channelRuntimes = new Map([[TELEGRAM_CHANNEL_ID, this.channelRuntime]]);
     this._dispatchChannel = this.channelRuntime.dispatch.bind(this.channelRuntime);
     this.channelRuntime.dispatch = ref => this.dispatch(ref);
+    this.channelHost = channelStore ? new ChannelHost({ store: channelStore, surface: this.channelSurface, getConfig: () => this.config,
+      adapterFactories: channelAdapterFactories, log: this.log,
+      settingsFor: id => id === TELEGRAM_CHANNEL_ID ? this.telegramChannelSettings() : { ...channelStore.get(id), teammateId: DAEMON_CHANNEL_TARGET },
+      onRuntime: (id, runtime) => this.channelRuntimes.set(id, runtime),
+      settled: (ref, active) => { this.stats.messagesHandled++; if (active.error && !active.cancelled && !this.stopping) this.stats.errors++; this.saveChat(this.channelSurface.targetFor(null, ref)); },
+    }) : null;
+    if (this.channelHost) this.channelHost.runtimes.set(TELEGRAM_CHANNEL_ID, this.channelRuntime);
+    if (channelStore && !this.telegramChannelSettings().enabled) { this.bot = null; adapter.bot = null; this.channelRuntime.running = false; }
   }
 
   stop() {
@@ -209,6 +222,11 @@ export class Daemon {
   }
 
   telegramChannelSettings() {
+    if (this.channelStore) {
+      const settings = this.channelStore.get(TELEGRAM_CHANNEL_ID);
+      const explicit = own(this.channelStore.data[TELEGRAM_CHANNEL_ID] || {}, 'enabled');
+      return { ...settings, enabled: this.channelStore.doctor().ok && (explicit ? settings.enabled : settings.enabled || Boolean(this.bot)), teammateId: DAEMON_CHANNEL_TARGET };
+    }
     return {
       ...defaultRegistry.defaults(TELEGRAM_CHANNEL_ID),
       ...(this.config.channels?.[TELEGRAM_CHANNEL_ID] || {}),
@@ -228,16 +246,17 @@ export class Daemon {
     if (this.stopping) return false;
     const key = String(chatId), agent = this.chatAgents.get(key);
     if (this.config.autoApprove === true || agent?.autoApprove === true) return true;
-    if (!this.bot) return false;
-    const active = [...this.channelRuntime.activeJobs.values()].find(job => job.target === key);
+    const runtime = [...this.channelRuntimes.values()].find(candidate => [...candidate.activeJobs.values()].some(job => job.target === key)) || this.channelRuntime;
+    if (!this.bot && !runtime.running) return false;
+    const active = [...runtime.activeJobs.values()].find(job => job.target === key);
     const ref = active?.ref || telegramEnvelope({ chatId, messageId: randomUUID(), kind: 'text' });
-    const answer = await this.channelRuntime.requestApproval(ref, { toolName, detail }, active);
+    const answer = await runtime.requestApproval(ref, { toolName, detail }, active);
     if (answer === 'always' && agent) agent.autoApprove = true;
     return answer === 'yes' || answer === 'always';
   }
 
   resolvePending(job) {
-    return this.channelRuntime.resolvePending(job.channel ? job : telegramEnvelope(job));
+    return (this.channelRuntimes.get(job.channel || TELEGRAM_CHANNEL_ID) || this.channelRuntime).resolvePending(job.channel ? job : telegramEnvelope(job));
   }
 
   saveChat(chatId) {
@@ -447,7 +466,7 @@ export class Daemon {
   }
 
   async pollInbox() {
-    if (this.stopping || !this.bot) return 0;
+    if (this.stopping || !this.bot || !this.telegramChannelSettings().enabled) return 0;
     const runtime = this.channelRuntime, adapter = runtime.adapter;
     adapter.bot = this.bot; adapter.offset = this.offset; adapter.offsetReady = this.offsetReady;
     const count = await adapter.tick({
@@ -531,7 +550,7 @@ export class Daemon {
    * approval would otherwise hold shutdown open until it times out.
    */
   async drain(timeoutMs = 10000) {
-    const pending = [...this.chains.values()];
+    const pending = [...this.chains.values(), ...[...this.channelRuntimes.values()].flatMap(runtime => [...runtime.inbox.chains.values()])];
     if (!pending.length) return false;
     let timer;
     try {
@@ -614,6 +633,9 @@ export class Daemon {
   }
 
   async run() {
+    if (this.channelHost) {
+      for (const manifest of this.channelHost.registry.list()) if (manifest.id !== TELEGRAM_CHANNEL_ID && this.channelHost.settingsFor(manifest.id).enabled) await (await this.channelHost.runtime(manifest.id)).start();
+    }
     if (!this.bot) {
       this.log("no TELEGRAM_BOT_TOKEN: running schedules and watches with configured notification fallbacks");
     } else {
