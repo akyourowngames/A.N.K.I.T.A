@@ -7,6 +7,19 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Remembered browser companion connection
+
+The browser companion now has a separate opt-in control grant, an authenticated
+bounded command mailbox and a hidden local MCP transport behind the existing
+browser tool. Saved pairing credentials and the remembered local port survive
+desktop/browser restarts; ephemeral sessions and commands do not get replayed.
+Disconnect pauses the grant, Reconnect works across interfaces, and Unpair exposes
+fresh setup. Worker-session storage retains owned tabs and cancelled debugger
+access. Ordinary forms/clicks use DOM code; native keyboard input and screenshots
+attach and detach deeper control per operation. Browser settings include setup
+and live status. This is unpacked-extension source work, not a new release.
+See the [browser guide](../guides/browser-use.md#pair-your-signed-in-browser-once).
+
 ### Responsive voice setup and speaker feedback protection
 
 Windows device queries and output switching use one lazy background worker.

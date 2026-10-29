@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react';
 import type { BrowserPlugin, BrowserPluginsOverview } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { cleanErrorMessage } from '../../../shared/error-notices.mjs';
+import { ExtensionBrowserSetup } from './ExtensionBrowserSetup';
+import { BROWSER_CONNECTION } from '../../../browser-helper/control-protocol.mjs';
 
 function BrowserMark({ mode }: { mode: 'isolated' | 'local' }) {
   return mode === 'isolated'
@@ -28,7 +30,7 @@ function SiteRules({ plugin, busy, onChange }: { plugin: BrowserPlugin; busy: bo
 
 function BrowserDetails({ plugin, busy, progress, onToggle, onInstall, onStart, onMode, onHeadless, onPort, onTest, onSiteRule }: {
   plugin: BrowserPlugin; busy: string | null; progress: string;
-  onToggle: () => void; onInstall: () => void; onStart: () => void; onMode: (mode: 'profile' | 'port' | 'active') => void;
+  onToggle: () => void; onInstall: () => void; onStart: () => void; onMode: (mode: 'profile' | 'port' | 'active' | 'extension') => void;
   onHeadless: (value: boolean) => void; onPort: (value: number) => void; onTest: (port: number) => void;
   onSiteRule: (kind: 'allow' | 'block', site: string, add: boolean) => void;
 }) {
@@ -45,16 +47,16 @@ function BrowserDetails({ plugin, busy, progress, onToggle, onInstall, onStart, 
         {busy === plugin.mode && progress && <div className="browser-plugin-progress" role="status">{progress}</div>}
         <label className="browser-plugin-check"><input type="checkbox" checked={plugin.headless !== false} onChange={event => onHeadless(event.target.checked)} disabled={busy !== null} /><span>Run in the background</span></label>
       </> : <>
-        <p>Choose how Ankita connects. Active session uses your existing tabs and asks permission in Chrome each time.</p>
+        <p>Browser companion pairs once with your signed-in browser. Other connection methods are available below.</p>
         <div className="browser-mode-picker" role="group" aria-label="Chrome connection mode">
-          {(['profile', 'port', 'active'] as const).map(mode => <button key={mode} type="button" className={plugin.connection === mode ? 'active' : ''} onClick={() => onMode(mode)} disabled={busy !== null}>{mode === 'profile' ? 'Private Chrome' : mode === 'port' ? 'Debug port' : 'My session'}</button>)}
+          {([BROWSER_CONNECTION, 'profile', 'port', 'active'] as const).map(mode => <button key={mode} type="button" className={plugin.connection === mode ? 'active' : ''} onClick={() => onMode(mode)} disabled={busy !== null}>{mode === BROWSER_CONNECTION ? 'Browser companion' : mode === 'profile' ? 'Private Chrome' : mode === 'port' ? 'Debug port' : 'My session'}</button>)}
         </div>
         {plugin.connection === 'active' && <div className="browser-plugin-instruction"><span>1. Open <code>chrome://inspect/#remote-debugging</code> and enable remote debugging.</span><button type="button" onClick={() => void navigator.clipboard.writeText('chrome://inspect/#remote-debugging')}>Copy address</button></div>}
         {plugin.connection === 'port' && <div className="browser-plugin-instruction"><label htmlFor="chrome-port">Chrome debug port</label><input id="chrome-port" type="number" min="1" max="65535" value={portDraft} onChange={event => setPortDraft(event.target.value)} onBlur={() => { const port = Number(portDraft); if (Number.isInteger(port) && port >= 1 && port <= 65535 && port !== plugin.port) onPort(port); }} /><button type="button" onClick={() => onTest(Number(portDraft))} disabled={busy !== null || !Number.isInteger(Number(portDraft)) || Number(portDraft) < 1 || Number(portDraft) > 65535}>Test port</button></div>}
-        <div className="browser-plugin-setup-row"><span>{plugin.ready ? 'Connected to Chrome' : 'Chrome permission may appear when you start'}</span><button type="button" className="browser-plugin-primary" onClick={onStart} disabled={busy !== null || !plugin.enabled}>{busy === plugin.mode ? 'Connecting…' : plugin.ready ? 'Reconnect' : 'Start connection'}</button></div>
+        {plugin.connection === BROWSER_CONNECTION ? <ExtensionBrowserSetup /> : <div className="browser-plugin-setup-row"><span>{plugin.ready ? 'Connected to Chrome' : 'Chrome permission may appear when you start'}</span><button type="button" className="browser-plugin-primary" onClick={onStart} disabled={busy !== null || !plugin.enabled}>{busy === plugin.mode ? 'Connecting…' : plugin.ready ? 'Reconnect' : 'Start connection'}</button></div>}
       </>}
       <SiteRules plugin={plugin} busy={busy !== null} onChange={onSiteRule} />
-      <small className="browser-detail-version">{local ? 'Chrome DevTools MCP 1.10.1' : 'Playwright · Chromium'}</small>
+      <small className="browser-detail-version">{local ? plugin.connection === BROWSER_CONNECTION ? 'Ankita Browser Companion · MCP' : 'Chrome DevTools MCP 1.10.1' : 'Playwright · Chromium'}</small>
     </div>
   </>;
 }

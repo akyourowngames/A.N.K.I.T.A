@@ -2,6 +2,46 @@
 
 Ankita can open and interact with real web pages. The browser tool is loaded on demand with `find_tools("browser")`, so ordinary conversations do not pay for a browser schema on every request.
 
+## Pair your signed-in browser once
+
+In **Plugins → By Ankita team → Chrome local**, select **Browser companion**.
+Open the extension folder, then use your browser's Extensions page to load that
+folder with **Developer mode → Load unpacked**. Open **ANKITA Browser Companion**
+from the toolbar. Create a setup code in Ankita, copy it, and paste it into the
+companion. This is a one-time control grant; an older page-capture pairing does
+not automatically gain browser control.
+
+After pairing, desktop and browser restarts reuse the saved grant. Either app
+can open first. The desktop remembers the local port and the extension remembers
+its private credential. While its worker is awake, reconnect starts after about
+1.5 seconds with bounded backoff; after suspension Chrome can defer recovery until
+the next 30-second alarm. A closed app never triggers repeated pairing requests.
+
+**Disconnect** pauses reconnect without forgetting the pairing. **Reconnect**
+resumes it from either interface. **Unpair browser** revokes control; the extension
+then exposes setup again. Clearing either side's pairing data, removing the
+extension or changing to an unpaired browser profile also requires setup again.
+Existing site rules and action-approval settings still apply. When no browser is
+already selected, an enabled companion is preferred over private Chromium.
+
+Ordinary snapshots, text reads, form filling and clicks use packaged page code.
+Keyboard presses, explicit trusted clicks and screenshots use Chrome's debugger
+only for that action; Chrome may show its control notice. Cancelling deeper
+control is remembered across worker restarts until an explicit reconnect. A lost
+response or stopped request never causes an automatic replay of a write.
+
+The companion currently observes the main document. Embedded frames, native
+JavaScript dialogs, uploads/downloads and guarded sequences retain explicit
+unsupported results in this mode; use the existing Chrome/Playwright connection
+or the browser directly when needed. Scheduled routines requiring network
+isolation must use an existing backend. Voice jobs have independent owned tabs
+while sharing the browser-action coordination gate. The normal desktop preview
+does not attach a debugger automatically.
+
+This is a source feature, not a new packaged release or a published extension-store
+listing. The extension is loaded unpacked for now. See the
+[implementation and verification record](../findings/2026-10-29-extension-browser-control.md).
+
 ## Browser instructions
 
 Interactive desktop and CLI chats include the [browser-use skill](../../skills/browser-use/SKILL.md).

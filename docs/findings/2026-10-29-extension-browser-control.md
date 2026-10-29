@@ -1,6 +1,6 @@
 # Existing-profile browser control through Ankita's extension
 
-Research date: 2026-10-29. Status: researched design proposal. The user clarified the desired outcome and left the transport choice to the builder. No runtime changes or extension installation performed.
+Research and implementation date: 2026-10-29. Status: implemented in source, focused verification recorded below. The user approved implementation and explicitly required one-time pairing across restarts. Extension-store publication and packaged installer checks are not included.
 
 ## Requested experience
 
@@ -45,7 +45,7 @@ Distinguish connection approval, website access, action approval and Chrome's ow
 
 1. Extend the existing browser helper into the general Ankita browser companion. Keep capture and browser-control grants distinct. Do not broaden the ChatGPT provider bridge as a shortcut.
 2. Put browser commands behind an external MCP service and the existing browser tool contract. Connection transport does not grant new websites or change action approvals. Browser access works for typed and voice jobs alike.
-3. Let the desktop installer register a native messaging host for the supported browser and the actual extension identity. Development setup needs an explicit registration command; packaged setup must not depend on a globally installed Node binary. Detect paths and browser availability at runtime.
+3. The original proposal considered native messaging host registration. Implementation instead reuses the helper's existing authenticated loopback service and remembered OS-assigned port, with startup/alarm reconnect. This avoids a new native-host installer or globally installed Node dependency. A suspended extension worker can take until its next supported 30-second alarm to recover. Native messaging remains an alternative discovery transport, not a shipped claim.
 4. Establish an authenticated local session after one-time user pairing. Persist the control grant privately, reconnect automatically, and expose Disconnect/Revoke in the extension and desktop settings. Do not turn existing capture credentials into browser-control credentials. Reject an unknown extension identity, stale pairing and untrusted webpage messages.
 5. Route ordinary tab and DOM operations through packaged extension code. Keep observed element references scoped to document, frame, tab and job; invalidate them on navigation. Return observed results through the existing receipts, not guessed completion text.
 6. Use the debugger for operations needing trusted input, Chrome's page accessibility tree, background screenshots, supported page JavaScript dialogs or another supported deeper capability. This does not imply access to operating-system accessibility controls. Define capabilities explicitly. Do not retry a mutating action through a second path after an uncertain result: observe first so a click or submission cannot happen twice.
@@ -53,7 +53,7 @@ Distinguish connection approval, website access, action approval and Chrome's ow
 8. Keep independent jobs in separate owned tabs. Coordinate operations that share a tab; one job must not switch another job's target or reuse its references. Browser settings list paired profiles so discovery cannot attach an arbitrary profile.
 9. Show Connected / Browser closed / Access removed / Another debugger is attached with actionable recovery. One-time setup replaces manual port configuration. Chrome-owned notices remain visible whenever Chrome requires them.
 
-Builder choices proposed here, not yet agreed with the user: reuse the browser helper, use native messaging for discovery, retain the external MCP boundary, and preserve existing browser policy rather than adding another planner tool family. Host registration and browser-extension store publication are separate deliverables; the repository does not currently have the requested install-and-control flow.
+Builder choices made: reuse the browser helper's paired loopback discovery, retain the MCP boundary and existing browser policies, and use DOM-first execution with explicit deeper access. The user delegated these technical choices. The extension is loaded unpacked; store publication remains a separate deliverable.
 
 ## Required verification before calling it shipped
 
@@ -68,6 +68,58 @@ Builder choices proposed here, not yet agreed with the user: reuse the browser h
 
 ## Verification boundary
 
-This document is based on live source/document reads and inspection of current Ankita source. No browser-control runtime has been changed, no physical connection prompt has been reproduced in this research pass, and neither transport has been live-tested here. The cited third-party code is evidence of an approach, not a dependency approved for installation or a tested implementation for Ankita.
+The online research establishes supported mechanisms, not OpenAI's private internals. The cited third-party code is a reference, not a new dependency. The original remote-debugging modal was identified from the active-session code path and UI copy; a physical prompt was not reproduced in the user's real profile.
 
 An independent builder review found no blocking questions before implementation planning. Its terminology corrections about page accessibility and JavaScript dialogs are incorporated above. Referenced repository paths were checked as present; the document has no trailing whitespace. These checks validate the research handoff only, not browser operation.
+
+## Implementation and verification receipt
+
+New work on 2026-10-29: separate browser-control pairing, durable grant/port reuse,
+ephemeral command/session broker, private MCP gateway, extension reconnect/executor,
+existing browser-facade adapter, desktop setup/status and per-voice-job extension
+scopes. Existing capture, browser adapters, action approvals and voice architecture
+are baseline work, not newly invented for this change.
+
+Reproduced before fixes: the missing control endpoint returned 404; extension mode
+was rejected by settings; desktop resume could not release a popup pause; native
+Enter had no form effect; old refs survived a same-document route change; delivered
+input could outlive Stop; simultaneous pairing-file updates raised ENOENT; and the
+real popup misread an access-removal status as an IPC error. Regressions now cover
+these paths. Ordinary insecure HTTP also exposed the secure-context-only UUID API;
+page references now use the browser's random-byte API available on those pages.
+
+- Final focused serial integration run: **73 tests, 73 passed, 0 failed**. Includes real
+  helper/MCP HTTP, pairing persistence, cancelled command admission, site/ref/job
+  guards, both app entry points under shipped CSP and existing capture/browser
+  checks, ordinary HTTP page-ID hardening and the real native Chrome backend.
+- Real extension trace: `EXTENSION_LIVE_OK: one pairing; DOM post and Enter post
+  exactly once each; screenshot; worker/desktop/browser restarts; cross-surface
+  pause/resume; revoke recovery.` A dedicated Chromium profile loaded the actual
+  unpacked companion. The form received exactly two intended submissions total,
+  with no replay after restarts. The desktop service restarted using the same
+  pairing file and port; this is not a claim of a packaged Electron process test.
+- Settings trace: `BROWSER_SETUP_UI_OK: 1280/620/390; explicit setup only; private
+  code cleared; pause/resume/revoke; zero renderer errors.` The renderer used its
+  real component/CSS with a fixture IPC transport.
+- Desktop main and island startup traces both reported `mounted: true, errors: []`
+  under their shipped CSP with a fixture transport. The production renderer build
+  completed with **405 modules transformed**. Main-process source parsed cleanly.
+- Native Chrome trace: `CHROME_PROMPT_NATIVE_LIVE {"writes":1,"promptDecision":"executed","unsupportedTransfers":true}`.
+  The last shared-copy refactor rechecked **16/16** broker/reconnect/actual-extension
+  cases. Diff checks passed; the literal review kept fixed protocol identifiers
+  and HTTP status codes as wire values, placed timing/size and CDP key policy in
+  named constants/tables, and shared access-removal copy. No personal text files,
+  credentials or recordings are staged.
+- An independent code review found important cancellation, stale-target,
+  keyboard, revoke-recovery and worker-state issues. Each was addressed with a
+  focused regression; native keyboard and same-document target issues were also
+  reproduced against real Chromium before the fixes.
+
+Limits: no extension-store distribution, packaged/native desktop IPC lifecycle,
+macOS/Linux/Edge hardware/profile acceptance or full-suite run. Real-browser tests
+used a dedicated fixture profile, not the user's signed-in profile. The companion
+does not claim arbitrary-frame control, dialogs, transfers, sequences or scheduled
+network interception. Chrome-required notices are not suppressed. Browser-level
+commands already sent before Stop cannot be undone; their uncertain receipts are
+not automatically replayed. Broad user-site posting/form acceptance remains a
+manual follow-up beyond the real local form and keyboard checks.

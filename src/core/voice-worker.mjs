@@ -9,6 +9,7 @@ import { createVoiceCompletion } from './voice-completion.mjs';
 import { canonicalVoicePath } from '../automation/voice-resources.mjs';
 import { VOICE_JOBS_TOOL, VOICE_REPORTS_TOOL } from '../automation/voice-task-policy.mjs';
 import { get, isReadOnly } from '../../tools/index.mjs';
+import { BROWSER_CONNECTION } from '../../desktop/browser-helper/control-protocol.mjs';
 
 const HISTORY_MESSAGES = 16; // Messages: recent completed conversation, with tool exchanges kept atomic.
 const HISTORY_BYTES = 32 * 1024; // UTF-8 bytes: keep speech decisions small without another summarizer request.
@@ -82,6 +83,9 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
   const runtimeTools = new Map([[VOICE_JOBS_TOOL, controlTool], ...(reports ? [[VOICE_REPORTS_TOOL, reports.tool]] : [])]);
   let otherTools = false;
   let worker;
+  const parentBrowser = captured.browserManager;
+  const extensionJobs = !entry.controlOnly && parentBrowser?.store?.load().get('local').enabled && parentBrowser.store.get('local').connection === BROWSER_CONNECTION;
+  const browserManager = extensionJobs ? parentBrowser.createScope(entry.id, { mode: 'local' }) : parentBrowser;
   const approve = async (name, detail) => {
     if (signal?.aborted) return false;
     return task ? task.approval(name, () => confirm?.(name, detail, entry, signal)) : confirm?.(name, detail, entry, signal);
@@ -90,7 +94,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     subagentsEnabled: false, memoryConsolidation: false, projectWorkCapture: false,
     retryEmptyResponse: true }, // Retry one unexecuted model decision, never restart a partially completed task.
     project: captured.project, projectId: captured.projectId, workspacePath: captured.workspacePath,
-    mcp: captured.mcp, browserManager: captured.browserManager, browserThreadId: entry.ownerId,
+    mcp: captured.mcp, browserManager, browserThreadId: entry.ownerId,
     memoryEnabled: false, autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
     allowedTools: entry.controlOnly ? new Set(runtimeTools.keys()) : null, confirm: approve, print: () => {}, write: () => {},
     systemSuffix: [CONTROL_GUIDANCE, reports?.context, entry.controlOnly && CAPACITY_GUIDANCE].filter(Boolean).join('\n'),
@@ -132,5 +136,6 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     const active = [...worker.state.jobs.values()].filter(job => !job.done);
     if (active.length) entry.resourceHold = { promise: childLifetime(active), stop: () => entry.cancelWorker() };
     if (signal?.aborted) await entry.cancelWorker();
+    if (extensionJobs) await parentBrowser.closeScope(entry.id);
   }
 }

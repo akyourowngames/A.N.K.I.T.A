@@ -8,9 +8,23 @@ import { ToolHost } from '../../src/core/tool-host.mjs';
 import { VoiceResourceBroker } from '../../src/automation/voice-resources.mjs';
 import { Agent } from '../../src/core/agent.mjs';
 import { captureVoiceContext, runVoiceWorker, voiceCallResources } from '../../src/core/voice-worker.mjs';
+import { BrowserSessionManager } from '../../tools/browser/session.mjs';
+import { BrowserPluginStore } from '../../src/integrations/browser-plugins.mjs';
 
 const fixture = t => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-worker-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 const controlTool = { name: 'voice_jobs', description: 'test control', parameters: { type: 'object' }, needsApproval: false, run: () => '[]' };
+test('parallel voice workers retain separate extension browser scopes and release them after work', async t => {
+  const dir = fixture(t), store = new BrowserPluginStore(path.join(dir, 'browser.json')).load();
+  store.setEnabled('local', true); store.setChromeMode('extension');
+  const manager = new BrowserSessionManager({ store }), seen = [];
+  const parent = new Agent({ client: {}, browserManager: manager, config: { tools: true }, memoryEnabled: false, workspacePath: dir });
+  class Fake extends Agent { async send() { seen.push(this.browserManager); await new Promise(resolve => setImmediate(resolve)); return 'Ready'; } }
+  await Promise.all(['one', 'two'].map(id => runVoiceWorker({ id, ownerId: 'owner', transcript: 'browse', context: captureVoiceContext(parent) },
+    { signal: new AbortController().signal, observer: {}, controlTool }, { AgentClass: Fake })));
+  assert.notEqual(seen[0], manager); assert.notEqual(seen[0], seen[1]);
+  assert.equal(seen[0].scopeOptions.ownedTabs, true);
+  assert.equal(manager.scopes.size, 0);
+});
 test('fresh workers keep captured history, planner, abort and job state separate from the typed agent', async t => {
   const dir = fixture(t), parent = new Agent({ client: {}, config: { tools: true, model: 'typed' }, memoryEnabled: false, workspacePath: dir });
   parent.messages.push({ role: 'user', content: 'previous' }, { role: 'assistant', content: 'saved findings' });
