@@ -7,6 +7,44 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Responsive voice setup and speaker feedback protection
+
+Windows device queries and output switching use one lazy background worker.
+Concurrent observers share a five-second scan cache; Refresh invalidates it.
+Ordinary app/island startup reads a cheap session snapshot instead of probing
+devices. Recorded main-loop pause fell from 8208ms to 31ms in Node and 99ms in
+the native Electron check; these are local samples, not a universal latency SLA.
+
+Speaker/unknown outputs close capture before replies and reopen after playback
+drains. Windows-reported headphones can retain interruption after a fresh native
+monitor confirmation. Output/device changes or monitor failure stop current
+speech/capture, discard overlapping transcription and protect the rest of the
+session. Serializable output receipts support restoration across worker restart
+and retry after an interrupted restore. See the
+[performance and feedback record](../plans/2026-10-29-desktop-audio-performance.md).
+
+### Desktop voice output and setup
+
+Voice settings reuse the app's existing field, section and save-bar styles, with
+separate microphone and Windows speaker choices. Test speakers plays real Sarvam
+speech through the saved output without sending a planner request or creating a
+job. It reports playback completion without claiming that sound was heard.
+Temporary routing preserves each Windows output role and later manual changes.
+End during startup resolves normally; unexpected audio errors remain visible.
+Settings follow session changes from the island instead of staying locked.
+See the [audio repair record](../plans/2026-10-29-voice-tool-execution.md#desktop-audio-and-settings-follow-up).
+
+### Voice reports backed by actions
+
+Final voice drafts now receive a compact check from the same active planner,
+using actual action receipts. Skipped work gets one in-turn correction; another
+unsupported ending fails honestly without restarting completed side effects.
+Discovery alone cannot establish playback or other external completion. Fresh
+workers retain discovered built-in/MCP groups as independent snapshots, with
+normal permissions. The check adds a model call per final draft and can still
+misjudge meaning. See the [repair record](../plans/2026-10-29-voice-tool-execution.md)
+for live evidence, latency and remaining limits.
+
 ### Voice across terminal, desktop and island
 
 Sarvam supplies Hinglish speech recognition and speech generation, while a

@@ -29,6 +29,23 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Voice device discovery and routing now run in one shared background worker,
+  with cached scans and cheap app/island state snapshots. Opening Voice settings
+  and testing speakers no longer block the desktop's main thread. Speaker replies
+  pause capture to prevent self-triggered jobs; recognized headphones retain
+  interruption, with native output-change notifications enabling protection if
+  hardware changes. Output restoration can recover after a worker restart.
+- Desktop Voice settings now have styled full-width fields, a discovered speaker
+  selector and a real speech playback test. Windows output choices are restored
+  per role after voice/test playback, preserving separate call outputs and later
+  manual changes. Ending voice during startup no longer surfaces an expected
+  cancellation as an IPC error; genuine audio failures remain visible.
+- Voice final replies are checked against actual action receipts before display
+  or speech. Unsupported completion gets one correction in the same request;
+  discovery alone cannot prove that music played or another action finished.
+  The check uses the active planner and adds one compact call per draft reply.
+- Fresh voice workers retain discovered built-in and connected tool groups as
+  independent snapshots. Permissions and tool focus still apply normally.
 - Empty voice-planner decisions retry once inside the same request, keeping
   completed actions and remaining work instead of restarting the task.
 - Work updates use observed action state; obsolete updates are discarded and

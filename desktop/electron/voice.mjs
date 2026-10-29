@@ -2,7 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { randomUUID } from 'node:crypto';
 import * as channel from '../../src/channels/voice.mjs';
-import { useHandsFreePlayback } from '../../src/channels/audio-device.mjs';
+import { DesktopAudioDevices } from './audio-devices.mjs';
+import { isPrivateAudioOutput } from '../../src/channels/audio-device.mjs';
 import { createVoiceBrain, createAcknowledgements, createVoiceReportSpeech } from '../../src/core/voice-session.mjs';
 import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
@@ -16,6 +17,11 @@ const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner
 const DESKTOP_SPEECH_PROVIDER = 'sarvam'; // Both speech directions use the configured Sarvam credentials.
 const WAV_EXTENSION = 'wav'; // Existing channel helper expects an extension without a dot.
 const MILLISECONDS_PER_SECOND = 1000;
+const PLAYBACK_TEST_LINE = 'Hi, this is Ankita. If you can hear me clearly, your voice output is ready.'; // One short spoken setup check, never a planner request.
+const PLAYBACK_TEST_LANGUAGE = 'en-IN'; // Same Sarvam language path as normal English speech.
+const PLAYBACK_TEST_BUSY = 'Finish the speaker test before starting voice.';
+const PLAYBACK_TEST_ACTIVE = 'End voice before testing your speakers.';
+const SPEAKER_ECHO_SETTLE_MS = 300; // Milliseconds: let output buffers/room echo fade before reopening a speaker microphone.
 const END_VOICE_PATTERN = /^(exit|quit|end voice)[.!?]?$/i; // Only a complete explicit exit phrase ends a session.
 const ERRORS = Object.freeze({ owner: 'Choose an existing conversation to start voice.', busy: 'This conversation is already working. Wait for it to finish.',
   takeover: 'End voice in the other conversation first.', key: 'Add your Sarvam key in Voice settings.',
@@ -43,7 +49,19 @@ export class DesktopVoice {
     this.getConfig = getConfig;
     this.emit = emit;
     this.directory = directory;
-    this.io = { ...channel, useHandsFreePlayback, ...io };
+    this.devices = new DesktopAudioDevices();
+    this.io = { ...channel,
+      audioDeps: async () => (await this.devices.inspect()).deps,
+      listMicrophones: async () => (await this.devices.inspect()).microphones,
+      listAudioDevices: async () => { const result = await this.devices.inspect(); if (result.outputError) throw new Error(result.outputError); return result.devices; },
+      getDefaultRenderId: async () => (await this.devices.inspect()).defaultRenderId,
+      useHandsFreePlayback: microphone => this.devices.route({ microphone, hfp: true }),
+      usePlaybackDevice: outputDevice => this.devices.route({ outputDevice }),
+      playbackIsolated: async ({ outputDevice, device }) => {
+        if (device) return isPrivateAudioOutput(device);
+        const found = await this.devices.inspect();
+        return isPrivateAudioOutput(found.devices.find(item => item.id === (outputDevice || found.defaultRenderId)));
+      }, watchPlayback: listener => this.devices.watch(listener), ...io };
     this.state = emptyVoiceState();
     this.current = null;
     const config = getConfig();
@@ -76,20 +94,30 @@ export class DesktopVoice {
   owns(session) { return this.current === session && !session.audio.signal.aborted; }
   restingPhase(session) { return this.jobs.list(session.threadId).some(job => job.status === 'waiting_for_approval') ? 'approval' : 'listening'; }
 
-  async status() {
+  async status({ refresh = false } = {}) {
+    if (refresh) this.devices.invalidate();
     const config = this.getConfig();
     const issues = [];
     if (!config.sarvamApiKey) issues.push(ERRORS.key);
     try { createVoiceBrain({ ...config, voiceProvider: config.voiceProvider || DESKTOP_VOICE_PROVIDER }, this.engine); }
     catch (error) { issues.push(this.clean(error.message)); }
-    const deps = this.io.audioDeps();
+    const deps = await this.io.audioDeps();
     if (!deps.ffmpeg || !deps.ffplay) issues.push(ERRORS.audio);
     const microphones = deps.ffmpeg ? await this.io.listMicrophones().catch(() => []) : [];
     if (!microphones.length) issues.push(ERRORS.mic);
-    return { state: this.snapshot(), ready: !issues.length, issues, microphones: microphones.map(mic => ({ name: this.clean(mic.name) })), microphone: config.micDevice || '' };
+    let outputs = [], defaultOutput = '';
+    try {
+      outputs = (await this.io.listAudioDevices()).filter(device => device.flow === 'render').map(({ id, name }) => ({ id, name: this.clean(name) }));
+      const defaultId = await this.io.getDefaultRenderId();
+      defaultOutput = outputs.find(device => device.id === defaultId)?.name || '';
+    } catch (error) { issues.push(this.clean(error.message)); }
+    return { state: this.snapshot(), ready: !issues.length, issues, microphones: microphones.map(mic => ({ name: this.clean(mic.name) })), microphone: config.micDevice || '',
+      outputs, defaultOutput, outputDevice: config.voiceOutputDevice || '' };
   }
 
   async start({ threadId } = {}) {
+    if (this.ending) await this.ending;
+    if (this.preview) throw new Error(PLAYBACK_TEST_BUSY);
     if (this.current && this.owns(this.current)) {
       if (this.current.threadId !== threadId) throw new Error(ERRORS.takeover);
       await this.current.ready;
@@ -99,21 +127,24 @@ export class DesktopVoice {
     const config = { ...this.getConfig(), sttProvider: DESKTOP_SPEECH_PROVIDER, ttsProvider: DESKTOP_SPEECH_PROVIDER };
     if (config.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(ERRORS.browser);
     if (!config.sarvamApiKey) throw new Error(ERRORS.key);
-    const deps = this.io.audioDeps();
-    if (!deps.ffmpeg || !deps.ffplay) throw new Error(ERRORS.audio);
     const brain = createVoiceBrain({ ...config, voiceProvider: config.voiceProvider || DESKTOP_VOICE_PROVIDER }, this.engine);
     const session = { id: randomUUID(), threadId, config, brain, audio: new AbortController(), paused: false,
       input: null, task: null, taskAbort: null, lastMeterAt: 0, language: '', routing: null };
     this.current = session;
     this.publish(session, { ...emptyVoiceState(), sessionId: session.id, threadId, active: true, phase: 'starting' });
-    session.ready = this.prepare(session);
-    try { await session.ready; }
-    catch (error) { await this.fail(session, error); throw error; }
+    session.ready = this.prepare(session).catch(async error => {
+      // End during discovery/prewarm is expected, including callers sharing this startup.
+      if (error.name === 'AbortError' && session.audio.signal.aborted) return;
+      await this.fail(session, error); throw error;
+    });
+    await session.ready;
     if (this.owns(session)) session.loop = this.loop(session).catch(error => this.fail(session, error));
     return this.snapshot();
   }
 
   async prepare(session) {
+    const deps = await abortable(this.io.audioDeps(), session.audio.signal);
+    if (!deps.ffmpeg || !deps.ffplay) throw new Error(ERRORS.audio);
     const microphones = await abortable(this.io.listMicrophones(), session.audio.signal);
     const preferred = session.config.micDevice?.toLowerCase();
     session.microphone = (preferred && microphones.find(mic => mic.name.toLowerCase().includes(preferred))) || microphones[0];
@@ -123,7 +154,7 @@ export class DesktopVoice {
     session.narrate = this.io.narrate || createVoiceNarrator({ client: session.brain?.client || this.engine.client,
       model: session.brain?.model || this.engine.model, secrets: configuredSecrets(session.config) });
     session.speech = new VoiceSpeechQueue({ gapMs: session.config.voiceSpeechGapMs, historyLimit: session.config.voiceTaskLimit,
-      play: (audio, { signal }) => this.io.playMp3(audio, { signal, rejectOnFailure: true }), stop: () => this.io.stopPlayback(),
+      play: (audio, options) => this.play(session, audio, options), stop: () => this.io.stopPlayback(),
       onStart: item => {
         session.playingAt = Date.now();
         const line = item.line?.text || '';
@@ -134,14 +165,84 @@ export class DesktopVoice {
       onFinish: () => { session.playingAt = 0; if (this.owns(session) && !session.paused) this.publish(session, { phase: this.restingPhase(session) }); },
       onError: error => this.fail(session, error),
     });
+    session.routingReady = this.routeOutput(session.config, session.microphone.name);
+    session.routing = await session.routingReady;
+    if (!this.owns(session)) return; // End owns restoration after the pending switch settles.
+    session.bargeIn = Boolean(session.config.voiceBargeIn && await this.io.playbackIsolated({ outputDevice: session.config.voiceOutputDevice, device: session.routing?.device }));
+    if (!this.owns(session)) return;
+    if (session.bargeIn) {
+      session.monitorReady = this.io.watchPlayback(() => this.outputChanged(session));
+      session.monitor = await session.monitorReady.catch(() => null);
+      session.bargeIn = Boolean(session.monitor?.isolated && !session.outputChanged);
+    }
+    if (!this.owns(session)) return;
     await abortable(session.acks.prewarm(), session.audio.signal);
-    if (session.config.voiceHfpRouting && this.owns(session)) session.routing = this.io.useHandsFreePlayback(session.microphone.name);
+  }
+
+  async routeOutput(config, microphone) {
+    if (config.voiceOutputDevice) return this.io.usePlaybackDevice(config.voiceOutputDevice);
+    return config.voiceHfpRouting ? this.io.useHandsFreePlayback(microphone) : null;
+  }
+
+  async testPlayback() {
+    if (this.ending) await this.ending;
+    if (this.current && this.owns(this.current)) throw new Error(PLAYBACK_TEST_ACTIVE);
+    if (this.preview) throw new Error(PLAYBACK_TEST_BUSY);
+    const config = { ...this.getConfig() };
+    if (!config.sarvamApiKey) throw new Error(ERRORS.key);
+    const preview = { audio: new AbortController(), config };
+    this.preview = preview;
+    let routing;
+    try {
+      const deps = await abortable(this.io.audioDeps(), preview.audio.signal);
+      if (!deps.ffplay) throw new Error(ERRORS.audio);
+      const microphones = await abortable(this.io.listMicrophones(), preview.audio.signal);
+      const preferred = config.micDevice?.toLowerCase();
+      const microphone = (preferred && microphones.find(mic => mic.name.toLowerCase().includes(preferred))) || microphones[0];
+      routing = await this.routeOutput(config, microphone?.name);
+      if (preview.audio.signal.aborted) return { cancelled: true };
+      const audio = await abortable(this.synthesize(preview, PLAYBACK_TEST_LINE, PLAYBACK_TEST_LANGUAGE), preview.audio.signal);
+      await this.io.playMp3(audio, { signal: preview.audio.signal, rejectOnFailure: true });
+      return { cancelled: preview.audio.signal.aborted };
+    } catch (error) {
+      if (error.name === 'AbortError' && preview.audio.signal.aborted) return { cancelled: true };
+      throw error;
+    } finally {
+      try { await routing?.restore(); } finally { if (this.preview === preview) this.preview = null; }
+    }
   }
 
   async synthesize(session, text, detected = session.language) {
     const languageCode = this.io.chooseSarvamLanguage({ text, detected });
     return this.io.synthesizeSarvam({ apiKey: session.config.sarvamApiKey, model: session.config.sarvamTtsModel,
       speaker: this.io.resolveSarvamSpeaker(session.config, languageCode), languageCode, text });
+  }
+
+  async play(session, audio, { signal }) {
+    if (session.bargeIn) return this.io.playMp3(audio, { signal, rejectOnFailure: true });
+    let release;
+    const quiet = new Promise(resolve => { release = resolve; });
+    session.outputQuiet = quiet;
+    try {
+      await this.stopInput(session); // Close capture before any speaker audio can be recorded.
+      if (signal.aborted || !this.owns(session)) return;
+      await this.io.playMp3(audio, { signal, rejectOnFailure: true });
+      if (this.owns(session)) await abortable(wait(SPEAKER_ECHO_SETTLE_MS), session.audio.signal);
+    } finally {
+      if (session.outputQuiet === quiet) session.outputQuiet = null;
+      release();
+    }
+  }
+
+  outputChanged(session) {
+    if (!this.owns(session)) return;
+    session.outputChanged = true; session.bargeIn = false;
+    session.outputVersion = (session.outputVersion || 0) + 1;
+    if (session.input) session.input.feedback = true;
+    session.speech?.interrupt({ requeueReports: true });
+    void this.stopInput(session).then(() => {
+      if (this.owns(session) && !session.paused) session.speech?.resume();
+    }).catch(error => this.fail(session, error));
   }
 
   async stopInput(session) {
@@ -154,6 +255,7 @@ export class DesktopVoice {
   }
 
   async capture(session, { barge = false, onSpeech } = {}) {
+    const outputVersion = session.outputVersion || 0;
     const outFile = this.io.tmpVoiceFile(WAV_EXTENSION);
     const detector = this.io.createTurnDetector();
     let finish;
@@ -175,7 +277,7 @@ export class DesktopVoice {
           if (event.type === 'level' && Date.now() - session.lastMeterAt >= VOICE_METER_INTERVAL_MS) {
             session.lastMeterAt = Date.now(); this.publish(session, { inputLevel: event.level });
           }
-          if (session.playingAt && (!session.config.voiceBargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
+          if (session.playingAt && (!session.bargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
           const action = detector.feed(event);
           if (action === 'speech') {
             if (!heardSpeech) entry.speechTurn = session.speech.interrupt();
@@ -184,7 +286,7 @@ export class DesktopVoice {
           if (action === 'speech' && barge && !interrupted) { interrupted = true; onSpeech?.(); }
           if (action === 'end') finish();
         } });
-      const disconnected = () => { entry.error = new Error(ERRORS.disconnected); finish(); };
+      const disconnected = () => { if (!entry.stopping) entry.error = new Error(ERRORS.disconnected); finish(); };
       entry.handle.child?.once('close', disconnected);
       try { await abortable(entry.handle.ready, session.audio.signal); }
       catch (error) {
@@ -199,13 +301,13 @@ export class DesktopVoice {
       entry.handle.child?.removeListener('close', disconnected);
       const recorded = await this.stopInput(session);
       if (entry.error) throw entry.error;
-      if (!recorded || !heardSpeech || !this.owns(session) || session.paused || (barge && !interrupted)) {
+      if (!recorded || !heardSpeech || entry.feedback || !this.owns(session) || session.paused || (barge && !interrupted)) {
         if (this.owns(session) && !session.paused) await session.speech.falseInterruption(entry.speechTurn);
         return null;
       }
       this.publish(session, { phase: 'transcribing' });
       const heard = await abortable(this.io.transcribeAudio({ config: session.config, wavPath: outFile }), session.audio.signal);
-      if (this.owns(session) && heard?.text?.trim()) return { ...heard, speechTurn: entry.speechTurn };
+      if (this.owns(session) && outputVersion === (session.outputVersion || 0) && !entry.feedback && heard?.text?.trim()) return { ...heard, speechTurn: entry.speechTurn };
       if (this.owns(session) && !session.paused) await session.speech.falseInterruption(entry.speechTurn);
       return null;
     } finally {
@@ -219,6 +321,7 @@ export class DesktopVoice {
     let heard = null;
     while (this.owns(session)) {
       if (session.paused) { await wait(VOICE_POLL_MS); continue; }
+      if (session.outputQuiet) { await session.outputQuiet; continue; }
       heard ||= await this.capture(session);
       if (!heard || !this.owns(session)) {
         if (this.owns(session) && !session.paused) { session.userSpeaking = false; session.speech.resume(); }
@@ -298,13 +401,22 @@ export class DesktopVoice {
     return this.snapshot();
   }
   async end() {
+    if (this.ending) return this.ending;
+    this.ending = this.endAudio();
+    try { return await this.ending; } finally { this.ending = null; }
+  }
+  async endAudio() {
+    if (this.preview) { this.preview.audio.abort(); this.io.stopPlayback(); }
     const session = this.current;
     if (!session) return this.snapshot();
     session.audio.abort(); this.io.stopPlayback();
     await session.speech?.close();
     this.publish(session, { active: false, paused: false, phase: 'idle', inputLevel: 0, update: '' });
     await this.stopInput(session);
-    session.routing?.restore?.(); session.routing = null;
+    await session.routingReady?.catch(() => null); // Startup still reports routing failure; teardown must finish.
+    await session.monitorReady?.catch(() => null);
+    await session.monitor?.stop(); session.monitor = null;
+    await session.routing?.restore?.(); session.routing = null;
     return this.snapshot();
   }
   async cancelWork({ taskId, all = false } = {}) {
@@ -316,12 +428,13 @@ export class DesktopVoice {
   }
   async ownerDeleted(threadId) { this.jobs.cancelOwner(threadId); if (this.current?.threadId === threadId) await this.end(); }
   async fail(session, error) {
-    if (error.name === 'AbortError' || !this.owns(session)) return;
+    if (!this.owns(session)) return;
     await this.end();
     this.publish(session, { phase: 'error', error: error.message });
   }
   async close() {
     await this.end();
     await this.jobs.close();
+    await this.devices.close();
   }
 }

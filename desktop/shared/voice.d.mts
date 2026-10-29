@@ -3,10 +3,11 @@ export type VoiceTaskView = { id: string; status: string; label?: string; waitin
 export type VoiceState = { sessionId: string | null; threadId: string | null; active: boolean; paused: boolean; phase: VoicePhase;
   caption: string; captionRole: 'user' | 'assistant'; update: string; inputLevel: number; task: VoiceTaskView | null; jobs: VoiceTaskView[];
   error: string | null; microphone: string; revision: number };
-export type VoiceStatus = { state: VoiceState; ready: boolean; issues: string[]; microphones: { name: string; alt?: string }[]; microphone: string };
+export type VoiceStatus = { state: VoiceState; ready: boolean; issues: string[]; microphones: { name: string; alt?: string }[]; microphone: string;
+  outputs?: { id: string; name: string }[]; defaultOutput?: string; outputDevice?: string };
 export const VOICE_EVENT: 'voice-state';
 export const VOICE_API_REQUIRED_MESSAGE: string;
-export const VOICE_ACTIONS: Readonly<{ status: 'voiceStatus'; start: 'voiceStart'; end: 'voiceEnd'; pause: 'voicePause'; resume: 'voiceResume'; cancel: 'voiceCancel'; focus: 'voiceShowMain' }>;
+export const VOICE_ACTIONS: Readonly<{ status: 'voiceStatus'; snapshot: 'voiceSnapshot'; start: 'voiceStart'; end: 'voiceEnd'; pause: 'voicePause'; resume: 'voiceResume'; cancel: 'voiceCancel'; focus: 'voiceShowMain'; test: 'voiceTestPlayback' }>;
 export const VOICE_CAPTION_CHARS: number;
 export const VOICE_UPDATE_CHARS: number;
 export const VOICE_ERROR_CHARS: number;

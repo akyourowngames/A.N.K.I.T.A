@@ -7,6 +7,7 @@ import http from 'node:http';
 import { Agent } from '../../src/core/agent.mjs';
 import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
 import { VoiceSpeechQueue } from '../../src/automation/voice-speech-queue.mjs';
+import { isVoiceCheck, checkMessage } from '../helpers/voice-check.mjs';
 const api = await import('../../src/core/voice-report-control.mjs').catch(() => ({}));
 const tick = () => new Promise(resolve => setImmediate(resolve));
 const offer = (queue, id) => queue.offer({ jobId: id, kind: 'report', text: `${id} result.`, prepare: async () => id });
@@ -48,7 +49,9 @@ for (const mixed of [false, true]) test(`real voice planner receives speech cont
   const requests = [];
   const server = http.createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw); requests.push(body); const results = body.messages.filter(message => message.role === 'tool');
+    const body = JSON.parse(raw);
+    if (isVoiceCheck(body)) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ choices: [{ message: checkMessage() }] })); return; }
+    requests.push(body); const results = body.messages.filter(message => message.role === 'tool');
     const tool = (id, name, args) => ({ role: 'assistant', tool_calls: [{ id, type: 'function', function: { name, arguments: JSON.stringify(args) } }] });
     const message = !results.length ? tool('next', 'voice_reports', { action: 'next', answerRequired: false }) : mixed && results.length === 1
       ? tool('save', 'write_file', { path: 'new.txt', content: 'New work complete' }) : { content: mixed ? 'New work is saved.' : 'Selected the next result.' };
@@ -102,7 +105,9 @@ for (const [name, args, speechOnly] of [['voice_jobs', { action: 'list' }, true]
   const h = await speech(t), root = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-report-routing-'));
   const server = http.createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw), count = body.messages.filter(message => message.role === 'tool').length;
+    const body = JSON.parse(raw);
+    if (isVoiceCheck(body)) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ choices: [{ message: checkMessage() }] })); return; }
+    const count = body.messages.filter(message => message.role === 'tool').length;
     const message = count < 2 ? { role: 'assistant', tool_calls: [{ id: `route-${count}`, type: 'function',
       function: { name: count ? 'voice_reports' : name, arguments: JSON.stringify(count ? { action: 'next', answerRequired: false } : args) } }] }
       : { role: 'assistant', content: 'Selected the next result.' };
@@ -125,7 +130,9 @@ test('a successful speech dismissal can still owe a direct conversational answer
   const h = await speech(t), root = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-report-conversation-'));
   const server = http.createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw), done = body.messages.some(message => message.role === 'tool');
+    const body = JSON.parse(raw);
+    if (isVoiceCheck(body)) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ choices: [{ message: checkMessage() }] })); return; }
+    const done = body.messages.some(message => message.role === 'tool');
     const message = done ? { role: 'assistant', content: 'Two plus two is four.' } : { role: 'assistant', tool_calls: [{ id: 'dismiss', type: 'function',
       function: { name: 'voice_reports', arguments: JSON.stringify({ action: 'dismiss', answerRequired: true }) } }] };
     response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ choices: [{ message, finish_reason: done ? 'stop' : 'tool_calls' }] }));

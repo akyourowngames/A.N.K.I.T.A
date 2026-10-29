@@ -49,8 +49,11 @@ async function pageFor({ island = false, width = 1280, height = 850, reduced = f
       invoke: async (action, payload) => {
         window.__voiceCalls.push({ action, payload });
         if (action === 'initialize') return { teammates, models: [{ id: 'fixture-model' }], settings, preferences, version, contract, chrome: 'native', jobs: [] };
-        if (action === 'listTeammates') return teammates;
-        if (action === 'voiceStatus') return statusUnavailable ? {} : { state: voice, ready: true, issues: [], microphones: [{ name: 'Headset microphone' }], microphone: '' };
+         if (action === 'listTeammates') return teammates;
+         if (action === 'voiceSnapshot') return statusUnavailable ? undefined : voice;
+         if (action === 'voiceStatus') return statusUnavailable ? {} : { state: voice, ready: true, issues: [], microphones: [{ name: 'Headset microphone' }], microphone: '',
+           outputs: [{ id: 'fixture-speakers', name: 'Laptop speakers' }, { id: 'fixture-headset', name: 'Headset output' }], defaultOutput: 'Laptop speakers', outputDevice: '' };
+         if (action === 'voiceTestPlayback') return { cancelled: false };
         if (action === 'voiceStart') { window.__voicePatch({ ...voice, active: true, error: null, sessionId: 'fixture-session', threadId: payload.threadId, phase: 'listening', microphone: 'Headset microphone' }); return voice; }
         if (action === 'voicePause') { window.__voicePatch({ paused: true, phase: 'paused', inputLevel: 0 }); return voice; }
         if (action === 'voiceResume') { window.__voicePatch({ paused: false, phase: 'listening' }); return voice; }
@@ -79,6 +82,41 @@ const patch = (page, value) => page.evaluate(value => window.__voicePatch(value)
 const task = { id: 'fixture-task', status: 'running', steps: [{ index: 1, label: 'Write', tool: 'write_file', state: 'running' }], summary: '', error: null };
 
 try {
+  if (process.argv.includes('--settings-only')) {
+    const page = await pageFor();
+    await page.getByRole('button', { name: 'Start voice conversation' }).click();
+    await page.getByRole('button', { name: 'Voice settings' }).click();
+    const key = page.getByLabel('Sarvam API key', { exact: true });
+    await key.waitFor();
+    const dimensions = await key.evaluate(element => ({ width: element.getBoundingClientRect().width, field: element.closest('.settings-field')?.getBoundingClientRect().width || 0 }));
+    assert.ok(dimensions.field > 0 && dimensions.width >= dimensions.field - 2, 'key input must fill an existing styled form row');
+    assert.equal(await key.isDisabled(), true, 'live voice owns its setup');
+    assert.equal(await page.getByRole('button', { name: 'Test speakers', exact: true }).isDisabled(), true);
+    await patch(page, { active: false, phase: 'idle' });
+    await page.waitForFunction(() => !document.getElementById('voice-sarvam').disabled);
+    await patch(page, { active: true, phase: 'listening' });
+    await page.waitForFunction(() => document.getElementById('voice-sarvam').disabled);
+    await page.getByRole('button', { name: 'Close settings' }).click();
+    await page.getByRole('button', { name: 'End voice', exact: true }).click();
+    await page.getByRole('button', { name: 'Open settings', exact: true }).click();
+    await page.getByRole('button', { name: 'Voice', exact: true }).click();
+    await page.getByLabel('Speakers', { exact: true }).selectOption('fixture-speakers');
+    assert.equal(await page.getByRole('button', { name: 'Test speakers', exact: true }).isDisabled(), true, 'save output before testing');
+    await page.getByRole('button', { name: 'Save voice settings' }).click();
+    await page.getByRole('button', { name: 'Test speakers', exact: true }).click();
+    await page.getByText('Test played. If you heard nothing, choose another speaker and try again.', { exact: true }).waitFor();
+    assert.ok(await page.evaluate(() => window.__voiceCalls.some(call => call.action === 'saveDesktopSettings' && call.payload?.voiceOutputDevice === 'fixture-speakers')));
+    assert.ok(await page.evaluate(() => window.__voiceCalls.some(call => call.action === 'voiceTestPlayback')));
+    for (const width of [1280, 620, 390]) {
+      await page.setViewportSize({ width, height: 850 });
+      await page.locator('.settings-scroll').evaluate(element => { element.scrollTop = 0; });
+      const layout = await page.locator('.settings-content').evaluate(element => ({ width: element.clientWidth, scroll: element.scrollWidth }));
+      assert.ok(layout.scroll <= layout.width, `voice settings overflow at ${width}px`);
+      await page.screenshot({ path: path.join(captures, `voice-settings-${width}.png`) });
+    }
+    assert.deepEqual(errors, []);
+    console.log('VOICE_SETTINGS_UI_OK: styled fields; saved output; honest test receipt; 1280/620/390px; zero renderer errors');
+  } else {
   const main = await pageFor();
   await main.getByRole('button', { name: 'Start voice conversation' }).click();
   await main.getByText('Go ahead. I’m listening.', { exact: true }).waitFor();
@@ -266,4 +304,5 @@ try {
   receipt.assertions.push('active remount, island error/retry/settings and keyboard-focus recovery');
   assert.deepEqual(errors, []);
   console.log('DESKTOP_VOICE_UI_OK', JSON.stringify({ ...receipt, pageErrors: errors.length, captures }));
+  }
 } finally { await browser.close(); await new Promise(resolve => server.close(resolve)); }

@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
 import { spawn } from 'node:child_process';
+import { isVoiceCheck, checkMessage } from '../helpers/voice-check.mjs';
 
 const CLI_URL = new URL('../../src/core/cli.mjs', import.meta.url).href;
 const CHILD_TIMEOUT_MS = 15000; // Test-only ceiling: no real microphone or cloud service is used.
@@ -20,7 +21,9 @@ async function runCli(t, mode) {
     response.setHeader('Content-Type', 'application/json');
     if (request.url.endsWith('/models')) { response.end(JSON.stringify({ data: [{ id: 'typed-model', context_length: 131072, supported_parameters: ['tools'] }] })); return; }
     let raw = ''; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw); models.push(body.model);
+    const body = JSON.parse(raw);
+    if (isVoiceCheck(body)) { response.end(JSON.stringify({ choices: [{ message: checkMessage() }] })); return; }
+    models.push(body.model);
     if (mode === 'failure' && body.model === 'voice-model') { response.statusCode = 403; response.end('Planner access denied'); return; }
     const voice = body.model === 'voice-model';
     if (voice) {

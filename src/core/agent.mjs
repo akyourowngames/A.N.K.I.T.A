@@ -1317,6 +1317,7 @@ export class Agent {
     // model takes over the loop and the primary writes the final reply; the
     // tool model's own text is intermediate, so it is withheld from the UI.
     let usedTools = false;
+    const responsePolicy = this.toolContext?.responsePolicy; // Optional voice host check; typed turns keep their normal final path.
     const reportedSkills = new Set(); // Names per turn: announce actual whole-body request inclusion once, never activation eligibility.
     let protocolCorrections = 0;
     const printedProtocol = content => this.config.backgroundJob
@@ -1347,7 +1348,7 @@ export class Agent {
         try { onSkillsLoaded?.(includedSkills.map(skill => skill.name)); } catch { /* UI observers must not interrupt a model request. */ }
       }
       onMessageStart?.();
-      const live = !onToolModel;
+      const live = !onToolModel && !responsePolicy; // Unchecked voice drafts must never reach captions or speech.
       let content, toolCalls;
       let partial = '';
       let result;
@@ -1376,6 +1377,12 @@ export class Agent {
       this.messages.push(assistant);
 
       if (!toolCalls.length) {
+        if (responsePolicy) {
+          const correction = await responsePolicy.review({ content, client: this._activeModelClient || callClient,
+            model: result.model || callModel, signal: this.abort.signal, tools: this.currentSpecs().map(spec => spec.function.name),
+            onUsage: usage => this.recordUsage(usage, onUsage), onRequest: metrics => this.requestMetrics.push(metrics) });
+          if (correction) { this.messages.push({ role: 'user', content: correction }); continue; }
+        }
         if (printedProtocol(content)) {
           if (protocolCorrections++ >= MAX_TOOL_PROTOCOL_CORRECTIONS || step + 1 >= maxSteps) {
             this.terminationReason = INVALID_TOOL_PROTOCOL;
@@ -1394,6 +1401,7 @@ export class Agent {
           this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
           return reply;
         }
+        if (responsePolicy) onDelta?.(content);
         this.replyModel = result.model || callModel;
         this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
         return content;
@@ -1526,6 +1534,7 @@ export class Agent {
         return null;
       }
       if (this.totalToolCalls >= maxCalls) {
+        responsePolicy?.fail();
         return await this.finishForced(`the ${maxCalls}-call budget for this request is spent`, { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd, onMessageReset });
       }
 
@@ -1533,6 +1542,7 @@ export class Agent {
       // results are already in context, so what follows is a summary, not
       // another round of investigation.
       if (noProgress && this.repeatsThisTurn.get(noProgress.signature) === noProgress) {
+        responsePolicy?.fail();
         return await this.finishForced(
           `it kept repeating ${noProgress.name} with identical arguments (${noProgress.count} times this request)`,
           { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd, onMessageReset }
@@ -1543,6 +1553,7 @@ export class Agent {
     // Reaching here means the round budget was spent - every other exit above
     // returns. One tools-free turn answers with what it has, rather than the
     // canned string this used to end on.
+    responsePolicy?.fail();
     return await this.finishForced(
       `the tool budget for this request is spent (${maxSteps} rounds)`,
       { onDelta, onReasoning, onUsage, onMessageStart, onMessageEnd, onMessageReset }

@@ -15,8 +15,38 @@ floating companion. **Open conversation** returns to that session's owner.
 - Selecting another conversation ends voice. Existing permission prompts still
   require an answer and take priority over the island's voice view.
 
-Open **Settings → Voice** for Sarvam/Baseten keys and the discovered microphone
-list. Existing environment keys work too. Saved desktop values override them.
+Open **Settings → Voice** for Sarvam/Baseten keys and discovered audio devices.
+On Windows, select **Speakers**, save, then use **Test speakers** to hear a short
+real Sarvam reply. The test uses the same saved output routing as voice, without
+starting a planner or job. A successful player exit does not establish audibility;
+if nothing is heard, choose another output. Laptop speakers were heard in the
+29 October owner test; Airdopes Hands-Free was not. Its physical headset path
+remains unconfirmed. Automatic mode keeps the existing system/HFP routing.
+Other systems use their system output.
+
+Speaker and unknown-output playback uses turn-taking: the microphone closes
+before audio plays and reopens after a short buffer/echo drain. This prevents
+Ankita's own reply from becoming another job. Windows-reported headphones/headsets
+retain voice interruption only after native monitoring confirms the actual output.
+Changing or disconnecting audio devices stops current speech and overlapping
+recording, then protects the rest of that session; start a new session to confirm
+headphones again. If device classification or monitoring is unavailable, voice
+uses protected turn-taking. This is not acoustic echo cancellation; speaking over
+a speaker reply is intentionally not recorded. Pause/End/Stop controls still work.
+
+Device discovery and routing run in one lazy background worker, shared across the
+main app and island. Reopening settings within five seconds reuses a scan; Refresh
+forces a new scan. Normal app startup only reads voice state and does not launch
+audio probes. A cold OS scan can still take seconds, but it no longer blocks the
+main process. Independent voice jobs retain their existing concurrency limits;
+this change does not create another worker/thread per job.
+
+An explicit speaker choice temporarily changes Windows output during voice/test
+playback. Console, music and call defaults are restored separately afterwards;
+later manual changes are respected. Setup changes and speaker tests wait until
+voice ends. Settings follow changes from the island too. Restart desktop dev after
+updating the main-process audio code; a renderer refresh alone is insufficient.
+Existing environment keys work too. Saved desktop values override them.
 Keys use the app's existing private local API-key settings file; this is not a
 promise of encrypted storage. Public settings expose presence flags only.
 Voice uses Sarvam and the configured voice planner; typed-chat settings stay
@@ -44,6 +74,24 @@ npm run desktop:build
 node scripts/verify-desktop-voice-ui.mjs
 node scripts/verify-desktop-voice.mjs --env /path/to/your/local/.env
 ```
+
+For an audio/settings-only change, use the focused desktop/audio tests and
+`node scripts/verify-desktop-voice-ui.mjs --settings-only` after the desktop build.
+That fixture checks real field geometry, saved speaker/test IPC actions, live
+session locking, and 1280/620/390-pixel layouts. Audio is stubbed in that browser
+fixture; use **Test speakers** for real playback.
+
+Measure real device-scan responsiveness without speech or cloud requests:
+
+```bash
+node scripts/verify-desktop-audio-performance.mjs
+```
+
+Add `--env /path/to/local/.env --play` for a quiet-room check with a real microphone,
+Sarvam reply and speaker playback. It uses a discovered non-private output, creates
+no planner work, restores output choices and checks that no feedback reached
+transcription. The script prints timing/receipt fields, never API keys. See the
+[record and limits](../plans/2026-10-29-desktop-audio-performance.md).
 
 The last script uses real configured Sarvam/Meta services and file tools inside
 Electron with disposable app data. Microphone/VAD are generated fixtures and the
@@ -76,6 +124,40 @@ build and both-view browser checks pass with zero page errors. Three real
 Meta/Sarvam/file jobs prove independent completion, shared-file waiting and one
 player. The fresh review found seven substantive issues, now covered by ten
 failing-before/passing-after regressions. Physical and packaged limits above remain.
+
+### Checked final replies and tool visibility
+
+Before a final voice reply appears or plays, the active voice planner checks it
+against the original request and actual requested/started/result receipts. If
+work was skipped or the reply overclaims it, the same worker gets one chance to
+finish the remaining work. Completed actions are retained. A second unsupported
+ending, an unavailable check, or a spent work budget ends honestly as unfinished.
+Discovery, a checklist or memory lookup alone cannot prove external work finished.
+This applies across native and connected tools, rather than matching music words.
+
+Fresh workers copy already-discovered tool groups without sharing their mutable
+state or inheriting focus. Other groups remain available through discovery; the
+normal permissions, context limits and enabled-plugin settings still apply.
+
+The check adds one compact model request for each candidate final reply, including
+conversation. Its usage is counted. The deadline covers token preparation and the
+request; cancellation drops late replies. Oversized requests fail safely, while an
+overlong report gets one chance to become concise instead of being silently clipped
+for approval. Older context/results can be omitted or clipped with explicit flags.
+The checker can still misjudge meaning; it is not a guarantee that every claim is true.
+
+Repeatable live checks use the configured Meta key and disposable browser profiles:
+
+```bash
+node scripts/verify-voice-tool-execution.mjs --env /path/to/your/local/.env
+node scripts/verify-voice-tool-execution.mjs --env /path/to/your/local/.env --youtube-only
+```
+
+The default check uses a silent local media player in both browser backends, a
+real file/read-back and a conversation. The optional public YouTube check can fail
+on login, ads, network or playback restrictions; it independently inspects the video
+state rather than trusting the spoken report. Neither proves sound in a headset.
+See the [29 October repair record](../plans/2026-10-29-voice-tool-execution.md).
 
 ### Accurate work updates and overlapping tasks
 
@@ -370,7 +452,7 @@ Times measured on this machine, per call: speech out **0.8–1.5 s**, text back
 | `The model hit its output limit ...` | A generated answer or file did not fit the allowance | Restart after this update; default `BASETEN_MAX_TOKENS` is now 4096. If explicitly set smaller, increase it before retrying |
 | Voice task is `cancelled` | Work was stopped | Read its partial steps before retrying |
 | `no microphone found` | Windows cannot see a mic | Check Settings → Privacy → Microphone, or set `MIC_DEVICE` |
-| Transcript is right but silent | Speaker or Bluetooth routing | Unplug the headset, or try `/say hello` |
+| Transcript is right but silent | Speaker or Bluetooth routing | Desktop: Settings → Voice → Speakers, save, then Test speakers; try laptop output first. Terminal: `/say hello` |
 | Wrong word, again and again | Recognition, not the code | Speak a bit slower; add the word to `SARVAM_KEYTERMS` |
 | `Edge TTS handshake failed: HTTP 403` | The backup voice service rejected this connection | Keep Sarvam configured; the result still prints if both voices fail |
 

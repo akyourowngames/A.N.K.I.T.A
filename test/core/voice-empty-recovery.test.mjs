@@ -8,13 +8,16 @@ import { Agent } from '../../src/core/agent.mjs';
 import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
 import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
 import { VoiceTaskStore } from '../../src/automation/voice-task.mjs';
+import { isVoiceCheck, checkMessage } from '../helpers/voice-check.mjs';
 
 async function fixture(t, transport, reply) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-empty-'));
   const writes = [], bodies = [];
   const server = http.createServer(async (request, response) => {
     let raw = ''; for await (const chunk of request) raw += chunk;
-    const body = JSON.parse(raw); bodies.push(body);
+    const body = JSON.parse(raw);
+    if (isVoiceCheck(body)) { response.setHeader('Content-Type', 'application/json'); response.end(JSON.stringify({ choices: [{ message: checkMessage() }] })); return; }
+    bodies.push(body);
     const message = await reply(body);
     if (transport === 'JSON') {
       response.setHeader('Content-Type', 'application/json');
