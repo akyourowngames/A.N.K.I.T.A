@@ -1,0 +1,16 @@
+export const BROWSER_CONNECTION: 'extension';
+export const BROWSER_EXTENSION_MCP_ID: string, BROWSER_EXTENSION_TOOL: string;
+export const CONTROL_ROUTES: { connect: string; next: string; result: string; disconnect: string; resume: string; revoke: string; status: string; claim: string };
+export const CONTROL_ACTIONS: { setup: string; status: string; disconnect: string; resume: string; revoke: string };
+export const CONTROL_MESSAGES: { status: string; disconnect: string; resume: string; unpair: string };
+export const CONTROL_SESSION_KEY: string, CONTROL_ALARM: string, CONTROL_SCOPE_ATTRIBUTE: string;
+export const CONTROL_ALARM_MINUTES: number, CONTROL_RETRY_MS: number, CONTROL_RETRY_MAX_MS: number;
+export const CONTROL_POLL_MS: number, CONTROL_REQUEST_MS: number, CONTROL_ONLINE_MS: number, CONTROL_COMMAND_MS: number;
+export const CONTROL_MAX_PENDING: number, CONTROL_MAX_RESULT_BYTES: number;
+export const CONTROL_DOM_LIMITS: { controls: number; text: number; name: number; scopes: number };
+export const CONTROL_STALE: string, CONTROL_INTERRUPTED: string, CONTROL_OFFLINE: string;
+export const CONTROL_OPERATIONS: readonly string[];
+export const CONTROL_DEBUG_VERSION: string;
+export const CONTROL_LOAD_POLL_MS: number, CONTROL_LOAD_TIMEOUT_MS: number, CONTROL_STATUS_MS: number;
+export const CONTROL_ACCESS_REMOVED: string, CONTROL_EXECUTOR_STATE: string;
+export const CONTROL_REPAIR_MESSAGE: string;

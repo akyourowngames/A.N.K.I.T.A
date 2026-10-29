@@ -955,6 +955,19 @@ html[data-theme="slate"] .search-box { background: #1e2931; }
 .browser-site-chips span { color: var(--text-dim); font-size: 13px; line-height: 9px; }
 .browser-details-error { color: var(--danger) !important; margin-top: 20px !important; }
 .browser-details-notice { color: var(--success) !important; margin-top: 20px !important; }
+.browser-extension-setup { display: grid; min-width: 0; gap: 12px; padding: 16px; border: 1px solid var(--edge); border-radius: 8px; background: var(--sidebar); }
+.browser-extension-setup p, .browser-extension-setup ol { margin: 0; color: var(--text-soft); font-size: 11.5px; line-height: 1.7; }
+.browser-extension-setup ol { padding-left: 18px; }
+.browser-extension-setup li + li { margin-top: 8px; }
+.browser-extension-setup small { color: var(--text-dim); font-size: 10.5px; line-height: 1.6; }
+.browser-extension-setup .browser-plugin-setup-row { flex-wrap: wrap; }
+.browser-extension-setup button { min-height: 32px; padding: 6px 10px; border: 1px solid var(--edge-strong); border-radius: 6px; background: var(--surface); color: var(--text-soft); font: inherit; font-size: 11px; cursor: pointer; }
+.browser-extension-setup button:hover { background: var(--surface-hover); color: var(--text); }
+.browser-extension-setup button:disabled { cursor: wait; opacity: .5; }
+.browser-extension-code { display: grid; min-width: 0; gap: 8px; }
+.browser-extension-code label { color: var(--text-soft); font-size: 11px; }
+.browser-extension-code textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 10px; resize: vertical; border: 1px solid var(--edge-strong); border-radius: 6px; background: var(--canvas); color: var(--text); font: inherit; font-size: 11px; line-height: 1.6; overflow-wrap: anywhere; }
+.browser-extension-code button { justify-self: start; }
 
 /* Browser workbench */
 .browser-run-card { width: min(400px, calc(100% - 52px)); margin: 13px 0 18px 52px; border: 1px solid var(--edge-strong); border-radius: 8px; overflow: hidden; background: var(--surface); }

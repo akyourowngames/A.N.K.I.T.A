@@ -5,6 +5,7 @@ import { BrowserPluginStore, BROWSER_FILE, CHROME_MCP_ID, CHROME_MCP_VERSION, br
 import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { MCP_FILE } from '../../src/core/config.mjs';
 import { waitForBrowser } from '../../tools/browser/pending.mjs';
+import { BROWSER_CONNECTION, BROWSER_EXTENSION_MCP_ID, CONTROL_OFFLINE, CONTROL_COMMAND_MS } from '../browser-helper/control-protocol.mjs';
 
 const require = createRequire(import.meta.url);
 
@@ -28,7 +29,18 @@ export class DesktopBrowserPlugins {
   }
 
   store() { return new BrowserPluginStore(this.browserFile).load(); }
-  async overview() { return browserPluginOverview(this.store(), this.mcp); }
+  async overview() {
+    const overview = await browserPluginOverview(this.store(), this.mcp);
+    if (overview.local.connection === BROWSER_CONNECTION) {
+      const status = this.extensionService ? (await this.extensionService()).browserStatus() : { paired: false, connected: false, paused: false };
+      overview.local = { ...overview.local, ready: status.connected, extension: status, reason: status.connected ? '' : status.paused ? 'Connection paused' : status.paired ? 'Waiting for your paired browser' : 'Pair the browser companion once' };
+    }
+    return overview;
+  }
+  async syncExtension() {
+    const settings = this.store().get('local');
+    if (settings.enabled && settings.connection === BROWSER_CONNECTION && this.extensionService && (await this.extensionService()).browserStatus().connected) await this.startChrome({ reconnect: false });
+  }
 
   async setEnabled({ mode, enabled } = {}) {
     const settings = this.store().setEnabled(mode, enabled);
@@ -37,6 +49,7 @@ export class DesktopBrowserPlugins {
       const configured = new McpStore(this.mcpFile).load();
       if (configured.find(CHROME_MCP_ID)) configured.setEnabled(CHROME_MCP_ID, enabled);
       if (!enabled && this.mcp?.has?.(CHROME_MCP_ID)) await this.mcp.disconnect(CHROME_MCP_ID);
+      if (!enabled && this.mcp?.has?.(BROWSER_EXTENSION_MCP_ID)) await this.mcp.disconnect(BROWSER_EXTENSION_MCP_ID);
     }
     this.onChange();
     return settings;
@@ -47,6 +60,11 @@ export class DesktopBrowserPlugins {
 
   async configureChrome({ connection = 'profile', port = 9222 } = {}) {
     const settings = this.store().setChromeMode(connection, port);
+    if (connection === BROWSER_CONNECTION) {
+      if (this.mcp?.has?.(CHROME_MCP_ID)) await this.mcp.disconnect(CHROME_MCP_ID);
+      this.onChange(); return settings;
+    }
+    if (this.mcp?.has?.(BROWSER_EXTENSION_MCP_ID)) await this.mcp.disconnect(BROWSER_EXTENSION_MCP_ID);
     const mcpStore = new McpStore(this.mcpFile).load();
     const old = mcpStore.find(CHROME_MCP_ID);
     const command = chromeMcpCommand(settings);
@@ -78,6 +96,16 @@ export class DesktopBrowserPlugins {
     const plugin = this.store().get('local');
     if (!plugin.enabled) throw new Error('Enable Chrome local first');
     if (!this.mcp) throw new Error('MCP manager is unavailable');
+    if (plugin.connection === BROWSER_CONNECTION) {
+      if (!this.extensionService) throw new Error('Open Ankita desktop to connect the browser companion');
+      const service = await this.extensionService(); signal.throwIfAborted();
+      if (!service.browserStatus().connected) throw new Error(CONTROL_OFFLINE);
+      if (!this.mcp.has(BROWSER_EXTENSION_MCP_ID)) {
+        const gateway = await service.browserGateway();
+        await this.mcp.connect({ id: BROWSER_EXTENSION_MCP_ID, transport: 'http', url: gateway.url, hidden: true, synthetic: true, signal, requestTimeoutMs: CONTROL_COMMAND_MS });
+      }
+      this.onChange(); return this.overview();
+    }
     await this.configureChrome({ connection: plugin.connection, port: plugin.port });
     const store = new McpStore(this.mcpFile).load();
     const record = store.find(CHROME_MCP_ID);

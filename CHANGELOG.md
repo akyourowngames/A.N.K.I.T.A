@@ -9,6 +9,13 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **One-time browser companion pairing.** Ankita can use an existing signed-in
+  browser through its extension and reconnect after desktop, browser and worker
+  restarts. Separate capture/control grants, pause/resume, revocation recovery,
+  per-job tab ownership and non-replayed command receipts keep the connection
+  explicit. Page actions use DOM code first; deeper input and screenshots attach
+  Chrome's debugger only for the action. Source setup and current limits are in
+  the [browser guide](docs/guides/browser-use.md#pair-your-signed-in-browser-once).
 - **Hinglish voice delegation.** Sarvam speech recognition and speech generation
   work with a voice-only Baseten Meta planner, separate from typed-chat settings.
   Spoken requests retain their transcript, actual tool steps and final result.

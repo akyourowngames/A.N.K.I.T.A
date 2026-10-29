@@ -19,6 +19,8 @@ import { PhonePairing } from './phone-pairing.mjs';
 import { PHONE_PAIRING_ACTIONS, PAIRING_CONFIG_FILE, PAIRING_DEVICES_FILE } from '../shared/phone-pairing.mjs';
 import { runCaptureAction } from './capture-actions.mjs';
 import { CAPTURE_ACTIONS, CAPTURE_EVENT } from '../browser-helper/protocol.mjs';
+import { CONTROL_ACTIONS } from '../browser-helper/control-protocol.mjs';
+import { runBrowserControlAction } from './browser-control-actions.mjs';
 import { CHATGPT_CONNECTION_ACTIONS } from '../shared/chatgpt-browser.mjs';
 import { chatgptResourcePaths } from './chatgpt-resources.mjs';
 import { desktopCredentialFile } from './credential-profile.mjs';
@@ -65,6 +67,7 @@ function captureService(current) {
     companionCapture = new CompanionCapture({ configFile: path.join(CONFIG_DIR, CAPTURE_CONFIG_FILE),
       threadExists: id => current.listTeammates().some(item => item.id === id),
       onCapture: capture => current.emit({ type: CAPTURE_EVENT, capture }),
+      onBrowserChange: () => { current.emit({ type: 'browser-plugins-changed' }); void current.browserPlugins.syncExtension().catch(() => {}); },
     });
     captureStartup = companionCapture.start().catch(error => { captureStartup = null; throw error; });
   }
@@ -476,7 +479,8 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
   const current = requiredEngine();
   if (action === 'initialize') {
     await current.init();
-    void captureService(current).catch(() => {}); // Setup UI reports a remembered-port conflict without disrupting chat startup.
+    current.browserPlugins.extensionService = () => captureService(current);
+    void captureService(current).then(() => current.browserPlugins.syncExtension()).catch(() => {}); // Restore the paired connection without blocking startup.
     try { await current.schedule().start(); }
     catch (error) { current.emit({ type: 'scheduler-error', message: error.message }); }
     installTray();
@@ -492,6 +496,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     };
   }
   await current.init();
+  if (Object.values(CONTROL_ACTIONS).includes(action)) return runBrowserControlAction({ action, engine: current, start: () => captureService(current) });
   if (Object.values(VOICE_ACTIONS).includes(action)) {
     return runVoiceAction({ engine: current, action, payload, focus: (state, options) => {
       showWindow();

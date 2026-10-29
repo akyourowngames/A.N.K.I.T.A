@@ -47,6 +47,8 @@ import { COMPUTER_DIRECT_CONFIG } from '../../src/integrations/computer-use.mjs'
 import { COMPUTER_USE_CHANGED } from '../shared/computer-use.mjs';
 import { BrowserPluginStore, BROWSER_FILE } from '../../src/integrations/browser-plugins.mjs';
 import { BrowserSessionManager } from '../../tools/browser/session.mjs';
+import { ExtensionBrowserAdapter } from '../../tools/browser/extension.mjs';
+import { BROWSER_CONNECTION } from '../browser-helper/control-protocol.mjs';
 import { ChromeBrowserAdapter } from '../../tools/browser/chrome.mjs';
 import { MAX_BROWSER_SCREENSHOT_BYTES } from '../../tools/browser/screenshots.mjs';
 import { projectContext, projectSummary, projectWorkspace } from './projects.mjs';
@@ -346,7 +348,9 @@ export class DesktopEngine {
       protectedPage: url => Boolean(this.chatgptBrowser?.view().conversationId && conversationFromUrl(url) === this.chatgptBrowser.view().conversationId),
       credentials: new BrowserCredentials({ store: this.secureStore, requests: this.credentialRequests, emit: event => this.emit(event) }),
       store: new BrowserPluginStore(browserFile).load(),
-      chromeFactory: (mcp, options) => new ChromeBrowserAdapter(mcp, { ...options, ensureConnected: ctx => this.browserPlugins.startChrome(ctx) }),
+      chromeFactory: (mcp, options) => options.connection === BROWSER_CONNECTION
+        ? new ExtensionBrowserAdapter(mcp, { ...options, ensureConnected: ctx => this.browserPlugins.startChrome({ ...ctx, reconnect: false }) })
+        : new ChromeBrowserAdapter(mcp, { ...options, ensureConnected: ctx => this.browserPlugins.startChrome(ctx) }),
       onEvent: (state, threadId) => this.emit({ type: 'browser-state', threadId: threadId || null, state: { ...state, screenshot: null } }),
     });
     this.browserPlugins = new DesktopBrowserPlugins({

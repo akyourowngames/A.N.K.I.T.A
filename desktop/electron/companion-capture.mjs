@@ -1,4 +1,6 @@
 import http from 'node:http';
+import { BrowserControl } from './browser-control.mjs';
+import { CONTROL_ROUTES, CONTROL_MAX_RESULT_BYTES, CONTROL_ACCESS_REMOVED, CONTROL_REPAIR_MESSAGE } from '../browser-helper/control-protocol.mjs';
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -18,16 +20,27 @@ function equal(left, right) {
   return a.length === b.length && timingSafeEqual(a, b);
 }
 export class CompanionCapture {
-  constructor({ configFile, threadExists, onCapture, now = Date.now }) {
+  constructor({ configFile, threadExists, onCapture, onBrowserChange = () => {}, now = Date.now }) {
     this.configFile = configFile; this.threadExists = threadExists; this.onCapture = onCapture; this.now = now;
     this.instanceId = randomUUID(); this.tickets = new Map(); this.captures = new Map();
-    this.config = { port: 0, helpers: {} }; this.pairing = null; this.server = null;
+    this.config = { port: 0, helpers: {} }; this.pairings = new Map(); this.server = null;
+    this.onBrowserChange = onBrowserChange;
+    this.browser = new BrowserControl({ activeHelper: () => {
+      const id = this.config.controlHelperId, helper = this.config.helpers[id];
+      return helper?.control ? { id, paused: helper.paused, resumeVersion: helper.resumeVersion } : null;
+    }, onChange: onBrowserChange, now });
   }
   async persist() {
-    await mkdir(dirname(this.configFile), { recursive: true });
-    const temp = this.configFile + '.tmp';
-    await writeFile(temp, JSON.stringify(this.config), { mode: PRIVATE_MODE });
-    await rename(temp, this.configFile);
+    const contents = JSON.stringify(this.config);
+    const write = async () => {
+      await mkdir(dirname(this.configFile), { recursive: true });
+      const temp = this.configFile + '.tmp';
+      await writeFile(temp, contents, { mode: PRIVATE_MODE });
+      await rename(temp, this.configFile);
+    };
+    // Desktop settings and the companion can change grants together; serialize atomic replacements.
+    this.persisting = (this.persisting || Promise.resolve()).catch(() => {}).then(write);
+    return this.persisting;
   }
   async start() {
     try { this.config = JSON.parse(await readFile(this.configFile, 'utf8')); }
@@ -49,13 +62,31 @@ export class CompanionCapture {
     return this;
   }
   async close() {
+    this.browser.close();
+    if (this.gateway) { await (await this.gateway).close(); this.gateway = null; }
     if (!this.server?.listening) return;
     this.server.closeAllConnections();
     await new Promise(resolve => this.server.close(resolve));
   }
-  setup() {
-    if (!this.pairing || this.pairing.expires <= this.now()) this.pairing = { code: randomBytes(CODE_BYTES).toString('base64url'), expires: this.now() + PAIR_TTL_MS };
-    return { address: this.address, code: this.pairing.code, instanceId: this.instanceId, paired: Object.keys(this.config.helpers).length };
+  setup({ control = false } = {}) {
+    if (!this.pairings.has(control) || this.pairings.get(control).expires <= this.now()) this.pairings.set(control, { code: randomBytes(CODE_BYTES).toString('base64url'), expires: this.now() + PAIR_TTL_MS, control });
+    return { address: this.address, code: this.pairings.get(control).code, instanceId: this.instanceId, paired: Object.keys(this.config.helpers).length, control };
+  }
+  browserStatus() { return this.browser.status(); }
+  browserGateway() {
+    this.gateway ||= import('./browser-extension-gateway.mjs').then(({ createBrowserExtensionGateway }) => createBrowserExtensionGateway(this.browser)).catch(error => { this.gateway = null; throw error; });
+    return this.gateway;
+  }
+  async pauseBrowser(paused) {
+    const helper = this.config.helpers[this.config.controlHelperId];
+    if (helper?.control) { helper.paused = paused === true; if (!paused) helper.resumeVersion = (helper.resumeVersion || 0) + 1; await this.persist(); this.browser.interrupt(); }
+    return this.browserStatus();
+  }
+  async revokeBrowser() {
+    const helper = this.config.helpers[this.config.controlHelperId];
+    if (helper) { delete helper.control; delete helper.paused; }
+    delete this.config.controlHelperId;
+    await this.persist(); this.browser.interrupt(); return this.browserStatus();
   }
   prune() {
     for (const [id, item] of this.tickets) if (item.expires + TICKET_TTL_MS <= this.now()) this.tickets.delete(id);
@@ -76,24 +107,49 @@ export class CompanionCapture {
     try {
       if (!EXTENSION_ORIGIN.test(origin) || request.headers.host !== `${LOOPBACK_HOST}:${this.config.port}`) throw fail(403, 'Only a paired browser helper may connect');
       if (request.method === 'OPTIONS') { response.writeHead(204, { 'Access-Control-Allow-Origin': origin, 'Access-Control-Allow-Methods': 'POST', 'Access-Control-Allow-Headers': 'Content-Type, Authorization', Vary: 'Origin' }); response.end(); return; }
-      if (request.method !== 'POST' || !Object.values(ROUTES).includes(request.url)) throw fail(404, 'Unknown companion capture endpoint');
-      if (request.url === ROUTES.capture && !Object.values(this.config.helpers).some(credential => credential.origin === origin && equal(request.headers.authorization, 'Bearer ' + credential.token))) throw fail(401, 'Pair this browser helper with ANKITA first');
+      if (request.method !== 'POST' || ![...Object.values(ROUTES), ...Object.values(CONTROL_ROUTES)].includes(request.url)) throw fail(404, 'Unknown companion capture endpoint');
+      const credential = Object.entries(this.config.helpers).find(([, item]) => item.origin === origin && equal(request.headers.authorization, 'Bearer ' + item.token));
+      if (request.url !== ROUTES.pair && !credential) throw Object.assign(fail(401, 'Pair this browser helper with ANKITA first'), Object.values(CONTROL_ROUTES).includes(request.url) ? { code: CONTROL_ACCESS_REMOVED } : {});
       const chunks = []; let size = 0;
-      for await (const chunk of request) { size += chunk.length; if (size > MAX_REQUEST_BYTES) throw fail(413, CAPTURE_ERRORS.tooLarge); chunks.push(chunk); }
+      for await (const chunk of request) { size += chunk.length; if (size > (Object.values(CONTROL_ROUTES).includes(request.url) ? CONTROL_MAX_RESULT_BYTES : MAX_REQUEST_BYTES)) throw fail(413, CAPTURE_ERRORS.tooLarge); chunks.push(chunk); }
       let body;
       try { body = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch { throw fail(400, CAPTURE_ERRORS.unreadableRequest); }
       if (!body || typeof body !== 'object') throw fail(400, CAPTURE_ERRORS.unreadableRequest);
       if (request.url === ROUTES.pair) {
-        if (!this.pairing || this.pairing.expires <= this.now() || !equal(body.code, this.pairing.code)) throw fail(403, 'Pairing code expired; copy a new code from ANKITA');
+        const pairing = [...this.pairings.values()].find(item => item.expires > this.now() && equal(body.code, item.code));
+        if (!pairing) throw fail(403, 'Pairing code expired; copy a new code from ANKITA');
         const helperId = body.helperId || randomUUID();
         if (!UUID.test(helperId)) throw fail(400, 'Invalid browser helper identity');
         const previous = this.config.helpers[helperId];
         if (previous && previous.origin !== origin) throw fail(403, 'Pair each browser helper separately');
         if (Object.keys(this.config.helpers).length >= MAX_PENDING_CAPTURES && !previous) throw fail(409, 'Too many paired helpers');
         const token = randomBytes(TOKEN_BYTES).toString('base64url');
-        this.config.helpers[helperId] = {origin,token}; this.pairing = null;
-        try { await this.persist(); } catch (error) { if (previous) this.config.helpers[helperId] = previous; else delete this.config.helpers[helperId]; throw error; }
-        reply(200, { token, helperId, instanceId: this.instanceId }); return;
+        const control = pairing.control === true, previousControlId = this.config.controlHelperId;
+        this.config.helpers[helperId] = { origin, token, ...(control ? { control: true } : {}) };
+        if (control) this.config.controlHelperId = helperId;
+        this.pairings.delete(control);
+        try { await this.persist(); } catch (error) { if (previous) this.config.helpers[helperId] = previous; else delete this.config.helpers[helperId]; this.config.controlHelperId = previousControlId; throw error; }
+        if (control) { this.browser.interrupt(); this.onBrowserChange(); }
+        reply(200, { token, helperId, instanceId: this.instanceId, control }); return;
+      }
+      if (Object.values(CONTROL_ROUTES).includes(request.url)) {
+        const [helperId, helper] = credential;
+        if (!helper.control || helperId !== body.helperId || this.config.controlHelperId !== helperId) throw Object.assign(fail(403, CONTROL_REPAIR_MESSAGE), { code: CONTROL_ACCESS_REMOVED });
+        if (request.url === CONTROL_ROUTES.status) { reply(200, this.browserStatus()); return; }
+        if (request.url === CONTROL_ROUTES.resume) { reply(200, await this.pauseBrowser(false)); return; }
+        if (request.url === CONTROL_ROUTES.revoke) { reply(200, await this.revokeBrowser()); return; }
+        if (request.url === CONTROL_ROUTES.disconnect) { reply(200, await this.pauseBrowser(true)); return; }
+        if (request.url === CONTROL_ROUTES.connect) { reply(200, this.browser.connect(helperId, body.clientId)); return; }
+        if (request.url === CONTROL_ROUTES.claim) { reply(200, this.browser.claim(helperId, body)); return; }
+        if (request.url === CONTROL_ROUTES.next) {
+          const controller = new AbortController(), cancel = () => controller.abort();
+          response.once('close', cancel);
+          try { const next = await this.browser.next(helperId, body.sessionId, controller.signal); if (!response.destroyed) reply(200, next); }
+          finally { response.removeListener('close', cancel); }
+          return;
+        }
+        if (request.url === CONTROL_ROUTES.result) { reply(200, this.browser.result(helperId, body)); return; }
+        throw fail(404, 'Unknown browser endpoint');
       }
       if (body.instanceId !== this.instanceId) throw fail(409, 'This drop belongs to an earlier desktop session; drag again');
       const ticket = this.tickets.get(body.ticketId);
@@ -109,6 +165,6 @@ export class CompanionCapture {
       ticket.used = true; this.captures.set(item.id, item);
       this.onCapture(item);
       reply(200, { ok: true, id: item.id });
-    } catch (error) { if (!response.writableEnded) reply(error.status || 500, { error: error.status ? error.message : 'Companion capture could not be delivered' }); }
+    } catch (error) { if (!response.writableEnded && !response.destroyed) reply(error.status || 500, { error: error.status ? error.message : 'Companion capture could not be delivered', ...(error.code === CONTROL_ACCESS_REMOVED ? { code: error.code } : {}) }); }
   }
 }

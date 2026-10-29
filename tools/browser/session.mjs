@@ -1,6 +1,8 @@
 import { BrowserPluginStore } from '../../src/integrations/browser-plugins.mjs';
 import { PlaywrightBrowserAdapter } from './playwright.mjs';
 import { ChromeBrowserAdapter } from './chrome.mjs';
+import { ExtensionBrowserAdapter } from './extension.mjs';
+import { BROWSER_CONNECTION } from '../../desktop/browser-helper/control-protocol.mjs';
 import { waitForBrowser, normalizeBrowserArgs } from './pending.mjs';
 import { browserNotice, browserNeedsConnection, browserPageFailed } from '../../src/integrations/browser-errors.mjs';
 import { CREDENTIAL_WAIT_MS } from '../../src/integrations/browser-credentials.mjs';
@@ -23,7 +25,7 @@ const VIEW_REQUEST_TIMEOUT_MS = 1800; // Milliseconds for the outer preview requ
 
 /** One process-wide browser session. Calls are serialized so tab selection and refs cannot race. */
 export class BrowserSessionManager {
-  constructor({ store = new BrowserPluginStore().load(), isolatedFactory = options => new PlaywrightBrowserAdapter(options), chromeFactory = (mcp, options) => new ChromeBrowserAdapter(mcp, options), onEvent = () => {}, onResult = () => {}, credentials = null, scopeOptions = null, chromeQueue = { tail: Promise.resolve() }, protectedPage = null } = {}) {
+  constructor({ store = new BrowserPluginStore().load(), isolatedFactory = options => new PlaywrightBrowserAdapter(options), chromeFactory = (mcp, options) => options.connection === BROWSER_CONNECTION ? new ExtensionBrowserAdapter(mcp, options) : new ChromeBrowserAdapter(mcp, options), onEvent = () => {}, onResult = () => {}, credentials = null, scopeOptions = null, chromeQueue = { tail: Promise.resolve() }, protectedPage = null } = {}) {
     this.protectedPage = protectedPage;
     this.scopeOptions = scopeOptions;
     this.scopes = new Map();
@@ -169,14 +171,18 @@ export class BrowserSessionManager {
     if (action === 'login' && !this.store.get('isolated').enabled) throw new Error('Enable Playwright Browser in Plugins before using secure sign-in');
     const preferred = args.mode || this.activeMode;
     if (preferred) this.store.get(preferred);
-    const mode = preferred && this.store.get(preferred).enabled ? preferred : (this.store.get('isolated').enabled ? 'isolated' : this.store.get('local').enabled ? 'local' : preferred || 'isolated');
+    const local = this.store.get('local');
+    const defaultMode = local.enabled && local.connection === BROWSER_CONNECTION ? 'local' : this.store.get('isolated').enabled ? 'isolated' : local.enabled ? 'local' : preferred || 'isolated';
+    const mode = preferred && this.store.get(preferred).enabled ? preferred : defaultMode;
     if (preferred && mode !== preferred && (args.ref || args.tab || action === 'act' || action === 'fill_form' || action === 'sequence')) throw new Error('The previous browser is disabled. Open the page in the enabled browser and take a fresh snapshot; its tabs and refs are different.');
     const settings = { ...this.store.get(mode), ...(this.scopeOptions ? { headless: this.scopeOptions.headless !== false } : {}) };
     if (!settings.enabled) throw new Error(`Enable ${mode === 'local' ? 'Chrome local' : 'Playwright Browser'} in Plugins → By Ankita first`);
     let adapter = this.adapters.get(mode);
+    if (mode === 'local' && adapter && adapter.connectionMode !== settings.connection) { await adapter.close?.(); this.adapters.delete(mode); adapter = null; }
     if (!adapter) {
-      const options = { ...this.scopeOptions, protectedPage: this.protectedPage };
+      const options = { ...this.scopeOptions, protectedPage: this.protectedPage, connection: settings.connection };
       adapter = mode === 'isolated' ? this.isolatedFactory(options) : this.chromeFactory(ctx.mcp, options);
+      adapter.connectionMode = settings.connection;
       this.adapters.set(mode, adapter);
     }
     const needsLoginOrigin = action === 'login' && !args.website && !args.url;

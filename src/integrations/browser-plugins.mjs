@@ -3,6 +3,7 @@ import path from 'node:path';
 import { createRequire } from 'node:module';
 import { CONFIG_DIR } from '../core/config.mjs';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
+import { BROWSER_CONNECTION } from '../../desktop/browser-helper/control-protocol.mjs';
 
 export const BROWSER_FILE = path.join(CONFIG_DIR, 'browser.json');
 export const CHROME_MCP_ID = 'ankita-chrome';
@@ -11,6 +12,7 @@ export const CHROME_MCP_VERSION = JSON.parse(fs.readFileSync(new URL('../../pack
 const require = createRequire(import.meta.url);
 const ASAR_DIRECTORY = 'app.asar'; // electron-builder's standard archive; Node-mode children use the unpacked bridge.
 const ASAR_UNPACKED_DIRECTORY = `${ASAR_DIRECTORY}.unpacked`;
+const CHROME_CONNECTIONS = Object.freeze(['profile', 'port', 'active', BROWSER_CONNECTION]); // Stored connection kinds; extension reuses a durable pairing, not a debug port.
 export const BROWSER_PLUGINS = Object.freeze({
   isolated: { id: 'ankita-playwright', name: 'Playwright Browser', description: 'A private Chromium for Ankita', mode: 'isolated' },
   local: { id: 'ankita-chrome', name: 'Chrome local', description: 'Chrome for browsing and debugging', mode: 'local' },
@@ -48,7 +50,7 @@ export class BrowserPluginStore {
           defaults.plugins[mode].blockedSites = siteRules(input.blockedSites);
           if (mode === 'isolated') defaults.plugins.isolated.headless = input.headless !== false;
           else {
-            defaults.plugins.local.connection = ['profile', 'port', 'active'].includes(input.connection) ? input.connection : 'profile';
+            defaults.plugins.local.connection = CHROME_CONNECTIONS.includes(input.connection) ? input.connection : 'profile';
             defaults.plugins.local.port = Number.isInteger(input.port) && input.port >= 1 && input.port <= 65535 ? input.port : 9222;
           }
         }
@@ -78,7 +80,7 @@ export class BrowserPluginStore {
   }
 
   setChromeMode(connection, port = 9222) {
-    if (!['profile', 'port', 'active'].includes(connection)) throw new Error('Invalid Chrome connection mode');
+    if (!CHROME_CONNECTIONS.includes(connection)) throw new Error('Invalid Chrome connection mode');
     if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('Invalid Chrome debug port');
     this.load();
     this.data.plugins.local.connection = connection;
