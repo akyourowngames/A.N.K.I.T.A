@@ -199,7 +199,9 @@ when the choice is unclear, without a phrase list. These are sampled decisions,
 not a universal interpretation guarantee. During repeats, one planner reply stayed
 empty after its recovery attempt and one generated Hinglish phrase was misheard;
 the check failed honestly. A clearer code-switched next-report fixture was used
-without changing production recognition. Output was captured sentence MP3
+without changing production recognition. Another repeat had the correct next-report
+transcript but the planner chose resume. Intent decisions remain probabilistic;
+this is a known acceptance risk, not a perfect-language claim. Output was captured sentence MP3
 handoffs with peak one player. Physical echo, real interruptions and a packaged
 app remain separate checks. With your headset, interrupt a report with a new
 question, then ask to continue the earlier report; also test a cough and mic pause.

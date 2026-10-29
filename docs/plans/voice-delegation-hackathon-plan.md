@@ -1241,3 +1241,45 @@ Final fix-pass hardening: a later unavailable selection also keeps its explanati
 audible after an earlier selection succeeded. Its direct regression was RED then
 GREEN; the full focused queue/control/worker set is now **46/46**. This is part of
 the same owed-answer fix, with no additional classifier or model request.
+
+Latest cloud repetition after the final availability guard: first request was
+transcribed correctly as Ab next report sunao please, but Meta chose resume and
+the expected-next assertion failed. The earlier full7-case final-prompt sample
+passed, including mixed direct answer before other reports. Preserve both facts:
+queue/control/owed-answer behavior is covered by deterministic regressions, while
+natural-language intent can still be selected incorrectly by the planner. Do not
+claim universal phrase understanding or hide this behind a green earlier sample.
+
+
+Final verification receipt (29 October):
+- Final serial affected voice set: **127/127 pass**,0fail/skip/cancelled,
+ 43967.0981ms; shared queue/session/control/worker/task plus actual CLI child/HTTP
+ and controlled desktop recorder/player tests.
+- Full final-code run: **1736 tests,1734pass,1fail,1skip**,683103.7784ms.
+ The sole failure was unchanged `test/tools/git-process.test.mjs`, “kill refuses a
+ new owner on an approved port”, with “Cannot verify process PID15884” from the
+ process-identity safety guard. A current isolated rerun initially had9/10 with
+ the same identity error in another process test. An archived86ffe977 baseline
+ passed10/10, and the final current isolated rerun passed10/10. These three process
+ files are unchanged. Keep the full failed result visible; do not call the whole
+ project suite green or change an unrelated safety guard for this voice task.
+ The skipped case requires executable POSIX permission modes on Windows.
+- Real-service sample: a complete **7/7** generated-Sarvam/Meta run passed before
+ the availability-only guard. A later repetition on the final guard failed its
+ first next-report assertion despite correct transcription (Meta selected resume).
+ Previous repeats also exposed one empty provider response and one mishearing.
+ These are sampled external reliability limits, not hidden behind the passing run.
+- Native Electron real speech/file check and main/island renderer fixture passed;
+ build403modules. Inputs generated/VAD simulated, outputs capturedMP3. Physical
+ headset/echo and installed-package acceptance remain open.
+- One fresh review; all three Important findings and the follow-up owed-answer
+ case have RED→GREEN regressions. No new Minor findings deferred.
+
+Final ruling: preserve the full-run failure and keep PR70 in draft, with the
+127/127 affected set as the final task gate. The owner requested a reviewable draft;
+repository rules say to report existing failures and avoid unrelated expansion.
+Cost: no all-green project-suite claim; intermittent process fixture, model/speech
+reliability and physical/package acceptance remain open. No merge or release.
+The earlier interrupted helper left an obsolete child-run receipt; it was excluded.
+Final receipts above are from the completed current-code run and fresh affected set.
+No raw logs, generated media, keys or personal documents are committed.

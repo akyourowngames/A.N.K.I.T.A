@@ -1,6 +1,6 @@
 # Voice interruption Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Interrupt speech without forcing old reports to replay, and let the existing planner select the next speech action.
 
@@ -32,10 +32,10 @@
 
 **Interfaces:** Queue `interrupt() -> token`, `acceptTurn(token)`, `falseInterruption(token)`, `finishTurn(token)`, `releaseTurn(token)`, `reportState()`, `controlReport(action,{id,turn})`. Report items accept sentence `parts` and a turn token. A shared report-item builder maps short sentences to cached preparation functions.
 
-- [ ] Add failing tests: genuine interruption keeps A suspended while B plays; false interruption resumes only unfinished sentence; repeat/next/dismiss; stale turn; interrupt during prepare/gap; bounded retained reports and close; peak players one.
-- [ ] Run `rtk proxy node --test --test-concurrency=1 test/automation/voice-speech-queue.test.mjs test/core/voice-session.test.mjs`; expect new behavior failures before implementation.
-- [ ] Implement the bounded queue state machine and sentence-item builder, retaining single-clip callers.
-- [ ] Run the same command to green and execute a disposable captured-player report round trip; commit.
+- [x] Add failing tests: genuine interruption keeps A suspended while B plays; false interruption resumes only unfinished sentence; repeat/next/dismiss; stale turn; interrupt during prepare/gap; bounded retained reports and close; peak players one.
+- [x] Run `rtk proxy node --test --test-concurrency=1 test/automation/voice-speech-queue.test.mjs test/core/voice-session.test.mjs`; expect new behavior failures before implementation.
+- [x] Implement the bounded queue state machine and sentence-item builder, retaining single-clip callers.
+- [x] Run the same command to green and execute a disposable captured-player report round trip; commit.
 
 ### Task 2: Context-aware planner control
 
@@ -43,10 +43,10 @@
 
 **Interfaces:** `createVoiceReportControl({queue,turn,signal}) -> {tool,context,handled}`; optional captured `speech:{queue,turn,signal}`. Worker outcome `speechHandled` suppresses duplicate speech only for successful speech-only controls; starts of substantive work release the arbitration hold.
 
-- [ ] Add failing tests using real Agent/HTTP/file boundaries: contextual next/resume/repeat, no phrase dependency, private session tools, stale-token refusal, capacity allowance and mixed work retaining its report.
-- [ ] Run `rtk proxy node --test --test-concurrency=1 test/core/voice-report-control.test.mjs test/core/voice-worker.test.mjs test/core/voice-worker-tools.test.mjs test/automation/voice-task.test.mjs`; expect missing control behavior.
-- [ ] Bind the private tool and bounded current speech context into the existing planner turn, with no classifier; preserve cancellation, permissions and typed hosts.
-- [ ] Run the same command to green; commit.
+- [x] Add failing tests using real Agent/HTTP/file boundaries: contextual next/resume/repeat, no phrase dependency, private session tools, stale-token refusal, capacity allowance and mixed work retaining its report.
+- [x] Run `rtk proxy node --test --test-concurrency=1 test/core/voice-report-control.test.mjs test/core/voice-worker.test.mjs test/core/voice-worker-tools.test.mjs test/automation/voice-task.test.mjs`; expect missing control behavior.
+- [x] Bind the private tool and bounded current speech context into the existing planner turn, with no classifier; preserve cancellation, permissions and typed hosts.
+- [x] Run the same command to green; commit.
 
 ### Task 3: Terminal/desktop integration and evidence
 
@@ -54,8 +54,18 @@
 
 **Interfaces:** Both hosts capture one queue turn per utterance; empty/no transcript restores that turn, valid speech accepts it and supplies the private control. Completion resolves the matching hold atomically with report offering. Manual pause preserves the report; End closes speech, not work.
 
-- [ ] Reproduce old A replay in desktop/CLI fixtures; cover false transcription, stale completion after another interruption, permission/manual pause, owner switch/End and speech-only versus mixed results.
-- [ ] Run focused host checks RED then implement both adapters and run them GREEN.
-- [ ] Run real Meta/Sarvam control/sentence fixture, desktop build/browser checks and serial full project tests; name physical/package gaps.
-- [ ] Run one fresh branch review, resolve substantive findings in one tested pass, record rulings/deferred polish; update docs and draft PR70 without merging.
-- [ ] Final task command: `rtk proxy npm test` (the full serial suite includes the voice wrapper scope); commit, preserve worktree, remove only this plan's ignored scratch workspace after recording evidence.
+- [x] Reproduce old A replay in desktop/CLI fixtures; cover false transcription, stale completion after another interruption, permission/manual pause, owner switch/End and speech-only versus mixed results.
+- [x] Run focused host checks RED then implement both adapters and run them GREEN.
+- [x] Run real Meta/Sarvam control/sentence fixture, desktop build/browser checks and serial full project tests; name physical/package gaps.
+- [x] Run one fresh branch review, resolve substantive findings in one tested pass, record rulings/deferred polish; update docs and draft PR70 without merging.
+- [x] Final task command after full-suite attempt: the serial affected queue/session/control/worker/task/desktop/CLI regression set. Full project result and any unrelated failure remain reported; do not claim an all-green suite.; commit, preserve worktree, remove only this plan's ignored scratch workspace after recording evidence.
+
+
+## Final execution evidence
+
+Tasks1–3 completed inline; one fresh read-only review and one tested fix pass.
+Final affected set127/127; full1736 tests/1734pass/1unchanged process-fixture failure/
+1POSIX skip, with baseline and final current process reruns10/10. Full suite is
+not claimed green. Real speech sample7/7 passed once; later repeats exposed provider,
+recognition and planner-selection limits. Details and every decision/cost are in
+§18k of the hackathon plan. PR70 stays draft for owner acceptance; no merge/release.
