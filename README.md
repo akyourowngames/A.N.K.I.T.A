@@ -14,6 +14,8 @@ OpenAI-compatible provider.
  · [Contributing](CONTRIBUTING.md)
  · [MIT license](LICENSE)
 
+> How it was built: [How I built a 4-tier approval gate for my AI companion: a heuristic that can never say no](https://dev.to/krish_verma_77e28d3fd63ca/how-i-built-a-4-tier-approval-gate-for-my-ai-companion-a-heuristic-that-can-never-say-no-2k7o) — the write-up behind Ankita's safety model.
+
 ## Desktop, companion and terminal
 
 | Surface | Use it for |
