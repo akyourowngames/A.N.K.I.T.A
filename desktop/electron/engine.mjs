@@ -1,3 +1,5 @@
+import { PERSONALITY_FILENAME, normalizePersonality } from '../../src/core/personality.mjs';
+import { PersonalityStore } from '../../src/core/personality-store.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -291,6 +293,7 @@ export class DesktopEngine {
     this.scheduler = null;
     this.routineDeliveries = new Map();
     this.desktopSettings = new DesktopSettingsStore(settingsFile);
+    this.personalityStore = new PersonalityStore(path.join(path.dirname(settingsFile), PERSONALITY_FILENAME));
     this.channelsFile = channelsFile;
     this.telegramBotFactory = telegramBotFactory;
     this.composioFile = composioFile;
@@ -389,6 +392,8 @@ export class DesktopEngine {
     this.baseConfig = this.config || loadConfig(this.envPath);
     seedFreshDesktopProvider(this.desktopSettings, this.teammates.file, this.baseConfig, injectedConfig);
     this.config = applyDesktopSettings(this.baseConfig, this.desktopSettings.data);
+    this.config.personality = this.personalityStore.load().view().profile;
+    this.baseConfig.personality = this.config.personality;
     this.secretHistory.enabled = this.desktopSettings.data.secretScrubbing !== false;
     if (this.secretHistory.enabled) {
       const directory = path.dirname(this.teammates.file);
@@ -533,6 +538,17 @@ export class DesktopEngine {
   }
 
   getDesktopPreferences() { return this.desktopSettings.publicView(this.config || {}); }
+  getPersonality() { return this.personalityStore.view(); }
+
+  savePersonality(patch) {
+    if (this.turns.size || this.channels?.hasWork?.() || this.channels?.surface?.busy?.()) throw new Error('Let current chat replies finish before changing personality.');
+    const view = this.personalityStore.save(normalizePersonality(patch, this.personalityStore.profile));
+    this.config.personality = structuredClone(view.profile);
+    this.baseConfig.personality = structuredClone(view.profile);
+    for (const agent of this.agents.values()) agent.config.personality = structuredClone(view.profile);
+    this.channels?.surface?.invalidate?.();
+    return view;
+  }
 
   async refreshPlugins() {
     if (this.mcp.ensureComposio) {
@@ -570,6 +586,8 @@ export class DesktopEngine {
       await this.channels?.stopAll?.();
       this.desktopSettings.save(next);
       await this.activateBrowserProvider(session.browser);
+      // A personality edit can finish while provider connection is awaiting I/O.
+      nextConfig.personality = this.personalityStore.view().profile;
       this.config = nextConfig;
       this.client = session.client;
       this.tool = session.tool;

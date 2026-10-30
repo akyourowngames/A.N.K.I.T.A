@@ -1134,7 +1134,7 @@ export async function main({ voiceIO = {} } = {}) {
       onError: error => term.notify(c.red(`  voice job: ${error.message}`)),
     });
     const acks = createAcknowledgements({ synthesize: synthesizeSpeech });
-    const narrate = voiceIO.narrate || createVoiceNarrator({ client: brain?.client || agent.client, model: brain?.model || agent.model, secrets: configuredSecrets(config) });
+    const narrate = voiceIO.narrate || createVoiceNarrator({ client: brain?.client || agent.client, model: brain?.model || agent.model, secrets: configuredSecrets(config), getPersonality: () => config.personality });
     voiceMicrophone = createVoiceMicrophone({ detect: detectMic, preferred: config.micDevice });
     voiceActive = true;
     term.line(c.dim(config.voiceVad ? '  voice mode — just speak; pause to send. Jobs run together. Say exit to leave.' : '  voice mode — speak, press Enter to send. Jobs run together. Say exit to leave.'));

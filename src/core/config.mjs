@@ -1,3 +1,5 @@
+import { PERSONALITY_FILENAME } from './personality.mjs';
+import { PersonalityStore } from './personality-store.mjs';
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +12,7 @@ import { defaultRegistry } from '../channels/core/registry.mjs';
 import { CHANNEL_SETTINGS_FILE } from '../channels/core/contract.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
+export const PERSONALITY_FILE = path.join(CONFIG_DIR, PERSONALITY_FILENAME); // Local editable speaking style, separate from memories.
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
 export const AUTH_FILE = path.join(CONFIG_DIR, "auth.json");
 export const HISTORY_FILE = path.join(CONFIG_DIR, "history");
@@ -208,7 +211,7 @@ function readVars(file) {
  * (File settings beat process.env because Windows already defines USERNAME
  * for the OS account, which would otherwise shadow the user's .env.)
  */
-export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalEnvFile = GLOBAL_ENV_FILE, channelRegistry = defaultRegistry } = {}) {
+export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalEnvFile = GLOBAL_ENV_FILE, channelRegistry = defaultRegistry, personalityFile = PERSONALITY_FILE } = {}) {
   // Read-only provider/config source override for hermetic callers. Runtime storage
   // remains bound to CONFIG_DIR; no credentials are copied into test artifacts.
   const global = readVars(globalEnvFile);
@@ -234,7 +237,10 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
   );
 
   const channelConfig = channelRegistry.environment(pick);
+  const personality = new PersonalityStore(personalityFile).load().view();
   return {
+    personality: personality.profile,
+    personalityNotice: personality.notice,
     envPath: project.path,
     channels: channelConfig.channels,
     channelErrors: channelConfig.errors,

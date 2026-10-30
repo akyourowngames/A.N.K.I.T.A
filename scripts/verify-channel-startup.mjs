@@ -1,3 +1,4 @@
+import { PERSONALITY_ACTIONS, PERSONALITY_FILENAME } from '../src/core/personality.mjs';
 import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import http from 'node:http';
@@ -15,6 +16,8 @@ const TIMEOUT_MS = 30_000; // Milliseconds: fail a broken native startup without
 const HOST = '127.0.0.1'; // Local-only fixture; the OS selects its port.
 const MODEL = 'channel-startup-fixture'; // Synthetic model identity, used only by this verification script.
 const FIXTURE_TOKEN = 'local-channel-startup-fixture'; // Never a real account key; enabled channels remain off.
+const CHECK_PERSONALITY = process.argv.includes('--personality'); // Explicit opt-in to exercise the integrated editor over real native IPC.
+const EDITOR_TIMEOUT_MS = 5000; // Milliseconds: fail a missing screen promptly.
 const SETTINGS_FILE = 'desktop-settings.json'; // Existing desktop profile filename; only copied into owned temporary profiles.
 const sourceSettings = process.argv.includes('--saved-settings') ? path.join(CONFIG_DIR, SETTINGS_FILE) : null; // Explicit opt-in to test the user's existing profile, read-only.
 const originalSettings = sourceSettings ? await fs.readFile(sourceSettings) : null;
@@ -59,6 +62,21 @@ try {
     await page.getByRole('button', { name: 'Open settings', exact: true }).click();
     await page.getByRole('button', { name: 'Providers', exact: true }).click();
     await page.getByRole('status').filter({ hasText: ready.preferences.providerNotice }).waitFor();
+    if (CHECK_PERSONALITY) {
+      await page.getByRole('button', { name: 'Personality', exact: true }).click();
+      await page.getByLabel('Character', { exact: true }).waitFor({ timeout: EDITOR_TIMEOUT_MS });
+      const description = 'Native editor fixture with caring attitude';
+      await page.getByLabel('Character', { exact: true }).fill(description);
+      await page.getByLabel('Teasing', { exact: true }).selectOption('off');
+      await page.getByRole('button', { name: 'Save personality', exact: true }).click();
+      await page.getByRole('status').filter({ hasText: 'Personality saved' }).waitFor();
+      const card = await page.evaluate(action => window.ankita.invoke(action), PERSONALITY_ACTIONS.get);
+      assert.equal(card.profile.description, description);
+      assert.equal(card.profile.teasing, 'off');
+      const savedCard = JSON.parse(await fs.readFile(path.join(config, PERSONALITY_FILENAME), 'utf8'));
+      assert.deepEqual(savedCard.profile, card.profile);
+      console.log(`PERSONALITY_DESKTOP_OK: ${mode}; actual Settings tab; edit/save/read-back; native IPC; isolated disk persistence.`);
+    }
     assert.deepEqual(errors, []);
     console.log(`CHANNEL_DESKTOP_STARTUP_OK: ${mode}; actual Electron main/preload; initialize/getChannels IPC; late config; secret-safe view; no renderer errors.`);
     console.log(`SAVED_PROVIDER_STARTUP_OK: ${mode}; ${sourceSettings ? 'exact saved-profile copy' : 'future-provider fixture'}; compatible endpoint/model/credential retained; model discovery; Settings notice visible.`);

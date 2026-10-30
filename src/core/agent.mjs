@@ -1,3 +1,4 @@
+import { personalityPrompt } from './personality.mjs';
 import os from "node:os";
 import path from 'node:path';
 import { ProfileStore } from '../memory/profile.mjs';
@@ -359,6 +360,7 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
       "Never claim saved, updated or forgotten without a successful tool result. always=true is only for instructions " +
       "meant to apply every turn; other facts are recalled on demand. Project facts belong in project_memory.",
     personal,
+    config.backgroundJob || catalog?.internal || catalog?.personalityDisabled ? "" : personalityPrompt(config.personality, { compact: catalog?.compactPersonality === true }),
     "Write user-facing replies in GitHub-flavored Markdown. A short answer can be one paragraph; for longer answers use clear headings, short paragraphs and real Markdown lists. Use a pipe table with a header separator for comparisons, never tabs or spaces to align columns. Put code in a fenced code block with a language label. Do not wrap the entire answer in a code fence or emit raw HTML. Keep formatting useful rather than decorative.",
     "Skip preamble and pleasantries. Report failures honestly instead of guessing.",
     config.systemExtra ? `\nAdditional instructions from the user:\n${config.systemExtra}` : "",
@@ -508,12 +510,14 @@ export class Agent {
   }
 
   /** System prompt with the tool catalog actually callable by this agent. */
-  systemText() {
+  systemText(style = {}) {
     const base = buildSystemPrompt(this.config, this.cwd, this.project, this.mcpSummaries(), this.personalBlock(), this.skillLines,
       this.availableSkills().length > 0, {
         names: this.allowedTools ? [...this.allowedTools] : null,
         deferTools: this.deferTools,
+        internal: this.depth > 0,
         exclude: this.canDelegate() ? null : SUBAGENT_TOOL,
+        ...style,
       });
     const hint = this.projectHint();
     const text = hint ? `${base}\n\n${hint}` : base;
@@ -598,7 +602,18 @@ export class Agent {
     if (this._roundSpecs) return this._roundSpecs;
     if (!this.useTools) return [];
     const { core, optional } = this.specParts();
-    const budget = this.toolBudgetBytes();
+    let budget = this.toolBudgetBytes();
+    // Style is optional; preserve the same callable schemas as the baseline
+    // prompt. Reuse this round's schema snapshot rather than discovering twice.
+    const desiredBytes = schemaBytes(core) + optional.reduce((total, group) => total + schemaBytes(group.specs), 0);
+    if (desiredBytes > budget && !this.config.backgroundJob && this.depth === 0 && this.config.personality?.enabled !== false && this.messages?.length) {
+      this.refreshPrompt({ compactPersonality: true });
+      budget = this.toolBudgetBytes();
+      if (desiredBytes > budget) {
+        this.refreshPrompt({ personalityDisabled: true });
+        budget = this.toolBudgetBytes();
+      }
+    }
     if (budget === Infinity) return [...core, ...optional.flatMap((group) => group.specs)];
 
     // Core always ships. Loaded groups are added whole while they fit; one that
@@ -722,7 +737,7 @@ export class Agent {
   }
 
   /** Rebuild messages[0] so the model sees the current tool groups. */
-  refreshPrompt() {
+  refreshPrompt(style = {}) {
     if (!this.messages?.length) return this;
     const skills = this.availableSkills();
     this.skillLines = skillPromptLines(skills, this.activeSkillTools);
@@ -742,7 +757,7 @@ export class Agent {
       : '';
     this.messages[0] = {
       role: "system",
-      content: this.systemText() + checklist + islandStyle,
+      content: this.systemText(style) + checklist + islandStyle,
     };
     return this;
   }
