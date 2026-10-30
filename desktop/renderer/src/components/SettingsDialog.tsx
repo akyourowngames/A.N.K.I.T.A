@@ -30,6 +30,7 @@ const providers = [
   { id: 'copilot', name: 'GitHub Copilot', detail: 'Use your GitHub account' },
   { id: 'groq', name: 'Groq', detail: 'Fast hosted inference' },
   { id: 'kilo', name: 'Kilo', detail: 'Free and hosted models' },
+  { id: 'modal', name: 'Modal', detail: 'Your Modal deployment' },
   { id: 'custom', name: 'Custom provider', detail: 'OpenAI-compatible endpoint' },
   { id: CHATGPT_BROWSER_PROVIDER, name: CHATGPT_BROWSER_LABEL, detail: 'Your already-open ChatGPT chat' },
 ];
@@ -295,6 +296,12 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               {draft.provider === 'custom' && <><h2>Custom provider</h2><p>Use an OpenAI-compatible API. Include the version path, such as <code>/v1</code>.</p>
                 <div className="settings-field"><label htmlFor="settings-custom-url">API base URL</label><input id="settings-custom-url" value={draft.customApiBase} onChange={event => { set('customApiBase', event.target.value); setTestResult(null); }} placeholder="http://localhost:11434/v1" spellCheck={false} /></div>
                 {secretField('customApiKey', 'API key', 'Optional for local providers')}
+                <div className="settings-provider-actions"><button type="button" className="settings-secondary" onClick={test} disabled={testing || !draft.customApiBase.trim()}>{testing ? 'Testing…' : 'Test connection'}</button><span role="status" className={testResult?.tone === 'error' ? 'settings-test-error' : 'settings-test-ok'}>{testResult?.text || 'Checks the endpoint and available models.'}</span></div>
+              </>}
+              {draft.provider === 'modal' && <><h2>Modal credentials</h2><p>Use your Modal deployment URL and the combined proxy token (<code>wk-…ws-…</code>).</p>
+                <div className="settings-field"><label htmlFor="settings-modal-url">API base URL</label><input id="settings-modal-url" value={draft.customApiBase} onChange={event => { set('customApiBase', event.target.value); setTestResult(null); }} placeholder="https://…us-west.modal.direct/v1" spellCheck={false} /></div>
+                {secretField('customApiKey', 'Proxy token', 'wk-…ws-…')}
+                <small>Token format: <code>wk-&lt;id&gt;.ws-&lt;secret&gt;</code> (both parts, joined by a dot). The URL must end with <code>/v1</code>.</small>
                 <div className="settings-provider-actions"><button type="button" className="settings-secondary" onClick={test} disabled={testing || !draft.customApiBase.trim()}>{testing ? 'Testing…' : 'Test connection'}</button><span role="status" className={testResult?.tone === 'error' ? 'settings-test-error' : 'settings-test-ok'}>{testResult?.text || 'Checks the endpoint and available models.'}</span></div>
               </>}
             </div>}

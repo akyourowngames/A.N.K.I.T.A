@@ -16,9 +16,9 @@ export async function createSession({
   if (!provider) throw new Error(`Unknown provider "${config.provider}"`);
   if (provider.name === 'custom' && !config.apiBase) throw new Error('Custom provider API URL is required');
   if (provider.name !== 'copilot' && !config.apiBase) {
-    config.apiBase = (provider.name === 'baseten' && config.basetenBaseUrl) || provider.apiBase;
+    config.apiBase = (provider.baseUrlConfig && config[provider.baseUrlConfig]) || provider.apiBase;
     config.apiKey ||= provider.apiKey || (provider.keyConfig && config[provider.keyConfig]) || '';
-    config.model ||= (provider.name === 'baseten' && config.basetenModel) || provider.defaultModel || '';
+    config.model ||= (provider.modelConfig && config[provider.modelConfig]) || provider.defaultModel || '';
   }
 
   let client;

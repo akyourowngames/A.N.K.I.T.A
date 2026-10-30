@@ -25,16 +25,21 @@
 1. **Nothing is done until it is executed.** After implementing, run the relevant
    suite (`node --test <file>`) plus a live round trip of the changed path. A
    passing typecheck or a confident re-read is not verification.
-2. **Reproduce-then-fix discipline.** For bugs: first reproduce live and capture
+2. **Run only what is needed.** Never run the full suite or a whole directory by
+   default. Run the specific test file(s) covering what you changed, plus a
+   typecheck. Only run broader suites when the change is critical/shared
+   (core, IPC contract, security, packaging) or the user asks. State what you ran
+   and why it was enough.
+3. **Reproduce-then-fix discipline.** For bugs: first reproduce live and capture
    the trace, then fix, then re-run the same repro and show the before/after.
-3. **Cover both backends/branches you touched.** If Playwright and Chrome share a
+4. **Cover both backends/branches you touched.** If Playwright and Chrome share a
    contract, exercise both (real run where possible, stub-driven where not) and
    state which was which.
-4. **New behavior gets a new test.** Every fix ships with a regression test that
+5. **New behavior gets a new test.** Every fix ships with a regression test that
    fails without the fix. Update existing assertions instead of leaving them stale.
-5. **Evidence before claims.** Quote exact outputs, counts (`32/32`), and file
+6. **Evidence before claims.** Quote exact outputs, counts (`32/32`), and file
    paths with line numbers. Never write "verified" without the trace that proves it.
-6. **Record it.** Update the relevant doc (e.g. `docs/browser-screenshot-findings.md`
+7. **Record it.** Update the relevant doc (e.g. `docs/browser-screenshot-findings.md`
    finding status) with what changed, what verified it, and what remains uncovered.
 
 ## 3. Confidence Out of 100 — Always

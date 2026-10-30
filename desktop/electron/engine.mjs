@@ -41,6 +41,7 @@ import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs
 import { ChannelStore, ChannelManager } from './channels.mjs';
 import { TelegramBot } from '../../src/channels/telegram.mjs';
 import { DesktopPlugins } from './plugins.mjs';
+import { DesktopMcp } from './mcp.mjs';
 import { DesktopBrowserPlugins } from './browser-plugins.mjs';
 import { DesktopComputerUse } from './computer-use.mjs';
 import { COMPUTER_DIRECT_CONFIG } from '../../src/integrations/computer-use.mjs';
@@ -306,6 +307,7 @@ export class DesktopEngine {
       // File-backed: tier overrides outlive the process. Heuristics apply either way.
       tiers: new TierPolicy(MCP_TIERS_FILE),
     });
+    this.mcpDesktop = new DesktopMcp({ mcp: this.mcp });
     // Keep the raw sink separate so the channel bridge can observe every event
     // (approvals included) without the emit path calling back into itself.
     this._emit = emit;
@@ -553,7 +555,7 @@ export class DesktopEngine {
     const nextConfig = applyDesktopSettings(this.baseConfig, next);
     const active = this.provider?.name || 'copilot';
     const reconnect = ['provider', 'customApiBase'].some(key => Object.hasOwn(patch, key))
-      || (active === 'custom' && Object.hasOwn(patch, 'customApiKey'))
+      || (['custom', 'modal'].includes(active) && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
     const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
@@ -610,10 +612,10 @@ export class DesktopEngine {
   }
 
   testCustomProvider(input = {}) {
-    const apiBase = input.apiBase || this.desktopSettings.data.customApiBase || (this.provider?.name === 'custom' ? this.config.apiBase : '');
-    const activeBase = this.desktopSettings.data.customApiBase || (this.provider?.name === 'custom' ? this.config.apiBase : '');
+    const apiBase = input.apiBase || this.desktopSettings.data.customApiBase || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiBase : '');
+    const activeBase = this.desktopSettings.data.customApiBase || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiBase : '');
     // A saved key belongs to its saved endpoint. Do not send it to a newly entered URL.
-    const savedKey = apiBase === activeBase ? this.desktopSettings.data.customApiKey || (this.provider?.name === 'custom' ? this.config.apiKey : '') : '';
+    const savedKey = apiBase === activeBase ? this.desktopSettings.data.customApiKey || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiKey : '') : '';
     const apiKey = Object.hasOwn(input, 'apiKey') ? input.apiKey : savedKey;
     return testCustomProvider({ apiBase, apiKey });
   }

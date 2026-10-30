@@ -624,6 +624,15 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'pluginsDisconnectAccount': return current.plugins.disconnectAccount(payload);
     case 'pluginsDisconnectService': return current.plugins.disconnectService(payload);
     case 'pluginsRefresh': return current.refreshPlugins();
+    case 'mcpOverview': return current.mcpDesktop.overview();
+    case 'mcpSearch': return current.mcpDesktop.search(payload);
+    case 'mcpInstallRegistry': return current.mcpDesktop.installFromRegistry(payload);
+    case 'mcpInstallManual': return current.mcpDesktop.installManual(payload);
+    case 'mcpRemove': return current.mcpDesktop.remove(payload);
+    case 'mcpSetEnabled': return current.mcpDesktop.setEnabled(payload);
+    case 'mcpStart': return current.mcpDesktop.start(payload);
+    case 'mcpStop': return current.mcpDesktop.stop(payload);
+    case 'mcpRefresh': return current.mcpDesktop.refresh();
     case 'browserPluginsOverview': return current.browserPlugins.overview();
     case COMPUTER_USE_ACTIONS.overview: return current.computerUse.overview();
     case COMPUTER_USE_ACTIONS.connect: return current.computerUse.connect(payload);

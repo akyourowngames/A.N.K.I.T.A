@@ -9,6 +9,13 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **MCP servers in the desktop app.** Plugins now has an MCP tab beside Apps and
+  Skills. It searches the official MCP registry, installs a server from its pinned
+  command, and lists, enables, starts, stops and removes servers you add. Nothing
+  is executed until you confirm the exact command, and approval is tied to that
+  command. Remote-only registry entries are shown as unlaunchable rather than
+  silently failing, and the app's own browser and Computer Use servers stay hidden
+  from this page.
 - **One-time browser companion pairing.** Ankita can use an existing signed-in
   browser through its extension and reconnect after desktop, browser and worker
   restarts. Separate capture/control grants, pause/resume, revocation recovery,
@@ -69,6 +76,12 @@ not a new packaged release. Provider setup and the verification record are in th
 [voice guide](docs/guides/voice-delegation.md). Recognition and planner choices can
 still be wrong; an unfinished sentence can restart on resume. Generated-audio
 checks do not establish physical headset or installed-package acceptance.
+- **Modal voice planner (opt-in).** `VOICE_PROVIDER=modal` can point voice turns
+  at a Modal-hosted DeepSeek deployment, with `MODAL_PROXY_TOKEN_ID` and
+  `MODAL_PROXY_TOKEN_SECRET` joined into the bearer token. Voice keeps Baseten
+  as the default. Measured 2026-10-28: faster on short prompts, but slower on a
+  real 30-tool voice turn, so it stays opt-in
+  ([numbers](docs/voice-planner-benchmark-2026-10-28.md)).
 
 ## [2.7.1] - 2026-10-26
 

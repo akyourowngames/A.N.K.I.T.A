@@ -3,7 +3,7 @@ import path from 'node:path';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 
-const providers = new Set(['copilot', 'groq', 'kilo', 'custom', CHATGPT_BROWSER_PROVIDER]);
+const providers = new Set(['copilot', 'groq', 'kilo', 'custom', 'modal', CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -109,7 +109,7 @@ export function applyDesktopSettings(base, saved = {}) {
   }
   if (own(saved, 'imageApiBase')) config.imageApiBase = saved.imageApiBase || base.imageApiBase || '';
   if (own(saved, 'imageModel')) config.imageModel = saved.imageModel || base.imageModel || 'gpt-image-1';
-  if (config.provider === 'custom') {
+  if (config.provider === 'custom' || config.provider === 'modal') {
     if (own(saved, 'customApiBase')) config.apiBase = saved.customApiBase;
     if (own(saved, 'customApiKey')) config.apiKey = saved.customApiKey;
   } else if (config.provider === 'kilo' && own(saved, 'kiloApiKey')) {
@@ -218,7 +218,10 @@ export async function testCustomProvider({ apiBase, apiKey = '', fetchImpl = fet
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw new Error('Connection timed out after 8 seconds');
     throw new Error('Could not reach the provider. Check the URL and network.');
   }
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}. Check the URL and API key.`);
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Provider returned HTTP 401. Use the combined token `wk-<id>.ws-<secret>` (both parts, joined by a dot) and a URL ending in /v1.');
+    throw new Error(`Provider returned HTTP ${response.status}. Check the URL and API key.`);
+  }
   const body = await response.json().catch(() => null);
   if (!Array.isArray(body?.data)) throw new Error('The endpoint did not return a valid model list');
   return { ok: true, models: body.data.length, status: response.status };

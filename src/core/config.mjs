@@ -4,7 +4,7 @@ import path from "node:path";
 import { DEFAULT_SUMMARY_NOTE, DEFAULT_SARVAM_STT_MODEL, DEFAULT_SARVAM_STT_MODE, DEFAULT_SARVAM_TTS_MODEL, DEFAULT_SARVAM_SPEAKER_HI, DEFAULT_SARVAM_SPEAKER_EN, DEFAULT_SARVAM_TTS_LANGUAGE, parseKeyterms } from "../channels/voice.mjs";
 import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
 import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
-import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS } from './provider.mjs';
+import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS, MODAL_BASE_URL, MODAL_DEFAULT_MODEL, MODAL_DEFAULT_TOKENS, MODAL_MIN_TOKENS, MODAL_REASONING_EFFORT, MODAL_REASONING_LEVELS } from './provider.mjs';
 import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT } from '../automation/voice-task-policy.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
@@ -103,6 +103,7 @@ const DEFAULTS = {
   groqApiKey: "",
   sarvamApiKey: "",
   basetenApiKey: "",
+  modalApiKey: "",
   // Voice turns may use a different provider/model for latency; empty = same.
   voiceProvider: "",
   voiceModel: "",
@@ -394,6 +395,21 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     basetenReasoningEffort: (() => {
       const value = String(pick("BASETEN_REASONING_EFFORT") || '').trim().toLowerCase();
       return BASETEN_REASONING_LEVELS.includes(value) ? value : BASETEN_REASONING_EFFORT;
+    })(),
+    // Modal proxy auth arrives as two parts and is joined into the one bearer
+    // token the endpoint expects; a combined MODAL_PROXY_TOKEN wins so rotation
+    // needs a single variable.
+    modalApiKey: pick("MODAL_PROXY_TOKEN") || (() => {
+      const id = String(pick("MODAL_PROXY_TOKEN_ID") || '').trim();
+      const secret = String(pick("MODAL_PROXY_TOKEN_SECRET") || '').trim();
+      return id && secret ? `${id}.${secret}` : '';
+    })(),
+    modalBaseUrl: pick("MODAL_BASE_URL") || MODAL_BASE_URL,
+    modalModel: pick("MODAL_MODEL") || MODAL_DEFAULT_MODEL,
+    modalMaxTokens: Math.max(MODAL_MIN_TOKENS, posInt(pick("MODAL_MAX_TOKENS"), MODAL_DEFAULT_TOKENS)),
+    modalReasoningEffort: (() => {
+      const value = String(pick("MODAL_REASONING_EFFORT") || '').trim().toLowerCase();
+      return MODAL_REASONING_LEVELS.includes(value) ? value : MODAL_REASONING_EFFORT;
     })(),
     // A named provider preset for voice-only turns (see VOICE_PROVIDER).
     voiceProvider: (pick("VOICE_PROVIDER") || DEFAULTS.voiceProvider).trim().toLowerCase(),
