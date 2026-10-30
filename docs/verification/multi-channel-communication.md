@@ -153,3 +153,44 @@ physical speech, approved conversation-key semantics, a fourth connector and
 filesystem transactions. Ruling: these remain the explicit acceptance gaps and
 scope limits above. The two baseline suite failures were independently reproduced
 rather than silently set aside.
+
+## Startup regression repair, 30 October
+
+User reproduction: `desktop:dev` failed in the real Electron entry with
+`TypeError: Cannot read properties of null (reading 'channels')` from
+`environmentForConfig`, followed by `Desktop engine is not ready` IPC errors.
+The earlier fixtures injected config and therefore missed the default constructor
+path. A direct `new DesktopEngine()` reproduced the same stack before the fix.
+
+Root cause: the channel store captured configuration during construction even
+though the desktop intentionally loads it in `_init`. The environment adapter
+now accepts missing configuration and an optional getter; desktop supplies a
+getter for its current config. Field mappings are compiled once, so lookups do
+not repeatedly clone the registry or lose late-loaded environment values.
+
+Three regressions were observed failing, then passing: null/undefined config,
+late-loaded and changed config, and full desktop initialization without injected
+config. Final focused run: **41/41 pass** across channel config/contract/CLI host
+and desktop channels/settings. Exact direct reproduction after repair:
+
+```text
+DESKTOP_DEFAULT_CONSTRUCTION_OK
+```
+
+`node scripts/verify-channel-startup.mjs` also launched the actual Electron main,
+preload and renderer using isolated temporary profiles and a loopback model
+fixture, with channels disabled. Both real initialize/getChannels IPC round trips
+passed, including late-loaded channel config and a secret-free public view:
+
+```text
+CHANNEL_DESKTOP_STARTUP_OK: dev; actual Electron main/preload; initialize/getChannels IPC; late config; secret-safe view; no renderer errors.
+CHANNEL_DESKTOP_STARTUP_OK: built; actual Electron main/preload; initialize/getChannels IPC; late config; secret-safe view; no renderer errors.
+```
+
+The native verifier initially exposed a Windows fixture launch-path issue; its
+checkout argument is normalized before Electron launch. User profiles and the
+already-open app were left untouched. `git diff --check` passed; no new production
+paths, timeouts, credentials or dependencies were introduced. The full suite was
+not rerun for this bounded repair; earlier full-suite failures remain recorded
+above. A packaged installer was not tested. Restart the dev session to load the
+updated main process.

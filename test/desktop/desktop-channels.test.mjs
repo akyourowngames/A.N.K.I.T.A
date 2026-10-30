@@ -54,6 +54,23 @@ function readyChannel(t, { store, engine, bot, emit = () => {} }) {
   return channel;
 }
 
+test('desktop starts without injected config and channels use settings loaded during initialization', async t => {
+  const dir = tempDir(t), envPath = path.join(dir, 'config.env'), events = [];
+  fs.writeFileSync(envPath, 'TELEGRAM_BOT_TOKEN=late-telegram-fixture\nSLACK_BOT_TOKEN=late-slack-fixture\nTELEGRAM_ENABLED=off\nSLACK_ENABLED=off\n');
+  const engine = new DesktopEngine({ envPath, teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: path.join(dir, 'sessions'),
+    credentialFile: path.join(dir, 'credentials.json'), browserFile: path.join(dir, 'browser.json'), projectsFile: path.join(dir, 'projects.json'),
+    mcp: { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} },
+    bootstrap: async () => ({ client: {}, models: [], model: '', provider: { name: 'fixture' } }), emit: event => events.push(event),
+  });
+  t.after(() => engine.close());
+  assert.equal(engine.getChannels().channels.telegram.secrets.token, false);
+  await engine.init();
+  assert.equal(engine.channels.store.get('telegram').token === 'late-telegram-fixture', true);
+  assert.equal(engine.channels.store.get('slack').botToken === 'late-slack-fixture', true);
+  assert.equal(engine.getChannels().channels.telegram.status.running, false);
+  assert.equal(events.some(event => event.type === 'status' && event.phase === 'ready'), true);
+});
+
 test('channel store validates input and never returns the token', (t) => {
   const store = tempStore(t, { enabled: true, token: 'secret-token', allowedChatIds: '1 2', teammateId: 'chief', confirmTimeout: 120 });
   const fresh = new ChannelStore(store.file).load();

@@ -44,6 +44,9 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Desktop startup no longer crashes when channel setup is created before local
+  configuration finishes loading. Channel environment values are read from the
+  current configuration, including values loaded later or changed in Settings.
 - Voice device discovery and routing now run in one shared background worker,
   with cached scans and cheap app/island state snapshots. Opening Voice settings
   and testing speakers no longer block the desktop's main thread. Speaker replies

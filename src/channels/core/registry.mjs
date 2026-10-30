@@ -103,11 +103,15 @@ export class ChannelRegistry {
 export const defaultRegistry = new ChannelRegistry([telegramManifest, discordManifest, slackManifest]);
 
 export function environmentForConfig(config, registry = defaultRegistry) {
-  const values = {};
+  const fields = new Map();
   for (const manifest of registry.list()) for (const [key, field] of Object.entries(manifest.fields)) {
     if (!field.env) continue;
-    const value = config.channels?.[manifest.id]?.[key] ?? (field.configKey ? config[field.configKey] : undefined);
-    if (value != null) values[field.env] = value;
+    fields.set(field.env, { channel: manifest.id, key, configKey: field.configKey });
   }
-  return key => values[key];
+  // Desktop loads config after construction; retain a getter rather than an empty startup snapshot.
+  return name => {
+    const field = fields.get(name), current = typeof config === 'function' ? config() : config;
+    if (!field) return undefined;
+    return current?.channels?.[field.channel]?.[field.key] ?? (field.configKey ? current?.[field.configKey] : undefined);
+  };
 }

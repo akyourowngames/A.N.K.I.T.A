@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { loadConfig } from '../../src/core/config.mjs';
-import { ChannelRegistry, defaultRegistry } from '../../src/channels/core/registry.mjs';
+import { ChannelRegistry, defaultRegistry, environmentForConfig } from '../../src/channels/core/registry.mjs';
 
 test('configuration discovers new channel env fields from a registered descriptor', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'channel-env-'));
@@ -28,4 +28,22 @@ test('invalid channel env settings fail closed with a diagnostic instead of brea
   assert.equal(config.channels.telegram.enabled, false);
   assert.equal(config.telegramConfirmTimeout, 300);
   assert.equal(config.channelErrors.some(error => error.channel === 'telegram' && error.field === 'confirmTimeout'), true);
+});
+
+test('channel environment accepts configuration that has not loaded yet', () => {
+  for (const config of [null, undefined]) {
+    const env = environmentForConfig(config);
+    assert.equal(env('TELEGRAM_BOT_TOKEN'), undefined);
+    assert.equal(env('SLACK_BOT_TOKEN'), undefined);
+  }
+});
+
+test('channel environment reads late-loaded settings and later provider changes without rebuilding the store', () => {
+  let config = null;
+  const env = environmentForConfig(() => config);
+  assert.equal(env('TELEGRAM_BOT_TOKEN'), undefined);
+  config = { telegramBotToken: 'legacy-fixture', channels: { slack: { botToken: 'loaded-fixture' } } };
+  assert.equal(env('TELEGRAM_BOT_TOKEN'), 'legacy-fixture'); assert.equal(env('SLACK_BOT_TOKEN'), 'loaded-fixture');
+  config = { channels: { telegram: { token: '' }, slack: { botToken: 'updated-fixture' } }, telegramBotToken: 'legacy-fixture' };
+  assert.equal(env('TELEGRAM_BOT_TOKEN'), ''); assert.equal(env('SLACK_BOT_TOKEN'), 'updated-fixture');
 });

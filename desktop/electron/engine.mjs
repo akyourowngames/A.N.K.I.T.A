@@ -364,7 +364,7 @@ export class DesktopEngine {
     });
     this.computerUse = new DesktopComputerUse({ mcp: this.mcp, onChange: () => this.emit({ type: COMPUTER_USE_CHANGED }) });
     this.channels = new ChannelManager({
-      store: new ChannelStore(channelsFile, { env: environmentForConfig(config) }),
+      store: new ChannelStore(channelsFile, { env: environmentForConfig(() => this.config) }),
       engine: this,
       getConfig: () => this.config || {},
       emit: event => this.emit(event),
