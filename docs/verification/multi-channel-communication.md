@@ -121,7 +121,8 @@ additional platforms are isolated. Slack uses the official external upload flow:
 
 The whole serial suite was not rerun after the final fixes: the final affected
 checks cover their changed paths, while the two demonstrated baseline failures
-remain reported. No assertion that the entire repository is green is made.
+were initially reported. The saved-provider follow-up below resolves both. No
+assertion that the entire repository is green is made.
 
 ## Fresh review and fixes
 
@@ -194,3 +195,62 @@ paths, timeouts, credentials or dependencies were introduced. The full suite was
 not rerun for this bounded repair; earlier full-suite failures remain recorded
 above. A packaged installer was not tested. Restart the dev session to load the
 updated main process.
+
+## Saved-provider startup follow-up, 30 October
+
+The user's next real launch exposed a second issue:
+`Choose a supported provider` at `DesktopSettingsStore.load`.
+Read-only inspection found a provider saved by a newer build, with an existing
+compatible endpoint/key/model. The branch did not support that provider name.
+The earlier isolated Custom profile proved the channel constructor repair, but
+did not cover this saved-profile compatibility failure.
+
+The exact saved-profile load reproduced
+`SAVED_PROFILE_LOAD_FAILED: Choose a supported provider`. Two added regressions
+then failed with the same stack (**16 pass, 2 fail** in the settings file).
+Loading now normalizes an unknown saved provider to the existing Custom route
+in memory, retaining only the already-saved compatible connection. A missing
+endpoint leaves setup reachable and clears inherited env endpoint/credentials;
+it never switches to a different service. The public Settings view shows an
+explanation without returning secrets. Loading does not write the file, later
+saves retain unknown saved fields privately, and explicit unsupported updates
+remain rejected.
+
+Final focused command:
+
+```text
+node --test --test-concurrency=1 test/desktop/desktop-settings.test.mjs test/desktop/desktop.test.mjs test/desktop/settings-providers-ui.test.mjs test/channels/channel-config.test.mjs test/desktop/desktop-channels.test.mjs
+40 tests; 40 pass; 0 fail; 0 skipped; 14.583 seconds.
+```
+
+Both previously reported machine-profile failures in
+`test/desktop/desktop.test.mjs` now pass. The same read-only load reports:
+
+```text
+SAVED_PROFILE_LOAD_OK
+```
+
+The native verifier now covers an unknown-provider loopback fixture by default.
+An explicit `node scripts/verify-channel-startup.mjs --saved-settings` copies
+the existing profile from the detected config directory into a private temporary
+profile for each launch. It never prints its endpoint, key or model. Real main,
+preload, renderer, initialize/getChannels IPC, model discovery and the visible
+Settings notice passed for dev and built assets, both for the fixture and the
+exact saved-profile copy. No completion inference or external messages were
+requested. The final exact-copy run printed:
+
+```text
+SAVED_PROVIDER_STARTUP_OK: dev; exact saved-profile copy; compatible endpoint/model/credential retained; model discovery; Settings notice visible.
+SAVED_PROVIDER_STARTUP_OK: built; exact saved-profile copy; compatible endpoint/model/credential retained; model discovery; Settings notice visible.
+SAVED_PROFILE_UNCHANGED: original settings are byte-for-byte intact.
+```
+
+Desktop typecheck and Vite build passed (**408 modules**, 12.10 seconds).
+The saved-profile model connection was exercised for discovery, not a generated
+reply. The whole repository suite and a packaged installer were not rerun for
+this bounded fix. No release, merge or push was performed. Restart the running
+dev session to load the updated main process.
+
+Final whitespace check passed. Production literal review found only named
+compatibility constants, existing protocol/settings keys and interface text; no
+new endpoint, model, path, credential, timeout or dependency was added.

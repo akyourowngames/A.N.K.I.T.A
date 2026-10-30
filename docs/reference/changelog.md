@@ -7,6 +7,17 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Saved-provider startup compatibility
+
+A saved provider from a newer build no longer prevents the desktop from opening.
+When a compatible connection was already saved, this build reuses its endpoint,
+key and model through Custom. Otherwise Settings stays reachable for setup,
+without selecting a replacement service. Loading leaves the original profile
+unchanged; later saves preserve unknown fields privately. Unsupported new
+provider selections remain rejected. The verification record includes native
+dev and built-renderer launches using an exact private copy of the failing
+profile, with successful model discovery and a visible Settings notice.
+
 ### Shared local chat channels
 
 Telegram desktop and terminal inboxes now share a manifest-driven channel core

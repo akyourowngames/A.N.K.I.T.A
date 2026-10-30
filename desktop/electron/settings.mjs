@@ -3,7 +3,10 @@ import path from 'node:path';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 
-const providers = new Set(['copilot', 'groq', 'kilo', 'custom', CHATGPT_BROWSER_PROVIDER]);
+const COMPATIBLE_PROVIDER = 'custom'; // Existing OpenAI-compatible route for a saved provider from a newer build.
+const PROVIDER_COMPATIBILITY_NOTICE = 'Your saved provider is newer than this build. Using its saved compatible connection through Custom.';
+const PROVIDER_SETUP_NOTICE = 'Your saved provider is newer than this build. Open Settings / Providers to connect it; no replacement service was selected.';
+const providers = new Set(['copilot', 'groq', 'kilo', COMPATIBLE_PROVIDER, CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
@@ -109,7 +112,7 @@ export function applyDesktopSettings(base, saved = {}) {
   }
   if (own(saved, 'imageApiBase')) config.imageApiBase = saved.imageApiBase || base.imageApiBase || '';
   if (own(saved, 'imageModel')) config.imageModel = saved.imageModel || base.imageModel || 'gpt-image-1';
-  if (config.provider === 'custom') {
+  if (config.provider === COMPATIBLE_PROVIDER) {
     if (own(saved, 'customApiBase')) config.apiBase = saved.customApiBase;
     if (own(saved, 'customApiKey')) config.apiKey = saved.customApiKey;
   } else if (config.provider === 'kilo' && own(saved, 'kiloApiKey')) {
@@ -143,12 +146,21 @@ export function seedFreshDesktopProvider(settings, teammatesFile, baseConfig, in
 }
 
 export class DesktopSettingsStore {
-  constructor(file) { this.file = file; this.data = {}; }
+  constructor(file) { this.file = file; this.data = {}; this.preserved = {}; this.providerNotice = null; }
 
   load() {
+    this.preserved = {};
+    this.providerNotice = null;
     try {
       const parsed = JSON.parse(fs.readFileSync(this.file, 'utf8'));
-      this.data = validatePatch(parsed.settings || {});
+      const saved = parsed.settings || {};
+      // Loading an older build must not lock the user out of Settings. Reuse only
+      // an explicitly saved compatible endpoint; applyDesktopSettings clears env
+      // credentials so an absent endpoint cannot silently choose another service.
+      const compatible = typeof saved.provider === 'string' && !providers.has(saved.provider);
+      this.data = validatePatch(compatible ? { ...saved, provider: COMPATIBLE_PROVIDER } : saved);
+      this.preserved = Object.fromEntries(Object.entries(saved).filter(([key]) => !keys.has(key)));
+      if (compatible) this.providerNotice = this.data.customApiBase ? PROVIDER_COMPATIBILITY_NOTICE : PROVIDER_SETUP_NOTICE;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
       this.data = {};
@@ -162,7 +174,7 @@ export class DesktopSettingsStore {
     fs.mkdirSync(path.dirname(this.file), { recursive: true });
     const temp = path.join(path.dirname(this.file), `.${path.basename(this.file)}.${process.pid}.tmp`);
     try {
-      fs.writeFileSync(temp, JSON.stringify({ version: 1, settings: next }, null, 2), { mode: 0o600 });
+      fs.writeFileSync(temp, JSON.stringify({ version: 1, settings: { ...this.preserved, ...next } }, null, 2), { mode: 0o600 });
       fs.renameSync(temp, this.file);
       try { fs.chmodSync(this.file, 0o600); } catch { /* Windows may ignore mode changes. */ }
     } finally {
@@ -175,16 +187,17 @@ export class DesktopSettingsStore {
   update(patch) { return this.save(this.preview(patch)); }
 
   publicView(config) {
-    const provider = this.data.provider || (config.apiBase && !['groq', 'kilo'].includes(config.provider) ? 'custom' : config.provider || 'copilot');
+    const provider = this.data.provider || (config.apiBase && !['groq', 'kilo'].includes(config.provider) ? COMPATIBLE_PROVIDER : config.provider || 'copilot');
     return {
       provider,
+      providerNotice: provider === COMPATIBLE_PROVIDER ? this.providerNotice : null,
       model: this.data.model || config.model || '',
       username: this.data.username || config.username || '',
       timeZone: this.data.timeZone || config.timeZone || '',
       profileSetupDone: Boolean(this.data.profileSetupDone),
       secretScrubbing: this.data.secretScrubbing !== false,
       secretWarningSeen: this.data.secretWarningSeen === true,
-      customApiBase: this.data.customApiBase || (provider === 'custom' ? config.apiBase || '' : ''),
+      customApiBase: this.data.customApiBase || (provider === COMPATIBLE_PROVIDER ? config.apiBase || '' : ''),
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,
       maxTokens: this.data.maxTokens || 0,
@@ -193,7 +206,7 @@ export class DesktopSettingsStore {
       hasImageApiKey: Boolean(this.data.imageApiKey || config.imageApiKey),
       hasUnsplashAccessKey: Boolean(this.data.unsplashAccessKey || config.unsplashAccessKey),
       hasPixabayApiKey: Boolean(this.data.pixabayApiKey || config.pixabayApiKey),
-      hasCustomApiKey: Boolean(this.data.customApiKey || (provider === 'custom' && config.apiKey)),
+      hasCustomApiKey: Boolean(this.data.customApiKey || (provider === COMPATIBLE_PROVIDER && config.apiKey)),
       hasGroqKey: Boolean(own(this.data, 'groqApiKey') ? this.data.groqApiKey : config.groqApiKey),
       hasKiloKey: Boolean(this.data.kiloApiKey || (provider === 'kilo' && config.apiKey)),
       hasComposioKey: Boolean(own(this.data, 'composioApiKey') ? this.data.composioApiKey : config.composioApiKey),

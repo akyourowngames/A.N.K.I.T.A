@@ -14,6 +14,7 @@ export type DesktopSkill = { name: string; description: string; suggestedTools: 
 export type DesktopPreferences = {
   hasSarvamKey?: boolean; hasBasetenKey?: boolean; micDevice?: string; voiceOutputDevice?: string;
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
+  providerNotice?: string | null;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
   imageApiBase: string; imageModel: string;

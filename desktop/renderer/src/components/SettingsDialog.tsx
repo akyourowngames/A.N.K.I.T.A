@@ -232,6 +232,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
           </div>}
           {tab === 'providers' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="key" size={20} /></span><h1 id="settings-title">Providers</h1><p>Connect a model provider and manage keys for connected apps.</p></div>
+            {preferences.providerNotice && <p className="settings-help" role="status">{preferences.providerNotice}</p>}
             <h2 className="settings-section-title">Model provider</h2>
             <div className="settings-provider-grid">{providers.map(item => <button type="button" key={item.id} className={`settings-provider-card ${draft.provider === item.id ? 'active' : ''}`} aria-pressed={draft.provider === item.id} onClick={() => { set('provider', item.id); setTestResult(null); }}><span className="settings-provider-radio" /><strong>{item.name}</strong><small>{item.detail}</small></button>)}</div>
             {draft.provider !== CHATGPT_BROWSER_PROVIDER && <div className="settings-panel settings-provider-detail">

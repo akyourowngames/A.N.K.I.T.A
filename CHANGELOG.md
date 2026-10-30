@@ -44,6 +44,10 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Desktop can open settings saved with a newer model provider. This build uses
+  only the already-saved compatible connection through Custom, explains the
+  fallback in Settings and preserves unrecognized saved fields privately. Loading
+  does not rewrite the profile; new unsupported provider choices still fail.
 - Desktop startup no longer crashes when channel setup is created before local
   configuration finishes loading. Channel environment values are read from the
   current configuration, including values loaded later or changed in Settings.
