@@ -75,7 +75,7 @@ export default function App() {
   }, [state.selectedId]);
   const endVoice = useCallback(() => { setVoiceOpen(false); void voice.end(); }, [voice.act]);
   const startVoice = () => { if (state.selectedId) { setVoiceOpen(true); void voice.start(state.selectedId); } };
-  const [pluginsSection, setPluginsSection] = useState<'apps' | 'skills'>('apps');
+  const [pluginsSection, setPluginsSection] = useState<'apps' | 'skills' | 'mcp'>('apps');
   const [projects, setProjects] = useState<Project[]>([]);
   const [reviewOpen, setReviewOpen] = useState(false);
   const [subagentFocus, setSubagentFocus] = useState<string | null>(null);

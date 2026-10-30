@@ -9,6 +9,13 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **MCP servers in the desktop app.** Plugins now has an MCP tab beside Apps and
+  Skills. It searches the official MCP registry, installs a server from its pinned
+  command, and lists, enables, starts, stops and removes servers you add. Nothing
+  is executed until you confirm the exact command, and approval is tied to that
+  command. Remote-only registry entries are shown as unlaunchable rather than
+  silently failing, and the app's own browser and Computer Use servers stay hidden
+  from this page.
 - **One-time browser companion pairing.** Ankita can use an existing signed-in
   browser through its extension and reconnect after desktop, browser and worker
   restarts. Separate capture/control grants, pause/resume, revocation recovery,
