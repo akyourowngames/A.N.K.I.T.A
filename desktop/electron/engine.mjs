@@ -39,7 +39,8 @@ import { voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VOICE_TASK_DIRECTORY } from '../../src/automation/voice-task-policy.mjs';
 import { emptyVoiceState, VOICE_API_REQUIRED_MESSAGE } from '../shared/voice.mjs';
 import { ChannelStore, ChannelManager } from './channels.mjs';
-import { TelegramBot } from '../../src/channels/telegram.mjs';
+import { environmentForConfig } from '../../src/channels/core/registry.mjs';
+import { CHANNEL_SETTINGS_FILE } from '../../src/channels/core/contract.mjs';
 import { DesktopPlugins } from './plugins.mjs';
 import { DesktopBrowserPlugins } from './browser-plugins.mjs';
 import { DesktopComputerUse } from './computer-use.mjs';
@@ -257,11 +258,14 @@ function attachmentNames(content) {
   return names;
 }
 
+const ACTIVE_PROVIDER_CHANGE_MESSAGE = 'Wait for active replies to finish before changing the provider or model'; // One guard message before and after asynchronous provider setup.
+const CHANNEL_SCOPE_SETTINGS = Object.freeze(['projectId', 'model']); // Changes that must wait for the selected teammate's channel work.
+
 export class DesktopEngine {
   constructor({
     teammateFile = path.join(CONFIG_DIR, 'desktop-teammates.json'),
     settingsFile = path.join(CONFIG_DIR, 'desktop-settings.json'),
-    channelsFile = path.join(CONFIG_DIR, 'desktop-channels.json'),
+    channelsFile = path.join(CONFIG_DIR, CHANNEL_SETTINGS_FILE),
     composioFile = COMPOSIO_FILE,
     composioGrantsFile = COMPOSIO_GRANTS_FILE,
     openExternal = null,
@@ -360,7 +364,7 @@ export class DesktopEngine {
     });
     this.computerUse = new DesktopComputerUse({ mcp: this.mcp, onChange: () => this.emit({ type: COMPUTER_USE_CHANGED }) });
     this.channels = new ChannelManager({
-      store: new ChannelStore(channelsFile),
+      store: new ChannelStore(channelsFile, { env: environmentForConfig(() => this.config) }),
       engine: this,
       getConfig: () => this.config || {},
       emit: event => this.emit(event),
@@ -558,9 +562,12 @@ export class DesktopEngine {
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
     const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
     if ((voiceSetupChanged || reconnect || tune || Object.hasOwn(patch, 'model')) && this._voice?.snapshot().active) throw new Error('End voice before changing its setup or provider.');
-    if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
+    const replying = () => this.turns.size || this.channels?.hasWork?.() || this.channels?.surface?.busy?.();
+    if ((reconnect || Object.hasOwn(patch, 'model') || tune) && replying()) throw new Error(ACTIVE_PROVIDER_CHANGE_MESSAGE);
     if (reconnect) {
       const session = await this.connectProvider(nextConfig);
+      if (replying()) throw new Error(ACTIVE_PROVIDER_CHANGE_MESSAGE);
+      await this.channels?.stopAll?.();
       this.desktopSettings.save(next);
       await this.activateBrowserProvider(session.browser);
       this.config = nextConfig;
@@ -598,6 +605,8 @@ export class DesktopEngine {
         agent.contextWindow = nextConfig.contextWindow;
       }
     }
+    if (reconnect || tune || Object.hasOwn(patch, 'model')) this.channels?.surface?.invalidate?.();
+    if (reconnect && this.channels?.startEnabled) void this.channels.startEnabled().catch(error => this.emit({ type: 'error', threadId: null, message: error.message }));
     if (Object.hasOwn(patch, 'composioApiKey')) {
       this.config.composioApiKey = nextConfig.composioApiKey;
       void this.connectTools();
@@ -621,21 +630,19 @@ export class DesktopEngine {
   getChannels() { return this.channels.publicView(); }
 
   async saveChannelSettings(channel, patch) {
-    if (channel !== 'telegram') throw new Error('Unknown channel');
-    const next = this.channels.store.preview(patch).telegram;
+    const next = this.channels.store.preview(channel, patch)[channel];
     if (next.teammateId && !this.teammates.find(next.teammateId)) throw new Error('Choose an available teammate');
-    const view = await this.channels.save(patch);
+    const view = await this.channels.save(channel, patch);
     return view;
   }
 
   /** Verifies a bot token without persisting it or starting the bridge. */
   async testTelegramChannel(input = {}) {
-    const token = String(input.token || '').trim() || this.channels.store.telegram().token;
-    if (!token) throw new Error('Enter a bot token first');
-    const bot = (this.telegramBotFactory || (options => new TelegramBot(options)))({ token });
-    const me = await bot.whoami();
-    return { username: me?.username || null, name: [me?.first_name, me?.last_name].filter(Boolean).join(' ') || null };
+    return this.testChannel('telegram', input.token ? input : {});
   }
+
+  testChannel(channel, input = {}) { return this.channels.verify(channel, input); }
+  createChannelPairing(channel, senderId) { return this.channels.createPairing(channel, senderId); }
 
   listModels() { return (this.models || []).map(({ id, name, vendor, context, tools }) => ({ id, name, vendor, context, tools })); }
   getStartupProfile() { loadSkills(); return startupProfile.format(); }
@@ -648,11 +655,12 @@ export class DesktopEngine {
     const skill = loadSkills().find(item => item.name === name);
     if (!skill) throw new Error('Skill not found');
     if (typeof enabled !== 'boolean') throw new Error('Choose whether to enable this skill');
-    if (this.turns.size) throw new Error('Wait for active replies to finish before changing skills');
+    if (this.turns.size || this.channels?.surface?.busy?.()) throw new Error('Wait for active replies to finish before changing skills');
     const disabled = new Set(this.desktopSettings.data.disabledSkills || []);
     if (enabled) disabled.delete(name);
     else disabled.add(name);
     this.desktopSettings.update({ disabledSkills: [...disabled] });
+    this.channels?.surface?.invalidate?.();
     for (const agent of this.agents.values()) {
       if (agent.disabledSkills instanceof Set) {
         agent.disabledSkills = new Set(disabled);
@@ -794,9 +802,11 @@ export class DesktopEngine {
   }
   updateTeammate(id, patch) {
     if (this.turns.has(id) && Object.hasOwn(patch, 'projectId')) throw new Error('Wait for this reply to finish before switching projects');
+    if (this.channels?.surface?.busy?.(id) && CHANNEL_SCOPE_SETTINGS.some(key => Object.hasOwn(patch, key))) throw new Error('Wait for this teammate’s channel replies before changing its project or model');
     const project = patch.projectId ? new ProjectStore(this.projectsFile).load().find(patch.projectId) : null;
     if (patch.projectId && !project) throw new Error('Project not found');
     const item = this.teammates.update(id, patch);
+    this.channels?.surface?.invalidate?.(id);
     const agent = this.agents.get(id);
     if (agent) {
       agent.config.agentName = item.name;
@@ -1363,7 +1373,7 @@ export class DesktopEngine {
     const entry = this.approvals.pending.get(requestId);
     if (!entry) return false;
     if (answer === 'always') {
-      const agent = this.agents.get(entry.threadId);
+      const agent = this.agents.get(entry.threadId) || this.channels?.surface?.agents?.get(entry.threadId);
       if (agent) agent.autoApprove = true;
       else if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) {
         this.browserAutomaticThreads ??= new Set();

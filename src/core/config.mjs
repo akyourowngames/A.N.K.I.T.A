@@ -6,6 +6,8 @@ import { SUBAGENT_DEFAULTS, SUBAGENT_LIMITS } from "./subagents/registry.mjs";
 import { HEARTBEAT_COOLDOWN_MINUTES, HEARTBEAT_DAILY_LIMIT } from "../automation/job-policy.mjs";
 import { BASETEN_BASE_URL, BASETEN_DEFAULT_MODEL, BASETEN_DEFAULT_TOKENS, BASETEN_MIN_TOKENS, BASETEN_REASONING_EFFORT, BASETEN_REASONING_LEVELS } from './provider.mjs';
 import { VOICE_TASK_LIMIT, VOICE_JOB_SPEAK_MIN_INTERVAL_MS, VOICE_SPEECH_GAP_MS, VOICE_JOB_WAIT_UPDATE_MS, VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT } from '../automation/voice-task-policy.mjs';
+import { defaultRegistry } from '../channels/core/registry.mjs';
+import { CHANNEL_SETTINGS_FILE } from '../channels/core/contract.mjs';
 
 export const CONFIG_DIR = process.env.CONFIG_DIR || path.join(os.homedir(), ".copilot-chat-cli");
 export const GLOBAL_ENV_FILE = path.join(CONFIG_DIR, "config.env");
@@ -25,6 +27,7 @@ export const MCP_TIERS_FILE = path.join(CONFIG_DIR, "mcp-tiers.json");
 export const COMPOSIO_FILE = path.join(CONFIG_DIR, "composio.json");
 export const COMPOSIO_GRANTS_FILE = path.join(CONFIG_DIR, "composio-grants.json");
 export const DAEMON_LOG = path.join(CONFIG_DIR, "daemon.log");
+export const CHANNELS_FILE = path.join(CONFIG_DIR, CHANNEL_SETTINGS_FILE);
 export const DEFAULT_TOOL_OUTPUT_BYTES = 64 * 1024; // UTF-8 bytes/tool reply; shared by config and bounded observation formatting.
 
 const DEFAULTS = {
@@ -88,11 +91,7 @@ const DEFAULTS = {
   jinaFallback: true,
   allowPrivateHosts: false,
   pythonBin: "",
-  telegramBotToken: "",
-  telegramChatId: "",
-  telegramAllowedChatIds: "",
-  telegramVoiceReply: false,
-  telegramConfirmTimeout: 300,
+  ...defaultRegistry.legacyDefaults(),
   daemonTick: 20,
   maxConcurrent: 4,
   watchAlertLlm: true,
@@ -209,7 +208,7 @@ function readVars(file) {
  * (File settings beat process.env because Windows already defines USERNAME
  * for the OS account, which would otherwise shadow the user's .env.)
  */
-export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalEnvFile = GLOBAL_ENV_FILE } = {}) {
+export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalEnvFile = GLOBAL_ENV_FILE, channelRegistry = defaultRegistry } = {}) {
   // Read-only provider/config source override for hermetic callers. Runtime storage
   // remains bound to CONFIG_DIR; no credentials are copied into test artifacts.
   const global = readVars(globalEnvFile);
@@ -234,8 +233,12 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     DEFAULTS.historyMessages
   );
 
+  const channelConfig = channelRegistry.environment(pick);
   return {
     envPath: project.path,
+    channels: channelConfig.channels,
+    channelErrors: channelConfig.errors,
+    ...channelConfig.aliases,
     envFiles: [global.path, project.path].filter(Boolean),
     globalEnvPath: global.path,
     username: pick("USERNAME") || DEFAULTS.username,
@@ -325,11 +328,6 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     // Opt-in: lets web tools reach loopback/LAN, e.g. your own dev dashboard.
     allowPrivateHosts: onOff(pick("ALLOW_PRIVATE_HOSTS"), false),
     pythonBin: pick("PYTHON_BIN") || "",
-    telegramBotToken: pick("TELEGRAM_BOT_TOKEN") || "",
-    telegramChatId: pick("TELEGRAM_CHAT_ID") || "",
-    telegramAllowedChatIds: pick("TELEGRAM_ALLOWED_CHAT_IDS") || pick("TELEGRAM_CHAT_ID") || "",
-    telegramVoiceReply: onOff(pick("TELEGRAM_VOICE_REPLY"), false),
-    telegramConfirmTimeout: posInt(pick("TELEGRAM_CONFIRM_TIMEOUT"), 300),
     maxConcurrent: Math.min(12, posInt(pick("MAX_CONCURRENT"), 4)),
     watchAlertLlm: onOff(pick("WATCH_ALERT_LLM"), true),
     watchAlertPrompt: pick("WATCH_ALERT_PROMPT") || "",

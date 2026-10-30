@@ -27,8 +27,8 @@ class StubBot {
   async sendTyping(chatId) { this.typing.push(chatId); }
   async sendVoice(chatId) { this.voices.push(chatId); }
   async react(chatId, messageId, emoji) { this.reactions.push({ chatId, messageId, emoji }); }
-  async sendPhoto(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'photo', after: this.sent.length }); }
-  async sendDocument(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'document', after: this.sent.length }); }
+  async sendPhoto(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'photo', after: this.sent.length }); return { message_id: this.files.length }; }
+  async sendDocument(chatId, bytes, options) { this.files.push({ chatId, bytes, options, kind: 'document', after: this.sent.length }); return { message_id: this.files.length }; }
   async download() { return Buffer.from('audio'); }
 }
 
@@ -53,6 +53,23 @@ function readyChannel(t, { store, engine, bot, emit = () => {} }) {
   channel.offsetReady = true;
   return channel;
 }
+
+test('desktop starts without injected config and channels use settings loaded during initialization', async t => {
+  const dir = tempDir(t), envPath = path.join(dir, 'config.env'), events = [];
+  fs.writeFileSync(envPath, 'TELEGRAM_BOT_TOKEN=late-telegram-fixture\nSLACK_BOT_TOKEN=late-slack-fixture\nTELEGRAM_ENABLED=off\nSLACK_ENABLED=off\n');
+  const engine = new DesktopEngine({ envPath, teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: path.join(dir, 'sessions'),
+    credentialFile: path.join(dir, 'credentials.json'), browserFile: path.join(dir, 'browser.json'), projectsFile: path.join(dir, 'projects.json'),
+    mcp: { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} },
+    bootstrap: async () => ({ client: {}, models: [], model: '', provider: { name: 'fixture' } }), emit: event => events.push(event),
+  });
+  t.after(() => engine.close());
+  assert.equal(engine.getChannels().channels.telegram.secrets.token, false);
+  await engine.init();
+  assert.equal(engine.channels.store.get('telegram').token === 'late-telegram-fixture', true);
+  assert.equal(engine.channels.store.get('slack').botToken === 'late-slack-fixture', true);
+  assert.equal(engine.getChannels().channels.telegram.status.running, false);
+  assert.equal(events.some(event => event.type === 'status' && event.phase === 'ready'), true);
+});
 
 test('channel store validates input and never returns the token', (t) => {
   const store = tempStore(t, { enabled: true, token: 'secret-token', allowedChatIds: '1 2', teammateId: 'chief', confirmTimeout: 120 });
@@ -151,10 +168,10 @@ test('saving channel settings reconnects and emits the new view without the toke
   const events = [];
   const manager = new ChannelManager({ store, engine: {}, emit: event => events.push(event), botFactory: () => bot });
   manager.load();
-  const view = await manager.save({ enabled: true, token: 'tok', allowedChatIds: '42', teammateId: 'chief' });
-  assert.equal(view.telegram.enabled, true);
-  assert.equal(view.telegram.status.running, true);
-  assert.equal(JSON.stringify(view).includes('tok'), false);
+  const view = await manager.save({ enabled: true, token: 'private-manager-token', allowedChatIds: '42', teammateId: 'chief' });
+  assert.equal(view.channels.telegram.enabled, true);
+  assert.equal(view.channels.telegram.status.running, true);
+  assert.equal(JSON.stringify(view).includes('private-manager-token'), false);
   assert.equal(events.some(event => event.type === 'channels-updated'), true);
   await manager.stopAll();
 });
@@ -174,13 +191,14 @@ test('the desktop engine starts an enabled channel and rejects an unknown teamma
     telegramBotFactory: () => bot,
     emit: event => events.push(event),
   });
+  t.after(() => engine.close());
   await engine.init();
   const teammate = engine.createTeammate({ name: 'Chief', persona: '', color: '#22d3ee', emoji: '🧭' });
   await assert.rejects(engine.saveChannelSettings('telegram', { teammateId: 'missing' }), /available teammate/);
-  const view = await engine.saveChannelSettings('telegram', { enabled: true, token: 'secret', allowedChatIds: '42', teammateId: teammate.id });
-  assert.equal(view.telegram.status.running, true);
-  assert.equal(view.telegram.teammateId, teammate.id);
-  assert.equal(JSON.stringify(view).includes('secret'), false);
+  const view = await engine.saveChannelSettings('telegram', { enabled: true, token: 'private-engine-token', allowedChatIds: '42', teammateId: teammate.id });
+  assert.equal(view.channels.telegram.status.running, true);
+  assert.equal(view.channels.telegram.teammateId, teammate.id);
+  assert.equal(JSON.stringify(view).includes('private-engine-token'), false);
   assert.equal(events.some(event => event.type === 'channels-updated'), true);
   await engine.close();
 });

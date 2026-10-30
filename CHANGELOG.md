@@ -9,6 +9,14 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Shared chat channels (source).** Telegram, Discord Gateway and Slack Socket
+  Mode use one local policy, inbox, progress and delivery core. Settings and
+  terminal `/channels` are generated from channel descriptions, with masked key
+  replacement, connection tests and optional owner-issued pairing. Private
+  owner approvals, isolated additional-platform/group histories, durable send
+  receipts and cancellation protect concurrent conversations. No new SDK or
+  hosted relay is required. See [setup](docs/guides/channels.md) and
+  [evidence and real-account gaps](docs/verification/multi-channel-communication.md).
 - **One-time browser companion pairing.** Ankita can use an existing signed-in
   browser through its extension and reconnect after desktop, browser and worker
   restarts. Separate capture/control grants, pause/resume, revocation recovery,
@@ -36,6 +44,13 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Fixed
 
+- Desktop can open settings saved with a newer model provider. This build uses
+  only the already-saved compatible connection through Custom, explains the
+  fallback in Settings and preserves unrecognized saved fields privately. Loading
+  does not rewrite the profile; new unsupported provider choices still fail.
+- Desktop startup no longer crashes when channel setup is created before local
+  configuration finishes loading. Channel environment values are read from the
+  current configuration, including values loaded later or changed in Settings.
 - Voice device discovery and routing now run in one shared background worker,
   with cached scans and cheap app/island state snapshots. Opening Voice settings
   and testing speakers no longer block the desktop's main thread. Speaker replies

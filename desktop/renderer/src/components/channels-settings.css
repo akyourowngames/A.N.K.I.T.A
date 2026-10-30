@@ -1,0 +1,45 @@
+/* Reuse the app palette/type; spacing is in CSS pixels and controls wrap by content. */
+.channels-settings { --channels-gap: 16px; --channels-control-min: 190px; --channels-transition: 140ms; }
+.channels-picker { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr)); gap: 8px; margin-bottom: 24px; }
+.channels-choice { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 14px 12px; border: 1px solid var(--edge); border-radius: 10px; background: transparent; color: var(--text-dim); text-align: left; transition: border-color var(--channels-transition), background var(--channels-transition); }
+.channels-choice:hover, .channels-choice.is-selected { background: var(--surface); border-color: var(--edge-strong); color: var(--text); }
+.channels-choice:focus-visible { outline: 2px solid var(--gold); outline-offset: 3px; }
+.channels-monogram { display: grid; place-items: center; flex: 0 0 30px; height: 32px; border: 1px solid var(--edge); border-radius: 9px; color: var(--text); font-size: 17px; font-weight: 600; }
+.channels-choice-copy { display: flex; flex: 1; flex-direction: column; gap: 4px; min-width: 0; }
+.channels-choice-copy strong { font-size: 12px; font-weight: 600; overflow-wrap: anywhere; }
+.channels-choice-copy small { font-size: 10px; color: var(--text-dim); }
+.channels-dot { width: 5px; height: 5px; flex: 0 0 5px; border-radius: 50%; background: var(--text-dim); }
+.channels-dot.is-live { background: var(--success); }
+.channels-form { min-width: 0; }
+.channels-form-heading { display: flex; align-items: flex-start; gap: var(--channels-gap); justify-content: space-between; margin-bottom: 12px; }
+.channels-form-heading > div { min-width: 0; }
+.channels-form-heading p { margin: 7px 0 0; color: var(--text-dim); font-size: 12px; line-height: 1.6; }
+.channels-capabilities { display: flex; flex-wrap: wrap; gap: 6px 12px; margin: 0 0 12px; color: var(--text-dim); font-size: 10px; }
+.channels-capabilities span::before { content: '·'; margin-right: 5px; }
+.channels-setup-link { display: inline-flex; align-items: center; gap: 5px; margin-bottom: 18px; }
+.channels-form fieldset { min-width: 0; border: 0; padding: 0; margin: 0; }
+.channels-form-section { border-top: 1px solid var(--edge); padding-block: 20px 4px; }
+.channels-form-section h3 { margin: 0 0 14px; color: var(--text); font-size: 12px; font-weight: 600; }
+.channels-field-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, var(--channels-control-min)), 1fr)); column-gap: var(--channels-gap); }
+.channels-field-grid > * { min-width: 0; }
+.channels-secret-field, .channels-toggle { grid-column: 1 / -1; }
+.channels-form .settings-field { margin-bottom: 18px; }
+.channels-form input, .channels-form select { min-width: 0; width: 100%; }
+.channels-form .settings-switch-row input { width: auto; }
+.channels-form label, .channels-form small, .channels-form .settings-field-heading { overflow-wrap: anywhere; }
+.channels-private-note { display: flex; align-items: flex-start; gap: 8px; padding: 12px 0; margin: 0; color: var(--text-dim); font-size: 11px; line-height: 1.6; }
+.channels-private-note svg { flex-shrink: 0; margin-top: 2px; }
+.channels-advanced { border-top: 1px solid var(--edge); margin-top: 8px; }
+.channels-advanced summary { display: flex; align-items: center; justify-content: space-between; list-style: none; padding: 17px 0; color: var(--text-dim); font-size: 12px; cursor: pointer; }
+.channels-advanced summary::-webkit-details-marker { display: none; }
+.channels-advanced[open] summary svg { transform: rotate(180deg); }
+.channels-advanced .channels-form-section { border-top: 0; padding-top: 0; }
+.channels-advanced .channels-form-section h3 { display: none; }
+.channels-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding-block: 20px; border-top: 1px solid var(--edge); }
+.channels-actions span { flex: 1 1 160px; min-width: 0; font-size: 11px; line-height: 1.5; overflow-wrap: anywhere; }
+.channels-local-note { display: flex; align-items: flex-start; gap: 8px; margin: 0; color: var(--text-dim); font-size: 10px; line-height: 1.6; }
+.channels-local-note svg { flex-shrink: 0; }
+.channels-pairing { display: grid; gap: 8px; padding-bottom: 18px; font-size: 11px; }
+.channels-pair-row { display: flex; flex-wrap: wrap; gap: 8px; }
+.channels-pair-row input { flex: 1 1 160px; width: auto; }
+@media (prefers-reduced-motion: reduce) { .channels-choice { transition: none; } }

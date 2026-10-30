@@ -6,6 +6,7 @@ import path from 'node:path';
 import { TelegramBot, updateToJob } from '../../src/channels/telegram.mjs';
 import { Daemon } from '../../src/automation/daemon.mjs';
 import { TelegramProgress, readTelegramArtifact, sendTurnArtifacts } from '../../src/channels/telegram-progress.mjs';
+import { DeliveryError } from '../../src/channels/core/outbox.mjs';
 
 test('Telegram transport supports reactions, photo/document multipart upload and unsupported incoming media nudges', async t => {
   const requests = [];
@@ -30,7 +31,7 @@ test('CLI channel mirrors progress, artifact sends and cancel without losing app
   await fs.mkdir(path.join(directory, 'downloaded-images'));
   const image = path.join(directory, 'downloaded-images', 'turn.png'); await fs.writeFile(image, 'fixture image');
   const sent = [], reactions = [], files = [];
-  const bot = { enabled: true, sendTyping: async () => {}, react: async (...args) => reactions.push(args), send: async (_id, text) => sent.push(text), sendPhoto: async (_id, bytes) => files.push(bytes) };
+  const bot = { enabled: true, sendTyping: async () => {}, react: async (...args) => reactions.push(args), send: async (_id, text) => { sent.push(text); return [{ message_id: sent.length }]; }, sendPhoto: async (_id, bytes) => { files.push(bytes); return { message_id: files.length }; } };
   const daemon = new Daemon({ store: {}, bot, config: {}, client: {}, runPrompt: async () => '', deliver: async () => {} });
   daemon.saveChat = () => {};
   const agent = { cwd: directory, messages: [], send: async (_prompt, callbacks) => { callbacks.onToolCall({ function: { name: 'browser' } }); agent.messages.push({ role: 'tool', name: 'browser', result: JSON.stringify({ type: 'browser_screenshot', path: image }) }); return 'final'; } };
@@ -72,7 +73,7 @@ test('artifact reads reject outside files and symlink escapes; delivery is cappe
   const messages = [];
   for (let index = 0; index < 7; index++) { const image = path.join(cwd, 'generated-images', `${index}.png`); await fs.writeFile(image, 'image'); messages.push({ role: 'tool', name: 'image_generate', result: JSON.stringify({ type: 'generated_image', path: image }) }); }
   let photos = 0, documents = 0;
-  await sendTurnArtifacts({ sendTyping: async () => {}, sendPhoto: async () => { photos++; throw new Error('photo rejected'); }, sendDocument: async () => { documents++; }, send: () => assert.fail('fallback should upload') }, { chatId: 42 }, cwd, messages);
+  await sendTurnArtifacts({ sendTyping: async () => {}, sendPhoto: async () => { photos++; throw new DeliveryError('permanent', 'photo rejected'); }, sendDocument: async () => { documents++; }, send: () => assert.fail('fallback should upload') }, { chatId: 42 }, cwd, messages);
   assert.equal(photos, 5); assert.equal(documents, 5);
 });
 

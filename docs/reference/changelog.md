@@ -7,6 +7,43 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Saved-provider startup compatibility
+
+A saved provider from a newer build no longer prevents the desktop from opening.
+When a compatible connection was already saved, this build reuses its endpoint,
+key and model through Custom. Otherwise Settings stays reachable for setup,
+without selecting a replacement service. Loading leaves the original profile
+unchanged; later saves preserve unknown fields privately. Unsupported new
+provider selections remain rejected. The verification record includes native
+dev and built-renderer launches using an exact private copy of the failing
+profile, with successful model discovery and a visible Settings notice.
+
+### Shared local chat channels
+
+Telegram desktop and terminal inboxes now share a manifest-driven channel core
+with new native Discord Gateway and Slack Socket Mode adapters. Settings renders
+channel setup from metadata; `/channels` offers discovery, status, testing,
+connection, disconnect, doctor and optional sender-bound pairing. Terminal
+connection does not start scheduled routines. Each channel stays opt-in.
+
+Channel work requires an API model; browser-only setup now gives explicit
+guidance. Model/provider changes refresh isolated agents and wait for channel
+work. Replayed owner replies cannot authorize the next pending action, and a
+stopped daemon cannot open a later channel after authentication finishes.
+
+The core owns default-deny access, group mention rules, private owner approvals,
+bounded agent turns, tool-only progress and durable delivery receipts. Missing
+receipts remain uncertain rather than triggering blind resend. Stopping during
+authentication settles startup; Telegram advances its cursor after acceptance.
+Discord/Slack and groups have separate saved histories, while legacy Telegram
+private teammate routing is retained. SDK/bridge integrations are a documented
+contract; no public relay or extra platform connector is silently started.
+
+Local HTTP/native WebSocket and browser setup checks are separate from real
+Discord/Slack account acceptance and packaged-app validation. No version bump or
+release is included. See [setup](../guides/channels.md) and the
+[verification record](../verification/multi-channel-communication.md).
+
 ### Remembered browser companion connection
 
 The browser companion now has a separate opt-in control grant, an authenticated

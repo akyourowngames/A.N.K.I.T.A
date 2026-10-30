@@ -28,6 +28,20 @@ They use the same agent runtime and tools. Desktop teammates have separate
 threads, personas and drafts; assign a project to give a teammate its working
 folder and shared context.
 
+## Chat channels (source build)
+
+Connect Telegram, Discord or Slack in **Settings → Channels**. Choose a teammate,
+add allowed people or conversations, test the account and save. Requests use the
+same tools with owner-only private approvals, work updates, file delivery and
+per-conversation cancellation. Discord and Slack connect through outbound
+sockets; no extra hosted service is needed. The terminal shares setup through
+`/channels` and can host enabled connections alongside existing schedules.
+
+This is source-branch work, not a new installer release. Real Discord/Slack
+account acceptance remains a separate setup check. See the
+[channel guide](docs/guides/channels.md) and
+[verification matrix](docs/verification/multi-channel-communication.md).
+
 ## Voice delegation (source build)
 
 Speak a Hinglish or English request in terminal `/voice`, or choose **Voice** in
