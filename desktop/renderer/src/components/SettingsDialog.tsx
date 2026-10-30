@@ -1,3 +1,4 @@
+import { PersonalitySettings } from './PersonalitySettings';
 import { useEffect, useRef, useState } from 'react';
 import type { DesktopPreferences, DesktopSettingsResult, DesktopSettingsUpdate, Model, Routine, Teammate } from '../../../shared/wire';
 import { Icon } from './Icons';
@@ -11,12 +12,13 @@ import { ChannelsSettings } from './ChannelsSettings';
 import { cleanErrorMessage } from '../../../shared/error-notices.mjs';
 import { VoiceSettings } from './voice/VoiceSettings';
 
-export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about' | 'voice';
+export type SettingsTab = 'model' | 'providers' | 'profile' | 'images' | 'channels' | 'phone' | 'background' | 'privacy' | 'appearance' | 'about' | 'voice' | 'personality';
 
 const tabs: { id: SettingsTab; label: string; icon: string }[] = [
   { id: 'model', label: 'Model', icon: 'cube' },
   { id: 'providers', label: 'Providers', icon: 'key' },
   { id: 'voice', label: 'Voice', icon: 'mic' },
+  { id: 'personality', label: 'Personality', icon: 'sparkle' },
   { id: 'profile', label: 'Profile', icon: 'user' },
   { id: 'images', label: 'Images', icon: 'sparkle' },
   { id: 'channels', label: 'Channels', icon: 'broadcast' },
@@ -85,7 +87,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
     const onKey = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
       if (event.key !== 'Tab' || !dialog.current) return;
-      const elements = [...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled)')];
+      const elements = [...dialog.current.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled)')];
       const first = elements[0], last = elements[elements.length - 1];
       if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
       else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
@@ -206,6 +208,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
       <main className="settings-main">
         <div className="settings-top"><span>Settings / {tabs.find(item => item.id === tab)?.label}</span><button type="button" className="icon-button" onClick={onClose} aria-label="Close settings"><Icon name="close" size={17} /></button></div>
         <div className="settings-scroll" key={tab}>
+          {tab === 'personality' && <PersonalitySettings />}
           {tab === 'voice' && <VoiceSettings preferences={preferences} onSaved={onSaved} />}
           {tab === 'model' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="cube" size={20} /></span><h1 id="settings-title">Model</h1><p>Choose the default model for new conversations.</p></div>

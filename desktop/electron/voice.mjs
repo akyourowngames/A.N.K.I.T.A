@@ -152,7 +152,7 @@ export class DesktopVoice {
     this.publish(session, { microphone: session.microphone.name });
     session.acks = createAcknowledgements({ synthesize: (text, language) => this.synthesize(session, text, language) });
     session.narrate = this.io.narrate || createVoiceNarrator({ client: session.brain?.client || this.engine.client,
-      model: session.brain?.model || this.engine.model, secrets: configuredSecrets(session.config) });
+      model: session.brain?.model || this.engine.model, secrets: configuredSecrets(session.config), getPersonality: () => this.engine.config.personality });
     session.speech = new VoiceSpeechQueue({ gapMs: session.config.voiceSpeechGapMs, historyLimit: session.config.voiceTaskLimit,
       play: (audio, options) => this.play(session, audio, options), stop: () => this.io.stopPlayback(),
       onStart: item => {
