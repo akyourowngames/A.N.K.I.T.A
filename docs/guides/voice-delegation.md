@@ -350,6 +350,28 @@ voice mode with a message; they do not silently select a non-Meta planner.
 If a key was exposed in chat, rotate it in the provider dashboard and replace it
 locally. Never paste it into a conversation.
 
+### Modal DeepSeek planner (opt-in, not faster today)
+
+The same voice-only slot can point at a self-hosted Modal deployment:
+
+```dotenv
+VOICE_PROVIDER=modal
+MODAL_BASE_URL=https://<workspace>--<deployment>.us-west.modal.direct/v1
+MODAL_PROXY_TOKEN_ID=...
+MODAL_PROXY_TOKEN_SECRET=...
+```
+
+The two proxy parts are joined into one bearer token for you. `MODAL_MODEL`
+defaults to `deepseek-ai/DeepSeek-V4.1-Flash-1017`; `MODAL_REASONING_EFFORT`
+defaults to `low` because this deployment rejects `minimal` with HTTP 400.
+
+Measured 2026-10-28: on short prompts without tools Modal was faster (408 ms vs
+657 ms to first token), but on a real voice turn carrying 30 tool schemas it was
+slower (3,414 ms vs 2,593 ms transcript to player). Keep Baseten unless the Modal
+deployment gains prefix caching or more prefill capacity. Full numbers and the
+re-run commands are in
+[docs/voice-planner-benchmark-2026-10-28.md](../voice-planner-benchmark-2026-10-28.md).
+
 ### Speech round trip
 
 ```bash

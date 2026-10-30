@@ -32,6 +32,50 @@ test('Baseten and voice settings load separately from typed chat settings', () =
   assert.equal(resolveProvider('baseten').keyConfig, 'basetenApiKey');
 });
 
+test('Modal voice settings compose the proxy token and keep a safe token floor', () => {
+  const file = path.join(temporary, 'modal.env');
+  fs.writeFileSync(file, 'MODAL_PROXY_TOKEN_ID=token-id\nMODAL_PROXY_TOKEN_SECRET=token-secret\nMODAL_BASE_URL=https://deployment.invalid/v1\nMODAL_MAX_TOKENS=32\nMODAL_REASONING_EFFORT=high\n');
+  const config = loadConfig(file, { globalEnvFile: path.join(temporary, 'absent') });
+  assert.equal(config.modalApiKey, 'token-id.token-secret', 'the two proxy parts become one bearer token');
+  assert.equal(config.modalBaseUrl, 'https://deployment.invalid/v1');
+  assert.equal(config.modalModel, 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
+  assert.equal(config.modalMaxTokens, 400, 'reasoning needs room before any answer tokens');
+  assert.equal(config.modalReasoningEffort, 'high');
+  const brain = voice.createVoiceBrain({ ...config, voiceProvider: 'modal' });
+  assert.equal(brain.client.baseUrl, 'https://deployment.invalid/v1');
+  assert.equal(brain.client.apiKey, 'token-id.token-secret');
+  assert.deepEqual(brain.client.requestDefaults, { max_tokens: 400, reasoning_effort: 'high' });
+  const defaults = voice.createVoiceBrain({ voiceProvider: 'modal', modalBaseUrl: 'https://deployment.invalid/v1', modalApiKey: 'fixture' });
+  assert.equal(defaults.client.requestDefaults.reasoning_effort, 'low', 'the deployment rejects minimal; low is its floor');
+  assert.equal(defaults.contextWindow, 1_048_576, 'the advertised deployment window is used for voice only');
+  assert.throws(() => voice.createVoiceBrain({ voiceProvider: 'modal', modalApiKey: 'fixture' }), /MODAL_BASE_URL/);
+  const combined = loadConfig((() => {
+    const combinedFile = path.join(temporary, 'modal-combined.env');
+    fs.writeFileSync(combinedFile, 'MODAL_PROXY_TOKEN=combined-token\nMODAL_PROXY_TOKEN_ID=ignored-id\nMODAL_PROXY_TOKEN_SECRET=ignored-secret\n');
+    return combinedFile;
+  })(), { globalEnvFile: path.join(temporary, 'absent') });
+  assert.equal(combined.modalApiKey, 'combined-token', 'a rotated combined token wins over stale parts');
+});
+
+test('Modal requests carry the lowest supported reasoning and never inherit chat settings', async t => {
+  const requests = [];
+  t.mock.method(globalThis, 'fetch', async (_url, opts) => {
+    requests.push(JSON.parse(opts.body));
+    return Response.json({ choices: [{ message: { content: 'Ready.' } }] });
+  });
+  const brain = voice.createVoiceBrain({ voiceProvider: 'modal', modalBaseUrl: 'https://modal.invalid/v1', modalApiKey: 'fixture-key' });
+  const agent = new Agent({ client: brain.client, config: { tools: false, maxTokens: 32, maxTokensExplicit: true }, skillsEnabled: false, autoProject: false });
+  agent.model = brain.model;
+  await agent.streamAttempt();
+  assert.equal(requests[0].reasoning_effort, 'low', 'the deployment rejects minimal; low is its floor');
+  assert.equal(requests[0].max_tokens, 400);
+  assert.equal(requests[0].model, 'deepseek-ai/DeepSeek-V4.1-Flash-1017');
+  agent.client = new CompatibleClient({ apiBase: 'https://chat.invalid/v1' });
+  agent.config.maxTokensExplicit = false;
+  await agent.streamAttempt();
+  assert.equal(requests[1].reasoning_effort, undefined, 'typed chat clients keep their own request shape');
+});
+
 test('voice endpoint override wins and its key never comes from the chat provider', () => {
   const brain = voice.createVoiceBrain({ voiceProvider: 'baseten', voiceApiBase: 'https://voice.invalid/v1', voiceModel: 'voice-model', basetenApiKey: 'voice-key', apiKey: 'chat-key' });
   assert.equal(brain.client.baseUrl, 'https://voice.invalid/v1');

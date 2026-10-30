@@ -367,11 +367,11 @@ export async function main({ voiceIO = {} } = {}) {
     process.exit(2);
   }
   if (provider.name !== "copilot" && !config.apiBase) {
-    config.apiBase = (provider.name === 'baseten' && config.basetenBaseUrl) || provider.apiBase;
+    config.apiBase = (provider.baseUrlConfig && config[provider.baseUrlConfig]) || provider.apiBase;
     if (!config.apiKey && provider.apiKey) config.apiKey = provider.apiKey;
     // Some gateways reuse an existing key (Groq shares GROQ_API_KEY with voice).
     if (!config.apiKey && provider.keyConfig && config[provider.keyConfig]) config.apiKey = config[provider.keyConfig];
-    if (!config.model && provider.defaultModel) config.model = (provider.name === 'baseten' && config.basetenModel) || provider.defaultModel;
+    if (!config.model && provider.defaultModel) config.model = (provider.modelConfig && config[provider.modelConfig]) || provider.defaultModel;
   }
 
   if (opts.showConfig) {
@@ -393,6 +393,8 @@ export async function main({ voiceIO = {} } = {}) {
         : "(off)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
       ["BASETEN_API_KEY", config.basetenApiKey ? "(set)" : "(not set)"],
+      ["MODAL_PROXY_TOKEN", config.modalApiKey ? "(set)" : "(not set)"],
+      ["MODAL_BASE_URL", config.modalBaseUrl || "(not set)"],
       ["VOICE_PROVIDER", config.voiceProvider || "(same as chat)"],
       ["VOICE_MODEL", config.voiceModel || "(provider default)"],
       ["VOICE_API_BASE", config.voiceApiBase || "(provider default)"],

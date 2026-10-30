@@ -555,7 +555,7 @@ export class DesktopEngine {
     const nextConfig = applyDesktopSettings(this.baseConfig, next);
     const active = this.provider?.name || 'copilot';
     const reconnect = ['provider', 'customApiBase'].some(key => Object.hasOwn(patch, key))
-      || (active === 'custom' && Object.hasOwn(patch, 'customApiKey'))
+      || (['custom', 'modal'].includes(active) && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
     const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
@@ -612,10 +612,10 @@ export class DesktopEngine {
   }
 
   testCustomProvider(input = {}) {
-    const apiBase = input.apiBase || this.desktopSettings.data.customApiBase || (this.provider?.name === 'custom' ? this.config.apiBase : '');
-    const activeBase = this.desktopSettings.data.customApiBase || (this.provider?.name === 'custom' ? this.config.apiBase : '');
+    const apiBase = input.apiBase || this.desktopSettings.data.customApiBase || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiBase : '');
+    const activeBase = this.desktopSettings.data.customApiBase || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiBase : '');
     // A saved key belongs to its saved endpoint. Do not send it to a newly entered URL.
-    const savedKey = apiBase === activeBase ? this.desktopSettings.data.customApiKey || (this.provider?.name === 'custom' ? this.config.apiKey : '') : '';
+    const savedKey = apiBase === activeBase ? this.desktopSettings.data.customApiKey || (['custom', 'modal'].includes(this.provider?.name) ? this.config.apiKey : '') : '';
     const apiKey = Object.hasOwn(input, 'apiKey') ? input.apiKey : savedKey;
     return testCustomProvider({ apiBase, apiKey });
   }
