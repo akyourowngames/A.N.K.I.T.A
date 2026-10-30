@@ -254,3 +254,9 @@ dev session to load the updated main process.
 Final whitespace check passed. Production literal review found only named
 compatibility constants, existing protocol/settings keys and interface text; no
 new endpoint, model, path, credential, timeout or dependency was added.
+
+PR preflight: the branch-wide whitespace check exposed mixed carriage returns
+and trailing blank lines in the imported plan. Its line endings were normalized
+without changing text. The complete comparison against the refreshed default
+branch now passes `git diff --check`; the publication credential-pattern scan
+found no candidates. Personal untracked files remain outside the commits.
