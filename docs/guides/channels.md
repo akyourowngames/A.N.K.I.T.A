@@ -10,6 +10,13 @@ teammate. Add allowed people or conversations before turning the connection on.
 **Save changes** saves and reconnects only that channel. Saving keeps existing
 keys unless you replace them or explicitly choose Remove.
 
+Channel work currently needs an API provider selected in Settings. ChatGPT
+Browser is a browser-only conversation, so channel startup shows an explicit
+setup message instead of trying to construct an API agent. Provider/model
+changes wait for channel work, then refresh channel agents without losing their
+saved conversations. This also prevents requests going to a previously selected
+provider after a settings change.
+
 | Channel | Setup | Connection |
 | --- | --- | --- |
 | Telegram | [Create a private bot](channels/telegram.md) | Outbound long polling |

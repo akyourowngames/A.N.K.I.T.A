@@ -5,6 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 import { DesktopChannelSurface } from '../../desktop/electron/channel-surface.mjs';
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
+import { CHATGPT_BROWSER_PROVIDER } from '../../desktop/shared/chatgpt-browser.mjs';
+import { ChannelRuntime } from '../../src/channels/core/runtime.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-channel-surface-'));
@@ -62,4 +64,41 @@ test('an owner always-approval grants only its isolated channel agent', t => {
   engine.channels = { surface }; engine.approvals.pending = new Map([['r', { threadId: target }]]); engine.approvals.respond = () => true;
   assert.equal(DesktopEngine.prototype.respondApproval.call(engine, 'r', 'always'), true);
   assert.equal(agent.autoApprove, true); assert.notEqual(parent.autoApprove, true);
+});
+
+test('browser-only setup gives actionable channel guidance before opening a connection or constructing an API agent', async t => {
+  const { surface, engine } = fixture(t); engine.config.provider = CHATGPT_BROWSER_PROVIDER; engine.client = null;
+  engine.agentFor = () => { throw new Error('Set up a provider in Settings before sending a message'); };
+  for (const channel of ['telegram', 'discord', 'slack']) {
+    const ref = { channel, chatId: '42', messageId: '1', raw: { isGroup: false } }, target = surface.targetFor('chief', ref);
+    await assert.rejects(surface.run(ref, target, 'hello', {}), /API model/);
+  }
+  let starts = 0;
+  const runtime = new ChannelRuntime({ surface, getSettings: () => ({ enabled: true }), adapter: { manifest: { id: 'fixture', capabilities: [] }, start() { starts++; }, stop() {}, send() {} } });
+  const status = await runtime.start(); assert.equal(starts, 0); assert.equal(status.running, false); assert.match(status.error, /API model/);
+});
+
+function settingsEngine(engine, surface, parent) {
+  engine.channels = { surface }; engine.baseConfig = { provider: 'kilo', contextWindow: 32768 }; engine.provider = { name: 'kilo' };
+  engine.turns = new Map(); engine.models = [{ id: 'new-model', tools: true }]; engine.teammates = { find: () => ({}) };
+  engine.desktopSettings = { data: {}, preview: patch => ({ ...engine.desktopSettings.data, ...patch }), save: next => { engine.desktopSettings.data = next; } };
+  engine.connectProvider = async () => ({ client: { id: 'new-client' }, tool: {}, models: engine.models, model: 'new-model', provider: { name: 'groq' } });
+  engine.activateBrowserProvider = async () => {}; engine.settingsPayload = () => ({}); engine.config.contextWindow = 32768; parent.contextWindow = 32768;
+  return patch => DesktopEngine.prototype.saveDesktopSettings.call(engine, patch);
+}
+
+test('provider and model changes invalidate isolated channel agents while preserving their saved conversation', async t => {
+  const { surface, engine, parent } = fixture(t), save = settingsEngine(engine, surface, parent);
+  const ref = { channel: 'discord', chatId: '42', messageId: '1', raw: {} }, target = surface.targetFor('chief', ref);
+  await surface.run(ref, target, 'saved before provider change', {}); const old = surface.agents.get(target);
+  await save({ provider: 'groq' }); parent.model = 'new-model';
+  const changed = surface.agentForTarget(target); assert.notEqual(changed, old); assert.equal(changed.options.client.id, 'new-client'); assert.equal(changed.model, 'new-model');
+  assert.deepEqual(changed.messages.map(message => message.content), ['saved before provider change']);
+  engine.agents.set('chief', parent); await save({ model: 'new-model' }); assert.notEqual(surface.agentForTarget(target), changed);
+});
+
+test('provider changes wait for active isolated channel turns', async t => {
+  const { surface, engine, parent } = fixture(t), save = settingsEngine(engine, surface, parent);
+  const target = surface.targetFor('chief', { channel: 'discord', chatId: '42', raw: {} }); surface.privateTurns.set(target, Promise.resolve());
+  await assert.rejects(save({ provider: 'groq' }), /Wait for active replies/); surface.privateTurns.delete(target);
 });

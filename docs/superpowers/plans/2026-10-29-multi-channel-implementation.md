@@ -98,5 +98,9 @@ Interfaces: serialisable adapter/envelope contract, validated registry setup, st
 
 - [x] Document Windows/no-always-on-service + same sender-policy criterion; bridge/relay/SDK integration contract and examples, not a separate hand-written adapter for every platform.
 - [x] Ship reproducible Slack app manifest, Discord intent/invite steps, permission/owner setup and recovery guidance.
-- [ ] Verify local transport round trips, full affected tests/build and serial whole suite; record exact counts and remaining live-account gaps.
-- [ ] Fresh whole-branch review, fix important findings with regression tests, commit; retain branch for review without merging or releasing.
+- [x] Verify local transport round trips, full affected tests/build and serial whole suite; record exact counts and remaining live-account gaps.
+- [x] Fresh whole-branch review, fix important findings with regression tests, commit; retain branch for review without merging or releasing.
+
+## Completion record (30 October)
+
+Source tasks are complete. Final affected checks: 246/246; desktop build: 408 modules; safe local verification script: 18/18. Fresh review found four Important issues, all reproduced and fixed with regressions. The initial whole-suite run was not green: 1875 pass, 3 fail, 1 skipped. One task-related fixture failure was fixed; two desktop provider-load failures also reproduce on the unchanged base. Real-account and packaged acceptance remain open. Full evidence and compatibility rulings: [verification matrix](../../verification/multi-channel-communication.md).

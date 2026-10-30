@@ -1,4 +1,6 @@
 /** Pure form conversion shared by the renderer and behaviour tests. */
+export const CHANNEL_API_REQUIRED_MESSAGE = 'Chat channels need an API model. Choose an API provider in Settings to connect.'; // Browser-only conversations have no isolated API agent or channel tool budget.
+
 export function channelDraft(preferences) {
   return Object.fromEntries(Object.entries(preferences.manifest.fields).map(([key, field]) => {
     if (field.kind === 'secret') return [key, ''];

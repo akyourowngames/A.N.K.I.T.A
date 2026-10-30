@@ -1,8 +1,10 @@
 # Multi-channel communication — plan
 
-Date: 2026-10-29. Status: proposal, not implemented.
-Implementation started on `feat/multi-channel-communication`; completed phases and
-verification are tracked in [the execution plan](../superpowers/plans/2026-10-29-multi-channel-implementation.md).
+Date: 2026-10-29. Status: implemented in source on 29–30 October; real-account
+acceptance remains open. Branch: `feat/multi-channel-communication`.
+Completed source tasks are tracked in [the execution plan](../superpowers/plans/2026-10-29-multi-channel-implementation.md);
+checks, compatibility rulings and remaining gates are recorded in the
+[verification matrix](../verification/multi-channel-communication.md).
 
 Phase 0 decision record (29 October, user delegated the open choices): Telegram →
 Discord → Slack; in-process adapters with serialisable envelopes; native

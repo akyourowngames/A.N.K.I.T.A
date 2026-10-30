@@ -24,6 +24,8 @@ export class ChannelRuntime {
     if (this.running) return this.status();
     const settings = this.settings();
     if (!settings.enabled) return this.status();
+    try { this.surface.assertReady?.(); }
+    catch (error) { this.error = error.message; this.running = false; this.emit(); return this.status(); }
     for (const key of this.adapter.manifest.required || []) if (!settings[key]) { this.error = `Enter ${this.adapter.manifest.fields?.[key]?.label || key} before connecting`; this.emit(); return this.status(); }
     this.stopping = false; this.abort = new AbortController(); this.inbox = new ChannelInbox();
     this.running = true;
@@ -59,18 +61,23 @@ export class ChannelRuntime {
     const ref = normalizeInbound(input), settings = this.settings();
     if (ref.channel !== this.adapter.manifest.id || ref.raw?.bot || ref.raw?.webhook || ref.raw?.system) return 0;
     if (ref.raw?.approvalId && !isOwner(ref, settings)) return 0;
-    if (this.resolvePending(ref)) return 1;
     const owned = this.activeJobs.get(String(ref.chatId));
-    if (isCancelMessage(ref) && owned?.ref.senderId === ref.senderId) { await this.cancelJob(ref); return 1; }
+    if (isCancelMessage(ref) && owned?.ref.senderId === ref.senderId) return this.control(ref, () => this.cancelJob(ref));
+    if (this.pending.has(String(ref.chatId)) && isOwner(ref, settings)) return this.control(ref, () => this.resolvePending(ref));
     if (settings.pairingEnabled && /^\/pair\s+\S+\s*$/.test(ref.text) && this.pairing?.consume({ channel: ref.channel, senderId: ref.senderId, code: ref.text.split(/\s+/)[1] })) {
-      await this.onPair?.(ref); await this.notice(ref, 'Paired. You can send requests now.'); return 1;
+      return this.control(ref, async () => { await this.onPair?.(ref); await this.notice(ref, 'Paired. You can send requests now.'); });
     }
     if (!allows(ref, settings)) return 0;
-    if (ref.media.some(media => media.kind === 'unsupported')) { await this.notice(ref, this.adapter.unsupportedMediaMessage || 'Incoming files are not supported yet. Send text or a voice note.'); return 1; }
-    if (isCancelMessage(ref)) { await this.cancelJob(ref); return 1; }
-    if (isBareApproval(ref.text) || ref.raw?.approvalId) { await this.notice(ref, NO_PENDING_MESSAGE); return 1; }
+    if (ref.media.some(media => media.kind === 'unsupported')) return this.control(ref, () => this.notice(ref, this.adapter.unsupportedMediaMessage || 'Incoming files are not supported yet. Send text or a voice note.'));
+    if (isCancelMessage(ref)) return this.control(ref, () => this.cancelJob(ref));
+    if (isBareApproval(ref.text) || ref.raw?.approvalId) return this.control(ref, () => this.notice(ref, NO_PENDING_MESSAGE));
     if (!this.outbox.claimInbound(ref)) return 0;
     this.dispatch(ref); return 1;
+  }
+  async control(ref, work) {
+    if (!this.outbox.claimInbound(ref)) return 0;
+    try { await work(); this.outbox.finishInbound(ref, 'control'); return 1; }
+    catch (error) { this.outbox.finishInbound(ref, 'failed'); throw error; }
   }
   dispatch(ref) {
     const promise = this.inbox.enqueue(sessionKey(ref), ({ signal }) => this.runJob ? this.runJob(ref, { signal }) : this.handleJob(ref, { signal }));

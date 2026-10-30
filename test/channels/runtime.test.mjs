@@ -66,6 +66,30 @@ test('owner-only approvals reject a group response and a forged button, then acc
   gate.resolve('saved'); await runtime.drain();
 });
 
+test('one replayed owner text answer cannot approve the next queued permission', async () => {
+  const { runtime } = fixture(); const answers = [];
+  for (const requestId of ['first', 'second']) runtime.askApproval(inbound(), { requestId, toolName: 'write_file', detail: requestId, respond: answer => answers.push([requestId, answer]) });
+  const reply = { ...inbound('owner-dm', 'y', 'one-owner-answer'), senderId: 'owner' };
+  await runtime.receive(reply); await runtime.receive(reply);
+  assert.deepEqual(answers, [['first', 'yes']]);
+  await runtime.stop(); assert.deepEqual(answers, [['first', 'yes'], ['second', 'no']]);
+});
+
+test('a replayed cancel cannot stop a later task in the same conversation', async () => {
+  const { runtime } = fixture(); let cancels = 0;
+  runtime.cancelJob = async () => { cancels++; };
+  const reply = inbound('42', '/cancel', 'one-cancel');
+  await runtime.receive(reply); await runtime.receive(reply); assert.equal(cancels, 1);
+});
+
+test('an owner can cancel their own private task while its approval is waiting', async t => {
+  const { runtime } = fixture(); t.after(() => runtime.stop()); let cancels = 0;
+  const ref = { ...inbound('owner-dm', 'work'), senderId: 'owner' };
+  runtime.activeJobs.set('owner-dm', { ref, progress: { stop() {} } }); runtime.cancelJob = async () => { cancels++; };
+  runtime.askApproval(ref, { requestId: 'waiting', toolName: 'write_file', detail: 'work', respond() {} });
+  await runtime.receive({ ...ref, messageId: 'cancel-owner-work', text: '/cancel' }); assert.equal(cancels, 1);
+});
+
 test('two platforms sharing one target never steal the other platform approval', async () => {
   const gate = deferred(); const answers = [];
   const engine = { send: async () => {}, waitForTurn: () => gate.promise, respondApproval: (id, answer) => answers.push([id, answer]) };

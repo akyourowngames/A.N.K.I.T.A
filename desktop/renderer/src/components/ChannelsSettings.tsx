@@ -148,6 +148,7 @@ export function ChannelsSettings({ teammates }: { teammates: Teammate[] }) {
         <div className="channels-actions"><button type="button" className="settings-secondary" onClick={verify} disabled={Boolean(busy)}>{busy === 'test' ? 'Testing…' : 'Test connection'}</button><button type="submit" className="settings-primary" disabled={Boolean(busy) || view.doctor?.ok === false}>{busy === 'save' ? 'Saving…' : 'Save changes'}</button><span role="status" className={(notice || testResult)?.tone === 'error' ? 'settings-test-error' : 'settings-test-ok'}>{notice?.text || testResult?.text || ''}</span></div>
       </form>
       <p className="channels-local-note"><Icon name="broadcast" size={15} />Runs on this device while Ankita is open. Use one host per bot connection.</p>
+      <p className="channels-local-note">Channel work needs an API model selected in Settings.</p>
     </>}
   </div>;
 }

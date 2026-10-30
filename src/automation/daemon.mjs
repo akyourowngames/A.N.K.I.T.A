@@ -158,11 +158,12 @@ export class Daemon {
   stop() {
     this.stopping = true;
     this.wake?.();
-    for (const runtime of this.channelRuntimes.values()) void runtime.stop();
+    this.channelStop ||= (this.channelHost ? this.channelHost.stopAll() : Promise.all([...this.channelRuntimes.values()].map(runtime => runtime.stop()))).catch(error => this.log(`channel shutdown failed: ${error.message}`));
     // Queued turns have no work to drain. Settle their permits as cancelled;
     // active turns keep their slots until their own finally blocks release.
     for (const resolve of this.waiting.splice(0)) resolve(false);
     for (const pending of this.pending.values()) pending.settle("no");
+    return this.channelStop;
   }
 
   /* ------------------------- conversation per chat ------------------------ */
@@ -634,8 +635,15 @@ export class Daemon {
 
   async run() {
     if (this.channelHost) {
-      for (const manifest of this.channelHost.registry.list()) if (manifest.id !== TELEGRAM_CHANNEL_ID && this.channelHost.settingsFor(manifest.id).enabled) await (await this.channelHost.runtime(manifest.id)).start();
+      for (const manifest of this.channelHost.registry.list()) {
+        if (this.stopping) break;
+        if (manifest.id === TELEGRAM_CHANNEL_ID || !this.channelHost.settingsFor(manifest.id).enabled) continue;
+        const runtime = await this.channelHost.runtime(manifest.id);
+        if (this.stopping) break;
+        await runtime.start();
+      }
     }
+    if (this.stopping) { await this.channelStop; return; }
     if (!this.bot) {
       this.log("no TELEGRAM_BOT_TOKEN: running schedules and watches with configured notification fallbacks");
     } else {

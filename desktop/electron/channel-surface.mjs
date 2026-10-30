@@ -6,13 +6,22 @@ import { CHANNEL_TOOL_CALLS, CHANNEL_SESSION_PREFIX, sessionKey } from '../../sr
 import { TELEGRAM_CHANNEL_ID } from '../../src/channels/manifests/telegram.mjs';
 import { sanitizeMessages } from '../../src/core/history.mjs';
 import { saveSession, recordTurn } from '../../src/core/sessions.mjs';
+import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
+import { CHANNEL_API_REQUIRED_MESSAGE } from '../shared/channel-settings.mjs';
 
 const CHANNEL_SESSIONS_DIRECTORY = 'channels'; // Child conversations stay separate from desktop teammate files.
 const CHANNEL_SESSION_CACHE_LIMIT = 64; // In-memory agents: inactive sessions restore from disk instead of accumulating.
 
 /** Keep legacy Telegram DMs; isolate every group and additional platform's history. */
 export class DesktopChannelSurface extends ChannelSurface {
-  constructor({ engine }) { super({ engine }); this.agents = new Map(); this.privateTurns = new Map(); this.targets = new Map(); }
+  constructor({ engine }) { super({ engine }); this.agents = new Map(); this.privateTurns = new Map(); this.targets = new Map(); this.dirty = new Set(); }
+  assertReady() { if (this.engine?.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(CHANNEL_API_REQUIRED_MESSAGE); }
+  busy(teammateId = null) { return [...this.privateTurns.keys()].some(target => !teammateId || this.targets.get(target)?.teammateId === teammateId); }
+  invalidate(teammateId = null) {
+    for (const [target, binding] of this.targets) if (!teammateId || binding.teammateId === teammateId) {
+      this.dirty.add(target); if (!this.privateTurns.has(target)) this.agents.delete(target);
+    }
+  }
   targetFor(teammateId, ref) {
     if (!this.engine?.AgentClass || (ref.channel === TELEGRAM_CHANNEL_ID && !ref.raw?.isGroup)) return teammateId;
     const hash = createHash('sha256').update(JSON.stringify([sessionKey(ref), teammateId])).digest('hex');
@@ -21,8 +30,9 @@ export class DesktopChannelSurface extends ChannelSurface {
     return target;
   }
   sessionFile(target) { return path.join(this.engine.sessionsDir, CHANNEL_SESSIONS_DIRECTORY, `${target}.json`); }
-  agentForTarget(target, toolBudget) { return this.targets.has(target) ? this.privateAgent(target, toolBudget) : this.engine.agentFor?.(target) || super.agentForTarget(target); }
+  agentForTarget(target, toolBudget) { this.assertReady(); return this.targets.has(target) ? this.privateAgent(target, toolBudget) : this.engine.agentFor?.(target) || super.agentForTarget(target); }
   privateAgent(target, toolBudget) {
+    if (this.dirty.has(target) && !this.privateTurns.has(target)) { this.agents.delete(target); this.dirty.delete(target); }
     if (this.agents.has(target)) { const agent = this.agents.get(target); this.agents.delete(target); this.agents.set(target, agent); return agent; }
     if (this.agents.size >= CHANNEL_SESSION_CACHE_LIMIT) {
       const oldest = [...this.agents.keys()].find(id => !this.privateTurns.has(id));

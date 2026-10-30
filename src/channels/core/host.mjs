@@ -19,6 +19,7 @@ export class ChannelHost {
 
   }
   load() { this.store.load(); return this; }
+  hasWork() { return [...this.runtimes.values()].some(runtime => runtime.activeJobs.size || runtime.inbox.chains.size); }
   doctor() {
     const settings = this.store.doctor(), delivery = this.outbox.doctor();
     return { ...settings, ok: settings.ok && delivery.ok, error: settings.error || delivery.error || null, delivery };

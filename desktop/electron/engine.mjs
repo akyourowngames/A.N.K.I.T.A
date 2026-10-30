@@ -258,6 +258,9 @@ function attachmentNames(content) {
   return names;
 }
 
+const ACTIVE_PROVIDER_CHANGE_MESSAGE = 'Wait for active replies to finish before changing the provider or model'; // One guard message before and after asynchronous provider setup.
+const CHANNEL_SCOPE_SETTINGS = Object.freeze(['projectId', 'model']); // Changes that must wait for the selected teammate's channel work.
+
 export class DesktopEngine {
   constructor({
     teammateFile = path.join(CONFIG_DIR, 'desktop-teammates.json'),
@@ -559,9 +562,12 @@ export class DesktopEngine {
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
     const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
     if ((voiceSetupChanged || reconnect || tune || Object.hasOwn(patch, 'model')) && this._voice?.snapshot().active) throw new Error('End voice before changing its setup or provider.');
-    if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
+    const replying = () => this.turns.size || this.channels?.hasWork?.() || this.channels?.surface?.busy?.();
+    if ((reconnect || Object.hasOwn(patch, 'model') || tune) && replying()) throw new Error(ACTIVE_PROVIDER_CHANGE_MESSAGE);
     if (reconnect) {
       const session = await this.connectProvider(nextConfig);
+      if (replying()) throw new Error(ACTIVE_PROVIDER_CHANGE_MESSAGE);
+      await this.channels?.stopAll?.();
       this.desktopSettings.save(next);
       await this.activateBrowserProvider(session.browser);
       this.config = nextConfig;
@@ -599,6 +605,8 @@ export class DesktopEngine {
         agent.contextWindow = nextConfig.contextWindow;
       }
     }
+    if (reconnect || tune || Object.hasOwn(patch, 'model')) this.channels?.surface?.invalidate?.();
+    if (reconnect && this.channels?.startEnabled) void this.channels.startEnabled().catch(error => this.emit({ type: 'error', threadId: null, message: error.message }));
     if (Object.hasOwn(patch, 'composioApiKey')) {
       this.config.composioApiKey = nextConfig.composioApiKey;
       void this.connectTools();
@@ -647,11 +655,12 @@ export class DesktopEngine {
     const skill = loadSkills().find(item => item.name === name);
     if (!skill) throw new Error('Skill not found');
     if (typeof enabled !== 'boolean') throw new Error('Choose whether to enable this skill');
-    if (this.turns.size) throw new Error('Wait for active replies to finish before changing skills');
+    if (this.turns.size || this.channels?.surface?.busy?.()) throw new Error('Wait for active replies to finish before changing skills');
     const disabled = new Set(this.desktopSettings.data.disabledSkills || []);
     if (enabled) disabled.delete(name);
     else disabled.add(name);
     this.desktopSettings.update({ disabledSkills: [...disabled] });
+    this.channels?.surface?.invalidate?.();
     for (const agent of this.agents.values()) {
       if (agent.disabledSkills instanceof Set) {
         agent.disabledSkills = new Set(disabled);
@@ -793,9 +802,11 @@ export class DesktopEngine {
   }
   updateTeammate(id, patch) {
     if (this.turns.has(id) && Object.hasOwn(patch, 'projectId')) throw new Error('Wait for this reply to finish before switching projects');
+    if (this.channels?.surface?.busy?.(id) && CHANNEL_SCOPE_SETTINGS.some(key => Object.hasOwn(patch, key))) throw new Error('Wait for this teammate’s channel replies before changing its project or model');
     const project = patch.projectId ? new ProjectStore(this.projectsFile).load().find(patch.projectId) : null;
     if (patch.projectId && !project) throw new Error('Project not found');
     const item = this.teammates.update(id, patch);
+    this.channels?.surface?.invalidate?.(id);
     const agent = this.agents.get(id);
     if (agent) {
       agent.config.agentName = item.name;

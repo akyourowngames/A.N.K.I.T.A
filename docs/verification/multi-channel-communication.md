@@ -1,6 +1,7 @@
 # Multi-channel communication: verification record
 
-29 October 2026. Branch: `feat/multi-channel-communication`, based on
+Implemented 29 October; review fixes and final checks 30 October 2026.
+Branch: `feat/multi-channel-communication`, based on
 `origin/ankita` at `812b1b6889d308edc5ca39a8d0cde4b735fd3d05`. Work is isolated
 from unrelated changes in the main checkout. No version bump or release.
 
@@ -93,6 +94,9 @@ additional platforms are isolated. Slack uses the official external upload flow:
   New loopback evidence does not replace that acceptance check.
 - No packaged installer or physical speech/hardware check was performed for this
   channel change. No desktop voice behavior was intentionally modified.
+- Channel work currently requires an API provider. ChatGPT Browser is explicitly
+  blocked with setup guidance; isolated browser-only channel sessions and their
+  tool budget are outside this implementation.
 - Terminal/Desktop should not simultaneously host the same bot. The receipts
   prevent duplicates, but platform consumer contention is not a supported mode.
 - A crash after inbound acceptance is at-most-once: unfinished work is visible in
@@ -102,5 +106,50 @@ additional platforms are isolated. Slack uses the official external upload flow:
   users deliberately ask separate conversations to edit the same file; channel
   session isolation is not a general filesystem transaction system.
 
-Full-suite results and final review disposition are appended after integration
-checks complete.
+## Final checks, 30 October
+
+| Check | Observed result |
+| --- | --- |
+| Final affected checks: 30 files across channels, desktop setup/provider, daemon and terminal | **246/246 pass**, 0 failures, 72.317 seconds |
+| `node scripts/verify-channels.mjs` | **18/18 pass**, local-only; native Discord/Slack sockets and HTTP plus Telegram HTTP |
+| Desktop typecheck + Vite build | **408 modules**, app and island assets built, 18.51 seconds |
+| Browser-generated setup | Fake card appears without custom UI code; secret drafts survive status/save/test; keyboard and 1280/620/390 widths; no renderer errors |
+| Initial whole serial suite, before final review fixes | **1879 total: 1875 pass, 3 fail, 1 skipped**, 1002.319 seconds; not claimed green |
+| Task-related full-run failure | Daemon voice fixture returned an array length instead of platform message IDs. Corrected fixture; **2/2 pass**, and included in final 246/246 |
+| Remaining two full-run failures | Unchanged base `812b1b6` reproduced both provider-load errors in `test/desktop/desktop.test.mjs`: **6 pass, 2 fail**. Tests read machine settings containing a provider the base does not support. User settings were not edited. |
+| Final whitespace/literal review | `git diff --check` clean; protocol keys and interface copy are data, timings/limits/URLs are named constants or injected parameters |
+
+The whole serial suite was not rerun after the final fixes: the final affected
+checks cover their changed paths, while the two demonstrated baseline failures
+remain reported. No assertion that the entire repository is green is made.
+
+## Fresh review and fixes
+
+The read-only whole-branch review of `219747c9` found four Important issues and no
+Critical issues. Each was reproduced before fixing:
+
+1. One replayed owner text `y` approved two queued requests. Shared durable
+   control receipts now precede approval/cancel/pairing effects. Regression:
+   `one replayed owner text answer cannot approve the next queued permission`.
+   A replayed cancel cannot stop a later request, and an owner's `/cancel` takes
+   priority over the pending-approval parser.
+2. A configured ChatGPT Browser produced a misleading missing-provider error.
+   Startup and agent lookup now give explicit API-model guidance before opening
+   a channel connection. This is a deliberate API-only guard, not browser-channel
+   support. Existing API-backed Telegram behavior remains covered by 12 cases.
+3. Cached isolated agents retained an old client/model after settings changed.
+   Provider/model/config/teammate/skill changes invalidate those caches; their
+   histories restore independently. Active or queued channel work blocks provider
+   changes; provider reconnect closes/reopens enabled channel connections.
+   Regression covers a changed client/model and preserved conversation, plus the
+   active-turn guard.
+4. Daemon stop during Discord auth could start Slack afterward. The daemon now
+   invalidates/joins host shutdown and checks stop before each startup await.
+   Regression proves only Discord was started and Slack remains stopped.
+
+Fixes were verified by the final 246/246 affected checks; no second independent
+review was requested. The reviewer set aside external account/installer checks,
+physical speech, approved conversation-key semantics, a fourth connector and
+filesystem transactions. Ruling: these remain the explicit acceptance gaps and
+scope limits above. The two baseline suite failures were independently reproduced
+rather than silently set aside.

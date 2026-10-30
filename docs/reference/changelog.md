@@ -15,6 +15,11 @@ channel setup from metadata; `/channels` offers discovery, status, testing,
 connection, disconnect, doctor and optional sender-bound pairing. Terminal
 connection does not start scheduled routines. Each channel stays opt-in.
 
+Channel work requires an API model; browser-only setup now gives explicit
+guidance. Model/provider changes refresh isolated agents and wait for channel
+work. Replayed owner replies cannot authorize the next pending action, and a
+stopped daemon cannot open a later channel after authentication finishes.
+
 The core owns default-deny access, group mention rules, private owner approvals,
 bounded agent turns, tool-only progress and durable delivery receipts. Missing
 receipts remain uncertain rather than triggering blind resend. Stopping during
