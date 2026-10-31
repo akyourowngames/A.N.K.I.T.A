@@ -9,7 +9,7 @@ const ROOT = fileURLToPath(new URL('../../desktop/renderer/', import.meta.url));
 const ROUTE = '/compaction-ui'; // Local preview with a stubbed desktop bridge; no real process or provider.
 const PREFERENCES = {
   secretScrubbing: true, secretWarningSeen: true, provider: 'custom', model: 'alpha', customApiBase: 'http://localhost:11434/v1', appearance: 'graphite',
-  contextWindow: 64000, maxTokens: 4096, contextCompaction: false, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: true,
+  contextWindow: 64000, maxTokens: 4096, contextCompaction: true, imageApiBase: '', imageModel: 'gpt-image-1', username: '', timeZone: '', profileSetupDone: true,
   hasCustomApiKey: true, hasGroqKey: false, hasKiloKey: false, hasComposioKey: false, hasImageApiKey: false, hasUnsplashAccessKey: false, hasPixabayApiKey: false,
 };
 const MODEL = { id: 'alpha', name: 'Alpha', vendor: 'Fixture', context: 64000, tools: true };
@@ -52,18 +52,13 @@ async function openPreview(t, preferences = PREFERENCES) {
   return { page, errors };
 }
 
-test('the compaction switch is off by default, explains itself, and saves only the change', async t => {
+test('the compaction switch is on by default, explains itself, and saves only the change', async t => {
   const { page, errors } = await openPreview(t);
   const toggle = page.getByRole('switch', { name: 'Summarize older messages' });
-  assert.equal(await toggle.isChecked(), false, 'opt-in: off unless the user turns it on');
-  const previous = page.locator('.settings-compaction-preview');
-  assert.equal(await previous.evaluate(node => node.classList.contains('is-on')), false, 'the preview reflects the off state');
+  assert.equal(await toggle.isChecked(), true, 'on by default in the app');
+  assert.equal(await page.locator('.settings-compaction-preview').evaluate(node => node.classList.contains('is-on')), true, 'the preview reflects the on state');
+  assert.match(await page.locator('.settings-model-compaction .settings-switch-row small').innerText(), /On by default/, 'the copy says why it is on');
   assert.ok(await page.locator('.settings-compaction-chip').count() === 3, 'the old -> recap -> recent diagram is present');
-
-  await toggle.click();
-  assert.equal(await toggle.isChecked(), true);
-  assert.equal(await page.locator('.settings-compaction-preview').evaluate(node => node.classList.contains('is-on')), true, 'the preview lights up with the switch');
-  assert.equal(await page.locator('.settings-model-compaction .settings-value-tag').innerText(), 'On');
 
   if (process.env.ANKITA_UI_CAPTURE_DIR) {
     const { mkdirSync } = await import('node:fs');
@@ -72,19 +67,25 @@ test('the compaction switch is off by default, explains itself, and saves only t
     await page.locator('.settings-model-compaction').scrollIntoViewIfNeeded();
     await page.locator('.settings-model-compaction').screenshot({ path: join(process.env.ANKITA_UI_CAPTURE_DIR, 'compaction-on.png') });
   }
+  await toggle.click();
+  assert.equal(await toggle.isChecked(), false);
+  assert.equal(await page.locator('.settings-compaction-preview').evaluate(node => node.classList.contains('is-on')), false, 'the preview dims with the switch');
+  assert.equal(await page.locator('.settings-model-compaction .settings-value-tag').innerText(), 'Off');
+
   await page.getByRole('button', { name: 'Save model settings' }).click();
   await page.getByText('Changes saved.').waitFor();
   const patches = await page.evaluate(() => window.savedPatches);
-  assert.deepEqual(patches, [{ contextCompaction: true }], 'only the changed flag is sent, so untouched numbers stay as they are');
+  assert.deepEqual(patches, [{ contextCompaction: false }], 'only the changed flag is sent, so untouched numbers stay as they are');
   assert.deepEqual(errors, []);
 });
 
-test('an on state from the backend renders as on and saving an unchanged form sends nothing', async t => {
-  const { page, errors } = await openPreview(t, { ...PREFERENCES, contextCompaction: true });
+test('an off state from the backend renders as off and saving an unchanged form sends nothing', async t => {
+  const { page, errors } = await openPreview(t, { ...PREFERENCES, contextCompaction: false });
   const toggle = page.getByRole('switch', { name: 'Summarize older messages' });
-  assert.equal(await toggle.isChecked(), true, 'the saved choice is reflected on load');
-  assert.equal(await page.locator('.settings-compaction-preview').evaluate(node => node.classList.contains('is-on')), true);
-  assert.equal(await page.locator('.settings-model-compaction .settings-value-tag').innerText(), 'On');
+  assert.equal(await toggle.isChecked(), false, 'a saved off choice is respected on load');
+  assert.equal(await page.locator('.settings-compaction-preview').evaluate(node => node.classList.contains('is-on')), false);
+  assert.equal(await page.locator('.settings-model-compaction .settings-value-tag').innerText(), 'Off');
+  assert.match(await page.locator('.settings-model-compaction .settings-switch-row small').innerText(), /Off: once a chat is long/, 'the off copy explains the trade');
   await page.getByRole('button', { name: 'Save model settings' }).click();
   await page.getByText('Everything is up to date.').waitFor();
   assert.deepEqual(await page.evaluate(() => window.savedPatches), [], 'an untouched form does not write settings');

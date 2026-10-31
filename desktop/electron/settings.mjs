@@ -143,9 +143,11 @@ export function applyDesktopSettings(base, saved = {}) {
     config.maxTokens = saved.maxTokens;
     config.maxTokensExplicit = true;
   }
-  // Opt-in: summarize dropped history instead of silently deleting it. The
-  // runtime already guards every failure path, so a missing value means "off".
+  // Compaction is on by default in the app: silently dropping a long thread is
+  // the worse default. A saved choice (including off) always wins, and an
+  // explicit CONTEXT_COMPACTION in .env still overrides the app default.
   if (own(saved, 'contextCompaction')) config.contextCompaction = saved.contextCompaction === true;
+  else if (!base.contextCompactionExplicit) config.contextCompaction = true;
   return config;
 }
 
@@ -203,7 +205,8 @@ export class DesktopSettingsStore {
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,
       maxTokens: this.data.maxTokens || 0,
-      // Reflect the value that actually applies: a saved choice, else env/default.
+      // Reflect the value that actually applies: a saved choice, else the
+      // effective config (env override or the app's default-on).
       contextCompaction: own(this.data, 'contextCompaction') ? this.data.contextCompaction === true : config.contextCompaction === true,
       voiceWakeWord: own(this.data, 'voiceWakeWord') ? this.data.voiceWakeWord === true : config.voiceWakeWord !== false,
       voiceStopWord: own(this.data, 'voiceStopWord') ? this.data.voiceStopWord === true : config.voiceStopWord !== false,

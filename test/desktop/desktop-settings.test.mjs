@@ -155,24 +155,26 @@ test('changing the window updates live agents without reconnecting', async () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
-test('long-conversation compaction is opt-in, saved, and reaches live agents without a reconnect', async () => {
+test('long-conversation compaction is on by default in the app, saved, and reaches live agents without a reconnect', async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-compaction-'));
   const client = { id: 'client' };
   const bootstrap = async ({ config }) => ({ client, tool: null, models: [{ id: 'alpha', name: 'Alpha', tools: true }], model: 'alpha', provider: { name: config.provider } });
   const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
   try {
     const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768 };
-    assert.equal(applyDesktopSettings(base, {}).contextCompaction, undefined, 'unset stays unset so the runtime default applies');
+    assert.equal(applyDesktopSettings(base, {}).contextCompaction, true, 'nothing saved means the app default: on');
+    assert.equal(applyDesktopSettings({ ...base, contextCompactionExplicit: true, contextCompaction: false }, {}).contextCompaction, false,
+      'an explicit env CONTEXT_COMPACTION=off wins over the app default');
+    assert.equal(applyDesktopSettings(base, { contextCompaction: false }).contextCompaction, false, 'a saved off choice wins');
     assert.equal(applyDesktopSettings(base, { contextCompaction: true }).contextCompaction, true);
-    assert.equal(applyDesktopSettings(base, { contextCompaction: false }).contextCompaction, false);
 
     const store = new DesktopSettingsStore(path.join(dir, 'plain-settings.json'));
-    store.update({ contextCompaction: true });
+    store.update({ contextCompaction: false });
     const fresh = new DesktopSettingsStore(store.file).load();
-    assert.equal(fresh.data.contextCompaction, true, 'the choice persists as a boolean');
-    assert.equal(fresh.publicView({}).contextCompaction, true);
-    assert.equal(new DesktopSettingsStore(path.join(dir, 'empty-settings.json')).load().publicView({ contextCompaction: true }).contextCompaction, true,
-      'with nothing saved the view reflects the env/default');
+    assert.equal(fresh.data.contextCompaction, false, 'the choice persists as a boolean');
+    assert.equal(fresh.publicView(applyDesktopSettings(base, fresh.data)).contextCompaction, false);
+    assert.equal(new DesktopSettingsStore(path.join(dir, 'empty-settings.json')).load().publicView(applyDesktopSettings(base, {})).contextCompaction, true,
+      'with nothing saved the view shows the effective default: on');
 
     const engine = new DesktopEngine({
       teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,

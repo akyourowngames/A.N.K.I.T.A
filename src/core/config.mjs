@@ -283,6 +283,9 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     browserToolFocus: onOff(pick("BROWSER_TOOL_FOCUS"), DEFAULTS.browserToolFocus),
     browserHistoryCompaction: onOff(pick("BROWSER_HISTORY_COMPACTION"), DEFAULTS.browserHistoryCompaction),
     contextCompaction: onOff(pick("CONTEXT_COMPACTION"), DEFAULTS.contextCompaction),
+    // A host may choose a different default (the desktop app enables it), but an
+    // explicit CONTEXT_COMPACTION in .env must still win over that choice.
+    contextCompactionExplicit: pick("CONTEXT_COMPACTION") !== undefined,
     browserRuntimeV2: onOff(pick("BROWSER_RUNTIME_V2"), DEFAULTS.browserRuntimeV2),
     browserEvidenceRetention: onOff(pick("BROWSER_EVIDENCE_RETENTION"), DEFAULTS.browserEvidenceRetention),
     browserProgressTracking: onOff(pick("BROWSER_PROGRESS_TRACKING"), DEFAULTS.browserProgressTracking),

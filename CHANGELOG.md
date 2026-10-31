@@ -33,11 +33,12 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
   its own timer. In standby, speech is checked by the speech service to find the
   wake word; anything without it is discarded. The CLI gains the stop word but
   not yet the wake word.
-- **Long-conversation compaction (opt-in).** When a chat outgrows its context,
-  Ankita can summarize the turns trimming would drop into one recap and keep the
-  recent window intact, so goals, decisions and files survive a long thread
-  instead of being deleted. Off by default: enable it in **Settings → Model →
-  Long conversations** or with `CONTEXT_COMPACTION=on`. Each recap is one extra
+- **Long-conversation compaction.** When a chat outgrows its context, Ankita
+  summarizes the turns trimming would drop into one recap and keeps the recent
+  window intact, so goals, decisions and files survive a long thread instead of
+  being deleted. On by default in the desktop app (**Settings → Model → Long
+  conversations**); the CLI stays opt-in with `CONTEXT_COMPACTION=on`, and an
+  explicit value in `.env` wins over the app default. Each recap is one extra
   model call; a failed or empty recap falls back to plain trimming. The desktop
   transcript shows the recap as a labelled note, not as something you typed.
 - **MCP servers in the desktop app.** Plugins now has an MCP tab beside Apps and

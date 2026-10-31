@@ -298,7 +298,7 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
                 <span>
                   <strong>Summarize older messages</strong>
                   <small>{draft.contextCompaction
-                    ? 'Older turns fold into one short recap before they would be trimmed. Goals, decisions and files stay with you.'
+                    ? 'On by default. Older turns fold into one short recap before they would be trimmed, so goals, decisions and files stay with you.'
                     : 'Off: once a chat is long, older turns are dropped as the context fills. Turn this on to keep a recap instead.'}</small>
                 </span>
                 <input type="checkbox" role="switch" aria-label="Summarize older messages" checked={draft.contextCompaction} onChange={event => set('contextCompaction', event.target.checked)} />
