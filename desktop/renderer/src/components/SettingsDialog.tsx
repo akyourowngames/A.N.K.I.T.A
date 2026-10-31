@@ -41,7 +41,7 @@ const themes: { id: DesktopPreferences['appearance']; name: string; detail: stri
 ];
 
 type Secret = 'customApiKey' | 'groqApiKey' | 'kiloApiKey' | 'composioApiKey' | 'imageApiKey' | 'unsplashAccessKey' | 'pixabayApiKey';
-type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance']; contextWindow: string; maxTokens: string; imageApiBase: string; imageModel: string; username: string; timeZone: string } & Record<Secret, string>;
+type Draft = { provider: string; model: string; customApiBase: string; appearance: DesktopPreferences['appearance']; contextWindow: string; maxTokens: string; contextCompaction: boolean; imageApiBase: string; imageModel: string; username: string; timeZone: string } & Record<Secret, string>;
 const savedFlag: Record<Secret, keyof DesktopPreferences> = {
   customApiKey: 'hasCustomApiKey', groqApiKey: 'hasGroqKey', kiloApiKey: 'hasKiloKey', composioApiKey: 'hasComposioKey',
   imageApiKey: 'hasImageApiKey', unsplashAccessKey: 'hasUnsplashAccessKey', pixabayApiKey: 'hasPixabayApiKey',
@@ -49,6 +49,7 @@ const savedFlag: Record<Secret, keyof DesktopPreferences> = {
 function fromPreferences(value: DesktopPreferences): Draft {
   return { provider: value.provider, model: value.model, customApiBase: value.customApiBase, appearance: value.appearance,
     contextWindow: value.contextWindow ? String(value.contextWindow) : '', maxTokens: value.maxTokens ? String(value.maxTokens) : '',
+    contextCompaction: value.contextCompaction === true,
     imageApiBase: value.imageApiBase || '', imageModel: value.imageModel || 'gpt-image-1',
     username: value.username || '', timeZone: value.timeZone || '',
     customApiKey: '', groqApiKey: '', kiloApiKey: '', composioApiKey: '', imageApiKey: '', unsplashAccessKey: '', pixabayApiKey: '' };
@@ -145,6 +146,11 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
       if (typeof preferences.maxTokens === 'number') {
         const maxTokens = Number(draft.maxTokens) || 0;
         if (maxTokens !== preferences.maxTokens) patch.maxTokens = maxTokens;
+      }
+      // Only send the compaction flag when the main process advertises it, so an
+      // older build drops nothing instead of failing the whole save.
+      if (typeof preferences.contextCompaction === 'boolean' && draft.contextCompaction !== preferences.contextCompaction) {
+        patch.contextCompaction = draft.contextCompaction;
       }
     }
     if (tab === 'appearance' && draft.appearance !== preferences.appearance) patch.appearance = draft.appearance;
@@ -281,6 +287,30 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
                   <small>The maximum length of a reply. This space is reserved from the context window.</small>
                 </div>
               </div>
+            </section>
+            <section className="settings-panel settings-model-compaction" aria-labelledby="settings-compaction-title">
+              <div className="settings-section-lead">
+                <span className="settings-section-symbol"><Icon name="layers" size={19} /></span>
+                <div><h2 id="settings-compaction-title">Long conversations</h2><p>Keep the thread when a chat outgrows its context.</p></div>
+                <span className={`settings-value-tag ${draft.contextCompaction ? 'is-on' : ''}`} role="status">{draft.contextCompaction ? 'On' : 'Off'}</span>
+              </div>
+              <label className="settings-switch-row">
+                <span>
+                  <strong>Summarize older messages</strong>
+                  <small>{draft.contextCompaction
+                    ? 'Older turns fold into one short recap before they would be trimmed. Goals, decisions and files stay with you.'
+                    : 'Off: once a chat is long, older turns are dropped as the context fills. Turn this on to keep a recap instead.'}</small>
+                </span>
+                <input type="checkbox" role="switch" aria-label="Summarize older messages" checked={draft.contextCompaction} onChange={event => set('contextCompaction', event.target.checked)} />
+              </label>
+              <div className={`settings-compaction-preview ${draft.contextCompaction ? 'is-on' : ''}`} aria-hidden="true">
+                <span className="settings-compaction-chip">earlier turns</span>
+                <span className="settings-compaction-arrow"><Icon name="arrowRight" size={13} /></span>
+                <span className="settings-compaction-chip is-recap"><Icon name="layers" size={12} />recap</span>
+                <span className="settings-compaction-arrow"><Icon name="arrowRight" size={13} /></span>
+                <span className="settings-compaction-chip">recent turns</span>
+              </div>
+              <p className="settings-help">Each recap is one extra model call. If it fails, Ankita falls back to trimming as before.</p>
             </section>
             <div className="settings-savebar"><span>Saved on this device</span><button type="button" className="settings-primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save model settings'}</button></div>
             <button className="settings-navigation-link" onClick={() => { onTab('providers'); setNotice(null); }}><Icon name="key" size={15} /><span>Connect or change a provider</span><Icon name="arrowRight" size={15} /></button>

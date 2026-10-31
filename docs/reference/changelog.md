@@ -7,6 +7,22 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Long-conversation compaction (opt-in)
+
+When a chat is about to outgrow its context, Ankita can fold the turns that
+trimming would drop into one short recap and keep the most recent window intact,
+so goals, decisions and touched files survive a long thread. Off by default
+(`CONTEXT_COMPACTION=on`, or Settings → Model → Long conversations). Each recap
+is one extra model call; a failed or empty reply falls back to plain trimming
+and reports the skip instead of losing the turn. The recap is stored as a
+user-role message with a fixed prefix, which keeps provider histories valid and
+lets the desktop transcript show it as a labelled note rather than a typed
+bubble. Settings saves send only the changed flag, and the value reaches live
+agents without a reconnect; routine delivery deliberately skips compaction.
+Verified locally: 8 core tests, the unchanged trimming suites, both desktop UI
+previews and a localhost round trip (0 requests while off, 1 while on). Live
+provider cost and recap quality remain unmeasured.
+
 ### Remembered browser companion connection
 
 The browser companion now has a separate opt-in control grant, an authenticated

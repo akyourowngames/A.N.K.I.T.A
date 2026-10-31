@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Agent } from '../../src/core/agent.mjs';
+import { Agent, COMPACTION_SUMMARY_PREFIX } from '../../src/core/agent.mjs';
 import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG, MCP_TIERS_FILE, COMPOSIO_GRANTS_FILE } from '../../src/core/config.mjs';
 import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
 import { ComposioGrantStore } from '../../src/integrations/composio-oauth.mjs';
@@ -218,7 +218,13 @@ export function threadMessages(messages = []) {
     if (entry.role === 'user' || entry.role === 'assistant') {
       const content = messageText(entry.content);
       const attachments = attachmentNames(entry.content);
-      if (content || attachments.length) out.push({ id: `message-${i}`, role: entry.role, content, attachments: attachments.length ? attachments : undefined });
+      // A compaction recap is model-facing bookkeeping, not something the user
+      // typed: surface it as a labelled note instead of a fake user bubble.
+      const compacted = entry.role === 'user' && content.startsWith(COMPACTION_SUMMARY_PREFIX);
+      // The marker is stripped here: it is bookkeeping for this mapping only and
+      // must not read as text the teammate said.
+      const shown = compacted ? content.slice(COMPACTION_SUMMARY_PREFIX.length).trim() : content;
+      if (shown || attachments.length) out.push({ id: `message-${i}`, role: compacted ? 'assistant' : entry.role, content: shown, attachments: attachments.length ? attachments : undefined, ...(compacted ? { compacted: true } : {}) });
       for (const call of entry.tool_calls || []) {
         let args = {};
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
@@ -558,7 +564,7 @@ export class DesktopEngine {
       || (['custom', 'modal'].includes(active) && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
-    const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
+    const tune = ['contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
     if ((voiceSetupChanged || reconnect || tune || Object.hasOwn(patch, 'model')) && this._voice?.snapshot().active) throw new Error('End voice before changing its setup or provider.');
     if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
     if (reconnect) {
@@ -590,6 +596,7 @@ export class DesktopEngine {
       const window = {
         contextWindow: nextConfig.contextWindow, contextWindowExplicit: nextConfig.contextWindowExplicit,
         maxTokens: nextConfig.maxTokens, maxTokensExplicit: nextConfig.maxTokensExplicit,
+        contextCompaction: nextConfig.contextCompaction,
         imageApiBase: nextConfig.imageApiBase, imageApiKey: nextConfig.imageApiKey, imageModel: nextConfig.imageModel,
         unsplashAccessKey: nextConfig.unsplashAccessKey, pixabayApiKey: nextConfig.pixabayApiKey,
         username: nextConfig.username, timeZone: nextConfig.timeZone,
@@ -902,7 +909,9 @@ export class DesktopEngine {
           agent.abort = new AbortController();
           agent.useTools = false;
           agent.messages[0] = { ...agent.messages[0], content: `${agent.messages[0].content}\n\n${ROUTINE_DELIVERY_POLICY}` };
-          agent.trimHistory?.(agent.config?.historyMessages ?? agent.config?.historyLines);
+          // A routine delivery is a one-shot projection of the owner's thread;
+          // compacting it would pay for a recap that is discarded with `original`.
+          await agent.trimHistory?.(agent.config?.historyMessages ?? agent.config?.historyLines, { compact: false });
           const result = await agent.streamTurn({ useTools: false,
             onDelta: text => this.emit({ type: 'assistant-delta', threadId: id, messageId, text }),
             onReset: () => this.emit({ type: 'message-reset', threadId: id, messageId }),

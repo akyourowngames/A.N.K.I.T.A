@@ -5,7 +5,7 @@ import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom', 'modal', CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice', 'voiceOutputDevice']); // Private API keys and discovered audio-device preferences.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
@@ -74,7 +74,7 @@ function validatePatch(patch) {
         if (!zone) throw new Error('Enter a valid timezone, e.g. Asia/Kolkata');
         clean[key] = zone;
       }
-    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen'].includes(key)) {
+    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen', 'contextCompaction'].includes(key)) {
       clean[key] = value === true || value === 'true';
     } else if (key === 'disabledSkills') {
       if (!Array.isArray(value) || value.length > 100 || value.some(name => typeof name !== 'string' || !/^[a-z0-9-]{1,64}$/.test(name))) {
@@ -131,6 +131,9 @@ export function applyDesktopSettings(base, saved = {}) {
     config.maxTokens = saved.maxTokens;
     config.maxTokensExplicit = true;
   }
+  // Opt-in: summarize dropped history instead of silently deleting it. The
+  // runtime already guards every failure path, so a missing value means "off".
+  if (own(saved, 'contextCompaction')) config.contextCompaction = saved.contextCompaction === true;
   return config;
 }
 
@@ -188,6 +191,8 @@ export class DesktopSettingsStore {
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,
       maxTokens: this.data.maxTokens || 0,
+      // Reflect the value that actually applies: a saved choice, else env/default.
+      contextCompaction: own(this.data, 'contextCompaction') ? this.data.contextCompaction === true : config.contextCompaction === true,
       imageApiBase: this.data.imageApiBase || config.imageApiBase || '',
       imageModel: this.data.imageModel || config.imageModel || 'gpt-image-1',
       hasImageApiKey: Boolean(this.data.imageApiKey || config.imageApiKey),

@@ -155,6 +155,43 @@ test('changing the window updates live agents without reconnecting', async () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('long-conversation compaction is opt-in, saved, and reaches live agents without a reconnect', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-compaction-'));
+  const client = { id: 'client' };
+  const bootstrap = async ({ config }) => ({ client, tool: null, models: [{ id: 'alpha', name: 'Alpha', tools: true }], model: 'alpha', provider: { name: config.provider } });
+  const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
+  try {
+    const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768 };
+    assert.equal(applyDesktopSettings(base, {}).contextCompaction, undefined, 'unset stays unset so the runtime default applies');
+    assert.equal(applyDesktopSettings(base, { contextCompaction: true }).contextCompaction, true);
+    assert.equal(applyDesktopSettings(base, { contextCompaction: false }).contextCompaction, false);
+
+    const store = new DesktopSettingsStore(path.join(dir, 'plain-settings.json'));
+    store.update({ contextCompaction: true });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.contextCompaction, true, 'the choice persists as a boolean');
+    assert.equal(fresh.publicView({}).contextCompaction, true);
+    assert.equal(new DesktopSettingsStore(path.join(dir, 'empty-settings.json')).load().publicView({ contextCompaction: true }).contextCompaction, true,
+      'with nothing saved the view reflects the env/default');
+
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+      config: { ...base }, bootstrap, mcp, emit: () => {},
+    });
+    await engine.init();
+    const agent = { config: { ...engine.config }, contextWindow: 32768 };
+    engine.agents.set('thread', agent);
+    const result = await engine.saveDesktopSettings({ contextCompaction: true });
+    assert.equal(result.preferences.contextCompaction, true);
+    assert.equal(engine.client, client, 'the provider connection is reused');
+    assert.equal(engine.config.contextCompaction, true);
+    assert.equal(agent.config.contextCompaction, true, 'the live teammate picks up the switch');
+    await engine.saveDesktopSettings({ contextCompaction: false });
+    assert.equal(agent.config.contextCompaction, false);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('custom provider connection checks models with a bounded request and never echoes the key', async () => {
   let seen;
   const result = await testCustomProvider({ apiBase: 'https://models.example/v1', apiKey: 'private-token', fetchImpl: async (url, options) => {

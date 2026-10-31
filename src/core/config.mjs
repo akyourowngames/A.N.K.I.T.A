@@ -54,6 +54,7 @@ const DEFAULTS = {
   subagentMaxResultBytes: SUBAGENT_DEFAULTS.resultBytes,
   browserToolFocus: false, // Boolean: opt-in until repeated live capability parity clears the browser-lab gate.
   browserHistoryCompaction: false, // Boolean: opt-in request projection; mixed-page evidence retention still needs live parity.
+  contextCompaction: false, // Boolean: summarize dropped conversation history instead of deleting it. Opt-in until live parity is verified.
   browserRuntimeV2: false, // Boolean: experimental structured browser runtime; enable only after paired capability/speed gates.
   browserEvidenceRetention: false, // Boolean: opt-in grounded task quotes; requires structured runtime observations.
   browserProgressTracking: false, // Boolean: opt-in state-aware recovery guidance; existing hard limits still apply.
@@ -274,6 +275,7 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     subagentMaxResultBytes: clampInt(pick("SUBAGENT_MAX_RESULT_BYTES"), SUBAGENT_LIMITS.minResultBytes, SUBAGENT_LIMITS.maxResultBytes, DEFAULTS.subagentMaxResultBytes),
     browserToolFocus: onOff(pick("BROWSER_TOOL_FOCUS"), DEFAULTS.browserToolFocus),
     browserHistoryCompaction: onOff(pick("BROWSER_HISTORY_COMPACTION"), DEFAULTS.browserHistoryCompaction),
+    contextCompaction: onOff(pick("CONTEXT_COMPACTION"), DEFAULTS.contextCompaction),
     browserRuntimeV2: onOff(pick("BROWSER_RUNTIME_V2"), DEFAULTS.browserRuntimeV2),
     browserEvidenceRetention: onOff(pick("BROWSER_EVIDENCE_RETENTION"), DEFAULTS.browserEvidenceRetention),
     browserProgressTracking: onOff(pick("BROWSER_PROGRESS_TRACKING"), DEFAULTS.browserProgressTracking),

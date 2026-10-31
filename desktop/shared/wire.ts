@@ -16,12 +16,13 @@ export type DesktopPreferences = {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
+  contextCompaction?: boolean;
   imageApiBase: string; imageModel: string;
   username: string; timeZone: string; profileSetupDone: boolean;
   hasCustomApiKey: boolean; hasGroqKey: boolean; hasKiloKey: boolean; hasComposioKey: boolean;
   hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
-export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
+export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'contextCompaction' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
   sarvamApiKey?: string; basetenApiKey?: string; micDevice?: string; voiceOutputDevice?: string;
@@ -67,7 +68,7 @@ export type RoutineBudget = { maxRunsPerDay: number; maxTokensPerDay: number; ma
 export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; reason?: string | null; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string };
 export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastReason?: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null };
 export type ChatMessage =
-  | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
+  | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[]; compacted?: boolean }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
 
 export type PhonePairingState = 'starting' | 'ready' | 'offline' | 'unsupported' | 'error';
