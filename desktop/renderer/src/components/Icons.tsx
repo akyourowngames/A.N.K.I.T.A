@@ -51,6 +51,7 @@ export function Icon({ name, size = 18, stroke = 1.8 }: { name: string; size?: n
     user: <><circle cx="12" cy="8" r="4"/><path d="M4 21c1.4-3.8 4.7-5.5 8-5.5s6.6 1.7 8 5.5"/></>,
     phone: <><rect x="7" y="2.5" width="10" height="19" rx="2.5"/><path d="M10.5 5.5h3M11 18.5h2"/></>,
     qr: <><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h3M20 17v4"/></>,
+    layers: <><path d="m12 3 9 4.5-9 4.5-9-4.5L12 3Z"/><path d="m3 12 9 4.5 9-4.5M3 16.5 12 21l9-4.5"/></>,
   };
   return <svg {...shared}>{paths[name] || paths.sparkle}</svg>;
 }

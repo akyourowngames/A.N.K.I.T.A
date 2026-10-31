@@ -7,6 +7,79 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Scheduled results land in the jobs panel, not just the chat
+
+A result that finishes while the owning teammate is mid-turn used to exist only
+as a queued event nothing listened for. Now:
+
+- The **Scheduled tasks** panel shows waiting results immediately under "Results
+  ready to post". Each finished update keeps its own expandable row, so a busy
+  period that produced three results reads as one group with three readable
+  entries, not one merged blob and not three chat messages.
+- A **"While you were away"** strip counts what ran, what stayed quiet and what
+  needs you. Counts are computed by the scheduler, not re-derived in the UI.
+- **Live progress**: start, step and end events are reduced into the job row, so
+  a running task shows "Running · step N" while it happens.
+- **Heartbeats defer instead of dropping.** A check that comes due while the
+  owner is replying waits and runs once when the chat is free; missed intervals
+  collapse into one check and the row says how many are held.
+- **Silent runs**: a job may end with `[SILENT]`; the run is recorded and visible
+  but not posted. **Failures always post**, and a repeated failure alerts once per
+  incident. A failed handoff is recorded as `deliveryFailed`, separate from the
+  job's `failureStreak`.
+- The ChatGPT-tab turn path now flushes queued deliveries at turn end, matching
+  typed turns.
+
+Verified locally: 45 scheduler tests (including deferred/coalesced heartbeats,
+silence, failure-once and the away summary), 3 renderer store tests, 3 Playwright
+panel checks and the unchanged automation suites. Live tray behaviour, real
+quiet-hours timing and the packaged build are not exercised here.
+
+### Voice attention ladder: wake word, stop word, auto-mute
+
+Voice now has three attention levels instead of one. A voice session with a wake
+word starts in standby and returns there after every request, so the only thing
+acted on by default is an utterance starting with "Ankita" (a leading "Hi"/"Hey"
+is fine). "Ankita, <request>" runs the request in the same breath; a bare "Ankita"
+opens a short listening window (15 s by default, set to 0 for none). After a
+longer quiet spell the microphone closes until you resume. Saying "stop" or
+"cancel" cuts a reply or cancels running work; "stop by the store" is still an
+ordinary request. Exit phrases now also accept "exit voice mode" and "end the
+session".
+
+Standby speech has to be transcribed to look for the wake word, so nearby talking
+during standby is checked by the speech service; utterances without the wake word
+are discarded and never become captions, requests or saved history. The island
+gained a standby halo, a wake ring and phase-coloured wash, all disabled under
+reduced motion. **Settings → Voice → Hands-free** controls the two words and the
+two timers; behaviour saves take effect without ending voice. The CLI shares the
+same phrase table for stop/exit but has no wake word yet.
+
+Verified locally: 10 phrase-table tests, 43 desktop voice-loop tests including 7
+new ladder cases, state/UI/settings suites and a Playwright check of the new
+panel. Real microphone timing, Sarvam wake-word accuracy and false-positive rate
+are unmeasured without hardware and a live key.
+
+### Long-conversation compaction (opt-in)
+
+When a chat is about to outgrow its context, Ankita can fold the turns that
+trimming would drop into one short recap and keep the most recent window intact,
+so goals, decisions and touched files survive a long thread. On by default in
+the desktop app (Settings → Model → Long conversations); the CLI stays opt-in
+with `CONTEXT_COMPACTION=on`, and an explicit value in `.env` wins over the app
+default. Each recap
+is one extra model call; a failed or empty reply falls back to plain trimming
+and reports the skip instead of losing the turn. The recap is stored as a
+user-role message with a fixed prefix, which keeps provider histories valid and
+lets the desktop transcript show it as a labelled note rather than a typed
+bubble. Settings saves send only the changed flag, and the value reaches live
+agents without a reconnect; routine delivery deliberately skips compaction. The
+app default flipped to on after review, with a saved off choice and an explicit
+`.env` value both still winning. Verified locally: 8 core tests, the unchanged
+trimming suites, both desktop UI previews (on by default, off respected) and a
+localhost round trip (0 requests while off, 1 while on). Live provider cost and
+recap quality remain unmeasured.
+
 ### Remembered browser companion connection
 
 The browser companion now has a separate opt-in control grant, an authenticated

@@ -169,7 +169,7 @@ test('a one-shot agent carries every tool available outside the chat REPL', () =
 
 /* ------------------------- the budget, measured -------------------------- */
 
-test('the history budget is materially larger before activation', () => {
+test('the history budget is materially larger before activation', async () => {
   const build = () =>
     new Agent({
       client: {},
@@ -185,12 +185,12 @@ test('the history budget is materially larger before activation', () => {
 
   const lean = build();
   fill(lean);
-  lean.trimHistory(200);
+  await lean.trimHistory(200);
 
   const heavy = build();
   for (const c of CATEGORIES) findTools.run({ query: c.id }, heavy);
   fill(heavy);
-  heavy.trimHistory(200);
+  await heavy.trimHistory(200);
 
   assert.ok(
     lean.messages.length > heavy.messages.length,

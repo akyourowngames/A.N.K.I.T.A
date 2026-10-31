@@ -18,6 +18,9 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
   const config = { provider: 'kilo', voiceProvider: 'baseten', sarvamApiKey: 'fixture-speech', basetenApiKey: 'fixture-meta',
     sttProvider: 'sarvam', ttsProvider: 'sarvam', voiceSilenceMs: 800, voiceNoiseDb: -35, voiceBargeDb: -25,
     voiceMaxUtteranceMs: 5000, voiceBargeIn: barge, voiceHfpRouting: false,
+    // Most existing tests exercise freely-listening voice; the wake-word ladder
+    // has its own cases below and turns these on explicitly.
+    voiceWakeWord: false, voiceStopWord: true,
     voiceSpeechGapMs: 0, voiceJobWaitUpdateMs: 100000, voiceJobSpeakMinIntervalMs: 0, voiceTaskLimit: 20, voiceSpeakMaxChars: 1200 };
   const h = { inputs: [], played: [], events: [], calls: [], transcripts: [], cancelled: 0, stops: 0, synth: [] };
   const engine = { turns: new Map(), listTeammates: () => [{ id: 'owner' }, { id: 'other' }],
@@ -524,4 +527,127 @@ test('manual desktop pause during a tentative interruption preserves the unfinis
   await until(() => h.played.filter(text => text === 'More details.').length === 2);
   assert.equal(h.played.filter(text => text === 'First result.').length, 1);
   assert.equal(h.calls.length, 1);
+});
+
+/* --------------------- attention ladder: standby + wake ------------------ */
+
+const freeListening = config => { config.voiceWakeWord = false; };
+const wakeLadder = (config, idleMs = 15000, standbyMs = 400) => { config.voiceWakeWord = true; config.voiceIdleMs = idleMs; config.voiceStandbyMs = standbyMs; };
+const speakOnce = (h, text) => { h.transcripts.push(text); };
+const sayInto = (h, text) => {
+  speakOnce(h, text);
+  const input = h.inputs.at(-1);
+  input.options.onEvent({ type: 'silence_end', at: 1 }); input.options.onEvent({ type: 'silence_start', at: 2 });
+};
+
+test('a session with a wake word starts in standby, not freely listening', async t => {
+  const h = harness(t);
+  wakeLadder(h.config);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  assert.equal(h.calls.length, 0, 'starting voice is not a request');
+});
+
+test('standby closes the microphone after the quiet timeout without submitting anything', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().paused === true);
+  assert.equal(h.voice.snapshot().active, true, 'auto-mute keeps the session, unlike End voice');
+  assert.equal(h.voice.snapshot().phase, 'paused');
+  assert.ok(h.inputs.at(-1).stopped, 'the microphone process is closed');
+  assert.equal(h.calls.length, 0);
+});
+
+test('speech in standby that is not the wake word is dropped and never becomes a request', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0, 100000);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'write a note');
+  await until(() => h.transcripts.length > 0);
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(h.calls.length, 0, 'no delegated request');
+  assert.notEqual(h.voice.snapshot().caption, 'write a note', 'no user caption is shown');
+  assert.equal(h.voice.snapshot().phase, 'standby', 'it stays asleep');
+});
+
+test('the wake word plus a request is handled from standby and returns to standby', async t => {
+  const h = harness(t);
+  // A long mic timeout keeps this test about the return-to-standby step only.
+  wakeLadder(h.config, 0, 100000);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Hi Ankita, write a note');
+  await until(() => h.calls.length === 1);
+  assert.equal(h.calls[0].text, 'write a note', 'the wake prefix and greeting are not part of the request');
+  await until(() => h.voice.snapshot().phase === 'standby');
+  assert.ok(h.voice.snapshot().wakeCue > 0, 'the island saw the wake cue');
+});
+
+test('a bare wake word keeps listening for the configured window, then returns to standby', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 120);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Ankita');
+  await until(() => h.voice.snapshot().phase === 'listening');
+  assert.deepEqual(h.calls, [], 'the wake word is not a request');
+  await until(() => h.voice.snapshot().phase === 'standby');
+});
+
+test('with no listening window, a bare wake word still wakes and shows the cue', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0);
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Ankita');
+  await until(() => h.voice.snapshot().wakeCue > 0);
+  assert.deepEqual(h.calls, [], 'the wake word is not a request');
+  assert.equal(h.voice.snapshot().phase, 'standby', 'no free-listening window was configured');
+});
+
+test('the stop word cancels running work and confirms once', async t => {
+  let release;
+  const blocked = new Promise(resolve => { release = resolve; });
+  // A job must publish a durable record before submit() returns, so the fixture
+  // reports one real tool step and then blocks - the loop is free to listen again.
+  const h = harness(t, { run: async observer => {
+    const call = { id: 'read', function: { name: 'read_file', arguments: '{}' } };
+    observer.onToolCall(call); observer.onToolResult(call, 'opened', { ok: true });
+    await blocked;
+    return { text: '', error: null };
+  } });
+  freeListening(h.config);
+  try {
+    await h.voice.start({ threadId: 'owner' }); await h.say('write a note');
+    await until(() => h.calls.length === 1);
+    await h.say('stop');
+    await until(() => h.voice.snapshot().caption === 'Stopped.');
+    assert.ok(h.cancelled >= 1, 'the running job is asked to cancel');
+    assert.equal(h.calls.length, 1, 'the stop word itself is not submitted as a request');
+  } finally { release(); }
+});
+
+test('with the wake word off, the microphone listens freely and closes after quiet', async t => {
+  const h = harness(t);
+  h.config.voiceWakeWord = false; h.config.voiceIdleMs = 40; h.config.voiceStandbyMs = 400;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'listening');
+  await until(() => h.voice.snapshot().paused === true);
+  assert.equal(h.voice.snapshot().phase, 'paused', 'no standby rung when the wake word is off');
+});
+
+test('resume after auto-mute returns a wake-word session to standby', async t => {
+  const h = harness(t);
+  h.config.voiceWakeWord = true; h.config.voiceIdleMs = 0; h.config.voiceStandbyMs = 120;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().paused === true);
+  h.config.voiceStandbyMs = 100000;
+  await h.voice.resume();
+  await until(() => h.voice.snapshot().phase === 'standby');
+  await until(() => h.inputs.at(-1)?.stopped === false);
+  assert.equal(h.voice.snapshot().paused, false);
+  assert.equal(h.voice.snapshot().active, true);
+  assert.ok(h.inputs.at(-1) && h.inputs.at(-1).stopped === false, 'a replacement microphone is open');
 });

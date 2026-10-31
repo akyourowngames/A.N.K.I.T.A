@@ -19,10 +19,20 @@ test('voice snapshots are independent, bounded and safe to send to both surfaces
 });
 
 test('voice phase labels describe listening, work, pause and errors without a fake progress estimate', () => {
-  for (const phase of ['starting', 'listening', 'transcribing', 'working', 'speaking', 'approval', 'paused', 'error']) {
+  for (const phase of ['starting', 'listening', 'standby', 'transcribing', 'working', 'speaking', 'approval', 'paused', 'error']) {
     assert.ok(voice.VOICE_PHASE_LABELS[phase]);
   }
+  assert.equal(voice.VOICE_PHASE_LABELS.standby, 'Say Ankita');
   assert.notEqual(voice.VOICE_ACTIONS.end, voice.VOICE_ACTIONS.cancel);
+});
+
+test('standby and the wake cue survive a public snapshot, and junk is dropped', () => {
+  const standby = voice.voiceStatePatch(voice.emptyVoiceState(), { active: true, phase: 'standby', wakeCue: 1234 });
+  assert.equal(standby.phase, 'standby');
+  assert.equal(standby.wakeCue, 1234);
+  assert.equal(voice.voiceStatePatch(standby, { wakeCue: 'soon' }).wakeCue, 0, 'a non-numeric cue is discarded');
+  assert.equal(voice.voiceStatePatch(standby, { wakeCue: -5 }).wakeCue, 0, 'a negative cue is discarded');
+  assert.equal(voice.voiceStatePatch(standby, { phase: 'nope' }).phase, 'standby', 'an invented phase falls back');
 });
 
 test('parallel snapshots bound rows and remove private worker fields', () => {

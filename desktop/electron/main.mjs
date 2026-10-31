@@ -526,6 +526,8 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     }
     case 'scheduleList': return current.schedule().list(payload?.threadId);
     case 'scheduleStatus': return current.schedule().status(payload?.threadId);
+    case 'scheduleAwaySummary': return current.schedule().awaySummary(payload?.threadId);
+    case 'schedulePendingDeliveries': return current.schedule().pendingDeliveries(payload?.threadId);
     case 'scheduleAdd': return current.schedule().add(payload);
     case 'scheduleUpdate': return current.schedule().update(payload.id, payload.patch);
     case 'scheduleRemove': return current.schedule().remove(payload.id);

@@ -13,6 +13,18 @@ export function jobNeedsAttention(job: Routine) {
   return Boolean(job.needsApproval || job.ownerMissing || job.lastStatus === 'missed');
 }
 
+// A heartbeat waiting for the owner to finish replying. It is not "running" and
+// not "skipped": it is pending, and the panel says so.
+export function jobIsDeferred(job: Routine) {
+  return job.kind === 'heartbeat' && Boolean(job.pendingHeartbeatAt);
+}
+
+/** One calm line for a waiting result row. */
+export function pendingSummary(count: number) {
+  if (!count) return '';
+  return count === 1 ? '1 result ready' : `${count} results ready`;
+}
+
 // One calm line shared by the context-bar chip and the jobs panel intro, so the
 // status reads the same before and after opening the panel.
 export function jobStatusSummary(jobs: Routine[]) {

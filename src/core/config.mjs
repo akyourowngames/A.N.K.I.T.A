@@ -54,6 +54,7 @@ const DEFAULTS = {
   subagentMaxResultBytes: SUBAGENT_DEFAULTS.resultBytes,
   browserToolFocus: false, // Boolean: opt-in until repeated live capability parity clears the browser-lab gate.
   browserHistoryCompaction: false, // Boolean: opt-in request projection; mixed-page evidence retention still needs live parity.
+  contextCompaction: false, // Boolean: summarize dropped conversation history instead of deleting it. Opt-in until live parity is verified.
   browserRuntimeV2: false, // Boolean: experimental structured browser runtime; enable only after paired capability/speed gates.
   browserEvidenceRetention: false, // Boolean: opt-in grounded task quotes; requires structured runtime observations.
   browserProgressTracking: false, // Boolean: opt-in state-aware recovery guidance; existing hard limits still apply.
@@ -132,6 +133,13 @@ const DEFAULTS = {
   voiceBargeIn: true,
   voiceBargeDb: -25,
   voiceHfpRouting: true,
+  // Attention ladder inside a voice session. With a wake word, the session rests
+  // in standby (only "Ankita" is acted on) and returns there after each request;
+  // voiceIdleMs is how long a bare "Ankita" keeps full listening open.
+  voiceWakeWord: true,
+  voiceStopWord: true,
+  voiceIdleMs: 15000,
+  voiceStandbyMs: 600000,
   voiceAddress: "sir",
   voiceSpeakItems: 8,
   voiceSpeakSentences: 6,
@@ -274,6 +282,10 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     subagentMaxResultBytes: clampInt(pick("SUBAGENT_MAX_RESULT_BYTES"), SUBAGENT_LIMITS.minResultBytes, SUBAGENT_LIMITS.maxResultBytes, DEFAULTS.subagentMaxResultBytes),
     browserToolFocus: onOff(pick("BROWSER_TOOL_FOCUS"), DEFAULTS.browserToolFocus),
     browserHistoryCompaction: onOff(pick("BROWSER_HISTORY_COMPACTION"), DEFAULTS.browserHistoryCompaction),
+    contextCompaction: onOff(pick("CONTEXT_COMPACTION"), DEFAULTS.contextCompaction),
+    // A host may choose a different default (the desktop app enables it), but an
+    // explicit CONTEXT_COMPACTION in .env must still win over that choice.
+    contextCompactionExplicit: pick("CONTEXT_COMPACTION") !== undefined,
     browserRuntimeV2: onOff(pick("BROWSER_RUNTIME_V2"), DEFAULTS.browserRuntimeV2),
     browserEvidenceRetention: onOff(pick("BROWSER_EVIDENCE_RETENTION"), DEFAULTS.browserEvidenceRetention),
     browserProgressTracking: onOff(pick("BROWSER_PROGRESS_TRACKING"), DEFAULTS.browserProgressTracking),
@@ -466,6 +478,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     // Route playback to a Bluetooth headset's Hands-Free endpoint while its mic
     // is open, so barge-in doesn't silence replies (A2DP drops during capture).
     voiceHfpRouting: onOff(pick("VOICE_HFP_ROUTING"), DEFAULTS.voiceHfpRouting),
+    voiceWakeWord: onOff(pick("VOICE_WAKE_WORD"), DEFAULTS.voiceWakeWord),
+    voiceStopWord: onOff(pick("VOICE_STOP_WORD"), DEFAULTS.voiceStopWord),
+    // Listening window after a bare wake word (0 = return to standby at once).
+    voiceIdleMs: clampInt(pick("VOICE_IDLE_MS"), 0, 600000, DEFAULTS.voiceIdleMs),
+    voiceStandbyMs: clampInt(pick("VOICE_STANDBY_MS"), 60000, 3600000, DEFAULTS.voiceStandbyMs),
     // An empty address is useful ("off" / "none" disables the salutation).
     voiceAddress: (() => {
       const v = pick("VOICE_ADDRESS");

@@ -5,7 +5,10 @@ import { useReducedMotion } from '../../lib/useReducedMotion';
 const MAX_RENDER_PIXELS = 640; // Pixels per axis: cap GPU work on large and high-DPI displays.
 const MAX_PIXEL_RATIO = 1.5; // Render density: soft pearl reflections need no full retina buffer.
 const FRAME_MS = 1000 / 30; // Milliseconds: smooth, bounded thirty-frame animation.
-const PHASE_ENERGY: Partial<Record<VoicePhase, number>> = { listening: .25, speaking: .8, working: .48, transcribing: .38, approval: .12, paused: .04 };
+// Standby is deliberately the lowest live energy above paused: the orb should
+// read as "resting, still available", not as actively listening.
+const PHASE_ENERGY: Partial<Record<VoicePhase, number>> = { listening: .25, standby: .06, speaking: .8, working: .48, transcribing: .38, approval: .12, paused: .04 };
+const WAKE_CUE_MS = 900; // Milliseconds: one-shot ring if a timestamp changes; matches the CSS animation.
 // Normalized RGB material swatches, shared by the shader and its CSS fallback.
 const ORB_MATERIAL = Object.freeze({ ink: [.025, .025, .028], slate: [.23, .24, .26], frost: [.72, .76, .8], pearl: [.96, .97, .99], iris: [.46, .48, .53] });
 const MATERIAL_STYLE = Object.fromEntries(Object.entries(ORB_MATERIAL).map(([name, rgb]) =>
@@ -33,10 +36,24 @@ void main(){
  float alpha=1.-smoothstep(.986,1.,r); gl_FragColor=vec4(col,alpha);
 }`;
 
-export function VoiceOrb({ phase, inputLevel, compact = false, task }: { phase: VoicePhase; inputLevel: number; compact?: boolean; task?: VoiceState['task'] }) {
+export function VoiceOrb({ phase, inputLevel, compact = false, task, wakeCue = 0 }: { phase: VoicePhase; inputLevel: number; compact?: boolean; task?: VoiceState['task']; wakeCue?: number }) {
   const canvas = useRef<HTMLCanvasElement>(null);
   const values = useRef({ phase, inputLevel }); values.current = { phase, inputLevel };
   const reduced = useReducedMotion();
+  // A wake is a one-shot flourish: remount the ring only when the cue changes,
+  // so ordinary re-renders do not replay the animation.
+  const [wakeKey, setWakeKey] = useState(0);
+  const lastCue = useRef(wakeCue);
+  useEffect(() => {
+    if (wakeCue && wakeCue !== lastCue.current) { lastCue.current = wakeCue; setWakeKey(current => current + 1); }
+  }, [wakeCue]);
+  const [wakeVisible, setWakeVisible] = useState(false);
+  useEffect(() => {
+    if (!wakeKey || reduced) return;
+    setWakeVisible(true);
+    const timer = window.setTimeout(() => setWakeVisible(false), WAKE_CUE_MS);
+    return () => window.clearTimeout(timer);
+  }, [wakeKey, reduced]);
   const [fallback, setFallback] = useState(true);
   // CSS state cues must also pause when the static/WebGL-unavailable path is hidden.
   useEffect(() => {
@@ -99,5 +116,6 @@ export function VoiceOrb({ phase, inputLevel, compact = false, task }: { phase: 
     <div className="voice-orb-process" />
     {task?.status === 'done' && <div key={task.id} className="voice-orb-complete" />}
     <div className="voice-orb-ground" />
+    {wakeVisible && <div key={wakeKey} className="voice-orb-wake" />}
   </div>;
 }

@@ -9,6 +9,38 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Scheduled work is visible while it waits.** A result that finishes during a
+  chat now appears in **Scheduled tasks** straight away as a row you can expand
+  and read, instead of silently waiting for the turn to end. Several finished
+  results show as one group with each update on its own row. A "While you were
+  away" strip counts what ran, what stayed quiet and what needs you. Running jobs
+  show their current step live. All of it stays in the jobs panel; chat is not
+  used for status traffic.
+- **Heartbeats retry instead of being dropped.** If the owning teammate is
+  mid-reply at a check time, the check waits and runs once when the chat is free;
+  several missed intervals collapse into a single check.
+- **Silent runs and single failure alerts.** A job can end with `[SILENT]` to
+  record its run without posting. Failures always post, and a repeated failure
+  alerts once per incident instead of on every run. A failed handoff is recorded
+  as a delivery problem, not as a job failure.
+- **Voice wake word, stop word and auto-mute.** A voice session rests on the wake
+  word "Ankita" and returns to it after every request, so nearby talk is never
+  transcribed unless it starts with the wake word. "Ankita, <request>" runs the
+  request at once; a bare "Ankita" opens a short listening window. A longer quiet
+  spell closes the microphone until you resume. "Stop" / "cancel" interrupts a
+  reply or stops running work. The island shows standby, wake and speaking
+  states, and **Settings → Voice → Hands-free** turns each part on or off with
+  its own timer. In standby, speech is checked by the speech service to find the
+  wake word; anything without it is discarded. The CLI gains the stop word but
+  not yet the wake word.
+- **Long-conversation compaction.** When a chat outgrows its context, Ankita
+  summarizes the turns trimming would drop into one recap and keeps the recent
+  window intact, so goals, decisions and files survive a long thread instead of
+  being deleted. On by default in the desktop app (**Settings → Model → Long
+  conversations**); the CLI stays opt-in with `CONTEXT_COMPACTION=on`, and an
+  explicit value in `.env` wins over the app default. Each recap is one extra
+  model call; a failed or empty recap falls back to plain trimming. The desktop
+  transcript shows the recap as a labelled note, not as something you typed.
 - **MCP servers in the desktop app.** Plugins now has an MCP tab beside Apps and
   Skills. It searches the official MCP registry, installs a server from its pinned
   command, and lists, enables, starts, stops and removes servers you add. Nothing
@@ -82,6 +114,12 @@ checks do not establish physical headset or installed-package acceptance.
   as the default. Measured 2026-10-28: faster on short prompts, but slower on a
   real 30-tool voice turn, so it stays opt-in
   ([numbers](docs/voice-planner-benchmark-2026-10-28.md)).
+- **Long-conversation compaction** remains off by default. Covered by
+  `test/core/context-compaction.test.mjs` (8 tests), the unchanged trimming
+  suites and the Model-settings/transcript UI previews, plus a localhost round
+  trip that recorded zero provider requests while off and exactly one recap
+  request while on. No live third-party provider recap has been run yet, so
+  recap wording, cost and latency against a real model are unmeasured.
 
 ## [2.7.1] - 2026-10-26
 

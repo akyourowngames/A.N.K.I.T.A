@@ -18,7 +18,7 @@ import { approval as browserDescription } from '../../tools/browser/browser.mjs'
 import { normalizeBrowserArgs } from '../../tools/browser/pending.mjs';
 import { browserNotice } from '../../src/integrations/browser-errors.mjs';
 import { CHROME_MCP_ID } from '../../src/integrations/browser-plugins.mjs';
-import { APPROVAL_TIMEOUT_MS, CATCH_UP_WINDOW_MS, JOB_HISTORY_KEEP, JOB_PROOF_MAX_BYTES, JOB_SUMMARY_MAX_CHARS, MAX_CONCURRENT_JOBS, MAX_ROUTINE_SITES, SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS, JOB_BROWSER_DIRECTORY } from '../../src/automation/job-policy.mjs';
+import { APPROVAL_TIMEOUT_MS, CATCH_UP_WINDOW_MS, HEARTBEAT_MAX_COALESCED, JOB_HISTORY_KEEP, JOB_PROOF_MAX_BYTES, JOB_SILENT_MARKER, JOB_SUMMARY_MAX_CHARS, MAX_CONCURRENT_JOBS, MAX_ROUTINE_SITES, SCHEDULER_LOCK_FILENAME, SCHEDULER_TICK_MS, JOB_BROWSER_DIRECTORY } from '../../src/automation/job-policy.mjs';
 
 const MINUTE_MS = 60_000; // Clock conversion; schedules and wall budgets use minutes.
 const DRAIN_MS = 10_000; // Bounded main-process shutdown.
@@ -153,8 +153,14 @@ export class DesktopScheduler {
       if (!fire || fire > date || !Number.isFinite(fire.getTime())) continue;
       const previous = Date.parse(routine.lastFireAt || routine.lastRun || routine.createdAt || '');
       if (!routine.runAt && Number.isFinite(previous) && fire.getTime() <= previous) continue;
+      // A deferred heartbeat stays pending until the owner is free; it is never
+      // dropped, and several missed intervals collapse into one check.
       if (routine.kind === 'heartbeat' && this.engine.turns?.has(this.owner(routine).owner?.id)) {
-        this.store.updateRoutine(routine.id, { lastFireAt: fire.toISOString(), runAt: null, lastStatus: 'skipped-busy', lastSummary: 'Heartbeat skipped while teammate is replying.' });
+        const pendingAt = routine.pendingHeartbeatAt;
+        const coalesced = pendingAt ? (routine.coalescedHeartbeats || 0) + 1 : 1;
+        this.store.updateRoutine(routine.id, { lastFireAt: fire.toISOString(), runAt: null, pendingHeartbeatAt: pendingAt || fire.toISOString(),
+          coalescedHeartbeats: Math.min(HEARTBEAT_MAX_COALESCED, coalesced),
+          lastStatus: 'deferred', lastSummary: 'Checking after the current reply finishes.' });
         this.changed(); continue;
       }
       if (this.daemon.runningRoutines.has(routine.id)) {
@@ -162,6 +168,18 @@ export class DesktopScheduler {
         const pending = this.runs.get(routine.id)?.pendingRequest;
         if (pending) this.respondApproval(pending, 'superseded');
         this.changed(); continue;
+      }
+      // A pending heartbeat that is free to run now uses its original slot, so
+      // its "what changed since last time" comparison stays truthful.
+      if (routine.kind === 'heartbeat' && routine.pendingHeartbeatAt) {
+        const pending = new Date(routine.pendingHeartbeatAt);
+        if (Number.isFinite(pending.getTime())) {
+          this.nominal.set(routine.id, pending);
+          this.store.updateRoutine(routine.id, { pendingHeartbeatAt: null, coalescedHeartbeats: 0 });
+          due.push(this.store.findRoutine(routine.id));
+          continue;
+        }
+        this.store.updateRoutine(routine.id, { pendingHeartbeatAt: null, coalescedHeartbeats: 0 });
       }
       this.nominal.set(routine.id, fire);
       if (date - fire > CATCH_UP_WINDOW_MS) {
@@ -352,8 +370,14 @@ export class DesktopScheduler {
         if (decision.action === 'quiet') { run.status = 'quiet'; summary = ''; }
         else if (decision.action === 'held') { run.status = 'held'; summary = parsed.card.summary; }
         else summary = decision.text; // A delivered update or a digest of updates held earlier.
-      } else summary = summary.slice(0, JOB_SUMMARY_MAX_CHARS);
-    } catch (error) { run.status = error.jobStatus || 'error'; summary = error.jobStatus ? error.message : 'Job failed; no automatic retry was made. Review the last browser proof.'; }
+      } else {
+        // A regular job may end with the silence marker: the run is recorded and
+        // stays visible in the panel, but it does not post into chat. Failures
+        // are handled below and always deliver, whatever the marker says.
+        if (summary.trim().endsWith(JOB_SILENT_MARKER)) { run.silent = true; summary = summary.slice(0, -JOB_SILENT_MARKER.length).trim(); }
+        summary = summary.slice(0, JOB_SUMMARY_MAX_CHARS);
+      }
+    } catch (error) { run.status = error.jobStatus || 'error'; summary = error.jobStatus ? error.message : 'Job failed; no automatic retry was made. Review the last browser proof.'; run.silent = false; }
     finally {
       run.active = false; run.pauseTimer();
       if (run.pendingRequest) this.respondApproval(run.pendingRequest, 'no');
@@ -365,24 +389,34 @@ export class DesktopScheduler {
       catch { run.status = 'error'; summary = 'Browser cleanup failed. Execution stopped; review the last proof before running again.'; }
       const current = this.store.load().findRoutine(routine.id);
       const completedAt = this.now().toISOString(); // One outcome timestamp shared by durable state and receipt.
+      // Consecutive failures decide whether a failure alert is news or a repeat;
+      // a delivery problem must never make a healthy job look failing.
+      const failed = !['ok', 'quiet', 'held', 'disabled-mid-run', 'stopped-budget'].includes(run.status);
+      const failureStreak = failed ? (current?.failureStreak || 0) + 1 : 0;
       if (current) {
         if (routine.enabled && !current.enabled && run.status === 'ok') run.status = 'disabled-mid-run';
         const budget = run.status === 'stopped-budget';
         this.store.updateRoutine(routine.id, { activeRunId: null, pendingApproval: null, lastRun: started.toISOString(), lastOutcomeAt: completedAt, lastStatus: run.status, lastSummary: summary, runs: current.runs + 1,
+          failureStreak,
           spend: { day: dayAt(this.now(), this.timeZone), runs: current.spend.runs + 1, tokens: current.spend.tokens + run.tokens, minutes: current.spend.minutes + elapsed / MINUTE_MS },
           ...(routine.kind === 'heartbeat' && run.heartbeatState ? { heartbeatState: run.heartbeatState, lastReason: run.heartbeatReason || null } : {}),
           ...(run.status === 'ok' ? { lastSuccessfulResult: { text: summary, at: completedAt } } : {}),
           ...(budget ? { enabled: false, pausedReason: 'budget' } : {}) });
       }
       const owner = this.owner(routine);
+      const silent = run.silent === true && !failed; // Silence never hides a failure.
       const receipt = { runId: run.runId, routineId: routine.id, name: routine.name, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing, status: run.status,
         templateId: routine.templateId, channel: routine.channel, ...(routine.kind === 'heartbeat' && run.heartbeatReason ? { reason: run.heartbeatReason } : {}),
-        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(), delivered: run.status === 'quiet' || run.status === 'held' };
+        ...(silent ? { silent: true } : {}), failureStreak: failed ? failureStreak : 0,
+        text: `${summary}${started - nominal >= MINUTE_MS ? ` Ran ${Math.floor((started - nominal) / MINUTE_MS)}m late.` : ''}`, proof, at: completedAt, nominalAt: nominal.toISOString(),
+        delivered: run.status === 'quiet' || run.status === 'held' || silent };
       this.writeRun(run, { ...receipt, header, audit: run.audit, tokens: run.tokens, activeMs: elapsed });
       this.store.updateRoutine(routine.id, { lastReceipt: receipt });
-      if (run.status !== 'quiet' && run.status !== 'held') await this.deliver(receipt);
+      if (run.status !== 'quiet' && run.status !== 'held' && !silent) await this.deliver(receipt);
       this.runs.delete(routine.id); this.engine.emit({ type: 'routine-run-end', routineId: routine.id, threadId: receipt.threadId, runId: run.runId, status: run.status });
-      if (!isLogOnlyTemplate(routine) && !['ok', 'quiet', 'held', 'disabled-mid-run'].includes(run.status)) this.engine.emit({ type: 'routine-failed', ...receipt });
+      // Alert once per incident: the first failure notifies, later failures of the
+      // same streak stay in the panel without nudging again.
+      if (!isLogOnlyTemplate(routine) && failed && failureStreak === 1) this.engine.emit({ type: 'routine-failed', ...receipt });
       this.changed(); this.prune(routine.id);
     }
   }
@@ -404,7 +438,40 @@ export class DesktopScheduler {
         const saved = JSON.parse(fs.readFileSync(file, 'utf8')); this.writeRun(receipt, { ...saved, ...receipt, delivered: true });
         this.store.updateRoutine(receipt.routineId, { lastReceipt: { ...receipt, delivered: true } });
       }
-    } catch { this.engine.emit({ type: 'routine-queued', routineId: receipt.routineId, threadId: receipt.threadId, runId: receipt.runId }); }
+    } catch (error) {
+      // A delivery problem is recorded on the receipt, never as a job failure:
+      // the work succeeded, only the handoff did not.
+      const file = path.join(this.directory, `${receipt.routineId}-${receipt.runId}.json`);
+      try { const saved = JSON.parse(fs.readFileSync(file, 'utf8')); this.writeRun(receipt, { ...saved, deliveryFailed: true }); } catch {}
+      this.engine.emit({ type: 'routine-queued', routineId: receipt.routineId, threadId: receipt.threadId, runId: receipt.runId, detail: receipt.name || '', reason: error?.message });
+    }
+  }
+
+  /** Counts behind the jobs panel's "while you were away" strip. */
+  awaySummary(threadId = null) {
+    const jobs = this.list(threadId);
+    const pending = this.pendingDeliveries(threadId);
+    return {
+      ran: jobs.filter(job => job.lastReceipt && !job.lastReceipt.silent).length,
+      quiet: jobs.filter(job => ['quiet', 'held'].includes(job.lastStatus) || job.lastReceipt?.silent === true).length,
+      needsYou: jobs.filter(job => job.needsApproval || job.ownerMissing || job.lastStatus === 'missed').length,
+      readyToPost: pending.length,
+    };
+  }
+
+  /** Receipts written but not yet posted, so the panel can show them early. */
+  pendingDeliveries(threadId = null) {
+    if (!fs.existsSync(this.directory)) return [];
+    const out = [];
+    for (const name of fs.readdirSync(this.directory).filter(file => file.endsWith('.json'))) {
+      try {
+        const receipt = JSON.parse(fs.readFileSync(path.join(this.directory, name), 'utf8'));
+        if (!receipt.delivered && receipt.runId && (!threadId || receipt.threadId === threadId)) {
+          out.push({ runId: receipt.runId, routineId: receipt.routineId, name: receipt.name, status: receipt.status, at: receipt.at, text: receipt.text });
+        }
+      } catch { /* A half-written receipt is not a delivery. */ }
+    }
+    return out.sort((a, b) => String(b.at).localeCompare(String(a.at)));
   }
   async retryDeliveries() {
     if (!fs.existsSync(this.directory)) return;

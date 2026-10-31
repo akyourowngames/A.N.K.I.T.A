@@ -24,6 +24,7 @@
   --motion-fast: 120ms; /* Milliseconds; control feedback. */
   --motion-view: 240ms; /* Milliseconds; match native shell motion. */
   --motion-tool-pulse: 1.4s; /* Seconds; shared running-tool pulse on both surfaces. */
+  --motion-standby-breathe: 3.2s; /* Seconds; slow standby halo, matched to the orb. */
   --motion-curve: cubic-bezier(.2,.8,.2,1);
   --font: var(--companion-font);
   --mono: ui-monospace, "Cascadia Mono", Consolas, monospace;
@@ -208,7 +209,15 @@ button, summary { -webkit-app-region: no-drag; }
 .island-switch::after { content: ""; position: absolute; width: 14px; height: 14px; top: 2px; left: 2px; border-radius: 50%; background: var(--ink); transition: transform var(--motion-fast); }
 .island-switch.on { background: var(--green); }
 .island-switch.on::after { transform: translateX(14px); }
+/* Voice phase cues on the shell. Standby breathes slowly (available, not active);
+   the wash colour itself comes from Island.tsx so the two never disagree. */
+.island[data-voice-phase="standby"] .island-card::before { animation: voice-standby-breathe var(--motion-standby-breathe, 3.2s) ease-in-out infinite; }
+.island[data-voice-phase="listening"] .island-card::before { animation: voice-listen-pulse var(--motion-tool-pulse) ease-in-out infinite; }
+.island[data-voice-phase="speaking"] .island-card::before { animation: voice-speak-glow var(--motion-view) ease-in-out infinite alternate; }
 @keyframes view-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+@keyframes voice-standby-breathe { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes voice-listen-pulse { 50% { opacity: .7; } }
+@keyframes voice-speak-glow { from { opacity: .75; } to { opacity: 1; } }
 @keyframes tool-pulse { 50% { opacity: .4; } }
 @keyframes companion-breathe { 50% { transform: scale(.94, 1.03); } }
 @keyframes glow-pulse { 50% { opacity: 1; } }

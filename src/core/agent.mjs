@@ -115,6 +115,19 @@ const BACKGROUND_COMPLETION_SEARCH_GUIDANCE = 'Use web_search when it is needed 
 // genuinely impossible and trimHistory says so.
 const CONTEXT_OVERHEAD_BYTES = 1024;
 const MIN_HISTORY_BYTES = 512;
+// Prefix that identifies a compaction recap in history; shared by the writer,
+// the pruning guard and the tests so the marker never drifts.
+export const COMPACTION_SUMMARY_PREFIX = 'Compacted summary of earlier conversation:';
+const COMPACTION_MIN_MESSAGES = 16; // Below this a chat is too short to be worth an extra model call.
+const COMPACTION_TRIGGER_MARGIN = 4; // Recaps run shortly before trimming starts, so facts survive the first drop.
+const COMPACTION_MESSAGE_CHARS = 800; // Per-message excerpt in the summarizer input, in characters.
+const COMPACTION_KEEP_RECENT = 10; // Messages left untouched so the live task keeps full fidelity.
+const COMPACTION_MIN_OLD = 6; // Old turns worth summarizing; fewer folds nothing meaningful.
+const COMPACTION_COOLDOWN_TURNS = 8; // New messages required before another recap is earned.
+const COMPACTION_TRANSCRIPT_BYTES = 12000; // Summarizer input cap (UTF-8 bytes).
+const COMPACTION_REPLY_BYTES = 2000; // Summarizer output cap kept in history (UTF-8 bytes).
+const COMPACTION_MAX_TOKENS = 400; // Provider-side cap for the recap reply.
+const CHAT_COMPLETIONS_ROUTE = '/chat/completions'; // OpenAI-compatible wire path; host, model and credentials come from the active client.
 const measuredSchemas = new WeakMap();
 function schemaBytes(value) {
   if (!measuredSchemas.has(value)) measuredSchemas.set(value, Buffer.byteLength(JSON.stringify(value)));
@@ -776,7 +789,10 @@ export class Agent {
   }
 
   /** Drop old turns, never splitting an assistant tool_calls from its tool replies. */
-  trimHistory(max) {
+  async trimHistory(max, { compact = true } = {}) {
+    // Optional compaction: summarize the older history that trimming would drop,
+    // so long-running conversations keep their facts instead of losing them.
+    if (compact) await this.compactHistoryIfNeeded();
     // UTF-8 bytes are a conservative token upper bound; reserve output + tools.
     // currentSpecs() has already shed on-demand groups that do not fit, so this
     // only throws when even the core tools cannot share the window.
@@ -785,6 +801,81 @@ export class Agent {
       (this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0);
     if (available < MIN_HISTORY_BYTES) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
     this.messages = trimMessages(this.messages, max, available, { fitToolContent: (message, bytes) => this.fitToolContent(message, bytes) });
+  }
+
+  /** Summarize older turns into one compact note when compaction is enabled. */
+  async compactHistoryIfNeeded() {
+    if (this.config?.contextCompaction !== true) return;
+    const messages = this.messages;
+    if (!Array.isArray(messages) || messages.length < COMPACTION_MIN_MESSAGES) return;
+    if (this._lastCompactionCount && messages.length - this._lastCompactionCount < COMPACTION_COOLDOWN_TURNS) return;
+    // Only compact when history is large enough to matter.
+    const triggerCount = Math.max(COMPACTION_MIN_MESSAGES, (this.config.historyMessages ?? 40) - COMPACTION_TRIGGER_MARGIN);
+    if (messages.length < triggerCount) return;
+    const system = messages[0]?.role === 'system' ? messages[0] : null;
+    const body = system ? messages.slice(1) : messages.slice();
+    // Keep a recent window intact (do not split tool exchanges).
+    let keepCount = Math.min(COMPACTION_KEEP_RECENT, body.length);
+    while (keepCount < body.length && body[body.length - keepCount]?.role === 'tool') keepCount++;
+    const old = body.slice(0, body.length - keepCount);
+    const recent = body.slice(body.length - keepCount);
+    if (old.length < COMPACTION_MIN_OLD) return;
+    // Do not compact if there is already a fresh summary and nothing new.
+    let summaryText = null;
+    try {
+      summaryText = await this.summarizeMessages(old);
+    } catch (err) {
+      this.print?.(`  (context compaction skipped: ${err?.message || err})`);
+      return;
+    }
+    if (!summaryText) return;
+    // User role keeps the history valid for providers that require the first
+    // non-system turn to be the user, and the existing anchors keep it.
+    const summaryMessage = { role: 'user', content: `${COMPACTION_SUMMARY_PREFIX}\n${summaryText}` };
+    this.messages = system ? [system, summaryMessage, ...recent] : [summaryMessage, ...recent];
+    this._lastCompactionCount = this.messages.length;
+  }
+
+  /** Ask the model to summarize a block of messages. */
+  async summarizeMessages(messages) {
+    if (!this.client || typeof this.client.baseUrl !== 'string') return null;
+    const transcript = (messages || []).map((m) => {
+      let content = '';
+      if (typeof m?.content === 'string') content = m.content;
+      else if (Array.isArray(m?.content)) content = m.content.map((p) => (p && typeof p === 'object' && typeof p.text === 'string') ? p.text : (p?.type === 'image_url' ? '[image]' : '')).filter(Boolean).join(' ');
+      if (Array.isArray(m?.tool_calls) && m.tool_calls.length) content += ` [called: ${m.tool_calls.map((c) => c?.function?.name).filter(Boolean).join(', ')}]`;
+      return `${m?.role || 'message'}: ${String(content).slice(0, COMPACTION_MESSAGE_CHARS)}`;
+    }).join('\n').slice(0, COMPACTION_TRANSCRIPT_BYTES);
+    if (!transcript.trim()) return null;
+    const prompt = [
+      'Summarize the following conversation excerpt into a concise, factual summary (max 300 words).',
+      'Preserve: the user goals, decisions made, files/paths touched, tools used and their key results, unresolved tasks, and constraints.',
+      'Do not invent facts. Return only the summary text, no preamble.',
+      '',
+      'TRANSCRIPT DATA:',
+      transcript,
+    ].join('\n');
+    const body = {
+      ...this.client.requestDefaults,
+      model: this.model || this.client.requestDefaults?.model,
+      messages: [{ role: 'user', content: prompt }],
+      stream: false,
+      max_tokens: COMPACTION_MAX_TOKENS,
+    };
+    const res = await fetchWithRetry(`${this.client.baseUrl}${CHAT_COMPLETIONS_ROUTE}`, {
+      method: 'POST',
+      headers: this.client.headers(false),
+      body: JSON.stringify(body),
+      signal: this.abort?.signal,
+    }, { retries: 1 });
+    if (!res?.ok) throw new Error(`compaction request failed (${res?.status})`);
+    const data = await res.json();
+    const text = data?.choices?.[0]?.message?.content;
+    if (typeof text !== 'string') return null;
+    // Cap in bytes, not code units, so multi-byte scripts (e.g. Hinglish/Hindi)
+    // cannot exceed the history budget the recap is meant to stay inside.
+    const recap = text.trim();
+    return recap ? capOutput(recap, COMPACTION_REPLY_BYTES) : null;
   }
 
   cancelled() {
@@ -894,7 +985,7 @@ export class Agent {
       // UTF-8 bytes per logical model request; provider-reported tokens remain the token metric.
       (this.requestMetrics ??= []).push({ requestBytes: Buffer.byteLength(JSON.stringify(body)), schemaBytes: Buffer.byteLength(JSON.stringify(body.tools || [])), historyBytes: Buffer.byteLength(JSON.stringify(body.messages)), focused: Boolean(this.state.toolFocus) });
       return fetchWithRetry(
-        `${cli.baseUrl}/chat/completions`,
+        `${cli.baseUrl}${CHAT_COMPLETIONS_ROUTE}`,
         {
           method: "POST",
           headers: cli.headers(true),
@@ -1295,12 +1386,12 @@ export class Agent {
       if (result.content) onDelta?.(notice);
       if (!result.content) onDelta?.(fallback);
       this.messages.push({ role: 'assistant', content });
-      this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+      await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       return content;
     } catch {
       onDelta?.(fallback);
       this.messages.push({ role: 'assistant', content: fallback });
-      this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+      await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       return fallback;
     } finally {
       onMessageEnd?.();
@@ -1340,7 +1431,7 @@ export class Agent {
       // The request and history budget use the same catalog snapshot. Rebuild
       // next round so discovery, MCP reloads and search limits take effect.
       this._roundSpecs = this.currentSpecs();
-      this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+      await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       const includedSkills = activeAutomaticSkills(this.availableSkills(), this.activeSkillTools)
         .filter(skill => !reportedSkills.has(skill.name) && this.messages[0]?.content?.includes(skill.body));
       if (includedSkills.length) {
@@ -1398,12 +1489,12 @@ export class Agent {
             this.terminationReason = INVALID_TOOL_PROTOCOL;
             throw toolProtocolFailure(this.config.backgroundJob);
           }
-          this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+          await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
           return reply;
         }
         if (responsePolicy) onDelta?.(content);
         this.replyModel = result.model || callModel;
-        this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
+        await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
         return content;
       }
 

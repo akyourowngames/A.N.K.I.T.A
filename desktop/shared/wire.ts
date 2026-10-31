@@ -16,12 +16,14 @@ export type DesktopPreferences = {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
+  contextCompaction?: boolean;
+  voiceWakeWord?: boolean; voiceStopWord?: boolean; voiceIdleMs?: number; voiceStandbyMs?: number;
   imageApiBase: string; imageModel: string;
   username: string; timeZone: string; profileSetupDone: boolean;
   hasCustomApiKey: boolean; hasGroqKey: boolean; hasKiloKey: boolean; hasComposioKey: boolean;
   hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
-export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
+export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'contextCompaction' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone' | 'voiceWakeWord' | 'voiceStopWord' | 'voiceIdleMs' | 'voiceStandbyMs'>> & {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
   sarvamApiKey?: string; basetenApiKey?: string; micDevice?: string; voiceOutputDevice?: string;
@@ -64,10 +66,10 @@ export type SecureStoreRequest = { type: 'secure-store-request'; requestId: stri
 export type SecureStoreStatus = { type: 'secure-store-status'; threadId: string; callId: string; website: string; username: string; state: string; message: string };
 export type RoutineAllow = { read: boolean; interact: boolean; login: boolean; sites: string[]; mode: 'isolated' | 'local' };
 export type RoutineBudget = { maxRunsPerDay: number; maxTokensPerDay: number; maxMinutesPerDay: number };
-export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; reason?: string | null; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string };
-export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastReason?: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null };
+export type JobReceipt = { runId: string; routineId: string; threadId: string; name: string; status: string; reason?: string | null; text: string; ownerMissing?: boolean; proof: { url: string | null; screenshot: string | null } | null; at: string; silent?: boolean; deliveryFailed?: boolean; failureStreak?: number };
+export type Routine = { id: string; name: string; description?: string; kind?: 'routine' | 'heartbeat'; browserPolicy?: 'autonomous' | 'scoped'; executionPolicy?: 'complete' | 'bounded'; cron: string; cronLabel: string; prompt: string; threadId: string | null; deliveryThreadId: string | null; allow: RoutineAllow; budget: RoutineBudget; timeoutMs: number; headless: boolean; onNewRequest: 'pause-ask' | 'deny'; enabled: boolean; ownerMissing: boolean; pausedReason: string | null; nextRunAt: string | null; nextRunIn: number | null; timeZone: string; running: boolean; step: number; scope: string | null; needsApproval: boolean; lastStatus: string | null; lastReason?: string | null; lastSummary: string | null; lastReceipt?: JobReceipt; draft?: boolean; draftPatch?: Partial<Routine>; pendingApproval?: { requestId: string; runId: string; redactedDetail: string; expiresAt: string } | null; failureStreak?: number; pendingHeartbeatAt?: string | null; coalescedHeartbeats?: number };
 export type ChatMessage =
-  | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[] }
+  | { id: string; role: 'user' | 'assistant'; content: string; job?: JobReceipt; reasoning?: string; attachments?: { name: string; image?: boolean }[]; compacted?: boolean }
   | { id: string; role: 'tool'; callId: string; name: string; args: unknown; result: string; isError: boolean; startedAt?: number; endedAt?: number; hidden?: boolean };
 
 export type PhonePairingState = 'starting' | 'ready' | 'offline' | 'unsupported' | 'error';
@@ -116,7 +118,9 @@ export type EngineEvent = (
   | { type: 'secret-notice'; message: string }
   | { type: 'schedule-changed'; jobs: Routine[] }
   | { type: 'routine-draft'; threadId: string; routineId: string }
-  | { type: 'routine-run-start' | 'routine-run-step' | 'routine-run-end' | 'routine-queued'; threadId: string; routineId: string; runId: string; scope?: string; step?: number; detail?: string; status?: string }
+  | { type: 'routine-run-start' | 'routine-run-step' | 'routine-run-end' | 'routine-queued'; threadId: string; routineId: string; runId: string; scope?: string; step?: number; detail?: string; reason?: string; status?: string }
+  // Authoritative refresh of the waiting-result list for one teammate.
+  | { type: 'routine-delivery-state'; threadId: string; pending: { runId: string; routineId: string; name: string; status: string; at: string }[] }
   | ({ type: 'routine-result'; messageId: string; content: string } & JobReceipt)
   | { type: 'routine-failed'; threadId?: string; routineId: string; status: string; text?: string }
   | { type: 'routine-approval-ended'; requestId: string; routineId: string; threadId: string; outcome: string }
