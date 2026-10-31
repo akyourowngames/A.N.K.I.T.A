@@ -133,6 +133,13 @@ const DEFAULTS = {
   voiceBargeIn: true,
   voiceBargeDb: -25,
   voiceHfpRouting: true,
+  // Attention ladder inside a voice session. With a wake word, the session rests
+  // in standby (only "Ankita" is acted on) and returns there after each request;
+  // voiceIdleMs is how long a bare "Ankita" keeps full listening open.
+  voiceWakeWord: true,
+  voiceStopWord: true,
+  voiceIdleMs: 15000,
+  voiceStandbyMs: 600000,
   voiceAddress: "sir",
   voiceSpeakItems: 8,
   voiceSpeakSentences: 6,
@@ -468,6 +475,11 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     // Route playback to a Bluetooth headset's Hands-Free endpoint while its mic
     // is open, so barge-in doesn't silence replies (A2DP drops during capture).
     voiceHfpRouting: onOff(pick("VOICE_HFP_ROUTING"), DEFAULTS.voiceHfpRouting),
+    voiceWakeWord: onOff(pick("VOICE_WAKE_WORD"), DEFAULTS.voiceWakeWord),
+    voiceStopWord: onOff(pick("VOICE_STOP_WORD"), DEFAULTS.voiceStopWord),
+    // Listening window after a bare wake word (0 = return to standby at once).
+    voiceIdleMs: clampInt(pick("VOICE_IDLE_MS"), 0, 600000, DEFAULTS.voiceIdleMs),
+    voiceStandbyMs: clampInt(pick("VOICE_STANDBY_MS"), 60000, 3600000, DEFAULTS.voiceStandbyMs),
     // An empty address is useful ("off" / "none" disables the salutation).
     voiceAddress: (() => {
       const v = pick("VOICE_ADDRESS");

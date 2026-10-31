@@ -192,6 +192,47 @@ test('long-conversation compaction is opt-in, saved, and reaches live agents wit
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('hands-free behaviour settings persist, validate, and reach live voice without ending it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-voice-behavior-'));
+  try {
+    const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768 };
+    // Defaults: on, on, a 15 s listening window, 10 min to mic-off — shown even
+    // with nothing saved.
+    const defaults = new DesktopSettingsStore(path.join(dir, 'empty.json')).load().publicView(applyDesktopSettings(base, {}));
+    assert.equal(defaults.voiceWakeWord, true);
+    assert.equal(defaults.voiceStopWord, true);
+    assert.equal(defaults.voiceIdleMs, 15000);
+    assert.equal(defaults.voiceStandbyMs, 600000);
+
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    store.update({ voiceWakeWord: false, voiceStopWord: false, voiceIdleMs: 45000, voiceStandbyMs: 300000 });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.voiceWakeWord, false);
+    assert.equal(fresh.data.voiceIdleMs, 45000);
+    const applied = applyDesktopSettings(base, fresh.data);
+    assert.equal(applied.voiceWakeWord, false, 'saved values reach the runtime config');
+    assert.equal(applied.voiceStandbyMs, 300000);
+
+    // Invalid values are rejected instead of persisted.
+    assert.throws(() => store.update({ voiceIdleMs: -1 }), /valid standby delay/);
+    assert.throws(() => store.update({ voiceStandbyMs: 99999999 }), /valid microphone timeout/);
+
+    // These are behaviour toggles, not device/credential changes: saving them
+    // while voice is live must not throw the "end voice first" guard.
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'engine-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+      config: { ...base }, mcp: { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} }, emit: () => {},
+    });
+    await engine.init();
+    engine._voice = { snapshot: () => ({ active: true }), close: async () => {}, end: async () => {} }; // Pretend a session owns the mic.
+    const result = await engine.saveDesktopSettings({ voiceStopWord: false, voiceIdleMs: 60000 });
+    assert.equal(result.preferences.voiceStopWord, false);
+    assert.equal(engine.config.voiceStopWord, false, 'the live config is updated in place');
+    assert.equal(engine.config.voiceIdleMs, 60000);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('custom provider connection checks models with a bounded request and never echoes the key', async () => {
   let seen;
   const result = await testCustomProvider({ apiBase: 'https://models.example/v1', apiKey: 'private-token', fetchImpl: async (url, options) => {

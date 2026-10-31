@@ -9,6 +9,16 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Voice wake word, stop word and auto-mute.** A voice session rests on the wake
+  word "Ankita" and returns to it after every request, so nearby talk is never
+  transcribed unless it starts with the wake word. "Ankita, <request>" runs the
+  request at once; a bare "Ankita" opens a short listening window. A longer quiet
+  spell closes the microphone until you resume. "Stop" / "cancel" interrupts a
+  reply or stops running work. The island shows standby, wake and speaking
+  states, and **Settings → Voice → Hands-free** turns each part on or off with
+  its own timer. In standby, speech is checked by the speech service to find the
+  wake word; anything without it is discarded. The CLI gains the stop word but
+  not yet the wake word.
 - **Long-conversation compaction (opt-in).** When a chat outgrows its context,
   Ankita can summarize the turns trimming would drop into one recap and keep the
   recent window intact, so goals, decisions and files survive a long thread

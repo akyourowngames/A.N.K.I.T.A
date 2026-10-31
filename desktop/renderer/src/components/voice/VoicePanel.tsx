@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { VoiceState } from '../../../../shared/voice.mjs';
+import type { VoicePhase, VoiceState } from '../../../../shared/voice.mjs';
 import { VOICE_PHASE_LABELS, voiceTaskActive } from '../../../../shared/voice.mjs';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceCaptions } from './VoiceCaptions';
@@ -7,8 +7,9 @@ import { Icon } from '../Icons';
 import './voice.css';
 
 const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Working', waiting_for_approval: 'Permission needed', waiting_for_resource: 'Waiting for access', cancelling: 'Stopping', done: 'Done', partial: 'Partial result', failed: 'Needs attention', cancelled: 'Stopped' };
-const PLACEHOLDERS = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
-  transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '', approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
+const PLACEHOLDERS: Record<VoicePhase, string> = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
+  standby: 'Say “Ankita” to talk.', transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '',
+  approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
 
 export function VoicePanel({ voice, error = '', busy = false, compact = false, onEnd, onPause, onResume, onCancel, onIsland, onSettings, onStart, onFocus }: {
   voice: VoiceState; error?: string; busy?: boolean; compact?: boolean;
@@ -32,7 +33,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     {!compact && <div className="voice-panel-top">
       <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={15} /> Voice settings</button></div>}
     <div className="voice-stage">
-      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} task={voice.task} />
+      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} task={voice.task} wakeCue={voice.wakeCue} />
       <div className="voice-phase" data-phase={phase}><i />{VOICE_PHASE_LABELS[phase]}</div>
       <VoiceCaptions text={voice.caption || PLACEHOLDERS[phase]} role={voice.captionRole} />
       <div className="voice-work-line" role="status" aria-live="polite" aria-atomic="true">

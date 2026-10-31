@@ -7,6 +7,31 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Voice attention ladder: wake word, stop word, auto-mute
+
+Voice now has three attention levels instead of one. A voice session with a wake
+word starts in standby and returns there after every request, so the only thing
+acted on by default is an utterance starting with "Ankita" (a leading "Hi"/"Hey"
+is fine). "Ankita, <request>" runs the request in the same breath; a bare "Ankita"
+opens a short listening window (15 s by default, set to 0 for none). After a
+longer quiet spell the microphone closes until you resume. Saying "stop" or
+"cancel" cuts a reply or cancels running work; "stop by the store" is still an
+ordinary request. Exit phrases now also accept "exit voice mode" and "end the
+session".
+
+Standby speech has to be transcribed to look for the wake word, so nearby talking
+during standby is checked by the speech service; utterances without the wake word
+are discarded and never become captions, requests or saved history. The island
+gained a standby halo, a wake ring and phase-coloured wash, all disabled under
+reduced motion. **Settings → Voice → Hands-free** controls the two words and the
+two timers; behaviour saves take effect without ending voice. The CLI shares the
+same phrase table for stop/exit but has no wake word yet.
+
+Verified locally: 10 phrase-table tests, 43 desktop voice-loop tests including 7
+new ladder cases, state/UI/settings suites and a Playwright check of the new
+panel. Real microphone timing, Sarvam wake-word accuracy and false-positive rate
+are unmeasured without hardware and a live key.
+
 ### Long-conversation compaction (opt-in)
 
 When a chat is about to outgrow its context, Ankita can fold the turns that

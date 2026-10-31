@@ -9,8 +9,9 @@ import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
 import { VoiceTaskStore, voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
+import { VOICE_FINAL_STATES } from '../../src/automation/voice-task-policy.mjs';
 import { VoiceSpeechQueue } from '../../src/automation/voice-speech-queue.mjs';
-import { emptyVoiceState, voiceStatePatch, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE, VOICE_PUBLIC_STEPS } from '../shared/voice.mjs';
+import { emptyVoiceState, voiceStatePatch, voiceCommand, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE, VOICE_PUBLIC_STEPS } from '../shared/voice.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 
 const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner without changing typed-chat settings.
@@ -22,7 +23,13 @@ const PLAYBACK_TEST_LANGUAGE = 'en-IN'; // Same Sarvam language path as normal E
 const PLAYBACK_TEST_BUSY = 'Finish the speaker test before starting voice.';
 const PLAYBACK_TEST_ACTIVE = 'End voice before testing your speakers.';
 const SPEAKER_ECHO_SETTLE_MS = 300; // Milliseconds: let output buffers/room echo fade before reopening a speaker microphone.
-const END_VOICE_PATTERN = /^(exit|quit|end voice)[.!?]?$/i; // Only a complete explicit exit phrase ends a session.
+const STANDBY_CUE_MS = 1400; // Milliseconds: a one-shot wake ring, longer than the CSS animation to be seen once.
+const STOPPED_LINE = 'Stopped.'; // Spoken confirmation after a stop word cancels work.
+// Fallbacks mirror config.mjs defaults, so a host that omits these keys (older
+// configs, test harnesses) still gets a sane ladder instead of a zero-length timer.
+const FALLBACK_IDLE_MS = 90000;
+const FALLBACK_STANDBY_MS = 600000;
+const positive = (value, fallback) => Number.isFinite(Number(value)) && Number(value) > 0 ? Number(value) : fallback;
 const ERRORS = Object.freeze({ owner: 'Choose an existing conversation to start voice.', busy: 'This conversation is already working. Wait for it to finish.',
   takeover: 'End voice in the other conversation first.', key: 'Add your Sarvam key in Voice settings.',
   browser: VOICE_API_REQUIRED_MESSAGE,
@@ -75,6 +82,9 @@ export class DesktopVoice {
         if (session && this.owns(session)) {
           if (!(task.status === 'done' && result.outcome.speechHandled)) this.report(session, task, context.speech?.turn);
           session.speech.finishTurn(context.speech?.turn);
+          // Named work is over: go back to the resting level (standby with a
+          // wake word) instead of leaving a free-listening mic open.
+          if (!this.busy(session)) this.settle(session);
         }
         await engine.deliverVoiceJob(task);
       },
@@ -92,7 +102,10 @@ export class DesktopVoice {
     try { this.emit({ type: VOICE_EVENT, state: this.snapshot() }); } catch { /* A closed window does not own the job. */ }
   }
   owns(session) { return this.current === session && !session.audio.signal.aborted; }
-  restingPhase(session) { return this.jobs.list(session.threadId).some(job => job.status === 'waiting_for_approval') ? 'approval' : 'listening'; }
+  restingPhase(session) {
+    if (this.jobs.list(session.threadId).some(job => job.status === 'waiting_for_approval')) return 'approval';
+    return session.asleep === true ? 'standby' : 'listening';
+  }
 
   async status({ refresh = false } = {}) {
     if (refresh) this.devices.invalidate();
@@ -128,8 +141,8 @@ export class DesktopVoice {
     if (config.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(ERRORS.browser);
     if (!config.sarvamApiKey) throw new Error(ERRORS.key);
     const brain = createVoiceBrain({ ...config, voiceProvider: config.voiceProvider || DESKTOP_VOICE_PROVIDER }, this.engine);
-    const session = { id: randomUUID(), threadId, config, brain, audio: new AbortController(), paused: false,
-      input: null, task: null, taskAbort: null, lastMeterAt: 0, language: '', routing: null };
+    const session = { id: randomUUID(), threadId, config, brain, audio: new AbortController(), paused: false, asleep: false,
+      input: null, task: null, taskAbort: null, lastMeterAt: 0, language: '', routing: null, idleTimer: null, standbyTimer: null };
     this.current = session;
     this.publish(session, { ...emptyVoiceState(), sessionId: session.id, threadId, active: true, phase: 'starting' });
     session.ready = this.prepare(session).catch(async error => {
@@ -138,7 +151,13 @@ export class DesktopVoice {
       await this.fail(session, error); throw error;
     });
     await session.ready;
-    if (this.owns(session)) session.loop = this.loop(session).catch(error => this.fail(session, error));
+    if (this.owns(session)) {
+      // A session with a wake word starts asleep: the first thing you say must be
+      // the wake word, rather than any nearby speech being transcribed.
+      if (this.behavior(session).wake) this.rest(session);
+      else this.armIdle(session);
+      session.loop = this.loop(session).catch(error => this.fail(session, error));
+    }
     return this.snapshot();
   }
 
@@ -279,6 +298,9 @@ export class DesktopVoice {
           }
           if (session.playingAt && (!session.bargeIn || Date.now() - session.playingAt < VOICE_BARGE_GUARD_MS)) return;
           const action = detector.feed(event);
+          // Any real sound restarts the quiet countdown at the current stage, so a
+          // wake-only mic only closes after a genuinely silent spell.
+          if (action === 'speech') this.touchIdle(session);
           if (action === 'speech') {
             if (!heardSpeech) entry.speechTurn = session.speech.interrupt();
             heardSpeech = true; session.userSpeaking = true;
@@ -317,6 +339,140 @@ export class DesktopVoice {
     }
   }
 
+  /** True while the session is asleep: only the wake word is acted on. */
+  asleep(session) { return session.asleep === true; }
+
+  /**
+   * Attention ladder timers. Quiet listening sleeps to wake-only after the idle
+   * delay, then closes the microphone after the standby delay. Any accepted turn
+   * or resume restarts the ladder from full listening.
+   */
+  armIdle(session) {
+    this.clearIdle(session);
+    if (!this.owns(session) || session.paused) return;
+    session.asleep = false;
+    this.startIdleTimer(session);
+  }
+
+  /** The default resting state for a session with a wake word. */
+  rest(session) {
+    this.clearIdle(session);
+    if (!this.owns(session) || session.paused) return;
+    session.asleep = true;
+    this.publish(session, { phase: 'standby', update: '' });
+    this.startIdleTimer(session);
+  }
+
+  /**
+   * Return to the resting state after a finished request: standby when a wake
+   * word is on (so the mic never listens freely), otherwise keep listening.
+   */
+  settle(session) {
+    if (!this.owns(session) || session.paused) return;
+    if (this.busy(session)) { this.ensureIdle(session); return; }
+    if (this.behavior(session).wake) this.rest(session);
+    else this.armIdle(session);
+  }
+
+  /**
+   * The loop re-opens the microphone after every capture, so a missing timer
+   * (a long job, a resumed session) must be repaired there rather than trusted
+   * to an earlier turn.
+   */
+  ensureIdle(session) {
+    if (!this.owns(session) || session.paused) return;
+    if (!session.idleTimer && !session.standbyTimer) this.startIdleTimer(session);
+  }
+
+  clearIdle(session) {
+    if (session.idleTimer) { clearTimeout(session.idleTimer); session.idleTimer = null; }
+    if (session.standbyTimer) { clearTimeout(session.standbyTimer); session.standbyTimer = null; }
+  }
+
+  /** One countdown for the current stage: quiet listening, or quiet wake-only. */
+  startIdleTimer(session) {
+    const behavior = this.behavior(session);
+    if (session.asleep) {
+      session.standbyTimer = setTimeout(() => {
+        session.standbyTimer = null;
+        if (this.owns(session) && !session.paused) void this.sleepToPaused(session);
+      }, behavior.standbyMs);
+      return;
+    }
+    session.idleTimer = setTimeout(() => {
+      session.idleTimer = null;
+      if (!this.owns(session) || session.paused) return;
+      // With the wake word off there is no middle rung: quiet goes straight to
+      // a closed microphone.
+      if (this.behavior(session).wake) this.sleep(session);
+      else void this.sleepToPaused(session);
+    }, behavior.idleMs);
+  }
+
+  /** Restart the countdown for the stage we are already in, without changing it. */
+  touchIdle(session) {
+    if (!this.owns(session) || session.paused) return;
+    this.clearIdle(session);
+    this.startIdleTimer(session);
+  }
+
+  /**
+   * Behaviour toggles are read live, not from the session's startup snapshot, so
+   * saving them in Settings takes effect without ending voice.
+   */
+  behavior(session) {
+    const live = this.getConfig?.() || {};
+    const pick = (key, fallback) => live[key] === undefined ? session.config[key] ?? fallback : live[key];
+    return {
+      wake: pick('voiceWakeWord', true) !== false,
+      stop: pick('voiceStopWord', true) !== false,
+      // 0 is meaningful here: a bare wake word returns to standby immediately.
+      idleMs: pick('voiceIdleMs', FALLBACK_IDLE_MS) >= 0 ? Number(pick('voiceIdleMs', FALLBACK_IDLE_MS)) : FALLBACK_IDLE_MS,
+      standbyMs: positive(pick('voiceStandbyMs', FALLBACK_STANDBY_MS), FALLBACK_STANDBY_MS),
+    };
+  }
+
+  /** True while real work should keep the mic at full attention. */
+  busy(session) {
+    if (session.playingAt) return true;
+    return this.jobs.list(session.threadId).some(job => !VOICE_FINAL_STATES.includes(job.status) || job.resourcesHeld);
+  }
+
+  /**
+   * Drop to wake-only listening and start the countdown to closing the mic.
+   * Sleeping during speech or active work would hide the "speaking"/"approval"
+   * state and could silence a report, so those defer the transition.
+   */
+  sleep(session) {
+    if (!this.owns(session) || session.paused || session.asleep) return;
+    if (this.busy(session)) { this.startIdleTimer(session); return; }
+    session.asleep = true;
+    this.publish(session, { phase: 'standby', update: '' });
+    this.startIdleTimer(session);
+  }
+
+  /** Close the microphone until the user resumes voice. */
+  async sleepToPaused(session) {
+    if (!this.owns(session) || session.paused) return;
+    await this.pause();
+  }
+
+  /** Wake from standby: back to full listening with a one-shot visual cue. */
+  wake(session) {
+    this.clearIdle(session);
+    session.asleep = false;
+    const { idleMs, wake: wakeWord } = this.behavior(session);
+    // A zero window means "say the word, then speak the request": go straight
+    // back to standby instead of leaving the mic in free listening.
+    if (wakeWord && idleMs <= 0) {
+      this.rest(session);
+      this.publish(session, { wakeCue: Date.now() + STANDBY_CUE_MS });
+      return;
+    }
+    this.startIdleTimer(session);
+    this.publish(session, { phase: this.restingPhase(session), update: '', wakeCue: Date.now() + STANDBY_CUE_MS });
+  }
+
   async loop(session) {
     let heard = null;
     while (this.owns(session)) {
@@ -325,19 +481,56 @@ export class DesktopVoice {
       heard ||= await this.capture(session);
       if (!heard || !this.owns(session)) {
         if (this.owns(session) && !session.paused) { session.userSpeaking = false; session.speech.resume(); }
+        this.ensureIdle(session);
         continue;
       }
-      const text = heard.text.trim();
-      if (END_VOICE_PATTERN.test(text)) { await this.end(); return; }
+      const behavior = this.behavior(session);
+      const command = voiceCommand(heard.text, { wake: behavior.wake, stop: behavior.stop, listening: !this.asleep(session) });
+      if (command.kind === 'end') { await this.end(); return; }
+      if (command.kind === 'stop') {
+        // Interrupt speech here; cancel in-flight work only when nothing is playing,
+        // so a mid-reply "stop" silences it without killing the job behind it.
+        session.speech.interrupt();
+        if (!session.playingAt) await this.cancelWork({ all: true });
+        const wasAsleep = this.asleep(session);
+        if (wasAsleep) this.wake(session); else { this.armIdle(session); this.publish(session, { phase: this.restingPhase(session) }); }        // The caption survives the next capture (which resets only phase/update),
+        // so the confirmation does not flash away when listening resumes.
+        this.publish(session, { caption: STOPPED_LINE, captionRole: 'assistant', update: '' });
+        session.speech.falseInterruption(heard.speechTurn);
+        session.userSpeaking = false;
+        session.speech.resume();
+        heard = null;
+        continue;
+      }
+      // Asleep: anything without the wake word is dropped here - never captioned,
+      // delegated, journaled or saved. This is the accepted cost of standby.
+      if (command.kind === 'ignored') {
+        session.speech.falseInterruption(heard.speechTurn);
+        heard = null;
+        session.userSpeaking = false;
+        continue;
+      }
+      if (this.asleep(session)) this.wake(session);
+      else this.armIdle(session);
+      if (command.kind === 'wake') {
+        session.speech.falseInterruption(heard.speechTurn);
+        heard = null;
+        session.userSpeaking = false;
+        continue;
+      }
+      const text = command.text;
       session.language = heard.languageCode || '';
       this.publish(session, { caption: text, captionRole: 'user', phase: 'working', error: null });
       session.speech.acceptTurn(heard.speechTurn);
-      try { await this.delegate(session, heard); }
+      try { await this.delegate(session, { ...heard, text }); }
       catch (error) { session.speech.finishTurn(heard.speechTurn); this.publish(session, { error: error.message }); }
       heard = null;
       if (!this.owns(session)) return;
       session.userSpeaking = false;
       session.speech.resume();
+      // Back to standby after each request when a wake word is on, so nothing is
+      // transcribed unless it starts with the wake word.
+      this.settle(session);
     }
   }
 
@@ -386,6 +579,8 @@ export class DesktopVoice {
     const session = this.current;
     if (!session || !this.owns(session)) return this.snapshot();
     session.paused = true;
+    this.clearIdle(session);
+    session.asleep = false;
     session.speech?.interrupt({ requeueReports: true });
     this.publish(session, { paused: true, phase: 'paused', inputLevel: 0 });
     await this.stopInput(session);
@@ -397,6 +592,10 @@ export class DesktopVoice {
       session.paused = false;
       await session.speech?.falseInterruption(session.speech.turn);
       session.speech?.resume(); this.publish(session, { paused: false, phase: 'starting' });
+      // Resume is an explicit "I'm back": with a wake word, wait for the wake
+      // word rather than listening freely.
+      if (this.behavior(session).wake) this.rest(session);
+      else this.armIdle(session);
     }
     return this.snapshot();
   }
@@ -409,6 +608,7 @@ export class DesktopVoice {
     if (this.preview) { this.preview.audio.abort(); this.io.stopPlayback(); }
     const session = this.current;
     if (!session) return this.snapshot();
+    this.clearIdle(session);
     session.audio.abort(); this.io.stopPlayback();
     await session.speech?.close();
     this.publish(session, { active: false, paused: false, phase: 'idle', inputLevel: 0, update: '' });

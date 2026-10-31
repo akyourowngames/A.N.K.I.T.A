@@ -17,12 +17,13 @@ export type DesktopPreferences = {
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
   contextCompaction?: boolean;
+  voiceWakeWord?: boolean; voiceStopWord?: boolean; voiceIdleMs?: number; voiceStandbyMs?: number;
   imageApiBase: string; imageModel: string;
   username: string; timeZone: string; profileSetupDone: boolean;
   hasCustomApiKey: boolean; hasGroqKey: boolean; hasKiloKey: boolean; hasComposioKey: boolean;
   hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
-export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'contextCompaction' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone'>> & {
+export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'contextCompaction' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone' | 'voiceWakeWord' | 'voiceStopWord' | 'voiceIdleMs' | 'voiceStandbyMs'>> & {
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
   sarvamApiKey?: string; basetenApiKey?: string; micDevice?: string; voiceOutputDevice?: string;

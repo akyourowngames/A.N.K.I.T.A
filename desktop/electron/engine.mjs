@@ -31,7 +31,7 @@ import { SecureStore } from './secure-store.mjs';
 import { CredentialRequests } from './credential-requests.mjs';
 import { BrowserCredentials } from './browser-credentials.mjs';
 import { CREDENTIAL_STORE_FILENAME } from '../../src/integrations/browser-credentials.mjs';
-import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS } from './settings.mjs';
+import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS, VOICE_BEHAVIOR_KEYS } from './settings.mjs';
 import { DesktopVoice } from './voice.mjs';
 import { withVoiceBrain } from '../../src/core/voice-session.mjs';
 import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
@@ -612,6 +612,9 @@ export class DesktopEngine {
       void this.connectTools();
     }
     for (const key of VOICE_SETTINGS_KEYS) if (Object.hasOwn(patch, key)) this.config[key] = nextConfig[key];
+    // Behaviour toggles reach the live session through getConfig() on its next
+    // read; no reconnect and no "end voice first" requirement.
+    for (const key of VOICE_BEHAVIOR_KEYS) if (Object.hasOwn(patch, key)) this.config[key] = nextConfig[key];
     const payload = this.settingsPayload();
     this.secretHistory.enabled = this.desktopSettings.data.secretScrubbing !== false;
     this.emit({ type: 'settings-updated', ...payload });

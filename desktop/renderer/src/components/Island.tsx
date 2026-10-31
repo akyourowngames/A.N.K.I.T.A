@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { EngineEvent, Routine } from '../../../shared/wire';
+import type { VoicePhase } from '../../../shared/voice.mjs';
 import { islandThreadState, type IslandTool } from '../../../shared/island-state.mjs';
 import type { MascotState } from '../island/engine';
 import { useReducedMotion } from '../lib/useReducedMotion';
@@ -41,6 +42,13 @@ const STATE_GLOW: Record<MascotState, string> = {
   approval: 'rgba(245,165,36,0.34)', question: 'rgba(34,211,238,0.28)',
   error: 'rgba(244,63,94,0.32)', finished: 'rgba(52,211,153,0.28)',
   ratelimit: 'rgba(251,146,60,0.28)', sleeping: 'rgba(148,163,184,0.2)', dizzy: 'rgba(244,114,182,0.28)',
+};
+// Voice phases tint the shell independently of the mascot state, so "asleep and
+// waiting for the wake word" reads differently from "actively listening".
+const VOICE_GLOW: Partial<Record<VoicePhase, string>> = {
+  listening: 'rgba(122,162,255,0.24)', standby: 'rgba(148,163,184,0.12)',
+  working: 'rgba(139,92,246,0.24)', transcribing: 'rgba(122,162,255,0.18)',
+  speaking: 'rgba(110,231,211,0.22)', approval: 'rgba(245,165,36,0.28)', paused: 'rgba(148,163,184,0.10)',
 };
 const clampLook = (v: number) => Math.max(-1, Math.min(1, v));
 
@@ -182,6 +190,8 @@ export function Island() {
   const botState: MascotState = approvals.length ? 'approval' : flash === 'error' ? 'error'
     : liveStates.includes('searching') ? 'searching' : liveStates.includes('working') ? 'working'
     : runningCount ? (activeThreads.length ? 'thinking' : 'working') : flash === 'finished' ? 'finished' : 'idle';
+  // Voice owns the shell tint while it is on screen; otherwise the mascot state does.
+  const wash = showVoice ? (VOICE_GLOW[voice.state.phase] || STATE_GLOW[botState]) : STATE_GLOW[botState];
 
   useEffect(() => {
     const want = view === 'home' ? (showVoice || TALL_VIEWS.includes(activeView) ? 'home-chat' : 'home-expanded') : view === 'petit' ? 'petit' : 'tuck';
@@ -260,7 +270,8 @@ export function Island() {
     else if (!runningCount && !flash) tuckTimer.current = window.setTimeout(() => setView('tucked'), TUCK_DELAY_MS);
   };
   return <div className={'island ' + (home ? 'island-home' : 'island-petit') + (showVoice ? ' island-voice-shell' : '') + (dragOver ? ' is-dragging' : '')}
-    data-mascot-state={botState} data-shell-view={view} style={{ '--wash': STATE_GLOW[botState] } as CSSProperties}
+    data-mascot-state={botState} data-shell-view={view} data-voice-phase={showVoice ? voice.state.phase : undefined}
+    style={{ '--wash': wash } as CSSProperties}
     onMouseEnter={() => { clearTimers(); if (view === 'tucked') { setView('petit'); playSound('peek'); } }}
     onMouseLeave={leave}
     onDragEnter={event => { if (!event.dataTransfer.types.includes('Files')) return; event.preventDefault(); if (!dragDepth.current) dropRecipient.current = selectedTeammate?.id || null; dragDepth.current++; setDragOver(true); pose('anticipate'); openHome(); }}
@@ -286,7 +297,7 @@ export function Island() {
         <MascotFile interaction={interaction} />
         {home && <span className="island-mascot-name" title={selectedTeammate?.name}>{selectedTeammate?.name || 'Ankita'}</span>}
       </div>}
-      {showVoice && !home && <button className="voice-island-peek" aria-label="Expand voice" onClick={() => openHome()}><VoiceOrb phase={voice.state.phase} inputLevel={voice.state.inputLevel} compact task={voice.state.task} /></button>}
+      {showVoice && !home && <button className="voice-island-peek" aria-label="Expand voice" onClick={() => openHome()}><VoiceOrb phase={voice.state.phase} inputLevel={voice.state.inputLevel} compact task={voice.state.task} wakeCue={voice.state.wakeCue} /></button>}
       {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
         <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
       </button> : <div className="island-body" data-home-view={activeView}>
