@@ -7,6 +7,34 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Scheduled results land in the jobs panel, not just the chat
+
+A result that finishes while the owning teammate is mid-turn used to exist only
+as a queued event nothing listened for. Now:
+
+- The **Scheduled tasks** panel shows waiting results immediately under "Results
+  ready to post". Each finished update keeps its own expandable row, so a busy
+  period that produced three results reads as one group with three readable
+  entries, not one merged blob and not three chat messages.
+- A **"While you were away"** strip counts what ran, what stayed quiet and what
+  needs you. Counts are computed by the scheduler, not re-derived in the UI.
+- **Live progress**: start, step and end events are reduced into the job row, so
+  a running task shows "Running · step N" while it happens.
+- **Heartbeats defer instead of dropping.** A check that comes due while the
+  owner is replying waits and runs once when the chat is free; missed intervals
+  collapse into one check and the row says how many are held.
+- **Silent runs**: a job may end with `[SILENT]`; the run is recorded and visible
+  but not posted. **Failures always post**, and a repeated failure alerts once per
+  incident. A failed handoff is recorded as `deliveryFailed`, separate from the
+  job's `failureStreak`.
+- The ChatGPT-tab turn path now flushes queued deliveries at turn end, matching
+  typed turns.
+
+Verified locally: 45 scheduler tests (including deferred/coalesced heartbeats,
+silence, failure-once and the away summary), 3 renderer store tests, 3 Playwright
+panel checks and the unchanged automation suites. Live tray behaviour, real
+quiet-hours timing and the packaged build are not exercised here.
+
 ### Voice attention ladder: wake word, stop word, auto-mute
 
 Voice now has three attention levels instead of one. A voice session with a wake

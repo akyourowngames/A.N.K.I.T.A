@@ -891,7 +891,10 @@ export class DesktopEngine {
     if (deliveredIds.includes(receipt.runId)) { this.routineDeliveries.delete(receipt.runId); return true; }
     if (this.turns.has(id)) {
       this.routineDeliveries.set(receipt.runId, receipt);
-      this.emit({ type: 'routine-queued', threadId: id, routineId: receipt.routineId, runId: receipt.runId }); return false;
+      // Carry the title so the panel can list a waiting result without reading
+      // the receipt file again on every event.
+      this.emit({ type: 'routine-queued', threadId: id, routineId: receipt.routineId, runId: receipt.runId, detail: receipt.name || '' });
+      return false;
     }
     const turnId = randomUUID(), messageId = randomUUID();
     const work = Promise.resolve().then(async () => {
@@ -965,6 +968,15 @@ export class DesktopEngine {
     this.flushVoiceDeliveries(id);
     for (const receipt of this.routineDeliveries.values()) if (receipt.threadId === id) await this.deliverRoutine(receipt);
     await this.scheduler?.retryDeliveries();
+    this.emitDeliveryState(id);
+  }
+
+  /** Tell the panel exactly which results are still waiting for this teammate. */
+  emitDeliveryState(id) {
+    try {
+      const pending = this.scheduler?.pendingDeliveries?.(id) || [];
+      this.emit({ type: 'routine-delivery-state', threadId: id, pending });
+    } catch { /* Panel refresh is best-effort; the queue itself is durable. */ }
   }
 
   _savedThread(id) {
@@ -1360,6 +1372,8 @@ export class DesktopEngine {
       persist();
       this.turns.delete(id); this.browserControllers.delete(id); this.approvals.cancelThread(id); this.credentialRequests.cancelThread(id);
       this.emit({ type: 'message-end', threadId: id, messageId }); this.emit({ type: 'turn-end', threadId: id, turnId });
+      // Same rule as a typed turn: results held during this turn are released now.
+      void this.flushRoutineDeliveries(id).catch(err => this.emit({ type: 'scheduler-error', message: err.message }));
     });
     this.turns.set(id, work); void work.catch(() => {}); return { turnId };
   }

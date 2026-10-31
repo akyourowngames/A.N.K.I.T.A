@@ -9,6 +9,20 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Scheduled work is visible while it waits.** A result that finishes during a
+  chat now appears in **Scheduled tasks** straight away as a row you can expand
+  and read, instead of silently waiting for the turn to end. Several finished
+  results show as one group with each update on its own row. A "While you were
+  away" strip counts what ran, what stayed quiet and what needs you. Running jobs
+  show their current step live. All of it stays in the jobs panel; chat is not
+  used for status traffic.
+- **Heartbeats retry instead of being dropped.** If the owning teammate is
+  mid-reply at a check time, the check waits and runs once when the chat is free;
+  several missed intervals collapse into a single check.
+- **Silent runs and single failure alerts.** A job can end with `[SILENT]` to
+  record its run without posting. Failures always post, and a repeated failure
+  alerts once per incident instead of on every run. A failed handoff is recorded
+  as a delivery problem, not as a job failure.
 - **Voice wake word, stop word and auto-mute.** A voice session rests on the wake
   word "Ankita" and returns to it after every request, so nearby talk is never
   transcribed unless it starts with the wake word. "Ankita, <request>" runs the

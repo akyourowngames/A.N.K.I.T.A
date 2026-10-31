@@ -564,3 +564,26 @@
   .desktop-workbench :is(.project-tab-content, .context-record-body) { animation: none; }
   .desktop-workbench :is(.project-tabs button, .section-primary, .section-secondary, .settings-switch-row input, .settings-switch-row input::before) { transition: none; }
 }
+
+/* ---- Scheduled results: waiting list, away strip, live step ---- */
+/* The panel, not chat, is where waiting work lives, so these are calm rows. */
+.desktop-workbench .jobs-away-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); color: var(--text-dim); font-size: 10.5px; }
+.desktop-workbench .jobs-away-lead { display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-weight: 500; }
+.desktop-workbench .jobs-away-strip strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.desktop-workbench .jobs-away-strip .is-attention strong { color: var(--gold-light); }
+.desktop-workbench .jobs-group.ready .jobs-group-title { color: var(--gold-light); }
+.desktop-workbench .upcoming-job-icon.ready { color: var(--green, #4ade80); }
+.desktop-workbench .jobs-delivery { border: 1px solid var(--edge); border-radius: 10px; margin: 0 0 6px; background: var(--desktop-panel); overflow: hidden; }
+.desktop-workbench .jobs-delivery-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.desktop-workbench .jobs-delivery-head > span:nth-child(2) { flex: 1; min-width: 0; }
+.desktop-workbench .jobs-delivery-head strong { display: block; font-size: 12px; font-weight: 500; }
+.desktop-workbench .jobs-delivery-head small { display: block; margin-top: 3px; color: var(--text-dim); font-size: 10px; }
+.desktop-workbench .jobs-delivery-head > svg { color: var(--text-dim); transition: transform var(--desktop-motion); }
+.desktop-workbench .jobs-delivery[data-open="true"] .jobs-delivery-head > svg { transform: rotate(180deg); }
+.desktop-workbench .jobs-delivery-body { padding: 0 12px 12px 51px; }
+.desktop-workbench .jobs-delivery-body p { margin: 0 0 8px; color: var(--text-soft); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; }
+.desktop-workbench .job-live-run { display: flex; align-items: center; gap: 11px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); }
+.desktop-workbench .job-live-run > div { min-width: 0; }
+.desktop-workbench .job-live-run span { display: block; color: var(--text-dim); font-size: 10px; }
+.desktop-workbench .job-live-run strong { display: block; color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.desktop-workbench .job-live-run small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 10px; }
