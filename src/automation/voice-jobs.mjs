@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { runVoiceTask } from './voice-task.mjs';
 import { VoiceResourceBroker } from './voice-resources.mjs';
-import { VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT, VOICE_CONTROL_TURNS, VOICE_JOBS_TOOL, VOICE_FINAL_STATES } from './voice-task-policy.mjs';
+import { VOICE_MAX_PARALLEL_JOBS, VOICE_PARALLEL_JOBS_LIMIT, VOICE_CONTROL_TURNS, VOICE_JOBS_TOOL, VOICE_FINAL_STATES, VOICE_HOLD_MAX_MS } from './voice-task-policy.mjs';
 import { redactText } from '../core/redact.mjs';
 
 export { VOICE_JOBS_TOOL };
@@ -29,9 +29,9 @@ function abortable(work, signal) {
 
 /** Parallel job lifecycle only. Hosts supply a fresh Agent, approvals, IO and idle result delivery. */
 export class VoiceJobs {
-  constructor({ store, run, concurrency = VOICE_MAX_PARALLEL_JOBS, resources = new VoiceResourceBroker(), onUpdate, onComplete, onError } = {}) {
+  constructor({ store, run, concurrency = VOICE_MAX_PARALLEL_JOBS, resources = new VoiceResourceBroker(), onUpdate, onComplete, onError, holdMaxMs = VOICE_HOLD_MAX_MS } = {}) {
     if (!store || typeof run !== 'function' || !Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > VOICE_PARALLEL_JOBS_LIMIT) throw new TypeError('Invalid parallel voice worker setup.');
-    Object.assign(this, { store, run, concurrency, resources, onUpdate, onComplete, onError });
+    Object.assign(this, { store, run, concurrency, resources, onUpdate, onComplete, onError, holdMaxMs: Number(holdMaxMs) || 0 });
     this.entries = new Map(); this.closed = false;
   }
 
@@ -113,14 +113,34 @@ export class VoiceJobs {
       const holder = `${PROCESS_PREFIX}${entry.id}`;
       entry.resourcesHeld = true;
       this.resources.transfer(entry.id, holder, { exclude: [completion(entry.id)] });
-      entry.resourceLifetime = Promise.resolve(entry.resourceHold.promise).then(() => {
+      const release = () => {
+        if (!entry.resourcesHeld) return;
         this.resources.release(holder); entry.resourcesHeld = false;
         if (entry.record) {
           entry.record.resourcesHeld = false;
           try { this.store.save(entry.record); } catch (error) { this.notify(this.onError, error); }
         }
         this.emit(entry); this.prune();
-      }, error => { entry.stopError = error; this.notify(this.onError, error); });
+      };
+      entry.resourceLifetime = Promise.resolve(entry.resourceHold.promise).then(release,
+        error => { entry.stopError = error; this.notify(this.onError, error); });
+      // A child process must never hold the voice queue open forever: an app that
+      // stays running, or a wedged command, would otherwise block every later
+      // request. Past the ceiling the job finishes and reports that the process is
+      // still alive — and stays stoppable, so the user can still end it.
+      const cap = this.holdMaxMs;
+      if (cap > 0) {
+        const timer = setTimeout(() => {
+          if (!entry.resourcesHeld) return;
+          entry.holdExpired = true;
+          if (entry.record) entry.record.holdExpired = true;
+          // Keep the child reachable for Stop, which cancels by entry id.
+          release();
+          this.emit(entry);
+        }, cap);
+        timer.unref?.();
+        entry.resourceLifetime.finally(() => clearTimeout(timer));
+      }
       if (entry.record) { entry.record.resourcesHeld = true; this.store.save(entry.record); }
     }
     this.resources.release(entry.id);
@@ -164,7 +184,9 @@ export class VoiceJobs {
 
   cancel(id, { ownerId } = {}) {
     const entry = this.find(id, ownerId);
-    if (entry.finished && !entry.resourcesHeld) return false;
+    // A finished job is normally not cancellable, but its child may still be
+    // running after the hold ceiling released the queue: Stop must reach it.
+    if (entry.finished && !entry.resourcesHeld && !entry.holdExpired) return false;
     entry.cancelled = true; entry.controller.abort(); entry.task?.interruptSpeech();
     if (!entry.stopping || entry.stopError) {
       entry.stopError = null;
@@ -195,7 +217,9 @@ export class VoiceJobs {
       } };
   }
   prune() {
-    const finished = [...this.entries.values()].filter(entry => entry.finished && !entry.resourcesHeld).sort((a, b) => b.record?.endedAt - a.record?.endedAt);
+    // An expired hold keeps a live child: its entry must survive so Stop can
+    // still reach it and the panel can still explain what is running.
+    const finished = [...this.entries.values()].filter(entry => entry.finished && !entry.resourcesHeld && !entry.holdExpired).sort((a, b) => b.record?.endedAt - a.record?.endedAt);
     for (const entry of finished.slice(this.store.limit)) this.entries.delete(entry.id);
   }
   async close() {

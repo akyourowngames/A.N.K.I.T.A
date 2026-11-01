@@ -25,6 +25,11 @@ const PLAYBACK_TEST_ACTIVE = 'End voice before testing your speakers.';
 const SPEAKER_ECHO_SETTLE_MS = 300; // Milliseconds: let output buffers/room echo fade before reopening a speaker microphone.
 const STANDBY_CUE_MS = 1400; // Milliseconds: a one-shot wake ring, longer than the CSS animation to be seen once.
 const STOPPED_LINE = 'Stopped.'; // Spoken confirmation after a stop word cancels work.
+// Panel copy for the window just after a reply, and for speech dropped in standby.
+const FOLLOW_UP_HINT = 'Go ahead — I am still listening.';
+const WAKE_HINT = 'Say "Ankita" first.';
+const WAKE_HINT_COOLDOWN_MS = 4000; // A long aside must not flash the hint repeatedly.
+const FALLBACK_FOLLOW_UP_MS = 25000;
 // Fallbacks mirror config.mjs defaults, so a host that omits these keys (older
 // configs, test harnesses) still gets a sane ladder instead of a zero-length timer.
 const FALLBACK_IDLE_MS = 90000;
@@ -74,6 +79,7 @@ export class DesktopVoice {
     const config = getConfig();
     this.jobs = new VoiceJobs({ store: new VoiceTaskStore({ directory, limit: config.voiceTaskLimit, secrets: configuredSecrets(config) }),
       concurrency: config.voiceMaxParallelJobs,
+      holdMaxMs: config.voiceHoldMaxMs,
       run: (entry, options) => engine.runVoiceJob(entry, { ...options, brain: entry.context.audioSession.brain, jobs: this.jobs }),
       onUpdate: task => this.updateJobs(task.ownerId),
       onComplete: async (task, result) => {
@@ -317,7 +323,7 @@ export class DesktopVoice {
         throw error;
       }
       if (!this.owns(session) || session.paused) finish();
-      if (!barge && !ended && !session.playingAt) this.publish(session, { phase: this.restingPhase(session), update: '' });
+      if (!barge && !ended && !session.playingAt) this.publish(session, { phase: this.restingPhase(session), update: this.restingUpdate(session) });
       timeout = setTimeout(finish, session.config.voiceMaxUtteranceMs);
       await done;
       entry.handle.child?.removeListener('close', disconnected);
@@ -343,6 +349,28 @@ export class DesktopVoice {
   asleep(session) { return session.asleep === true; }
 
   /**
+   * Tell the panel that speech was heard but ignored, because standby needs the
+   * wake word. Throttled: one aside should produce one hint, not a flicker.
+   */
+  hintWake(session) {
+    const now = Date.now();
+    if (now - (session.wakeHintAt || 0) < WAKE_HINT_COOLDOWN_MS) return;
+    session.wakeHintAt = now;
+    // The mic re-opens immediately after a dropped utterance, and that capture
+    // clears the work line. Keep the hint for a moment so it is actually readable.
+    session.hint = WAKE_HINT;
+    session.hintUntil = now + WAKE_HINT_COOLDOWN_MS;
+    this.publish(session, { update: WAKE_HINT });
+  }
+
+  /** The line the panel should show when listening resumes. */
+  restingUpdate(session) {
+    if (session.followUp) return FOLLOW_UP_HINT;
+    if (session.hint && Date.now() < (session.hintUntil || 0)) return session.hint;
+    return '';
+  }
+
+  /**
    * Attention ladder timers. Quiet listening sleeps to wake-only after the idle
    * delay, then closes the microphone after the standby delay. Any accepted turn
    * or resume restarts the ladder from full listening.
@@ -359,19 +387,42 @@ export class DesktopVoice {
     this.clearIdle(session);
     if (!this.owns(session) || session.paused) return;
     session.asleep = true;
-    this.publish(session, { phase: 'standby', update: '' });
+    // A recent "say Ankita first" hint is still the most useful line here.
+    this.publish(session, { phase: 'standby', update: this.restingUpdate(session) });
     this.startIdleTimer(session);
   }
 
   /**
-   * Return to the resting state after a finished request: standby when a wake
-   * word is on (so the mic never listens freely), otherwise keep listening.
+   * Return to the resting state after a finished request.
+   *
+   * With a wake word on, a short follow-up window keeps listening so a natural
+   * back-and-forth does not need the name repeated. When the window closes — or
+   * when it is disabled — the session returns to standby as before.
    */
   settle(session) {
     if (!this.owns(session) || session.paused) return;
     if (this.busy(session)) { this.ensureIdle(session); return; }
-    if (this.behavior(session).wake) this.rest(session);
-    else this.armIdle(session);
+    const behavior = this.behavior(session);
+    if (!behavior.wake) { this.armIdle(session); return; }
+    if (behavior.followUpMs > 0) this.openFollowUp(session);
+    else this.rest(session);
+  }
+
+  /** Stay in full listening for the follow-up window, then fall back to standby. */
+  openFollowUp(session) {
+    this.clearIdle(session);
+    if (!this.owns(session) || session.paused) return;
+    const behavior = this.behavior(session);
+    session.asleep = false;
+    session.followUp = true;
+    // `update` carries the hint the panel already renders; no new phase is needed.
+    this.publish(session, { phase: this.restingPhase(session), update: FOLLOW_UP_HINT });
+    session.idleTimer = setTimeout(() => {
+      session.idleTimer = null;
+      if (!this.owns(session) || session.paused) return;
+      session.followUp = false;
+      this.rest(session);
+    }, behavior.followUpMs);
   }
 
   /**
@@ -412,6 +463,9 @@ export class DesktopVoice {
   /** Restart the countdown for the stage we are already in, without changing it. */
   touchIdle(session) {
     if (!this.owns(session) || session.paused) return;
+    // Inside the follow-up window, sound restarts that window, not the idle timer
+    // that would push an awake session back to standby while the user is talking.
+    if (session.followUp) { this.openFollowUp(session); return; }
     this.clearIdle(session);
     this.startIdleTimer(session);
   }
@@ -428,6 +482,8 @@ export class DesktopVoice {
       stop: pick('voiceStopWord', true) !== false,
       // 0 is meaningful here: a bare wake word returns to standby immediately.
       idleMs: pick('voiceIdleMs', FALLBACK_IDLE_MS) >= 0 ? Number(pick('voiceIdleMs', FALLBACK_IDLE_MS)) : FALLBACK_IDLE_MS,
+      // Also 0-meaningful: no follow-up window means the name is required again.
+      followUpMs: Number(pick('voiceFollowUpMs', FALLBACK_FOLLOW_UP_MS)) >= 0 ? Number(pick('voiceFollowUpMs', FALLBACK_FOLLOW_UP_MS)) : FALLBACK_FOLLOW_UP_MS,
       standbyMs: positive(pick('voiceStandbyMs', FALLBACK_STANDBY_MS), FALLBACK_STANDBY_MS),
     };
   }
@@ -461,6 +517,8 @@ export class DesktopVoice {
   wake(session) {
     this.clearIdle(session);
     session.asleep = false;
+    session.followUp = false;
+    session.wakeHintAt = 0;
     const { idleMs, wake: wakeWord } = this.behavior(session);
     // A zero window means "say the word, then speak the request": go straight
     // back to standby instead of leaving the mic in free listening.
@@ -503,8 +561,10 @@ export class DesktopVoice {
         continue;
       }
       // Asleep: anything without the wake word is dropped here - never captioned,
-      // delegated, journaled or saved. This is the accepted cost of standby.
+      // delegated, journaled or saved. The panel still says why, so a forgotten
+      // wake word does not read as "it stopped working".
       if (command.kind === 'ignored') {
+        this.hintWake(session);
         session.speech.falseInterruption(heard.speechTurn);
         heard = null;
         session.userSpeaking = false;
@@ -551,7 +611,7 @@ export class DesktopVoice {
   updateJobs(ownerId) {
     const session = this.current;
     if (!session || session.threadId !== ownerId) return;
-    const jobs = this.jobs.list(ownerId).map(task => ({ id: task.id, label: task.label, status: task.status, resourcesHeld: task.resourcesHeld,
+    const jobs = this.jobs.list(ownerId).map(task => ({ id: task.id, label: task.label, status: task.status, resourcesHeld: task.resourcesHeld, holdExpired: task.holdExpired,
       waitingFor: task.waitingFor, summary: task.summary.slice(0, VOICE_CAPTION_CHARS), error: task.error?.slice(0, VOICE_ERROR_CHARS) || null,
       steps: task.steps.slice(-VOICE_PUBLIC_STEPS).map(({ index, label, tool, state }) => ({ index, label: label.slice(0, VOICE_UPDATE_CHARS), tool: tool.slice(0, VOICE_UPDATE_CHARS), state })) }));
     this.publish(session, { jobs, task: jobs[0] || null,

@@ -80,6 +80,9 @@ const publicTask = task => task && typeof task.id === 'string' ? {
   id: text(task.id, VOICE_DEVICE_CHARS), label: text(task.label, VOICE_UPDATE_CHARS), status: text(task.status, VOICE_UPDATE_CHARS),
   summary: text(task.summary, VOICE_CAPTION_CHARS), error: task.error ? text(task.error, VOICE_ERROR_CHARS) : null,
   waitingFor: task.waitingFor ? text(task.waitingFor, VOICE_UPDATE_CHARS) : null, resourcesHeld: Boolean(task.resourcesHeld),
+  // Set when a child process outlived the hold ceiling: the job is finished, the
+  // program is still running. Voice is free again.
+  holdExpired: Boolean(task.holdExpired),
   steps: Array.isArray(task.steps) ? task.steps.slice(-VOICE_PUBLIC_STEPS).map(step => ({ index: step.index,
     label: text(step.label, VOICE_UPDATE_CHARS), tool: text(step.tool, VOICE_UPDATE_CHARS), state: text(step.state, VOICE_UPDATE_CHARS) })) : [],
 } : null;

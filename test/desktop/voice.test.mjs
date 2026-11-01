@@ -572,17 +572,19 @@ test('speech in standby that is not the wake word is dropped and never becomes a
   assert.equal(h.voice.snapshot().phase, 'standby', 'it stays asleep');
 });
 
-test('the wake word plus a request is handled from standby and returns to standby', async t => {
+test('the wake word plus a request is handled from standby, then the follow-up window opens', async t => {
   const h = harness(t);
-  // A long mic timeout keeps this test about the return-to-standby step only.
+  // A long mic timeout keeps this test about the wake and follow-up steps only.
   wakeLadder(h.config, 0, 100000);
+  h.config.voiceFollowUpMs = 100000; // keep the window open for the assertion
   await h.voice.start({ threadId: 'owner' });
   await until(() => h.voice.snapshot().phase === 'standby');
   sayInto(h, 'Hi Ankita, write a note');
   await until(() => h.calls.length === 1);
   assert.equal(h.calls[0].text, 'write a note', 'the wake prefix and greeting are not part of the request');
-  await until(() => h.voice.snapshot().phase === 'standby');
+  await until(() => h.voice.snapshot().phase === 'listening');
   assert.ok(h.voice.snapshot().wakeCue > 0, 'the island saw the wake cue');
+  assert.match(h.voice.snapshot().update, /still listening/i, 'the panel explains that a follow-up needs no wake word');
 });
 
 test('a bare wake word keeps listening for the configured window, then returns to standby', async t => {
@@ -650,4 +652,58 @@ test('resume after auto-mute returns a wake-word session to standby', async t =>
   assert.equal(h.voice.snapshot().paused, false);
   assert.equal(h.voice.snapshot().active, true);
   assert.ok(h.inputs.at(-1) && h.inputs.at(-1).stopped === false, 'a replacement microphone is open');
+});
+
+/* ------------------------- follow-up window + hints ---------------------- */
+
+test('after answering, the session keeps listening so a follow-up needs no wake word', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0, 100000);
+  h.config.voiceFollowUpMs = 100000;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Ankita, write a note');
+  await until(() => h.calls.length === 1);
+  await until(() => h.voice.snapshot().phase === 'listening');
+
+  // The second request is handled with no wake prefix at all.
+  await until(() => h.inputs.at(-1) && h.inputs.at(-1).stopped !== true);
+  sayInto(h, 'and a second note');
+  await until(() => h.calls.length === 2);
+  assert.equal(h.calls[1].text, 'and a second note');
+  assert.notEqual(h.voice.snapshot().phase, 'standby', 'still inside the follow-up window');
+});
+
+test('when the follow-up window closes the session returns to standby', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0, 100000);
+  h.config.voiceFollowUpMs = 80;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Ankita, write a note');
+  await until(() => h.calls.length === 1);
+  await until(() => h.voice.snapshot().phase === 'standby');
+});
+
+test('with no follow-up window, the wake word is required again after every request', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0, 100000);
+  h.config.voiceFollowUpMs = 0;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'Ankita, write a note');
+  await until(() => h.calls.length === 1);
+  await until(() => h.voice.snapshot().phase === 'standby');
+  assert.equal(h.calls.length, 1);
+});
+
+test('speech ignored in standby produces a hint instead of silence', async t => {
+  const h = harness(t);
+  wakeLadder(h.config, 0, 100000);
+  h.config.voiceFollowUpMs = 0;
+  await h.voice.start({ threadId: 'owner' });
+  await until(() => h.voice.snapshot().phase === 'standby');
+  sayInto(h, 'just some nearby talking');
+  await until(() => /Say .*Ankita.* first/.test(h.voice.snapshot().update || ''));
+  assert.equal(h.calls.length, 0, 'the hint replaces nothing: the request is still dropped');
 });

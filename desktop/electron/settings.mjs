@@ -6,15 +6,16 @@ import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 const providers = new Set(['copilot', 'groq', 'kilo', 'custom', 'modal', CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen',
-  'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs']);
+  'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice', 'voiceOutputDevice']); // Private API keys and discovered audio-device preferences.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
 // Behaviour toggles are safe to change mid-session: they carry no device or
 // credential, so saving them must not force the user to end voice first.
-export const VOICE_BEHAVIOR_KEYS = Object.freeze(['voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs']);
+export const VOICE_BEHAVIOR_KEYS = Object.freeze(['voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs']);
 const VOICE_IDLE_LIMITS = Object.freeze({ min: 0, max: 600000, default: 15000 }); // Milliseconds; 0 means return to standby at once. Mirrors config.mjs.
-const VOICE_STANDBY_LIMITS = Object.freeze({ min: 60000, max: 3600000, default: 600000 }); // Milliseconds; mirrors config.mjs defaults and clamps.
+const VOICE_STANDBY_LIMITS = Object.freeze({ min: 60000, max: 3600000, default: 600000 });
+const VOICE_FOLLOW_UP_LIMITS = Object.freeze({ min: 0, max: 300000, default: 25000 }); // Milliseconds; 0 means strict mode: the wake word is required every time.
 keys.add('secretScrubbing');
 keys.add('secretWarningSeen');
 
@@ -80,10 +81,10 @@ function validatePatch(patch) {
         if (!zone) throw new Error('Enter a valid timezone, e.g. Asia/Kolkata');
         clean[key] = zone;
       }
-    } else if (key === 'voiceIdleMs' || key === 'voiceStandbyMs') {
-      const limits = key === 'voiceIdleMs' ? VOICE_IDLE_LIMITS : VOICE_STANDBY_LIMITS;
+    } else if (key === 'voiceIdleMs' || key === 'voiceStandbyMs' || key === 'voiceFollowUpMs') {
+      const limits = key === 'voiceIdleMs' ? VOICE_IDLE_LIMITS : key === 'voiceFollowUpMs' ? VOICE_FOLLOW_UP_LIMITS : VOICE_STANDBY_LIMITS;
       const n = Number(value);
-      if (!Number.isFinite(n) || n < limits.min || n > limits.max) throw new Error(`Enter a valid ${key === 'voiceIdleMs' ? 'standby delay' : 'microphone timeout'} in milliseconds`);
+      if (!Number.isFinite(n) || n < limits.min || n > limits.max) throw new Error(`Enter a valid ${key === 'voiceIdleMs' ? 'standby delay' : key === 'voiceFollowUpMs' ? 'follow-up window' : 'microphone timeout'} in milliseconds`);
       clean[key] = Math.floor(n);
     } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen', 'contextCompaction', 'voiceWakeWord', 'voiceStopWord'].includes(key)) {
       clean[key] = value === true || value === 'true';
@@ -212,6 +213,7 @@ export class DesktopSettingsStore {
       voiceStopWord: own(this.data, 'voiceStopWord') ? this.data.voiceStopWord === true : config.voiceStopWord !== false,
       voiceIdleMs: own(this.data, 'voiceIdleMs') ? this.data.voiceIdleMs : (config.voiceIdleMs ?? VOICE_IDLE_LIMITS.default),
       voiceStandbyMs: own(this.data, 'voiceStandbyMs') ? this.data.voiceStandbyMs : (config.voiceStandbyMs ?? VOICE_STANDBY_LIMITS.default),
+      voiceFollowUpMs: own(this.data, 'voiceFollowUpMs') ? this.data.voiceFollowUpMs : (config.voiceFollowUpMs ?? VOICE_FOLLOW_UP_LIMITS.default),
       imageApiBase: this.data.imageApiBase || config.imageApiBase || '',
       imageModel: this.data.imageModel || config.imageModel || 'gpt-image-1',
       hasImageApiKey: Boolean(this.data.imageApiKey || config.imageApiKey),

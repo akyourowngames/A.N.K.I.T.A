@@ -1,5 +1,5 @@
 export type VoicePhase = 'idle' | 'starting' | 'listening' | 'standby' | 'transcribing' | 'working' | 'speaking' | 'approval' | 'paused' | 'error';
-export type VoiceTaskView = { id: string; status: string; label?: string; waitingFor?: string | null; resourcesHeld?: boolean; steps: { index: number; label: string; tool: string; state: string }[]; summary: string; error: string | null };
+export type VoiceTaskView = { id: string; status: string; label?: string; waitingFor?: string | null; resourcesHeld?: boolean; holdExpired?: boolean; steps: { index: number; label: string; tool: string; state: string }[]; summary: string; error: string | null };
 export type VoiceState = { sessionId: string | null; threadId: string | null; active: boolean; paused: boolean; phase: VoicePhase;
   caption: string; captionRole: 'user' | 'assistant'; update: string; inputLevel: number; task: VoiceTaskView | null; jobs: VoiceTaskView[];
   error: string | null; microphone: string; wakeCue: number; revision: number };

@@ -44,10 +44,11 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
       <div className="voice-jobs-heading"><span>{activeJobs.length ? 'In progress' : 'Recent results'} <b>{activeJobs.length || visibleJobs.length}</b></span><span>Open a request for details</span></div>
       {visibleJobs.map(job => <div className="voice-job" key={job.id} data-status={job.status}>
         <span className="voice-job-dot" /><div><details className="voice-job-details"><summary title={job.label || 'Voice request'}>
-          <span className="voice-job-name">{job.label || 'Voice request'}</span><span className="voice-job-status">{job.resourcesHeld ? 'Command active' : JOB_STATE[job.status] || job.status}</span>
+          <span className="voice-job-name">{job.label || 'Voice request'}</span><span className="voice-job-status">{job.resourcesHeld ? 'Command active' : job.holdExpired ? 'Still running' : JOB_STATE[job.status] || job.status}</span>
         </summary><div className="voice-job-result">
           {job.waitingFor && <p>{job.waitingFor}</p>}
           {job.resourcesHeld && <p>The report is ready. Its command still holds shared access until it exits or you stop it.</p>}
+          {job.holdExpired && <p>The request finished, but its program is still open in the background. Voice is free for the next request.</p>}
           {job.error && <p className="voice-job-issue">{job.error}</p>}
           {job.summary && <p>{job.summary}</p>}
           {job.steps.length > 0 && <small>{job.steps.filter(step => step.state === 'done').length} of {job.steps.length} actions completed</small>}

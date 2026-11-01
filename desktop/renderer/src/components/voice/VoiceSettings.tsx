@@ -11,6 +11,8 @@ const DEFAULT_IDLE_MS = 15000;
 const DEFAULT_STANDBY_MS = 600000;
 const IDLE_MIN_SEC = 0, IDLE_MAX_SEC = 600; // 0 = return to standby as soon as the wake word is heard.
 const STANDBY_MIN_MIN = 1, STANDBY_MAX_MIN = 60;
+const DEFAULT_FOLLOW_UP_MS = 25000;
+const FOLLOW_UP_MIN_SEC = 0, FOLLOW_UP_MAX_SEC = 300; // 0 = strict: the wake word is required every time.
 const toIdleMs = (seconds: string) => Math.round(Number(seconds) * 1000);
 const toStandbyMs = (minutes: string) => Math.round(Number(minutes) * 60000);
 
@@ -23,6 +25,7 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
   const [stop, setStop] = useState(preferences.voiceStopWord !== false);
   const [idleSec, setIdleSec] = useState(String(Math.round((preferences.voiceIdleMs || DEFAULT_IDLE_MS) / 1000)));
   const [standbyMin, setStandbyMin] = useState(String(Math.round((preferences.voiceStandbyMs || DEFAULT_STANDBY_MS) / 60000)));
+  const [followUpSec, setFollowUpSec] = useState(String(Math.round((preferences.voiceFollowUpMs ?? DEFAULT_FOLLOW_UP_MS) / 1000)));
   const [status, setStatus] = useState<VoiceStatus | null>(null);
   const [busy, setBusy] = useState(false), [testing, setTesting] = useState(false), [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState(''), [notice, setNotice] = useState('');
@@ -35,7 +38,8 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
   const handsFreeDirty = wake !== (preferences.voiceWakeWord !== false)
     || stop !== (preferences.voiceStopWord !== false)
     || toIdleMs(idleSec) !== (preferences.voiceIdleMs || DEFAULT_IDLE_MS)
-    || toStandbyMs(standbyMin) !== (preferences.voiceStandbyMs || DEFAULT_STANDBY_MS);
+    || toStandbyMs(standbyMin) !== (preferences.voiceStandbyMs || DEFAULT_STANDBY_MS)
+    || toIdleMs(followUpSec) !== (preferences.voiceFollowUpMs ?? DEFAULT_FOLLOW_UP_MS);
   const dirty = Boolean(handsFreeDirty || sarvam.trim() || baseten.trim() || mic !== (preferences.micDevice || '') || output !== (preferences.voiceOutputDevice || ''));
   const refresh = async () => {
     setRefreshing(true); setError('');
@@ -64,6 +68,7 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
     if (stop !== (preferences.voiceStopWord !== false)) patch.voiceStopWord = stop;
     if (toIdleMs(idleSec) !== (preferences.voiceIdleMs || DEFAULT_IDLE_MS)) patch.voiceIdleMs = toIdleMs(idleSec);
     if (toStandbyMs(standbyMin) !== (preferences.voiceStandbyMs || DEFAULT_STANDBY_MS)) patch.voiceStandbyMs = toStandbyMs(standbyMin);
+    if (toIdleMs(followUpSec) !== (preferences.voiceFollowUpMs ?? DEFAULT_FOLLOW_UP_MS)) patch.voiceFollowUpMs = toIdleMs(followUpSec);
     setBusy(true); setError(''); setNotice('');
     try {
       const result = await window.ankita.invoke<DesktopSettingsResult>('saveDesktopSettings', patch);
@@ -108,6 +113,10 @@ export function VoiceSettings({ preferences, onSaved }: { preferences: DesktopPr
         <div className="settings-field"><label htmlFor="voice-idle">Keep listening after “Ankita” (seconds)</label>
           <input id="voice-idle" type="number" min={IDLE_MIN_SEC} max={IDLE_MAX_SEC} step="5" inputMode="numeric" value={idleSec} disabled={!wake} onChange={event => { setIdleSec(event.target.value); setNotice(''); }} />
           <small>How long a bare wake word keeps the microphone open. 0 returns to standby at once.</small>
+        </div>
+        <div className="settings-field"><label htmlFor="voice-followup">Keep listening after a reply (seconds)</label>
+          <input id="voice-followup" type="number" min={FOLLOW_UP_MIN_SEC} max={FOLLOW_UP_MAX_SEC} step="5" inputMode="numeric" value={followUpSec} disabled={!wake} onChange={event => { setFollowUpSec(event.target.value); setNotice(''); }} />
+          <small>Ask a follow-up without saying “Ankita” again. 0 requires the wake word every time.</small>
         </div>
         <div className="settings-field"><label htmlFor="voice-standby">Microphone off after (minutes)</label>
           <input id="voice-standby" type="number" min={STANDBY_MIN_MIN} max={STANDBY_MAX_MIN} step="1" inputMode="numeric" value={standbyMin} onChange={event => { setStandbyMin(event.target.value); setNotice(''); }} />

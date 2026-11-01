@@ -16,6 +16,7 @@ import * as delegateTask from './delegate-task.mjs';
 import * as git from './git/git.mjs';
 import * as portStatus from './process/port-status.mjs';
 import * as killProcess from './process/kill-process.mjs';
+import * as openApp from './apps/open-app.mjs';
 import * as imageGenerate from './images/image-generate.mjs';
 import * as unsplashSearch from './images/unsplash-search.mjs';
 import * as pixabaySearch from './images/pixabay-search.mjs';
@@ -42,6 +43,13 @@ export const CATEGORIES = [
     id: 'process', summary: 'find port owners and terminate an approved process or port listener',
     keywords: ['port', 'process', 'pid', 'address in use', 'eaddrinuse', 'kill', 'listener', 'taskkill'],
     tools: [portStatus, killProcess],
+  },
+  {
+    id: 'apps', summary: 'open an installed desktop application by name',
+    // Launching an app is not a shell command: it returns immediately and holds
+    // no process, so it cannot stall a voice or chat turn.
+    keywords: ['open app', 'launch', 'start app', 'notepad', 'calculator', 'spotify', 'browser app', 'application'],
+    tools: [openApp],
   },
   {
     id: "personal",

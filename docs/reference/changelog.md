@@ -7,6 +7,49 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Voice comfort: follow-up window, a wake hint, and a real app launcher
+
+Three things made voice mode tiring in daily use, all fixed here.
+
+- **You no longer repeat the name every time.** When a request finishes, the
+  session opens a follow-up window (`VOICE_FOLLOW_UP_MS`, default 25 s, 0 for
+  strict) and stays in `listening`. A follow-up needs no wake word, and sound
+  restarts the window rather than the shorter standby timer. When the window
+  closes it returns to standby exactly as before.
+- **Ignored speech says why.** In standby, an utterance without "Ankita" used to
+  vanish. It now publishes a throttled hint ("Say Ankita first") that survives
+  the mic re-opening, so a forgotten wake word no longer reads as a crash.
+- **"Open notepad" is not a terminal command any more.** `tools/apps/` adds an
+  `open_app` tool backed by a system-discovered app index
+  (`apps-index.json`, rescanned after `APP_INDEX_MAX_AGE_DAYS`, default 7).
+  Discovery parses Windows `Get-StartApps` plus Start-menu shortcuts, macOS
+  `.app` bundles, and freedesktop entries. Launching is detached and shell-free,
+  so it is never a job and never a resource hold.
+
+**Security hardening on the launch path** (a review of the first draft found
+real defects, all fixed and regression-tested):
+
+- Only an AppID matching a strict shape may go through `cmd /c start`; real file
+  paths are spawned directly with `shell:false`, so nothing is re-parsed.
+- The cached index is validated on read and on write: a poisoned entry with
+  shell metacharacters, a `%VAR%`, a relative path, or a malformed AppID is
+  refused rather than executed.
+- The audit record names the app, not its absolute path, so no OS username is
+  written into a shared log.
+- Rescans are debounced and the directory walk is bounded, so repeated calls
+  cannot make the main process pay for a full scan each time.
+
+**Resource-hold ceiling** (`VOICE_HOLD_MAX_MS`, default 120 s): a child process
+that outlives its turn no longer keeps the job "running" forever. The hold is
+released, the job finishes, the panel reports the program is still open, and the
+entry stays stoppable. Previously Stop was unreachable after release and prune
+could drop the entry.
+
+Verified locally: 167 voice and launcher tests, 144 adjacent suites, typecheck
+and build. Live: `open_app("notepad")` really launched Notepad with an empty job
+map, and an injection attempt was refused. Not covered: a real macOS/Linux scan,
+Stop-after-expiry against a real wedged child, and packaged-installer behaviour.
+
 ### Memory: no more duplicate or silently-contradicting facts
 
 The memory system stored facts as flat lines and only deduplicated exact text, so

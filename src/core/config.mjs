@@ -140,6 +140,12 @@ const DEFAULTS = {
   voiceStopWord: true,
   voiceIdleMs: 15000,
   voiceStandbyMs: 600000,
+  // After Ankita answers, stay listening this long so a follow-up needs no wake
+  // word. 0 restores strict "say the name every time" behaviour.
+  voiceFollowUpMs: 25000,
+  // A child process must never hold the voice queue open indefinitely.
+  voiceHoldMaxMs: 120000,
+  appIndexMaxAgeDays: 7,
   voiceAddress: "sir",
   voiceSpeakItems: 8,
   voiceSpeakSentences: 6,
@@ -506,6 +512,9 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     voiceStopWord: onOff(pick("VOICE_STOP_WORD"), DEFAULTS.voiceStopWord),
     // Listening window after a bare wake word (0 = return to standby at once).
     voiceIdleMs: clampInt(pick("VOICE_IDLE_MS"), 0, 600000, DEFAULTS.voiceIdleMs),
+    voiceFollowUpMs: clampInt(pick("VOICE_FOLLOW_UP_MS"), 0, 300000, DEFAULTS.voiceFollowUpMs),
+    voiceHoldMaxMs: clampInt(pick("VOICE_HOLD_MAX_MS"), 10000, 1800000, DEFAULTS.voiceHoldMaxMs),
+    appIndexMaxAgeDays: clampInt(pick("APP_INDEX_MAX_AGE_DAYS"), 1, 365, DEFAULTS.appIndexMaxAgeDays),
     voiceStandbyMs: clampInt(pick("VOICE_STANDBY_MS"), 60000, 3600000, DEFAULTS.voiceStandbyMs),
     // An empty address is useful ("off" / "none" disables the salutation).
     voiceAddress: (() => {

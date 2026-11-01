@@ -9,6 +9,22 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Conversation flow in voice.** After Ankita answers, it keeps listening for a
+  short follow-up window (25 s by default), so a back-and-forth does not need the
+  wake word every time. Speaking without the wake word in standby now shows a
+  quiet "Say Ankita first" hint instead of being silently dropped. Set the
+  follow-up window to 0 in **Settings → Voice → Hands-free** to require the name
+  every time.
+- **"Open notepad" actually opens Notepad.** A new `open_app` tool launches an
+  installed application by name, using an app list discovered from the system
+  (Start menu on Windows, Applications on macOS, desktop entries on Linux) and
+  refreshed weekly. Launching is shell-free and detached, so it returns at once
+  and never holds a voice turn open. Only apps from the discovered list can be
+  launched; an app not yet known asks for approval first.
+- **A stuck process can no longer freeze voice.** A live child process used to
+  keep a voice job "running" forever, blocking every later request. It now stops
+  holding the queue after a ceiling, the job finishes, and the panel says the
+  program is still open in the background. Stop still works.
 - **Memory stops duplicating and stops hiding contradictions.** A new fact is
   compared with what is already stored: near-identical wording updates the
   existing fact instead of creating a second, and a likely contradiction is
