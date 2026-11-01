@@ -13,7 +13,7 @@ function voiceJob(t, { stopDuringWrite = false } = {}) {
   const daemon = new Daemon({
     store: { telegramOffset: 0 }, client: {}, config: { groqApiKey: 'test' },
     runPrompt: async () => '', deliver: async () => {},
-    bot: { enabled: true, download: async () => Buffer.from('voice note'), sendTyping: async () => {}, send: async (_id, text) => sent.push(text) },
+    bot: { enabled: true, download: async () => Buffer.from('voice note'), sendTyping: async () => {}, send: async (_id, text) => { sent.push(text); return [{ message_id: sent.length }]; } },
   });
   daemon.chatAgent = () => ({ send: async prompt => { prompts.push(prompt); return 'reply'; } });
   daemon.saveChat = () => {};

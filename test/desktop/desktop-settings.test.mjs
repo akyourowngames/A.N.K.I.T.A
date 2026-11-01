@@ -15,6 +15,50 @@ test('the current desktop loads a saved browser provider without resetting or re
   assert.equal(fs.readFileSync(file, 'utf8'), original);
 });
 
+test('a newer saved provider opens through its existing compatible endpoint without rewriting the profile', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-future-provider-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'settings.json');
+  const saved = {
+    provider: 'future-provider', model: 'saved-model', username: 'Saved name',
+    customApiBase: 'https://compatible.example/v1', customApiKey: 'private-fixture-key',
+    futureProviderKey: 'private-future-fixture',
+  };
+  const original = JSON.stringify({ version: 1, settings: saved });
+  fs.writeFileSync(file, original);
+  const store = new DesktopSettingsStore(file).load();
+  const config = applyDesktopSettings({ provider: 'kilo', apiBase: 'https://other.example', apiKey: 'other-key' }, store.data);
+  assert.equal(config.provider, 'custom');
+  assert.equal(config.apiBase, saved.customApiBase);
+  assert.equal(config.apiKey, saved.customApiKey);
+  assert.equal(config.model, saved.model);
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
+  const view = store.publicView(config);
+  assert.match(view.providerNotice, /saved provider/i);
+  assert.equal(JSON.stringify(view).includes(saved.customApiKey), false);
+  assert.equal(JSON.stringify(view).includes(saved.futureProviderKey), false);
+  store.update({ username: 'Changed name' });
+  const roundtrip = JSON.parse(fs.readFileSync(file, 'utf8')).settings;
+  assert.equal(roundtrip.customApiKey, saved.customApiKey);
+  assert.equal(roundtrip.futureProviderKey, saved.futureProviderKey);
+  assert.throws(() => store.update({ provider: 'another-unknown-provider' }), /supported provider/);
+});
+
+test('a newer saved provider without an endpoint opens settings without choosing another service', t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-future-unconfigured-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const file = path.join(dir, 'settings.json');
+  const original = JSON.stringify({ settings: { provider: 'future-provider', username: 'Saved name' } });
+  fs.writeFileSync(file, original);
+  const store = new DesktopSettingsStore(file).load();
+  const config = applyDesktopSettings({ provider: 'kilo', apiBase: 'https://other.example', apiKey: 'other-key' }, store.data);
+  assert.equal(config.provider, 'custom');
+  assert.equal(config.apiBase, '');
+  assert.equal(config.apiKey, '');
+  assert.match(store.publicView(config).providerNotice, /Settings|connect/i);
+  assert.equal(fs.readFileSync(file, 'utf8'), original);
+});
+
 test('fresh desktop installs select Kilo while existing users and explicit settings keep their provider', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-fresh-provider-'));
   try {

@@ -24,6 +24,11 @@ import { fileURLToPath } from 'node:url';
 const ROOT = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const TEST_ROOT = path.join(ROOT, 'test');
 const BROWSER_MARKER = /from ['"]playwright['"]|require\(['"]playwright['"]\)/;
+// Files that spawn real subprocesses and wait on their timing. Run alone: under
+// parallel load their fixed deadlines expire and they hang or fail spuriously.
+const HEAVY_FILES = new Set([
+  'test/core/voice-cli.test.mjs',
+]);
 
 const log = (...parts) => console.log(...parts);
 
@@ -40,18 +45,28 @@ export function classifyTests(dir = TEST_ROOT) {
     }
   };
   walk(dir);
-  return { all: files.map(entry => entry.file), browser: files.filter(entry => entry.browser).map(entry => entry.file), unit: files.filter(entry => !entry.browser).map(entry => entry.file) };
+  const all = files.map(entry => entry.file);
+  const browser = files.filter(entry => entry.browser).map(entry => entry.file);
+  // Heavy files are pulled out of the parallel unit run and executed on their own.
+  const heavy = all.filter(file => HEAVY_FILES.has(file));
+  const unit = files.filter(entry => !entry.browser && !HEAVY_FILES.has(entry.file)).map(entry => entry.file);
+  return { all, browser, heavy, unit };
 }
 
 const TIERS = {
-  // Both kinds run, but browser files one at a time: two Vite servers in one
-  // process race on the cache and HMR socket, which surfaces as
-  // "WebSocket closed without opened" and fails healthy tests.
-  full: ({ all, browser, unit }) => [
+  // Browser files one at a time: two Vite servers in one process race on the
+  // cache and HMR socket, which surfaces as "WebSocket closed without opened"
+  // and fails healthy tests. Heavy subprocess files run alone for the same
+  // reason: their fixed deadlines expire under load.
+  full: ({ browser, heavy, unit }) => [
     { label: 'unit (parallel)', files: unit, parallel: true },
+    { label: 'heavy (serial)', files: heavy, parallel: false },
     { label: 'browser (serial)', files: browser, parallel: false },
   ],
-  unit: ({ unit }) => [{ label: 'unit (parallel)', files: unit, parallel: true }],
+  unit: ({ heavy, unit }) => [
+    { label: 'unit (parallel)', files: unit, parallel: true },
+    { label: 'heavy (serial)', files: heavy, parallel: false },
+  ],
   browser: ({ browser }) => [{ label: 'browser (serial)', files: browser, parallel: false }],
 };
 
@@ -119,9 +134,11 @@ async function main(tier) {
     const chosen = selected.length ? selected : files;
     log(`Running ${chosen.length} test file(s) touched by this change${wide ? ' (wide)' : ''}. ${wide ? '' : `${files.length - chosen.length} importers skipped; pass --all-related to include them.`}`);
     const browserOnes = chosen.filter(file => BROWSER_MARKER.test(fs.readFileSync(path.join(ROOT, file), 'utf8')));
-    const unitOnes = chosen.filter(file => !browserOnes.includes(file));
+    const unitOnes = chosen.filter(file => !browserOnes.includes(file) && !HEAVY_FILES.has(file));
+    const heavyOnes = chosen.filter(file => HEAVY_FILES.has(file));
     let code = 0;
     if (unitOnes.length) code = (await runTier({ files: unitOnes, parallel: true })).code || code;
+    if (heavyOnes.length) code = (await runTier({ files: heavyOnes, parallel: false })).code || code;
     if (browserOnes.length) code = (await runTier({ files: browserOnes, parallel: false })).code || code;
     process.exit(code);
   }
