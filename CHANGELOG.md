@@ -9,6 +9,11 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Editable personality.** Settings now has a structured character card for
+  caring attitude, teasing, language and example exchanges, shared by API-backed
+  chat and voice. Style uses existing generation calls; tool evidence and
+  permissions take priority. See [editing](docs/guides/personality.md) and
+  [live samples and limits](docs/verification/personality.md).
 - **Shared chat channels (source).** Telegram, Discord Gateway and Slack Socket
   Mode use one local policy, inbox, progress and delivery core. Settings and
   terminal `/channels` are generated from channel descriptions, with masked key

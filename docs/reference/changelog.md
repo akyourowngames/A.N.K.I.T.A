@@ -7,6 +7,18 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Editable character and speaking style
+
+Settings / Personality edits a local structured card with description, attitude,
+teasing, language, care guidance and example exchanges. Chat and voice reuse the
+same card in their existing generation calls. Invalid saves keep the old card;
+damaged files leave Settings reachable. Active voice snapshots remain isolated.
+Optional personality text yields to tool schema space in small contexts, and a
+concurrent provider reconnect keeps the newest card. A separate ChatGPT Browser
+conversation retains its own instructions. Four real planner samples include an
+actual temporary file write/read-back; raw reply length and tone still vary.
+See [editing](../guides/personality.md) and [evidence](../verification/personality.md).
+
 ### Saved-provider startup compatibility
 
 A saved provider from a newer build no longer prevents the desktop from opening.

@@ -1,3 +1,4 @@
+import { PERSONALITY_ACTIONS } from '../../src/core/personality.mjs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { app, BrowserWindow, ipcMain, shell, Menu, screen, safeStorage, Tray, Notification, nativeImage, powerMonitor, dialog, clipboard } from 'electron';
@@ -510,6 +511,8 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
       openHelper: () => shell.openPath(app.isPackaged ? path.join(process.resourcesPath, HELPER_DIRECTORY) : path.resolve(here, '..', HELPER_DIRECTORY)),
     });
   }
+  if (action === PERSONALITY_ACTIONS.get) return current.getPersonality();
+  if (action === PERSONALITY_ACTIONS.save) return current.savePersonality(payload);
   switch (action) {
     case 'palette:query': return current.paletteQuery(payload?.query);
     case 'palette:run': return current.paletteRun(payload?.id, payload?.threadId);

@@ -1,0 +1,10 @@
+.personality-settings textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; resize: vertical; padding: 11px 12px; border: 1px solid var(--edge-strong); border-radius: 9px; background: var(--canvas); color: var(--text); font: inherit; font-size: 12px; line-height: 1.6; }
+.personality-settings textarea:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
+.personality-enabled { display: flex; align-items: flex-start; gap: 10px; color: var(--text); font-size: 12px; }
+.personality-enabled input { margin-top: 3px; accent-color: var(--accent); }
+.personality-enabled small { display: block; margin-top: 5px; color: var(--text-dim); line-height: 1.5; }
+.personality-examples { margin-top: 22px; border-block: 1px solid var(--edge); padding-block: 15px; }
+.personality-examples summary { cursor: pointer; color: var(--text); font-size: 12px; }
+.personality-examples summary span { margin-left: 6px; color: var(--text-dim); }
+.personality-example { padding-bottom: 18px; border-bottom: 1px solid var(--edge); margin-bottom: 18px; }
+.personality-example > button { margin-top: 12px; }
