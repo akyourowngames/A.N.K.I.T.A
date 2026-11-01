@@ -5,6 +5,70 @@ All notable changes to Ankita are documented here. This project adheres to
 version in `package.json` (see [docs/guides/releasing.md](docs/guides/releasing.md)). A fuller,
 continuously updated narrative lives in [docs/reference/changelog.md](docs/reference/changelog.md).
 
+## [2.7.5] - 2026-11-01
+
+Voice that does not need the wake word every time, an app launcher that actually
+opens apps, scheduled results you can see, memory that stops repeating itself,
+and shared chat channels.
+
+### Added
+
+- **Editable personality.** Settings now has a structured character card for
+  caring attitude, teasing, language and example exchanges, shared by API-backed
+  chat and voice. Style uses existing generation calls; tool evidence and
+  permissions take priority. See [editing](docs/guides/personality.md) and
+  [live samples and limits](docs/verification/personality.md).
+- **Conversation flow in voice.** After Ankita answers it keeps listening for a
+  short follow-up window (25 s by default), so a back-and-forth does not need the
+  wake word every time. Speaking without the wake word in standby now shows a
+  quiet "Say Ankita first" hint instead of being silently dropped. Set the window
+  to 0 in **Settings → Voice → Hands-free** to require the name every time.
+- **"Open notepad" actually opens Notepad.** A new `open_app` tool launches an
+  installed application by name, using an app list discovered from the system
+  (Start menu on Windows, Applications on macOS, desktop entries on Linux) and
+  refreshed weekly. Launching is shell-free and detached, so it returns at once
+  and never holds a voice turn open. Only apps from the discovered list can be
+  launched; an unknown app asks for approval first.
+- **Memory stops duplicating and stops hiding contradictions.** A new fact is
+  compared with what is already stored: near-identical wording updates the
+  existing fact instead of creating a second one, and a likely contradiction is
+  stored but flagged so Ankita asks which is current. Nothing is deleted or
+  rewritten automatically.
+- **Offline semantic memory.** Point `EMBED_LOCAL_BASE` at any
+  OpenAI-compatible embeddings server (Ollama, LM Studio) and recall becomes
+  semantic without a Cloudflare account.
+- **Voice wake word, stop word and auto-mute.** A voice session rests on the wake
+  word "Ankita" and returns to standby after each request. "Stop" or "cancel"
+  interrupts a reply or stops running work.
+- **Scheduled work is visible while it waits.** A result that finishes during a
+  chat appears in **Scheduled tasks** straight away as a row you can expand and
+  read, instead of silently waiting for the turn to end.
+- **Heartbeats retry instead of being dropped,** and a job can end with
+  `[SILENT]` to record its run without posting. A repeated failure alerts once.
+- **Long-conversation compaction** keeps a recap of older turns, on by default in
+  the desktop app.
+- **Shared chat channels.** Telegram, Discord Gateway and Slack Socket Mode use
+  one local policy, inbox, progress and delivery core, with private owner
+  approvals and isolated additional-platform histories. No new SDK or hosted
+  relay is required.
+
+### Fixed
+
+- **A stuck process can no longer freeze voice.** A live child process used to
+  keep a voice job "running" forever, blocking every later request. It now stops
+  holding the queue after a ceiling, and Stop still works.
+- **`npm test` ran 189 test files from cloned research code and generated site
+  builds.** Those produced a different failure count on every run. The command is
+  now scoped to this project's `test/` directory (255 files).
+
+### Security
+
+- The app launcher only passes a strictly-shaped AppID through `cmd`; real file
+  paths are spawned directly with no shell, so nothing is re-parsed.
+- The cached app index is validated on read and write: shell metacharacters,
+  `%VAR%`, relative paths and malformed AppIDs are refused, not executed.
+- The launch audit record names the app, not its absolute path.
+
 ## [Unreleased]
 
 ### Added

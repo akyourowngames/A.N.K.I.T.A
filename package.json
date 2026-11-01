@@ -1,6 +1,6 @@
 {
   "name": "ankita",
-  "version": "2.7.1",
+  "version": "2.7.5",
   "private": true,
   "type": "module",
   "description": "Terminal coding agent powered by GitHub Copilot models, with shell and file-editing tools.",
@@ -18,7 +18,7 @@
     "node": "^20.19.0 || ^22.12.0 || >=23"
   },
   "scripts": {
-    "test": "node --test --test-concurrency=1",
+    "test": "node scripts/test-tier.mjs full",
     "test:changed": "node scripts/test-tier.mjs changed",
     "test:unit": "node scripts/test-tier.mjs unit",
     "test:browser": "node scripts/test-tier.mjs browser",

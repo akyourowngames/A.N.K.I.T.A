@@ -141,10 +141,13 @@ jobs:
 
           # Prefer the hand-written CHANGELOG section for this version; fall
           # back to GitHub's generated notes when there is none.
+          # index() compares the heading literally. The previous "/^## \[v\]/"
+          # form escaped the brackets, so it matched nothing and every release
+          # silently fell back to generated notes.
           notes="${RUNNER_TEMP:-/tmp}/release-notes.md"
           awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" { found = 1; next }
-            found && /^## \[/ { exit }
+            index($0, "## [" v "]") == 1 { found = 1; next }
+            found && index($0, "## [") == 1 { exit }
             found { print }
           ' CHANGELOG.md > "$notes" || true
 

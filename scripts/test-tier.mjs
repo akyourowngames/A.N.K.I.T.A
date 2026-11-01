@@ -61,7 +61,7 @@ const TIERS = {
   full: ({ browser, heavy, unit }) => [
     { label: 'unit (parallel)', files: unit, parallel: true },
     { label: 'heavy (serial)', files: heavy, parallel: false },
-    { label: 'browser (serial)', files: browser, parallel: false },
+    { label: 'browser (isolated)', files: browser, parallel: false, isolated: true },
   ],
   unit: ({ heavy, unit }) => [
     { label: 'unit (parallel)', files: unit, parallel: true },
@@ -101,7 +101,16 @@ export function changedTests(base = 'origin/ankita') {
   return { files: [...new Set([...direct, ...named, ...importing])], direct: [...direct], named: [...named], importing: [...importing] };
 }
 
-function runTier({ files, parallel }) {
+/**
+ * Run a group of test files.
+ *
+ * `isolated` runs each file in its own `node --test` process. That is what
+ * browser files need: two Vite servers in one process share HMR state, and the
+ * second file then fails with "WebSocket closed without opened". A fresh process
+ * per file costs well under a second each and removes the interference entirely.
+ */
+function runTier({ files, parallel, isolated = false }) {
+  if (isolated) return runIsolated(files);
   return new Promise(resolve => {
     if (!files.length) return resolve({ code: 0, skipped: true });
     const args = ['--test'];
@@ -110,6 +119,25 @@ function runTier({ files, parallel }) {
     const child = spawn(process.execPath, args, { cwd: ROOT, stdio: 'inherit' });
     child.on('exit', code => resolve({ code: code ?? 1 }));
   });
+}
+
+/** One process per file; stops at the first failure so a broken file is obvious. */
+async function runIsolated(files) {
+  for (const [index, file] of files.entries()) {
+    const label = `[${index + 1}/${files.length}] ${file}`;
+    const started = Date.now();
+    const { code } = await new Promise(resolve => {
+      const child = spawn(process.execPath, ['--test', '--test-concurrency=1', file], { cwd: ROOT, stdio: 'inherit' });
+      child.on('exit', exit => resolve({ code: exit ?? 1 }));
+    });
+    const seconds = Math.round((Date.now() - started) / 1000);
+    if (code) {
+      console.log(`${label} FAILED after ${seconds}s`);
+      return { code };
+    }
+    console.log(`${label} ok (${seconds}s)`);
+  }
+  return { code: 0 };
 }
 
 const tier = process.argv[2] || 'full';
@@ -139,7 +167,7 @@ async function main(tier) {
     let code = 0;
     if (unitOnes.length) code = (await runTier({ files: unitOnes, parallel: true })).code || code;
     if (heavyOnes.length) code = (await runTier({ files: heavyOnes, parallel: false })).code || code;
-    if (browserOnes.length) code = (await runTier({ files: browserOnes, parallel: false })).code || code;
+    if (browserOnes.length) code = (await runTier({ files: browserOnes, parallel: false, isolated: true })).code || code;
     process.exit(code);
   }
 

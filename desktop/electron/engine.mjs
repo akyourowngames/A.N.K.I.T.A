@@ -595,7 +595,9 @@ export class DesktopEngine {
       this.desktopSettings.save(next);
       await this.activateBrowserProvider(session.browser);
       // A personality edit can finish while provider connection is awaiting I/O.
-      nextConfig.personality = this.personalityStore.view().profile;
+      // The store is optional: a host (or a test harness) may not provide one, and
+      // personality must never block a provider change.
+      if (this.personalityStore) nextConfig.personality = this.personalityStore.view().profile;
       this.config = nextConfig;
       this.client = session.client;
       this.tool = session.tool;
