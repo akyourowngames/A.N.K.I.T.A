@@ -1,5 +1,10 @@
 # Problem: memory keeps near-duplicates and contradicting facts
 
+> **Status: implemented.** `src/memory/memory-similarity.mjs` provides the
+> similarity gate, `tools/personal/remember.mjs` merges near-duplicates and flags
+> contradictions before commit, and consolidation runs the same path. Conflict
+> resolution is deliberately user-explicit: facts are flagged, never rewritten.
+
 ## Problem
 
 Two gaps in Ankita's memory consolidation, both leaning on the extractor model

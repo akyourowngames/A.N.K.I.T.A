@@ -54,8 +54,10 @@ function validate(raw, messages, projectId, facts) {
 }
 
 export class MemoryConsolidator {
-  constructor({ extract, config = {}, sessionsDir = SESSIONS_DIR, journalDir = JOURNAL_DIR, profileFile = PROFILE_FILE, projectsFile = PROJECTS_FILE, indexFile = MEMORY_INDEX_FILE, now = () => new Date(), log = () => {} }) {
-    Object.assign(this, { extract, config, sessionsDir, journalDir, profileFile, projectsFile, indexFile, now, log });
+  constructor({ extract, config = {}, sessionsDir = SESSIONS_DIR, journalDir = JOURNAL_DIR, profileFile = PROFILE_FILE, projectsFile = PROJECTS_FILE, indexFile = MEMORY_INDEX_FILE, now = () => new Date(), log = () => {},
+    // Injectable so tests can stub the similarity/embedding layer without network.
+    embeddingCacheDir = undefined, embeddingFetch = undefined }) {
+    Object.assign(this, { extract, config, sessionsDir, journalDir, profileFile, projectsFile, indexFile, now, log, embeddingCacheDir, embeddingFetch });
     this.nextRun = 0;
   }
 
@@ -116,8 +118,9 @@ export class MemoryConsolidator {
     ].join('\n');
   }
 
-  apply(entry) {
-    const ctx = { profileFile: this.profileFile, projectsFile: this.projectsFile };
+  async apply(entry) {
+    const ctx = { profileFile: this.profileFile, projectsFile: this.projectsFile, config: this.config,
+      embeddingCacheDir: this.embeddingCacheDir, embeddingFetch: this.embeddingFetch };
     for (const item of entry.plan.personal) {
       const s = new ProfileStore(this.profileFile).load();
       if (s.data.forgottenBefore && Date.parse(entry.at) <= Date.parse(s.data.forgottenBefore)) continue;
@@ -126,8 +129,11 @@ export class MemoryConsolidator {
       // A user correction after this conversation must win over older history.
       if (existing && Date.parse(existing.source?.at || existing.updatedAt) > Date.parse(entry.at)) continue;
       if (item.id && !existing) continue; // user forgot it while the model was working
-      const result = remember({ action: existing ? 'update' : 'add', id: existing?.id, text: item.text, kind: item.kind || 'fact',
-        ...(existing ? { expectedUpdatedAt: existing.updatedAt } : { always: false }), source: { id: entry.id, at: entry.at, file: entry.source, evidence: item.evidence } }, ctx);
+      // The add path runs the similarity gate: near-duplicates merge instead of
+      // creating a second fact, and a likely contradiction is flagged, not applied.
+      const result = await remember({ action: existing ? 'update' : 'add', id: existing?.id, text: item.text, kind: item.kind || 'fact',
+        ...(existing ? { expectedUpdatedAt: existing.updatedAt } : { always: false }),
+        source: { id: entry.id, at: entry.at, file: entry.source, evidence: item.evidence } }, ctx);
       if (result.startsWith('Error:')) throw new Error(result);
     }
     for (const item of entry.plan.project) {
@@ -179,7 +185,7 @@ export class MemoryConsolidator {
         const entry = { id, sessionId: sessionId || session.sessionId || path.basename(file), source: file, at, projectId: project.id,
           summary: plan.summary, plan, ...(memorySource ? { memorySource } : {}) };
         index.entries.push(entry); this.save(index);
-        this.apply(entry); delete entry.plan; this.save(index);
+        await this.apply(entry); delete entry.plan; this.save(index);
         done.add(id); processed++;
       }
       return { processed };
@@ -207,7 +213,7 @@ export class MemoryConsolidator {
       const cap = this.cap();
       // Staged plans survive a crash between memory writes and checkpointing.
       for (const entry of index.entries.filter(e => e.plan)) {
-        this.apply(entry); delete entry.plan; this.save(index); processed++;
+        await this.apply(entry); delete entry.plan; this.save(index); processed++;
         if (processed >= budget) return { processed };
       }
       for await (const file of this.sources()) {
@@ -227,7 +233,7 @@ export class MemoryConsolidator {
           const plan = validate(raw, messages, project?.id, facts);
           const entry = { id, sessionId: session.sessionId || session.name || path.basename(file), source: file, at: session.savedAt, projectId: project?.id || null, summary: plan.summary, plan };
           index.entries.push(entry); this.save(index);
-          this.apply(entry); delete entry.plan; this.save(index);
+          await this.apply(entry); delete entry.plan; this.save(index);
           done.add(id); processed++;
           if (processed >= budget) {
             this.nextRun = this.now().getTime() + 60000;

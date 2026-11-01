@@ -9,6 +9,7 @@ import { createTurnAudit, noteToolUse, noteFileEffects, finishTurnAudit } from '
 import { PROJECT_WORK_GUIDANCE, UNTRACKED_REPO_GUIDANCE } from '../memory/project-guidance.mjs';
 import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from '../memory/memory-context.mjs';
+import { isStale } from '../memory/memory-similarity.mjs';
 import { runtimeVoiceSpecs, runtimeVoiceTool } from './runtime-tools.mjs';
 import { warmRecall } from '../../tools/personal/recall.mjs';
 import { specs, coreSpecs, specsFor, get, isReadOnly, coreNames, names as toolNames, categoryOfTool, CATEGORIES } from "../../tools/index.mjs";
@@ -768,8 +769,10 @@ export class Agent {
       const version = `${stat.mtimeMs}:${stat.ctimeMs}:${stat.size}`;
       if (this.profileCache?.file === profileFile && this.profileCache?.version === version) return this.profileCache.block;
       const profile = new ProfileStore(profileFile).load();
+      const staleDays = this.config?.memoryStaleDays;
+      const stale = staleDays > 0 ? profile.facts.filter(f => isStale(f, { staleDays })).length : 0;
       const block = [profile.facts.length
-        ? `Personal memory store: ${profile.facts.length} saved fact(s); only pins appear here. ` +
+        ? `Personal memory store: ${profile.facts.length} saved fact(s)${stale ? `, ${stale} stale` : ''}; only pins appear here. ` +
           'Call recall before personal recommendations or asking about interests/preferences.'
         : 'Personal memory store: no saved facts yet.', profile.promptBlock()].filter(Boolean).join('\n');
       this.profileCache = { file: profileFile, version, block };

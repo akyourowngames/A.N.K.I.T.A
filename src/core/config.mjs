@@ -361,6 +361,30 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     cloudflareAccountId: pick("CLOUDFLARE_ACCOUNT_ID") || "",
     cloudflareApiToken: pick("CLOUDFLARE_API_TOKEN") || pick("CLOUDFLARE_AUTH_TOKEN") || "",
     embedModel: pick("EMBED_MODEL") || "@cf/qwen/qwen3-embedding-0.6b",
+    // Which embedding backend to use. "auto" prefers Cloudflare credentials,
+    // then a local OpenAI-compatible server, then no semantic search at all.
+    embedProvider: (() => {
+      const value = String(pick("EMBED_PROVIDER") || "auto").trim().toLowerCase();
+      return ["auto", "cloudflare", "local", "off"].includes(value) ? value : "auto";
+    })(),
+    // A local OpenAI-compatible embeddings endpoint (Ollama, LM Studio, llama.cpp).
+    // Kept separate from chat providers: it only needs /embeddings.
+    embedLocalBase: (pick("EMBED_LOCAL_BASE") || "").replace(/\/+$/, ""),
+    embedLocalModel: pick("EMBED_LOCAL_MODEL") || "nomic-embed-text",
+    embedLocalApiKey: pick("EMBED_LOCAL_API_KEY") || "",
+    // Memory quality gates. Merge above the dedup threshold; flag conflicts inside
+    // a narrow band where two facts look related but disagree. Conservative by
+    // default: the code never rewrites a fact on its own.
+    memoryDedupThreshold: (() => {
+      const n = Number(pick("MEMORY_DEDUP_THRESHOLD") ?? 0.85);
+      return Number.isFinite(n) && n > 0 && n <= 1 ? n : 0.85;
+    })(),
+    memoryConflictLow: (() => {
+      const n = Number(pick("MEMORY_CONFLICT_LOW") ?? 0.55);
+      return Number.isFinite(n) && n >= 0 && n < 1 ? n : 0.55;
+    })(),
+    memoryStaleDays: Math.min(3650, posInt(pick("MEMORY_STALE_DAYS"), 90)),
+    memoryForgetDays: Math.min(3650, posInt(pick("MEMORY_FORGET_DAYS"), 365)),
     embedQueryInstruction: pick("EMBED_QUERY_INSTRUCTION"),
     embedTimeoutMs: Math.min(30000, posInt(pick("EMBED_TIMEOUT_MS"), 2000)),
     embedIndexTimeoutMs: Math.min(120000, posInt(pick("EMBED_INDEX_TIMEOUT_MS"), 30000)),

@@ -9,6 +9,18 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
 
 ### Added
 
+- **Memory stops duplicating and stops hiding contradictions.** A new fact is
+  compared with what is already stored: near-identical wording updates the
+  existing fact instead of creating a second, and a likely contradiction is
+  stored but flagged so Ankita asks which is current rather than asserting
+  either. Existing facts are never deleted or rewritten automatically.
+- **Offline semantic memory.** Point `EMBED_LOCAL_BASE` at any
+  OpenAI-compatible embeddings server (Ollama, LM Studio) and recall becomes
+  semantic without a Cloudflare account.
+- **Facts age.** Each fact records confidence and when it was last recalled;
+  ones untouched for 90 days drop out of default recall but can be asked for.
+  Automatic context now also searches project notes and decisions, and project
+  decisions are chosen by relevance to your request.
 - **Scheduled work is visible while it waits.** A result that finishes during a
   chat now appears in **Scheduled tasks** straight away as a row you can expand
   and read, instead of silently waiting for the turn to end. Several finished

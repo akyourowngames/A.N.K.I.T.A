@@ -7,6 +7,38 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Memory: no more duplicate or silently-contradicting facts
+
+The memory system stored facts as flat lines and only deduplicated exact text, so
+"I use Postgres" and "Database is Postgres" became two facts, and a later
+"I switched to tea" sat next to "I like coffee" as if both were current.
+
+- **Similarity gate before saving.** A new fact is compared with existing ones
+  (embeddings when configured, a conservative lexical score otherwise). Above
+  `MEMORY_DEDUP_THRESHOLD` the existing fact takes the clearer wording instead of
+  a second entry being created.
+- **Contradictions are flagged, never rewritten.** A fact in the
+  `MEMORY_CONFLICT_LOW`–dedup band with the same declared kind is stored and both
+  sides are marked. `remember` reports it, and automatic context carries a
+  one-line notice so the reply asks which is current. Nothing is deleted.
+- **Local embeddings.** `EMBED_PROVIDER=local` (or `auto` with an
+  `EMBED_LOCAL_BASE`) uses any OpenAI-compatible `/embeddings` server — Ollama,
+  LM Studio — so semantic recall no longer requires a Cloudflare account.
+- **Facts carry confidence and an ageing clock.** Direct statements are 1.0,
+  extraction guesses 0.6; recalls now record `lastRecalledAt`/`recallCount` in one
+  batched write. Facts untouched for `MEMORY_STALE_DAYS` sink out of default
+  recall and return with `includeStale`.
+- **Wider automatic recall.** Pre-turn context now searches project notes and
+  decisions too, not only personal facts; a project row is labelled so it is not
+  read as a preference. Project decisions are also relevance-ranked when a request
+  is present instead of always taking the newest three.
+
+Verified locally: 138 memory tests, plus a live end-to-end run (add → merge →
+conflict → recall) showing one fact after restatement, both facts kept and
+cross-flagged after a contradiction, and recall counts incrementing. A real
+Ollama server and a real Cloudflare account are not exercised by tests; the
+lexical fallback is what those runs cover.
+
 ### Scheduled results land in the jobs panel, not just the chat
 
 A result that finishes while the owning teammate is mid-turn used to exist only

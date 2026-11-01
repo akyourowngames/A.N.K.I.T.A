@@ -248,3 +248,52 @@ test('CLI config shows the selected embedding model but redacts its API token', 
   assert.match(result.stdout, /CLOUDFLARE_API_TOKEN\s+\(set\)/);
   assert.doesNotMatch(result.stdout + result.stderr, /never-display-this-token/);
 });
+
+/* --------------------------- local OpenAI-compatible --------------------- */
+
+test('a local OpenAI-compatible endpoint is used when configured and Cloudflare is not', async t => {
+  const dir = fs.mkdtempSync(path.join(root, 'local-'));
+  const store = new ProfileStore(path.join(dir, 'profile.json')).load();
+  const ceramics = store.add({ text: 'Enjoys ceramics', kind: 'preference' });
+  store.add({ text: 'Lives in Oslo' });
+  const calls = [];
+  const ctx = { profileFile: store.file, projectsFile: path.join(dir, 'projects.json'), memoryIndexFile: path.join(dir, 'summaries.json'),
+    embeddingCacheDir: path.join(dir, 'vectors'),
+    config: { embedProvider: 'auto', embedLocalBase: 'http://127.0.0.1:11434/v1', embedLocalModel: 'nomic-embed-text', embedTimeoutMs: 1000 },
+    embeddingFetch: async (url, options) => {
+      calls.push({ url, body: JSON.parse(options.body) });
+      const inputs = JSON.parse(options.body).input;
+      return new Response(JSON.stringify({ data: inputs.map(text => ({ embedding: /ceramics|Instruct:/i.test(text) ? [1, 0, 0] : [0, 1, 0] })) }));
+    } };
+  const found = JSON.parse(await recall({ query: 'What artistic hobby suits me?', project: 'personal', limit: 1 }, ctx));
+  assert.equal(found.mode, 'semantic', 'local embeddings give the same semantic recall');
+  assert.equal(found.results[0].id, ceramics.id);
+  assert.equal(calls[0].url, 'http://127.0.0.1:11434/v1/embeddings');
+  assert.equal(calls[0].body.model, 'nomic-embed-text', 'the configured local model is requested');
+});
+
+test('explicit off disables semantic recall even when credentials exist', async t => {
+  const { ctx } = setup(t);
+  ctx.config = { ...ctx.config, embedProvider: 'off' };
+  let fetched = 0;
+  ctx.embeddingFetch = async () => { fetched++; throw new Error('must not be called'); };
+  const found = JSON.parse(await recall({ query: 'artistic hobby', project: 'personal' }, ctx));
+  assert.equal(fetched, 0);
+  assert.equal(found.embedding, undefined);
+  // With no embedder and no keyword overlap, recall falls back to browsing
+  // stored candidates rather than guessing a match.
+  assert.equal(found.mode, 'browse');
+});
+
+test('a failing local server falls back to keyword results instead of erroring', async t => {
+  const dir = fs.mkdtempSync(path.join(root, 'localfail-'));
+  const store = new ProfileStore(path.join(dir, 'profile.json')).load();
+  store.add({ text: 'Enjoys ceramics', kind: 'preference' });
+  const ctx = { profileFile: store.file, projectsFile: path.join(dir, 'projects.json'), memoryIndexFile: path.join(dir, 'summaries.json'),
+    embeddingCacheDir: path.join(dir, 'vectors'),
+    config: { embedProvider: 'local', embedLocalBase: 'http://127.0.0.1:9/v1', embedTimeoutMs: 200 },
+    embeddingFetch: async () => { throw new Error('ECONNREFUSED'); } };
+  const found = JSON.parse(await recall({ query: 'ceramics', project: 'personal' }, ctx));
+  assert.equal(found.mode, 'search', 'keyword search still answers');
+  assert.match(JSON.stringify(found), /ceramics/);
+});
