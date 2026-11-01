@@ -89,15 +89,50 @@ export const BASETEN_DEFAULT_TOKENS = 4096; // Output tokens: file/tool argument
 export const BASETEN_REASONING_EFFORT = "low"; // Lowest supported effort reduces voice response delay.
 export const BASETEN_REASONING_LEVELS = [BASETEN_REASONING_EFFORT, "medium", "high", "xhigh"];
 
+/**
+ * Modal serves a dedicated OpenAI-compatible deployment. The hostname belongs to
+ * the owner's workspace, so it is configuration (`MODAL_BASE_URL`), never a code
+ * default; the model slug and reasoning levels are stable deployment settings.
+ */
+export const MODAL_DEFAULT_MODEL = "deepseek-ai/DeepSeek-V4.1-Flash-1017";
+export const MODAL_BASE_URL = ""; // Empty: supplied by MODAL_BASE_URL (workspace-specific deployment).
+export const MODAL_CONTEXT_WINDOW = 1_048_576; // Tokens: advertised by the deployment's /v1/models.
+export const MODAL_MIN_TOKENS = 400; // Output tokens: reasoning needs room before any answer tokens.
+export const MODAL_DEFAULT_TOKENS = 4096; // Output tokens: file/tool arguments share this budget.
+// The deployment rejects "minimal" with HTTP 400; `low` is its lowest reasoning
+// level. `none` is also accepted and disables reasoning entirely (measured 0
+// reasoning tokens, 6/6 attempts), which is the faster setting for voice.
+export const MODAL_REASONING_EFFORT = "low";
+export const MODAL_REASONING_LEVELS = ["none", MODAL_REASONING_EFFORT, "high", "xhigh", "max"];
+
+/** Per-provider request defaults; providers without an entry keep their own shape. */
+const REQUEST_DEFAULTS = {
+  baseten: {
+    minMaxTokens: BASETEN_MIN_TOKENS,
+    maxTokensConfig: "basetenMaxTokens",
+    defaultMaxTokens: BASETEN_DEFAULT_TOKENS,
+    reasoningConfig: "basetenReasoningEffort",
+    defaultReasoning: BASETEN_REASONING_EFFORT,
+  },
+  modal: {
+    minMaxTokens: MODAL_MIN_TOKENS,
+    maxTokensConfig: "modalMaxTokens",
+    defaultMaxTokens: MODAL_DEFAULT_TOKENS,
+    reasoningConfig: "modalReasoningEffort",
+    defaultReasoning: MODAL_REASONING_EFFORT,
+  },
+};
+
 /** Provider-specific request settings; other providers retain their own defaults. */
 export function providerClientOptions(provider, config = {}) {
-  if (provider?.name !== "baseten") return {};
+  const defaults = REQUEST_DEFAULTS[provider?.name];
+  if (!defaults) return {};
   return {
     requestDefaults: {
-      max_tokens: Math.max(BASETEN_MIN_TOKENS, config.basetenMaxTokens || BASETEN_DEFAULT_TOKENS),
-      reasoning_effort: config.basetenReasoningEffort || BASETEN_REASONING_EFFORT,
+      max_tokens: Math.max(defaults.minMaxTokens, config[defaults.maxTokensConfig] || defaults.defaultMaxTokens),
+      reasoning_effort: config[defaults.reasoningConfig] || defaults.defaultReasoning,
     },
-    minMaxTokens: BASETEN_MIN_TOKENS,
+    minMaxTokens: defaults.minMaxTokens,
   };
 }
 
@@ -137,6 +172,24 @@ export const PROVIDERS = {
     // that answers; the unpinned slug returns 403 in this workspace.
     defaultModel: BASETEN_DEFAULT_MODEL,
     keyConfig: "basetenApiKey",
+    envKey: "BASETEN_API_KEY",
+    baseUrlConfig: "basetenBaseUrl",
+    modelConfig: "basetenModel",
+    defaultContextWindow: BASETEN_CONTEXT_WINDOW,
+    keyless: false,
+  },
+  modal: {
+    label: "Modal (DeepSeek)",
+    apiBase: MODAL_BASE_URL,
+    // The deployment is owner-specific; MODAL_BASE_URL is required and exposed
+    // through Voice settings diagnostics rather than assumed.
+    defaultModel: MODAL_DEFAULT_MODEL,
+    keyConfig: "modalApiKey",
+    envKey: "MODAL_PROXY_TOKEN_ID + MODAL_PROXY_TOKEN_SECRET",
+    baseUrlConfig: "modalBaseUrl",
+    modelConfig: "modalModel",
+    baseUrlEnvKey: "MODAL_BASE_URL",
+    defaultContextWindow: MODAL_CONTEXT_WINDOW,
     keyless: false,
   },
 };

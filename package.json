@@ -19,6 +19,10 @@
   },
   "scripts": {
     "test": "node --test --test-concurrency=1",
+    "test:changed": "node scripts/test-tier.mjs changed",
+    "test:unit": "node scripts/test-tier.mjs unit",
+    "test:browser": "node scripts/test-tier.mjs browser",
+    "test:fast": "node scripts/test-tier.mjs unit",
     "start": "node chat.mjs",
     "models": "node chat.mjs --list-models",
     "config": "node chat.mjs --config",

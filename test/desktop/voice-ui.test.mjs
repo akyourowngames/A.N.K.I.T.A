@@ -19,3 +19,16 @@ test('voice ownership and both entry points use shared events rather than render
   assert.ok(source('components/Island.tsx').includes('VoicePanel'));
   assert.ok(source('App.tsx').includes('voice-focus'));
 });
+test('the voice surface explains standby and offers hands-free controls without renderer microphones', () => {
+  const panel = source('components/voice/VoicePanel.tsx');
+  assert.ok(panel.includes('standby'), 'standby has copy of its own');
+  assert.match(panel, /Say .Ankita. to talk/, 'the standby placeholder names the wake word');
+  const orb = source('components/voice/VoiceOrb.tsx');
+  for (const behavior of ['standby', 'wakeCue', 'voice-orb-wake', 'useReducedMotion']) assert.ok(orb.includes(behavior), behavior);
+  const settings = source('components/voice/VoiceSettings.tsx');
+  for (const label of ['Wake word', 'Stop word', 'Hands-free', 'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs']) assert.ok(settings.includes(label), label);
+  assert.ok(!settings.includes('getUserMedia'));
+  const island = source('components/Island.tsx');
+  assert.ok(island.includes('VOICE_GLOW'));
+  assert.ok(island.includes('data-voice-phase'));
+});

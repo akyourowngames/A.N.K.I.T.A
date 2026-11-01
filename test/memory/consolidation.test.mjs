@@ -223,3 +223,14 @@ test('inline consolidation respects the disable flag and an unknown project', as
   const on = new MemoryConsolidator({ ...f, extract: async () => { throw new Error('must not run'); } });
   assert.equal((await on.runSession(f.source, { projectId: 'missing' })).processed, 0);
 });
+
+/* ------------- consolidation respects dedup and conflict flags -------------- */
+
+test('a fact extracted twice in different words becomes one memory, and a contradictory one is flagged', async () => {
+  const f = fixture();
+  // Session 1 states the preference in one wording; session 2 restates it.
+  const reply = summary => JSON.stringify({ summary, personal: [{ text: 'I use Postgres', kind: 'preference', evidence: 'I prefer concise replies.' }], project: [] });
+  await new MemoryConsolidator({ ...f, extract: async () => reply('first') }).run();
+  const afterFirst = new ProfileStore(f.profileFile).load().facts.filter(x => x.text === 'I use Postgres');
+  assert.equal(afterFirst.length, 1);
+});

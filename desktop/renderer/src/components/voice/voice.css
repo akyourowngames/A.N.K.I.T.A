@@ -42,8 +42,15 @@
 .voice-orb[data-phase=speaking] canvas,.voice-orb.is-fallback[data-phase=speaking] .voice-orb-glass{animation:voice-orb-speak var(--orb-speech-cycle) ease-in-out infinite}
 .voice-orb[data-phase=approval] .voice-orb-process{opacity:.65;transform:rotate(-45deg)}
 .voice-orb-complete{border:1px solid color-mix(in srgb,var(--orb-pearl) 65%,transparent);animation:voice-orb-done var(--orb-done-duration) ease-out both}
+/* Standby reads as dim, slow and available - not asleep, not listening hard. */
+.voice-orb[data-phase=standby]{opacity:.78;filter:saturate(.75)}
+.voice-orb[data-phase=standby] .voice-orb-aura{opacity:.10;animation:voice-orb-standby 3.2s ease-in-out infinite}
+.voice-orb-wake{position:absolute;inset:7%;border-radius:50%;border:1px solid color-mix(in srgb,var(--orb-frost) 70%,transparent);pointer-events:none;z-index:4;animation:voice-orb-wake 900ms cubic-bezier(.2,.7,.2,1) both}
+@keyframes voice-orb-standby{0%,100%{transform:scale(1.26);opacity:.08}50%{transform:scale(1.36);opacity:.16}}
+@keyframes voice-orb-wake{0%{opacity:0;transform:scale(.86)}35%{opacity:.85}100%{opacity:0;transform:scale(1.28)}}
 .voice-orb[data-visible=false] :is(canvas,.voice-orb-glass,.voice-orb-process,.voice-orb-complete){animation-play-state:paused}
 @keyframes voice-orb-process{to{transform:rotate(360deg)}}
 @keyframes voice-orb-speak{0%,100%{transform:scale(.985);opacity:.9}50%{transform:scale(1.035);opacity:1}}
 @keyframes voice-orb-done{0%{opacity:0;transform:scale(.98)}25%{opacity:.7}100%{opacity:0;transform:scale(1.2)}}
 @media(prefers-reduced-motion:reduce){.voice-orb canvas,.voice-orb .voice-orb-glass,.voice-orb .voice-orb-process,.voice-orb .voice-orb-complete{animation:none!important}.voice-orb-complete{opacity:.4}.voice-orb{transform:none}}
+@media(prefers-reduced-motion:reduce){.voice-orb .voice-orb-aura,.voice-orb-wake{animation:none!important}.voice-orb-wake{display:none}}

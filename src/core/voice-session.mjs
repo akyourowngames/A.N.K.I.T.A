@@ -1,4 +1,4 @@
-import { CompatibleClient, resolveProvider, providerClientOptions, BASETEN_DEFAULT_MODEL, BASETEN_CONTEXT_WINDOW } from './provider.mjs';
+import { CompatibleClient, resolveProvider, providerClientOptions } from './provider.mjs';
 import { stripForSpeech } from '../channels/voice.mjs';
 
 // Short spoken receipts, never a claim that delegated work has finished.
@@ -10,7 +10,7 @@ const DEFAULT_ACK_LANGUAGE = 'en-IN'; // English backup when detection is absent
 const VOICE_REPLY_MAX_SENTENCES = 2; // Complete sentences: the owner's limit for conversational voice replies.
 const VOICE_SENTENCE_BOUNDARY = /(?<=[.!?])\s+|(?<=[।॥])\s*/u; // Hindi danda is a sentence ending, including without a space.
 const VOICE_SPEAKABLE_CHARACTER = /[\p{L}\p{N}]/u; // Ignore punctuation-only Markdown list markers after speech cleanup.
-const VOICE_REPLY_INSTRUCTIONS = `Voice conversation: answer in one or two short sentences, at most two spoken lines. Be crisp and directly answer the request in the user's language.
+export const VOICE_REPLY_INSTRUCTIONS = `Voice conversation: answer in one or two short sentences, at most two spoken lines. Be crisp and directly answer the request in the user's language.
 Skip greetings, repeated questions, lists, recaps and extra offers unless requested. Put any longer details in the requested file or artifact; briefly say where they are.
 For work, report the result and any essential failure or permission needed. Never hide a failure or claim an action succeeded without evidence.`;
 
@@ -53,12 +53,13 @@ export function createVoiceBrain(config, current = {}) {
     if (!current.client || resolveProvider(config.provider)?.name !== selected.name) throw new Error('VOICE_PROVIDER=copilot requires the current GitHub Copilot session.');
     return { ...current, model: config.voiceModel || current.model, label: selected.label };
   }
-  const apiBase = config.voiceApiBase || (name === 'baseten' && config.basetenBaseUrl) || selected.apiBase;
+  const apiBase = config.voiceApiBase || (selected.baseUrlConfig && config[selected.baseUrlConfig]) || selected.apiBase;
   const apiKey = selected.apiKey || (selected.keyConfig && config[selected.keyConfig]) || '';
-  if (!selected.keyless && !apiKey) throw new Error(`VOICE_PROVIDER=${name} needs ${selected.keyConfig === 'basetenApiKey' ? 'BASETEN_API_KEY' : 'its provider key'}.`);
-  const model = config.voiceModel || (name === 'baseten' && config.basetenModel) || selected.defaultModel;
+  if (!selected.keyless && !apiBase) throw new Error(`VOICE_PROVIDER=${name} needs ${selected.baseUrlEnvKey || 'API_BASE'}.`);
+  if (!selected.keyless && !apiKey) throw new Error(`VOICE_PROVIDER=${name} needs ${selected.envKey || 'its provider key'}.`);
+  const model = config.voiceModel || (selected.modelConfig && config[selected.modelConfig]) || selected.defaultModel;
   const contextWindow = config.voiceContextWindow || (config.contextWindowExplicit && config.contextWindow) ||
-    (name === 'baseten' && model === BASETEN_DEFAULT_MODEL ? BASETEN_CONTEXT_WINDOW : config.contextWindow);
+    (selected.defaultContextWindow && model === selected.defaultModel ? selected.defaultContextWindow : config.contextWindow);
   return {
     client: new CompatibleClient({ apiBase, apiKey, model, contextWindow, ...providerClientOptions(selected, config) }),
     model,

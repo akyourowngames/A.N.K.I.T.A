@@ -1,16 +1,6 @@
 # Multi-channel communication — plan
 
-Date: 2026-10-29. Status: implemented in source on 29–30 October; real-account
-acceptance remains open. Branch: `feat/multi-channel-communication`.
-Completed source tasks are tracked in [the execution plan](../superpowers/plans/2026-10-29-multi-channel-implementation.md);
-checks, compatibility rulings and remaining gates are recorded in the
-[verification matrix](../verification/multi-channel-communication.md).
-
-Phase 0 decision record (29 October, user delegated the open choices): Telegram →
-Discord → Slack; in-process adapters with serialisable envelopes; native
-WebSocket/fetch without extra dependencies or hosted services; absorb the daemon
-inbox into the shared core. The generic webhook is an integration contract and
-documented escape hatch, not an automatically exposed network listener.
+Date: 2026-10-29. Status: proposal, not implemented.
 Supersedes [telegram-channel-upgrade-plan.md](telegram-channel-upgrade-plan.md) for the
 channel *architecture*; that plan's locked scope (progress replies, ack reactions,
 send-first files) is shipped and stays as prior art, and
@@ -557,3 +547,10 @@ External, checked at source rather than from summaries:
 - mautrix-whatsapp — README (whatsmeow-based, requires a Matrix homeserver)
 - Bottender — README (MIT, v1 stable, platforms listed, Windows install warning)
 - Chatwoot — README (MIT, channel list)
+
+
+
+
+
+
+

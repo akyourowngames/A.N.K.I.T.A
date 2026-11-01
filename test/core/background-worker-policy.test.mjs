@@ -44,7 +44,10 @@ test('a background worker corrects printed pretend tool calls through the model 
 
 test('repeated pretend tool calls stop a background worker instead of reporting a successful job', async () => {
   let rounds = 0;
-  const agent = new Agent({ client: {}, config: { tools: true, backgroundJob: true, memoryConsolidation: false }, skillsEnabled: false, print: () => {}, write: () => {} });
+  // A roomy window keeps this about protocol correction. The default 32k window
+  // leaves only a few hundred bytes after tools and memory, so an unrelated
+  // change elsewhere in the catalogue could turn this into a budget failure.
+  const agent = new Agent({ client: {}, config: { tools: true, backgroundJob: true, memoryConsolidation: false, contextWindow: 131072 }, skillsEnabled: false, print: () => {}, write: () => {} });
   agent.streamTurn = async () => { rounds++; return { content: '[Tool call: browser]\n{"action":"read"}', toolCalls: [] }; };
   await assert.rejects(agent.send('Finish the scheduled task'), /did not execute its requested tools/);
   assert.equal(rounds, 2);

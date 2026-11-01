@@ -84,6 +84,12 @@ export function Message({ message, teammate, threadId, streaming, onOpenBrowserP
     }
     return message.hidden ? null : <ToolCallCard message={message} threadId={threadId} onOpenBrowserPlugins={onOpenBrowserPlugins} />;
   }
+  if (message.compacted) return <div className="message compacted-message">
+    <div className="compacted-card">
+      <span className="compacted-label"><Icon name="layers" size={13} />Earlier conversation, summarized</span>
+      <div className="compacted-body">{message.content}</div>
+    </div>
+  </div>;
   if (message.role === 'user') return <div className="message user-message">
     <div className="user-bubble">
       {message.attachments?.length ? <div className="user-attachments">{message.attachments.map((file, index) => <span className="user-attachment" key={`${file.name}-${index}`}><Icon name="file" size={13} />{file.name}</span>)}</div> : null}

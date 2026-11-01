@@ -63,7 +63,7 @@ test('an unset MAX_TOKENS reserves less on a small window, an explicit one wins'
 
 /* ------------------------ shedding a loaded group ------------------------ */
 
-test('a large loaded server is dropped rather than starving the window', () => {
+test('a large loaded server is dropped rather than starving the window', async () => {
   // The real shape: an OpenAI-compatible provider advertises no context, so the
   // 32768 default applies, and the model has loaded Playwright's 25 tools.
   const mcp = managerWith({ time: 2, browser: 25 });
@@ -74,15 +74,15 @@ test('a large loaded server is dropped rather than starving the window', () => {
   assert.ok(!names.some((name) => name.startsWith('mcp__browser__')), 'the big group is shed, not half-sent');
 
   // And the turn still builds: the guard must not fire now that the tools fit.
-  assert.doesNotThrow(() => agent.trimHistory(8));
+  await assert.doesNotReject(() => agent.trimHistory(8));
 });
 
-test('the same loaded server is kept once the window is large enough', () => {
+test('the same loaded server is kept once the window is large enough', async () => {
   const mcp = managerWith({ time: 2, browser: 25 });
   const agent = agentStub({ contextWindow: 60000, config: { maxTokens: 4096 }, mcp, activated: ['mcp:browser'] });
   const names = agent.currentSpecs().map((spec) => spec.function.name);
   assert.ok(names.some((name) => name.startsWith('mcp__browser__')), 'with room to spare the whole group ships');
-  assert.doesNotThrow(() => agent.trimHistory(8));
+  await assert.doesNotReject(() => agent.trimHistory(8));
 });
 
 test('core tools always ship even when they alone exceed the budget', () => {
@@ -95,11 +95,11 @@ test('core tools always ship even when they alone exceed the budget', () => {
 
 /* ------------------------------ the guard -------------------------------- */
 
-test('the guard only fires when even the core set cannot fit', () => {
+test('the guard only fires when even the core set cannot fit', async () => {
   const tiny = agentStub({ contextWindow: 1000, config: { maxTokens: 4096 } });
-  assert.throws(() => tiny.trimHistory(8), /context window is too small/);
+  await assert.rejects(() => tiny.trimHistory(8), /context window is too small/);
 
   const coreOnly = bytes(coreSpecs);
   const justFits = agentStub({ contextWindow: coreOnly + 1024 + 512 + 512, config: { maxTokens: 256, maxTokensExplicit: true } });
-  assert.doesNotThrow(() => justFits.trimHistory(8));
+  await assert.doesNotReject(() => justFits.trimHistory(8));
 });

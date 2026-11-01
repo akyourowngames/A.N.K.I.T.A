@@ -25,17 +25,45 @@
 1. **Nothing is done until it is executed.** After implementing, run the relevant
    suite (`node --test <file>`) plus a live round trip of the changed path. A
    passing typecheck or a confident re-read is not verification.
-2. **Reproduce-then-fix discipline.** For bugs: first reproduce live and capture
+2. **Run only what is needed.** Never run the full suite or a whole directory by
+   default. Run the specific test file(s) covering what you changed, plus a
+   typecheck. Only run broader suites when the change is critical/shared
+   (core, IPC contract, security, packaging) or the user asks. State what you ran
+   and why it was enough.
+3. **Reproduce-then-fix discipline.** For bugs: first reproduce live and capture
    the trace, then fix, then re-run the same repro and show the before/after.
-3. **Cover both backends/branches you touched.** If Playwright and Chrome share a
+4. **Cover both backends/branches you touched.** If Playwright and Chrome share a
    contract, exercise both (real run where possible, stub-driven where not) and
    state which was which.
-4. **New behavior gets a new test.** Every fix ships with a regression test that
+5. **New behavior gets a new test.** Every fix ships with a regression test that
    fails without the fix. Update existing assertions instead of leaving them stale.
-5. **Evidence before claims.** Quote exact outputs, counts (`32/32`), and file
+6. **Evidence before claims.** Quote exact outputs, counts (`32/32`), and file
    paths with line numbers. Never write "verified" without the trace that proves it.
-6. **Record it.** Update the relevant doc (e.g. `docs/browser-screenshot-findings.md`
+7. **Record it.** Update the relevant doc (e.g. `docs/browser-screenshot-findings.md`
    finding status) with what changed, what verified it, and what remains uncovered.
+8. **Know what the suite costs, and don't guess at speedups.** Measured on this
+   repo: the full `npm test` is about 17 minutes, of which roughly 9.5 is the 37
+   Playwright files and 8 is the 197 unit files. Three unit files carry over six
+   minutes alone (`browser-tool-protocol` ~168 s, `browser-flight-workflow`
+   ~112 s, `voice-cli` ~98 s — the latter spawns a real CLI per test).
+   - Use the tiers in `scripts/test-tier.mjs` instead of waiting on the full run
+     every time: `npm run test:changed` while iterating, `npm run test:unit` or
+     `npm run test:browser` before pushing, `npm test` before a PR.
+   - **Do not assume parallelism is free.** Raising `--test-concurrency` was
+     measured: unit files roughly halved, but a healthy test failed, and parallel
+     Playwright files failed 4 of 8 with `WebSocket closed without opened`. Two
+     Vite servers in one process race on the shared cache and HMR socket, and
+     many test files assign the global `process.env.CONFIG_DIR` at import, so
+     batching them makes them fight over one directory. Browser files stay
+     serial by design; a faster-looking suite that fails healthy tests is worse
+     than a slow honest one.
+   - **A prompt/catalogue change is a context-budget change.** Adding the `apps`
+     tool family grew the system prompt by 65 bytes and pushed a borderline
+     worker test past its budget, so it failed with "schema exceeds the context
+     budget" instead of the protocol error it asserts. Any suite that sits a few
+     hundred bytes from its limit will flip when the catalogue grows; give those
+     tests explicit headroom rather than letting an unrelated change turn them red.
+
 
 ## 3. Confidence Out of 100 — Always
 

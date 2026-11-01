@@ -4,14 +4,24 @@ import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 import { VOICE_DEVICE_CHARS } from '../shared/voice.mjs';
 
 const COMPATIBLE_PROVIDER = 'custom'; // Existing OpenAI-compatible route for a saved provider from a newer build.
+const MODAL_PROVIDER = 'modal'; // Third-party OpenAI-compatible route added on ankita while this branch was open.
 const PROVIDER_COMPATIBILITY_NOTICE = 'Your saved provider is newer than this build. Using its saved compatible connection through Custom.';
 const PROVIDER_SETUP_NOTICE = 'Your saved provider is newer than this build. Open Settings / Providers to connect it; no replacement service was selected.';
-const providers = new Set(['copilot', 'groq', 'kilo', COMPATIBLE_PROVIDER, CHATGPT_BROWSER_PROVIDER]);
+// Both compatible routes read the same saved endpoint and key.
+const COMPATIBLE_PROVIDERS = new Set([COMPATIBLE_PROVIDER, MODAL_PROVIDER]);
+const providers = new Set(['copilot', 'groq', 'kilo', COMPATIBLE_PROVIDER, MODAL_PROVIDER, CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
-const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen']);
+const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen',
+  'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice', 'voiceOutputDevice']); // Private API keys and discovered audio-device preferences.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
+// Behaviour toggles are safe to change mid-session: they carry no device or
+// credential, so saving them must not force the user to end voice first.
+export const VOICE_BEHAVIOR_KEYS = Object.freeze(['voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs']);
+const VOICE_IDLE_LIMITS = Object.freeze({ min: 0, max: 600000, default: 15000 }); // Milliseconds; 0 means return to standby at once. Mirrors config.mjs.
+const VOICE_STANDBY_LIMITS = Object.freeze({ min: 60000, max: 3600000, default: 600000 });
+const VOICE_FOLLOW_UP_LIMITS = Object.freeze({ min: 0, max: 300000, default: 25000 }); // Milliseconds; 0 means strict mode: the wake word is required every time.
 keys.add('secretScrubbing');
 keys.add('secretWarningSeen');
 
@@ -77,7 +87,12 @@ function validatePatch(patch) {
         if (!zone) throw new Error('Enter a valid timezone, e.g. Asia/Kolkata');
         clean[key] = zone;
       }
-    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen'].includes(key)) {
+    } else if (key === 'voiceIdleMs' || key === 'voiceStandbyMs' || key === 'voiceFollowUpMs') {
+      const limits = key === 'voiceIdleMs' ? VOICE_IDLE_LIMITS : key === 'voiceFollowUpMs' ? VOICE_FOLLOW_UP_LIMITS : VOICE_STANDBY_LIMITS;
+      const n = Number(value);
+      if (!Number.isFinite(n) || n < limits.min || n > limits.max) throw new Error(`Enter a valid ${key === 'voiceIdleMs' ? 'standby delay' : key === 'voiceFollowUpMs' ? 'follow-up window' : 'microphone timeout'} in milliseconds`);
+      clean[key] = Math.floor(n);
+    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen', 'contextCompaction', 'voiceWakeWord', 'voiceStopWord'].includes(key)) {
       clean[key] = value === true || value === 'true';
     } else if (key === 'disabledSkills') {
       if (!Array.isArray(value) || value.length > 100 || value.some(name => typeof name !== 'string' || !/^[a-z0-9-]{1,64}$/.test(name))) {
@@ -98,6 +113,7 @@ function validatePatch(patch) {
 export function applyDesktopSettings(base, saved = {}) {
   const config = { ...base };
   for (const key of VOICE_SETTINGS_KEYS) if (own(saved, key)) config[key] = saved[key];
+  for (const key of VOICE_BEHAVIOR_KEYS) if (own(saved, key)) config[key] = saved[key];
   if (own(saved, 'provider')) {
     config.provider = saved.provider;
     // API_BASE from .env otherwise wins over PROVIDER in the shared bootstrap.
@@ -112,7 +128,7 @@ export function applyDesktopSettings(base, saved = {}) {
   }
   if (own(saved, 'imageApiBase')) config.imageApiBase = saved.imageApiBase || base.imageApiBase || '';
   if (own(saved, 'imageModel')) config.imageModel = saved.imageModel || base.imageModel || 'gpt-image-1';
-  if (config.provider === COMPATIBLE_PROVIDER) {
+  if (COMPATIBLE_PROVIDERS.has(config.provider)) {
     if (own(saved, 'customApiBase')) config.apiBase = saved.customApiBase;
     if (own(saved, 'customApiKey')) config.apiKey = saved.customApiKey;
   } else if (config.provider === 'kilo' && own(saved, 'kiloApiKey')) {
@@ -134,6 +150,11 @@ export function applyDesktopSettings(base, saved = {}) {
     config.maxTokens = saved.maxTokens;
     config.maxTokensExplicit = true;
   }
+  // Compaction is on by default in the app: silently dropping a long thread is
+  // the worse default. A saved choice (including off) always wins, and an
+  // explicit CONTEXT_COMPACTION in .env still overrides the app default.
+  if (own(saved, 'contextCompaction')) config.contextCompaction = saved.contextCompaction === true;
+  else if (!base.contextCompactionExplicit) config.contextCompaction = true;
   return config;
 }
 
@@ -201,6 +222,14 @@ export class DesktopSettingsStore {
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,
       maxTokens: this.data.maxTokens || 0,
+      // Reflect the value that actually applies: a saved choice, else the
+      // effective config (env override or the app's default-on).
+      contextCompaction: own(this.data, 'contextCompaction') ? this.data.contextCompaction === true : config.contextCompaction === true,
+      voiceWakeWord: own(this.data, 'voiceWakeWord') ? this.data.voiceWakeWord === true : config.voiceWakeWord !== false,
+      voiceStopWord: own(this.data, 'voiceStopWord') ? this.data.voiceStopWord === true : config.voiceStopWord !== false,
+      voiceIdleMs: own(this.data, 'voiceIdleMs') ? this.data.voiceIdleMs : (config.voiceIdleMs ?? VOICE_IDLE_LIMITS.default),
+      voiceStandbyMs: own(this.data, 'voiceStandbyMs') ? this.data.voiceStandbyMs : (config.voiceStandbyMs ?? VOICE_STANDBY_LIMITS.default),
+      voiceFollowUpMs: own(this.data, 'voiceFollowUpMs') ? this.data.voiceFollowUpMs : (config.voiceFollowUpMs ?? VOICE_FOLLOW_UP_LIMITS.default),
       imageApiBase: this.data.imageApiBase || config.imageApiBase || '',
       imageModel: this.data.imageModel || config.imageModel || 'gpt-image-1',
       hasImageApiKey: Boolean(this.data.imageApiKey || config.imageApiKey),
@@ -231,7 +260,10 @@ export async function testCustomProvider({ apiBase, apiKey = '', fetchImpl = fet
     if (error?.name === 'TimeoutError' || error?.name === 'AbortError') throw new Error('Connection timed out after 8 seconds');
     throw new Error('Could not reach the provider. Check the URL and network.');
   }
-  if (!response.ok) throw new Error(`Provider returned HTTP ${response.status}. Check the URL and API key.`);
+  if (!response.ok) {
+    if (response.status === 401) throw new Error('Provider returned HTTP 401. Use the combined token `wk-<id>.ws-<secret>` (both parts, joined by a dot) and a URL ending in /v1.');
+    throw new Error(`Provider returned HTTP ${response.status}. Check the URL and API key.`);
+  }
   const body = await response.json().catch(() => null);
   if (!Array.isArray(body?.data)) throw new Error('The endpoint did not return a valid model list');
   return { ok: true, models: body.data.length, status: response.status };

@@ -29,13 +29,13 @@ test('autoApprove is enforced by Agent independently of the CLI', async (t) => {
   assert.equal(fs.readFileSync(path.join(cwd, 'a.txt'), 'utf8'), 'ok');
 });
 
-test('history trimming keeps the current request and complete recent tool groups', () => {
+test('history trimming keeps the current request and complete recent tool groups', async () => {
   const agent = makeAgent();
   agent.messages.push({ role: 'user', content: 'current task' });
   for (let i = 0; i < 12; i++) agent.messages.push(
     { role: 'assistant', content: null, tool_calls: [call(String(i), 'read_file', {})] },
     { role: 'tool', tool_call_id: String(i), content: 'output' });
-  agent.trimHistory(8);
+  await agent.trimHistory(8);
   assert.ok(agent.messages.length <= 9);
   assert.ok(agent.messages.some(m => m.content === 'current task'));
   assert.equal(agent.messages.at(-1).tool_call_id, '11');

@@ -1,6 +1,6 @@
 /** Real planner/TTS and device discovery, simulated mic startup, no recording/playback.
  * Measures transcript-to-final-player handoff, not physical speech-to-ear latency.
- * Usage: node scripts/verify-voice-latency.mjs [--cli /path/to/src/core/cli.mjs]
+ * Usage: node scripts/verify-voice-latency.mjs [--cli /path/to/src/core/cli.mjs] [--voice-provider modal]
  */
 import fs from 'node:fs';
 import os from 'node:os';
@@ -21,6 +21,18 @@ const arguments_ = process.argv.slice(2);
 const cliIndex = arguments_.indexOf('--cli');
 const cli = cliIndex < 0 ? new URL('../src/core/cli.mjs', import.meta.url).href : pathToFileURL(path.resolve(arguments_[cliIndex + 1])).href;
 const config = loadConfig();
+// Voice planner under test can be swapped without editing .env, so the same
+// harness measures "before" and "after" on identical prompts.
+const voiceProviderIndex = arguments_.indexOf('--voice-provider');
+if (voiceProviderIndex >= 0) {
+  const override = String(arguments_[voiceProviderIndex + 1] || '').trim().toLowerCase();
+  assert.ok(override, '--voice-provider needs a provider name.');
+  config.voiceProvider = override;
+  // VOICE_MODEL is provider-specific. An override run uses the target
+  // provider's default unless --voice-model names one explicitly.
+  const modelIndex = arguments_.indexOf('--voice-model');
+  config.voiceModel = modelIndex >= 0 ? String(arguments_[modelIndex + 1] || '').trim() : '';
+}
 const brain = createVoiceBrain(config);
 assert.ok(brain && config.sarvamApiKey, 'Set voice planner and Sarvam keys locally.');
 const secrets = configuredSecrets(config);
@@ -54,6 +66,24 @@ try {
     process.argv = [process.execPath, ${JSON.stringify(harness)}, '--voice', '--plain', '--no-banner'];
     const exit = new Error('cli exit');
     process.exit = code => { process.exitCode = code; throw exit; };
+    if (process.env.VOICE_LATENCY_TRACE === '1') {
+      console.log('LATENCY_TRACE_ENABLED');
+      const originalFetch = globalThis.fetch;
+      globalThis.fetch = async (url, options = {}) => {
+        const started = performance.now();
+        let body = {};
+        try { body = JSON.parse(options.body || '{}'); } catch {}
+        console.log('LATENCY_REQUEST ' + JSON.stringify({ model: body.model, messages: (body.messages || []).length,
+          promptChars: JSON.stringify(body.messages || []).length, tools: (body.tools || []).length,
+          toolSchemaChars: JSON.stringify(body.tools || []).length, max_tokens: body.max_tokens,
+          reasoning_effort: body.reasoning_effort, stream: body.stream === true,
+          toolNames: (body.tools || []).map(tool => tool.function?.name).filter(Boolean),
+          toolChars: Object.fromEntries((body.tools || []).map(tool => [tool.function?.name, JSON.stringify(tool).length])) }));
+        const response = await originalFetch(url, options);
+        console.log('LATENCY_RESPONSE ' + JSON.stringify({ status: response.status, headersMs: Math.round(performance.now() - started), at: Math.round(performance.now()) }));
+        return response;
+      };
+    }
     try { await main({voiceIO: {
       audioDeps: () => ({ffmpeg: true, ffplay: true}),
       detectMic: async preferred => { discoveryCount++; return voice.detectMic(preferred); },
@@ -74,7 +104,7 @@ try {
   `);
   const child = spawn(process.execPath, [harness], { cwd: directory, windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
     env: { ...process.env, CONFIG_DIR: path.join(directory, 'config'), NO_COLOR: '1',
-      BASETEN_API_KEY: config.basetenApiKey, SARVAM_API_KEY: config.sarvamApiKey } });
+      BASETEN_API_KEY: config.basetenApiKey, MODAL_PROXY_TOKEN: config.modalApiKey, SARVAM_API_KEY: config.sarvamApiKey } });
   let output = ''; let errors = ''; let captures = 0; let leaving = false;
   child.stdout.on('data', data => {
     output += data;
@@ -90,6 +120,9 @@ try {
   });
   assert.equal(code, 0, redactText(errors, { secrets }));
   for (const match of output.matchAll(/LATENCY_ROW (\{[^\r\n]+\})/g)) rows.push(JSON.parse(match[1]));
+  if (process.env.VOICE_LATENCY_TRACE === '1') {
+    for (const line of output.split(/\r?\n/).filter(value => /^LATENCY_(TRACE_ENABLED|REQUEST|RESPONSE)\b/.test(value))) console.log(line);
+  }
   assert.equal(rows.length, REQUESTS.length, 'Every request needs a final speech clip.');
   for (const row of rows) {
     console.log(JSON.stringify(row)); assert.ok(row.characters > 0);

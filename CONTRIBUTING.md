@@ -38,6 +38,30 @@ After implementing, you **must**:
 
 A PR with no verification evidence gets closed. Say what you ran and what the result was in the PR body.
 
+#### Running tests quickly without skipping anything
+
+The full suite takes roughly 17 minutes, and almost all of that is browser tests:
+each of the 37 Playwright files starts its own Vite server and Chromium.
+
+| Command | What it runs | Approx. time | When |
+| --- | --- | --- | --- |
+| `npm run test:changed` | Only tests touched by your diff (by name, or importing the changed file) | 10 s – 4 min | While iterating |
+| `npm run test:unit` | All 197 non-browser files, in parallel | ~8 min | Before pushing |
+| `npm run test:browser` | All 37 Playwright files, one at a time | ~9.5 min | When UI changed |
+| `npm test` | Everything, browser files serial | ~17 min | Before opening a PR |
+
+`test:changed` is the fast loop: it maps your changed files to the tests that cover
+them, so a small edit answers in seconds. It is a **shortcut for iterating, not a
+replacement** — it does not touch anything your diff did not, so `npm test` is
+still required before a PR.
+
+Browser tests run one file at a time on purpose. Two Vite servers in one process
+race on the shared cache and HMR socket, which shows up as
+`WebSocket closed without opened` and fails healthy tests. Several test files also
+set the global `process.env.CONFIG_DIR` at import, so batching them into one
+worker would make them fight over the same directory.
+
+
 ### 3. 🧪 Tests are mandatory for behavior changes
 - New behavior → new test. Changed behavior → updated test.
 - Tests live in `test/`, grouped by subsystem, using Node's built-in runner.

@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import type { VoiceState } from '../../../../shared/voice.mjs';
+import type { VoicePhase, VoiceState } from '../../../../shared/voice.mjs';
 import { VOICE_PHASE_LABELS, voiceTaskActive } from '../../../../shared/voice.mjs';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceCaptions } from './VoiceCaptions';
@@ -7,8 +7,9 @@ import { Icon } from '../Icons';
 import './voice.css';
 
 const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Working', waiting_for_approval: 'Permission needed', waiting_for_resource: 'Waiting for access', cancelling: 'Stopping', done: 'Done', partial: 'Partial result', failed: 'Needs attention', cancelled: 'Stopped' };
-const PLACEHOLDERS = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
-  transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '', approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
+const PLACEHOLDERS: Record<VoicePhase, string> = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
+  standby: 'Say “Ankita” to talk.', transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '',
+  approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
 
 export function VoicePanel({ voice, error = '', busy = false, compact = false, onEnd, onPause, onResume, onCancel, onIsland, onSettings, onStart, onFocus }: {
   voice: VoiceState; error?: string; busy?: boolean; compact?: boolean;
@@ -32,7 +33,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     {!compact && <div className="voice-panel-top">
       <button className="voice-text-button" onClick={onSettings}><Icon name="settings" size={15} /> Voice settings</button></div>}
     <div className="voice-stage">
-      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} task={voice.task} />
+      <VoiceOrb phase={phase} inputLevel={voice.inputLevel} compact={compact} task={voice.task} wakeCue={voice.wakeCue} />
       <div className="voice-phase" data-phase={phase}><i />{VOICE_PHASE_LABELS[phase]}</div>
       <VoiceCaptions text={voice.caption || PLACEHOLDERS[phase]} role={voice.captionRole} />
       <div className="voice-work-line" role="status" aria-live="polite" aria-atomic="true">
@@ -43,10 +44,11 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
       <div className="voice-jobs-heading"><span>{activeJobs.length ? 'In progress' : 'Recent results'} <b>{activeJobs.length || visibleJobs.length}</b></span><span>Open a request for details</span></div>
       {visibleJobs.map(job => <div className="voice-job" key={job.id} data-status={job.status}>
         <span className="voice-job-dot" /><div><details className="voice-job-details"><summary title={job.label || 'Voice request'}>
-          <span className="voice-job-name">{job.label || 'Voice request'}</span><span className="voice-job-status">{job.resourcesHeld ? 'Command active' : JOB_STATE[job.status] || job.status}</span>
+          <span className="voice-job-name">{job.label || 'Voice request'}</span><span className="voice-job-status">{job.resourcesHeld ? 'Command active' : job.holdExpired ? 'Still running' : JOB_STATE[job.status] || job.status}</span>
         </summary><div className="voice-job-result">
           {job.waitingFor && <p>{job.waitingFor}</p>}
           {job.resourcesHeld && <p>The report is ready. Its command still holds shared access until it exits or you stop it.</p>}
+          {job.holdExpired && <p>The request finished, but its program is still open in the background. Voice is free for the next request.</p>}
           {job.error && <p className="voice-job-issue">{job.error}</p>}
           {job.summary && <p>{job.summary}</p>}
           {job.steps.length > 0 && <small>{job.steps.filter(step => step.state === 'done').length} of {job.steps.length} actions completed</small>}

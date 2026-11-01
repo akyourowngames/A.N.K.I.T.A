@@ -70,6 +70,7 @@ import { names as toolNames, cleanupJobs, displayArgs } from "../../tools/index.
 import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from '../tooling/job-ui.mjs';
 import * as voiceChannel from '../channels/voice.mjs';
 import { useHandsFreePlayback } from "../channels/audio-device.mjs";
+import { voiceCommand } from '../../desktop/shared/voice.mjs';
 
 function packageVersion() {
   try {
@@ -375,11 +376,11 @@ export async function main({ voiceIO = {} } = {}) {
     process.exit(2);
   }
   if (provider.name !== "copilot" && !config.apiBase) {
-    config.apiBase = (provider.name === 'baseten' && config.basetenBaseUrl) || provider.apiBase;
+    config.apiBase = (provider.baseUrlConfig && config[provider.baseUrlConfig]) || provider.apiBase;
     if (!config.apiKey && provider.apiKey) config.apiKey = provider.apiKey;
     // Some gateways reuse an existing key (Groq shares GROQ_API_KEY with voice).
     if (!config.apiKey && provider.keyConfig && config[provider.keyConfig]) config.apiKey = config[provider.keyConfig];
-    if (!config.model && provider.defaultModel) config.model = (provider.name === 'baseten' && config.basetenModel) || provider.defaultModel;
+    if (!config.model && provider.defaultModel) config.model = (provider.modelConfig && config[provider.modelConfig]) || provider.defaultModel;
   }
 
   if (opts.showConfig) {
@@ -401,6 +402,8 @@ export async function main({ voiceIO = {} } = {}) {
         : "(off)"],
       ["GROQ_API_KEY", config.groqApiKey ? "(set)" : "(not set)"],
       ["BASETEN_API_KEY", config.basetenApiKey ? "(set)" : "(not set)"],
+      ["MODAL_PROXY_TOKEN", config.modalApiKey ? "(set)" : "(not set)"],
+      ["MODAL_BASE_URL", config.modalBaseUrl || "(not set)"],
       ["VOICE_PROVIDER", config.voiceProvider || "(same as chat)"],
       ["VOICE_MODEL", config.voiceModel || "(provider default)"],
       ["VOICE_API_BASE", config.voiceApiBase || "(provider default)"],
@@ -1156,7 +1159,10 @@ export async function main({ voiceIO = {} } = {}) {
         if (said === null) { term.line(c.dim('  leaving voice mode.')); break; }
         const clean = String(said || '').trim();
         if (!clean) { session.speech.resume(); continue; }
-        if (/^(exit|quit|end voice|goodbye|bye)[.!?]?$/i.test(clean)) { term.line(c.dim('  leaving voice mode.')); break; }
+        // Shared phrase table keeps terminal and desktop exit/stop wording identical.
+        const command = voiceCommand(clean, { wake: false, stop: config.voiceStopWord !== false });
+        if (command.kind === 'end') { term.line(c.dim('  leaving voice mode.')); break; }
+        if (command.kind === 'stop') { voiceJobs?.cancelOwner(voiceOwner); session.speech.interrupt(); term.line(c.dim('  stopped.')); session.speech.resume(); continue; }
         term.line(`${c.magenta(config.username)} ${c.dim('›')} ${clean}`);
         const language = speechLanguage, turn = session.captureSpeechTurn;
         session.speech.acceptTurn(turn);

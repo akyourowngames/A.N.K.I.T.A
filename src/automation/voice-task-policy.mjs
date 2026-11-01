@@ -15,3 +15,7 @@ export const VOICE_REPORT_ACTIONS = Object.freeze({ status: 'status', next: 'nex
 export const VOICE_REPORT_ERRORS = Object.freeze({ ended: 'This voice session has ended.', stale: 'This speech control belongs to an older interruption.', cancelled: 'Voice report request cancelled.' }); // Same ownership errors across queue and private capability.
 export const VOICE_FINAL_STATES = Object.freeze(['done', 'partial', 'failed', 'cancelled']); // Terminal task states; partial retains useful findings without claiming every step succeeded.
 export const VOICE_BARGE_GUARD_MS = 400; // Milliseconds: shared playback-start transient guard for terminal and desktop interruption.
+// A child process must never keep a voice job "running" forever, or every later
+// request waits behind it. Past this ceiling the job finishes and reports that the
+// process is still alive in the background; Stop can still end it.
+export const VOICE_HOLD_MAX_MS = 120000;

@@ -17,6 +17,73 @@ continuously updated narrative lives in [docs/reference/changelog.md](docs/refer
   receipts and cancellation protect concurrent conversations. No new SDK or
   hosted relay is required. See [setup](docs/guides/channels.md) and
   [evidence and real-account gaps](docs/verification/multi-channel-communication.md).
+- **Conversation flow in voice.** After Ankita answers, it keeps listening for a
+  short follow-up window (25 s by default), so a back-and-forth does not need the
+  wake word every time. Speaking without the wake word in standby now shows a
+  quiet "Say Ankita first" hint instead of being silently dropped. Set the
+  follow-up window to 0 in **Settings → Voice → Hands-free** to require the name
+  every time.
+- **"Open notepad" actually opens Notepad.** A new `open_app` tool launches an
+  installed application by name, using an app list discovered from the system
+  (Start menu on Windows, Applications on macOS, desktop entries on Linux) and
+  refreshed weekly. Launching is shell-free and detached, so it returns at once
+  and never holds a voice turn open. Only apps from the discovered list can be
+  launched; an app not yet known asks for approval first.
+- **A stuck process can no longer freeze voice.** A live child process used to
+  keep a voice job "running" forever, blocking every later request. It now stops
+  holding the queue after a ceiling, the job finishes, and the panel says the
+  program is still open in the background. Stop still works.
+- **Memory stops duplicating and stops hiding contradictions.** A new fact is
+  compared with what is already stored: near-identical wording updates the
+  existing fact instead of creating a second, and a likely contradiction is
+  stored but flagged so Ankita asks which is current rather than asserting
+  either. Existing facts are never deleted or rewritten automatically.
+- **Offline semantic memory.** Point `EMBED_LOCAL_BASE` at any
+  OpenAI-compatible embeddings server (Ollama, LM Studio) and recall becomes
+  semantic without a Cloudflare account.
+- **Facts age.** Each fact records confidence and when it was last recalled;
+  ones untouched for 90 days drop out of default recall but can be asked for.
+  Automatic context now also searches project notes and decisions, and project
+  decisions are chosen by relevance to your request.
+- **Scheduled work is visible while it waits.** A result that finishes during a
+  chat now appears in **Scheduled tasks** straight away as a row you can expand
+  and read, instead of silently waiting for the turn to end. Several finished
+  results show as one group with each update on its own row. A "While you were
+  away" strip counts what ran, what stayed quiet and what needs you. Running jobs
+  show their current step live. All of it stays in the jobs panel; chat is not
+  used for status traffic.
+- **Heartbeats retry instead of being dropped.** If the owning teammate is
+  mid-reply at a check time, the check waits and runs once when the chat is free;
+  several missed intervals collapse into a single check.
+- **Silent runs and single failure alerts.** A job can end with `[SILENT]` to
+  record its run without posting. Failures always post, and a repeated failure
+  alerts once per incident instead of on every run. A failed handoff is recorded
+  as a delivery problem, not as a job failure.
+- **Voice wake word, stop word and auto-mute.** A voice session rests on the wake
+  word "Ankita" and returns to it after every request, so nearby talk is never
+  transcribed unless it starts with the wake word. "Ankita, <request>" runs the
+  request at once; a bare "Ankita" opens a short listening window. A longer quiet
+  spell closes the microphone until you resume. "Stop" / "cancel" interrupts a
+  reply or stops running work. The island shows standby, wake and speaking
+  states, and **Settings → Voice → Hands-free** turns each part on or off with
+  its own timer. In standby, speech is checked by the speech service to find the
+  wake word; anything without it is discarded. The CLI gains the stop word but
+  not yet the wake word.
+- **Long-conversation compaction.** When a chat outgrows its context, Ankita
+  summarizes the turns trimming would drop into one recap and keeps the recent
+  window intact, so goals, decisions and files survive a long thread instead of
+  being deleted. On by default in the desktop app (**Settings → Model → Long
+  conversations**); the CLI stays opt-in with `CONTEXT_COMPACTION=on`, and an
+  explicit value in `.env` wins over the app default. Each recap is one extra
+  model call; a failed or empty recap falls back to plain trimming. The desktop
+  transcript shows the recap as a labelled note, not as something you typed.
+- **MCP servers in the desktop app.** Plugins now has an MCP tab beside Apps and
+  Skills. It searches the official MCP registry, installs a server from its pinned
+  command, and lists, enables, starts, stops and removes servers you add. Nothing
+  is executed until you confirm the exact command, and approval is tied to that
+  command. Remote-only registry entries are shown as unlaunchable rather than
+  silently failing, and the app's own browser and Computer Use servers stay hidden
+  from this page.
 - **One-time browser companion pairing.** Ankita can use an existing signed-in
   browser through its extension and reconnect after desktop, browser and worker
   restarts. Separate capture/control grants, pause/resume, revocation recovery,
@@ -84,6 +151,18 @@ not a new packaged release. Provider setup and the verification record are in th
 [voice guide](docs/guides/voice-delegation.md). Recognition and planner choices can
 still be wrong; an unfinished sentence can restart on resume. Generated-audio
 checks do not establish physical headset or installed-package acceptance.
+- **Modal voice planner (opt-in).** `VOICE_PROVIDER=modal` can point voice turns
+  at a Modal-hosted DeepSeek deployment, with `MODAL_PROXY_TOKEN_ID` and
+  `MODAL_PROXY_TOKEN_SECRET` joined into the bearer token. Voice keeps Baseten
+  as the default. Measured 2026-10-28: faster on short prompts, but slower on a
+  real 30-tool voice turn, so it stays opt-in
+  ([numbers](docs/voice-planner-benchmark-2026-10-28.md)).
+- **Long-conversation compaction** remains off by default. Covered by
+  `test/core/context-compaction.test.mjs` (8 tests), the unchanged trimming
+  suites and the Model-settings/transcript UI previews, plus a localhost round
+  trip that recorded zero provider requests while off and exactly one recap
+  request while on. No live third-party provider recap has been run yet, so
+  recap wording, cost and latency against a real model are unmeasured.
 
 ## [2.7.1] - 2026-10-26
 

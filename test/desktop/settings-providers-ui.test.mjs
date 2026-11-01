@@ -59,7 +59,7 @@ test('providers keep one calm column, grouped actions and a single save bar', as
   await page.locator('.settings-window').evaluate(element => Promise.all(element.getAnimations().map(animation => animation.finished)));
 
   const cards = page.locator('.settings-provider-card');
-  assert.equal(await cards.count(), 5);
+  assert.equal(await cards.count(), 6);
   const boxes = await cards.evaluateAll(nodes => nodes.map(node => node.getBoundingClientRect().toJSON()));
   assert.equal(new Set(boxes.map(box => Math.round(box.x))).size, 1, 'provider cards share one left edge');
   assert.ok(boxes.every((box, index) => index === 0 || box.y > boxes[index - 1].y), 'provider cards stack instead of splitting into ragged columns');

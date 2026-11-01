@@ -3,6 +3,7 @@ import type { PluginCard, PluginService, PluginsCatalogPage, PluginsOverview } f
 import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
 import { SkillsSection } from './SkillsSection';
+import { McpSection } from './McpSection';
 import { BrowserPluginsSection } from './BrowserPluginsSection';
 import { ComputerUseSection } from './ComputerUseSection';
 import { SecureStoreAccounts } from './SecureStore';
@@ -28,14 +29,14 @@ function PluginLogo({ slug, label, logo }: { slug: string; label: string; logo?:
 
 export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettings, hasComposioKey, toolsRevision, initialSection = 'apps' }: {
   chrome: string; sidebarOpen: boolean; onToggleSidebar: () => void; onOpenSettings: () => void; hasComposioKey: boolean; toolsRevision: number;
-  initialSection?: 'apps' | 'skills';
+  initialSection?: 'apps' | 'skills' | 'mcp';
 }) {
   const [overview, setOverview] = useState<PluginsOverview | null>(null);
   const [cards, setCards] = useState<PluginCard[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [visible, setVisible] = useState(PAGE_SIZE);
   const [tab, setTab] = useState<'discover' | 'installed'>('discover');
-  const [section, setSection] = useState<'apps' | 'skills'>(initialSection);
+  const [section, setSection] = useState<'apps' | 'skills' | 'mcp'>(initialSection);
   useEffect(() => { setSection(initialSection); }, [initialSection]);
   const [query, setQuery] = useState('');
   const [loading, setLoading] = useState(true);
@@ -180,8 +181,8 @@ export function PluginsPage({ chrome, sidebarOpen, onToggleSidebar, onOpenSettin
     </div><div className="plugins-header-actions no-drag"><button type="button" className="icon-button" onClick={() => void loadOverview(true)} disabled={refreshing} aria-label="Refresh connected apps" title="Refresh connected apps"><Icon name="refresh" size={17} /></button><button type="button" className="plugins-header-settings" onClick={onOpenSettings}><Icon name="settings" size={15} /> Settings</button></div></header>
 
     <div className="plugins-scroll"><div className="plugins-content">
-      <nav className="plugins-sections" aria-label="Plugin sections"><button type="button" className={section === 'apps' ? 'active' : ''} aria-current={section === 'apps' ? 'page' : undefined} onClick={() => setSection('apps')}><Icon name="plug" size={16} /> Apps</button><button type="button" className={section === 'skills' ? 'active' : ''} aria-current={section === 'skills' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('skills'); }}><Icon name="file" size={16} /> Skills</button></nav>
-      {section === 'skills' ? <SkillsSection /> : <>
+      <nav className="plugins-sections" aria-label="Plugin sections"><button type="button" className={section === 'apps' ? 'active' : ''} aria-current={section === 'apps' ? 'page' : undefined} onClick={() => setSection('apps')}><Icon name="plug" size={16} /> Apps</button><button type="button" className={section === 'skills' ? 'active' : ''} aria-current={section === 'skills' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('skills'); }}><Icon name="file" size={16} /> Skills</button><button type="button" className={section === 'mcp' ? 'active' : ''} aria-current={section === 'mcp' ? 'page' : undefined} onClick={() => { setSelected(null); setSection('mcp'); }}><Icon name="cube" size={16} /> MCP</button></nav>
+      {section === 'skills' ? <SkillsSection /> : section === 'mcp' ? <McpSection toolsRevision={toolsRevision} /> : <>
       <div className="plugins-intro"><h1>Connected apps</h1><p>Browsers, accounts, and tools your teammates can use.</p></div>
       <BrowserPluginsSection />
       <ComputerUseSection />

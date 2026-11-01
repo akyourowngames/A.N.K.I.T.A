@@ -77,6 +77,13 @@ test('named providers resolve to a keyless gateway or fail loudly', () => {
   assert.equal(groq.defaultModel, 'openai/gpt-oss-120b');
   assert.equal(groq.keyConfig, 'groqApiKey');
   assert.equal(groq.keyless, false);
+  const modal = provider.resolveProvider('modal');
+  assert.equal(modal.name, 'modal');
+  assert.equal(modal.label, 'Modal (DeepSeek)');
+  assert.equal(modal.keyConfig, 'modalApiKey');
+  assert.equal(modal.baseUrlConfig, 'modalBaseUrl');
+  assert.equal(modal.modelConfig, 'modalModel');
+  assert.equal(modal.keyless, false);
   assert.equal(provider.resolveProvider('nope'), null);
 });
 

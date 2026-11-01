@@ -526,6 +526,8 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     }
     case 'scheduleList': return current.schedule().list(payload?.threadId);
     case 'scheduleStatus': return current.schedule().status(payload?.threadId);
+    case 'scheduleAwaySummary': return current.schedule().awaySummary(payload?.threadId);
+    case 'schedulePendingDeliveries': return current.schedule().pendingDeliveries(payload?.threadId);
     case 'scheduleAdd': return current.schedule().add(payload);
     case 'scheduleUpdate': return current.schedule().update(payload.id, payload.patch);
     case 'scheduleRemove': return current.schedule().remove(payload.id);
@@ -626,6 +628,15 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'pluginsDisconnectAccount': return current.plugins.disconnectAccount(payload);
     case 'pluginsDisconnectService': return current.plugins.disconnectService(payload);
     case 'pluginsRefresh': return current.refreshPlugins();
+    case 'mcpOverview': return current.mcpDesktop.overview();
+    case 'mcpSearch': return current.mcpDesktop.search(payload);
+    case 'mcpInstallRegistry': return current.mcpDesktop.installFromRegistry(payload);
+    case 'mcpInstallManual': return current.mcpDesktop.installManual(payload);
+    case 'mcpRemove': return current.mcpDesktop.remove(payload);
+    case 'mcpSetEnabled': return current.mcpDesktop.setEnabled(payload);
+    case 'mcpStart': return current.mcpDesktop.start(payload);
+    case 'mcpStop': return current.mcpDesktop.stop(payload);
+    case 'mcpRefresh': return current.mcpDesktop.refresh();
     case 'browserPluginsOverview': return current.browserPlugins.overview();
     case COMPUTER_USE_ACTIONS.overview: return current.computerUse.overview();
     case COMPUTER_USE_ACTIONS.connect: return current.computerUse.connect(payload);
