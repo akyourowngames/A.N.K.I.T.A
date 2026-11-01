@@ -116,6 +116,11 @@ const BACKGROUND_COMPLETION_SEARCH_GUIDANCE = 'Use web_search when it is needed 
 // of history. If even the core tools cannot fit inside this, the request is
 // genuinely impossible and trimHistory says so.
 const CONTEXT_OVERHEAD_BYTES = 1024;
+// Floor of conversation the tool catalogue must leave behind, in UTF-8 bytes.
+// Kept small on purpose: raising it sheds discovered work tools on a normal 32k
+// window, and "optional style must never evict a work tool" is the stronger
+// promise. Tests that need room for a tool exchange set an explicit contextWindow
+// instead of moving this floor (see AGENTS.md rule 2.8).
 const MIN_HISTORY_BYTES = 512;
 // Prefix that identifies a compaction recap in history; shared by the writer,
 // the pruning guard and the tests so the marker never drifts.

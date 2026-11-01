@@ -99,7 +99,11 @@ test('the guard only fires when even the core set cannot fit', async () => {
   const tiny = agentStub({ contextWindow: 1000, config: { maxTokens: 4096 } });
   await assert.rejects(() => tiny.trimHistory(8), /context window is too small/);
 
+  // Derived from the agent's own reservation rather than a copied literal, so the
+  // floor can change (it is 8 kB, not 512 B) without this test going stale.
+  const probe = agentStub({ contextWindow: 32768, config: { maxTokens: 256, maxTokensExplicit: true } });
+  const floor = probe.contextWindow - probe.outputReserve() - bytes(coreSpecs) - 1024;
   const coreOnly = bytes(coreSpecs);
-  const justFits = agentStub({ contextWindow: coreOnly + 1024 + 512 + 512, config: { maxTokens: 256, maxTokensExplicit: true } });
+  const justFits = agentStub({ contextWindow: coreOnly + 1024 + floor, config: { maxTokens: 256, maxTokensExplicit: true } });
   await assert.doesNotReject(() => justFits.trimHistory(8));
 });

@@ -9,7 +9,10 @@ process.env.CONFIG_DIR = path.join(root, 'config');
 const { PlaywrightBrowserAdapter } = await import('../../tools/browser/playwright.mjs');
 const { ChromeBrowserAdapter } = await import('../../tools/browser/chrome.mjs');
 const pageText = await import('../../tools/browser/page-find.mjs').catch(() => ({}));
-test.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+// A browser handle can still be closing when this runs, which on Windows throws
+// EPERM/EBUSY. Failing to remove a temp directory is not a test result, so the
+// cleanup is best-effort; the OS reclaims it either way.
+test.after(() => { try { fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); } catch {} });
 
 test('page find treats query as literal text, preserves Unicode offsets, and bounds matches', () => {
   assert.equal(typeof pageText.pageTextResult, 'function');

@@ -38,7 +38,11 @@ async function connect(mcp) {
 
 function agent(mcp, config = {}, client = {}) {
   return new Agent({ client, mcp, workspacePath: SANDBOX,
-    config: { model: MODEL, tools: false, autoApprove: false, memoryConsolidation: false, ...config },
+    // A roomy window on purpose. With tools on, a default 32k window leaves only
+    // ~2.3 kB of history after the catalogue and system prompt, so one tool
+    // exchange can exceed it and the test fails on a budget error rather than the
+    // round trip it exercises. (See AGENTS.md rule 2.8.)
+    config: { model: MODEL, tools: false, autoApprove: false, memoryConsolidation: false, contextWindow: 131072, ...config },
     print: () => {}, write: () => {} });
 }
 
