@@ -5,6 +5,9 @@ import { clearThreadSubagents, reduceSubagents } from '../../../shared/subagent-
 
 export type Approval = Extract<EngineEvent, { type: 'approval-request' }>;
 export type Usage = { prompt_tokens: number; completion_tokens: number; estimated_cost: number };
+// One finished result waiting for the owning turn to end. Shape matches the
+// scheduler's pendingDeliveries() and the routine-queued event detail.
+export type PendingDelivery = { runId: string; routineId: string; name: string; status: string; at: string };
 export type State = {
   jobs: Routine[];
   phase: string;
@@ -24,13 +27,16 @@ export type State = {
   error: string | null;
   compat: Compat | null;
   compatDismissed: boolean;
+  // Results that finished while the owning teammate was busy. They wait for the
+  // turn to end; the jobs panel lists them so the work is visible immediately.
+  deliveries: Record<string, PendingDelivery[]>;
 };
 
 export const initialState: State = {
   jobs: [],
   phase: 'starting', chrome: 'custom', teammates: [], models: [], settings: null,
   selectedId: null, threads: {}, running: {}, loadedSkills: {}, unread: {}, usage: {}, subagents: {}, approvals: [],
-  deviceCode: null, error: null, compat: null, compatDismissed: false,
+  deviceCode: null, error: null, compat: null, compatDismissed: false, deliveries: {},
 };
 
 type Action =
@@ -78,6 +84,26 @@ export function reducer(state: State, action: Action): State {
 
   const event = action.event;
   if (event.type === 'schedule-changed') return { ...state, jobs: event.jobs };
+  // Live run progress: the panel shows the step as it happens. No chat traffic.
+  if (event.type === 'routine-run-start') return {
+    ...state, jobs: state.jobs.map(job => job.id === event.routineId ? { ...job, running: true, step: 0, scope: event.scope || job.scope } : job),
+  };
+  if (event.type === 'routine-run-step') return {
+    ...state, jobs: state.jobs.map(job => job.id === event.routineId ? { ...job, running: true, step: event.step ?? job.step } : job),
+  };
+  if (event.type === 'routine-run-end') return {
+    ...state, jobs: state.jobs.map(job => job.id === event.routineId ? { ...job, running: false, lastStatus: event.status || job.lastStatus } : job),
+  };
+  // A finished result waiting for the owning turn. Both the direct queue notice
+  // and the periodic delivery-state refresh land here so the list self-heals.
+  if (event.type === 'routine-queued') {
+    const list = state.deliveries[event.threadId || ''] || [];
+    if (list.some(item => item.runId === event.runId)) return state;
+    const job = state.jobs.find(item => item.id === event.routineId);
+    const entry: PendingDelivery = { runId: event.runId, routineId: event.routineId, name: event.detail || job?.name || 'Scheduled task', status: event.status || 'ok', at: new Date().toISOString() };
+    return { ...state, deliveries: { ...state.deliveries, [event.threadId || '']: [...list, entry] } };
+  }
+  if (event.type === 'routine-delivery-state') return { ...state, deliveries: { ...state.deliveries, [event.threadId || '']: event.pending || [] } };
   if (event.type === 'scheduler-error' || event.type === 'scheduler-stopped') return { ...state, error: event.message };
   if (event.type === 'routine-result') {
     const next = patchThread(state, event.threadId, messages => messages.map(message =>

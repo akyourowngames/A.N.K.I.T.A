@@ -4,6 +4,7 @@ import zlib from 'node:zlib';
 
 const { sanitizeMessages } = await import('../../src/core/history.mjs');
 const { threadMessages, attachmentPayload } = await import('../../desktop/electron/engine.mjs');
+const agentModule = await import('../../src/core/agent.mjs');
 const { readZipEntries, extractDocumentText, pdfText, pdfTextCoverage, looksLikeProse } = await import('../../desktop/renderer/src/lib/extract-document.ts');
 
 /* --------------------------- history keeps attachments ------------------- */
@@ -38,6 +39,23 @@ test('threadMessages recovers attachment chips from prompt blocks', () => {
   ]);
   assert.equal(transcript[0].attachments[0].name, 'Proteus Arc.md');
   assert.equal(transcript[1].attachments[0].image, true);
+});
+
+test('a compaction recap is shown as a labelled note, not a user bubble', () => {
+  const { COMPACTION_SUMMARY_PREFIX } = agentModule;
+  const transcript = threadMessages([
+    { role: 'system', content: 'system' },
+    { role: 'user', content: `${COMPACTION_SUMMARY_PREFIX}\nBuilt the settings panel and ran checks.` },
+    { role: 'user', content: 'now add tests' },
+    { role: 'assistant', content: 'Done.' },
+  ]);
+  assert.equal(transcript.length, 3, 'the system prompt stays out of the transcript');
+  assert.equal(transcript[0].role, 'assistant', 'the recap is not presented as something the user typed');
+  assert.equal(transcript[0].content, 'Built the settings panel and ran checks.', 'the recap body loses the bookkeeping marker');
+  assert.equal(transcript[0].compacted, true, 'the renderer can label it');
+  assert.equal(transcript[1].role, 'user');
+  assert.equal(transcript[1].content, 'now add tests');
+  assert.equal(transcript[1].compacted, undefined);
 });
 
 /* -------------------------- document extraction ------------------------- */

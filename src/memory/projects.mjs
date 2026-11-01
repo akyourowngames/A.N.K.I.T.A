@@ -568,8 +568,12 @@ export class ProjectStore {
   /**
    * Recent work and open items. Separate from promptBlock so the base project
    * block stays stable, and capped because it is paid on every turn.
+   *
+   * `query` is the current request. When given, decisions and notes are ranked
+   * against it so the relevant ones survive the cap instead of always taking the
+   * newest; without a query the block falls back to recency.
    */
-  workBlock(project = this.active) {
+  workBlock(project = this.active, { query = "" } = {}) {
     if (!project) return "";
     const lines = [];
     const worklog = (project.worklog || []).slice(-WORK_BLOCK_LOG_LINES);
@@ -586,12 +590,32 @@ export class ProjectStore {
       lines.push("Open items:");
       for (const todo of open) lines.push(`  [${todo.id}] ${todo.text}`);
     }
-    const decisions = (project.decisions || []).slice(-WORK_BLOCK_DECISIONS);
+    const decisions = this.relevant(project.decisions || [], query, WORK_BLOCK_DECISIONS);
     if (decisions.length) {
-      lines.push("Recent decisions:");
+      lines.push(query.trim() ? "Related decisions:" : "Recent decisions:");
       for (const decision of decisions) lines.push(`  ${decision.text}`);
     }
     return lines.join("\n").slice(0, WORK_BLOCK_CAP);
+  }
+
+  /**
+   * Keep the newest items, but when a request is present let items that share
+   * wording with it survive instead of being pushed out by the latest three.
+   * Order stays newest-first so the prompt still reads chronologically.
+   */
+  relevant(items, query, limit) {
+    if (!query || !String(query).trim() || items.length <= limit) return items.slice(-limit);
+    const terms = [...new Set(String(query).toLocaleLowerCase().match(/[\p{L}\p{N}]+/gu) || [])].filter(t => t.length > 2);
+    if (!terms.length) return items.slice(-limit);
+    const scored = items.map((item, index) => ({
+      item, index,
+      score: terms.reduce((total, term) => total + (String(item.text || '').toLocaleLowerCase().includes(term) ? 1 : 0), 0),
+    }));
+    return scored
+      .sort((a, b) => b.score - a.score || b.index - a.index)
+      .slice(0, limit)
+      .sort((a, b) => a.index - b.index)
+      .map(entry => entry.item);
   }
 }
 

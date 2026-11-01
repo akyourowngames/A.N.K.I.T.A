@@ -18,6 +18,8 @@ const RECEIPT_STATUS_LABELS: Record<string, string> = {
 const CALM_STATUSES = ['ok', 'quiet', 'held', 'disabled-mid-run']; // Silence is a decision, not a failure.
 
 function receiptStatus(receipt: JobReceipt) {
+  // A silent run is still a success; a delivery problem is not a job failure.
+  if (receipt.silent && CALM_STATUSES.includes(receipt.status)) return { ok: true, label: 'Quiet run' };
   const ok = CALM_STATUSES.includes(receipt.status);
   return { ok, label: RECEIPT_STATUS_LABELS[receipt.status] || receipt.status.replaceAll('-', ' ') };
 }

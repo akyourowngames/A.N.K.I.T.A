@@ -7,6 +7,154 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Voice comfort: follow-up window, a wake hint, and a real app launcher
+
+Three things made voice mode tiring in daily use, all fixed here.
+
+- **You no longer repeat the name every time.** When a request finishes, the
+  session opens a follow-up window (`VOICE_FOLLOW_UP_MS`, default 25 s, 0 for
+  strict) and stays in `listening`. A follow-up needs no wake word, and sound
+  restarts the window rather than the shorter standby timer. When the window
+  closes it returns to standby exactly as before.
+- **Ignored speech says why.** In standby, an utterance without "Ankita" used to
+  vanish. It now publishes a throttled hint ("Say Ankita first") that survives
+  the mic re-opening, so a forgotten wake word no longer reads as a crash.
+- **"Open notepad" is not a terminal command any more.** `tools/apps/` adds an
+  `open_app` tool backed by a system-discovered app index
+  (`apps-index.json`, rescanned after `APP_INDEX_MAX_AGE_DAYS`, default 7).
+  Discovery parses Windows `Get-StartApps` plus Start-menu shortcuts, macOS
+  `.app` bundles, and freedesktop entries. Launching is detached and shell-free,
+  so it is never a job and never a resource hold.
+
+**Security hardening on the launch path** (a review of the first draft found
+real defects, all fixed and regression-tested):
+
+- Only an AppID matching a strict shape may go through `cmd /c start`; real file
+  paths are spawned directly with `shell:false`, so nothing is re-parsed.
+- The cached index is validated on read and on write: a poisoned entry with
+  shell metacharacters, a `%VAR%`, a relative path, or a malformed AppID is
+  refused rather than executed.
+- The audit record names the app, not its absolute path, so no OS username is
+  written into a shared log.
+- Rescans are debounced and the directory walk is bounded, so repeated calls
+  cannot make the main process pay for a full scan each time.
+
+**Resource-hold ceiling** (`VOICE_HOLD_MAX_MS`, default 120 s): a child process
+that outlives its turn no longer keeps the job "running" forever. The hold is
+released, the job finishes, the panel reports the program is still open, and the
+entry stays stoppable. Previously Stop was unreachable after release and prune
+could drop the entry.
+
+Verified locally: 167 voice and launcher tests, 144 adjacent suites, typecheck
+and build. Live: `open_app("notepad")` really launched Notepad with an empty job
+map, and an injection attempt was refused. Not covered: a real macOS/Linux scan,
+Stop-after-expiry against a real wedged child, and packaged-installer behaviour.
+
+### Memory: no more duplicate or silently-contradicting facts
+
+The memory system stored facts as flat lines and only deduplicated exact text, so
+"I use Postgres" and "Database is Postgres" became two facts, and a later
+"I switched to tea" sat next to "I like coffee" as if both were current.
+
+- **Similarity gate before saving.** A new fact is compared with existing ones
+  (embeddings when configured, a conservative lexical score otherwise). Above
+  `MEMORY_DEDUP_THRESHOLD` the existing fact takes the clearer wording instead of
+  a second entry being created.
+- **Contradictions are flagged, never rewritten.** A fact in the
+  `MEMORY_CONFLICT_LOW`–dedup band with the same declared kind is stored and both
+  sides are marked. `remember` reports it, and automatic context carries a
+  one-line notice so the reply asks which is current. Nothing is deleted.
+- **Local embeddings.** `EMBED_PROVIDER=local` (or `auto` with an
+  `EMBED_LOCAL_BASE`) uses any OpenAI-compatible `/embeddings` server — Ollama,
+  LM Studio — so semantic recall no longer requires a Cloudflare account.
+- **Facts carry confidence and an ageing clock.** Direct statements are 1.0,
+  extraction guesses 0.6; recalls now record `lastRecalledAt`/`recallCount` in one
+  batched write. Facts untouched for `MEMORY_STALE_DAYS` sink out of default
+  recall and return with `includeStale`.
+- **Wider automatic recall.** Pre-turn context now searches project notes and
+  decisions too, not only personal facts; a project row is labelled so it is not
+  read as a preference. Project decisions are also relevance-ranked when a request
+  is present instead of always taking the newest three.
+
+Verified locally: 138 memory tests, plus a live end-to-end run (add → merge →
+conflict → recall) showing one fact after restatement, both facts kept and
+cross-flagged after a contradiction, and recall counts incrementing. A real
+Ollama server and a real Cloudflare account are not exercised by tests; the
+lexical fallback is what those runs cover.
+
+### Scheduled results land in the jobs panel, not just the chat
+
+A result that finishes while the owning teammate is mid-turn used to exist only
+as a queued event nothing listened for. Now:
+
+- The **Scheduled tasks** panel shows waiting results immediately under "Results
+  ready to post". Each finished update keeps its own expandable row, so a busy
+  period that produced three results reads as one group with three readable
+  entries, not one merged blob and not three chat messages.
+- A **"While you were away"** strip counts what ran, what stayed quiet and what
+  needs you. Counts are computed by the scheduler, not re-derived in the UI.
+- **Live progress**: start, step and end events are reduced into the job row, so
+  a running task shows "Running · step N" while it happens.
+- **Heartbeats defer instead of dropping.** A check that comes due while the
+  owner is replying waits and runs once when the chat is free; missed intervals
+  collapse into one check and the row says how many are held.
+- **Silent runs**: a job may end with `[SILENT]`; the run is recorded and visible
+  but not posted. **Failures always post**, and a repeated failure alerts once per
+  incident. A failed handoff is recorded as `deliveryFailed`, separate from the
+  job's `failureStreak`.
+- The ChatGPT-tab turn path now flushes queued deliveries at turn end, matching
+  typed turns.
+
+Verified locally: 45 scheduler tests (including deferred/coalesced heartbeats,
+silence, failure-once and the away summary), 3 renderer store tests, 3 Playwright
+panel checks and the unchanged automation suites. Live tray behaviour, real
+quiet-hours timing and the packaged build are not exercised here.
+
+### Voice attention ladder: wake word, stop word, auto-mute
+
+Voice now has three attention levels instead of one. A voice session with a wake
+word starts in standby and returns there after every request, so the only thing
+acted on by default is an utterance starting with "Ankita" (a leading "Hi"/"Hey"
+is fine). "Ankita, <request>" runs the request in the same breath; a bare "Ankita"
+opens a short listening window (15 s by default, set to 0 for none). After a
+longer quiet spell the microphone closes until you resume. Saying "stop" or
+"cancel" cuts a reply or cancels running work; "stop by the store" is still an
+ordinary request. Exit phrases now also accept "exit voice mode" and "end the
+session".
+
+Standby speech has to be transcribed to look for the wake word, so nearby talking
+during standby is checked by the speech service; utterances without the wake word
+are discarded and never become captions, requests or saved history. The island
+gained a standby halo, a wake ring and phase-coloured wash, all disabled under
+reduced motion. **Settings → Voice → Hands-free** controls the two words and the
+two timers; behaviour saves take effect without ending voice. The CLI shares the
+same phrase table for stop/exit but has no wake word yet.
+
+Verified locally: 10 phrase-table tests, 43 desktop voice-loop tests including 7
+new ladder cases, state/UI/settings suites and a Playwright check of the new
+panel. Real microphone timing, Sarvam wake-word accuracy and false-positive rate
+are unmeasured without hardware and a live key.
+
+### Long-conversation compaction (opt-in)
+
+When a chat is about to outgrow its context, Ankita can fold the turns that
+trimming would drop into one short recap and keep the most recent window intact,
+so goals, decisions and touched files survive a long thread. On by default in
+the desktop app (Settings → Model → Long conversations); the CLI stays opt-in
+with `CONTEXT_COMPACTION=on`, and an explicit value in `.env` wins over the app
+default. Each recap
+is one extra model call; a failed or empty reply falls back to plain trimming
+and reports the skip instead of losing the turn. The recap is stored as a
+user-role message with a fixed prefix, which keeps provider histories valid and
+lets the desktop transcript show it as a labelled note rather than a typed
+bubble. Settings saves send only the changed flag, and the value reaches live
+agents without a reconnect; routine delivery deliberately skips compaction. The
+app default flipped to on after review, with a saved off choice and an explicit
+`.env` value both still winning. Verified locally: 8 core tests, the unchanged
+trimming suites, both desktop UI previews (on by default, off respected) and a
+localhost round trip (0 requests while off, 1 while on). Live provider cost and
+recap quality remain unmeasured.
+
 ### Remembered browser companion connection
 
 The browser companion now has a separate opt-in control grant, an authenticated

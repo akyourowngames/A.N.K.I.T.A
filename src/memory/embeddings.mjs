@@ -5,6 +5,7 @@ import { EMBEDDINGS_DIR } from '../core/config.mjs';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
 
 export const DEFAULT_EMBED_MODEL = '@cf/qwen/qwen3-embedding-0.6b';
+export const DEFAULT_LOCAL_EMBED_MODEL = 'nomic-embed-text'; // Ships with Ollama; 768-dim, 8k context.
 export const DEFAULT_EMBED_INSTRUCTION = 'Given a conversation message, retrieve relevant personal preferences, facts, past decisions and tasks that help answer it.';
 const hash = text => createHash('sha256').update(text).digest('hex');
 const services = new Map();
@@ -29,16 +30,36 @@ function keep(map, key, value, limit) {
 }
 
 export function embeddingsEnabled(config = {}) {
-  return config.embeddings !== false && !!config.cloudflareAccountId && !!config.cloudflareApiToken;
+  if (config.embeddings === false) return false;
+  const provider = String(config.embedProvider || 'auto').toLowerCase();
+  if (provider === 'off') return false;
+  if (provider === 'cloudflare') return Boolean(config.cloudflareAccountId && config.cloudflareApiToken);
+  if (provider === 'local') return Boolean(config.embedLocalBase);
+  // auto: prefer explicit Cloudflare credentials, then a local endpoint.
+  return Boolean((config.cloudflareAccountId && config.cloudflareApiToken) || config.embedLocalBase);
 }
 
-/** One model namespace per cache. No plaintext facts, queries or credentials on disk. */
-export class CloudflareEmbeddings {
-  constructor(config, { cacheDir = EMBEDDINGS_DIR, fetchImpl = globalThis.fetch } = {}) {
+/** Which backend a config resolves to, or null. Mirrors embeddingsEnabled(). */
+export function embeddingProvider(config = {}) {
+  if (!embeddingsEnabled(config)) return null;
+  const provider = String(config.embedProvider || 'auto').toLowerCase();
+  if (provider === 'cloudflare') return 'cloudflare';
+  if (provider === 'local') return 'local';
+  return config.cloudflareAccountId && config.cloudflareApiToken ? 'cloudflare' : 'local';
+}
+
+/**
+ * Shared caching, warming and cosine ranking for any embedding backend.
+ * Subclasses only implement `request(texts, signal) -> vectors`.
+ */
+export class EmbeddingIndex {
+  constructor(config, { cacheDir = EMBEDDINGS_DIR, fetchImpl = globalThis.fetch, namespace = 'v1' } = {}) {
     this.config = { ...config };
     this.model = config.embedModel || DEFAULT_EMBED_MODEL;
     this.instruction = boundedText(config.embedQueryInstruction ?? DEFAULT_EMBED_INSTRUCTION).slice(0, 512);
-    this.dir = path.join(cacheDir, hash(`v1:${this.model}`));
+    // The model name is in the cache namespace, so switching providers or models
+    // never reuses vectors of the wrong shape.
+    this.dir = path.join(cacheDir, hash(`${namespace}:${this.model}`));
     this.fetch = fetchImpl;
     this.documents = new Map();
     this.queries = new Map();
@@ -67,21 +88,7 @@ export class CloudflareEmbeddings {
     } catch {} // Read-only cache storage must not break recall.
   }
 
-  async request(text, signal) {
-    const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(this.config.cloudflareAccountId)}/ai/run/${this.model.split('/').map(encodeURIComponent).join('/').replace(/^%40/, '@')}`;
-    const response = await this.fetch(url, {
-      method: 'POST', headers: { Authorization: `Bearer ${this.config.cloudflareApiToken}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ text }), signal, redirect: 'error',
-    });
-    // Never include provider bodies or headers in errors; they can contain secrets.
-    if (!response.ok) throw new Error('Embedding service unavailable');
-    const body = await response.json();
-    const data = body?.result?.data;
-    if (body.success === false || !Array.isArray(data) || data.length !== text.length) throw new Error('Invalid embedding response');
-    const vectors = data.map(normalize);
-    if (vectors.some(v => v.length !== vectors[0].length)) throw new Error('Invalid embedding dimensions');
-    return vectors;
-  }
+  request(text, signal) { throw new Error('Embedding backend must implement request()'); }
 
   warm(rows) {
     if (Date.now() < this.retryAt) return Promise.resolve();
@@ -181,12 +188,64 @@ export class CloudflareEmbeddings {
   }
 }
 
+/** Cloudflare Workers AI. One model namespace per cache; no plaintext on disk. */
+export class CloudflareEmbeddings extends EmbeddingIndex {
+  async request(text, signal) {
+    const url = `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(this.config.cloudflareAccountId)}/ai/run/${this.model.split('/').map(encodeURIComponent).join('/').replace(/^%40/, '@')}`;
+    const response = await this.fetch(url, {
+      method: 'POST', headers: { Authorization: `Bearer ${this.config.cloudflareApiToken}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text }), signal, redirect: 'error',
+    });
+    // Never include provider bodies or headers in errors; they can contain secrets.
+    if (!response.ok) throw new Error('Embedding service unavailable');
+    const body = await response.json();
+    const data = body?.result?.data;
+    if (body.success === false || !Array.isArray(data) || data.length !== text.length) throw new Error('Invalid embedding response');
+    const vectors = data.map(normalize);
+    if (vectors.some(v => v.length !== vectors[0].length)) throw new Error('Invalid embedding dimensions');
+    return vectors;
+  }
+}
+
+/**
+ * Any OpenAI-compatible embeddings server: Ollama (/v1), LM Studio, llama.cpp.
+ * Keeps memory semantic with no cloud account, which is the offline path.
+ */
+export class LocalEmbeddings extends EmbeddingIndex {
+  constructor(config, options = {}) {
+    // The base class derives the cache directory from embedModel, so the local
+    // model must be in place BEFORE super() runs or two models share one cache.
+    super({ ...config, embedModel: config.embedLocalModel || DEFAULT_LOCAL_EMBED_MODEL }, { ...options, namespace: 'local' });
+    this.base = String(config.embedLocalBase || '').replace(/\/+$/, '');
+  }
+
+  async request(text, signal) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (this.config.embedLocalApiKey) headers.Authorization = `Bearer ${this.config.embedLocalApiKey}`;
+    const response = await this.fetch(`${this.base}/embeddings`, {
+      method: 'POST', headers, body: JSON.stringify({ model: this.model, input: text }), signal, redirect: 'error',
+    });
+    if (!response.ok) throw new Error('Local embedding service unavailable');
+    const body = await response.json();
+    const data = body?.data;
+    if (!Array.isArray(data) || data.length !== text.length) throw new Error('Invalid embedding response');
+    const vectors = data.map(item => normalize(item?.embedding));
+    if (vectors.some(v => v.length !== vectors[0].length)) throw new Error('Invalid embedding dimensions');
+    return vectors;
+  }
+}
+
 export function getEmbeddings(config, { cacheDir = EMBEDDINGS_DIR, fetchImpl = globalThis.fetch } = {}) {
-  if (!embeddingsEnabled(config)) return null;
-  const key = hash(JSON.stringify([cacheDir, config.cloudflareAccountId, config.cloudflareApiToken, config.embedModel, config.embedQueryInstruction, config.embedTimeoutMs, config.embedIndexTimeoutMs]));
+  const provider = embeddingProvider(config);
+  if (!provider) return null;
+  const key = hash(JSON.stringify([cacheDir, provider, config.cloudflareAccountId, config.cloudflareApiToken,
+    config.embedLocalBase, config.embedLocalModel, config.embedLocalApiKey,
+    config.embedModel, config.embedQueryInstruction, config.embedTimeoutMs, config.embedIndexTimeoutMs]));
   let service = services.get(key);
   if (!service || service.fetch !== fetchImpl) {
-    service = new CloudflareEmbeddings(config, { cacheDir, fetchImpl });
+    service = provider === 'local'
+      ? new LocalEmbeddings(config, { cacheDir, fetchImpl })
+      : new CloudflareEmbeddings(config, { cacheDir, fetchImpl });
     keep(services, key, service, 8);
   }
   return service;

@@ -163,6 +163,11 @@ export default function App() {
     const id = state.selectedId;
     saveUi({ selectedId: id });
     void window.ankita.invoke<ChatMessage[]>('loadThread', { id }).then(messages => dispatch({ type: 'thread-loaded', id, messages })).catch(err => dispatch({ type: 'event', event: { type: 'error', threadId: id, message: err.message } }));
+    // Results that finished while this teammate was busy are listed in the jobs
+    // panel; load them with the thread so a reopen shows waiting work at once.
+    void window.ankita.invoke<{ runId: string; routineId: string; name: string; status: string; at: string }[]>('schedulePendingDeliveries', { threadId: id })
+      .then(pending => dispatch({ type: 'event', event: { type: 'routine-delivery-state', threadId: id, pending } }))
+      .catch(() => {});
   }, [state.selectedId]);
 
   useEffect(() => {
@@ -400,6 +405,7 @@ export default function App() {
     catch (error) { dispatch({ type: 'event', event: { type: 'error', threadId: state.selectedId, message: error instanceof Error ? error.message : String(error) } }); }
   };
   const threadJobs = state.jobs.filter(job => job.threadId === state.selectedId || (job.ownerMissing && job.deliveryThreadId === state.selectedId));
+  const threadDeliveries = state.deliveries[state.selectedId || ''] || [];
 
   return <SecureStoreProvider><div className={`app-shell desktop-workbench ${reviewOpen && view === 'chat' && state.selectedId ? 'review-visible' : ''} ${subagentPanelOpen ? 'subagent-visible' : ''} ${showBrowser ? 'browser-visible' : ''}`}>
     <Sidebar
@@ -426,7 +432,7 @@ export default function App() {
       onSend={send} onStop={stop} onModel={model} onEdit={() => setDialog('edit')} onCreate={() => setDialog('create')} onClear={clear} onDelete={remove}
     />}
     {view === 'chat' && state.selectedId && <BrowserStage key={browserScope || state.selectedId} scope={browserScope} view={browserThreadId === state.selectedId ? browserView : null} visible={showBrowser} onView={setBrowserView} onStop={stopBrowser} onOpenSetup={() => setView('plugins')} />}
-    {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
+    {view === 'chat' && state.selectedId && jobSheet && (jobSheet.advanced ? <RoutineSheet key={jobSheet.id || 'new'} routine={threadJobs.find(job => job.id === jobSheet.id) || null} jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} onChoose={id => setJobSheet({ id, advanced: true })} onClose={() => editJob(jobSheet.id)} /> : <JobsPanel jobs={threadJobs} teammates={state.teammates} threadId={state.selectedId} selectedId={jobSheet.id} pending={threadDeliveries} onChoose={editJob} onEdit={id => setJobSheet({ id, advanced: true })} onWatch={job => { setJobSheet(null); void watchJob(job); }} onAsk={() => { setJobSheet(null); window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: 'Schedule a task: ' })); }} onClose={() => setJobSheet(null)} />)}
     {view === 'chat' && state.selectedId && <WorkspacePanel threadId={state.selectedId} revision={workspaceRevision} visible={reviewOpen && !subagentPanelOpen} onClose={() => setReviewOpen(false)} />}
     {view === 'chat' && state.selectedId && <SubagentPanel activities={subagentActivities} focus={subagentFocus} visible={subagentPanelOpen} onFocus={key => { setSubagentFocus(key); setSubagentOpen(true); }} onClose={() => setSubagentOpen(false)} onStop={stop} />}
     {dialog && <TeammateDialog teammate={dialog === 'edit' ? selected : null} projects={projects} onSave={saveTeammate} onClose={() => setDialog(null)} />}

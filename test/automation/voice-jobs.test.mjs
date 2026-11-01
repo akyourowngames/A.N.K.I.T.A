@@ -124,3 +124,27 @@ test('failed result observers and diagnostics cannot turn completed work into an
   const job = await pool.submit({ ownerId: 'owner', transcript: 'Save' });
   assert.equal((await pool.waitFor(job.id, { ownerId: 'owner' })).task.status, 'done'); await tick();
 });
+
+test('a long-running child stops holding the queue once the ceiling passes', async t => {
+  const child = defer(); // never resolves: an app that stays open
+  const pool = poolFor(t, { holdMaxMs: 60, run: async (job, { signal }) => {
+    await pool.acquire(job.id, [{ kind: 'path', key: '/workspace/open.txt', mode: 'write' }], { signal });
+    if (job.transcript === 'Open app') job.resourceHold = { promise: child.promise, stop: async () => child.resolve() };
+    return { text: `${job.transcript} done.` };
+  } });
+  pool.store.limit = 2;
+  const first = await pool.submit({ ownerId: 'owner', transcript: 'Open app' });
+  await pool.waitFor(first.id, { ownerId: 'owner' });
+  assert.equal(pool.list('owner').find(job => job.id === first.id).resourcesHeld, true, 'held at first');
+
+  // Past the ceiling the hold is released rather than blocking forever.
+  await new Promise(resolve => setTimeout(resolve, 150));
+  const released = pool.list('owner').find(job => job.id === first.id);
+  assert.notEqual(released.resourcesHeld, true, 'the queue is free again');
+  assert.equal(released.holdExpired, true, 'the panel is told the program is still running');
+
+  // The next request runs immediately instead of waiting for that child.
+  const second = await pool.submit({ ownerId: 'owner', transcript: 'Next task' });
+  assert.equal((await pool.waitFor(second.id, { ownerId: 'owner' })).task.status, 'done');
+  child.resolve();
+});

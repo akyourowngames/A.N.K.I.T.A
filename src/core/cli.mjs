@@ -63,6 +63,7 @@ import { names as toolNames, cleanupJobs, displayArgs } from "../../tools/index.
 import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from '../tooling/job-ui.mjs';
 import * as voiceChannel from '../channels/voice.mjs';
 import { useHandsFreePlayback } from "../channels/audio-device.mjs";
+import { voiceCommand } from '../../desktop/shared/voice.mjs';
 
 function packageVersion() {
   try {
@@ -1149,7 +1150,10 @@ export async function main({ voiceIO = {} } = {}) {
         if (said === null) { term.line(c.dim('  leaving voice mode.')); break; }
         const clean = String(said || '').trim();
         if (!clean) { session.speech.resume(); continue; }
-        if (/^(exit|quit|end voice|goodbye|bye)[.!?]?$/i.test(clean)) { term.line(c.dim('  leaving voice mode.')); break; }
+        // Shared phrase table keeps terminal and desktop exit/stop wording identical.
+        const command = voiceCommand(clean, { wake: false, stop: config.voiceStopWord !== false });
+        if (command.kind === 'end') { term.line(c.dim('  leaving voice mode.')); break; }
+        if (command.kind === 'stop') { voiceJobs?.cancelOwner(voiceOwner); session.speech.interrupt(); term.line(c.dim('  stopped.')); session.speech.resume(); continue; }
         term.line(`${c.magenta(config.username)} ${c.dim('›')} ${clean}`);
         const language = speechLanguage, turn = session.captureSpeechTurn;
         session.speech.acceptTurn(turn);

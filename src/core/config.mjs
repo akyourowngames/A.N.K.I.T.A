@@ -54,6 +54,7 @@ const DEFAULTS = {
   subagentMaxResultBytes: SUBAGENT_DEFAULTS.resultBytes,
   browserToolFocus: false, // Boolean: opt-in until repeated live capability parity clears the browser-lab gate.
   browserHistoryCompaction: false, // Boolean: opt-in request projection; mixed-page evidence retention still needs live parity.
+  contextCompaction: false, // Boolean: summarize dropped conversation history instead of deleting it. Opt-in until live parity is verified.
   browserRuntimeV2: false, // Boolean: experimental structured browser runtime; enable only after paired capability/speed gates.
   browserEvidenceRetention: false, // Boolean: opt-in grounded task quotes; requires structured runtime observations.
   browserProgressTracking: false, // Boolean: opt-in state-aware recovery guidance; existing hard limits still apply.
@@ -132,6 +133,19 @@ const DEFAULTS = {
   voiceBargeIn: true,
   voiceBargeDb: -25,
   voiceHfpRouting: true,
+  // Attention ladder inside a voice session. With a wake word, the session rests
+  // in standby (only "Ankita" is acted on) and returns there after each request;
+  // voiceIdleMs is how long a bare "Ankita" keeps full listening open.
+  voiceWakeWord: true,
+  voiceStopWord: true,
+  voiceIdleMs: 15000,
+  voiceStandbyMs: 600000,
+  // After Ankita answers, stay listening this long so a follow-up needs no wake
+  // word. 0 restores strict "say the name every time" behaviour.
+  voiceFollowUpMs: 25000,
+  // A child process must never hold the voice queue open indefinitely.
+  voiceHoldMaxMs: 120000,
+  appIndexMaxAgeDays: 7,
   voiceAddress: "sir",
   voiceSpeakItems: 8,
   voiceSpeakSentences: 6,
@@ -274,6 +288,10 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     subagentMaxResultBytes: clampInt(pick("SUBAGENT_MAX_RESULT_BYTES"), SUBAGENT_LIMITS.minResultBytes, SUBAGENT_LIMITS.maxResultBytes, DEFAULTS.subagentMaxResultBytes),
     browserToolFocus: onOff(pick("BROWSER_TOOL_FOCUS"), DEFAULTS.browserToolFocus),
     browserHistoryCompaction: onOff(pick("BROWSER_HISTORY_COMPACTION"), DEFAULTS.browserHistoryCompaction),
+    contextCompaction: onOff(pick("CONTEXT_COMPACTION"), DEFAULTS.contextCompaction),
+    // A host may choose a different default (the desktop app enables it), but an
+    // explicit CONTEXT_COMPACTION in .env must still win over that choice.
+    contextCompactionExplicit: pick("CONTEXT_COMPACTION") !== undefined,
     browserRuntimeV2: onOff(pick("BROWSER_RUNTIME_V2"), DEFAULTS.browserRuntimeV2),
     browserEvidenceRetention: onOff(pick("BROWSER_EVIDENCE_RETENTION"), DEFAULTS.browserEvidenceRetention),
     browserProgressTracking: onOff(pick("BROWSER_PROGRESS_TRACKING"), DEFAULTS.browserProgressTracking),
@@ -349,6 +367,30 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     cloudflareAccountId: pick("CLOUDFLARE_ACCOUNT_ID") || "",
     cloudflareApiToken: pick("CLOUDFLARE_API_TOKEN") || pick("CLOUDFLARE_AUTH_TOKEN") || "",
     embedModel: pick("EMBED_MODEL") || "@cf/qwen/qwen3-embedding-0.6b",
+    // Which embedding backend to use. "auto" prefers Cloudflare credentials,
+    // then a local OpenAI-compatible server, then no semantic search at all.
+    embedProvider: (() => {
+      const value = String(pick("EMBED_PROVIDER") || "auto").trim().toLowerCase();
+      return ["auto", "cloudflare", "local", "off"].includes(value) ? value : "auto";
+    })(),
+    // A local OpenAI-compatible embeddings endpoint (Ollama, LM Studio, llama.cpp).
+    // Kept separate from chat providers: it only needs /embeddings.
+    embedLocalBase: (pick("EMBED_LOCAL_BASE") || "").replace(/\/+$/, ""),
+    embedLocalModel: pick("EMBED_LOCAL_MODEL") || "nomic-embed-text",
+    embedLocalApiKey: pick("EMBED_LOCAL_API_KEY") || "",
+    // Memory quality gates. Merge above the dedup threshold; flag conflicts inside
+    // a narrow band where two facts look related but disagree. Conservative by
+    // default: the code never rewrites a fact on its own.
+    memoryDedupThreshold: (() => {
+      const n = Number(pick("MEMORY_DEDUP_THRESHOLD") ?? 0.85);
+      return Number.isFinite(n) && n > 0 && n <= 1 ? n : 0.85;
+    })(),
+    memoryConflictLow: (() => {
+      const n = Number(pick("MEMORY_CONFLICT_LOW") ?? 0.55);
+      return Number.isFinite(n) && n >= 0 && n < 1 ? n : 0.55;
+    })(),
+    memoryStaleDays: Math.min(3650, posInt(pick("MEMORY_STALE_DAYS"), 90)),
+    memoryForgetDays: Math.min(3650, posInt(pick("MEMORY_FORGET_DAYS"), 365)),
     embedQueryInstruction: pick("EMBED_QUERY_INSTRUCTION"),
     embedTimeoutMs: Math.min(30000, posInt(pick("EMBED_TIMEOUT_MS"), 2000)),
     embedIndexTimeoutMs: Math.min(120000, posInt(pick("EMBED_INDEX_TIMEOUT_MS"), 30000)),
@@ -466,6 +508,14 @@ export function loadConfig(envPath = path.join(process.cwd(), ".env"), { globalE
     // Route playback to a Bluetooth headset's Hands-Free endpoint while its mic
     // is open, so barge-in doesn't silence replies (A2DP drops during capture).
     voiceHfpRouting: onOff(pick("VOICE_HFP_ROUTING"), DEFAULTS.voiceHfpRouting),
+    voiceWakeWord: onOff(pick("VOICE_WAKE_WORD"), DEFAULTS.voiceWakeWord),
+    voiceStopWord: onOff(pick("VOICE_STOP_WORD"), DEFAULTS.voiceStopWord),
+    // Listening window after a bare wake word (0 = return to standby at once).
+    voiceIdleMs: clampInt(pick("VOICE_IDLE_MS"), 0, 600000, DEFAULTS.voiceIdleMs),
+    voiceFollowUpMs: clampInt(pick("VOICE_FOLLOW_UP_MS"), 0, 300000, DEFAULTS.voiceFollowUpMs),
+    voiceHoldMaxMs: clampInt(pick("VOICE_HOLD_MAX_MS"), 10000, 1800000, DEFAULTS.voiceHoldMaxMs),
+    appIndexMaxAgeDays: clampInt(pick("APP_INDEX_MAX_AGE_DAYS"), 1, 365, DEFAULTS.appIndexMaxAgeDays),
+    voiceStandbyMs: clampInt(pick("VOICE_STANDBY_MS"), 60000, 3600000, DEFAULTS.voiceStandbyMs),
     // An empty address is useful ("off" / "none" disables the salutation).
     voiceAddress: (() => {
       const v = pick("VOICE_ADDRESS");

@@ -155,6 +155,86 @@ test('changing the window updates live agents without reconnecting', async () =>
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
 
+test('long-conversation compaction is on by default in the app, saved, and reaches live agents without a reconnect', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-settings-compaction-'));
+  const client = { id: 'client' };
+  const bootstrap = async ({ config }) => ({ client, tool: null, models: [{ id: 'alpha', name: 'Alpha', tools: true }], model: 'alpha', provider: { name: config.provider } });
+  const mcp = { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} };
+  try {
+    const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768 };
+    assert.equal(applyDesktopSettings(base, {}).contextCompaction, true, 'nothing saved means the app default: on');
+    assert.equal(applyDesktopSettings({ ...base, contextCompactionExplicit: true, contextCompaction: false }, {}).contextCompaction, false,
+      'an explicit env CONTEXT_COMPACTION=off wins over the app default');
+    assert.equal(applyDesktopSettings(base, { contextCompaction: false }).contextCompaction, false, 'a saved off choice wins');
+    assert.equal(applyDesktopSettings(base, { contextCompaction: true }).contextCompaction, true);
+
+    const store = new DesktopSettingsStore(path.join(dir, 'plain-settings.json'));
+    store.update({ contextCompaction: false });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.contextCompaction, false, 'the choice persists as a boolean');
+    assert.equal(fresh.publicView(applyDesktopSettings(base, fresh.data)).contextCompaction, false);
+    assert.equal(new DesktopSettingsStore(path.join(dir, 'empty-settings.json')).load().publicView(applyDesktopSettings(base, {})).contextCompaction, true,
+      'with nothing saved the view shows the effective default: on');
+
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'desktop-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+      config: { ...base }, bootstrap, mcp, emit: () => {},
+    });
+    await engine.init();
+    const agent = { config: { ...engine.config }, contextWindow: 32768 };
+    engine.agents.set('thread', agent);
+    const result = await engine.saveDesktopSettings({ contextCompaction: true });
+    assert.equal(result.preferences.contextCompaction, true);
+    assert.equal(engine.client, client, 'the provider connection is reused');
+    assert.equal(engine.config.contextCompaction, true);
+    assert.equal(agent.config.contextCompaction, true, 'the live teammate picks up the switch');
+    await engine.saveDesktopSettings({ contextCompaction: false });
+    assert.equal(agent.config.contextCompaction, false);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('hands-free behaviour settings persist, validate, and reach live voice without ending it', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-voice-behavior-'));
+  try {
+    const base = { provider: 'custom', apiBase: 'http://localhost:11434/v1', apiKey: 'k', model: 'alpha', tools: true, contextWindow: 32768 };
+    // Defaults: on, on, a 15 s listening window, 10 min to mic-off — shown even
+    // with nothing saved.
+    const defaults = new DesktopSettingsStore(path.join(dir, 'empty.json')).load().publicView(applyDesktopSettings(base, {}));
+    assert.equal(defaults.voiceWakeWord, true);
+    assert.equal(defaults.voiceStopWord, true);
+    assert.equal(defaults.voiceIdleMs, 15000);
+    assert.equal(defaults.voiceStandbyMs, 600000);
+
+    const store = new DesktopSettingsStore(path.join(dir, 'settings.json'));
+    store.update({ voiceWakeWord: false, voiceStopWord: false, voiceIdleMs: 45000, voiceStandbyMs: 300000 });
+    const fresh = new DesktopSettingsStore(store.file).load();
+    assert.equal(fresh.data.voiceWakeWord, false);
+    assert.equal(fresh.data.voiceIdleMs, 45000);
+    const applied = applyDesktopSettings(base, fresh.data);
+    assert.equal(applied.voiceWakeWord, false, 'saved values reach the runtime config');
+    assert.equal(applied.voiceStandbyMs, 300000);
+
+    // Invalid values are rejected instead of persisted.
+    assert.throws(() => store.update({ voiceIdleMs: -1 }), /valid standby delay/);
+    assert.throws(() => store.update({ voiceStandbyMs: 99999999 }), /valid microphone timeout/);
+
+    // These are behaviour toggles, not device/credential changes: saving them
+    // while voice is live must not throw the "end voice first" guard.
+    const engine = new DesktopEngine({
+      teammateFile: path.join(dir, 'teammates.json'), settingsFile: path.join(dir, 'engine-settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
+      config: { ...base }, mcp: { connectedIds: [], reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {} }, emit: () => {},
+    });
+    await engine.init();
+    engine._voice = { snapshot: () => ({ active: true }), close: async () => {}, end: async () => {} }; // Pretend a session owns the mic.
+    const result = await engine.saveDesktopSettings({ voiceStopWord: false, voiceIdleMs: 60000 });
+    assert.equal(result.preferences.voiceStopWord, false);
+    assert.equal(engine.config.voiceStopWord, false, 'the live config is updated in place');
+    assert.equal(engine.config.voiceIdleMs, 60000);
+    await engine.close();
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
+});
+
 test('custom provider connection checks models with a bounded request and never echoes the key', async () => {
   let seen;
   const result = await testCustomProvider({ apiBase: 'https://models.example/v1', apiKey: 'private-token', fetchImpl: async (url, options) => {

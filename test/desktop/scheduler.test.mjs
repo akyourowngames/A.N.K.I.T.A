@@ -153,17 +153,78 @@ test('a ref rejected before interaction can recover; a model can stop for foregr
   await run({ action: 'needs_input', reason: 'An authenticator code is required' }, { backgroundJob: true, requireForeground: text => { message = text; } });
   assert.match(message, /authenticator/);
 });
-test('heartbeat skips a busy teammate and suppresses a quiet model response', async t => {
+test('heartbeat defers a busy teammate, coalesces missed ticks, then runs once and stays quiet', async t => {
   const f = await fixture(t, async () => 'HEARTBEAT_OK');
   const r = f.add({ kind: 'heartbeat', cron: '* * * * *' });
   f.scheduler.store.updateRoutine(r.id, { createdAt: '2026-09-27T08:00:00Z' });
   f.engine.turns.set('owner', Promise.resolve());
-  await f.scheduler.tick(); await f.scheduler.drain(); assert.equal(f.workers.length, 0);
-  f.engine.turns.clear(); f.clock('2026-09-27T09:01:00Z');
   await f.scheduler.tick(); await f.scheduler.drain();
-  assert.equal(f.workers.length, 1); assert.equal(f.delivered.length, 0);
+  assert.equal(f.workers.length, 0, 'a busy teammate is never interrupted');
+  assert.equal(f.scheduler.list()[0].pendingHeartbeatAt, '2026-09-27T09:00:00.000Z', 'the check is deferred, not dropped');
+
+  // A second interval while still busy coalesces into the same pending check.
+  f.clock('2026-09-27T09:31:00Z');
+  await f.scheduler.tick(); await f.scheduler.drain();
+  assert.equal(f.workers.length, 0);
+  assert.equal(f.scheduler.list()[0].coalescedHeartbeats, 2, 'missed ticks collapse instead of queueing a backlog');
+
+  f.engine.turns.clear(); f.clock('2026-09-27T10:01:00Z');
+  await f.scheduler.tick(); await f.scheduler.drain();
+  assert.equal(f.workers.length, 1, 'one check runs once the chat is free');
+  assert.equal(f.delivered.length, 0);
   assert.equal(f.scheduler.list()[0].lastStatus, 'quiet');
+  assert.equal(f.scheduler.list()[0].pendingHeartbeatAt, null, 'the deferred slot is cleared');
+  assert.equal(f.scheduler.list()[0].coalescedHeartbeats, 0);
 });
+
+test('a silent job records its run and stays out of chat, but a failure still delivers', async t => {
+  const quiet = await fixture(t, async () => 'Checked everything. No changes. [SILENT]');
+  const a = quiet.add({});
+  await quiet.scheduler.runNow(a.id); await quiet.scheduler.drain();
+  assert.equal(quiet.delivered.length, 0, 'a silent run does not post');
+  assert.equal(quiet.scheduler.list()[0].lastReceipt.silent, true);
+  assert.equal(quiet.scheduler.list()[0].lastStatus, 'ok', 'silence is not a failure');
+
+  const failing = await fixture(t, async () => { const error = new Error('Reading failed'); error.jobStatus = 'error'; throw error; });
+  const b = failing.add({});
+  await failing.scheduler.runNow(b.id); await failing.scheduler.drain();
+  assert.equal(failing.delivered.length, 1, 'a failure is never silenced');
+});
+
+test('a repeated failure alerts once, and a delivery problem does not count as a job failure', async t => {
+  const f = await fixture(t, async () => { const error = new Error('Reading failed'); error.jobStatus = 'error'; throw error; });
+  const r = f.add({});
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  const firstAlerts = f.events.filter(event => event.type === 'routine-failed').length;
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  const allAlerts = f.events.filter(event => event.type === 'routine-failed').length;
+  assert.equal(firstAlerts, 1);
+  assert.equal(allAlerts, 1, 'the same incident is not announced again');
+  assert.equal(f.scheduler.list()[0].failureStreak, 2);
+
+  // A delivery throw marks the receipt, not the routine's failure streak.
+  const g = await fixture(t, async () => 'Read complete.');
+  g.engine.deliverRoutine = async () => { const error = new Error('chat unavailable'); throw error; };
+  const h = g.add({});
+  await g.scheduler.runNow(h.id); await g.scheduler.drain();
+  assert.equal(g.scheduler.list()[0].failureStreak, 0, 'the job itself succeeded');
+  assert.ok(g.events.some(event => event.type === 'routine-queued'), 'the handoff is reported as a queue problem');
+});
+
+test('the away summary and pending list describe waiting work without any chat traffic', async t => {
+  const f = await fixture(t, async () => 'Read complete.');
+  const r = f.add({ name: 'Daily read' });
+  // Pretend the result finished but the handoff is still waiting.
+  f.engine.deliverRoutine = async () => false;
+  await f.scheduler.runNow(r.id); await f.scheduler.drain();
+  const pending = f.scheduler.pendingDeliveries('owner');
+  assert.equal(pending.length, 1);
+  assert.equal(pending[0].name, 'Daily read');
+  const away = f.scheduler.awaySummary('owner');
+  assert.equal(away.readyToPost, 1);
+  assert.equal(away.needsYou, 0);
+});
+
 
 test('jobs use fresh owner project context and heartbeat briefing without borrowing foreground state', async t => {
   const f = await fixture(t, async function() {

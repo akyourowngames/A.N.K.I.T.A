@@ -104,6 +104,12 @@
 .desktop-workbench .blank-workspace { padding: 30px; }
 .desktop-workbench .blank-workspace .button-primary { display: inline-flex; align-items: center; gap: 7px; margin-top: 16px; }
 .desktop-workbench .user-bubble { border: 0; border-radius: 18px 18px 5px 18px; background: var(--surface); color: var(--text); font-size: 14px; line-height: 1.6; }
+/* A compaction recap sits where old turns used to be: quiet, labelled, and
+   visually distinct from a real user bubble so nobody misreads it as typed. */
+.desktop-workbench .compacted-message { margin: 4px 0; }
+.desktop-workbench .compacted-card { border: 1px dashed var(--edge-strong); border-radius: 12px; background: color-mix(in srgb, var(--surface) 55%, transparent); padding: 11px 14px; }
+.desktop-workbench .compacted-label { display: flex; align-items: center; gap: 6px; color: var(--text-dim); font-size: 10px; letter-spacing: .2px; text-transform: uppercase; margin-bottom: 7px; }
+.desktop-workbench .compacted-body { color: var(--text-soft); font-size: 12.5px; line-height: 1.65; white-space: pre-wrap; }
 .desktop-workbench .message-avatar { width: 27px; height: 25px; margin-top: 2px; }
 .desktop-workbench .assistant-name { color: var(--text-soft); font-size: 11px; font-weight: 550; }
 .desktop-workbench .markdown-body { font-size: 14px; line-height: 1.75; color: var(--text-soft); }
@@ -400,6 +406,18 @@
 .settings-model-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; color: var(--text-dim); font-size: 10px; padding-top: 12px; }
 .desktop-workbench .settings-model-choice .settings-help { margin: 12px 0 0 !important; }
 .desktop-workbench .settings-model-limits .settings-field { margin: 0; }
+/* Long-conversation compaction: the switch leads, a tiny visual explains the
+   "old turns -> recap -> recent turns" idea without reading the copy. */
+.desktop-workbench .settings-model-compaction { margin-top: 14px; }
+.desktop-workbench .settings-model-compaction .settings-switch-row { border-top: 0; padding-top: 4px; }
+.settings-value-tag.is-on { color: var(--gold); border-color: var(--gold); }
+.settings-compaction-preview { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 14px 0 0; padding: 10px 12px; border: 1px dashed var(--edge-strong); border-radius: 10px; background: var(--canvas); transition: border-color var(--desktop-motion), background var(--desktop-motion); }
+.settings-compaction-preview.is-on { border-style: solid; border-color: var(--gold); background: var(--surface); }
+.settings-compaction-chip { display: inline-flex; align-items: center; gap: 5px; padding: 5px 9px; border: 1px solid var(--edge); border-radius: 999px; background: var(--surface-hover); color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+.settings-compaction-preview.is-on .settings-compaction-chip { color: var(--text-soft); }
+.settings-compaction-preview.is-on .settings-compaction-chip.is-recap { color: var(--gold); border-color: var(--gold); background: var(--accent-soft); }
+.settings-compaction-arrow { color: var(--text-dim); display: inline-flex; }
+.settings-compaction-preview.is-on .settings-compaction-arrow { color: var(--gold); }
 .desktop-workbench .settings-field small { color: var(--text-dim); font-size: 10px; line-height: 1.6; display: block; margin-top: 8px; }
 .settings-savebar { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 18px; padding: 12px 0; border-bottom: 1px solid var(--edge); }
 .settings-savebar > span { color: var(--text-dim); font-size: 10px; }
@@ -546,3 +564,26 @@
   .desktop-workbench :is(.project-tab-content, .context-record-body) { animation: none; }
   .desktop-workbench :is(.project-tabs button, .section-primary, .section-secondary, .settings-switch-row input, .settings-switch-row input::before) { transition: none; }
 }
+
+/* ---- Scheduled results: waiting list, away strip, live step ---- */
+/* The panel, not chat, is where waiting work lives, so these are calm rows. */
+.desktop-workbench .jobs-away-strip { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); color: var(--text-dim); font-size: 10.5px; }
+.desktop-workbench .jobs-away-lead { display: inline-flex; align-items: center; gap: 6px; color: var(--text-soft); font-weight: 500; }
+.desktop-workbench .jobs-away-strip strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.desktop-workbench .jobs-away-strip .is-attention strong { color: var(--gold-light); }
+.desktop-workbench .jobs-group.ready .jobs-group-title { color: var(--gold-light); }
+.desktop-workbench .upcoming-job-icon.ready { color: var(--green, #4ade80); }
+.desktop-workbench .jobs-delivery { border: 1px solid var(--edge); border-radius: 10px; margin: 0 0 6px; background: var(--desktop-panel); overflow: hidden; }
+.desktop-workbench .jobs-delivery-head { display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 11px; background: none; border: 0; color: var(--text); text-align: left; cursor: pointer; font: inherit; }
+.desktop-workbench .jobs-delivery-head > span:nth-child(2) { flex: 1; min-width: 0; }
+.desktop-workbench .jobs-delivery-head strong { display: block; font-size: 12px; font-weight: 500; }
+.desktop-workbench .jobs-delivery-head small { display: block; margin-top: 3px; color: var(--text-dim); font-size: 10px; }
+.desktop-workbench .jobs-delivery-head > svg { color: var(--text-dim); transition: transform var(--desktop-motion); }
+.desktop-workbench .jobs-delivery[data-open="true"] .jobs-delivery-head > svg { transform: rotate(180deg); }
+.desktop-workbench .jobs-delivery-body { padding: 0 12px 12px 51px; }
+.desktop-workbench .jobs-delivery-body p { margin: 0 0 8px; color: var(--text-soft); font-size: 11.5px; line-height: 1.6; white-space: pre-wrap; }
+.desktop-workbench .job-live-run { display: flex; align-items: center; gap: 11px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid var(--edge); border-radius: 10px; background: var(--surface); }
+.desktop-workbench .job-live-run > div { min-width: 0; }
+.desktop-workbench .job-live-run span { display: block; color: var(--text-dim); font-size: 10px; }
+.desktop-workbench .job-live-run strong { display: block; color: var(--text); font-size: 12px; font-variant-numeric: tabular-nums; }
+.desktop-workbench .job-live-run small { display: block; margin-top: 2px; color: var(--text-dim); font-size: 10px; }

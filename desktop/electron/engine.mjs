@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { Agent } from '../../src/core/agent.mjs';
+import { Agent, COMPACTION_SUMMARY_PREFIX } from '../../src/core/agent.mjs';
 import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG, MCP_TIERS_FILE, COMPOSIO_GRANTS_FILE } from '../../src/core/config.mjs';
 import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
 import { ComposioGrantStore } from '../../src/integrations/composio-oauth.mjs';
@@ -31,7 +31,7 @@ import { SecureStore } from './secure-store.mjs';
 import { CredentialRequests } from './credential-requests.mjs';
 import { BrowserCredentials } from './browser-credentials.mjs';
 import { CREDENTIAL_STORE_FILENAME } from '../../src/integrations/browser-credentials.mjs';
-import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS } from './settings.mjs';
+import { DesktopSettingsStore, applyDesktopSettings, seedFreshDesktopProvider, testCustomProvider, VOICE_SETTINGS_KEYS, VOICE_BEHAVIOR_KEYS } from './settings.mjs';
 import { DesktopVoice } from './voice.mjs';
 import { withVoiceBrain } from '../../src/core/voice-session.mjs';
 import { captureVoiceContext, runVoiceWorker } from '../../src/core/voice-worker.mjs';
@@ -218,7 +218,13 @@ export function threadMessages(messages = []) {
     if (entry.role === 'user' || entry.role === 'assistant') {
       const content = messageText(entry.content);
       const attachments = attachmentNames(entry.content);
-      if (content || attachments.length) out.push({ id: `message-${i}`, role: entry.role, content, attachments: attachments.length ? attachments : undefined });
+      // A compaction recap is model-facing bookkeeping, not something the user
+      // typed: surface it as a labelled note instead of a fake user bubble.
+      const compacted = entry.role === 'user' && content.startsWith(COMPACTION_SUMMARY_PREFIX);
+      // The marker is stripped here: it is bookkeeping for this mapping only and
+      // must not read as text the teammate said.
+      const shown = compacted ? content.slice(COMPACTION_SUMMARY_PREFIX.length).trim() : content;
+      if (shown || attachments.length) out.push({ id: `message-${i}`, role: compacted ? 'assistant' : entry.role, content: shown, attachments: attachments.length ? attachments : undefined, ...(compacted ? { compacted: true } : {}) });
       for (const call of entry.tool_calls || []) {
         let args = {};
         try { args = JSON.parse(call.function?.arguments || '{}'); } catch {}
@@ -558,7 +564,7 @@ export class DesktopEngine {
       || (['custom', 'modal'].includes(active) && Object.hasOwn(patch, 'customApiKey'))
       || (active === 'groq' && Object.hasOwn(patch, 'groqApiKey'))
       || (active === 'kilo' && Object.hasOwn(patch, 'kiloApiKey'));
-    const tune = ['contextWindow', 'maxTokens', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
+    const tune = ['contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone'].some(key => Object.hasOwn(patch, key));
     if ((voiceSetupChanged || reconnect || tune || Object.hasOwn(patch, 'model')) && this._voice?.snapshot().active) throw new Error('End voice before changing its setup or provider.');
     if ((reconnect || Object.hasOwn(patch, 'model') || tune) && this.turns.size) throw new Error('Wait for active replies to finish before changing the provider or model');
     if (reconnect) {
@@ -590,6 +596,7 @@ export class DesktopEngine {
       const window = {
         contextWindow: nextConfig.contextWindow, contextWindowExplicit: nextConfig.contextWindowExplicit,
         maxTokens: nextConfig.maxTokens, maxTokensExplicit: nextConfig.maxTokensExplicit,
+        contextCompaction: nextConfig.contextCompaction,
         imageApiBase: nextConfig.imageApiBase, imageApiKey: nextConfig.imageApiKey, imageModel: nextConfig.imageModel,
         unsplashAccessKey: nextConfig.unsplashAccessKey, pixabayApiKey: nextConfig.pixabayApiKey,
         username: nextConfig.username, timeZone: nextConfig.timeZone,
@@ -605,6 +612,9 @@ export class DesktopEngine {
       void this.connectTools();
     }
     for (const key of VOICE_SETTINGS_KEYS) if (Object.hasOwn(patch, key)) this.config[key] = nextConfig[key];
+    // Behaviour toggles reach the live session through getConfig() on its next
+    // read; no reconnect and no "end voice first" requirement.
+    for (const key of VOICE_BEHAVIOR_KEYS) if (Object.hasOwn(patch, key)) this.config[key] = nextConfig[key];
     const payload = this.settingsPayload();
     this.secretHistory.enabled = this.desktopSettings.data.secretScrubbing !== false;
     this.emit({ type: 'settings-updated', ...payload });
@@ -881,7 +891,10 @@ export class DesktopEngine {
     if (deliveredIds.includes(receipt.runId)) { this.routineDeliveries.delete(receipt.runId); return true; }
     if (this.turns.has(id)) {
       this.routineDeliveries.set(receipt.runId, receipt);
-      this.emit({ type: 'routine-queued', threadId: id, routineId: receipt.routineId, runId: receipt.runId }); return false;
+      // Carry the title so the panel can list a waiting result without reading
+      // the receipt file again on every event.
+      this.emit({ type: 'routine-queued', threadId: id, routineId: receipt.routineId, runId: receipt.runId, detail: receipt.name || '' });
+      return false;
     }
     const turnId = randomUUID(), messageId = randomUUID();
     const work = Promise.resolve().then(async () => {
@@ -902,7 +915,9 @@ export class DesktopEngine {
           agent.abort = new AbortController();
           agent.useTools = false;
           agent.messages[0] = { ...agent.messages[0], content: `${agent.messages[0].content}\n\n${ROUTINE_DELIVERY_POLICY}` };
-          agent.trimHistory?.(agent.config?.historyMessages ?? agent.config?.historyLines);
+          // A routine delivery is a one-shot projection of the owner's thread;
+          // compacting it would pay for a recap that is discarded with `original`.
+          await agent.trimHistory?.(agent.config?.historyMessages ?? agent.config?.historyLines, { compact: false });
           const result = await agent.streamTurn({ useTools: false,
             onDelta: text => this.emit({ type: 'assistant-delta', threadId: id, messageId, text }),
             onReset: () => this.emit({ type: 'message-reset', threadId: id, messageId }),
@@ -953,6 +968,15 @@ export class DesktopEngine {
     this.flushVoiceDeliveries(id);
     for (const receipt of this.routineDeliveries.values()) if (receipt.threadId === id) await this.deliverRoutine(receipt);
     await this.scheduler?.retryDeliveries();
+    this.emitDeliveryState(id);
+  }
+
+  /** Tell the panel exactly which results are still waiting for this teammate. */
+  emitDeliveryState(id) {
+    try {
+      const pending = this.scheduler?.pendingDeliveries?.(id) || [];
+      this.emit({ type: 'routine-delivery-state', threadId: id, pending });
+    } catch { /* Panel refresh is best-effort; the queue itself is durable. */ }
   }
 
   _savedThread(id) {
@@ -1348,6 +1372,8 @@ export class DesktopEngine {
       persist();
       this.turns.delete(id); this.browserControllers.delete(id); this.approvals.cancelThread(id); this.credentialRequests.cancelThread(id);
       this.emit({ type: 'message-end', threadId: id, messageId }); this.emit({ type: 'turn-end', threadId: id, turnId });
+      // Same rule as a typed turn: results held during this turn are released now.
+      void this.flushRoutineDeliveries(id).catch(err => this.emit({ type: 'scheduler-error', message: err.message }));
     });
     this.turns.set(id, work); void work.catch(() => {}); return { turnId };
   }
