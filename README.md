@@ -1,15 +1,9 @@
-# Ankita
+# Ankita AI
 
-An AI workspace for getting work done on your computer. Ankita brings teammate
-conversations, real tools, projects and scheduled work into a desktop app, a
-floating companion and a terminal CLI.
+**Ankita AI is a personal AI companion for your desktop, built by Krish Verma** — open-source (MIT), local-first, your models. A little companion, a lot more possible: chat, files, terminal and browser tools together, with a floating companion that shows what your assistant is doing.
 
-Ask it to inspect a repository, edit files, run commands, research a page or
-handle a recurring task. Tool activity, results and approval requests stay in the
-conversation. Choose ChatGPT Browser, GitHub Copilot, Groq, Kilo or an
-OpenAI-compatible provider.
-
-[Download for Windows](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
+[Get Ankita for Windows](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
+ · [Ankita website](https://ankita-sable.vercel.app)
  · [Release notes](CHANGELOG.md)
  · [Contributing](CONTRIBUTING.md)
  · [MIT license](LICENSE)
