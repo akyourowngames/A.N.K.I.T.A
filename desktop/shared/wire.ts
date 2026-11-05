@@ -94,6 +94,8 @@ export type PhonePairingSnapshot = {
 export type SubagentUsage = { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; estimated_cost?: number };
 export type SubagentCall = { id: string; function?: { name?: string; arguments?: string } };
 export type SubagentEvent = (
+  | { type: 'subagent-queued'; threadId: string; turnId?: string | null; subagentId: string; parentCallId: string | null; subagentType: string; description: string; prompt?: string; depth?: number }
+  | { type: 'subagent-message'; threadId: string; turnId?: string | null; subagentId: string; parentCallId: string | null; messageId: string; from: string; to: string; message: string; createdAt: string }
   | { type: 'subagent-start'; threadId: string; turnId?: string | null; subagentId: string; parentCallId: string | null; subagentType: string; description: string; prompt?: string; depth?: number }
   | { type: 'subagent-delta'; threadId: string; turnId?: string | null; subagentId: string; parentCallId: string | null; text: string }
   | { type: 'subagent-tool-call'; threadId: string; turnId?: string | null; subagentId: string; parentCallId: string | null; call: SubagentCall }
@@ -151,6 +153,7 @@ export type EngineEvent = (
   | { type: 'turn-start'; threadId: string; turnId: string; model: string; text: string; source?: 'routine' | 'voice'; attachments?: { name: string; image?: boolean }[] }
   | { type: 'turn-end'; threadId: string; turnId: string; source?: 'voice' }
   | { type: 'skills-loaded'; threadId: string; turnId: string; names: string[] }
+  | { type: 'context-compaction'; threadId: string; phase: 'started' | 'completed' | 'skipped'; summary?: string; beforeMessages?: number; afterMessages?: number }
   | { type: 'message-start' | 'message-end' | 'message-reset'; threadId: string; messageId: string }
   | { type: 'assistant-delta' | 'reasoning-delta'; threadId: string; messageId?: string; text: string }
   | { type: 'tool-call'; threadId: string; callId: string; name: string; args: unknown }

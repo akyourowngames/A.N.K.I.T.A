@@ -13,6 +13,11 @@ import {
   SUBAGENT_EVENT,
   SUBAGENT_EVENT_RESULT_BYTES,
   SUBAGENT_LIMITS,
+  SUBAGENT_MESSAGE_BYTES,
+  SUBAGENT_INBOX_LIMIT,
+  SUBAGENT_PARENT_TARGET,
+  SUBAGENT_WAIT_MS,
+  SUBAGENT_MAX_WAIT_MS,
   SUBAGENT_STATUS,
   SUBAGENT_TRANSCRIPT_PREFIX,
   SUBAGENT_TRANSCRIPT_KEEP,
@@ -22,8 +27,8 @@ import {
   resolveTools,
 } from './registry.mjs';
 
-// Workers share one workspace. Serialize them per resolved path so two
-// delegations from different threads cannot edit the same tree at once.
+// Workers and foreground mutations share one workspace. Serialize them per
+// resolved path so different threads cannot edit the same tree at once.
 const workspaceTails = new Map();
 
 function clampInt(value, min, max, fallback) {
@@ -142,6 +147,11 @@ function withWorkspaceLock(key, signal, task) {
   })();
 }
 
+/** Parent tool mutations join the same canonical workspace queue as workers. */
+export function withWorkspaceMutation(parent, signal, task) {
+  return withWorkspaceLock(workspaceKey(parent), signal, task);
+}
+
 /**
  * Keep only the newest subagent transcripts. Teammate sessions, project files
  * and anything without the child prefix are never touched.
@@ -167,6 +177,13 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
   if (typeof createAgent !== 'function') throw new TypeError('createSubagentRuntime requires a createAgent function');
   const semaphore = new Semaphore(clampInt(parent.config?.maxConcurrentSubagents, 1, SUBAGENT_LIMITS.maxConcurrent, SUBAGENT_DEFAULTS.concurrency));
   let startedThisTurn = 0;
+  const records = new Map();
+  const inbox = [];
+  const progressWaiters = new Set();
+  const notifyProgress = () => {
+    for (const resolve of progressWaiters) resolve();
+    progressWaiters.clear();
+  };
 
   const config = () => parent.config ?? {};
 
@@ -195,7 +212,7 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
     return resolveTimeout(args, config());
   }
 
-  function createChild({ id, type, preset, depth, description, args }) {
+  function createChild({ id, type, preset, depth, description, args, record }) {
     const cfg = config();
     const stepLimit = resolveStepLimit(args, cfg);
     const callLimit = clampInt(cfg.subagentMaxToolCalls, 1, SUBAGENT_LIMITS.maxToolCalls, SUBAGENT_DEFAULTS.toolCalls);
@@ -204,6 +221,8 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
       client: parent.client,
       config: {
         ...cfg,
+        model: parent.model ?? cfg.model,
+        contextWindow: parent.contextLimit?.(parent.client, parent.model) ?? parent.contextWindow ?? cfg.contextWindow,
         // Defense in depth: depth checks also run here, but a child must never
         // advertise or execute delegation even if a parent is misconfigured.
         subagentsEnabled: false,
@@ -217,7 +236,10 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
       projectId: parent.projectId ?? null,
       workspacePath: parent.workspacePath ?? null,
       allowedTools: new Set(resolveTools(preset, toolNames)),
-      toolContext: { ...(parent.toolContext ?? {}), ...approvalContext },
+      toolContext: { ...(parent.toolContext ?? {}), ...approvalContext,
+        subagentControl: args => control(args, {}, record),
+        takeSubagentMessages: () => record.inbox.splice(0),
+      },
       deferTools: false,
       skillsEnabled: false,
       mcp: null,
@@ -235,7 +257,10 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
     const id = randomUUID();
     const startedAt = Date.now();
     const parentCallId = ctx.callId ?? null;
-    const signal = ctx.signal ?? parent.abort?.signal ?? null;
+    const parentSignal = ctx.signal ?? parent.abort?.signal ?? null;
+    const controller = new AbortController();
+    const signal = controller.signal;
+    if (parentSignal?.aborted) controller.abort(parentSignal.reason);
     const type = String(args?.subagent_type ?? '');
     const preset = presetFor(type);
     const description = capChars(args?.description, SUBAGENT_DESCRIPTION_MAX_CHARS) || type || 'sub-agent';
@@ -258,28 +283,44 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
     if (startedThisTurn >= perTurn) return rejected(`Sub-agent budget for this request is exhausted (${perTurn}).`);
     startedThisTurn++;
 
-    let releaseSlot;
-    try {
-      releaseSlot = await semaphore.acquire(signal);
-    } catch {
-      return cancelled('The parent request was cancelled while waiting for a sub-agent slot.');
-    }
-
-    const context = { id, type, preset, depth, description, prompt, signal, startedAt, parentCallId, args, cfg };
-    try {
-      const task = () => execute(context);
-      if (preset.readOnly) return await task();
-      return await withWorkspaceLock(workspaceKey(parent), signal, task);
-    } catch (error) {
-      if (signal?.aborted) return cancelled('The parent request was cancelled while the sub-agent was running.');
-      const message = redactText(String(error?.message || error), { secrets: configuredSecrets(process.env, cfg) });
-      return envelope({ ...base, durationMs: Date.now() - startedAt, status: SUBAGENT_STATUS.failed, summary: message, error: message });
-    } finally {
-      releaseSlot();
-    }
+    // Retain the current turn and unfinished earlier work. Completed handles
+    // from older turns are removed by beginTurn after their results are queued.
+    const record = { ...base, status: SUBAGENT_STATUS.queued, controller, inbox: [], result: null,
+      background: args.background === true, turn: turnNumber };
+    records.set(id, record);
+    if (record.background) emit({ ...base, type: SUBAGENT_EVENT.queued, prompt: capOutput(prompt, SUBAGENT_EVENT_RESULT_BYTES), depth });
+    const onParentAbort = () => controller.abort(parentSignal.reason);
+    parentSignal?.addEventListener('abort', onParentAbort, { once: true });
+    const context = { id, type, preset, depth, description, prompt, signal, startedAt, parentCallId, args, cfg, record };
+    record.promise = (async () => {
+      let releaseSlot;
+      try {
+        releaseSlot = await semaphore.acquire(signal);
+        const task = () => execute(context);
+        return preset.readOnly ? await task() : await withWorkspaceLock(workspaceKey(parent), signal, task);
+      } catch (error) {
+        if (signal.aborted) return cancelled('The sub-agent was cancelled while queued or running.');
+        const message = redactText(String(error?.message || error), { secrets: configuredSecrets(process.env, cfg) });
+        return envelope({ ...base, durationMs: Date.now() - startedAt, status: SUBAGENT_STATUS.failed, summary: message, error: message });
+      } finally {
+        releaseSlot?.();
+        parentSignal?.removeEventListener('abort', onParentAbort);
+      }
+    })().then(output => {
+      record.result = JSON.parse(output);
+      record.status = record.result.status;
+      if (!record.ended) emit({ ...record.result, type: SUBAGENT_EVENT.end });
+      if (record.background) inbox.push({ kind: 'result', ...record.result });
+      notifyProgress();
+      return output;
+    });
+    if (!record.background) return record.promise;
+    // Let an available slot start before reporting its actual queued/running state.
+    await Promise.resolve();
+    return envelope({ ...base, status: record.status });
   }
 
-  async function execute({ id, type, preset, depth, description, prompt, signal, startedAt, parentCallId, args, cfg }) {
+  async function execute({ id, type, preset, depth, description, prompt, signal, startedAt, parentCallId, args, cfg, record }) {
     if (signal?.aborted) {
       return envelope({ subagentId: id, parentCallId, subagentType: type, description, durationMs: Date.now() - startedAt,
         status: SUBAGENT_STATUS.cancelled, summary: 'The parent request was cancelled before the sub-agent started.', error: 'cancelled' });
@@ -287,7 +328,8 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
 
     let child;
     try {
-      child = createChild({ id, type, preset, depth, description, args });
+      child = createChild({ id, type, preset, depth, description, args, record });
+      record.status = SUBAGENT_STATUS.running;
     } catch (error) {
       const message = redactText(String(error?.message || error), { secrets: configuredSecrets(process.env, cfg) });
       return envelope({ subagentId: id, parentCallId, subagentType: type, description, durationMs: Date.now() - startedAt,
@@ -358,6 +400,7 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
     const event = { type: SUBAGENT_EVENT.end, subagentId: id, parentCallId, subagentType: type, description, status, summary,
       usage: { ...child.sessionUsage }, durationMs: Date.now() - startedAt, transcript, toolsUsed: [...(child.ranThisTurn || [])], depth };
     emit(event);
+    record.ended = true;
 
     return envelope({
       subagentId: id,
@@ -404,8 +447,62 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
     }
   }
 
+  function takeMessages() { return inbox.splice(0); }
+
+  async function control(args = {}, ctx = {}, sender = null) {
+    if (sender && (args.action !== 'send' || args.subagent_id !== SUBAGENT_PARENT_TARGET)) {
+      return 'Error: children can only send messages to their parent.';
+    }
+    if (sender && sender.controller.signal.aborted) return 'Error: the sub-agent has finished or was cancelled.';
+    if (args.action === 'list') return JSON.stringify([...records.values()].map(record => record.result || {
+      subagentId: record.subagentId, description: record.description, subagentType: record.subagentType, status: record.status,
+    }));
+    const record = sender || records.get(args.subagent_id);
+    if (!record) return 'Error: this sub-agent ID is not owned by this parent.';
+    if (args.action === 'send') {
+      if (record.result) return 'Error: the sub-agent has finished.';
+      const message = typeof args.message === 'string' ? args.message.trim() : '';
+      if (!message) return 'Error: message must be a nonempty string.';
+      if (Buffer.byteLength(message) > SUBAGENT_MESSAGE_BYTES) return `Error: message exceeds ${SUBAGENT_MESSAGE_BYTES} bytes.`;
+      const mailbox = sender ? inbox : record.inbox;
+      if (mailbox.length >= SUBAGENT_INBOX_LIMIT) return 'Error: recipient mailbox is full. Wait for delivery before retrying.';
+      const item = { kind: 'message', messageId: randomUUID(), subagentId: record.subagentId,
+        parentCallId: record.parentCallId, from: sender ? record.subagentId : SUBAGENT_PARENT_TARGET,
+        to: sender ? SUBAGENT_PARENT_TARGET : record.subagentId, message, createdAt: new Date().toISOString() };
+      mailbox.push(item);
+      if (sender) notifyProgress();
+      emit({ ...item, type: SUBAGENT_EVENT.message });
+      return JSON.stringify({ status: SUBAGENT_STATUS.queued, messageId: item.messageId, subagentId: record.subagentId });
+    }
+    if (args.action === 'cancel') record.controller.abort();
+    else if (args.action !== 'wait') return 'Error: action must be list, send, wait or cancel.';
+    const waitMs = args.action === 'cancel' ? SUBAGENT_WAIT_MS
+      : clampInt(args.wait_ms, 0, SUBAGENT_MAX_WAIT_MS, SUBAGENT_WAIT_MS);
+    let timer;
+    try {
+      return await waitFor(Promise.race([record.promise, new Promise(resolve => {
+        timer = setTimeout(() => resolve(envelope({ subagentId: record.subagentId, status: record.status })), waitMs);
+      })]), ctx.signal);
+    } finally { clearTimeout(timer); }
+  }
+
+  let turnNumber = 0;
   return {
-    beginTurn() { startedThisTurn = 0; },
-    run,
+    beginTurn() {
+      startedThisTurn = 0;
+      turnNumber++;
+      for (const [id, record] of records) if (record.result && record.turn < turnNumber) records.delete(id);
+    },
+    run, control, takeMessages,
+    cancelAll: () => Promise.all([...records.values()].filter(record => !record.result)
+      .map(record => control({ action: 'cancel', subagent_id: record.subagentId }))),
+    hasPending: () => [...records.values()].some(record => record.background && !record.result),
+    waitForProgress: async signal => {
+      if (inbox.length || ![...records.values()].some(record => record.background && !record.result)) return;
+      let wake;
+      try {
+        await waitFor(new Promise(resolve => { wake = resolve; progressWaiters.add(resolve); }), signal);
+      } finally { progressWaiters.delete(wake); }
+    },
   };
 }

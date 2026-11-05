@@ -1,15 +1,16 @@
 import { useState } from 'react';
 import type { SubagentActivity } from '../../../shared/subagent-state.mjs';
 import { formatDuration, formatTokens } from '../lib/format';
-import { SUBAGENT_FAILED_STATES, subagentStatusLabel, subagentTail, subagentTokens, subagentTypeLabel } from '../lib/subagent';
+import { SUBAGENT_FAILED_STATES, subagentRunning, subagentStatusLabel, subagentTail, subagentTokens, subagentTypeLabel } from '../lib/subagent';
 import { Icon } from './Icons';
 import { SubagentTools } from './SubagentTools';
+import { SubagentMessages } from './SubagentMessages';
 
 const PREVIEW_CHARS = 240; // Characters; enough to see motion in the collapsed card.
 
 export function SubagentCard({ activity, onOpen }: { activity: SubagentActivity; onOpen?: () => void }) {
   const [open, setOpen] = useState(false);
-  const running = activity.status === 'running';
+  const running = subagentRunning(activity.status);
   const failed = SUBAGENT_FAILED_STATES.has(activity.status);
   const status = subagentStatusLabel(activity.status);
   const tokens = subagentTokens(activity);
@@ -48,6 +49,7 @@ export function SubagentCard({ activity, onOpen }: { activity: SubagentActivity;
         <span className="tool-section-label">Tool calls</span>
         <SubagentTools tools={activity.tools} />
       </section>}
+      <SubagentMessages messages={activity.messages} />
       {activity.error && <p className="subagent-error">{activity.error}</p>}
       {activity.transcript && <p className="subagent-transcript" title={activity.transcript}>Transcript saved: {activity.transcript}</p>}
     </div>}

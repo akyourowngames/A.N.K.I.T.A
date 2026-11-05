@@ -13,6 +13,7 @@ import * as remember from "./personal/remember.mjs";
 import * as recall from "./personal/recall.mjs";
 import * as skill from './skills/skill.mjs';
 import * as delegateTask from './delegate-task.mjs';
+import * as subagentControl from './subagent-control.mjs';
 import * as git from './git/git.mjs';
 import * as portStatus from './process/port-status.mjs';
 import * as killProcess from './process/kill-process.mjs';
@@ -67,9 +68,9 @@ export const CATEGORIES = [
   },
   {
     id: 'subagents',
-    summary: 'delegate a self-contained task to an explore, reviewer or worker sub-agent',
+    summary: 'delegate tasks and exchange messages with background sub-agents',
     keywords: ['delegate', 'subagent', 'sub-agent', 'parallel agents', 'child agent'],
-    tools: [delegateTask],
+    tools: [delegateTask, subagentControl],
   },
   {
     id: 'browser',

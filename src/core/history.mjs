@@ -1,4 +1,10 @@
 import { capOutput } from '../../tools/shared/_shared.mjs';
+import { SUBAGENT_INBOX_PREFIX } from './subagents/registry.mjs';
+
+/** Agent mailbox updates carry observations, so they cannot replace the user's task. */
+export function isUserRequest(message) {
+  return message?.role === 'user' && !(typeof message.content === 'string' && message.content.startsWith(SUBAGENT_INBOX_PREFIX));
+}
 
 /**
  * Vision attachments are billed by pixels, not by base64 length. A 1.6 MB PNG
@@ -205,13 +211,13 @@ export function trimMessages(messages, maxMessages = 40, maxBytes = Infinity, { 
   const system = clean[0]?.role === 'system' ? clean.shift() : { role: 'system', content: '' };
   const max = Math.max(TOOL_EXCHANGE_MESSAGES, Number(maxMessages) || 40);
   let userIndex = -1;
-  for (let i = clean.length - 1; i >= 0; i--) if (clean[i].role === 'user') { userIndex = i; break; }
+  for (let i = clean.length - 1; i >= 0; i--) if (isUserRequest(clean[i])) { userIndex = i; break; }
   const anchor = userIndex < 0 ? null : clean[userIndex];
   const priorAnchors = [];
   const anchorLimit = Math.max(1, Math.min(USER_REQUEST_ANCHORS, max - TOOL_EXCHANGE_MESSAGES)); // Keep room for the newest atomic tool exchange.
   let priorBytes = 0;
   for (let i = userIndex - 1; i >= 0 && priorAnchors.length < anchorLimit - 1; i--) {
-    if (clean[i].role !== 'user') continue;
+    if (!isUserRequest(clean[i])) continue;
     const cost = messageCost(clean[i]);
     if (priorBytes + cost > PRIOR_REQUEST_ANCHOR_BYTES) break;
     priorAnchors.unshift({ message: clean[i], cost }); priorBytes += cost;

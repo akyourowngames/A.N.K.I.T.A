@@ -8,6 +8,17 @@ const reduce = (events, initial = { threads: {} }) => {
 };
 const event = (type, fields = {}) => ({ type, threadId: 'chief', ...fields });
 
+test('companion receives completed recaps live and retains their identity after reload', () => {
+  const state = reduce([event('turn-start', { turnId: 'turn', text: 'Continue' }),
+    event('context-compaction', { phase: 'completed', summary: 'Earlier decisions preserved.' })]);
+  assert.equal(state.threads.chief.log.at(-1).compacted, true);
+  assert.equal(state.threads.chief.log.at(-1).content, 'Earlier decisions preserved.');
+  const loaded = api.hydrateIslandState({ threads: [{ id: 'chief', messages: [
+    { id: 'recap', role: 'assistant', compacted: true, content: 'Saved recap.' },
+  ] }] });
+  assert.equal(loaded.threads.chief.log[0].compacted, true);
+});
+
 test('reasoning stays separate and distinct assistant messages keep distinct identities', () => {
   const state = reduce([
     event('turn-start', { turnId: 'turn', text: 'Inspect this' }),

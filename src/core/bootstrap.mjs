@@ -1,5 +1,6 @@
 import { CompatibleClient, resolveProvider, pickModel, providerClientOptions } from './provider.mjs';
 import { CopilotClient, resolveGithubToken, deviceLogin, writeAuth } from './auth.mjs';
+import { modelContextWindow } from './model-capabilities.mjs';
 
 /** Shared provider bootstrap for terminal and desktop front ends. */
 export async function createSession({
@@ -56,6 +57,10 @@ export async function createSession({
 
   const models = await client.models();
   const picked = pickModel(models, config.model, config.tools);
-  if (!config.contextWindowExplicit && picked.context) config.contextWindow = picked.context;
+  config.contextWindow = modelContextWindow({ ...config, client, model: picked.id, models });
+  if (tool) {
+    const toolModels = tool.client === client ? models : await tool.client.models();
+    tool.contextWindow = modelContextWindow({ client: tool.client, model: tool.model, models: toolModels, contextWindow: config.contextWindow });
+  }
   return { client, tool, models, model: picked.id, provider, picked };
 }

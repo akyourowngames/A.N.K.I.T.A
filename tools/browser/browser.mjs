@@ -71,4 +71,9 @@ export function display(args = {}) {
 
 let shared;
 export function manager() { return shared ||= new BrowserSessionManager(); }
+/** Release an existing CLI browser session without creating one during shutdown. */
+export async function closeSharedBrowser() {
+  await shared?.close();
+  shared = null;
+}
 export async function run(args = {}, ctx = {}) { return (ctx.browserManager || manager()).run(normalizeBrowserArgs(args), ctx); }

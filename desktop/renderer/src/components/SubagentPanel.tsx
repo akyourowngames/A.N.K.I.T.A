@@ -1,9 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { SubagentActivity } from '../../../shared/subagent-state.mjs';
 import { formatDuration, formatTokens } from '../lib/format';
-import { subagentStatusLabel, subagentTokens, subagentTone, subagentTypeLabel } from '../lib/subagent';
+import { subagentRunning, subagentStatusLabel, subagentTokens, subagentTone, subagentTypeLabel } from '../lib/subagent';
 import { Icon } from './Icons';
 import { SubagentTools } from './SubagentTools';
+import { SubagentMessages } from './SubagentMessages';
 
 const ELAPSED_TICK_MS = 1000; // ms — live elapsed time refreshes once a second
 const FOLLOW_THRESHOLD_PX = 48; // px — keep following while this close to the end
@@ -17,7 +18,7 @@ export function SubagentPanel({ activities, focus, visible, onFocus, onClose, on
   onStop?: () => void;
 }) {
   const activity = focus ? activities[focus] : null;
-  const running = activity?.status === 'running';
+  const running = Boolean(activity && subagentRunning(activity.status));
   const tone = activity ? subagentTone(activity.status) : 'idle';
   const tokens = activity ? subagentTokens(activity) : 0;
   const report = activity?.text.trim() || '';
@@ -38,7 +39,7 @@ export function SubagentPanel({ activities, focus, visible, onFocus, onClose, on
     const element = scroll.current;
     if (!element || !stick.current) return;
     element.scrollTop = element.scrollHeight;
-  }, [activity?.text, activity?.tools.length, activity?.status]);
+  }, [activity?.text, activity?.tools.length, activity?.messages?.length, activity?.status]);
 
   useEffect(() => {
     stick.current = true;
@@ -101,6 +102,7 @@ export function SubagentPanel({ activities, focus, visible, onFocus, onClose, on
           <div className="subagent-panel-section-head"><span>Tool calls</span><small>{activity.tools.length}</small></div>
           <SubagentTools tools={activity.tools} />
         </section>}
+        <SubagentMessages messages={activity.messages} />
         {activity.prompt && <details className="subagent-panel-brief">
           <summary>Task brief</summary>
           <pre>{activity.prompt}</pre>

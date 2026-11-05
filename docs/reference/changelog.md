@@ -7,6 +7,27 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Model-aware recaps and parallel-agent messages
+
+Long chats now summarize before their selected model's available space runs out,
+including short chats with large messages. Switching models refreshes the limit
+for the chat, tool planner and voice. Recaps keep the current task intact, appear
+immediately in chat and the companion, and stay labelled after a reload.
+
+Background children can send findings or questions to their parent. Parents can
+reply, inspect progress, wait or cancel while independent children work. The
+desktop panel and terminal show message direction. A memory fix also keeps a
+saved statement and its English negation separate and flags the conflict.
+
+Parent edits now wait behind a worker using the same workspace, including path
+aliases. Provider reply defaults and minimums are included in the context budget.
+One-shot terminal requests close owned resources before exiting, fixing a
+Windows shutdown crash after parallel model requests.
+
+The verification record includes failing regressions, local HTTP round trips,
+browser checks and remaining coverage boundaries.
+[Verification record](../verification/context-and-subagents.md).
+
 ### Editable character and speaking style
 
 Settings / Personality edits a local structured card with description, attitude,

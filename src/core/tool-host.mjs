@@ -153,11 +153,14 @@ export class ToolHost {
     this.onEvent?.({ type: 'tool-call', call });
     let result;
     try {
-      if (ctx.beforeToolExecute) await ctx.beforeToolExecute(call, ctx);
-      result = combined.aborted ? textResult(CANCELLED) : String(name).startsWith(MCP_PREFIX)
-        ? await this.executeMcp(call, args, ctx, state, resultMode, budget)
-        : await this.executeLocal(call, args, ctx, state, resultMode, budget);
-    } catch (error) { result = textResult(`Error while running ${name}: ${error.message}`); }
+      const execute = async () => {
+        if (ctx.beforeToolExecute) await ctx.beforeToolExecute(call, ctx);
+        return combined.aborted ? textResult(CANCELLED) : String(name).startsWith(MCP_PREFIX)
+          ? await this.executeMcp(call, args, ctx, state, resultMode, budget)
+          : await this.executeLocal(call, args, ctx, state, resultMode, budget);
+      };
+      result = ctx.withToolExecution ? await ctx.withToolExecution(call, ctx, execute) : await execute();
+    } catch (error) { result = textResult(combined.aborted ? CANCELLED : `Error while running ${name}: ${error.message}`); }
     this.onEvent?.({ type: 'tool-result', call, result });
     return result;
   }

@@ -28,6 +28,7 @@ const BROWSER_MARKER = /from ['"]playwright['"]|require\(['"]playwright['"]\)/;
 // parallel load their fixed deadlines expire and they hang or fail spuriously.
 const HEAVY_FILES = new Set([
   'test/core/voice-cli.test.mjs',
+  'test/core/cli-shutdown.test.mjs',
 ]);
 
 const log = (...parts) => console.log(...parts);

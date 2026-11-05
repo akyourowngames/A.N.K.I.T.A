@@ -26,6 +26,7 @@ export type SubagentActivity = {
   status: string;
   text: string;
   tools: SubagentToolStep[];
+  messages: { messageId: string; from: string; to: string; message: string; createdAt: string }[];
   summary: string;
   usage: SubagentUsage | null;
   durationMs: number;
@@ -43,3 +44,5 @@ export const SUBAGENT_TOOL_LIMIT: number;
 export function reduceSubagents(state: SubagentState, event: unknown): SubagentState;
 export function clearThreadSubagents(state: SubagentState, threadId: string): SubagentState;
 export function activityFromReceipt(result: unknown): SubagentActivity | null;
+export const SUBAGENT_PARENT_TARGET: string;
+export const SUBAGENT_MESSAGE_LABELS: Readonly<{ toChild: string; toParent: string }>;

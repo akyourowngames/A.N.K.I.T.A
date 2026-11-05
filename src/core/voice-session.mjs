@@ -1,5 +1,6 @@
 import { CompatibleClient, resolveProvider, providerClientOptions } from './provider.mjs';
 import { stripForSpeech } from '../channels/voice.mjs';
+import { modelContextWindow } from './model-capabilities.mjs';
 
 // Short spoken receipts, never a claim that delegated work has finished.
 const ACK_LINES = {
@@ -46,12 +47,15 @@ export function createVoiceMicrophone({ detect, preferred = '' }) {
 /** Resolve only voice settings; an explicit broken setup must not silently change planners. */
 export function createVoiceBrain(config, current = {}) {
   const name = String(config.voiceProvider || '').trim().toLowerCase();
-  if (!name) return config.voiceModel ? { client: current.client, model: config.voiceModel, label: 'current provider' } : null;
+  const contextWindowExplicit = Boolean(config.voiceContextWindow || config.contextWindowExplicit);
+  if (!name) return config.voiceModel ? { client: current.client, model: config.voiceModel,
+    contextWindow: config.voiceContextWindow || config.contextWindow, contextWindowExplicit, label: 'current provider' } : null;
   const selected = resolveProvider(name);
   if (!selected) throw new Error(`Unknown VOICE_PROVIDER "${name}".`);
   if (selected.name === 'copilot') {
     if (!current.client || resolveProvider(config.provider)?.name !== selected.name) throw new Error('VOICE_PROVIDER=copilot requires the current GitHub Copilot session.');
-    return { ...current, model: config.voiceModel || current.model, label: selected.label };
+    return { client: current.client, model: config.voiceModel || current.model,
+      contextWindow: config.voiceContextWindow || config.contextWindow, contextWindowExplicit, label: selected.label };
   }
   const apiBase = config.voiceApiBase || (selected.baseUrlConfig && config[selected.baseUrlConfig]) || selected.apiBase;
   const apiKey = selected.apiKey || (selected.keyConfig && config[selected.keyConfig]) || '';
@@ -64,20 +68,43 @@ export function createVoiceBrain(config, current = {}) {
     client: new CompatibleClient({ apiBase, apiKey, model, contextWindow, ...providerClientOptions(selected, config) }),
     model,
     contextWindow,
+    contextWindowExplicit,
     label: selected.label,
   };
 }
 
+/** A shared catalogue request may outlive one cancelled utterance; keep its eventual rejection observed. */
+async function voiceDiscoveryResult(discovery, signal) {
+  if (!signal) return discovery;
+  let abort;
+  const cancelled = new Promise((resolve, reject) => {
+    abort = () => reject(signal.reason);
+    signal.addEventListener('abort', abort, { once: true });
+    if (signal.aborted) abort();
+  });
+  try { return await Promise.race([discovery, cancelled]); }
+  finally { signal.removeEventListener('abort', abort); }
+}
+
 /** Pin every model round to the voice planner; restore the typed session even on abort. */
-export async function withVoiceBrain(agent, brain, run) {
-  const fields = ['client', 'model', 'contextWindow', 'tool', '_activeModelClient', '_activeModel', 'systemSuffix'];
+export async function withVoiceBrain(agent, brain, run, { signal } = {}) {
+  const fields = ['client', 'model', 'config', 'contextWindow', 'tool', '_activeModelClient', '_activeModel', 'systemSuffix'];
   const saved = fields.map(key => [key, Object.hasOwn(agent, key), agent[key]]);
-  agent.systemSuffix = [agent.systemSuffix, VOICE_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
-  if (brain) {
-    Object.assign(agent, { client: brain.client, model: brain.model, tool: null });
-    if (brain.contextWindow) agent.contextWindow = brain.contextWindow;
-  }
   try {
+    signal?.throwIfAborted();
+    agent.systemSuffix = [agent.systemSuffix, VOICE_REPLY_INSTRUCTIONS].filter(Boolean).join('\n\n');
+    if (brain) {
+      if (!brain.client?.modelCapabilities?.has(brain.model) && typeof brain.client?.models === 'function') {
+        brain.discovery ||= Promise.resolve().then(() => brain.client.models());
+      }
+      const models = brain.discovery ? await voiceDiscoveryResult(brain.discovery, signal) : undefined;
+      const contextWindow = modelContextWindow({ ...brain, models, contextWindow: brain.contextWindow || agent.contextWindow });
+      Object.assign(agent, { client: brain.client, model: brain.model, tool: null });
+      if (contextWindow) agent.contextWindow = contextWindow;
+      agent.config = { ...agent.config, model: brain.model, contextWindow: agent.contextWindow,
+        contextWindowExplicit: brain.contextWindowExplicit ?? agent.config?.contextWindowExplicit };
+    }
+    signal?.throwIfAborted();
     return await run();
   } finally {
     for (const [key, existed, value] of saved) {

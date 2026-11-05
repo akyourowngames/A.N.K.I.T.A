@@ -5,12 +5,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Agent, COMPACTION_SUMMARY_PREFIX } from '../../src/core/agent.mjs';
+import { SUBAGENT_INBOX_PREFIX } from '../../src/core/subagents/registry.mjs';
 import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG, MCP_TIERS_FILE, COMPOSIO_GRANTS_FILE } from '../../src/core/config.mjs';
 import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
 import { ComposioGrantStore } from '../../src/integrations/composio-oauth.mjs';
 import { SecretHistory } from './secret-history.mjs';
 import { migrateSecrets, migrationMarker } from '../../src/security/secret-migration.mjs';
 import { createSession } from '../../src/core/bootstrap.mjs';
+import { modelContextWindow } from '../../src/core/model-capabilities.mjs';
 import { McpManager } from '../../src/integrations/mcp-manager.mjs';
 import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { ComposioStore } from '../../src/integrations/composio-store.mjs';
@@ -224,6 +226,7 @@ export function threadMessages(messages = []) {
       // A compaction recap is model-facing bookkeeping, not something the user
       // typed: surface it as a labelled note instead of a fake user bubble.
       const compacted = entry.role === 'user' && content.startsWith(COMPACTION_SUMMARY_PREFIX);
+      if (entry.role === 'user' && content.startsWith(SUBAGENT_INBOX_PREFIX)) continue;
       // The marker is stripped here: it is bookkeeping for this mapping only and
       // must not read as text the teammate said.
       const shown = compacted ? content.slice(COMPACTION_SUMMARY_PREFIX.length).trim() : content;
@@ -613,7 +616,10 @@ export class DesktopEngine {
       this.desktopSettings.save(next);
       this.config.model = selected.id;
       this.model = selected.id;
-      for (const [id, agent] of this.agents) if (!this.teammates.find(id)?.model) agent.model = selected.id;
+      for (const [id, agent] of this.agents) if (!this.teammates.find(id)?.model) {
+        agent.model = selected.id;
+        agent.config.model = selected.id;
+      }
     } else {
       this.desktopSettings.save(next);
     }
@@ -631,7 +637,13 @@ export class DesktopEngine {
       Object.assign(this.config, window);
       for (const agent of this.agents.values()) {
         Object.assign(agent.config, window);
-        agent.contextWindow = nextConfig.contextWindow;
+      }
+    }
+    if (tune || Object.hasOwn(patch, 'model')) {
+      this.config.contextWindow = modelContextWindow({ ...this.config, client: this.client, model: this.model, models: this.models });
+      for (const agent of this.agents.values()) {
+        agent.contextWindow = modelContextWindow({ ...agent.config, client: agent.client || this.client, model: agent.model || this.model, models: this.models });
+        agent.config.contextWindow = agent.contextWindow;
       }
     }
     if (reconnect || tune || Object.hasOwn(patch, 'model')) this.channels?.surface?.invalidate?.();
@@ -843,7 +855,10 @@ export class DesktopEngine {
     if (agent) {
       agent.config.agentName = item.name;
       agent.config.systemExtra = item.persona;
-      if (item.model) agent.model = item.model;
+      agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+      agent.config.model = agent.model;
+      agent.contextWindow = modelContextWindow({ ...agent.config, client: this.client, model: agent.model, models: this.models });
+      agent.config.contextWindow = agent.contextWindow;
       if (Object.hasOwn(patch, 'projectId')) agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
       else agent.refreshPrompt?.();
     }
@@ -1061,7 +1076,9 @@ export class DesktopEngine {
     const item = this.teammates.find(id);
     if (!item) throw new Error('Teammate not found');
     if (this.agents.has(id)) return this.agents.get(id);
-    const config = { ...this.config, desktopBackgroundJobs: true, [COMPUTER_DIRECT_CONFIG]: true, agentName: item.name, systemExtra: item.persona };
+    const model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+    const config = { ...this.config, model, desktopBackgroundJobs: true, [COMPUTER_DIRECT_CONFIG]: true, agentName: item.name, systemExtra: item.persona };
+    config.contextWindow = modelContextWindow({ ...config, client: this.client, models: this.models });
     let project = '', projectId = null, workspacePath = null;
     if (item.projectId) {
       const projects = new ProjectStore(this.projectsFile).load();
@@ -1098,10 +1115,11 @@ export class DesktopEngine {
       // Child prompts, results and summaries reach the renderer and the channel
       // bridge, so scrub them exactly like parent output before emitting.
       onSubagentEvent: event => this.emit(this.secretHistory.clean({ ...event, threadId: id, turnId: this.turnIds?.get(id) || null })),
+      onCompaction: event => this.emit({ ...event, type: 'context-compaction', threadId: id }),
       subagentTransform: value => this.secretHistory?.clean ? this.secretHistory.clean(value) : value,
       print: () => {}, write: () => {},
     });
-    agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+    agent.model = model;
     agent.state ||= {};
     agent.state.onJobEvent = () => this.emit({ type: 'workspace-changed', threadId: id });
     const saved = this._savedThread(id);

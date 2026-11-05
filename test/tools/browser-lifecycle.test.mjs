@@ -16,6 +16,24 @@ function storeFor(t) {
   return new BrowserPluginStore(path.join(dir, 'browser.json')).load();
 }
 
+test('shared browser shutdown closes existing sessions without creating a new manager', async t => {
+  const browser = await import('../../tools/browser/browser.mjs?shutdown-lifecycle');
+  let loads = 0, closes = 0;
+  t.mock.method(BrowserPluginStore.prototype, 'load', function () { loads++; return this; });
+  t.mock.method(BrowserSessionManager.prototype, 'close', async () => { closes++; });
+  await browser.closeSharedBrowser();
+  assert.equal(loads, 0, 'unused browser shutdown does not load settings or create a manager');
+  assert.equal(closes, 0);
+  const first = browser.manager();
+  assert.equal(loads, 1);
+  await browser.closeSharedBrowser();
+  await browser.closeSharedBrowser();
+  assert.equal(closes, 1, 'an existing manager closes once');
+  assert.notEqual(browser.manager(), first, 'a later session receives a fresh manager');
+  await browser.closeSharedBrowser();
+  assert.equal(closes, 2);
+});
+
 for (const mode of ['isolated', 'local']) {
   test(`${mode}: stale refs keep the browser usable without leaking the recovered snapshot into its view`, async t => {
     const store = storeFor(t); store.setEnabled(mode, true);
