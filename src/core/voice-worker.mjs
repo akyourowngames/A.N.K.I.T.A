@@ -129,7 +129,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
         observer.onToolResult?.(call, result, verdict); callbacks.onToolResult?.(call, result, verdict);
       },
     };
-    const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions));
+    const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions), { signal });
     return { text, error: completion.outcome()?.error || null, model: worker.replyModel || brain?.model || worker.model, speechHandled: Boolean(reports?.handled() && !otherTools && !completion.outcome()?.error) };
   } finally {
     signal?.removeEventListener('abort', abort);

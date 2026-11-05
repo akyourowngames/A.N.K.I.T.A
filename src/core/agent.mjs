@@ -11,16 +11,17 @@ import { PROJECT_WORK_GUIDANCE, UNTRACKED_REPO_GUIDANCE } from '../memory/projec
 import { randomUUID, createHash } from 'node:crypto';
 import { personalMemoryContext, withMemoryContext } from '../memory/memory-context.mjs';
 import { isStale } from '../memory/memory-similarity.mjs';
-import { runtimeVoiceSpecs, runtimeVoiceTool } from './runtime-tools.mjs';
+import { runtimeVoiceSpecs, runtimeVoiceTool, runtimeToolFlag } from './runtime-tools.mjs';
 import { warmRecall } from '../../tools/personal/recall.mjs';
 import { specs, coreSpecs, specsFor, get, isReadOnly, coreNames, names as toolNames, categoryOfTool, CATEGORIES } from "../../tools/index.mjs";
-import { createSubagentRuntime } from './subagents/runtime.mjs';
-import { SUBAGENT_TOOL } from './subagents/registry.mjs';
+import { createSubagentRuntime, withWorkspaceMutation } from './subagents/runtime.mjs';
+import { SUBAGENT_TOOL, SUBAGENT_CONTROL_TOOL, SUBAGENT_INBOX_PREFIX } from './subagents/registry.mjs';
 import { redactText, configuredSecrets } from './redact.mjs';
 import { fetchWithRetry } from "./net.mjs";
 import { c, preview, short, clip } from "./ui.mjs";
 import { capOutput } from "../../tools/shared/_shared.mjs";
-import { messageCost, trimMessages } from "./history.mjs";
+import { messageCost, conversationCost, trimMessages, isUserRequest } from "./history.mjs";
+import { modelContextWindow } from './model-capabilities.mjs';
 import { TOOL_RESULT_MODE } from '../integrations/chatgpt-browser/protocol.mjs';
 import { compactBrowserHistory } from './browser-context.mjs';
 import { focusAllows, TOOL_FOCUS_GUIDANCE, BROWSER_DISCOVERY_GUIDANCE } from './tool-focus.mjs';
@@ -134,6 +135,8 @@ const COMPACTION_COOLDOWN_TURNS = 8; // New messages required before another rec
 const COMPACTION_TRANSCRIPT_BYTES = 12000; // Summarizer input cap (UTF-8 bytes).
 const COMPACTION_REPLY_BYTES = 2000; // Summarizer output cap kept in history (UTF-8 bytes).
 const COMPACTION_MAX_TOKENS = 400; // Provider-side cap for the recap reply.
+const COMPACTION_PRESSURE_RATIO = 0.85; // Fraction of available history that starts a recap before the next response grows it.
+const COMPACTION_RESERVED_MESSAGES = 2; // Message slots for the recap and an older current-task anchor.
 const CHAT_COMPLETIONS_ROUTE = '/chat/completions'; // OpenAI-compatible wire path; host, model and credentials come from the active client.
 const measuredSchemas = new WeakMap();
 function schemaBytes(value) {
@@ -280,8 +283,8 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
   // catalog keeps the prompt truthful for scoped agents: without it the prompt
   // would advertise core/deferred tools the host will refuse to execute.
   const visible = catalog?.names ? new Set(catalog.names) : null;
-  const hidden = catalog?.exclude || null;
-  const offered = name => name !== hidden && (!visible || visible.has(name));
+  const hidden = new Set([catalog?.exclude].flat().filter(Boolean));
+  const offered = name => !hidden.has(name) && (!visible || visible.has(name));
   const deferTools = catalog?.deferTools !== false;
   // A one-shot child ships every spec, so its directly available list is the
   // whole catalog rather than the deferrable core.
@@ -428,6 +431,7 @@ export class Agent {
     autoProject = null,
     // Called after a turn is journaled. A host uses this to write project work.
     onTurnComplete = null,
+    onCompaction = null, // Optional host observer for recap progress and completion.
   }) {
     this.client = client;
     this.allowedTools = allowedTools;
@@ -440,6 +444,7 @@ export class Agent {
     this.config = config;
     this.confirm = confirm;
     this.print = print;
+    this.onCompaction = onCompaction;
     this.write = write;
     this.ui = TOOL_UI;
 
@@ -535,7 +540,8 @@ export class Agent {
         names: this.allowedTools ? [...this.allowedTools] : null,
         deferTools: this.deferTools,
         internal: this.depth > 0,
-        exclude: this.canDelegate() ? null : SUBAGENT_TOOL,
+        exclude: [!this.canDelegate() && SUBAGENT_TOOL,
+          !this.canControlSubagents() && SUBAGENT_CONTROL_TOOL].filter(Boolean),
         ...style,
       });
     const hint = this.projectHint();
@@ -567,6 +573,24 @@ export class Agent {
       createAgent: options => new Agent(options),
       toolNames: toolNames(),
     });
+  }
+
+  canControlSubagents() {
+    return this.canDelegate() || typeof this.toolContext?.subagentControl === 'function';
+  }
+
+  receiveSubagentMessages() {
+    const incoming = [...(this.toolContext?.takeSubagentMessages?.() || []), ...(this._subagents?.takeMessages() || [])];
+    if (!incoming.length) return false;
+    for (const item of incoming) {
+      if (item.kind !== 'result') continue;
+      const receipt = this.messages.find(message => message.role === 'tool' && message.tool_call_id === item.parentCallId);
+      if (receipt) receipt.content = JSON.stringify({ ...item, kind: undefined });
+    }
+    // Delivery happens between decisions, after all declared tool replies, so
+    // injected messages cannot split an assistant/tool protocol group.
+    this.messages.push({ role: 'user', content: `${SUBAGENT_INBOX_PREFIX}\n${incoming.map(item => JSON.stringify(item)).join('\n')}` });
+    return true;
   }
 
   emitSubagentEvent(event) {
@@ -669,6 +693,7 @@ export class Agent {
     if (this.config?.desktopBackgroundJobs && this.deferTools) core = [...core, ...specsFor(['schedule'])];
     if (!this.availableSkills().length) core = core.filter(spec => spec.function?.name !== 'skill');
     if (!this.canDelegate()) core = core.filter(spec => spec.function?.name !== SUBAGENT_TOOL);
+    if (!this.canControlSubagents()) core = core.filter(spec => spec.function?.name !== SUBAGENT_CONTROL_TOOL);
     let optional = [];
 
     if (this.deferTools && names.length) {
@@ -684,6 +709,9 @@ export class Agent {
     }
     if (!this.canDelegate()) optional = optional
       .map(group => ({ ...group, specs: group.specs.filter(spec => spec.function?.name !== SUBAGENT_TOOL) }))
+      .filter(group => group.specs.length);
+    if (!this.canControlSubagents()) optional = optional
+      .map(group => ({ ...group, specs: group.specs.filter(spec => spec.function?.name !== SUBAGENT_CONTROL_TOOL) }))
       .filter(group => group.specs.length);
 
     if (!completionWorker(this.config) && this.searchesThisTurn >= MAX_WEB_SEARCHES_PER_TURN) {
@@ -734,23 +762,35 @@ export class Agent {
    * a deliberate cap and wins. The default is only a guess - no max_tokens is
    * even sent - so it must not starve a small window: reserve at most a quarter.
    */
+  contextLimit(client = this._activeModelClient || this.client, model = this._activeModel || this.model) {
+    const toolWindow = this.tool && client === this.tool.client && model === this.tool.model ? this.tool.contextWindow : null;
+    return modelContextWindow({ client, model, contextWindow: this.config?.contextWindowExplicit ? this.contextWindow : toolWindow || this.contextWindow,
+      contextWindowExplicit: this.config?.contextWindowExplicit });
+  }
+
   outputReserve() {
     const cap = this.config?.maxTokens || 4096;
-    if (this.config?.maxTokensExplicit) return cap;
-    const window = Number(this.contextWindow);
+    const client = this._activeModelClient || this.client;
+    const minimum = client?.minMaxTokens || 0;
+    if (this.config?.maxTokensExplicit) return Math.max(cap, minimum);
+    // Match the output tokens actually sent by streamAttempt, including the
+    // provider's request default and enforced minimum, before fitting history.
+    const providerCap = Math.max(client?.requestDefaults?.max_tokens || 0, minimum);
+    if (providerCap > 0) return providerCap;
+    const window = Number(this.contextLimit());
     if (!Number.isFinite(window) || window <= 0) return cap;
     return Math.min(cap, Math.max(256, Math.floor(window / 4)));
   }
 
   /** Bytes left for tool schemas once output, overhead and memory are reserved. */
   toolBudgetBytes() {
-    const window = Number(this.contextWindow);
+    const window = Number(this.contextLimit());
     if (!Number.isFinite(window) || window <= 0) return Infinity;
     const memory = this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0;
     // The real system prompt also occupies the window. Reserving only schemas
     // could load browser/web/connectors and leave too little room to send a request.
     const prompt = this.messages?.[0]?.role === 'system' ? messageCost(this.messages[0]) : 0;
-    const request = this.messages?.findLast(message => message.role === 'user');
+    const request = this.messages?.findLast(isUserRequest);
     const requestBytes = request ? messageCost(request) : 0;
     return window - this.outputReserve() - CONTEXT_OVERHEAD_BYTES - Math.max(MIN_HISTORY_BYTES, requestBytes) - memory - prompt;
   }
@@ -815,84 +855,131 @@ export class Agent {
   async trimHistory(max, { compact = true } = {}) {
     // Optional compaction: summarize the older history that trimming would drop,
     // so long-running conversations keep their facts instead of losing them.
-    if (compact) await this.compactHistoryIfNeeded();
     // UTF-8 bytes are a conservative token upper bound; reserve output + tools.
     // currentSpecs() has already shed on-demand groups that do not fit, so this
     // only throws when even the core tools cannot share the window.
-    const available = this.contextWindow - this.outputReserve() - CONTEXT_OVERHEAD_BYTES -
+    const available = this.contextLimit() - this.outputReserve() - CONTEXT_OVERHEAD_BYTES -
       schemaBytes(this.currentSpecs()) -
       (this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0);
     if (available < MIN_HISTORY_BYTES) throw new Error('Model context window is too small for the configured output and tools. Reduce MAX_TOKENS or disable tools.');
+    if (compact) await this.compactHistoryIfNeeded(max, available);
+    this.abort?.signal.throwIfAborted();
     this.messages = trimMessages(this.messages, max, available, { fitToolContent: (message, bytes) => this.fitToolContent(message, bytes) });
   }
 
+  reportCompaction(event) {
+    try { this.onCompaction?.(event); } catch { /* Observers cannot interrupt the conversation. */ }
+  }
+
   /** Summarize older turns into one compact note when compaction is enabled. */
-  async compactHistoryIfNeeded() {
+  async compactHistoryIfNeeded(max, available) {
     if (this.config?.contextCompaction !== true) return;
     const messages = this.messages;
-    if (!Array.isArray(messages) || messages.length < COMPACTION_MIN_MESSAGES) return;
-    if (this._lastCompactionCount && messages.length - this._lastCompactionCount < COMPACTION_COOLDOWN_TURNS) return;
+    if (!Array.isArray(messages)) return;
+    const cost = conversationCost(messages);
+    const urgent = cost > available || (max > 0 && messages.length > max + 1);
+    const pressure = urgent || cost >= available * COMPACTION_PRESSURE_RATIO;
+    if (!urgent && this._lastCompactionCount && messages.length - this._lastCompactionCount < COMPACTION_COOLDOWN_TURNS) return;
     // Only compact when history is large enough to matter.
-    const triggerCount = Math.max(COMPACTION_MIN_MESSAGES, (this.config.historyMessages ?? 40) - COMPACTION_TRIGGER_MARGIN);
-    if (messages.length < triggerCount) return;
+    const triggerCount = Math.max(COMPACTION_MIN_MESSAGES, (max ?? this.config.historyMessages ?? 40) - COMPACTION_TRIGGER_MARGIN);
+    if (!pressure && messages.length < triggerCount) return;
     const system = messages[0]?.role === 'system' ? messages[0] : null;
     const body = system ? messages.slice(1) : messages.slice();
     // Keep a recent window intact (do not split tool exchanges).
-    let keepCount = Math.min(COMPACTION_KEEP_RECENT, body.length);
-    while (keepCount < body.length && body[body.length - keepCount]?.role === 'tool') keepCount++;
-    const old = body.slice(0, body.length - keepCount);
-    const recent = body.slice(body.length - keepCount);
-    if (old.length < COMPACTION_MIN_OLD) return;
+    const current = body.findLast(isUserRequest);
+    const recentCount = Math.min(COMPACTION_KEEP_RECENT, Math.max(1, (max || COMPACTION_KEEP_RECENT) - COMPACTION_RESERVED_MESSAGES));
+    let boundary = Math.max(0, body.length - recentCount);
+    while (boundary > 0 && body[boundary]?.role === 'tool') boundary--;
+    // Large messages may fill a small model in only a few turns. Move complete
+    // tool exchanges into the recap until the recent window has space for it.
+    if (pressure) {
+      while (boundary < body.length && conversationCost([...(system ? [system] : []),
+        ...(body.indexOf(current) < boundary && current ? [current] : []), ...body.slice(boundary)]) + COMPACTION_REPLY_BYTES > available) {
+        boundary++;
+        while (boundary < body.length && body[boundary]?.role === 'tool') boundary++;
+      }
+    }
+    const old = body.slice(0, boundary).filter(message => message !== current);
+    const recent = [...(current && body.indexOf(current) < boundary ? [current] : []), ...body.slice(boundary)];
+    if (!old.length || (!pressure && old.length < COMPACTION_MIN_OLD)) return;
     // Do not compact if there is already a fresh summary and nothing new.
     let summaryText = null;
+    this.reportCompaction({ phase: 'started' });
     try {
       summaryText = await this.summarizeMessages(old);
+      this.abort?.signal.throwIfAborted();
     } catch (err) {
+      this.abort?.signal.throwIfAborted();
       this.print?.(`  (context compaction skipped: ${err?.message || err})`);
+      this.reportCompaction({ phase: 'skipped' });
       return;
     }
-    if (!summaryText) return;
+    if (!summaryText) { this.reportCompaction({ phase: 'skipped' }); return; }
     // User role keeps the history valid for providers that require the first
     // non-system turn to be the user, and the existing anchors keep it.
     const summaryMessage = { role: 'user', content: `${COMPACTION_SUMMARY_PREFIX}\n${summaryText}` };
-    this.messages = system ? [system, summaryMessage, ...recent] : [summaryMessage, ...recent];
+    const candidate = system ? [system, summaryMessage, ...recent] : [summaryMessage, ...recent];
+    let fitted;
+    try { fitted = trimMessages(candidate, max, available, { fitToolContent: (message, bytes) => this.fitToolContent(message, bytes) }); }
+    catch { this.reportCompaction({ phase: 'skipped' }); return; }
+    if (!fitted.some(message => message.content === summaryMessage.content)) {
+      this.reportCompaction({ phase: 'skipped' });
+      return;
+    }
+    this.messages = fitted;
     this._lastCompactionCount = this.messages.length;
+    this.print?.('  (earlier conversation summarized)');
+    this.reportCompaction({ phase: 'completed', summary: summaryText,
+      beforeMessages: messages.length, afterMessages: this.messages.length });
   }
 
   /** Ask the model to summarize a block of messages. */
   async summarizeMessages(messages) {
-    if (!this.client || typeof this.client.baseUrl !== 'string') return null;
+    const client = this._activeModelClient || this.client;
+    const model = this._activeModel || this.model || client?.requestDefaults?.model;
+    if (!client || typeof client.baseUrl !== 'string') return null;
     const transcript = (messages || []).map((m) => {
       let content = '';
       if (typeof m?.content === 'string') content = m.content;
       else if (Array.isArray(m?.content)) content = m.content.map((p) => (p && typeof p === 'object' && typeof p.text === 'string') ? p.text : (p?.type === 'image_url' ? '[image]' : '')).filter(Boolean).join(' ');
       if (Array.isArray(m?.tool_calls) && m.tool_calls.length) content += ` [called: ${m.tool_calls.map((c) => c?.function?.name).filter(Boolean).join(', ')}]`;
-      return `${m?.role || 'message'}: ${String(content).slice(0, COMPACTION_MESSAGE_CHARS)}`;
-    }).join('\n').slice(0, COMPACTION_TRANSCRIPT_BYTES);
+      // Prior recaps are already bounded. Keep their decisions complete when
+      // folding them again, while ordinary tool/page messages get excerpts.
+      const excerpt = content.startsWith(COMPACTION_SUMMARY_PREFIX)
+        ? capOutput(content, COMPACTION_REPLY_BYTES + Buffer.byteLength(`${COMPACTION_SUMMARY_PREFIX}\n`))
+        : content.slice(0, COMPACTION_MESSAGE_CHARS);
+      return `${m?.role || 'message'}: ${excerpt}`;
+    }).join('\n');
     if (!transcript.trim()) return null;
-    const prompt = [
+    const instructions = [
       'Summarize the following conversation excerpt into a concise, factual summary (max 300 words).',
       'Preserve: the user goals, decisions made, files/paths touched, tools used and their key results, unresolved tasks, and constraints.',
       'Do not invent facts. Return only the summary text, no preamble.',
       '',
       'TRANSCRIPT DATA:',
-      transcript,
     ].join('\n');
+    const maxTokens = Math.max(COMPACTION_MAX_TOKENS, client.minMaxTokens || 0);
+    const transcriptBudget = Math.min(COMPACTION_TRANSCRIPT_BYTES,
+      this.contextLimit(client, model) - maxTokens - CONTEXT_OVERHEAD_BYTES - messageCost({ role: 'user', content: instructions }));
+    if (transcriptBudget <= 0) return null;
+    const prompt = instructions + capOutput(transcript, transcriptBudget);
     const body = {
-      ...this.client.requestDefaults,
-      model: this.model || this.client.requestDefaults?.model,
+      ...client.requestDefaults,
+      model,
       messages: [{ role: 'user', content: prompt }],
       stream: false,
-      max_tokens: COMPACTION_MAX_TOKENS,
+      max_tokens: maxTokens,
     };
-    const res = await fetchWithRetry(`${this.client.baseUrl}${CHAT_COMPLETIONS_ROUTE}`, {
+    const res = await fetchWithRetry(`${client.baseUrl}${CHAT_COMPLETIONS_ROUTE}`, {
       method: 'POST',
-      headers: this.client.headers(false),
+      headers: client.headers(false),
       body: JSON.stringify(body),
       signal: this.abort?.signal,
     }, { retries: 1 });
     if (!res?.ok) throw new Error(`compaction request failed (${res?.status})`);
     const data = await res.json();
+    if (data.error) throw providerError(data);
+    assertCompleteGeneration(data.choices?.[0]?.finish_reason);
     const text = data?.choices?.[0]?.message?.content;
     if (typeof text !== 'string') return null;
     // Cap in bytes, not code units, so multi-byte scripts (e.g. Hinglish/Hindi)
@@ -984,13 +1071,20 @@ export class Agent {
     this.abort ??= new AbortController();
     const signal = this.abort.signal;
 
-    const request = (cli, mdl, retries) => {
+    const request = async (cli, mdl, retries) => {
+      const changingModel = (this._activeModelClient || this.client) !== cli || (this._activeModel || this.model) !== mdl;
+      if (changingModel) this._roundSpecs = null;
+      this._activeModelClient = cli;
+      this._activeModel = mdl;
+      // A fallback can have a smaller window. Refit on the change, including
+      // recovery requests that bypass the normal tool-loop boundary.
+      if (changingModel) await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
       const body = {
         ...cli.requestDefaults,
         model: mdl,
         messages: messagesForModel(withMemoryContext(this.config.browserHistoryCompaction === true ? compactBrowserHistory(this.messages, {
           evidence: this.config.browserEvidenceRetention === true ? this.browserEvidence?.items || [] : [], notice: this.browserEvidence?.notice,
-          maxBytes: this.contextWindow - this.outputReserve() - CONTEXT_OVERHEAD_BYTES - schemaBytes(this.currentSpecs()) -
+          maxBytes: this.contextLimit() - this.outputReserve() - CONTEXT_OVERHEAD_BYTES - schemaBytes(this.currentSpecs()) -
             (this.memoryContext ? Buffer.byteLength(JSON.stringify(this.memoryContext.messages)) : 0),
         }) : this.messages, this.memoryContext), cli.modelCapabilities?.get(mdl)?.vision),
         stream: true,
@@ -1163,7 +1257,20 @@ export class Agent {
         return { ...this.toolContext, cwd: this.cwd, workspacePath: this.workspacePath, config: this.config,
           ui: this.ui, state: this.state, executionState, allowedTools: this.allowedTools, backgroundToolScope: Boolean(this.allowedTools),
           readOnly: this.readOnly || undefined,
+          withToolExecution: (call, ctx, execute) => {
+            // A worker owns the lock for its whole loop. Delegation acquires its
+            // own lock, and mailbox controls must remain usable while it runs.
+            if (this.depth > 0 || call.name === SUBAGENT_TOOL || call.name === SUBAGENT_CONTROL_TOOL) return execute();
+            const native = get(call.name);
+            const runtime = runtimeVoiceTool(ctx, call.name);
+            const readOnly = native ? isReadOnly(call.name, call.arguments, ctx)
+              : runtime ? runtimeToolFlag(runtime, 'readOnly', call.arguments, ctx) === true
+                : ctx.mcp?.findTool(call.name)?.tool?.annotations?.readOnlyHint === true;
+            return readOnly ? execute() : withWorkspaceMutation(ctx, ctx.signal, execute);
+          },
           runSubagent: this.canDelegate() ? (args, callCtx) => this.subagentRuntime().run(args, callCtx) : null,
+          subagentControl: this.toolContext?.subagentControl || (this.canDelegate()
+            ? (args, callCtx) => this.subagentRuntime().control(args, callCtx) : null),
           signal: this.abort?.signal, autoApprove: this.autoApprove,
           skillsInteractive: this.skillsEnabled, skillsEnabled: this.availableSkills().length > 0,
           disabledSkills: this.disabledSkills, projectId: this.projectId, mcp: this.mcp,
@@ -1317,6 +1424,9 @@ export class Agent {
       traceAgent({ event: 'final', request_id: this.requestId, total_tool_calls: this.totalToolCalls, elapsed_time: Date.now() - this.requestStarted, termination_reason: this.cancelled() ? 'cancelled' : this.terminationReason || (String(err.code || '').startsWith('provider_') ? err.code : 'error') }, this.config);
       throw err;
     }
+    finally {
+      if (this._subagents?.hasPending()) await this._subagents.cancelAll();
+    }
     if (this.useTools) warmRecallSafely({ config: this.config });
     if (this.config.memoryConsolidation === false) this.journalComplete = false;
     const termination = this.cancelled() ? 'cancelled' : this.terminationReason || 'model_answer';
@@ -1443,6 +1553,7 @@ export class Agent {
     const maxSteps = completionWorker(this.config) ? Infinity : this.config.maxToolSteps > 0 ? this.config.maxToolSteps : MAX_TOOL_STEPS;
     const maxCalls = completionWorker(this.config) ? Infinity : this.config.maxToolCalls > 0 ? this.config.maxToolCalls : MAX_TOOL_CALLS;
     for (let step = 0; step < maxSteps; step++) {
+      this.receiveSubagentMessages();
       const onToolModel = usedTools && this.tool;
       if (onToolModel) this.toolLoopUsed = true;
       const callClient = onToolModel ? this.tool.client : this.client;
@@ -1462,7 +1573,7 @@ export class Agent {
         try { onSkillsLoaded?.(includedSkills.map(skill => skill.name)); } catch { /* UI observers must not interrupt a model request. */ }
       }
       onMessageStart?.();
-      const live = !onToolModel && !responsePolicy; // Unchecked voice drafts must never reach captions or speech.
+      const live = !onToolModel && !responsePolicy && !this._subagents?.hasPending(); // Background drafts and unchecked voice drafts stay internal.
       let content, toolCalls;
       let partial = '';
       let result;
@@ -1491,6 +1602,13 @@ export class Agent {
       this.messages.push(assistant);
 
       if (!toolCalls.length) {
+        // A draft cannot finish the parent while delegated background work is
+        // still owed. Wake on a child message or completion and decide again.
+        if (this._subagents?.hasPending()) await this._subagents.waitForProgress(this.abort.signal);
+        if (this.receiveSubagentMessages()) {
+          this.messages.splice(this.messages.indexOf(assistant), 1);
+          continue;
+        }
         if (responsePolicy) {
           const correction = await responsePolicy.review({ content, client: this._activeModelClient || callClient,
             model: result.model || callModel, signal: this.abort.signal, tools: this.currentSpecs().map(spec => spec.function.name),
@@ -1515,7 +1633,7 @@ export class Agent {
           await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
           return reply;
         }
-        if (responsePolicy) onDelta?.(content);
+        if (responsePolicy || !live) onDelta?.(content);
         this.replyModel = result.model || callModel;
         await this.trimHistory(this.config.historyMessages ?? this.config.historyLines);
         return content;

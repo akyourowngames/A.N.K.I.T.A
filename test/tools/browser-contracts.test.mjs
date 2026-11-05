@@ -4,6 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import { removeFixtureDirectory } from '../helpers/fixture-cleanup.mjs';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-browser-contract-'));
 process.env.CONFIG_DIR = path.join(root, 'config');
@@ -14,7 +15,7 @@ const { isToolFailure, verdictFor } = await import('../../src/core/verify.mjs');
 const contracts = await import('../../tools/browser/contracts.mjs').catch(() => ({}));
 const SLOW_PREPARATION_MS = 500; // Milliseconds: fixture preparation exceeds the former 250ms pre-dispatch assertion; browser work remains real.
 const LIVE_STOP_TEST_TIMEOUT_MS = 30_000; // Milliseconds: bound real browser startup, cancellation, response and cleanup.
-test.after(() => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }));
+test.after(() => removeFixtureDirectory(root));
 
 test('numbered partial browser batches are failures without misclassifying page prose', () => {
   const result = '1. fill complete.\n2. Error: stale target. Batch stopped.';

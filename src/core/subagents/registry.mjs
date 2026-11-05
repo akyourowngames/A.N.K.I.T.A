@@ -1,4 +1,15 @@
 export const SUBAGENT_TOOL = 'delegate_task';
+export const SUBAGENT_CONTROL_TOOL = 'subagent_control';
+export const SUBAGENT_PARENT_TARGET = 'parent';
+// Shared direction labels keep terminal and desktop message receipts consistent.
+export const SUBAGENT_MESSAGE_LABELS = Object.freeze({ toChild: 'Parent to agent', toParent: 'Agent to parent' });
+export const SUBAGENT_INBOX_PREFIX = '[Sub-agent inbox]';
+// Bytes/message and queued messages/recipient bound cross-agent context growth.
+export const SUBAGENT_MESSAGE_BYTES = 8_000;
+export const SUBAGENT_INBOX_LIMIT = 64;
+// Milliseconds/control wait keeps the parent responsive while children work.
+export const SUBAGENT_WAIT_MS = 1_000;
+export const SUBAGENT_MAX_WAIT_MS = 30_000;
 export const SUBAGENT_TYPES = Object.freeze(['explore', 'reviewer', 'worker']);
 // Parent-facing digest size; the complete answer travels in the result field.
 export const SUMMARY_MAX_BYTES = 2_000;
@@ -41,6 +52,8 @@ export const SUBAGENT_DEFAULTS = Object.freeze({
 });
 
 export const SUBAGENT_STATUS = Object.freeze({
+  queued: 'queued',
+  running: 'running',
   completed: 'completed',
   failed: 'failed',
   timeout: 'timeout',
@@ -50,6 +63,8 @@ export const SUBAGENT_STATUS = Object.freeze({
 });
 
 export const SUBAGENT_EVENT = Object.freeze({
+  queued: 'subagent-queued',
+  message: 'subagent-message',
   start: 'subagent-start',
   delta: 'subagent-delta',
   toolCall: 'subagent-tool-call',
@@ -58,13 +73,14 @@ export const SUBAGENT_EVENT = Object.freeze({
 });
 
 export const CHILD_RULES = [
-  'You are a sub-agent in an isolated context. The parent sees only your final message, not your intermediate work.',
-  'You cannot ask questions and cannot delegate. If the brief is ambiguous, choose the most reasonable interpretation and state it.',
+  'You are a sub-agent in an isolated context. Use subagent_control(action="send", subagent_id="parent", message="...") to send progress, questions or findings to your parent during work. Parent messages arrive between model decisions.',
+  'You cannot ask the user directly or delegate. Send questions to your parent and continue independent safe work while awaiting a reply. If the brief stays ambiguous, state your interpretation.',
   'Your final answer must be complete: what you did or found, evidence (file:line where relevant), files changed, commands/tests run and their results, and remaining risks.',
   'Never claim work you did not verify.',
 ].join(' ');
 
 const READ_ONLY_TOOLS = Object.freeze([
+  SUBAGENT_CONTROL_TOOL,
   'read_file',
   'list_dir',
   'search_files',

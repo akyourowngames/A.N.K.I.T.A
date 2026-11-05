@@ -13,6 +13,37 @@ import { BrowserPluginStore } from '../../src/integrations/browser-plugins.mjs';
 
 const fixture = t => { const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'voice-worker-')); t.after(() => fs.rmSync(dir, { recursive: true, force: true })); return dir; };
 const controlTool = { name: 'voice_jobs', description: 'test control', parameters: { type: 'object' }, needsApproval: false, run: () => '[]' };
+
+for (const discoveryOutcome of ['resolve', 'reject']) test(`cancelling during voice model discovery stops before send and handles late ${discoveryOutcome}`, async t => {
+  const dir = fixture(t);
+  const parent = new Agent({ client: {}, config: { model: 'typed', tools: false, contextWindow: 128000, memoryConsolidation: false },
+    memoryEnabled: false, skillsEnabled: false, autoProject: false, workspacePath: dir });
+  let discoveryStarted, resolveDiscovery, rejectDiscovery;
+  const started = new Promise(resolve => { discoveryStarted = resolve; });
+  const discovery = new Promise((resolve, reject) => { resolveDiscovery = resolve; rejectDiscovery = reject; });
+  const brain = { model: 'voice', client: { async models() { discoveryStarted(); return discovery; } } };
+  const entry = { id: 'cancel-discovery', ownerId: 'owner', transcript: 'Say hello.', context: captureVoiceContext(parent) };
+  const controller = new AbortController();
+  const reason = new DOMException('Fixture cancelled during discovery', 'AbortError');
+  let outcome, modelRequests = 0;
+  t.mock.method(globalThis, 'fetch', async () => { modelRequests++; return Response.json({ choices: [{ message: { content: 'Hello.' } }] }); });
+  const pending = runVoiceWorker(entry, { signal: controller.signal, observer: {}, controlTool }, { brain })
+    .then(value => { outcome = { value }; }, error => { outcome = { error }; });
+  await started;
+  const original = { client: entry.worker.client, model: entry.worker.model, config: entry.worker.config, contextWindow: entry.worker.contextWindow };
+  try {
+    controller.abort(reason);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(outcome?.error, reason, 'cancellation settles before discovery responds');
+    for (const [field, value] of Object.entries(original)) assert.equal(entry.worker[field], value, field);
+  } finally {
+    if (discoveryOutcome === 'resolve') resolveDiscovery([]);
+    else rejectDiscovery(new Error('Fixture late catalogue failure'));
+    await pending;
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(modelRequests, 0, 'a cancelled worker never starts a model request');
+});
 test('parallel voice workers retain separate extension browser scopes and release them after work', async t => {
   const dir = fixture(t), store = new BrowserPluginStore(path.join(dir, 'browser.json')).load();
   store.setEnabled('local', true); store.setChromeMode('extension');

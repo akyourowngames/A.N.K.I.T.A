@@ -107,7 +107,7 @@ test('the delegate_task tool is one typed entry and classifies its presets', () 
   assert.match(delegate.run({ subagent_type: 'explore', description: 'x', prompt: ' ' }, {}), /nonempty/);
   assert.match(delegate.run({ subagent_type: 'explore', description: 'x', prompt: 'x' }, {}), /unavailable/);
   assert.deepEqual(Object.keys(delegate.parameters.properties).sort(),
-    ['description', 'max_steps', 'prompt', 'subagent_type', 'timeout_ms']);
+    ['background', 'description', 'max_steps', 'prompt', 'subagent_type', 'timeout_ms']);
   assert.equal(delegate.parameters.properties.max_steps.maximum, registry.SUBAGENT_LIMITS.maxToolSteps);
   assert.equal(delegate.parameters.properties.timeout_ms.maximum, registry.SUBAGENT_LIMITS.maxTimeoutMs);
 });

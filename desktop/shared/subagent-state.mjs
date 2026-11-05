@@ -1,5 +1,6 @@
 /** Live sub-agent activity for the desktop workbench. No DOM or Electron dependency. */
-import { SUBAGENT_EVENT, SUBAGENT_STATUS } from '../../src/core/subagents/registry.mjs';
+import { SUBAGENT_EVENT, SUBAGENT_STATUS, SUBAGENT_INBOX_LIMIT } from '../../src/core/subagents/registry.mjs';
+export { SUBAGENT_PARENT_TARGET, SUBAGENT_MESSAGE_LABELS } from '../../src/core/subagents/registry.mjs';
 
 // Characters kept from one child's stream. The parent receives the complete
 // answer in the delegate_task result; the live card only needs enough context
@@ -31,6 +32,7 @@ function blank(event) {
     status: RUNNING,
     text: '',
     tools: [],
+    messages: [],
     summary: '',
     usage: null,
     durationMs: 0,
@@ -68,6 +70,15 @@ export function reduceSubagents(state, event) {
   let next = current;
 
   switch (event.type) {
+    case SUBAGENT_EVENT.queued:
+      next = { ...current, status: SUBAGENT_STATUS.queued };
+      break;
+    case SUBAGENT_EVENT.message:
+      if (!event.messageId || typeof event.message !== 'string' || current.messages?.some(item => item.messageId === event.messageId)) return state;
+      next = { ...current, messages: [...(current.messages || []), {
+        messageId: event.messageId, from: event.from, to: event.to, message: capText(event.message), createdAt: event.createdAt,
+      }].slice(-SUBAGENT_INBOX_LIMIT) };
+      break;
     case SUBAGENT_EVENT.start:
       next = {
         ...current,

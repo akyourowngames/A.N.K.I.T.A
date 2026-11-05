@@ -11,6 +11,7 @@ export const SUBAGENT_TYPE_LABEL: Record<string, string> = {
 };
 
 export const SUBAGENT_STATUS_LABEL: Record<string, string> = {
+  queued: 'Waiting',
   running: 'Working',
   completed: 'Done',
   failed: 'Failed',
@@ -33,9 +34,13 @@ export const SUBAGENT_FAILED_STATES = new Set(['failed', 'timeout', 'budget_exce
 export type SubagentTone = 'running' | 'ok' | 'failed' | 'idle';
 
 export function subagentTone(status: string): SubagentTone {
-  if (status === 'running') return 'running';
+  if (subagentRunning(status)) return 'running';
   if (status === 'completed') return 'ok';
   return SUBAGENT_FAILED_STATES.has(status) ? 'failed' : 'idle';
+}
+
+export function subagentRunning(status: string) {
+  return status === 'running' || status === 'queued';
 }
 
 export function subagentTypeLabel(type: string) {

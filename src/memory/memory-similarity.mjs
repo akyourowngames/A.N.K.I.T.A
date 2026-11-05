@@ -11,6 +11,8 @@
 export const DEFAULT_DEDUP_THRESHOLD = 0.85; // Above this, one fact, not two.
 export const DEFAULT_CONFLICT_LOW = 0.55; // Below this, unrelated.
 const MAX_COMPARE_FACTS = 2000; // Bounds a pathological profile without skipping recent facts.
+// English negation changes a fact's meaning even when its words or embedding are close.
+const NEGATION_PATTERN = /\b(?:no|not|never|without|cannot|neither|nor|[a-z]+n['’]t)\b/iu;
 const STOP_WORDS = new Set(['i', 'a', 'an', 'the', 'is', 'am', 'are', 'was', 'were', 'be', 'been', 'my', 'me', 'to', 'of', 'for', 'and', 'or', 'in', 'on', 'at', 'it', 'that', 'this', 'with', 'use', 'used', 'using', 'database', 'db', 'app', 'project', 'thing', 'stuff', 'like', 'prefer', 'want', 'need']);
 
 const normalize = value => String(value ?? '').trim().toLocaleLowerCase().replace(/[^\p{L}\p{N}\s]+/gu, ' ').replace(/\s+/g, ' ').trim();
@@ -106,7 +108,8 @@ export async function findSimilar(text, facts, {
     if (!best || score > best.score) { best = { fact, score }; scoredByEmbedder = fromEmbedder; }
   }
   if (!best) return { fact: null, score: 0, kind: null };
-  if (best.score >= dedup) return { ...best, kind: 'duplicate' };
+  const changesNegation = NEGATION_PATTERN.test(String(text)) !== NEGATION_PATTERN.test(best.fact.text);
+  if (best.score >= dedup && !changesNegation) return { ...best, kind: 'duplicate' };
   // A conflict is only claimed between facts of the same declared category;
   // unrelated kinds sharing vocabulary are not a disagreement. A cold or partial
   // embedding index mixes cosine and lexical scores, so the cosine threshold is

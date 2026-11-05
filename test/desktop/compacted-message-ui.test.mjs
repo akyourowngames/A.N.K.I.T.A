@@ -21,13 +21,28 @@ test('a compaction recap renders as a quiet labelled note, never as a user bubbl
     res.end(await vitess.transformIndexHtml(ROUTE, `<!doctype html><html data-theme="graphite"><body class="desktop-workbench"><div id="root"></div><script type="module">
       import React from 'react'; import {createRoot} from 'react-dom/client';
       import {Transcript} from '/src/components/Transcript.tsx';
+      import {reducer, initialState} from '/src/state/store.ts';
+      import {Prompt} from '/src/components/island-views/Prompt.tsx';
+      import {reduceIslandState} from '/@fs/${fileURLToPath(new URL('../../desktop/shared/island-state.mjs', import.meta.url)).replaceAll('\\', '/')}';
       import '/src/styles.css'; import '/src/workbench.css';
       window.ankita = { invoke: async () => [], openExternal: () => {} };
       const messages = ${JSON.stringify(messages)};
-      createRoot(document.getElementById('root')).render(React.createElement(Transcript, {
-        messages, teammate: {id:'fixture', name:'Fixture', color:'sage'}, threadId:'fixture', running:false,
+      const root = createRoot(document.getElementById('root'));
+      let state = { ...initialState, threads: { fixture: messages } };
+      const render = () => root.render(React.createElement(Transcript, {
+        messages: state.threads.fixture, teammate: {id:'fixture', name:'Fixture', color:'sage'}, threadId:'fixture', running:true,
         jobs:[], onEditJob:()=>{}, onReview:()=>{}, subagentOpen:false,
       }));
+      window.receiveCompaction = event => { state = reducer(state, {type:'event', event}); render(); };
+      window.showCompanionRecap = () => {
+        const companion = reduceIslandState({threads:{}}, {type:'context-compaction', threadId:'fixture', phase:'completed', summary:'The companion keeps this recap visible.'});
+        root.render(React.createElement(Prompt, { chat: {
+          log:companion.threads.fixture.log, thinking:false, sending:false, loading:false, error:'', input:'',
+          teammateId:'fixture', teammateName:'Fixture', teammates:[{id:'fixture',name:'Fixture'}],
+          attachments:[], reading:false, setInput:()=>{}, selectTeammate:()=>{}, submit:()=>{}, stop:()=>{},
+        }, onAttach:()=>{} }));
+      };
+      render();
     </script></body></html>`));
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -51,6 +66,11 @@ test('a compaction recap renders as a quiet labelled note, never as a user bubbl
   assert.match(order[0], /user-message/);
   assert.match(order[1], /compacted-message/);
   assert.match(order[2], /user-message/);
+  await page.evaluate(() => window.receiveCompaction({type:'context-compaction', threadId:'fixture', phase:'completed', summary:'New decisions kept while the reply is still running.'}));
+  await page.getByText('New decisions kept while the reply is still running.').waitFor();
+  assert.equal(await card.count(), 1, 'a fresh completion replaces the prior recap');
+  assert.equal(await page.locator('.user-message').count(), 2, 'live compaction preserves the displayed conversation');
+  assert.equal(await card.getAttribute('role'), 'status', 'assistive technology can announce completion');
   assert.deepEqual(errors, []);
   if (process.env.ANKITA_UI_CAPTURE_DIR) {
     const { mkdirSync } = await import('node:fs');
@@ -58,4 +78,9 @@ test('a compaction recap renders as a quiet labelled note, never as a user bubbl
     mkdirSync(process.env.ANKITA_UI_CAPTURE_DIR, { recursive: true });
     await page.screenshot({ path: join(process.env.ANKITA_UI_CAPTURE_DIR, 'compacted-message.png') });
   }
+  await page.evaluate(() => window.showCompanionRecap());
+  await page.getByText('The companion keeps this recap visible.').waitFor();
+  assert.match(await page.getByRole('status').innerText(), /Earlier conversation, summarized/);
+  assert.equal(await page.locator('.chat-row .reply').count(), 0, 'the companion also labels a recap separately from replies');
+  assert.deepEqual(errors, []);
 });

@@ -742,7 +742,7 @@ body.resizing, body.resizing * { cursor: col-resize !important; user-select: non
 .subagent-panel-section { display: grid; gap: 8px; }
 .subagent-panel-section-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text-dim); font-size: 10px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; }
 .subagent-panel-section-head small { color: #9db8d8; font-size: 9.5px; font-weight: 500; letter-spacing: 0; text-transform: none; }
-.subagent-panel-output, .subagent-panel-summary, .subagent-panel-brief pre { margin: 0; padding: 14px 15px; overflow: auto; border: 1px solid var(--edge); border-radius: 10px; background: var(--subagent-well); color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px/1.72 var(--companion-font); text-wrap: pretty; }
+.subagent-panel-output, .subagent-panel-summary, .subagent-panel-brief pre, .subagent-message-body { margin: 0; padding: 14px 15px; overflow: auto; border: 1px solid var(--edge); border-radius: 10px; background: var(--subagent-well); color: var(--text-soft); white-space: pre-wrap; overflow-wrap: anywhere; font: 12.5px/1.72 var(--companion-font); text-wrap: pretty; }
 .subagent-panel-output { border-color: rgba(154,185,232,.16); background: linear-gradient(180deg, rgba(112,154,210,.06), var(--subagent-well) 55%); }
 .subagent-panel-waiting { display: flex; align-items: center; gap: 9px; padding: 14px 15px; border: 1px dashed var(--edge); border-radius: 10px; color: var(--text-dim); font-size: 11px; }
 .subagent-panel-quiet { margin: 0; color: var(--text-dim); font-size: 11px; }

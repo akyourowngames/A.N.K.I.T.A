@@ -5,6 +5,38 @@
 > contradictions before commit, and consolidation runs the same path. Conflict
 > resolution is deliberately user-explicit: facts are flagged, never rewritten.
 
+## Negation regression checked on 2026-11-04
+
+A real bug allowed a statement and its negation to merge. Adding "I live in
+Pune" followed by "I do not live in Pune" through the memory tool returned a
+merge score of `0.9`, erased the original wording and left `total: 1`.
+
+The similarity gate now checks English negation words and contractions before
+merging, including straight and curly apostrophes. A high embedding score also
+respects this check. Repeating the same disk-backed add/list sequence returned
+`total: 2`, retained both statements and saved conflict links in both directions.
+Equivalent negative statements can still merge.
+
+The new regressions first failed with `28 passed, 2 failed`. The final focused
+run passed `62/62` with zero failures.
+
+```text
+node --test --test-concurrency=1 test/memory/memory-similarity.test.mjs test/memory/personal.test.mjs test/memory/consolidation.test.mjs test/memory/embeddings.test.mjs
+node --check src/memory/memory-similarity.mjs
+node node_modules/typescript/bin/tsc --noEmit -p desktop/tsconfig.json
+```
+
+The syntax check and desktop typecheck both exited successfully. A separate
+focused audit of channels, personality, desktop MCP and voice passed `114/114`,
+including real loopback HTTP and native WebSocket round trips for Discord and
+Slack. No source changes were needed in those areas during this check.
+
+The negation check covers English markers, while other languages and subtler
+changes of meaning still depend on the existing similarity heuristics. The high
+embedding-score branch used a deterministic scorer. Real provider acceptance,
+real messaging accounts, physical audio, packaged desktop and the full suite
+were not exercised by this focused audit.
+
 ## Problem
 
 Two gaps in Ankita's memory consolidation, both leaning on the extractor model

@@ -91,6 +91,16 @@ test('a launched sub-agent opens the side panel, narrows chat and streams live w
   assert.ok(narrow < wide - 200, `chat should narrow from ${wide}px, got ${narrow}px`);
   assert.match(await page.locator('.subagent-toggle').innerText(), /1 agent working/);
 
+  for (const message of [
+    { messageId: 'parent-guidance', from: 'parent', to: 'child-live', message: 'Check the patched query parser.' },
+    { messageId: 'child-progress', from: 'child-live', to: 'parent', message: 'I found the parser guard.' },
+  ]) await page.evaluate(item => window.emitEvent(item), event('subagent-message', {
+    subagentId: 'child-live', parentCallId: 'call-delegate', createdAt: new Date().toISOString(), ...message,
+  }));
+  const messages = page.locator('.subagent-panel .subagent-messages');
+  await messages.getByText('I found the parser guard.', { exact: true }).waitFor();
+  assert.match(await messages.innerText(), /Parent to agent[\s\S]*patched query parser[\s\S]*Agent to parent[\s\S]*parser guard/);
+
   await page.evaluate(delta => window.emitEvent(delta), event('subagent-delta', { subagentId: 'child-live', parentCallId: 'call-delegate', text: 'Reading the exploit notes…' }));
   await page.locator('.subagent-panel-output').filter({ hasText: 'Reading the exploit notes' }).waitFor();
   await page.evaluate(call => window.emitEvent(call), event('subagent-tool-call', {

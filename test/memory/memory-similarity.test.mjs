@@ -64,6 +64,24 @@ test('an embedder failure degrades to lexical scoring instead of blocking the wr
   assert.equal(match.kind, 'duplicate', 'the lexical fallback still recognises the duplicate');
 });
 
+test('negating a fact cannot become a duplicate even with a high embedding score', async () => {
+  const rows = [{ id: 'home', text: 'I live in Pune', kind: 'fact' }];
+  const embedder = { rank: async () => ({ scores: new Map([[rows[0], 0.97]]) }) };
+  for (const text of ['I do not live in Pune', "I don't live in Pune", 'I don’t live in Pune', 'I never live in Pune']) {
+    for (const scorer of [null, embedder]) {
+      const match = await findSimilar(text, rows, { embedder: scorer, kind: 'fact' });
+      assert.equal(match.kind, 'conflict', text);
+      assert.equal(match.fact.id, 'home');
+    }
+  }
+});
+
+test('equivalent negative facts can still merge', async () => {
+  const rows = [{ id: 'home', text: 'I do not live in Pune', kind: 'fact' }];
+  const match = await findSimilar('I do not live in Pune city', rows, { kind: 'fact' });
+  assert.equal(match.kind, 'duplicate');
+});
+
 test('an empty or one-word fact is not compared into a false match', async () => {
   assert.equal((await findSimilar('x', facts())).kind, null);
   assert.equal((await findSimilar('   ', facts())).kind, null);

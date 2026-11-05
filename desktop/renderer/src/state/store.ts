@@ -1,4 +1,5 @@
 import type { ChatMessage, EngineEvent, Model, Teammate, Routine } from '../../../shared/wire';
+import { COMPACTION_ROW_PREFIX } from '../../../shared/compaction.mjs';
 import type { Compat } from '../../../shared/version.mjs';
 import type { SubagentState } from '../../../shared/subagent-state.mjs';
 import { clearThreadSubagents, reduceSubagents } from '../../../shared/subagent-state.mjs';
@@ -138,6 +139,13 @@ export function reducer(state: State, action: Action): State {
   if (event.type === 'skills-loaded') return {
     ...state, loadedSkills: { ...state.loadedSkills, [event.threadId]: [...new Set([...(state.loadedSkills[event.threadId] || []), ...event.names])] },
   };
+  if (event.type === 'context-compaction' && event.phase === 'completed' && event.summary) {
+    const summary = event.summary;
+    return patchThread(state, event.threadId, messages => [
+      ...messages.filter(message => message.role === 'tool' || !message.compacted),
+      { id: `${COMPACTION_ROW_PREFIX}${event.threadId}`, role: 'assistant', content: summary, compacted: true },
+    ]);
+  }
   if (event.type === 'message-start') return {
     ...state,
     threads: { ...state.threads, [event.threadId]: [...(state.threads[event.threadId] || []), { id: event.messageId, role: 'assistant', content: '', reasoning: '' }] },

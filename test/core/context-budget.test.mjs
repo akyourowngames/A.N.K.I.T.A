@@ -61,6 +61,17 @@ test('an unset MAX_TOKENS reserves less on a small window, an explicit one wins'
   assert.equal(pinned.outputReserve(), 4096, 'a deliberate cap is honoured even if it is large');
 });
 
+test('history reserves the actual provider output default and minimum for the active client', () => {
+  const agent = agentStub({ contextWindow: 32768, config: { maxTokens: 4096 } });
+  agent.client = { requestDefaults: { max_tokens: 12000 }, minMaxTokens: 8000 };
+  assert.equal(agent.outputReserve(), 12000, 'provider request defaults are sent even without a manual cap');
+  agent.config.maxTokensExplicit = true;
+  agent.config.maxTokens = 1000;
+  assert.equal(agent.outputReserve(), 8000, 'the provider minimum also applies to a smaller manual cap');
+  agent._activeModelClient = { minMaxTokens: 9000 };
+  assert.equal(agent.outputReserve(), 9000, 'tool and fallback requests use their own minimum');
+});
+
 /* ------------------------ shedding a loaded group ------------------------ */
 
 test('a large loaded server is dropped rather than starving the window', async () => {
