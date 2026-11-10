@@ -8,6 +8,7 @@ import { primitiveBrowserCost } from '../../tools/browser/operations.mjs';
 import { captureBrowserEvidence, recordBrowserProgress } from './browser-progress.mjs';
 import { isToolFailure } from './verify.mjs';
 import { browserScreenshotImage } from '../../tools/browser/screenshots.mjs';
+import { phoneScreenshotImage, MAX_PHONE_SCREENSHOTS_PER_TURN } from '../../tools/phone/screenshots.mjs';
 import { isBrowserMcpTool, MANAGED_BROWSER_REQUIRED } from '../integrations/browser-routing.mjs';
 import { parseToolName } from '../integrations/mcp-manager.mjs';
 import { TIER_DENY } from '../integrations/mcp-tiers.mjs';
@@ -32,6 +33,7 @@ export const MAX_WEB_SEARCHES_PER_TURN = 6;
 export const MAX_REPEAT_CALLS = 3;
 const FILE_WORKER_TOOLS = new Set(['search_files', 'glob', 'list_dir', 'read_file']);
 const NATIVE_CONNECTION_MANAGEMENT_TOOLS = new Set(['mcp_manage', 'composio']); // Native models use already connected capabilities; the desktop owner controls global connection settings.
+const DESKTOP_OWNED_TOOLS = new Set(['browser', 'phone']); // Device-driving families live on the desktop surface; they open real windows and phones.
 const DEFAULT_OUTPUT_COLUMNS = 80; // Terminal columns when no interactive TTY supplies a width.
 const CANCELLED = 'Action cancelled by user.';
 const DENIED = 'The user denied permission for this action. Do not retry it; ask what to do instead.';
@@ -73,7 +75,7 @@ export class ToolHost {
     if (!context) throw new TypeError('ToolHost requires an explicit host context');
     this.context = context; this.mcp = mcp; this.authorize = authorize; this.onEvent = onEvent;
     this.controller = new AbortController();
-    this.requestState = { searchesThisTurn: 0, browserActionsThisTurn: 0, activeSkillTools: new Set() };
+    this.requestState = { searchesThisTurn: 0, browserActionsThisTurn: 0, phoneScreenshotsThisTurn: 0, activeSkillTools: new Set() };
   }
 
   currentContext() { return typeof this.context === 'function' ? this.context() : this.context; }
@@ -89,7 +91,7 @@ export class ToolHost {
     const ctx = this.currentContext();
     if (!Object.values(NATIVE_TOOL_SURFACES).includes(surface)) throw new Error('Unknown native tool surface');
     const local = specs.filter(spec => !NATIVE_CONNECTION_MANAGEMENT_TOOLS.has(spec.function.name) && (spec.function.name === TOOL_DISCOVERY_NAME || (surface !== NATIVE_TOOL_SURFACES.plugins &&
-      (surface === NATIVE_TOOL_SURFACES.desktop ? spec.function.name === 'browser' : spec.function.name !== 'browser'))) &&
+      (surface === NATIVE_TOOL_SURFACES.desktop ? DESKTOP_OWNED_TOOLS.has(spec.function.name) : !DESKTOP_OWNED_TOOLS.has(spec.function.name)))) &&
       (!ctx.allowedTools || ctx.allowedTools.has(spec.function.name)) &&
       (spec.function.name !== SUBAGENT_TOOL || Boolean(ctx.runSubagent)) &&
       (!ctx.readOnly || isReadOnly(spec.function.name, {}, ctx))).map(spec => ({
@@ -254,11 +256,15 @@ export class ToolHost {
     }
     await ctx.onLocalResult?.(tool.name, args, output, ctx);
     const result = textResult(capOutput(output, budget));
-    if (resultMode === MCP_MODE && tool.name === 'browser' && args.action === 'screenshot' && !result.isError) {
-      const image = browserScreenshotImage(output, ctx);
+    const capture = tool.name === 'browser' && args.action === 'screenshot' ? browserScreenshotImage(output, ctx) : null;
+    const phoneCapture = tool.name === 'phone' && args.action === 'screenshot' && state.phoneScreenshotsThisTurn < MAX_PHONE_SCREENSHOTS_PER_TURN
+      ? phoneScreenshotImage(output, ctx) : null;
+    if (resultMode === MCP_MODE && (capture || phoneCapture) && !result.isError) {
+      const image = capture || phoneCapture;
       if (!image) return nativeProjection({ content: [{ type: 'text', text: NATIVE_IMAGE_INVALID_NOTICE }], isError: true }, state, budget);
       const [mimeType, data] = image.dataUrl.slice('data:'.length).split(';base64,');
       result.content.push({ type: 'image', mimeType, data });
+      if (phoneCapture) state.phoneScreenshotsThisTurn = (state.phoneScreenshotsThisTurn || 0) + 1;
       return nativeProjection(result, state, budget);
     }
     return result;

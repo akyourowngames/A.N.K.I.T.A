@@ -7,6 +7,28 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+### Phone control
+
+A new `phone` tool family drives an Android phone or emulator (and an iOS
+simulator on a Mac) through mobile-next/mobile-mcp, pinned at `1.0.16`. It is
+one curated tool with named actions rather than the bridge's 34 raw tools: it
+selects the phone once, reads the screen into refs, and returns screenshots as
+attached images. Connect is approved once and shows the exact command; after
+that only state-destroying actions ask again. The bridge stays hidden and never
+starts on its own, telephone/cloud-device tools are excluded, and typed text is
+hidden from the approval preview. Existing screenshots still attach for the
+browser family unchanged.
+
+Wireless debugging is set up by the assistant, not by the user: it finds the
+phone over adb mDNS, pairs with the six-digit code the user reads off the
+screen (sent over stdin, never as an argument), and reconnects a dropped link
+from the remembered address. No adb commands are handed back to the user.
+
+A bundled `phone-control` skill loads automatically when the phone family is
+discovered, so the assistant follows one connect → read → act order, re-reads
+refs instead of replaying stale taps, and spends no extra skill call.
+See [phone control](../guides/phone-control.md) and [evidence](../verification/phone-control.md).
+
 ### Editable character and speaking style
 
 Settings / Personality edits a local structured card with description, attitude,

@@ -237,6 +237,7 @@ with status, output, stdin and Stop controls while chat continues.
 | Commands and processes | Run commands, inspect ports, manage processes and background jobs |
 | Git and HTTP | Repository operations and structured requests |
 | Web and browser | Search, readable page extraction, browser actions, tabs and screenshots |
+| Phone | See an Android phone screen, tap, type, open apps, screenshot and read logs |
 | Projects and memory | Working context, decisions, tasks and personal facts |
 | Automation | Scheduled prompts, page watches and job control |
 | Images | Original generation, Unsplash search and Pixabay search |
@@ -412,6 +413,7 @@ Third-party companion attribution ships in
 - [Desktop workspace](docs/guides/desktop-workbench.md)
 - [Companion, file drops and webpage capture](docs/guides/desktop-companion.md)
 - [Phone pairing](docs/guides/phone-pairing.md)
+- [Controlling an Android phone](docs/guides/phone-control.md)
 - [Browser connections and permissions](docs/guides/browser-use.md)
 - [Browser lab fixes and remaining limits](docs/browser-lab-FINDINGS.md)
 - [Browser request cost and A/B evidence](docs/browser-lab-token-research.md)
