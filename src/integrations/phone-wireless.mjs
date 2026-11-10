@@ -20,6 +20,7 @@ export const ADB_MDNS_TIMEOUT_MS = 4_000; // Milliseconds; discovery returns qui
 export const ADB_PAIR_TIMEOUT_MS = 45_000; // Milliseconds; pairing waits for the phone to accept on its side.
 export const ADB_CONNECT_TIMEOUT_MS = 20_000; // Milliseconds; a TCP connect to a phone on the LAN.
 export const ADB_DEVICES_TIMEOUT_MS = 15_000; // Milliseconds; normally instant, allows for a cold adb server start.
+export const ADB_MAX_OUTPUT_CHARS = 1 * 1024 * 1024; // Characters/stream; a hard memory bound even for multibyte text.
 export const ADB_PAIRING_CODE_PATTERN = /^\d{6}$/; // Android shows exactly six digits.
 export const WIRELESS_ADDRESS_PATTERN = /^(?:[A-Za-z0-9._-]+|\[[0-9a-fA-F:]+\]):\d{1,5}$/; // host:port, IPv4 hostname or bracketed IPv6.
 
@@ -49,13 +50,18 @@ export function runProcess(command, args, { input = null, timeoutMs = 20_000, si
     try { child = spawnImpl(command, args, { stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true, shell: false, signal }); }
     catch (error) { resolve({ code: -1, stdout: '', stderr: error.message }); return; }
     let stdout = '', stderr = '', settled = false;
+    const append = (current, chunk) => {
+      if (current.length >= ADB_MAX_OUTPUT_CHARS) return current;
+      const next = current + chunk;
+      return next.length > ADB_MAX_OUTPUT_CHARS ? next.slice(0, ADB_MAX_OUTPUT_CHARS) : next;
+    };
     const finish = (result) => { if (settled) return; settled = true; clearTimeout(timer); resolve(result); };
     const timer = setTimeout(() => {
       try { child.kill(); } catch {}
       finish({ code: -1, stdout, stderr: `${stderr}\nTimed out after ${timeoutMs} ms`.trim() });
     }, timeoutMs);
-    child.stdout?.on('data', chunk => { stdout += chunk; });
-    child.stderr?.on('data', chunk => { stderr += chunk; });
+    child.stdout?.on('data', chunk => { stdout = append(stdout, chunk); });
+    child.stderr?.on('data', chunk => { stderr = append(stderr, chunk); });
     child.on('error', error => finish({ code: -1, stdout, stderr: error.message }));
     child.on('close', code => finish({ code: code ?? -1, stdout, stderr }));
     if (input !== null) { try { child.stdin.end(input); } catch { try { child.stdin.end(); } catch {} } }

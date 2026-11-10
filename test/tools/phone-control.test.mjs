@@ -9,7 +9,7 @@ const configDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-phone-config-'))
 process.env.CONFIG_DIR = configDir;
 
 const { PhoneSession, connectApprovalText } = await import('../../tools/phone/session.mjs');
-const { phoneSessionFor } = await import('../../tools/phone/session.mjs');
+const { phoneSessionFor, isPhoneRecord } = await import('../../tools/phone/session.mjs');
 const { Agent } = await import('../../src/core/agent.mjs');
 const phone = await import('../../tools/phone/phone.mjs');
 const { phoneScreenshotImage } = await import('../../tools/phone/screenshots.mjs');
@@ -101,7 +101,9 @@ test('every curated action maps to a tool inside the allowed ceiling', () => {
 
 test('the raw escape hatch can only reach allow-listed tools', () => {
   const session = { device: 'd' };
-  for (const tool of core.PHONE_MCP_TOOLS) assert.ok(core.rawCall({ tool }, session).tool === tool);
+  const reachable = core.PHONE_MCP_TOOLS.filter(name => !core.PHONE_RAW_BLOCKED_TOOLS.includes(name));
+  for (const tool of reachable) assert.ok(core.rawCall({ tool }, session).tool === tool);
+  for (const tool of core.PHONE_RAW_BLOCKED_TOOLS) assert.match(core.rawCall({ tool }, session).error, /curated action|action="batch"/, tool);
   assert.ok(core.rawCall({ tool: 'mobile_login_to_cloud_provider' }, session).error);
 });
 
@@ -239,16 +241,45 @@ test('a receipt pointing outside the artifact folder never attaches', (t) => {
   assert.equal(phoneScreenshotImage(JSON.stringify(escaped), ctx), null);
 });
 
-test('approval asks once to connect, then only for destructive actions', async (t) => {
+test('approval asks once to connect, then only for state-changing actions', async (t) => {
   const { s, ctx } = session(t);
   assert.equal(phone.needsApproval({ action: 'see' }, ctx), true, 'the first call must ask to start the bridge');
   assert.match(phone.approval({ action: 'see' }, ctx), /Start phone control[\s\S]*@mobilenext\/mobile-mcp@/);
   await s.run({ action: 'devices' }, ctx);
   assert.equal(phone.needsApproval({ action: 'tap', ref: '@e1' }, ctx), false, 'after connect, a tap is not re-approved');
   assert.equal(phone.needsApproval({ action: 'uninstall' }, ctx), true);
+  assert.equal(phone.needsApproval({ action: 'UNINSTALL' }, ctx), true, 'action names are case-insensitive');
+  assert.equal(phone.needsApproval({ action: ' uninstall ' }, ctx), true, 'surrounding space must not dodge approval');
   assert.equal(phone.needsApproval({ action: 'clear_data' }, ctx), true);
+  assert.equal(phone.needsApproval({ action: 'install', path: 'a.apk' }, ctx), true, 'installing runs new code on the phone');
   assert.equal(phone.needsApproval({ action: 'raw', tool: 'mobile_clear_app_data' }, ctx), true);
   assert.equal(phone.needsApproval({ action: 'raw', tool: 'mobile_get_orientation' }, ctx), false);
+  assert.equal(phone.needsApproval({ action: 'batch', steps: [{ name: 'mobile_install_app' }] }, ctx), true);
+  assert.equal(phone.needsApproval({ action: 'batch', steps: [{ name: 'mobile_press_button' }] }, ctx), false);
+});
+
+test('batch and raw cannot bypass approval for state-changing steps', () => {
+  assert.equal(core.phoneNeedsApproval('batch', { steps: [{ name: 'mobile_press_button' }] }), false);
+  assert.equal(core.phoneNeedsApproval('batch', { steps: [{ name: ' mobile_uninstall_app ' }] }), true, 'whitespace must not dodge approval');
+  assert.equal(core.phoneNeedsApproval('raw', { tool: ' MOBILE_INSTALL_APP ' }), true, 'raw tool names are case-insensitive and trimmed');
+  for (const name of ['mobile_install_app', 'mobile_uninstall_app', 'mobile_clear_app_data', 'mobile_stop_screen_recording']) {
+    assert.equal(core.phoneNeedsApproval('batch', { steps: [{ name }] }), true, `batch ${name}`);
+    assert.equal(core.phoneNeedsApproval('raw', { tool: name }), true, `raw ${name}`);
+  }
+  const nested = core.rawCall({ tool: 'mobile_batch_commands', args: { steps: [] } }, { device: 'd' });
+  assert.match(nested.error, /action="batch"/, 'a raw nested batch must use the reviewed path');
+});
+
+test('batch is bounded and cannot retarget another device', () => {
+  const tooMany = Array.from({ length: core.PHONE_MAX_BATCH_STEPS + 1 }, () => ({ name: 'mobile_press_button', arguments: { button: 'HOME' } }));
+  assert.throws(() => core.PHONE_ACTIONS.batch({ steps: tooMany }, { device: 'd' }), /at most/);
+  const mapped = core.PHONE_ACTIONS.batch({ steps: [{ name: 'mobile_press_button', arguments: { button: 'HOME', device: 'other' } }] }, { device: 'd' });
+  assert.equal(mapped.args.steps[0].arguments.device, 'd');
+  for (const name of core.PHONE_RAW_BLOCKED_TOOLS) {
+    assert.throws(() => core.PHONE_ACTIONS.batch({ steps: [{ name, arguments: {} }] }, { device: 'd' }), /not allowed in a batch/, name);
+  }
+  const raw = core.rawCall({ tool: 'mobile_fold_device', args: { device: 'other', posture: 'folded' } }, { device: 'd' });
+  assert.equal(raw.args.device, 'd', 'raw arguments must not retarget the selected phone');
 });
 
 test('read-only classification matches what changes the phone', () => {
@@ -275,6 +306,9 @@ test('the approval text names the exact command and the iOS limitation', () => {
 test('display hides typed text from the approval preview', () => {
   const shown = phone.display({ action: 'type', text: 'my secret password' });
   assert.equal(shown.text, '[18 characters hidden]');
+  const batch = phone.display({ action: 'batch', steps: [{ name: 'mobile_type_keys', arguments: { text: 'my secret password' } }] });
+  assert.equal(batch.steps[0].arguments.text, '[18 characters hidden]');
+  assert.ok(!JSON.stringify(batch).includes('secret password'));
 });
 
 test('element refs are strictly @eN', () => {
@@ -292,20 +326,23 @@ test('at most three phone screenshots attach per turn', async (t) => {
   stubScreenshots(mcp);
   const host = new ToolHost({ context: { ...ctx, config: {} }, authorize: () => true });
   const attached = [];
+  let last;
   for (let index = 0; index < 4; index++) {
-    const result = await host.execute({ id: `shot-${index}`, name: 'phone', arguments: { action: 'screenshot' } }, { resultMode: 'mcp' });
-    attached.push(result.content.some(part => part.type === 'image'));
+    last = await host.execute({ id: `shot-${index}`, name: 'phone', arguments: { action: 'screenshot' } }, { resultMode: 'mcp' });
+    attached.push(last.content.some(part => part.type === 'image'));
   }
   assert.deepEqual(attached, [true, true, true, false], 'the fourth image must stay an artifact');
+  assert.equal(last.isError, false, 'reaching the cap is not an invalid image');
+  assert.ok(last.content.some(part => part.type === 'text' && part.text.includes('phone_screenshot')));
 });
 
 test('a receipt describing a file above the screenshot cap never attaches', (t) => {
   const { ctx } = session(t);
   const folder = path.join(ctx.workspacePath, 'downloaded-images');
   fs.mkdirSync(folder, { recursive: true });
-  const file = path.join(folder, 'phone-big.png');
+  const file = path.join(folder, 'phone-20261110095157706-big.png');
   fs.writeFileSync(file, PNG_1PX);
-  const receipt = { type: 'phone_screenshot', path: 'downloaded-images/phone-big.png', bytes: core.PHONE_SCREENSHOT_MAX_BYTES + 1 };
+  const receipt = { type: 'phone_screenshot', path: 'downloaded-images/phone-20261110095157706-big.png', bytes: core.PHONE_SCREENSHOT_MAX_BYTES + 1 };
   const realStat = fs.statSync;
   t.mock.method(fs, 'statSync', value => path.resolve(String(value)) === path.resolve(file)
     ? { isFile: () => true, size: core.PHONE_SCREENSHOT_MAX_BYTES + 1 }
@@ -334,4 +371,56 @@ test('the phone description stays compact and keeps the critical safety rules', 
   assert.match(description, /untrusted/);
   assert.match(description, /PIN/);
   assert.match(description, /action="wireless"/);
+});
+
+test('only generated phone captures inside the real artifact folder attach', (t) => {
+  const { ctx } = session(t);
+  const folder = path.join(ctx.workspacePath, 'downloaded-images');
+  fs.mkdirSync(folder, { recursive: true });
+  const name = 'phone-20261110095157706-abc123.png';
+  fs.writeFileSync(path.join(folder, name), PNG_1PX);
+  fs.writeFileSync(path.join(folder, 'evil.png'), PNG_1PX);
+  const receipt = file => ({ type: 'phone_screenshot', path: `downloaded-images/${file}`, bytes: PNG_1PX.length });
+  assert.ok(phoneScreenshotImage(JSON.stringify(receipt(name)), ctx));
+  assert.equal(phoneScreenshotImage(JSON.stringify(receipt('evil.png')), ctx), null, 'an arbitrary workspace PNG is not a phone capture');
+});
+
+test('a capture in workspacePath attaches even when cwd differs', (t) => {
+  const { ctx } = session(t);
+  const other = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-phone-cwd-'));
+  t.after(() => fs.rmSync(other, { recursive: true, force: true }));
+  const folder = path.join(ctx.workspacePath, 'downloaded-images');
+  fs.mkdirSync(folder, { recursive: true });
+  const name = 'phone-20261110095157706-abc123.png';
+  fs.writeFileSync(path.join(folder, name), PNG_1PX);
+  const receipt = { type: 'phone_screenshot', path: `downloaded-images/${name}`, bytes: PNG_1PX.length };
+  assert.ok(phoneScreenshotImage(JSON.stringify(receipt), { ...ctx, cwd: other }), 'workspacePath is the capture root');
+});
+
+test('a capture resolving outside the artifact folder never attaches', (t) => {
+  const { ctx } = session(t);
+  const folder = path.join(ctx.workspacePath, 'downloaded-images');
+  fs.mkdirSync(folder, { recursive: true });
+  const file = path.join(folder, 'phone-20261110095157706-abc123.png');
+  fs.writeFileSync(file, PNG_1PX);
+  const real = fs.realpathSync;
+  t.mock.method(fs, 'realpathSync', value => path.resolve(String(value)) === path.resolve(file)
+    ? path.join(ctx.workspacePath, 'outside.png')
+    : real(value));
+  const receipt = { type: 'phone_screenshot', path: 'downloaded-images/phone-20261110095157706-abc123.png', bytes: PNG_1PX.length };
+  assert.equal(phoneScreenshotImage(JSON.stringify(receipt), ctx), null);
+});
+
+test('connect refuses to replace an unrelated MCP server named phone', async (t) => {
+  assert.equal(isPhoneRecord({ command: 'npx', args: ['-y', '@mobilenext/mobile-mcp@1.0.15'] }), true, 'an older pinned version is still ours');
+  assert.equal(isPhoneRecord({ command: 'node', args: ['server.mjs'] }), false);
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-phone-store-'));
+  t.after(() => fs.rmSync(cwd, { recursive: true, force: true }));
+  const storeFile = path.join(cwd, 'mcp.json');
+  new McpStore(storeFile).load().add({ id: 'phone', name: 'user server', command: 'node', args: ['server.mjs'] });
+  const mcp = fakeManager();
+  const s = new PhoneSession({ mcp, mcpFile: storeFile });
+  const out = await s.run({ action: 'devices' }, { cwd, workspacePath: cwd, mcp });
+  assert.match(out, /already used by another server/);
+  assert.equal(new McpStore(storeFile).load().find('phone').command, 'node', 'the user record must survive');
 });

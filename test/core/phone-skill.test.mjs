@@ -45,7 +45,8 @@ test('locked-phone and destructive-action rules are explicit', () => {
   assert.match(skill.body, /`POWER` once/);
   assert.match(skill.body, /ask the user to unlock/i);
   assert.match(skill.body, /Never ask for, type or guess a PIN/i);
-  assert.match(skill.body, /uninstall.*clear_data.*stop_recording/i);
+  assert.match(skill.body, /install.*uninstall.*clear_data.*stop_recording/i);
+  assert.match(skill.body, /including inside `batch` or `raw`/i);
   assert.match(skill.body, /always need approval/i);
 });
 

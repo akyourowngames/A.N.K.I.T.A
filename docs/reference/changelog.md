@@ -14,7 +14,8 @@ simulator on a Mac) through mobile-next/mobile-mcp, pinned at `1.0.16`. It is
 one curated tool with named actions rather than the bridge's 34 raw tools: it
 selects the phone once, reads the screen into refs, and returns screenshots as
 attached images. Connect is approved once and shows the exact command; after
-that only state-destroying actions ask again. The bridge stays hidden and never
+that only installs and state-destroying actions ask again, including when they
+arrive inside a batch or a raw call. The bridge stays hidden and never
 starts on its own, telephone/cloud-device tools are excluded, and typed text is
 hidden from the approval preview. Existing screenshots still attach for the
 browser family unchanged.

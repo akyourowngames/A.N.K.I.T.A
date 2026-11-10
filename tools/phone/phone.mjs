@@ -1,6 +1,6 @@
 import {
-  PHONE_ACTION_NAMES, PHONE_DESTRUCTIVE_ACTIONS, PHONE_LOG_LIMIT_MAX, PHONE_LOG_LIMIT_DEFAULT,
-  PHONE_PACKAGE_SPEC, PHONE_DOCS, PHONE_RAW_DESTRUCTIVE_TOOLS, PHONE_GUIDANCE, PHONE_WIRELESS_ACTIONS,
+  PHONE_ACTION_NAMES, PHONE_APPROVAL_ACTIONS, PHONE_LOG_LIMIT_MAX, PHONE_LOG_LIMIT_DEFAULT,
+  PHONE_PACKAGE_SPEC, PHONE_DOCS, PHONE_GUIDANCE, PHONE_WIRELESS_ACTIONS,
   phoneReadOnly, phoneNeedsApproval,
 } from '../../src/integrations/phone-control.mjs';
 import { PhoneSession, phoneSession, connectApprovalText } from './session.mjs';
@@ -13,7 +13,7 @@ export const description =
   'Control a real or emulated Android phone (and an iOS simulator on a Mac): read the screen, tap, type, swipe, ' +
   'open apps and URLs, take screenshots, and read logs. ' +
   `Requires ${PHONE_PACKAGE_SPEC} and a running emulator or USB-debugged phone; docs: ${PHONE_DOCS}. ` +
-  `The first call asks once to start the bridge; after that safe actions run and only ${PHONE_DESTRUCTIVE_ACTIONS.join(', ')} ask again. ` +
+  `The first call asks once to start the bridge; after that safe actions run and only ${PHONE_APPROVAL_ACTIONS.join(', ')} ask again. ` +
   PHONE_GUIDANCE;
 
 export const parameters = {
@@ -56,17 +56,18 @@ export const parameters = {
 /**
  * Approval happens in two distinct moments:
  *   - the first call that needs the bridge: ask once, showing the exact command;
- *   - state-destroying actions (uninstall, clear_data, and the raw equivalents):
- *     always ask, because they are not cheap to undo.
+ *   - state-changing actions (install, uninstall, clear_data, stop_recording,
+ *     and their raw or batch equivalents): always ask, because they are not
+ *     cheap to undo.
  * Everything else runs after the connect decision has been made.
  */
 export function needsApproval(args = {}, ctx = {}) {
   const session = phoneSession(ctx);
   // Wireless setup runs local adb only and never touches the phone's contents,
   // so it needs no prompt of its own - but starting the bridge still does.
-  if (PHONE_WIRELESS_ACTIONS.includes(String(args.action || '').toLowerCase())) return false;
+  if (PHONE_WIRELESS_ACTIONS.includes(String(args.action || '').trim().toLowerCase())) return false;
   if (!session?.connected) return true;
-  return phoneNeedsApproval(args.action) || (String(args.action).toLowerCase() === 'raw' && PHONE_RAW_DESTRUCTIVE_TOOLS.includes(String(args.tool || '')));
+  return phoneNeedsApproval(args.action, args);
 }
 
 export const readOnly = (args = {}) => phoneReadOnly(args.action, args);
@@ -75,7 +76,7 @@ export const readOnly = (args = {}) => phoneReadOnly(args.action, args);
 export function approval(args = {}, ctx = {}) {
   const session = phoneSession(ctx);
   if (!session?.connected) return connectApprovalText();
-  if (!phoneNeedsApproval(args.action) && String(args.action).toLowerCase() !== 'raw') return null;
+  if (!phoneNeedsApproval(args.action, args)) return null;
   return `${String(args.action).toUpperCase()} on phone ${args.device || session.device || '(active device)'}. This changes the phone and cannot be undone by the assistant.`;
 }
 
@@ -86,6 +87,11 @@ export function display(args = {}) {
   const shown = { ...args };
   if (typeof shown.text === 'string') shown.text = `[${shown.text.length} characters hidden]`;
   if (typeof shown.code === 'string') shown.code = '[pairing code hidden]';
+  if (Array.isArray(shown.steps)) shown.steps = shown.steps.map(step => {
+    const text = step?.arguments?.text;
+    if (typeof text !== 'string') return step;
+    return { ...step, arguments: { ...step.arguments, text: `[${text.length} characters hidden]` } };
+  });
   if (shown.args && typeof shown.args === 'object') shown.args = Object.fromEntries(
     Object.entries(shown.args).map(([key, value]) => [key, typeof value === 'string' && value.length > 40 ? `[${value.length} characters hidden]` : value])
   );

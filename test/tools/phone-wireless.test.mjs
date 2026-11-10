@@ -169,6 +169,20 @@ test('pairing rescans and connects when the connect endpoint appears only after 
   assert.equal(s.wirelessAddress, '192.168.1.42:46551');
 });
 
+test('adb output is capped so a hostile or wedged daemon cannot exhaust memory', async () => {
+  const { EventEmitter } = await import('node:events');
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { end: () => {} };
+  child.kill = () => {};
+  const pending = wireless.runProcess('adb', ['devices'], { spawnImpl: () => child });
+  child.stdout.emit('data', 'x'.repeat(wireless.ADB_MAX_OUTPUT_CHARS + 100));
+  child.emit('close', 0);
+  const result = await pending;
+  assert.equal(result.stdout.length, wireless.ADB_MAX_OUTPUT_CHARS);
+});
+
 test('wireless_connect reuses the discovered address and reports failures clearly', async () => {
   const ok = fakeAdb({ connect: { code: 0, stdout: 'connected to 192.168.1.42:5555', stderr: '' } });
   const s = session(ok);

@@ -89,8 +89,9 @@ Wi-Fi"* — it uses the remembered address, or re-discovers it with
   only time third-party code starts.
 - **After that**, reading the screen, tapping, typing and launching apps run
   without a prompt.
-- **Destructive actions** — `uninstall`, `clear_data` and `stop_recording` (and
-  their `raw` equivalents) — always ask, because they end or erase state.
+- **State-changing actions** — `install`, `uninstall`, `clear_data` and
+  `stop_recording` (and their `raw` or `batch` equivalents) — always ask,
+  because they run new code or end/erase state.
 
 The bridge is hidden from the MCP server list and never starts on its own; only
 a phone action starts it. Telephone and cloud-device tools from mobile-mcp are

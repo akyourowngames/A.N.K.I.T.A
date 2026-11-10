@@ -27,6 +27,7 @@ export const PHONE_DOCS = 'https://github.com/mobile-next/mobile-mcp';
 export const PHONE_LABEL = 'Phone control';
 export const PHONE_SCREENSHOT_DIRECTORY = 'downloaded-images'; // Existing workspace artifact folder, same as browser captures.
 export const PHONE_SCREENSHOT_EXTENSION = '.png'; // mobile-mcp only guarantees PNG on Android's legacy path; PNG is the safe ask.
+export const PHONE_SCREENSHOT_NAME_PATTERN = /^phone-\d{17}-[a-z0-9]+\.png$/; // Only captures this tool generated, never an arbitrary workspace PNG.
 export const PHONE_SCREENSHOT_MAX_BYTES = 15 * 1024 * 1024; // Bytes/capture; matches the desktop image cap.
 export const PHONE_REQUEST_TIMEOUT_MS = 60_000; // Milliseconds; a device round-trip on a cold adb can exceed the 30s default.
 export const PHONE_INIT_TIMEOUT_MS = 180_000; // Milliseconds; first run may download the package and mobilecli binary.
@@ -34,6 +35,8 @@ export const PHONE_DEFAULT_SCREENSHOT_MAX_PX = 1024; // Pixels/longest edge, mob
 export const PHONE_MAX_RAW_ARG_BYTES = 8 * 1024; // UTF-8 bytes/raw args; keeps one call from smuggling a payload past the model.
 export const PHONE_LOG_LIMIT_DEFAULT = 60; // Entries/log read; enough to see a crash without flooding context.
 export const PHONE_LOG_LIMIT_MAX = 200; // Entries/log read; the server's own cap is 10000, this is the model-facing cap.
+export const PHONE_MAX_BATCH_STEPS = 50; // Steps/call; bounds one batch and the device time it can consume.
+export const PHONE_MAX_BATCH_BYTES = 32 * 1024; // UTF-8 bytes of serialized steps; mirrors the raw argument cap.
 
 /** Every mobile-mcp tool the curated actions may reach. Anything else needs no ceiling change. */
 export const PHONE_MCP_TOOLS = Object.freeze([
@@ -51,10 +54,23 @@ export const PHONE_MCP_TOOLS = Object.freeze([
  * cheap to undo, so they always ask even in connect-once mode.
  */
 export const PHONE_DESTRUCTIVE_ACTIONS = Object.freeze(['uninstall', 'clear_data', 'stop_recording']);
-const DESTRUCTIVE = new Set(PHONE_DESTRUCTIVE_ACTIONS);
+/** Every curated action that changes the phone enough to ask every time.
+ * Installation is not destructive, but it runs new code on the phone.
+ */
+export const PHONE_APPROVAL_ACTIONS = Object.freeze([...PHONE_DESTRUCTIVE_ACTIONS, 'install']);
+const APPROVAL = new Set(PHONE_APPROVAL_ACTIONS);
 
-/** Raw mobile-mcp tools with the same consequence as a destructive curated action. */
+/** Raw mobile-mcp tools with the same consequence as an approval-required action. */
 export const PHONE_RAW_DESTRUCTIVE_TOOLS = Object.freeze(['mobile_uninstall_app', 'mobile_clear_app_data', 'mobile_stop_screen_recording']);
+export const PHONE_RAW_APPROVAL_TOOLS = Object.freeze([...PHONE_RAW_DESTRUCTIVE_TOOLS, 'mobile_install_app']);
+const RAW_APPROVAL = new Set(PHONE_RAW_APPROVAL_TOOLS);
+
+/** Raw paths that write host files or nest another call; the curated action owns them. */
+export const PHONE_RAW_BLOCKED_TOOLS = Object.freeze([
+  'mobile_batch_commands', 'mobile_save_screenshot', 'mobile_take_screenshot',
+  'mobile_get_device_logs', 'mobile_start_screen_recording',
+]);
+const RAW_BLOCKED = new Set(PHONE_RAW_BLOCKED_TOOLS);
 
 /** Read-only actions never mutate the phone, so they are safe in a read-only host. */
 export const PHONE_READ_ACTIONS = Object.freeze(['devices', 'see', 'apps', 'foreground', 'orientation', 'size', 'screenshot', 'logs', 'crashes', 'crash', 'clipboard']);
@@ -68,15 +84,24 @@ const READ_ONLY_EXTRAS = new Set(['wireless', 'wireless_connect']);
 
 /** Whether an action mutates the phone. Used for both the approval gate and read-only hosts. */
 export function phoneReadOnly(action, args = {}) {
-  const name = String(action || '');
+  const name = String(action || '').trim().toLowerCase();
   // Reading the clipboard is safe; writing it is not, and both use the same action name.
   if (name === 'clipboard' && typeof args.text === 'string') return false;
   return READ_ONLY.has(name) || READ_ONLY_EXTRAS.has(name);
 }
 
-export function phoneNeedsApproval(action) {
-  return DESTRUCTIVE.has(String(action || ''));
-}/**
+export function phoneNeedsApproval(action, args = {}) {
+  const name = String(action || '').trim().toLowerCase();
+  if (APPROVAL.has(name)) return true;
+  if (name === 'raw') return RAW_APPROVAL.has(String(args.tool || '').trim().toLowerCase());
+  if (name === 'batch') {
+    const steps = Array.isArray(args.steps) ? args.steps : [];
+    return steps.some(step => RAW_APPROVAL.has(String(step?.name || '').trim().toLowerCase()));
+  }
+  return false;
+}
+
+/**
  * Curated action -> mobile-mcp tool. A function takes `(args, session)` so the
  * mapping stays declarative; every entry returns `{ tool, args }` or throws with
  * a message the model can act on.
@@ -133,11 +158,14 @@ export const PHONE_WIRELESS_ACTIONS = Object.freeze(['wireless', 'wireless_pair'
 export function rawCall(args, session) {
   const tool = String(args.tool || '').trim();
   if (!tool.startsWith('mobile_')) return { error: `raw needs a mobile_* tool name from ${PHONE_DOCS}.` };
+  if (tool === 'mobile_batch_commands') return { error: 'raw cannot run a nested batch; use action="batch" so state-changing steps are reviewed.' };
+  if (RAW_BLOCKED.has(tool)) return { error: `${tool} writes a host file or nests calls; use its curated action so the path stays inside the artifact folder.` };
   if (UNSUPPORTED_RAW.has(tool)) return { error: `${tool} is not available through the phone tool; it would start a cloud session or change this app's tool list.` };
   if (!PHONE_MCP_TOOLS.includes(tool)) return { error: `${tool} is not in the phone tool's allowed list. Add it to PHONE_MCP_TOOLS deliberately if it is genuinely needed.` };
-  const extra = args.args && typeof args.args === 'object' && !Array.isArray(args.args) ? args.args : {};
+  const extra = args.args && typeof args.args === 'object' && !Array.isArray(args.args) ? { ...args.args } : {};
   if (Buffer.byteLength(JSON.stringify(extra)) > PHONE_MAX_RAW_ARG_BYTES) return { error: 'raw arguments are too large.' };
-  return { tool, args: { device: session.device, ...extra } };
+  delete extra.device; // The selected phone always wins; raw arguments must not retarget another device.
+  return { tool, args: { ...extra, device: session.device } };
 }
 
 /** Parse the mobile-mcp device list into plain objects. Returns null on a non-JSON reply. */
@@ -170,20 +198,25 @@ export function phoneScreenshotReceipt({ relativePath, bytes, device }) {
   return { type: PHONE_SCREENSHOT_TYPE, path: relativePath, bytes, device };
 }
 
-/** Accepts a relative `downloaded-images/...png` path and returns the absolute file, or null. */
+/** Accepts a relative `downloaded-images/phone-*.png` path and returns the real file, or null. */
 export function resolvePhoneScreenshot(receipt, ctx = {}) {
   if (receipt?.type !== PHONE_SCREENSHOT_TYPE || typeof receipt.path !== 'string') return null;
-  const cwd = path.resolve(ctx.cwd || process.cwd());
+  const root = path.resolve(ctx.workspacePath || ctx.cwd || process.cwd());
   if (path.isAbsolute(receipt.path)) return null;
-  const file = path.resolve(cwd, receipt.path);
-  const relative = path.relative(cwd, file);
+  const file = path.resolve(root, receipt.path);
+  const relative = path.relative(root, file);
   if (path.dirname(relative) !== PHONE_SCREENSHOT_DIRECTORY) return null;
   if (path.extname(relative).toLowerCase() !== PHONE_SCREENSHOT_EXTENSION) return null;
+  if (!PHONE_SCREENSHOT_NAME_PATTERN.test(path.basename(relative))) return null;
   try {
-    const stat = fs.statSync(file);
+    // Resolve links so a symlink inside the artifact folder cannot name a file outside it.
+    const realRoot = fs.realpathSync(root);
+    const realFile = fs.realpathSync(file);
+    if (path.dirname(path.relative(realRoot, realFile)) !== PHONE_SCREENSHOT_DIRECTORY) return null;
+    const stat = fs.statSync(realFile);
     if (!stat.isFile() || stat.size <= 0 || stat.size > PHONE_SCREENSHOT_MAX_BYTES) return null;
     if (stat.size !== receipt.bytes) return null;
-    return file;
+    return realFile;
   } catch { return null; }
 }
 
@@ -264,12 +297,15 @@ function target(args, session) {
 function batchArgs(args, session) {
   const steps = Array.isArray(args.steps) ? args.steps : null;
   if (!steps?.length) throw new Error('steps must be a non-empty list of { name, arguments } entries.');
-  const allowed = new Set(PHONE_MCP_TOOLS.filter(name => name !== 'mobile_take_screenshot' && name !== 'mobile_batch_commands'));
+  if (steps.length > PHONE_MAX_BATCH_STEPS) throw new Error(`steps must contain at most ${PHONE_MAX_BATCH_STEPS} entries.`);
+  if (Buffer.byteLength(JSON.stringify(steps)) > PHONE_MAX_BATCH_BYTES) throw new Error('batch steps are too large.');
+  const allowed = new Set(PHONE_MCP_TOOLS.filter(name => !PHONE_RAW_BLOCKED_TOOLS.includes(name)));
   const mapped = steps.map((step, index) => {
     const name = String(step?.name || '').trim();
     if (!allowed.has(name)) throw new Error(`step ${index + 1}: "${name || '(unnamed)'}" is not allowed in a batch.`);
-    const stepArgs = step?.arguments && typeof step.arguments === 'object' ? step.arguments : {};
-    return { name, arguments: { device: session.device, ...stepArgs } };
+    const stepArgs = step?.arguments && typeof step.arguments === 'object' ? { ...step.arguments } : {};
+    delete stepArgs.device; // The selected phone always wins; a step must not retarget another device.
+    return { name, arguments: { ...stepArgs, device: session.device } };
   });
   return { device: session.device, steps: mapped, stopOnError: args.stopOnError !== false };
 }
@@ -288,7 +324,7 @@ export const PHONE_GUIDANCE = 'Start with action="devices" and reuse the selecte
 /** Unique per-call capture name; the timestamp prefix sorts captures chronologically. */
 export function phoneScreenshotName(now = new Date(), id = Math.random().toString(36).slice(2, 10)) {
   const stamp = now.toISOString().replace(/[-:.TZ]/g, '');
-  return `phone-${stamp}-${id}${PHONE_SCREENSHOT_EXTENSION}`;
+  return `phone-${stamp}-${id || '0'}${PHONE_SCREENSHOT_EXTENSION}`;
 }
 
 // Keeps the saved-capture location inside a temporary directory the server may write to.

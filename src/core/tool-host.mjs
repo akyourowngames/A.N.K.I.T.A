@@ -256,12 +256,17 @@ export class ToolHost {
     }
     await ctx.onLocalResult?.(tool.name, args, output, ctx);
     const result = textResult(capOutput(output, budget));
-    const capture = tool.name === 'browser' && args.action === 'screenshot' ? browserScreenshotImage(output, ctx) : null;
-    const phoneCapture = tool.name === 'phone' && args.action === 'screenshot' && state.phoneScreenshotsThisTurn < MAX_PHONE_SCREENSHOTS_PER_TURN
-      ? phoneScreenshotImage(output, ctx) : null;
-    if (resultMode === MCP_MODE && (capture || phoneCapture) && !result.isError) {
+    const browserShot = tool.name === 'browser' && args.action === 'screenshot';
+    const phoneShot = tool.name === 'phone' && args.action === 'screenshot';
+    const phoneCapped = phoneShot && state.phoneScreenshotsThisTurn >= MAX_PHONE_SCREENSHOTS_PER_TURN;
+    const capture = browserShot ? browserScreenshotImage(output, ctx) : null;
+    const phoneCapture = phoneShot && !phoneCapped ? phoneScreenshotImage(output, ctx) : null;
+    if (resultMode === MCP_MODE && (browserShot || phoneShot) && !result.isError) {
       const image = capture || phoneCapture;
-      if (!image) return nativeProjection({ content: [{ type: 'text', text: NATIVE_IMAGE_INVALID_NOTICE }], isError: true }, state, budget);
+      if (!image) {
+        if (phoneCapped) return result; // The receipt stays readable; only the attachment is capped.
+        return nativeProjection({ content: [{ type: 'text', text: NATIVE_IMAGE_INVALID_NOTICE }], isError: true }, state, budget);
+      }
       const [mimeType, data] = image.dataUrl.slice('data:'.length).split(';base64,');
       result.content.push({ type: 'image', mimeType, data });
       if (phoneCapture) state.phoneScreenshotsThisTurn = (state.phoneScreenshotsThisTurn || 0) + 1;

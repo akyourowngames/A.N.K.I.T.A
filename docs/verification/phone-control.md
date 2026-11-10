@@ -105,9 +105,10 @@ and confirm the attached image and a real `downloaded-images/phone-*.png`.
 
 ## Follow-up (2026-11-10)
 
-- Re-ran: `phone-control` 24/24, `phone-wireless` 18/18, `phone-skill` 5/5,
-  related host/loading/budget/skill suites 58/58, and `check-skills` with
-  8 skills checked and 0 errors.
+- Re-ran: `phone-control` 30/30, `phone-wireless` 19/19, `phone-skill` 5/5,
+  the related host/loading/budget/skill suites at 111/111, `check-skills` with
+  8 skills checked and 0 errors, and `tsc --noEmit -p desktop/tsconfig.json`
+  clean.
 - Added the bundled `phone-control` skill. It auto-loads when the phone family
   is discovered and is pinned by `skills/phone-control/fixtures/expected.md`
   plus `test/core/phone-skill.test.mjs`, including a discovery round trip.
@@ -123,3 +124,66 @@ and confirm the attached image and a real `downloaded-images/phone-*.png`.
   skill now carries the step-by-step workflow.
 - Still not verified: real taps/typing/screenshots on a device, a complete
   real pairing handshake, iOS, and the desktop UI.
+
+## Full suite (2026-11-10)
+
+Targeted evidence is green: `phone-control` 30/30, `phone-wireless` 19/19,
+`phone-skill` 5/5, the related host/loading/budget/skill suites at 111/111,
+`check-skills` 8 skills with 0 errors, and `tsc --noEmit -p
+desktop/tsconfig.json` clean.
+
+`npm run test:unit` is **not reliably green on this Windows machine** under its
+parallel batching: different real-process or timeout tests fail on different
+runs, and each failing file passes when run alone (the last one, `voice-worker`,
+passed 8/8 alone). The deterministic issues this round were fixed:
+
+- The phone catalogue line is a prompt-budget change. `voice-empty-recovery`
+  and `background-worker-policy` now request explicit context headroom, and
+  `mcp-images` disables project auto-detection so a developer's registered
+  workspace cannot change its prompt.
+- The Windows short-name transfer test now skips when the volume exposes no
+  8.3 alias instead of crashing on an empty probe.
+- The job UI cleanup retries a temp directory that Windows may still hold.
+
+## Security audit (2026-11-10)
+
+Fixed in this round:
+
+- **Batch approval bypass.** A `batch` containing `mobile_install_app`,
+  `mobile_uninstall_app`, `mobile_clear_app_data` or
+  `mobile_stop_screen_recording` ran without a prompt. State-changing steps
+  now trigger the same approval as the curated action.
+- **Raw nested batch bypass.** `raw` could reach `mobile_batch_commands` and
+  hide destructive steps below a harmless tool name. Raw now refuses nested
+  batches and points at `action="batch"`.
+- **Install approval.** `install` runs new code on the phone; it now always
+  asks, like uninstall and clear-data.
+- **Screenshot path escape.** Resolution now follows only generated
+  `phone-<timestamp>-<id>.png` names, uses `workspacePath` as the capture root,
+  and resolves links so a symlink cannot name a file outside the artifact
+  folder. The 15 MB and byte-count checks remain.
+- **MCP store collision.** Connecting no longer deletes an unrelated MCP server
+  whose id happens to be `phone`; it refuses with a readable error.
+- **Device retargeting.** A `raw` argument or batch step can no longer override
+  the selected device.
+- **Batch bounds.** A batch is capped at 50 steps and 32 KB of serialized steps.
+- **Batch approval variants.** Step names are trimmed before the approval
+  check, so whitespace cannot dodge it, and typed text inside a batch step is
+  hidden from the approval preview.
+- **Raw host-file paths.** `raw` and `batch` could pass `saveTo` or `output` to
+  screenshot, log and recording tools. Those tools now require their curated
+  action, which keeps the path inside the controlled artifact or temp folder.
+- **ADB output cap.** `adb` stdout and stderr are capped at 1 MB per stream, so
+  a wedged or hostile daemon cannot exhaust memory.
+
+Residual risks (not fixed here):
+
+- The browser screenshot resolver uses the same relative-path pattern without a
+  realpath containment check. It validates its own capture filename strictly,
+  and changing it is outside this branch.
+- `start_recording` passes its `output` path to the bridge. The bridge decides
+  whether that is a host or device path; no containment is enforced here.
+- Phone screen text remains untrusted model input. Prompt-injection resistance
+  relies on the guidance and on approvals, not on a content sandbox.
+- The bridge is pinned to `@mobilenext/mobile-mcp@1.0.16`, but `npx` does not
+  verify an integrity hash. A compromised registry package is still possible.

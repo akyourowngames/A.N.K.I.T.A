@@ -4,7 +4,7 @@ import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { MCP_FILE } from '../../src/core/config.mjs';
 import { formatToolResult, toolResultText } from '../../src/integrations/mcp-client.mjs';
 import {
-  PHONE_MCP_ID, PHONE_MCP_COMMAND, PHONE_MCP_ARGS, PHONE_ENV, PHONE_DOCS, PHONE_LABEL, PHONE_MCP_TOOLS,
+  PHONE_MCP_ID, PHONE_MCP_COMMAND, PHONE_MCP_ARGS, PHONE_PACKAGE, PHONE_ENV, PHONE_DOCS, PHONE_LABEL, PHONE_MCP_TOOLS,
   PHONE_REQUEST_TIMEOUT_MS, PHONE_INIT_TIMEOUT_MS, PHONE_SCREENSHOT_DIRECTORY,
   PHONE_SCREENSHOT_MAX_BYTES, PHONE_DEFAULT_SCREENSHOT_MAX_PX, PHONE_TEMP_ROOT,
   PHONE_ACTIONS, PHONE_ACTION_NAMES, PHONE_DESTRUCTIVE_ACTIONS,
@@ -35,6 +35,13 @@ export function connectApprovalText() {
     `Docs: ${PHONE_DOCS}`,
   ].join('\n');
 }
+/** A record this tool owns, so connecting never deletes an unrelated server with the same id. */
+export function isPhoneRecord(record) {
+  const packageArg = String(PHONE_PACKAGE);
+  return record?.command === PHONE_MCP_COMMAND && Array.isArray(record.args)
+    && record.args.some(arg => arg === packageArg || String(arg).startsWith(`${packageArg}@`));
+}
+
 export class PhoneSession {
   constructor({ mcp = null, mcpFile = MCP_FILE, env = process.env, platform = process.platform, exists = fs.existsSync, exec = runProcess } = {}) {
     this.mcp = mcp;
@@ -79,6 +86,10 @@ export class PhoneSession {
   async connect(ctx = {}) {
     const store = new McpStore(this.mcpFile || MCP_FILE).load();
     const previous = store.find(PHONE_MCP_ID);
+    if (previous && !isPhoneRecord(previous)) {
+      this.connectionProblem = `Error: the MCP server id "${PHONE_MCP_ID}" is already used by another server. Rename or remove it before using phone control.`;
+      throw new Error(this.connectionProblem.slice('Error: '.length));
+    }
     if (previous) store.remove(PHONE_MCP_ID);
     const record = store.add({
       id: PHONE_MCP_ID,
@@ -128,7 +139,7 @@ export class PhoneSession {
 
   /** The public entry point used by the `phone` tool. */
   async run(args = {}, ctx = {}) {
-    const action = String(args.action || '').toLowerCase();
+    const action = String(args.action || '').trim().toLowerCase();
     if (!PHONE_ACTION_NAMES.includes(action)) {
       return `Error: unknown phone action "${action || '(none)'}". Use one of: ${PHONE_ACTION_NAMES.join(', ')}.`;
     }
