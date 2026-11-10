@@ -194,7 +194,8 @@ test('Windows short-name paths retain authorized upload and download identity', 
   const alias = execFileSync('powershell.exe', ['-NoProfile', '-File', probe], {
     encoding: 'utf8', windowsHide: true, env: { ...process.env, ANKITA_TEST_ALIAS_FILE: source },
   }).trim();
-  if (!path.relative(alias, await fs.promises.realpath(alias))) { t.skip('This volume does not expose a distinct short-name alias.'); return; }
+  const canonical = alias ? await fs.promises.realpath(alias).catch(() => '') : '';
+  if (!canonical || !path.relative(alias, canonical)) { t.skip('This volume does not expose a distinct short-name alias.'); return; }
   assert.equal(fs.statSync(alias).ino, fs.statSync(source).ino);
   const ctx = { cwd: directory, workspacePath: directory };
   const selected = await selectedBrowserUpload({}, { ...ctx, selectBrowserUpload: async () => alias });

@@ -31,7 +31,8 @@ async function fixture(t, transport, reply) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); fs.rmSync(root, { recursive: true, force: true }); });
   const client = { baseUrl: `http://127.0.0.1:${server.address().port}`, headers: () => ({}) };
-  const parent = new Agent({ client, config: { tools: true, autoApprove: true, memoryConsolidation: false },
+  const parent = new Agent({ client, // This test exercises empty-decision recovery, not prompt budgets; keep the growing tool catalogue from trimming the history.
+    config: { tools: true, autoApprove: true, memoryConsolidation: false, contextWindow: 131072 },
     memoryEnabled: false, skillsEnabled: false, workspacePath: root });
   const jobs = new VoiceJobs({ store: new VoiceTaskStore({ directory: path.join(root, 'tasks') }),
     run: (entry, options) => runVoiceWorker(entry, options, { acquire: (...args) => jobs.acquire(...args),
