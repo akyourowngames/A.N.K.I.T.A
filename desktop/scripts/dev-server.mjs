@@ -25,9 +25,15 @@ export async function startDesktopDev({ root = ROOT, electronPath = require('ele
     await server.listen();
     const url = server.resolvedUrls?.local?.[0];
     if (!url) throw new Error('The desktop renderer did not publish a local address');
+    // A terminal that itself runs under Electron (some editors set this for
+    // their own helper processes) leaks ELECTRON_RUN_AS_NODE into children.
+    // Inheriting it starts the host as plain Node, so `import { BrowserWindow }
+    // from 'electron'` resolves to the npm stub and the app dies at boot.
+    // This child is always the real desktop window, so the flag is never wanted.
+    const { ELECTRON_RUN_AS_NODE: _runAsNode, ...hostEnv } = env;
     electron = spawn(electronPath, electronArgs, { cwd: root, stdio, windowsHide: true,
       detached: process.platform !== 'win32', // POSIX: own the whole group so shutdown stops Chromium children too.
-      env: { ...env, ANKITA_DESKTOP_DEV_URL: url } });
+      env: { ...hostEnv, ANKITA_DESKTOP_DEV_URL: url } });
     childDone = new Promise(resolve => electron.once('close', (code, signal) => resolve({ code, signal })));
     const closed = childDone.then(async result => { await close(); return result; });
     void closed.catch(() => {}); // Startup failures still clean up even before a caller receives these handles.

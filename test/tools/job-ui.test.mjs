@@ -46,7 +46,7 @@ test('actual CLI starts a background job, lists it, sends stdin, reads output an
     child.stdin.end('/exit\n');
     if (child.exitCode === null) child.kill();
     server.closeAllConnections(); server.close();
-    fs.rmSync(cwd, { recursive: true, force: true });
+    fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
   const until = async pattern => {
     const deadline = Date.now() + 12000;
