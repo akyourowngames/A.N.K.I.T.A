@@ -119,6 +119,12 @@ not an end-to-end latency claim. Temporary audio and task files were removed.
 The first sandbox request failed with `fetch failed`; the successful run used
 the required approved escalation, without exposing credentials.
 
+Re-verification 2026-11-10: `node scripts/verify-voice-streaming.mjs` exited 0
+with `mode=streaming`, `firstChunkMs=491`, `firstConsumedMs=32`, `chunks=4`,
+`bytes=21315`, `decodedWavBytes=42710`, the exact expected transcript, injected
+synthetic microphone input and no speaker playback. The limits below are
+unchanged.
+
 ## Remaining acceptance limits
 
 Provider streaming and native decoding are real; microphone/headphone/speaker
