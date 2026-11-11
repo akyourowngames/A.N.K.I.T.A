@@ -1,15 +1,9 @@
-# Ankita
+# Ankita AI
 
-An AI workspace for getting work done on your computer. Ankita brings teammate
-conversations, real tools, projects and scheduled work into a desktop app, a
-floating companion and a terminal CLI.
+**Ankita AI is a personal AI companion for your desktop, built by Krish Verma** — open-source (MIT), local-first, your models. A little companion, a lot more possible: chat, files, terminal and browser tools together, with a floating companion that shows what your assistant is doing.
 
-Ask it to inspect a repository, edit files, run commands, research a page or
-handle a recurring task. Tool activity, results and approval requests stay in the
-conversation. Choose ChatGPT Browser, GitHub Copilot, Groq, Kilo or an
-OpenAI-compatible provider.
-
-[Download for Windows](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
+[Get Ankita for Windows](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
+ · [Ankita website](https://ankita-sable.vercel.app)
  · [Release notes](CHANGELOG.md)
  · [Contributing](CONTRIBUTING.md)
  · [MIT license](LICENSE)
@@ -237,6 +231,7 @@ with status, output, stdin and Stop controls while chat continues.
 | Commands and processes | Run commands, inspect ports, manage processes and background jobs |
 | Git and HTTP | Repository operations and structured requests |
 | Web and browser | Search, readable page extraction, browser actions, tabs and screenshots |
+| Phone | See an Android phone screen, tap, type, open apps, screenshot and read logs |
 | Projects and memory | Working context, decisions, tasks and personal facts |
 | Automation | Scheduled prompts, page watches and job control |
 | Images | Original generation, Unsplash search and Pixabay search |
@@ -412,6 +407,7 @@ Third-party companion attribution ships in
 - [Desktop workspace](docs/guides/desktop-workbench.md)
 - [Companion, file drops and webpage capture](docs/guides/desktop-companion.md)
 - [Phone pairing](docs/guides/phone-pairing.md)
+- [Controlling an Android phone](docs/guides/phone-control.md)
 - [Browser connections and permissions](docs/guides/browser-use.md)
 - [Browser lab fixes and remaining limits](docs/browser-lab-FINDINGS.md)
 - [Browser request cost and A/B evidence](docs/browser-lab-token-research.md)

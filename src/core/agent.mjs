@@ -31,6 +31,8 @@ import { loadSkills, skillPromptLines, activeAutomaticSkills } from './skills.mj
 import { SKILL_MANAGER_TOOL, SKILL_MANAGER_CATEGORY } from '../skills/manager.mjs';
 import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 import { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } from '../../tools/browser/screenshots.mjs';
+import { phoneScreenshotImage, MAX_PHONE_SCREENSHOTS_PER_TURN } from '../../tools/phone/screenshots.mjs';
+import { PHONE_SCREENSHOT_TYPE } from '../integrations/phone-control.mjs';
 import { managedMcpSummaries, isBrowserMcpTool } from '../integrations/browser-routing.mjs';
 import { parseToolName } from '../integrations/mcp-manager.mjs';
 import { attachMcpImages, MAX_MCP_IMAGES_PER_TURN, messagesForModel } from '../integrations/mcp-images.mjs';
@@ -472,6 +474,7 @@ export class Agent {
     // by callSignature(), valued { name, count }.
     this.repeatsThisTurn = new Map();
     this.browserScreenshotsThisTurn = 0;
+    this.phoneScreenshotsThisTurn = 0;
     this.browserEvidence = null;
     this.browserProgress = null;
     // Distinct tools run this request, so a stopped turn can say what it did.
@@ -1254,7 +1257,7 @@ export class Agent {
     this._toolHost ??= new ToolHost({
       context: () => {
         const executionState = {};
-        for (const name of ['searchesThisTurn', 'browserActionsThisTurn', 'activeSkillTools', 'browserEvidence', 'browserProgress']) {
+        for (const name of ['searchesThisTurn', 'browserActionsThisTurn', 'phoneScreenshotsThisTurn', 'activeSkillTools', 'browserEvidence', 'browserProgress']) {
           Object.defineProperty(executionState, name, { get: () => this[name], set: value => { this[name] = value; } });
         }
         return { ...this.toolContext, assistantTaskRun: this.assistantTaskRun || this.toolContext?.assistantTaskRun,
@@ -1362,6 +1365,22 @@ export class Agent {
         result = JSON.stringify({ ...image.receipt, visionAttached: true });
       }
     }
+    if (name === 'phone' && args.action === 'screenshot') {
+      let receipt; try { receipt = JSON.parse(result); } catch {}
+      if (receipt?.type === PHONE_SCREENSHOT_TYPE && activeClient?.modelCapabilities?.get(activeModel)?.vision === false) {
+        return capOutput(JSON.stringify({ ...receipt, visionAttached: false, note: 'This model is text-only. The screenshot remains an artifact; use action="see" to read the screen.' }), budget);
+      }
+      if (this.phoneScreenshotsThisTurn < MAX_PHONE_SCREENSHOTS_PER_TURN) {
+        const image = phoneScreenshotImage(result, ctx);
+        const request = this.messages.findLast(message => message.role === 'user');
+        if (image && request) {
+          const parts = Array.isArray(request.content) ? request.content : [{ type: 'text', text: String(request.content || '') }];
+          request.content = [...parts, { type: 'image_url', image_url: { url: image.dataUrl } }];
+          this.phoneScreenshotsThisTurn++;
+          result = JSON.stringify({ ...image.receipt, visionAttached: true });
+        }
+      }
+    }
     return capOutput(result, budget);
   }
 
@@ -1423,6 +1442,7 @@ export class Agent {
     this.searchesThisTurn = 0;
     this.repeatsThisTurn = new Map();
     this.browserScreenshotsThisTurn = 0;
+    this.phoneScreenshotsThisTurn = 0;
     this.mcpImagesThisTurn = 0;
     this.computerObservations = new Map();
     this.ranThisTurn = [];

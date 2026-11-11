@@ -55,7 +55,10 @@ test('repeated pretend tool calls stop a background worker instead of reporting 
 
 test('a printed tool request on the final allowed round cannot become a successful forced summary', async () => {
   let rounds = 0;
-  const agent = new Agent({ client: {}, config: { tools: true, backgroundJob: true, maxToolSteps: 1, memoryConsolidation: false }, skillsEnabled: false, print: () => {}, write: () => {} });
+  // A roomy window keeps this about the forced-summary protocol. The default
+  // 32k window leaves only a few hundred bytes after tools, so a catalogue
+  // addition elsewhere would turn this into a budget failure.
+  const agent = new Agent({ client: {}, config: { tools: true, backgroundJob: true, maxToolSteps: 1, memoryConsolidation: false, contextWindow: 131072 }, skillsEnabled: false, print: () => {}, write: () => {} });
   agent.streamTurn = async () => ({ content: ++rounds === 1 ? '[Tool call: browser]' : 'Task completed successfully.', toolCalls: [] });
   await assert.rejects(agent.send('Finish the task'), /did not execute its requested tools/); assert.equal(rounds, 1);
 });

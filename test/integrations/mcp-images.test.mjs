@@ -76,7 +76,7 @@ test('final model reply retains complete native identifiers with multibyte trees
   for (const [maxToolChars, contextWindow] of [[65536, 1000000], [2048, 1000000], [65536, null]]) {
     const mcp = { summaries: () => [], alwaysOnIds: () => [], specs: () => [], findTool: () => ({}), needsApproval: () => false,
       callToolResult: async () => ({ text: 'Readable 文 tree\n'.repeat(7000), raw: { structuredContent: { snapshot_id: snapshot, elements: controls } } }) };
-    const a = new Agent({ client: {}, mcp, config: { model: 'fixture', tools: true, autoApprove: true, maxToolChars, contextWindow, maxTokens: 1000, maxToolSteps: 3, memoryConsolidation: false }, print: () => {}, write: () => {} });
+    const a = new Agent({ client: {}, mcp, autoProject: false, config: { model: 'fixture', tools: true, autoApprove: true, maxToolChars, contextWindow, maxTokens: 1000, maxToolSteps: 3, memoryConsolidation: false }, print: () => {}, write: () => {} });
     if (contextWindow === null) {
       // This case needs a constrained usable reply, independent of catalogue/prompt growth.
       a.contextWindow = Buffer.byteLength(JSON.stringify(a.messages)) + Buffer.byteLength(JSON.stringify(a.currentSpecs())) + a.outputReserve() + NATIVE_PROOF_BUDGET_BYTES;

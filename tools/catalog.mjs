@@ -25,6 +25,7 @@ import * as unsplashSearch from './images/unsplash-search.mjs';
 import * as pixabaySearch from './images/pixabay-search.mjs';
 import * as imageDownload from './images/image-download.mjs';
 import * as browser from './browser/browser.mjs';
+import * as phone from './phone/phone.mjs';
 
 /**
  * Grouped tools: most schemas are deferred so discovery loads a whole family.
@@ -85,6 +86,12 @@ export const CATEGORIES = [
     summary: 'drive a real browser with page snapshots, stable refs, tabs and screenshots',
     keywords: ['browser', 'playwright', 'chrome', 'click website', 'fill form', 'browse interactively', 'book', 'booking', 'flight', 'flights', 'ticket', 'tickets', 'travel', 'hotel', 'play', 'music', 'song', 'video', 'youtube', 'listen'],
     tools: [browser],
+  },
+  {
+    id: 'phone',
+    summary: 'control an Android phone or emulator: see the screen, tap, type, open apps, screenshot, read logs',
+    keywords: ['phone', 'android', 'emulator', 'mobile', 'ios simulator', 'tap', 'swipe', 'screenshot phone', 'android app', 'adb', 'device', 'mobile app', 'install app', 'logcat'],
+    tools: [phone],
   },
   {
     id: "web",
