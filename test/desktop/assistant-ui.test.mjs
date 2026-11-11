@@ -105,6 +105,12 @@ test('Today controls continue a saved request and edit/forget the real memory pr
   await schedule.getByRole('button', { name: 'Review schedule draft', exact: true }).click();
   await schedule.waitFor({ state: 'hidden' });
   assert.equal(scheduled.length, 1); assert.equal(scheduled[0].enabled, false);
+  await page.getByRole('button', { name: 'Schedule daily briefing', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Briefing schedule', exact: true }).fill('daily 08:30');
+  await page.getByRole('button', { name: 'Create paused draft', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Briefing schedule', exact: true }).waitFor({ state: 'hidden' });
+  assert.equal(scheduled.length, 2); assert.equal(scheduled[1].assistantBriefing, true);
+  assert.equal(scheduled[1].enabled, false); assert.equal(scheduled[1].cron, 'daily 08:30');
   await library.getByRole('button', { name: 'Edit routine', exact: true }).click();
   await page.getByRole('textbox', { name: 'Routine name', exact: true }).fill('Reading brief');
   await page.getByRole('button', { name: 'Save routine', exact: true }).click();

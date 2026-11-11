@@ -153,6 +153,11 @@ test('opt-in daily briefing creates an editable paused draft and reads fresh loc
   const job = await dispatcher.runAssistantAction({ engine: h.engine, action: actions.ASSISTANT_ACTIONS.briefingSchedule,
     payload: { ownerId: h.id, cron: 'daily 09:00' } });
   assert.equal(job.enabled, false); assert.equal(job.draft, true); assert.equal(job.assistantBriefing, true);
+  await assert.rejects(dispatcher.runAssistantAction({ engine: h.engine, action: actions.ASSISTANT_ACTIONS.briefingSchedule,
+    payload: { ownerId: 'missing-owner', cron: 'daily 09:00' } }), /available conversation/i);
+  await assert.rejects(dispatcher.runAssistantAction({ engine: h.engine, action: actions.ASSISTANT_ACTIONS.briefingSchedule,
+    payload: { ownerId: h.id, cron: 'not a schedule' } }), /invalid schedule/i);
+  assert.equal(h.engine.schedule().list().filter(item => item.assistantBriefing).length, 1, 'rejected drafts create no job');
   const project = h.engine.createProject({ name: 'Daily priorities' });
   h.engine.addProjectTodo(project.id, 'Fresh commitment created after scheduling.');
   let requests = 0;

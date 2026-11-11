@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import type { AssistantTask, AssistantToday, PersonalMemory, Routine, Teammate } from '../../../shared/wire';
 import { ASSISTANT_ACTIONS, ASSISTANT_CHANGED, ASSISTANT_ROUTINES_CHANGED, KNOWLEDGE_CHANGED, MEMORY_TEXT_LIMIT, RESUMABLE_TASK_STATES } from '../../../shared/assistant.mjs';
+import { describeCron, parseCron } from '../../../../src/automation/cron.mjs';
 import { RoutineLibrary } from './RoutineLibrary';
 import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
@@ -47,6 +48,8 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
   const [today, setToday] = useState<AssistantToday | null>(null), [facts, setFacts] = useState<PersonalMemory[]>([]);
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [query, setQuery] = useState('');
   const [draft, setDraft] = useState<{ id?: string; text: string; kind: string; always: boolean; expectedUpdatedAt?: string } | null>(null);
+  const [briefOpen, setBriefOpen] = useState(false), [briefCron, setBriefCron] = useState('daily 09:00');
+  const [briefOwner, setBriefOwner] = useState(''), [briefError, setBriefError] = useState('');
   const [teachTask, setTeachTask] = useState<AssistantTask | null>(null);
   const alive = useRef(true), revision = useRef(0);
   const refresh = useCallback(async () => {
@@ -72,6 +75,17 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
     finally { setBusy(false); }
   };
   const saveMemory = (event: FormEvent) => { event.preventDefault(); if (draft) void run(ASSISTANT_ACTIONS.memorySave, draft).then(ok => { if (ok) setDraft(null); }); };
+  const scheduleBriefing = async (event: FormEvent) => {
+    event.preventDefault();
+    const ownerId = briefOwner || teammates[0]?.id;
+    if (!ownerId || !parseCron(briefCron)) return;
+    setBusy(true); setBriefError('');
+    try {
+      const job = await window.ankita.invoke<Routine>(ASSISTANT_ACTIONS.briefingSchedule, { ownerId, cron: briefCron.trim() });
+      setBriefOpen(false); onOpenJob(job);
+    } catch (err) { setBriefError(err instanceof Error ? err.message : String(err)); }
+    finally { setBusy(false); }
+  };
   const name = (id: string) => teammates.find(item => item.id === id)?.name || 'Conversation';
   const shown = facts.filter(fact => `${fact.text} ${fact.kind}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <main className="today-page">
@@ -81,7 +95,15 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
     </div>
     {error && <p role="alert" className="today-error">{error}</p>}
     {!today && !error && <p role="status">Loading your day…</p>}
-    {today && <><section className="today-brief" aria-label="Daily briefing"><h2>At a glance</h2><p>{today.briefing}</p><button disabled={!teammates.length} onClick={() => onAsk(CHECK_APPS_REQUEST)}>Check connected apps in chat <Icon name="external" size={14} /></button></section>
+    {today && <><section className="today-brief" aria-label="Daily briefing"><h2>At a glance</h2><p>{today.briefing}</p><div className="today-brief-actions"><button disabled={!teammates.length} onClick={() => onAsk(CHECK_APPS_REQUEST)}>Check connected apps in chat <Icon name="external" size={14} /></button><button disabled={!teammates.length || busy} onClick={() => { setBriefError(''); setBriefOpen(open => !open); }}>Schedule daily briefing</button></div>
+      {briefOpen && <form className="today-brief-schedule" onSubmit={event => void scheduleBriefing(event)}>
+        <label>Schedule<input aria-label="Briefing schedule" required maxLength={80} value={briefCron} onChange={event => setBriefCron(event.target.value)} placeholder="daily 09:00" /><small>{parseCron(briefCron) ? describeCron(briefCron) : 'Use daily 08:00, weekdays 09:30, or every 30m.'}</small></label>
+        {teammates.length > 1 && <label>Conversation<select aria-label="Briefing conversation" value={briefOwner || teammates[0].id} onChange={event => setBriefOwner(event.target.value)}>{teammates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
+        <p>Creates a paused draft. Review its instructions and permissions before turning it on. Each run reads current saved facts and marks external apps as not checked.</p>
+        {briefError && <p role="alert" className="today-error">{briefError}</p>}
+        <div><button className="button-primary" disabled={busy || !parseCron(briefCron)}>Create paused draft</button><button type="button" onClick={() => setBriefOpen(false)}>Cancel</button></div>
+      </form>}
+    </section>
       <div className="today-columns"><section aria-label="Unfinished requests"><h2>Pick up where you left off <span>{today.unfinished.length}</span></h2>
         {!today.unfinished.length && <p className="today-empty">No unfinished requests. Start with whatever you need today.</p>}
         {today.unfinished.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}

@@ -34,8 +34,8 @@ The approved scope is `docs/superpowers/specs/2026-11-06-everyday-assistant-desi
 - Opt-in daily briefing schedule: the shared action creates a paused job draft,
   each run injects fresh saved commitments plus the explicit not-checked
   external-source notice, and the finished briefing is posted directly instead
-  of paying for a second delivery rewrite. The Today UI control for that draft
-  is still the remaining reachability gap.
+  of paying for a second delivery rewrite. Today exposes an editable schedule
+  form that creates the draft and opens it for review.
 - `src/core/voice-worker.mjs`: only explicit foreground profile context enables
   normal bounded fresh retrieval; private control-only workers avoid recall.
   Corrected facts reach subsequent typed and voice decisions.
@@ -119,6 +119,13 @@ node --test --test-name-pattern "opt-in daily briefing" test/desktop/everyday-as
 tests 1; pass 1; fail 0
 ```
 
+The same test rejects an unknown owner and an invalid schedule and confirms a
+rejected draft creates no job. The real renderer check
+`test/desktop/assistant-ui.test.mjs` creates the paused draft from Today and
+asserts `assistantBriefing=true`, `enabled=false` and the edited cron. The IPC
+path remains restricted to the authenticated application windows, and the action
+is only dispatched when its identifier is in `ASSISTANT_ACTIONS`.
+
 Re-run focused gates after the briefing fix: desktop assistant/phone/voice
 **36/36**, core assistant/skills **46/46**, `check-skills` **12 checked, 0 errors**,
 and `tsc --noEmit -p desktop/tsconfig.json` exit **0**.
@@ -130,8 +137,7 @@ credentials, releases or external accounts were changed for these checks.
 
 - Finish full-App navigation/draft acceptance and inspect actual rendered images.
 - Complete source-backed project context editing/deletion, current commitments
-  and deterministic daily facts; expose the paused briefing-schedule draft in
-  the Today UI (its engine/IPC and fresh-fact execution are done).
+  and deterministic daily facts.
 - Add reviewed selected-text/document/browser context across task/handoff flows.
 - Add teach-once parameterized routines with source evidence, reachable editor,
   normal tracked execution and separate opt-in scheduling.

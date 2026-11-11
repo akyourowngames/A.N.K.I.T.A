@@ -1,4 +1,4 @@
-export const ASSISTANT_ACTIONS: Readonly<Record<'today' | 'resume' | 'resolve' | 'memoryList' | 'memorySave' | 'memoryForget' | 'projectSave' | 'projectForget' | 'commitmentComplete' | 'routineList' | 'routineSave' | 'routineRemove' | 'routineRun' | 'routineSchedule', string>>;
+export const ASSISTANT_ACTIONS: Readonly<Record<'today' | 'resume' | 'resolve' | 'memoryList' | 'memorySave' | 'memoryForget' | 'projectSave' | 'projectForget' | 'commitmentComplete' | 'routineList' | 'routineSave' | 'routineRemove' | 'routineRun' | 'routineSchedule' | 'briefingSchedule', string>>;
 export const ASSISTANT_CHANGED: 'assistant-task-changed';
 export const KNOWLEDGE_CHANGED: 'assistant-knowledge-changed';
 export const ASSISTANT_ROUTINES_CHANGED: 'assistant-routines-changed';

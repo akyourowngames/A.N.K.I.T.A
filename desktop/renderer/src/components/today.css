@@ -18,6 +18,12 @@
 .today-brief { padding: 22px 24px; border: 1px solid var(--edge-strong); border-radius: 12px; background: var(--sidebar); }
 .today-brief p { font-size: 14px; line-height: 1.7; color: var(--text-soft); max-width: 850px; }
 .today-brief button { margin-top: 8px; }
+.today-brief-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+.today-brief-schedule { display: grid; gap: 12px; margin-top: 18px; max-width: 520px; }
+.today-brief-schedule label { display: grid; gap: 7px; font-size: 12px; color: var(--text-soft); }
+.today-brief-schedule small { color: var(--text-dim); }
+.today-brief-schedule p { margin: 0; font-size: 12px; }
+.today-brief-schedule > div { display: flex; gap: 10px; flex-wrap: wrap; }
 .today-columns { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 32px; margin-top: 34px; }
 .today-task { padding: 19px 0; border-top: 1px solid var(--edge); overflow-wrap: anywhere; }
 .today-task-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--text-dim); }
