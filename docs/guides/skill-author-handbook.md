@@ -104,3 +104,12 @@ resources and current observations over assumptions about the user's machine.
 Verification: the handbook regression failed while the guide was absent, then
 passed by copying and loading all five fenced examples, including the real golden
 comparison. Network access and model behavior are outside this offline example.
+
+## Find and import existing skills
+
+Ask ANKITA to find skills for a task, preview one, then install the exact preview.
+The native manager also works before provider login through `ankita skills --help`.
+Imported profile roots are shared by chat and desktop; a new turn discovers them.
+Only self-contained instruction files are supported. Existing names are protected,
+and ordinary tool approvals still apply. See [productive skills](../findings/productive-skills.md)
+for source research, exact commands, measurements and unsupported formats.

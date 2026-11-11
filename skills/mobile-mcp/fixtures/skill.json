@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "mobile-mcp"
+  },
+  "expectedFile": "expected.md"
+}

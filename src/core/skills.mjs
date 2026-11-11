@@ -5,6 +5,7 @@ import { validatePalette } from '../palette/index.mjs';
 import { startupProfile } from './startup-profile.mjs';
 import { SKILL_FILE, MANIFEST_FILE } from '../skills/layout.mjs';
 import { registeredSkillRoots } from '../skills/roots.mjs';
+import { parseToolName } from '../integrations/mcp-manager.mjs';
 
 const TOOL_METADATA_CHARS = 200; // Characters per tool-hint/activation field; bounds catalog metadata.
 const PERMISSION_CHARS = 200; // Characters per permission manifest field; keeps install prompts readable.
@@ -139,7 +140,8 @@ export function permissionSummary(skill) {
 }
 
 export function activeAutomaticSkills(skills, activatedTools = []) {
-  const tools = new Set(activatedTools);
+  // Match advertised MCP tool names independently of the user's chosen server id.
+  const tools = new Set([...activatedTools].flatMap(name => [name, parseToolName(name)?.toolName].filter(Boolean)));
   let remaining = AUTO_SKILL_PROMPT_CHARS;
   return skills.filter(skill => {
     if (!skill.autoTools?.some(tool => tools.has(tool))) return false;

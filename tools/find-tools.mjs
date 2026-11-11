@@ -3,6 +3,7 @@ import { managedMcpSummaries } from '../src/integrations/browser-routing.mjs';
 import { focusAllows, setToolFocus, BROWSER_DISCOVERY_GUIDANCE } from '../src/core/tool-focus.mjs';
 import { loadSkills } from '../src/core/skills.mjs';
 import { SUBAGENT_TOOL, SUBAGENT_CONTROL_TOOL } from '../src/core/subagents/registry.mjs';
+import { SKILL_MANAGER_CATEGORY } from '../src/skills/manager.mjs';
 
 const SKILL_LIST_LIMIT = 50; // Count/skills: bounds discovery output for large custom roots.
 const SKILL_DESCRIPTION_CHARS = 160; // Characters/description; full instructions stay behind the skill tool.
@@ -97,7 +98,7 @@ function skillCatalogue(ctx) {
 }
 
 function catalogue(mcpServers = [], skillsEnabled = true, categories = CATEGORIES) {
-  const builtIn = categories.filter(c => skillsEnabled || c.id !== 'skills')
+  const builtIn = categories.filter(c => skillsEnabled || !['skills', SKILL_MANAGER_CATEGORY].includes(c.id))
     .map((c) => `  ${c.id.padEnd(12)} ${c.summary}`);
   const external = mcpServers.map(
     (s) => `  ${String(s.id).padEnd(12)} MCP server - ${s.tools.length} tool(s): ${s.tools.slice(0, 6).join(", ")}`
@@ -124,7 +125,7 @@ export function run(args = {}, ctx = {}) {
   const allowed = tool => (!ctx.toolAvailability || ctx.toolAvailability.has(tool)) &&
     (tool !== SUBAGENT_TOOL || typeof ctx.runSubagent === 'function') &&
     (tool !== SUBAGENT_CONTROL_TOOL || typeof ctx.subagentControl === 'function');
-  const categories = CATEGORIES.filter(category => (skillsEnabled || category.id !== 'skills') && category.tools.some(tool => allowed(tool.name)));
+  const categories = CATEGORIES.filter(category => (skillsEnabled || !['skills', SKILL_MANAGER_CATEGORY].includes(category.id)) && category.tools.some(tool => allowed(tool.name)));
   // Only held-back servers need loading; a small one is already in the request.
   const connected = ctx.mcp?.summaries() || [];
   const available = (ctx.browserManager ? managedMcpSummaries(connected) : connected)

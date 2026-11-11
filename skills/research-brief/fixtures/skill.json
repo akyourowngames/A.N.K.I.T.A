@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "research-brief"
+  },
+  "expectedFile": "expected.md"
+}

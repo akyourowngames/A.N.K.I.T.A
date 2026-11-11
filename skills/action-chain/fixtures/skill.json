@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "action-chain"
+  },
+  "expectedFile": "expected.md"
+}
