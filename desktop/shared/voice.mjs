@@ -1,10 +1,24 @@
 /** Public desktop voice protocol. Audio and credentials stay in the main process. */
-import { VOICE_FINAL_STATES, VOICE_TASK_LIMIT, VOICE_BARGE_GUARD_MS } from '../../src/automation/voice-task-policy.mjs';
+import { VOICE_FINAL_STATES, VOICE_TASK_LIMIT, VOICE_BARGE_GUARD_MS, VOICE_REPORT_ACTIONS } from '../../src/automation/voice-task-policy.mjs';
 export { VOICE_BARGE_GUARD_MS };
 export const VOICE_EVENT = 'voice-state';
 export const VOICE_API_REQUIRED_MESSAGE = 'Voice needs an API-backed conversation. Choose a model in Settings first.'; // Shared setup guard for status, session start and direct engine calls.
 export const VOICE_ACTIONS = Object.freeze({ status: 'voiceStatus', snapshot: 'voiceSnapshot', start: 'voiceStart', end: 'voiceEnd',
-  pause: 'voicePause', resume: 'voiceResume', cancel: 'voiceCancel', focus: 'voiceShowMain', test: 'voiceTestPlayback' });
+  pause: 'voicePause', resume: 'voiceResume', cancel: 'voiceCancel', focus: 'voiceShowMain', test: 'voiceTestPlayback', speech: 'voiceSpeechControl' });
+export const VOICE_SPEECH_ACTIONS = Object.freeze({ stop: 'stop', resume: VOICE_REPORT_ACTIONS.resume, repeat: VOICE_REPORT_ACTIONS.repeat, dismiss: VOICE_REPORT_ACTIONS.dismiss }); // Separate speech control from task cancellation.
+export const VOICE_SPEECH_ERRORS = Object.freeze({ invalid: 'Invalid speech control.', missing: 'This report has expired. Choose a current report.' }); // Shared validation copy for the local dispatcher and audio owner.
+export const VOICE_LOCAL_ACTIONS = Object.freeze({ ...VOICE_SPEECH_ACTIONS, pause: 'pause', status: 'status' }); // Controls that never require a planner.
+const LOCAL_CONTROL_PHRASES = new Map(Object.entries({
+  status: ['status', 'what is the status', 'what is the progress', 'how is it going', 'are you still working', 'what are you working on'],
+  resume: ['continue', 'continue speaking', 'continue the report', 'resume speaking', 'resume the report'],
+  repeat: ['repeat that', 'repeat the report', 'say that again'],
+  dismiss: ['skip the report', 'skip this report', 'skip that report'],
+  stop: ['stop speaking', 'stop talking', 'be quiet'],
+  pause: ['pause listening', 'pause the microphone', 'mute the microphone', 'mute your microphone'],
+}).flatMap(([action, phrases]) => phrases.map(phrase => [phrase, action]))); // Whole utterances only: mixed requests still need the planner.
+const REPORT_STATES = new Set(['queued', 'speaking', 'suspended', 'delivered', 'dismissed', 'unavailable']); // Public queue states, never private clips or text.
+const DELIVERY_MODES = new Set(['pending', 'streaming', 'buffered', 'cached']); // Observed audio delivery, not a prediction of provider readiness.
+const DELIVERY_FALLBACKS = new Set(['provider', 'runtime']); // Capability reason only; never raw provider responses.
 export const VOICE_CAPTION_CHARS = 1200; // Characters: bound a displayed utterance; the full transcript stays in chat.
 export const VOICE_UPDATE_CHARS = 240; // Characters: one current work update, not a raw tool dump.
 export const VOICE_ERROR_CHARS = 360; // Characters: keep an actionable error readable in the island.
@@ -32,6 +46,9 @@ const normalizeCommand = value => String(value ?? '').replace(VOICE_PUNCTUATION,
 const commandWords = value => normalizeCommand(value).split(' ').filter(Boolean);
 // Words with only leading/trailing punctuation removed, so possessives stay distinct.
 const edgeWord = word => word.replace(VOICE_EDGE_PUNCTUATION, '').toLowerCase();
+
+/** Called only after the attention/wake gate; no substring matching of app commands. */
+export const voiceLocalControl = value => LOCAL_CONTROL_PHRASES.get(normalizeCommand(value)) || null;
 
 /**
  * Classify one transcript inside a voice session. Pure and shared so the desktop
@@ -89,7 +106,8 @@ const publicTask = task => task && typeof task.id === 'string' ? {
 
 export function emptyVoiceState() {
   return { sessionId: null, threadId: null, active: false, paused: false, phase: 'idle', caption: '', captionRole: 'assistant',
-    update: '', inputLevel: 0, task: null, jobs: [], error: null, microphone: '', wakeCue: 0, revision: 0 };
+    update: '', inputLevel: 0, task: null, jobs: [], error: null, microphone: '', wakeCue: 0, revision: 0,
+    bargeIn: false, delivery: { mode: 'pending', fallback: '', firstChunkMs: null }, speech: { turn: 0, speaking: false, reports: [] } };
 }
 
 /** Only explicit public fields can enter snapshots; unknown fields cannot leak secrets. */
@@ -109,6 +127,15 @@ export function voiceStatePatch(state, patch) {
   const jobs = Array.isArray(next.jobs) ? next.jobs.map(publicTask).filter(Boolean) : [];
   next.jobs = [...jobs.filter(voiceTaskActive), ...jobs.filter(job => !voiceTaskActive(job))].slice(0, VOICE_PUBLIC_JOBS);
   next.task = publicTask(next.task);
+  next.bargeIn = Boolean(next.bargeIn);
+  const delivery = next.delivery || {};
+  next.delivery = { mode: DELIVERY_MODES.has(delivery.mode) ? delivery.mode : 'pending',
+    fallback: DELIVERY_FALLBACKS.has(delivery.fallback) ? delivery.fallback : '',
+    firstChunkMs: Number.isFinite(delivery.firstChunkMs) && delivery.firstChunkMs >= 0 ? Math.round(delivery.firstChunkMs) : null };
+  const speech = next.speech || {};
+  next.speech = { turn: Number.isSafeInteger(speech.turn) && speech.turn >= 0 ? speech.turn : 0, speaking: Boolean(speech.speaking),
+    reports: (Array.isArray(speech.reports) ? speech.reports : []).filter(report => report && typeof report.id === 'string' && REPORT_STATES.has(report.state)).slice(-VOICE_PUBLIC_JOBS)
+      .map(report => ({ id: text(report.id, VOICE_DEVICE_CHARS), label: text(report.label, VOICE_UPDATE_CHARS), state: report.state })) };
   next.revision = state.revision + 1;
   return next;
 }

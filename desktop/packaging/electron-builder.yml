@@ -18,6 +18,7 @@ files:
   # from an ASAR; both copies are generated from this one source tree.
   - desktop/chatgpt-companion/**/*
   - desktop/browser-helper/**/*
+  - desktop/phone-client/**/*
   - desktop/THIRD_PARTY_NOTICES.md
   - desktop/renderer/dist/**/*
   - src/**/*

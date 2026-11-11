@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
-import type { VoicePhase, VoiceState } from '../../../../shared/voice.mjs';
-import { VOICE_PHASE_LABELS, voiceTaskActive } from '../../../../shared/voice.mjs';
+import type { VoicePhase, VoiceState, VoiceSpeechAction } from '../../../../shared/voice.mjs';
+import { VOICE_PHASE_LABELS, VOICE_SPEECH_ACTIONS, voiceTaskActive } from '../../../../shared/voice.mjs';
 import { VoiceOrb } from './VoiceOrb';
 import { VoiceCaptions } from './VoiceCaptions';
 import { Icon } from '../Icons';
@@ -10,10 +10,15 @@ const JOB_STATE: Record<string, string> = { queued: 'Starting', running: 'Workin
 const PLACEHOLDERS: Record<VoicePhase, string> = { idle: 'Speak when you’re ready.', starting: 'Getting your voice ready.', listening: 'Go ahead. I’m listening.',
   standby: 'Say “Ankita” to talk.', transcribing: 'Catching your words.', working: 'I’m on it.', speaking: '',
   approval: 'Your permission is needed.', paused: 'Take your time.', error: 'Let’s get voice ready.' };
+const UNFINISHED_REPORT_STATES = new Set(['queued', 'speaking', 'suspended']); // Prefer the report that still has speech to deliver.
+const DELIVERY_COPY = { pending: 'Replies stream when supported. Words appear after you pause.', streaming: 'Streaming replies. Words appear after you pause.',
+  cached: 'Replaying saved speech. Words appear after you pause.', buffered: 'Replies are buffered. Words appear after you pause.' }; // Describe actual delivery, without implying streaming recognition.
+const DELIVERY_FALLBACK_COPY = { provider: 'The speech service did not accept streaming; buffered speech is available.', runtime: 'This audio runtime uses buffered speech.' }; // Explain supported fallback without provider internals.
 
-export function VoicePanel({ voice, error = '', busy = false, compact = false, onEnd, onPause, onResume, onCancel, onIsland, onSettings, onStart, onFocus }: {
+export function VoicePanel({ voice, error = '', busy = false, compact = false, onEnd, onPause, onResume, onCancel, onSpeech, onIsland, onSettings, onStart, onFocus }: {
   voice: VoiceState; error?: string; busy?: boolean; compact?: boolean;
   onEnd: () => unknown; onPause: () => unknown; onResume: () => unknown; onCancel: (taskId?: string) => unknown;
+  onSpeech?: (action: VoiceSpeechAction, id?: string) => unknown;
   onIsland?: () => unknown; onSettings?: () => unknown; onStart?: () => unknown; onFocus?: () => unknown;
 }) {
   const end = useRef<HTMLButtonElement>(null);
@@ -23,6 +28,9 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
   const visibleJobs = [...activeJobs, ...jobs.filter(job => !voiceTaskActive(job)).slice(0, compact ? 1 : 2)];
   const working = activeJobs.length > 0;
   const issue = error || voice.error;
+  const reports = voice.speech?.reports?.filter(report => report.state !== 'unavailable') || [];
+  const focusedReport = reports.find(report => report.state === 'speaking') || [...reports].reverse().find(report => report.state === 'suspended')
+    || reports.find(report => report.state === 'queued') || reports.at(-1);
   useEffect(() => { if (!compact) end.current?.focus({ preventScroll: true }); }, [compact]);
   useEffect(() => {
     if (compact) return;
@@ -40,6 +48,20 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
         {issue ? <span className="voice-error">{issue}</span> : voice.phase === 'approval' ? 'Review the permission request to continue.' : voice.update || (working ? 'You can give me another request.' : voice.task?.status === 'done' ? 'Done · saved in this conversation' : voice.task?.status === 'partial' ? 'Some findings are ready · open the result below' : voice.task?.status === 'failed' ? 'Work needs attention · see the conversation' : voice.task?.status === 'cancelled' ? 'Work stopped' : voice.paused ? 'Microphone is off' : 'Speak naturally. Pause to send.')}
       </div>
     </div>
+    {voice.active && <p className="voice-listening-hint" role="status">{voice.paused
+      ? 'Microphone is off. Use Resume microphone to listen again.'
+      : voice.bargeIn ? 'You can interrupt by speaking through your headphones.' : 'Listening pauses during replies. Use Stop speaking.'}</p>}
+    {voice.active && <p className="voice-listening-hint" title={voice.delivery?.fallback ? DELIVERY_FALLBACK_COPY[voice.delivery.fallback] : undefined}>
+      {DELIVERY_COPY[voice.delivery?.mode || 'pending']}{voice.delivery?.firstChunkMs != null ? ` Last first audio: ${voice.delivery.firstChunkMs} ms.` : ''}
+    </p>}
+    {voice.active && onSpeech && focusedReport && <div className="voice-report-controls" aria-label="Spoken report controls">
+      <span>{focusedReport.label || 'Spoken report'}</span>
+      <div>
+        {focusedReport.state === 'suspended' && <button className="voice-text-button" aria-label="Continue report" disabled={busy || voice.paused} onClick={() => onSpeech(VOICE_SPEECH_ACTIONS.resume, focusedReport.id)}>Continue report</button>}
+        <button className="voice-text-button" aria-label="Repeat report" disabled={busy || voice.paused} onClick={() => onSpeech(VOICE_SPEECH_ACTIONS.repeat, focusedReport.id)}>Repeat report</button>
+        {UNFINISHED_REPORT_STATES.has(focusedReport.state) && <button className="voice-text-button" aria-label="Skip report" disabled={busy || voice.paused} onClick={() => onSpeech(VOICE_SPEECH_ACTIONS.dismiss, focusedReport.id)}>Skip report</button>}
+      </div>
+    </div>}
     {jobs.length > 0 && <div className="voice-jobs" aria-label="Voice jobs">
       <div className="voice-jobs-heading"><span>{activeJobs.length ? 'In progress' : 'Recent results'} <b>{activeJobs.length || visibleJobs.length}</b></span><span>Open a request for details</span></div>
       {visibleJobs.map(job => <div className="voice-job" key={job.id} data-status={job.status}>
@@ -58,6 +80,7 @@ export function VoicePanel({ voice, error = '', busy = false, compact = false, o
     </div>}
     <div className="voice-controls">
       {voice.active ? <>
+        {onSpeech && voice.speech?.speaking && <button className="voice-control voice-stop" disabled={busy} aria-label="Stop speaking" onClick={() => onSpeech(VOICE_SPEECH_ACTIONS.stop)}><Icon name="stop" size={14} /><span>Stop speaking</span></button>}
         <button className={`voice-control ${voice.paused ? 'is-muted' : ''}`} disabled={busy} onClick={voice.paused ? onResume : onPause} aria-label={voice.paused ? 'Resume microphone' : 'Pause microphone'} aria-pressed={voice.paused} title={voice.paused ? 'Resume microphone' : 'Pause microphone'}><Icon name={voice.paused ? 'micOff' : 'mic'} size={20} /></button>
         <button ref={end} className="voice-control voice-end" onClick={onEnd} aria-label="End voice" title="End voice · work keeps running"><Icon name="phoneEnd" size={21} /><span>End voice</span></button>
       </> : <button ref={end} className="voice-start" onClick={onStart} disabled={busy || !onStart}><Icon name="mic" size={18} />{busy ? 'Getting ready…' : 'Try voice again'}</button>}

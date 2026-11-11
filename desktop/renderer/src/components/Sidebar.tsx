@@ -7,10 +7,11 @@ import { TeammateAvatar } from './TeammateAvatar';
 import { sidebarWidth } from '../../../shared/desktop-layout.mjs';
 import { CHATGPT_BROWSER_PROVIDER, CHATGPT_BROWSER_LABEL, CHATGPT_CURRENT_MODEL_LABEL } from '../../../shared/chatgpt-browser.mjs';
 
-export function Sidebar({ teammates, selectedId, search, onSearch, onSelect, onCreate, onOpenSettings, onOpenPlugins, onOpenProjects, onOpenChat, pluginsOpen, projectsOpen, provider, model, phase, chrome, unread, toolsCount, width, collapsed, onCollapse, onResize }: {
+export function Sidebar({ teammates, selectedId, search, onSearch, onSelect, onCreate, onOpenSettings, onOpenPlugins, onOpenProjects, onOpenChat, onOpenToday, todayOpen = false, pluginsOpen, projectsOpen, provider, model, phase, chrome, unread, toolsCount, width, collapsed, onCollapse, onResize }: {
   teammates: Teammate[]; selectedId: string | null; search: string; onSearch: (value: string) => void;
   onSelect: (id: string) => void; onCreate: () => void; onOpenSettings: () => void; onOpenPlugins: () => void; onOpenProjects: () => void; onOpenChat: () => void; pluginsOpen: boolean; projectsOpen: boolean; provider: string; model: string; phase: string;
   chrome: string; unread: Record<string, boolean>; toolsCount: number; width: number; collapsed: boolean; onCollapse: () => void; onResize: (width: number) => void;
+  onOpenToday?: () => void; todayOpen?: boolean;
 }) {
   const shown = useMemo(() => teammates.filter(t => `${t.name} ${t.persona}`.toLowerCase().includes(search.toLowerCase())), [teammates, search]);
   const unreadCount = teammates.filter(t => unread[t.id] && t.id !== selectedId).length;
@@ -38,11 +39,12 @@ export function Sidebar({ teammates, selectedId, search, onSearch, onSelect, onC
     <div className="sidebar-workspace">
     <nav className="workspace-rail no-drag" aria-label="Workspace navigation">
       <TeammateAvatar className="rail-mascot" />
-      <button type="button" className={`rail-button ${!pluginsOpen && !projectsOpen ? 'active' : ''}`} onClick={onOpenChat} aria-label="Conversations" aria-current={!pluginsOpen && !projectsOpen ? 'page' : undefined} title="Conversations"><Icon name="chat" size={20} /><span>Chat</span>{unreadCount > 0 && <i className="rail-unread" />}</button>
+      {onOpenToday && <button type="button" className={`rail-button ${todayOpen ? 'active' : ''}`} onClick={onOpenToday} aria-label="Today" aria-current={todayOpen ? 'page' : undefined} title="Today"><Icon name="clock" size={20} /><span>Today</span></button>}
+      <button type="button" className={`rail-button ${!todayOpen && !pluginsOpen && !projectsOpen ? 'active' : ''}`} onClick={onOpenChat} aria-label="Conversations" aria-current={!todayOpen && !pluginsOpen && !projectsOpen ? 'page' : undefined} title="Conversations"><Icon name="chat" size={20} /><span>Chat</span>{unreadCount > 0 && <i className="rail-unread" />}</button>
       <button type="button" className={`rail-button ${projectsOpen ? 'active' : ''}`} onClick={onOpenProjects} aria-label="Projects" aria-current={projectsOpen ? 'page' : undefined} title="Projects"><Icon name="folder" size={20} /><span>Projects</span></button>
       <button type="button" className={`rail-button ${pluginsOpen ? 'active' : ''}`} onClick={onOpenPlugins} aria-label="Plugins" aria-current={pluginsOpen ? 'page' : undefined} title="Apps and skills"><Icon name="plug" size={20} /><span>Plugins</span></button>
       <button type="button" className="rail-button rail-create" onClick={onCreate} aria-label="New teammate" title="New teammate"><Icon name="plus" size={20} /><span>New</span></button>
-      <div className="rail-teammates" role="group" aria-label="Switch teammate">{teammates.map(teammate => <button type="button" key={teammate.id} aria-label={teammate.name} title={teammate.name} aria-pressed={!pluginsOpen && !projectsOpen && selectedId === teammate.id} onClick={() => onSelect(teammate.id)}><TeammateAvatar id={teammate.id} color={teammate.color} />{unread[teammate.id] && teammate.id !== selectedId && <i className="rail-unread" />}</button>)}</div>
+      <div className="rail-teammates" role="group" aria-label="Switch teammate">{teammates.map(teammate => <button type="button" key={teammate.id} aria-label={teammate.name} title={teammate.name} aria-pressed={!todayOpen && !pluginsOpen && !projectsOpen && selectedId === teammate.id} onClick={() => onSelect(teammate.id)}><TeammateAvatar id={teammate.id} color={teammate.color} />{unread[teammate.id] && teammate.id !== selectedId && <i className="rail-unread" />}</button>)}</div>
       <button type="button" className="rail-button rail-settings" onClick={onOpenSettings} aria-label="Open settings" title="Settings"><Icon name="settings" size={20} /><span>Settings</span></button>
     </nav>
     <div className="sidebar-roster">
@@ -50,7 +52,7 @@ export function Sidebar({ teammates, selectedId, search, onSearch, onSelect, onC
     <label className="search-box no-drag"><Icon name="search" size={17} /><input placeholder="Find a teammate" value={search} onChange={event => onSearch(event.target.value)} aria-label="Find a teammate" /></label>
     <div className="sidebar-section-title"><span>Conversations</span>{unreadCount > 0 && <em className="unread-pill">{unreadCount} new</em>}</div>
     <nav className="teammate-list" aria-label="Teammates">
-      {shown.length ? shown.map(teammate => <button key={teammate.id} aria-label={teammate.name} title={teammate.name} aria-current={!pluginsOpen && !projectsOpen && selectedId === teammate.id ? 'page' : undefined} className={`teammate-row ${!pluginsOpen && !projectsOpen && selectedId === teammate.id ? 'active' : ''}`} onClick={() => onSelect(teammate.id)}>
+      {shown.length ? shown.map(teammate => <button key={teammate.id} aria-label={teammate.name} title={teammate.name} aria-current={!todayOpen && !pluginsOpen && !projectsOpen && selectedId === teammate.id ? 'page' : undefined} className={`teammate-row ${!todayOpen && !pluginsOpen && !projectsOpen && selectedId === teammate.id ? 'active' : ''}`} onClick={() => onSelect(teammate.id)}>
         <TeammateAvatar id={teammate.id} color={teammate.color} />
         <span className="teammate-copy">
           <span className="teammate-line"><strong>{teammate.name}</strong><time>{relativeTime(teammate.lastMessageAt)}</time></span>

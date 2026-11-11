@@ -11,6 +11,17 @@ export type Teammate = {
 
 export type Model = { id: string; name?: string; vendor?: string; context?: number; tools?: boolean };
 export type DesktopSkill = { name: string; description: string; suggestedTools: string; body: string; enabled: boolean };
+export type AssistantTask = { id: string; ownerId: string; goal: string; status: string; updatedAt: number; reply: string; error: string | null;
+  steps: { id: string; tool: string; phase: string; result: string; mutation: boolean }[];
+  checklist: { id: string; content: string; status: string }[] };
+export type AssistantRoutine = { id: string; ownerId: string; name: string; template: string; revision: number; sourceTaskId: string;
+  sourceEvidence: { at: number; tools: string[] }; parameters: { name: string; label: string; defaultValue: string | null }[] };
+export type AssistantToday = { at: number; timeZone: string; unfinished: AssistantTask[]; recent: AssistantTask[]; upcoming: Routine[];
+  memories: PersonalMemory[]; routines: AssistantRoutine[];
+  commitments: { id: string; text: string; projectId: string; projectName: string }[];
+  pending: { runId: string; routineId: string; name: string; status: string; at: string }[]; briefing: string;
+  externalSources: { status: string; notice: string } };
+export type PersonalMemory = { id: string; text: string; kind: string; always: boolean; updatedAt: string; confidence: number; source: unknown; conflictsWith: string[] };
 export type DesktopPreferences = {
   hasSarvamKey?: boolean; hasBasetenKey?: boolean; micDevice?: string; voiceOutputDevice?: string;
   secretScrubbing?: boolean; secretWarningSeen?: boolean;
@@ -46,7 +57,8 @@ export type ChannelPreferences = { manifest: ChannelManifest; secrets: Record<st
 export type ChannelsView = { channels: Record<string, ChannelPreferences>; doctor?: { ok: boolean; error: string | null; migrated: boolean; rollbackAvailable: boolean } };
 export type ChannelUpdate = Record<string, string | boolean | number | null>;
 export type PluginCard = { slug: string; label: string; blurb: string; noAuth: boolean; logo: string };
-export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: { at: string; text: string }[]; notes: { at: string; text: string }[]; todos: { id: string; at: string; text: string; done: boolean }[]; worklog: { at: string; text: string; source?: { kind?: string; sessionId?: string; turnId?: string } }[]; lastWorkAt: string | null; lastUsedAt: string | null };
+export type ProjectRecord = { at: string; text: string; ref?: string; source?: { kind?: string; at?: string; sessionId?: string; turnId?: string; surface?: string } | null; previousSource?: unknown };
+export type Project = { id: string; name: string; summary: string; path: string; repo: string; client: string; conventions: string[]; status: string; archived: boolean; decisions: ProjectRecord[]; notes: ProjectRecord[]; todos: { id: string; at: string; text: string; done: boolean }[]; worklog: { at: string; text: string; source?: { kind?: string; sessionId?: string; turnId?: string } }[]; lastWorkAt: string | null; lastUsedAt: string | null };
 export type ChangedFile = { path: string; status: string; untracked: boolean };
 export type WorkspaceJob = { id: string; state: string; command: string; cwd: string; exit_code: number | null; started_at: string; output: string };
 export type WorkspaceSnapshot = { root: string; cwd: string; files: ChangedFile[]; artifacts: { path: string; name: string }[]; jobs: WorkspaceJob[] };
@@ -78,7 +90,7 @@ export type ChatMessage =
 
 export type PhonePairingState = 'starting' | 'ready' | 'offline' | 'unsupported' | 'error';
 export type PhonePairingInvitation = { id: string; code: string; expiresAt: string; address: string; fingerprint: string; attemptsLeft: number };
-export type PhonePairingInvitationResult = PhonePairingInvitation & { uri: string; qr: string };
+export type PhonePairingInvitationResult = PhonePairingInvitation & { uri: string; qr: string; browserUrl: string; browserQr: string };
 export type PhonePairingRequest = { requestId: string; deviceName: string; platform: string; createdAt: string; expiresAt: string };
 export type PhonePairingDevice = {
   id: string; name: string; platform: string; teammateId: string; teammateName: string;
@@ -87,6 +99,7 @@ export type PhonePairingDevice = {
 export type PhonePairingSnapshot = {
   state: PhonePairingState; error: string | null; address: string | null; name: string; port: number | null;
   fingerprint: string | null; addresses: string[]; preferredAddress: string | null; running: boolean;
+  browserUrl?: string | null;
   invitation: PhonePairingInvitation | null; pending: PhonePairingRequest[];
   devices: PhonePairingDevice[]; teammates: { id: string; name: string }[];
 };
@@ -118,6 +131,9 @@ export type UpdateEvent =
   | { type: 'error'; message: string };
 
 export type EngineEvent = (
+  | { type: 'assistant-task-changed'; threadId: string; taskId: string }
+  | { type: 'assistant-knowledge-changed' }
+  | { type: 'assistant-routines-changed' }
   | { type: 'voice-state'; state: VoiceState }
   | { type: 'voice-focus'; threadId: string | null; settings?: boolean }
   | { type: 'companion-capture-ready'; capture: CompanionCaptureItem }

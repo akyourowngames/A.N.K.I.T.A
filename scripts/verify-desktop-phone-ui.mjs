@@ -7,7 +7,7 @@ import { createServer } from 'vite';
 import { chromium } from 'playwright';
 import QRCode from 'qrcode';
 import { IPC_CONTRACT } from '../desktop/shared/version.mjs';
-import { PHONE_PAIRING_ACTIONS, pairingUri, parsePairingUri } from '../desktop/shared/phone-pairing.mjs';
+import { PHONE_PAIRING_ACTIONS, pairingUri, parsePairingUri, phoneBrowserUrl } from '../desktop/shared/phone-pairing.mjs';
 
 const repo = fileURLToPath(new URL('../', import.meta.url));
 const appVersion = JSON.parse(await fs.readFile(new URL('../package.json', import.meta.url), 'utf8')).version;
@@ -15,7 +15,6 @@ const artifactDir = process.env.ANKITA_PHONE_UI_ARTIFACT_DIR || await fs.mkdtemp
 const NARROW = { width: 720, height: 900 }; // Below the 760px invite breakpoint, above the 700px nav collapse.
 const WIDE = { width: 1280, height: 900 };
 const READY_TIMEOUT_MS = 20_000;
-const PHONE_NAV_TABS = 6; // Model, Providers, Profile, Images, Channels, Phone in DOM order.
 const KEYBOARD_TAB_LIMIT = 20;
 const INVITATION_TTL_FIXTURE_MS = 120_000;
 
@@ -31,13 +30,15 @@ assert.ok(parsed, 'Fixture invitation link parses');
 assert.equal(parsed.address, COMPANION_ADDRESS);
 assert.ok(!/token|secret|password/i.test(URI), 'Invitation link carries only address, one-time code, fingerprint and name');
 const QR = await QRCode.toDataURL(URI, { errorCorrectionLevel: 'M', margin: 2, width: 220 });
+const BROWSER_URI = phoneBrowserUrl({ address: COMPANION_ADDRESS, code: CODE, fingerprint: FINGERPRINT });
+const BROWSER_QR = await QRCode.toDataURL(BROWSER_URI, { errorCorrectionLevel: 'M', margin: 2, width: 220 });
 
 const snapshot = (now = Date.now()) => ({
   state: 'ready', error: '', address: COMPANION_ADDRESS, name: 'Studio desktop', port: 8443,
   fingerprint: FINGERPRINT, addresses: ['192.168.1.20'], preferredAddress: null, running: true,
   invitation: null, pending: [], devices: [], teammates: [{ id: 'chief', name: 'Ankita' }],
 });
-const invitation = now => ({ id: 'fixture-invite', code: DISPLAY_CODE, expiresAt: new Date(now + INVITATION_TTL_FIXTURE_MS).toISOString(), address: COMPANION_ADDRESS, fingerprint: FINGERPRINT, attemptsLeft: 5, uri: URI, qr: QR });
+const invitation = now => ({ id: 'fixture-invite', code: DISPLAY_CODE, expiresAt: new Date(now + INVITATION_TTL_FIXTURE_MS).toISOString(), address: COMPANION_ADDRESS, fingerprint: FINGERPRINT, attemptsLeft: 5, uri: URI, qr: QR, browserUrl: BROWSER_URI, browserQr: BROWSER_QR });
 const pendingRequest = now => ({ requestId: 'fixture-request', deviceName: 'Ava’s Pixel 9 Pro with a deliberately long household name', platform: 'Android 16', createdAt: new Date(now).toISOString(), expiresAt: new Date(now + INVITATION_TTL_FIXTURE_MS).toISOString() });
 const pairedDevice = () => ({ id: 'fixture-device', name: 'Ava’s Pixel 9 Pro', platform: 'Android 16', createdAt: new Date().toISOString(), lastSeenAt: new Date().toISOString(), online: true, activeRun: null, teammateId: 'chief', teammateName: 'Ankita' });
 
@@ -108,7 +109,7 @@ try {
   assert.equal(await page.evaluate(() => document.activeElement?.classList.contains('settings-window')), true, 'Settings dialog owns initial keyboard focus');
   await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Model');
-  for (let index = 1; index < PHONE_NAV_TABS; index++) await page.keyboard.press('Tab');
+  for (let index = 0; index < KEYBOARD_TAB_LIMIT && await page.evaluate(() => document.activeElement?.getAttribute('aria-label')) !== 'Phone'; index++) await page.keyboard.press('Tab');
   assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('aria-label')), 'Phone', 'Tab order reaches the Phone section');
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'Pair a phone', exact: true }).waitFor();
@@ -123,6 +124,12 @@ try {
   assert.equal(reached, true, 'Tab order reaches Create pairing code');
   await page.keyboard.press('Enter');
   await page.locator('.phone-qr img').waitFor();
+  assert.equal(await page.locator('.phone-qr img').getAttribute('alt'), 'Pairing QR code for the phone browser');
+  assert.equal(await page.locator('.phone-qr img').getAttribute('src'), BROWSER_QR);
+  await page.getByLabel('Open on your phone', { exact: true }).selectOption('app');
+  assert.equal(await page.locator('.phone-qr img').getAttribute('src'), QR, 'the native companion keeps its existing invitation');
+  await page.getByLabel('Open on your phone', { exact: true }).selectOption('browser');
+  await page.getByRole('button', { name: 'Copy browser link', exact: true }).waitFor();
   assert.match(await page.locator('.phone-code').innerText(), /^ABCD-EFGH$/);
   assert.match(await page.locator('.phone-expiry').innerText(), /^Expires in \d+:\d{2} · 5 attempts left$/);
   assert.equal(await page.locator('.phone-invite-address').innerText(), COMPANION_ADDRESS);

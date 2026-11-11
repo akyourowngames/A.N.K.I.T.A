@@ -12,6 +12,8 @@ import { SettingsDialog, type SettingsTab } from './components/SettingsDialog';
 import { OnboardingDialog } from './components/OnboardingDialog';
 import { PluginsPage } from './components/PluginsPage';
 import { ProjectsPage } from './components/ProjectsPage';
+import { TodayPage } from './components/TodayPage';
+import { appendCompanionDraft } from './lib/useCompanionDrafts';
 import { WorkspacePanel } from './components/WorkspacePanel';
 import { SubagentPanel } from './components/SubagentPanel';
 import { activityFromReceipt } from '../../shared/subagent-state.mjs';
@@ -53,7 +55,7 @@ export default function App() {
   const [dialog, setDialog] = useState<'create' | 'edit' | null>(null);
   const [confirm, setConfirm] = useState<{ action: 'clear' | 'delete'; id: string; name: string } | null>(null);
   const [settingsTab, setSettingsTab] = useState<SettingsTab | null>(null);
-  const [view, setView] = useState<'chat' | 'plugins' | 'projects'>('chat');
+  const [view, setView] = useState<'today' | 'chat' | 'plugins' | 'projects'>(initialUi.selectedId ? 'chat' : 'today');
   const voice = useVoice();
   const [voiceOpen, setVoiceOpen] = useState(false);
   const previousVoiceThread = useRef<string | null>(null);
@@ -413,13 +415,19 @@ export default function App() {
       onSelect={id => { setView('chat'); dispatch({ type: 'select', id }); }} onCreate={() => { setView('chat'); setDialog('create'); }} onOpenSettings={() => setSettingsTab('model')}
       onOpenPlugins={() => { setPluginsSection('apps'); setView('plugins'); }} pluginsOpen={view === 'plugins'} onOpenProjects={() => setView('projects')} projectsOpen={view === 'projects'}
       onOpenChat={() => setView('chat')}
+      onOpenToday={() => setView('today')} todayOpen={view === 'today'}
       provider={state.settings?.provider || 'Copilot'} model={state.settings?.model || ''} phase={state.phase}
       chrome={state.chrome} unread={state.unread} toolsCount={state.settings?.tools.length || 0}
       width={sidebarWidth} collapsed={!sidebarOpen} onCollapse={() => setSidebarOpen(false)} onResize={setSidebarWidth}
     />
-    {view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} toolsRevision={toolsRevision} initialSection={pluginsSection} /> : view === 'projects' ? <ProjectsPage projects={projects} selectedThread={selected} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onRefresh={refreshProjects} onAssign={assignProject} /> : <ChatPane
+    {view === 'today' ? <TodayPage teammates={state.teammates} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)}
+      onOpenThread={id => { dispatch({ type: 'select', id }); setView('chat'); }}
+      onOpenJob={job => { const id = job.deliveryThreadId || job.threadId; if (!id) return; dispatch({ type: 'select', id }); setView('chat'); editJob(job.id); }}
+      onAsk={text => { const id = state.selectedId || state.teammates[0]?.id; if (!id) return; appendCompanionDraft('main', id, text); dispatch({ type: 'select', id }); setView('chat'); }}
+      onVoice={id => { dispatch({ type: 'select', id }); setView('chat'); setVoiceOpen(true); void voice.start(id); }} />
+      : view === 'plugins' ? <PluginsPage chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onOpenSettings={() => setSettingsTab('providers')} hasComposioKey={preferences.hasComposioKey} toolsRevision={toolsRevision} initialSection={pluginsSection} /> : view === 'projects' ? <ProjectsPage projects={projects} selectedThread={selected} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)} onRefresh={refreshProjects} onAssign={assignProject} /> : <ChatPane
       onVoice={voiceOpen ? endVoice : startVoice}
-      voicePanel={voiceOpen ? <VoicePanel voice={voice.state} error={voice.error} busy={voice.busy} onEnd={endVoice} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onStart={startVoice} onIsland={() => void window.ankita.windowAction('minimize')} onSettings={() => setSettingsTab('voice')} /> : undefined}
+      voicePanel={voiceOpen ? <VoicePanel voice={voice.state} error={voice.error} busy={voice.busy} onEnd={endVoice} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onSpeech={voice.speech} onStart={startVoice} onIsland={() => void window.ankita.windowAction('minimize')} onSettings={() => setSettingsTab('voice')} /> : undefined}
       teammate={selected} messages={messages}
       jobs={threadJobs} onEditJob={editJob}
       running={Boolean(state.selectedId && state.running[state.selectedId])}

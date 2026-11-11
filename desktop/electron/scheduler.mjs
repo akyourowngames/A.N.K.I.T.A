@@ -97,7 +97,7 @@ export class DesktopScheduler {
       const prior = this.store.load().routines.find(r => r.threadId === input.threadId && r.requestKey === input.requestKey);
       if (prior) { if (prior.creationFingerprint !== fingerprint) throw new Error('Creation request key belongs to a different task'); return this.list().find(r => r.id === prior.id); }
     }
-    input = { ...Object.fromEntries(Object.entries(input).filter(([key]) => MUTABLE_FIELDS.has(key) || key === 'requestKey')), creationFingerprint: fingerprint };
+    input = { ...Object.fromEntries(Object.entries(input).filter(([key]) => MUTABLE_FIELDS.has(key) || key === 'requestKey' || key === 'assistantBriefing')), creationFingerprint: fingerprint };
     const routine = this.store.addRoutine({ ...input, channel: 'desktop', enabled: draft ? false : input.enabled !== false });
     this.store.updateRoutine(routine.id, { createdAt: this.now().toISOString(), draft });
     this.changed(); if (draft) this.engine.emit({ type: 'routine-draft', threadId: routine.threadId, routineId: routine.id });
@@ -285,12 +285,22 @@ export class DesktopScheduler {
     return { now: this.now(), timeZone: this.timeZone, quietHours: this.engine.config?.quietHours || '',
       dailyLimit: this.engine.config?.heartbeatDailyLimit, cooldownMinutes: this.engine.config?.heartbeatCooldownMinutes };
   }
+  /** Fresh local facts for an opt-in briefing run; external sources stay explicitly unchecked. */
+  briefingContext() {
+    const today = this.engine.assistant().today();
+    const commitments = today.commitments.length
+      ? today.commitments.map(item => `- ${item.projectName}: ${item.text}`).join('\n')
+      : '- No open personal commitments were saved.';
+    return ['Local daily briefing facts:', commitments,
+      `External sources: ${today.externalSources.status}. ${today.externalSources.notice}`].join('\n');
+  }
   /** The single construction point for background workers. The config flag and
    *  the tool context are stamped here, so no caller can build one without them. */
   createJobWorker(routine, run, scope) {
     const owner = this.owner(routine).owner;
     const heartbeat = routine.kind === 'heartbeat';
-    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(heartbeat ? [this.engine.config.briefingPrompt || '', HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext(routine, this.heartbeatOptions())] : [])].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
+    const briefing = routine.assistantBriefing === true;
+    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(heartbeat ? [this.engine.config.briefingPrompt || '', HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext(routine, this.heartbeatOptions())] : []), briefing ? this.briefingContext() : ''].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
     const worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
       ...this.engine.contextForJob?.(routine),
       browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
@@ -431,7 +441,8 @@ export class DesktopScheduler {
       return;
     }
     const owner = this.owner(routine || receipt);
-    receipt = { ...receipt, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing };
+    receipt = { ...receipt, threadId: owner.owner?.id || null, ownerMissing: owner.ownerMissing,
+      ...(routine?.assistantBriefing === true ? { direct: true } : {}) };
     try {
       if (receipt.threadId && await this.engine.deliverRoutine(receipt)) {
         const file = path.join(this.directory, `${receipt.routineId}-${receipt.runId}.json`);

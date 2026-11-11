@@ -22,6 +22,7 @@ import { renderDiff } from '../../tools/shared/_diff.mjs';
 import { name as TOOL_DISCOVERY_NAME } from '../../tools/find-tools.mjs';
 import { SUBAGENT_TOOL } from './subagents/registry.mjs';
 import { runtimeVoiceTool, runtimeToolFlag } from './runtime-tools.mjs';
+import { SKILL_MANAGER_TOOL } from '../skills/manager.mjs';
 
 export const TOOL_UI = { ...c, preview, short, clip };
 TOOL_UI.diff = (oldText, newText, opts = {}) => renderDiff(oldText, newText, { ui: TOOL_UI, ...opts });
@@ -151,9 +152,12 @@ export class ToolHost {
       ? 'Error: This tool is not available in background browser jobs.'
       : 'Error: This tool is not available in this execution context.');
     this.onEvent?.({ type: 'tool-call', call });
-    let result;
+    let result, admitted = false;
     try {
+      // A failed durable checkpoint must prevent execution, including MCP writes.
+      await ctx.assistantTaskRun?.requested(call, ctx); admitted = true;
       const execute = async () => {
+        await ctx.assistantTaskRun?.guard(call, ctx);
         if (ctx.beforeToolExecute) await ctx.beforeToolExecute(call, ctx);
         return combined.aborted ? textResult(CANCELLED) : String(name).startsWith(MCP_PREFIX)
           ? await this.executeMcp(call, args, ctx, state, resultMode, budget)
@@ -161,6 +165,10 @@ export class ToolHost {
       };
       result = ctx.withToolExecution ? await ctx.withToolExecution(call, ctx, execute) : await execute();
     } catch (error) { result = textResult(combined.aborted ? CANCELLED : `Error while running ${name}: ${error.message}`); }
+    if (admitted) {
+      try { await ctx.assistantTaskRun?.settled(call, result, ctx); }
+      catch (error) { result = textResult(`Error: the action outcome could not be saved: ${error.message}. It may already have happened. Check its effect before retrying.`); }
+    }
     this.onEvent?.({ type: 'tool-result', call, result });
     return result;
   }
@@ -195,6 +203,7 @@ export class ToolHost {
       if (ok !== true) return textResult(DENIED);
     }
     if (ctx.signal.aborted) return textResult(CANCELLED);
+    await ctx.assistantTaskRun?.started(call, ctx);
     if (ctx.onToolStart) await ctx.onToolStart(call, ctx);
     if (ctx.signal.aborted) return textResult(CANCELLED);
     if (!mcp.callToolResult) return textResult(await mcp.callTool(name, args, { signal: ctx.signal }));
@@ -214,7 +223,7 @@ export class ToolHost {
     const tool = native || runtimeVoiceTool(ctx, call.name);
     if (!tool) return textResult(`Error: unknown tool "${call.name}".`);
     if (ctx.readOnly && !(native ? isReadOnly(tool.name, args, ctx) : runtimeToolFlag(tool, 'readOnly', args, ctx) === true)) return textResult(READ_ONLY_DENIAL);
-    if (tool.name === 'skill' && !(ctx.skillsInteractive ?? ctx.skillsEnabled)) return textResult('Error: skills are available only in interactive chats.');
+    if (['skill', SKILL_MANAGER_TOOL].includes(tool.name) && !(ctx.skillsInteractive ?? ctx.skillsEnabled)) return textResult('Error: skills are available only in interactive chats.');
     if (tool.name === 'skill' && ctx.disabledSkills?.has(String(args.name || '').trim().toLowerCase())) return textResult(`Error: skill "${args.name}" is disabled in Plugins > Skills.`);
     if (tool.name === 'web_search') {
       const completion = ctx.config.backgroundJob && ctx.config.backgroundExecutionPolicy === JOB_EXECUTION_COMPLETE;
@@ -247,6 +256,7 @@ export class ToolHost {
       if ((state.browserActionsThisTurn || 0) + cost > limit) return textResult(`Error: Browser primitive action budget (${limit} this turn) is exhausted. Inspect existing receipts and report unfinished work.`);
       state.browserActionsThisTurn = (state.browserActionsThisTurn || 0) + cost;
     }
+    await ctx.assistantTaskRun?.started(call, ctx);
     if (ctx.onToolStart) await ctx.onToolStart(call, ctx);
     if (ctx.signal.aborted) return textResult(CANCELLED);
     let output = FILE_WORKER_TOOLS.has(tool.name) ? await runFileToolInWorker(tool.name, args, ctx) : await tool.run(args, ctx);

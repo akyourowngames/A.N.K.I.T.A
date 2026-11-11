@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import { projectRecordRef } from '../../src/memory/projects.mjs';
 
 /** Keep project context useful without filling every model request with the whole log. */
 export function projectContext(project) {
@@ -31,8 +32,8 @@ export function projectSummary(project) {
     id: project.id, name: project.name, summary: project.summary || '',
     path: project.path || '', repo: project.repo || '', client: project.client || '',
     conventions: project.conventions || [], status: project.status || 'active',
-    archived: Boolean(project.archived), decisions: (project.decisions || []).slice(-8),
-    notes: (project.notes || []).slice(-8), todos: project.todos || [],
+    archived: Boolean(project.archived), decisions: (project.decisions || []).map(record => ({ ...record, ref: projectRecordRef('decision', record) })),
+    notes: (project.notes || []).map(record => ({ ...record, ref: projectRecordRef('note', record) })), todos: project.todos || [],
     worklog: (project.worklog || []).slice(-20),
     lastWorkAt: project.worklog?.at(-1)?.at || null,
     lastUsedAt: project.lastUsedAt || null,

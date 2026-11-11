@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Ankita on your phone</title>
+  <link rel="stylesheet" href="{{PHONE_CLIENT_ROOT}}/style.css">
+  <script type="module" src="{{PHONE_CLIENT_ROOT}}/app.mjs"></script>
+</head>
+<body>
+  <main>
+    <header><p class="eyebrow">ANKITA · YOUR DESKTOP</p><h1>Pick up where you left off</h1><p id="connection">Your desktop stays in charge of tools and approvals.</p></header>
+    <p id="notice" role="status" aria-live="polite"></p>
+    <section id="pair-panel" aria-labelledby="pair-title">
+      <h2 id="pair-title">Pair this phone</h2>
+      <p>Use the same network. First install the public certificate saved from desktop Settings → Phone, and compare its fingerprint there. Keep normal HTTPS checks on.</p>
+      <p id="fingerprint" class="fingerprint"></p>
+      <form id="pair-form">
+        <label>Phone name<input id="device-name" autocomplete="off" required></label>
+        <label>Pairing code<input id="pair-code" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label>
+        <button id="pair-button" type="submit">Request pairing</button>
+      </form>
+      <p id="pair-status" role="status">Create a short-lived code on the desktop, then approve this phone there.</p>
+    </section>
+    <div id="workspace" hidden>
+      <div class="actions"><button id="refresh" type="button" class="secondary">Refresh work</button><button id="disconnect" type="button" class="secondary">Disconnect and forget</button></div>
+      <section aria-labelledby="history-title"><h2 id="history-title">Conversation</h2><p>Recent messages from the conversation assigned on your desktop.</p><div id="history"></div></section>
+      <section aria-labelledby="tasks-title"><h2 id="tasks-title">Saved work</h2><div id="tasks"></div></section>
+      <section aria-labelledby="request-title">
+        <h2 id="request-title">Ask your desktop</h2>
+        <p id="resume-label" hidden></p><button id="clear-task" type="button" class="secondary" hidden>Start a new request instead</button>
+        <form id="request-form">
+          <label id="prompt-label">Request<textarea id="prompt" rows="3" required></textarea></label>
+          <details id="context-editor"><summary>Add selected context</summary><p>Paste only the text you choose. Review it before sending; it belongs to this request and its saved work.</p>
+            <label>Source name<input id="context-title" autocomplete="off"></label><label>Selected text<textarea id="context-text" rows="4"></textarea></label>
+            <button id="preview-context" type="button" class="secondary">Review selected context</button>
+          </details>
+          <div id="context-preview" hidden><h3>Context to send once</h3><strong id="preview-title"></strong><pre id="preview-text"></pre><label class="check"><input id="context-reviewed" type="checkbox">I reviewed this context</label><button id="remove-context" type="button" class="secondary">Remove context</button></div>
+          <button id="send" type="submit">Send request</button>
+        </form>
+      </section>
+      <section id="run-panel" aria-labelledby="run-title" hidden><h2 id="run-title">Current request</h2><p id="run-status" role="status"></p><pre id="reply"></pre><div id="approval" hidden><h3>Permission needed</h3><pre id="approval-detail"></pre><div class="actions"><button id="allow" type="button">Allow once</button><button id="deny" type="button" class="secondary">Deny</button></div></div><button id="cancel-run" type="button" class="secondary">Stop this request</button></section>
+    </div>
+    <footer><p>The connection key stays in this browser tab. Closing this tab forgets it here. Disconnect to revoke it on the desktop too.</p><button id="forget" type="button" class="secondary">Forget this tab’s connection</button></footer>
+  </main>
+</body>
+</html>

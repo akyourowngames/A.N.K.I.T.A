@@ -8,5 +8,5 @@
   "background": {"service_worker": "background.mjs", "type": "module"},
   "action": {"default_popup": "popup.html"},
   "content_scripts": [{"matches": ["http://*/*", "https://*/*"], "js": ["content.js"], "all_frames": true}],
-  "web_accessible_resources": [{"resources": ["content.mjs", "protocol.mjs"], "matches": ["http://*/*", "https://*/*"]}]
+  "web_accessible_resources": [{"resources": ["content.mjs", "context-extraction.mjs", "protocol.mjs"], "matches": ["http://*/*", "https://*/*"]}]
 }

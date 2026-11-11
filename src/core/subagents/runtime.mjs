@@ -237,6 +237,7 @@ export function createSubagentRuntime({ parent, createAgent, toolNames = [] }) {
       workspacePath: parent.workspacePath ?? null,
       allowedTools: new Set(resolveTools(preset, toolNames)),
       toolContext: { ...(parent.toolContext ?? {}), ...approvalContext,
+        assistantTaskRun: (parent.assistantTaskRun || parent.toolContext?.assistantTaskRun)?.scope?.(id),
         subagentControl: args => control(args, {}, record),
         takeSubagentMessages: () => record.inbox.splice(0),
       },

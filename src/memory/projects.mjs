@@ -1,5 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
+import { createHash } from 'node:crypto';
 import { writeTextFile } from "../../tools/shared/_shared.mjs";
 import { redactValue } from '../security/secret-scrubber.mjs';
 
@@ -14,6 +15,9 @@ import { redactValue } from '../security/secret-scrubber.mjs';
  */
 
 export const PROJECTS_VERSION = 1;
+export const projectRecordRef = (kind, record) => createHash('sha256').update(JSON.stringify([kind, record.at, record.text])).digest('hex');
+export const projectUserSource = () => ({ kind: 'manual', surface: 'desktop-project-editor', at: new Date().toISOString() }); // Explicit edits must not be rolled back as automatic extraction.
+const PROJECT_RECORD_FIELDS = Object.freeze({ note: 'notes', decision: 'decisions' });
 
 // These bound the prompt block, which is paid on every single turn. Real
 // conventions are short ("pnpm not npm"); the caps only stop a runaway one.
@@ -357,6 +361,22 @@ export class ProjectStore {
   }
 
   /* ------------------------------- memory -------------------------------- */
+
+  editRecord(idOrName, kind, ref, { text, forget = false } = {}) {
+    this._fresh();
+    const project = this.find(idOrName), field = PROJECT_RECORD_FIELDS[kind];
+    if (!project || !field || typeof ref !== 'string') throw new Error('Project context record was not found.');
+    const matches = (project[field] || []).filter(record => projectRecordRef(kind, record) === ref);
+    if (matches.length !== 1) throw new Error('Project context changed or was not found. Refresh before editing.');
+    const record = matches[0];
+    if (forget) project[field] = project[field].filter(item => item !== record);
+    else {
+      if (typeof text !== 'string' || !text.trim()) throw new Error('Project context needs some text.');
+      record.previousSource = record.source || null;
+      record.source = projectUserSource(); record.text = text.trim(); record.updatedAt = new Date().toISOString();
+    }
+    this.save(); return project;
+  }
 
   addNote(idOrName, text, source = null) {
     this._fresh();

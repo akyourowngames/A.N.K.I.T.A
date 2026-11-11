@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { AssistantTaskStore, ASSISTANT_TASK_DIRECTORY } from '../assistant/tasks.mjs';
 import { NotificationDelivery } from '../automation/notify.mjs';
 import { MemoryConsolidator } from '../memory/consolidate.mjs';
 import { extractMemory } from '../memory/memory-extract.mjs';
@@ -15,6 +16,7 @@ import {
   AUTOSAVE_NAME,
   STATE_FILE,
   PROJECTS_FILE,
+  PROFILE_FILE,
   MCP_FILE,
   COMPOSIO_FILE,
   MCP_TIERS_FILE,
@@ -121,6 +123,7 @@ function parseArgs(argv) {
     listModels: false,
     showConfig: false,
     continueName: null,
+    resumeTask: null,
     yes: false,
     tools: null,
     banner: true,
@@ -160,6 +163,9 @@ function parseArgs(argv) {
       case "-p":
       case "--prompt":
         opts.prompt = takeValue(a, i++);
+        break;
+      case '--resume-task':
+        opts.resumeTask = takeValue(a, i++);
         break;
       case "-m":
       case "--model":
@@ -337,6 +343,7 @@ export async function main({ voiceIO = {} } = {}) {
   try { if (await runLocalCommand(process.argv.slice(2))) return; }
   catch (error) { console.error(error.message); process.exitCode = 2; return; }
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.resumeTask && opts.prompt === null) opts.prompt = 'Continue the unfinished saved request.';
 
   if (opts.help) {
     process.stdout.write(USAGE);
@@ -568,8 +575,15 @@ export async function main({ voiceIO = {} } = {}) {
     }
   }
 
+  const assistantTasks = new AssistantTaskStore({ directory: path.join(CONFIG_DIR, ASSISTANT_TASK_DIRECTORY) });
+  assistantTasks.recoverInterrupted();
+  const resumedTask = opts.resumeTask ? assistantTasks.get(opts.resumeTask) : null;
+  if (opts.resumeTask && !resumedTask) throw new Error('Saved assistant request was not found. Use ankita work list.');
+  const assistantOwnerId = resumedTask?.ownerId || `cli:${createHash('sha256').update(path.resolve(process.cwd())).digest('hex')}`;
+  let pendingAssistantTaskId = opts.resumeTask;
   const agent = new Agent({
     client,
+    toolContext: { assistantTasks, assistantOwnerId, assistantSurface: 'terminal', profileFile: PROFILE_FILE },
     skillsEnabled: !opts.daemon,
     tool,
     config,
@@ -616,6 +630,11 @@ export async function main({ voiceIO = {} } = {}) {
     },
   });
   agent.model = model;
+  if (resumedTask) {
+    const project = resumedTask.projectId ? new ProjectStore(PROJECTS_FILE).load().find(resumedTask.projectId) : null;
+    if (resumedTask.projectId && !project) throw new Error('The saved task project is no longer available.');
+    agent.setProject(project ? projectBlock(project) : '', resumedTask.projectId, resumedTask.workspacePath);
+  }
 
   // Connect any MCP servers the user has already approved, so their tools are
   // in the very first request. Only approved servers start, so this cannot
@@ -771,7 +790,9 @@ export async function main({ voiceIO = {} } = {}) {
     let spoke = false;
 
     try {
+      const assistantTaskId = pendingAssistantTaskId; pendingAssistantTaskId = null;
       const reply = await agent.send(text, {
+        assistantTaskId,
         onMessageStart: () => {
           if (show && !spoke && !opts.prompt) spin = spinner("thinking");
           if (!plain) {
@@ -1170,7 +1191,7 @@ export async function main({ voiceIO = {} } = {}) {
         const language = speechLanguage, turn = session.captureSpeechTurn;
         session.speech.acceptTurn(turn);
         try {
-          const context = { ...captureVoiceContext(agent), audioSession: session,
+          const context = { ...captureVoiceContext(agent, { toolContext: { assistantTasks, assistantOwnerId, assistantSurface: 'voice', profileFile: PROFILE_FILE, projectsFile: PROJECTS_FILE } }), audioSession: session,
             speech: { queue: session.speech, turn, signal: session.controller.signal } };
           const record = await voiceJobs.submit({ ownerId: voiceOwner, transcript: clean, language, confidence: speechConfidence, context,
             speech: { minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: 0, waitUpdateMs: config.voiceJobWaitUpdateMs },

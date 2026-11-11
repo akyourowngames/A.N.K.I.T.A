@@ -95,7 +95,9 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     retryEmptyResponse: true }, // Retry one unexecuted model decision, never restart a partially completed task.
     project: captured.project, projectId: captured.projectId, workspacePath: captured.workspacePath,
     mcp: captured.mcp, browserManager, browserThreadId: entry.ownerId,
-    memoryEnabled: false, autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
+    // Only a foreground host's explicitly supplied profile enables bounded, fresh recall.
+    memoryEnabled: !entry.controlOnly && typeof captured.toolContext?.profileFile === 'string',
+    autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
     allowedTools: entry.controlOnly ? new Set(runtimeTools.keys()) : null, confirm: approve, print: () => {}, write: () => {},
     systemSuffix: [CONTROL_GUIDANCE, reports?.context, entry.controlOnly && CAPACITY_GUIDANCE].filter(Boolean).join('\n'),
     toolContext: { ...captured.toolContext, ...toolContext, runtimeTools, responsePolicy: completion.policy,

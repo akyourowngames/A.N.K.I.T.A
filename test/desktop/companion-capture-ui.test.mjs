@@ -42,6 +42,7 @@ test('a busy capture bridge never leaks raw IPC text into passive mascot surface
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}${ROUTE}`);
+  await page.getByRole('button', { name: 'Conversations', exact: true }).click();
   await page.locator('.chat-pane').waitFor();
   assert.equal(await page.locator('.conversation-state').count(), 0, 'no status tag in the conversation header');
   assert.equal(await page.locator('.companion-helper-toggle').count(), 0, 'no helper badge on the mascot');

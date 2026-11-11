@@ -3,13 +3,38 @@ import path from 'node:path';
 import { scaffoldSkill, SCAFFOLD_USAGE } from '../skills/scaffold.mjs';
 import { commandCheatSheet } from './cheat-sheet.mjs';
 import { RoutineStore } from '../automation/routines.mjs';
-import { STATE_FILE, SESSIONS_DIR, loadConfig } from './config.mjs';
+import { CONFIG_DIR, STATE_FILE, SESSIONS_DIR, loadConfig } from './config.mjs';
+import { AssistantTaskStore, ASSISTANT_TASK_DIRECTORY } from '../assistant/tasks.mjs';
 import { enableJobTemplate, jobTemplatesText } from '../automation/templates.mjs';
 import { jobRunbook } from '../automation/runbooks.mjs';
 import { JOB_BROWSER_DIRECTORY } from '../automation/job-policy.mjs';
+import { SkillManager, SKILL_MANAGER_USAGE } from '../skills/manager.mjs';
 
 /** Local commands run before provider bootstrap so authoring works offline. */
-export async function runLocalCommand(argv, { ask, write = text => console.log(text) } = {}) {
+export async function runLocalCommand(argv, { ask, write = text => console.log(text), skillManager, assistantTasks } = {}) {
+  if (argv[0] === 'work') {
+    const store = assistantTasks || new AssistantTaskStore({ directory: path.join(CONFIG_DIR, ASSISTANT_TASK_DIRECTORY) });
+    store.recoverInterrupted();
+    if (argv[1] === 'list' && argv.length === 2) write(JSON.stringify(store.list()));
+    else if (argv[1] === 'show' && argv.length === 3) write(JSON.stringify(store.get(argv[2])));
+    else throw new Error('Usage: ankita work list | ankita work show <task-id> | ankita --resume-task <task-id>');
+    return true;
+  }
+  if (argv[0] === 'skills') {
+    const action = argv[1];
+    if (!action || action === '--help') { write(SKILL_MANAGER_USAGE); return true; }
+    const manager = skillManager || new SkillManager();
+    let result;
+    if (action === 'list' && argv.length === 2) result = manager.list();
+    else if (action === 'search') result = await manager.search(argv.slice(2).join(' '));
+    else if (action === 'preview' || action === 'install') {
+      const options = parseLocalOptions(argv.slice(4), action === 'preview' ? ['--ref', '--path'] : ['--commit', '--path', '--sha256']);
+      const selection = { source: argv[2], name: argv[3], ref: options['--ref'], path: options['--path'], commit: options['--commit'], sha256: options['--sha256'] };
+      result = action === 'preview' ? await manager.preview(selection) : await manager.install(selection);
+    } else throw new Error(`Usage: ${SKILL_MANAGER_USAGE}`);
+    write(JSON.stringify(result));
+    return true;
+  }
   if (argv[0] === 'commands') { write(commandCheatSheet({ query: argv.slice(1).join(' ') })); return true; }
   if (argv[0] === 'runbook') {
     const options = parseLocalOptions(argv.slice(2), ['--state-file', '--runs-dir', '--time-zone']);

@@ -25,7 +25,7 @@ export function voiceReplyForSpeech(text, options) { return voiceReplySentences(
 
 /** Cache one short clip per sentence in the queue; synthesis begins only when selected. */
 export function createVoiceReportSpeech({ jobId, label, text, synthesize, signal, turn, maxChars = Infinity }) {
-  const parts = voiceReplySentences(text, { maxChars }).map(text => ({ text, prepare: () => synthesize(text) }));
+  const parts = voiceReplySentences(text, { maxChars }).map(text => ({ text, prepare: signal => synthesize(text, { signal }) }));
   return { jobId, label, kind: 'report', text: parts.map(part => part.text).join(' '),
     parts, prepare: parts[0]?.prepare || (async () => null), signal, turn, line: { text: parts.map(part => part.text).join(' ') } };
 }

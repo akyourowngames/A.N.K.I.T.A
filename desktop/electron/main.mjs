@@ -27,6 +27,8 @@ import { chatgptResourcePaths } from './chatgpt-resources.mjs';
 import { desktopCredentialFile } from './credential-profile.mjs';
 import { VOICE_ACTIONS } from '../shared/voice.mjs';
 import { runVoiceAction } from './voice-actions.mjs';
+import { ASSISTANT_ACTIONS } from '../shared/assistant.mjs';
+import { runAssistantAction } from './assistant-actions.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const APP_NAME = 'Ankita';
@@ -497,6 +499,7 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     };
   }
   await current.init();
+  if (Object.values(ASSISTANT_ACTIONS).includes(action)) return runAssistantAction({ engine: current, action, payload });
   if (Object.values(CONTROL_ACTIONS).includes(action)) return runBrowserControlAction({ action, engine: current, start: () => captureService(current) });
   if (Object.values(VOICE_ACTIONS).includes(action)) {
     return runVoiceAction({ engine: current, action, payload, focus: (state, options) => {

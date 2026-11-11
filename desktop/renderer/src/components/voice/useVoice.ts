@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { VoiceState } from '../../../../shared/voice.mjs';
+import type { VoiceState, VoiceSpeechAction } from '../../../../shared/voice.mjs';
 import { emptyVoiceState, VOICE_ACTIONS, VOICE_EVENT } from '../../../../shared/voice.mjs';
 import { cleanErrorMessage } from '../../../../shared/error-notices.mjs';
 
@@ -22,7 +22,8 @@ export function useVoice() {
     void window.ankita.invoke<VoiceState>(VOICE_ACTIONS.snapshot).then(apply).catch(() => {});
     return () => { alive.current = false; off(); };
   }, [apply]);
-  const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean; taskId?: string; all?: boolean }) => {
+  const act = useCallback(async (action: string, payload?: { threadId?: string; settings?: boolean; taskId?: string; all?: boolean;
+    sessionId?: string; turn?: number; action?: VoiceSpeechAction; id?: string }) => {
     setBusy(true); setError('');
     try { const next = await window.ankita.invoke<VoiceState>(action, payload); apply(next); return next; }
     catch (cause) { if (alive.current) setError(cleanErrorMessage(cause)); return null; }
@@ -31,5 +32,6 @@ export function useVoice() {
   return { state, error, busy, act,
     start: (threadId: string) => act(VOICE_ACTIONS.start, { threadId }),
     end: () => act(VOICE_ACTIONS.end), pause: () => act(VOICE_ACTIONS.pause), resume: () => act(VOICE_ACTIONS.resume),
+    speech: (action: VoiceSpeechAction, id?: string) => state.sessionId ? act(VOICE_ACTIONS.speech, { sessionId: state.sessionId, turn: state.speech.turn, action, ...(id ? { id } : {}) }) : Promise.resolve(null),
     cancel: (taskId?: string) => act(VOICE_ACTIONS.cancel, taskId ? { taskId } : { all: true }), focus: (settings = false) => act(VOICE_ACTIONS.focus, settings ? { settings: true } : undefined) };
 }

@@ -1,13 +1,17 @@
-import { VOICE_ACTIONS } from '../shared/voice.mjs';
+import { VOICE_ACTIONS, VOICE_SPEECH_ACTIONS, VOICE_SPEECH_ERRORS } from '../shared/voice.mjs';
 const THREAD_ID_CHARS = 200; // Characters: bound IPC ownership identifiers before lookup.
+const SPEECH_PAYLOAD_FIELDS = ['sessionId', 'turn', 'action', 'id']; // Only an existing session/report can be selected; no executable text.
 
 /** The renderer can name an existing owner, never send credentials or executable configuration. */
 export async function runVoiceAction({ engine, action, payload, focus = () => {} }) {
   if (payload != null && (typeof payload !== 'object' || Array.isArray(payload))) throw new Error('Invalid voice payload.');
-  const allowed = action === VOICE_ACTIONS.start ? ['threadId'] : action === VOICE_ACTIONS.focus ? ['settings'] : action === VOICE_ACTIONS.cancel ? ['taskId', 'all'] : action === VOICE_ACTIONS.status ? ['refresh'] : [];
+  const allowed = action === VOICE_ACTIONS.start ? ['threadId'] : action === VOICE_ACTIONS.focus ? ['settings'] : action === VOICE_ACTIONS.cancel ? ['taskId', 'all'] : action === VOICE_ACTIONS.status ? ['refresh'] : action === VOICE_ACTIONS.speech ? SPEECH_PAYLOAD_FIELDS : [];
   if (Object.keys(payload || {}).some(key => !allowed.includes(key))) throw new Error('Invalid voice payload.');
   if (payload && Object.hasOwn(payload, 'settings') && typeof payload.settings !== 'boolean') throw new Error('Invalid voice payload.');
   if (payload && Object.hasOwn(payload, 'refresh') && typeof payload.refresh !== 'boolean') throw new Error('Invalid voice payload.');
+  if (action === VOICE_ACTIONS.speech && (!payload || typeof payload.sessionId !== 'string' || !payload.sessionId || payload.sessionId.length > THREAD_ID_CHARS ||
+    !Number.isSafeInteger(payload.turn) || payload.turn < 0 || !Object.values(VOICE_SPEECH_ACTIONS).includes(payload.action) ||
+    (Object.hasOwn(payload, 'id') && (typeof payload.id !== 'string' || !payload.id || payload.id.length > THREAD_ID_CHARS)))) throw new Error(VOICE_SPEECH_ERRORS.invalid);
   if (action === VOICE_ACTIONS.cancel && payload && (
     (Object.hasOwn(payload, 'all') && payload.all !== true) ||
     (Object.hasOwn(payload, 'taskId') && (typeof payload.taskId !== 'string' || !payload.taskId.trim() || payload.taskId.length > THREAD_ID_CHARS || /[\x00-\x1f]/.test(payload.taskId))) ||
@@ -26,6 +30,7 @@ export async function runVoiceAction({ engine, action, payload, focus = () => {}
     case VOICE_ACTIONS.pause: return voice.pause();
     case VOICE_ACTIONS.resume: return voice.resume();
     case VOICE_ACTIONS.cancel: return voice.cancelWork(payload);
+    case VOICE_ACTIONS.speech: return voice.speechControl(payload);
     case VOICE_ACTIONS.focus: await focus(voice.snapshot(), { settings: payload?.settings === true }); return voice.snapshot();
     default: throw new Error('Unknown voice action.');
   }

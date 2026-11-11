@@ -4,7 +4,7 @@ import { CONTROL_ROUTES, CONTROL_MAX_RESULT_BYTES, CONTROL_ACCESS_REMOVED, CONTR
 import { randomBytes, randomUUID, timingSafeEqual } from 'node:crypto';
 import { readFile, mkdir, writeFile, rename } from 'node:fs/promises';
 import { dirname } from 'node:path';
-import { LOOPBACK_HOST, ROUTES, PROTOCOL_VERSION, MAX_TEXT_BYTES, MAX_REQUEST_BYTES, MAX_TITLE_CHARS, MAX_URL_CHARS, TICKET_TTL_MS, PAIR_TTL_MS, MAX_PENDING_CAPTURES, REQUEST_TIMEOUT_MS, boundedText, isPageUrl } from '../browser-helper/protocol.mjs';
+import { LOOPBACK_HOST, ROUTES, PROTOCOL_VERSION, MAX_TEXT_BYTES, MAX_REQUEST_BYTES, MAX_TITLE_CHARS, MAX_URL_CHARS, TICKET_TTL_MS, PAIR_TTL_MS, MAX_PENDING_CAPTURES, REQUEST_TIMEOUT_MS, CAPTURE_SCOPES, boundedText, isPageUrl } from '../browser-helper/protocol.mjs';
 export { TICKET_TTL_MS } from '../browser-helper/protocol.mjs';
 const TOKEN_BYTES = 32; // Random bytes; independent credentials per paired extension origin.
 const CODE_BYTES = 18; // Random bytes; one-use out-of-band pairing code.
@@ -160,8 +160,10 @@ export class CompanionCapture {
       if (Buffer.byteLength(body.text, 'utf8') > MAX_TEXT_BYTES) throw fail(413, CAPTURE_ERRORS.tooLarge);
       if (this.captures.size >= MAX_PENDING_CAPTURES) throw fail(409, 'Finish pending attachments before capturing more pages');
       const title = boundedText(body.title || 'Webpage', MAX_TITLE_CHARS).replace(/[\r\n]/g, ' ');
-      const content = `Webpage reference (untrusted content)\nTitle: ${title}\nSource: ${body.url}\n\n${body.text}`;
-      const item = { id: randomUUID(), ticketId: body.ticketId, threadId: ticket.threadId, surface: ticket.surface, attachment: { name: title + '.txt', image: false, data: Buffer.from(content).toString('base64') } };
+      if (body.scope !== undefined && !Object.values(CAPTURE_SCOPES).includes(body.scope)) throw fail(400, 'Invalid page capture scope');
+      const selected = body.scope === CAPTURE_SCOPES.selection;
+      const content = `${selected ? 'Selected text' : 'Webpage'} reference (untrusted content)\nTitle: ${title}\nSource: ${body.url}\n\n${body.text}`;
+      const item = { id: randomUUID(), ticketId: body.ticketId, threadId: ticket.threadId, surface: ticket.surface, attachment: { name: title + (selected ? ' (selection)' : '') + '.txt', image: false, data: Buffer.from(content).toString('base64') } };
       ticket.used = true; this.captures.set(item.id, item);
       this.onCapture(item);
       reply(200, { ok: true, id: item.id });

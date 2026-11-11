@@ -33,6 +33,31 @@ export const MAX_REPLY_CHARS = 24000;
 export const MAX_EVENT_DETAIL_CHARS = 2400;
 export const MAX_REQUEST_BYTES = 16384;
 
+// Additive browser continuity contract; native v1 {version,prompt} stays valid.
+export const PHONE_CLIENT_ROOT = `${PHONE_PAIRING_ROOT}/phone`;
+export const PHONE_ROUTES = Object.freeze({ pair: `${PHONE_PAIRING_ROOT}/pair`, revoke: `${PHONE_PAIRING_ROOT}/pair/revoke`, capabilities: `${PHONE_PAIRING_ROOT}/capabilities`, runs: `${PHONE_PAIRING_ROOT}/runs`, history: `${PHONE_PAIRING_ROOT}/history`, tasks: `${PHONE_PAIRING_ROOT}/tasks`, context: `${PHONE_PAIRING_ROOT}/context` });
+export const PHONE_HISTORY_LIMIT = 40; // Visible user/assistant messages, never raw tools or hidden history.
+export const PHONE_HISTORY_CHARS = 24000; // Total excerpt characters returned per history request.
+export const PHONE_TASK_LIMIT = 30; // Most recent tasks in the assigned conversation.
+export const PHONE_TASK_DETAIL_BYTES = 12000; // Combined JSON-encoded text bytes per phone task preview.
+export const PHONE_TASK_DETAIL_ITEMS = 20; // Per checklist/reference/receipt list; full records remain on desktop.
+export const PHONE_CONTEXT_TITLE_CHARS = 120; // Reviewed source label, not a file path.
+export const PHONE_CONTEXT_TEXT_CHARS = 4000; // Fits the task store's bounded UTF-8 attachment metadata.
+export const PHONE_CONTEXT_BYTES = 6000; // Reject oversized Unicode excerpts before attachment encoding.
+export const PHONE_CONTEXT_TTL_MS = 120000; // A reviewed excerpt expires after two minutes without a send.
+export const PHONE_CONTEXT_LIMIT = 20; // Maximum unconsumed previews across all devices.
+export const PHONE_POLL_MS = 1000; // Browser run and pairing refresh interval in milliseconds.
+export const PHONE_REQUEST_TIMEOUT_MS = 15000; // Browser HTTP request budget, independent of assistant run duration.
+export const PHONE_SESSION_KEY = 'ankita-phone-session'; // Per-tab sessionStorage only; never localStorage/cookies.
+
+export function phoneBrowserUrl({ address, code, fingerprint }) {
+  const url = new URL(address);
+  url.pathname = PHONE_CLIENT_ROOT;
+  url.search = '';
+  url.hash = new URLSearchParams({ code: normalizePairingCode(code), fingerprint }).toString();
+  return url.toString();
+}
+
 export const PAIRING_CONFIG_FILE = 'phone-pairing.json'; // Port and encrypted TLS material in the config directory.
 export const PAIRING_DEVICES_FILE = 'phone-devices.json'; // Device metadata and token hashes only.
 export const PAIRING_CERTIFICATE_FILE = 'ankita-desktop-ca.crt'; // Public certificate the phone owner installs.

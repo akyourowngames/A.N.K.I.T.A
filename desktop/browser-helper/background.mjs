@@ -57,7 +57,7 @@ chrome.runtime.onMessage.addListener((message, sender, respond) => {
     const session = (await chrome.storage.local.get(SESSION_KEY))[SESSION_KEY];
     if (!session) throw new Error('Open this helper and pair it with ANKITA first');
     // The browser supplies the exact document URL, including frame identity.
-    return post(addressFrom(session.address), ROUTES.capture, { ...message.ticket, title: message.title, text: message.text, url: sender.url }, session.token);
+    return post(addressFrom(session.address), ROUTES.capture, { ...message.ticket, title: message.title, text: message.text, scope: message.scope, url: sender.url }, session.token);
   })().then(result => respond(result)).catch(error => respond({ error: error.message }));
   return true;
 });

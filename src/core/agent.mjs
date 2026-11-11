@@ -1,4 +1,5 @@
 import { personalityPrompt } from './personality.mjs';
+import { beginAssistantTask } from '../assistant/task-run.mjs';
 import os from "node:os";
 import path from 'node:path';
 import { ProfileStore } from '../memory/profile.mjs';
@@ -27,6 +28,7 @@ import { compactBrowserHistory } from './browser-context.mjs';
 import { focusAllows, TOOL_FOCUS_GUIDANCE, BROWSER_DISCOVERY_GUIDANCE } from './tool-focus.mjs';
 import { providerError, responseError, assertCompleteGeneration, emptyResponseError } from './provider-errors.mjs';
 import { loadSkills, skillPromptLines, activeAutomaticSkills } from './skills.mjs';
+import { SKILL_MANAGER_TOOL, SKILL_MANAGER_CATEGORY } from '../skills/manager.mjs';
 import { isToolFailure, verdictFor, verificationFooter } from './verify.mjs';
 import { browserScreenshotImage, MAX_BROWSER_SCREENSHOTS_PER_TURN } from '../../tools/browser/screenshots.mjs';
 import { managedMcpSummaries, isBrowserMcpTool } from '../integrations/browser-routing.mjs';
@@ -288,9 +290,9 @@ export function buildSystemPrompt(config, cwd, project = null, mcpServers = [], 
   const deferTools = catalog?.deferTools !== false;
   // A one-shot child ships every spec, so its directly available list is the
   // whole catalog rather than the deferrable core.
-  const listedCore = (deferTools ? coreNames() : toolNames()).filter(name => offered(name) && (includeSkills || name !== 'skill'));
+  const listedCore = (deferTools ? coreNames() : toolNames()).filter(name => offered(name) && (includeSkills || !['skill', SKILL_MANAGER_TOOL].includes(name)));
   const listedGroups = CATEGORIES
-    .filter(group => !group.alwaysOn && (includeSkills || group.id !== 'skills'))
+    .filter(group => !group.alwaysOn && (includeSkills || !['skills', SKILL_MANAGER_CATEGORY].includes(group.id)))
     .map(group => ({ ...group, tools: group.tools.filter(tool => offered(tool.name)) }))
     .filter(group => group.tools.length);
 
@@ -692,6 +694,7 @@ export class Agent {
     let core = this.deferTools ? coreSpecs : specs;
     if (this.config?.desktopBackgroundJobs && this.deferTools) core = [...core, ...specsFor(['schedule'])];
     if (!this.availableSkills().length) core = core.filter(spec => spec.function?.name !== 'skill');
+    if (!this.skillsEnabled) core = core.filter(spec => spec.function?.name !== SKILL_MANAGER_TOOL);
     if (!this.canDelegate()) core = core.filter(spec => spec.function?.name !== SUBAGENT_TOOL);
     if (!this.canControlSubagents()) core = core.filter(spec => spec.function?.name !== SUBAGENT_CONTROL_TOOL);
     let optional = [];
@@ -700,7 +703,7 @@ export class Agent {
       // specsFor() only knows deferred static names; group them by category so
       // a family loads or drops together.
       const groups = new Map();
-      for (const spec of specsFor(names).filter(spec => !core.some(item => item.function.name === spec.function.name))) {
+      for (const spec of specsFor(names).filter(spec => (this.skillsEnabled || spec.function.name !== SKILL_MANAGER_TOOL) && !core.some(item => item.function.name === spec.function.name))) {
         const id = categoryOfTool.get(spec.function?.name) || spec.function?.name;
         if (!groups.has(id)) groups.set(id, []);
         groups.get(id).push(spec);
@@ -1254,7 +1257,8 @@ export class Agent {
         for (const name of ['searchesThisTurn', 'browserActionsThisTurn', 'activeSkillTools', 'browserEvidence', 'browserProgress']) {
           Object.defineProperty(executionState, name, { get: () => this[name], set: value => { this[name] = value; } });
         }
-        return { ...this.toolContext, cwd: this.cwd, workspacePath: this.workspacePath, config: this.config,
+        return { ...this.toolContext, assistantTaskRun: this.assistantTaskRun || this.toolContext?.assistantTaskRun,
+          cwd: this.cwd, workspacePath: this.workspacePath, config: this.config,
           ui: this.ui, state: this.state, executionState, allowedTools: this.allowedTools, backgroundToolScope: Boolean(this.allowedTools),
           readOnly: this.readOnly || undefined,
           withToolExecution: (call, ctx, execute) => {
@@ -1278,6 +1282,7 @@ export class Agent {
           browserCredentialAllowed: this.browserCredentialAllowed === true,
           browserResultCallback: result => this.toolContext?.onBrowserActionResult?.(result),
           onLocalResult: (name, args, result, ctx) => {
+            if (name === 'write_todos' && !isToolFailure(String(result))) ctx.assistantTaskRun?.checklist(this.state.todos);
             if (!String(result).startsWith('Error:')) noteFileEffects(this.turnAudit, name, args, this.cwd);
             if (name === 'remember' && args.action !== 'list' && !String(result).startsWith('Error:')) this.memoryContext = null;
             if (['remember', 'project_memory', 'project'].includes(name) && !String(result).startsWith('Error:')) warmRecallSafely(ctx);
@@ -1365,6 +1370,21 @@ export class Agent {
    * without requesting a tool. Returns the final assistant text.
    */
   async send(text, options = {}) {
+    if (this.assistantTaskRun) throw new Error('This assistant is already working on a task.');
+    const task = beginAssistantTask(this, text, options);
+    this.assistantTaskRun = task?.run ?? null;
+    if (task && options.assistantTaskId) this.state.todos = structuredClone(task.record.checklist);
+    try {
+      const reply = await this.sendWithSkills(task?.text ?? text, options);
+      task?.run.finish({ reply, status: this.cancelled() ? 'cancelled' : this.terminationReason ? 'needs_review' : 'completed' });
+      return reply;
+    } catch (error) {
+      task?.run.finish({ status: this.cancelled() ? 'cancelled' : 'failed', error: error?.message || String(error) });
+      throw error;
+    } finally { this.assistantTaskRun = null; }
+  }
+
+  async sendWithSkills(text, options = {}) {
     this.activeSkillTools.clear();
     this.loadedAutomaticSkills.clear();
     this._turnSkills = this.skillsEnabled ? loadSkills() : [];
@@ -1372,6 +1392,9 @@ export class Agent {
     // Their matching instructions must be present before that decision, not after its first action.
     if (this.useTools) {
       const exposedNames = this.deferTools ? [...coreNames(), ...this.state.activatedTools] : specs.map(spec => spec.function.name);
+      // MCP activation records contain server ids, while skill triggers name tools.
+      // Include only admitted schemas so held-back servers cannot load instructions.
+      if (this.mcp) exposedNames.push(...this.currentSpecs().map(spec => spec.function.name).filter(name => parseToolName(name)));
       for (const name of exposedNames) {
         if (focusAllows(this.state, name) && (!this.allowedTools || this.allowedTools.has(name))) this.activeSkillTools.add(name);
       }
