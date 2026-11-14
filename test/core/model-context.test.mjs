@@ -1,5 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import os from 'node:os';
+import path from 'node:path';
 import { CompatibleClient } from '../../src/core/provider.mjs';
 import { CopilotClient } from '../../src/core/auth.mjs';
 import { createSession } from '../../src/core/bootstrap.mjs';
@@ -20,9 +22,9 @@ function desktop() {
     baseConfig: { provider: 'custom', model: 'large', contextWindow: FALLBACK_WINDOW },
     client: {}, models: MODELS, model: 'large', provider: { name: 'custom' },
     agents: new Map(), turns: new Map(), emit: () => {}, secretHistory: {},
-    desktopSettings: { data: {}, preview: patch => ({ ...patch }), save: () => {} },
+    desktopSettings: { file: path.join(os.tmpdir(), 'ankita-model-context-settings.json'), data: {}, preview: patch => ({ ...patch }), save: () => {} },
     settingsPayload: () => ({}),
-    teammates: { find: id => ({ id, model: id === 'pinned' ? 'small' : '' }), update: (id, patch) => ({ id, name: id, ...patch }) },
+    teammates: { file: path.join(os.tmpdir(), 'ankita-model-context-teammates.json'), find: id => ({ id, model: id === 'pinned' ? 'small' : '' }), update: (id, patch) => ({ id, name: id, ...patch }) },
   });
   return engine;
 }

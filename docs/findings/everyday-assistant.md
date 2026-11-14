@@ -126,6 +126,10 @@ asserts `assistantBriefing=true`, `enabled=false` and the edited cron. The IPC
 path remains restricted to the authenticated application windows, and the action
 is only dispatched when its identifier is in `ASSISTANT_ACTIONS`.
 
+Channel checkpoint regression: `test/desktop/channel-surface.test.mjs` runs an
+isolated Discord target through the real `AssistantTaskStore` and asserts the
+saved task is owned by that target, marked `surface: "channel"` and completed.
+
 Re-run focused gates after the briefing fix: desktop assistant/phone/voice
 **36/36**, core assistant/skills **46/46**, `check-skills` **12 checked, 0 errors**,
 and `tsc --noEmit -p desktop/tsconfig.json` exit **0**.
@@ -135,21 +139,30 @@ credentials, releases or external accounts were changed for these checks.
 
 ## Remaining acceptance gaps — goal is not complete
 
-- Finish full-App navigation/draft acceptance and inspect actual rendered images.
-- Complete source-backed project context editing/deletion, current commitments
-  and deterministic daily facts.
-- Add reviewed selected-text/document/browser context across task/handoff flows.
-- Add teach-once parameterized routines with source evidence, reachable editor,
-  normal tracked execution and separate opt-in scheduling.
-- Extend paired phone history/tasks/context, a usable entrypoint and owner/revoke
-  acceptance. Existing phone-run requests already enter the shared engine path.
-- Complete browser-provider task recovery and daemon channel checkpoint coverage.
-- Completion receipts presently prevent obvious false completion (denied,
-  uncertain, unfinished checklist), but full original-goal semantic completion
-  acceptance across typed multi-app work remains to be proven.
-- Streaming/early speech preparation, live configured speech-provider round trip,
-  physical microphone/headphone/speaker checks and latency evidence remain.
+Implemented and covered by current tests: project note/decision editing and
+deletion, current commitments and deterministic Today facts, selected
+text/document/browser context, teach-once parameterized routines with source
+evidence and separate scheduling, phone continuity, and durable-channel task
+wiring. `test/desktop/channel-surface.test.mjs` now proves an isolated channel
+turn receives the real `AssistantTaskStore` and saves a completed task for its
+channel target.
+
+Still open:
+
+- Physical microphone/headphone/speaker and Bluetooth audio, packaged/native UI
+  acceptance and a fresh whole-change review remain. Live configured speech and
+  synthetic native decoding passed separately.
+- Full original-goal semantic completion across typed multi-app work remains to
+  be proven beyond the current receipt guards.
+- A ChatGPT Browser request with no saved native operation ID cannot be resumed
+  automatically; it requires a fresh reviewed request. This is a deliberate
+  safety limit, not silent replay.
 - No measured general real-model/phone speed or 25% call-saving claim. Local
   voice controls have separate zero-planner-call evidence only.
-- Fresh whole-change review, final focused gates, whitespace/literal audit and
-  packaged/native UI acceptance remain. Full repository suite has not been run.
+- Full repository suite: a serial run found one merge-only fixture failure (a
+  minimal fake engine lacked the new settings/teammate file paths). The fixture
+  is fixed and `test/core/model-context.test.mjs` now passes **9/9**. The long
+  run was stopped after that finding and was not rerun to completion.
+- `npm run desktop:build` exited 0 (8.00s) and `npm run desktop:pack` exited 0,
+  producing the unpacked `desktop/release/win-unpacked/Ankita.exe`. Packaged UI
+  interaction was not exercised.
