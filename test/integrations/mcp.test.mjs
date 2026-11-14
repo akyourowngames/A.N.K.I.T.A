@@ -317,7 +317,7 @@ test('two Agents share one connection - no respawn per Agent', { skip }, async (
   for (const agent of [agentA, agentB]) {
     assert.ok(agent.currentSpecs().some((s) => s.function.name === 'mcp__fx__echo'), 'MCP offered');
   }
-  assert.equal(agentB.currentSpecs().length, specs.length - 1 + 6, 'worker: non-REPL static + all mcp');
+  assert.equal(agentB.currentSpecs().length, specs.length - 2 + 6, 'worker: non-REPL static + all mcp');
   assert.equal(agentA.currentSpecs().length, coreSpecs.length - 1 + 6, 'agent: non-REPL core + all mcp');
 });
 
