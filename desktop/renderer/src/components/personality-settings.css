@@ -1,10 +1,26 @@
 .personality-settings textarea { display: block; box-sizing: border-box; width: 100%; min-width: 0; resize: vertical; padding: 11px 12px; border: 1px solid var(--edge-strong); border-radius: 9px; background: var(--canvas); color: var(--text); font: inherit; font-size: 12px; line-height: 1.6; }
 .personality-settings textarea:focus-visible { outline: 2px solid var(--accent-edge); outline-offset: 2px; }
-.personality-enabled { display: flex; align-items: flex-start; gap: 10px; color: var(--text); font-size: 12px; }
+.personality-settings .settings-panel { padding: 22px; }
+.personality-enabled { display: flex; align-items: flex-start; gap: 10px; padding: 14px; border: 1px solid var(--edge); border-radius: 10px; background: var(--canvas); color: var(--text); font-size: 12px; }
 .personality-enabled input { margin-top: 3px; accent-color: var(--accent); }
 .personality-enabled small { display: block; margin-top: 5px; color: var(--text-dim); line-height: 1.5; }
-.personality-examples { margin-top: 22px; border-block: 1px solid var(--edge); padding-block: 15px; }
-.personality-examples summary { cursor: pointer; color: var(--text); font-size: 12px; }
-.personality-examples summary span { margin-left: 6px; color: var(--text-dim); }
-.personality-example { padding-bottom: 18px; border-bottom: 1px solid var(--edge); margin-bottom: 18px; }
-.personality-example > button { margin-top: 12px; }
+.personality-text-grid, .personality-select-grid, .personality-example-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
+.personality-select-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; }
+.personality-text-grid { margin-top: 16px; }
+.personality-text-grid .settings-field, .personality-select-grid .settings-field, .personality-example-grid .settings-field { margin: 0; }
+.personality-examples { margin-top: 22px; overflow: hidden; border: 1px solid var(--edge-strong); border-radius: 12px; background: var(--surface); }
+.personality-examples summary { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 14px 16px; color: var(--text); font-size: 12px; cursor: pointer; list-style: none; }
+.personality-examples summary::-webkit-details-marker { display: none; }
+.personality-examples summary b { margin-left: 6px; color: var(--text-dim); font-weight: 500; }
+.personality-examples[open] summary { border-bottom: 1px solid var(--edge); }
+.personality-examples > .settings-help { margin: 0 !important; padding: 14px 16px 0; }
+.personality-example-list { display: grid; gap: 12px; padding: 14px 16px 0; }
+.personality-example { padding: 16px; border: 1px solid var(--edge); border-radius: 10px; background: var(--canvas); }
+.personality-example header { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.personality-example header span { color: var(--text-soft); font-size: 11px; font-weight: 600; }
+.personality-remove { display: inline-flex; align-items: center; gap: 5px; padding: 5px 6px; border: 0; border-radius: 6px; background: none; color: var(--text-dim); font: inherit; font-size: 11px; cursor: pointer; }
+.personality-remove:hover { color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.personality-add { width: calc(100% - 32px); margin: 14px 16px 16px; padding: 10px; border: 1px dashed var(--edge-strong); border-radius: 9px; background: transparent; color: var(--text-soft); font: inherit; font-size: 12px; cursor: pointer; }
+.personality-add:hover { border-color: var(--gold); color: var(--gold); }
+.personality-add:disabled { opacity: .45; cursor: default; }
+@media (max-width: 760px) { .personality-text-grid, .personality-select-grid, .personality-example-grid { grid-template-columns: minmax(0, 1fr); } .personality-settings .settings-panel { padding: 18px; } }
