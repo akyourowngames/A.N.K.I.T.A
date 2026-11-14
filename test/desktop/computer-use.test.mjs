@@ -88,6 +88,7 @@ test('desktop agents authorize connected native computer actions without enablin
   const item = { id: 'fixture-desktop', name: 'Fixture', persona: '' };
   const engine = { client: {}, config: { autoApprove: false }, teammates: { find: () => item }, agents: new Map(), models: [], model: 'fixture',
     AgentClass: class { constructor(options) { this.config = options.config; this.messages = []; this.state = {}; } },
+    assistant: () => ({ context: () => ({}) }),
     desktopSettings: { data: {} }, schedule: () => null, _savedThread: () => ({ messages: [], todos: [] }) };
   const agent = DesktopEngine.prototype.agentFor.call(engine, item.id);
   assert.equal(agent.config[COMPUTER_DIRECT_CONFIG], true);

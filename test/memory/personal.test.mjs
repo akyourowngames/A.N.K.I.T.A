@@ -131,6 +131,20 @@ test('a contradictory fact is stored and flagged, never overwritten', async t =>
   assert.ok(facts[0].conflictsWith.includes(facts[1].id) && facts[1].conflictsWith.includes(facts[0].id), 'both sides are flagged');
 });
 
+test('a negated statement preserves the original fact and flags both sides', async t => {
+  const ctx = tempProfile(t);
+  const originalText = 'I live in Pune';
+  const negatedText = 'I do not live in Pune';
+  const first = JSON.parse(await remember.run({ action: 'add', text: originalText }, ctx));
+  const second = JSON.parse(await remember.run({ action: 'add', text: negatedText }, ctx));
+  assert.equal(second.merged, undefined);
+  assert.equal(second.conflict.id, first.fact.id);
+  const facts = new ProfileStore(ctx.profileFile).load().facts;
+  assert.deepEqual(facts.map(fact => fact.text), [originalText, negatedText]);
+  assert.deepEqual(facts[0].conflictsWith, [facts[1].id]);
+  assert.deepEqual(facts[1].conflictsWith, [facts[0].id]);
+});
+
 test('an inferred fact from extraction is softer than one the user stated directly', async t => {
   const ctx = tempProfile(t);
   // A direct tool call is the user's own statement.

@@ -12,7 +12,10 @@ import * as composio from "./connectors/composio.mjs";
 import * as remember from "./personal/remember.mjs";
 import * as recall from "./personal/recall.mjs";
 import * as skill from './skills/skill.mjs';
+import * as skillManage from './skills/skill-manage.mjs';
+import { SKILL_MANAGER_CATEGORY, SKILL_MANAGER_TOOL } from '../src/skills/manager.mjs';
 import * as delegateTask from './delegate-task.mjs';
+import * as subagentControl from './subagent-control.mjs';
 import * as git from './git/git.mjs';
 import * as portStatus from './process/port-status.mjs';
 import * as killProcess from './process/kill-process.mjs';
@@ -67,10 +70,16 @@ export const CATEGORIES = [
     tools: [skill],
   },
   {
+    id: SKILL_MANAGER_CATEGORY,
+    summary: 'search, preview and install workflow skills from public GitHub sources',
+    keywords: ['skills', 'skill management', 'skill search', 'install skill', SKILL_MANAGER_TOOL],
+    tools: [skillManage],
+  },
+  {
     id: 'subagents',
-    summary: 'delegate a self-contained task to an explore, reviewer or worker sub-agent',
+    summary: 'delegate tasks and exchange messages with background sub-agents',
     keywords: ['delegate', 'subagent', 'sub-agent', 'parallel agents', 'child agent'],
-    tools: [delegateTask],
+    tools: [delegateTask, subagentControl],
   },
   {
     id: 'browser',

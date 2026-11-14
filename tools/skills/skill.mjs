@@ -1,5 +1,6 @@
 import { loadSkills } from '../../src/core/skills.mjs';
 import { capOutput } from '../shared/_shared.mjs';
+import { SKILL_OUTPUT_BYTES } from '../../src/skills/layout.mjs';
 
 export const name = 'skill';
 export const description = 'Load a built-in skill: repeatable workflow instructions (e.g. commit-review). Call when the task matches a skill description. Returns markdown to follow; suggested tools are hints only.';
@@ -27,6 +28,6 @@ export function renderSkill(found) {
     `# Skill: ${found.name}`,
     ...(found.suggestedTools ? [`Suggested tools (hints only): ${found.suggestedTools}`] : []),
     '---',
-    capOutput(found.body, 8000),
+    capOutput(found.body, SKILL_OUTPUT_BYTES),
   ].join('\n');
 }

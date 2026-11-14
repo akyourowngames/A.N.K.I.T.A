@@ -14,7 +14,7 @@ import { cleanupJobs } from '../../tools/index.mjs';
 
 // Milliseconds: keep fixture jobs alive until their explicit test cleanup.
 const IDLE_JOB_SOURCE = 'setInterval(()=>{}, 1000)';
-const LAUNCHER_TERMINATION_TEST_TIMEOUT_MS = 20_000; // Milliseconds: bound native startup and tree termination in this regression.
+const LAUNCHER_TERMINATION_TEST_TIMEOUT_MS = 20_000; // Milliseconds: bound native bootstrap and tree termination, including measured 6.66 s Windows startup under load.
 
 test('deadline cleanup rejection stays on the live job instead of becoming an unhandled process rejection', { skip: process.platform !== 'win32', timeout: LAUNCHER_TERMINATION_TEST_TIMEOUT_MS }, async t => {
   const { command, ctx } = fixture(t, IDLE_JOB_SOURCE);
@@ -322,7 +322,8 @@ test('optional execution timeout terminates a job rather than imposing a default
   await run({ command, background: true, timeout_ms: 500 }, ctx);
   const job = [...ctx.state.jobs.values()][0];
   const { run: wait } = await import('../../tools/process/job-wait.mjs');
-  const result = JSON.parse(await wait({ job_id: job.id, timeout_ms: 8000 }, ctx));
+  await waitForExit(job, LAUNCHER_TERMINATION_TEST_TIMEOUT_MS);
+  const result = JSON.parse(await wait({ job_id: job.id, timeout_ms: 0 }, ctx));
   assert.equal(result.timed_out, true);
   assert.equal(job.done, true);
 });

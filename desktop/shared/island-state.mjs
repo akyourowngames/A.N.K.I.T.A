@@ -1,4 +1,5 @@
 /** ANKITA's companion event model. No renderer or Electron dependency. */
+import { COMPACTION_ROW_PREFIX } from './compaction.mjs';
 export const ISLAND_HISTORY_LIMIT = 40; // Rows; bounded history for a small companion window.
 export const ISLAND_TOOL_DETAIL_LIMIT = 90; // Characters; keep a tool identity readable in one line.
 export const ISLAND_TOOL_RESULT_LIMIT = 12000; // Characters; expandable output without unbounded DOM growth.
@@ -35,6 +36,7 @@ export function hydrateIslandState(snapshot, pendingEvents = []) {
       result: output(message.result),
     } : {
       id: message.id, kind: 'chat', role: message.role, content: message.content,
+      compacted: message.compacted === true,
       job: message.job || null, attachments: message.attachments || [], streaming: false,
     });
     state.threads[thread.id] = { ...emptyThread(), running: thread.running === true, log };
@@ -68,6 +70,13 @@ export function reduceIslandState(state, event) {
     }
     // Reasoning has its own engine channel; it must never become answer text.
     case 'reasoning-delta': return state;
+    case 'context-compaction': {
+      if (event.phase !== 'completed' || !event.summary) return state;
+      next = { ...thread, log: [...thread.log.filter(row => !row.compacted),
+        { id: `${COMPACTION_ROW_PREFIX}${id}`, kind: 'chat', role: 'assistant', content: event.summary,
+          compacted: true, streaming: false, attachments: [] }] };
+      break;
+    }
     case 'message-reset': next = { ...thread, log: thread.log.filter(row => row.id !== messageId) }; break;
     case 'message-end': next = { ...thread, log: thread.log.map(row => row.id === messageId ? { ...row, streaming: false } : row) }; break;
     case 'tool-call': {

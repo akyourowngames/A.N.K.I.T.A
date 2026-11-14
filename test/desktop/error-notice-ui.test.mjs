@@ -39,6 +39,7 @@ test('engine failures render as human notices with technical detail tucked away'
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`http://127.0.0.1:${server.address().port}${ROUTE}`);
+  await page.getByRole('button', { name: 'Conversations', exact: true }).click();
   await page.locator('.chat-pane').waitFor();
 
   const portError = "Error invoking remote method 'engine:invoke': Error: listen EADDRINUSE: address already in use 127.0.0.1:50457";

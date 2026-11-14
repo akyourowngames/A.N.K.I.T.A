@@ -41,6 +41,14 @@ test('paired real HTTP capture belongs to the original agent and is consumed onc
   f.bridge.ack(f.received[0].id, 'island');
   assert.equal(f.bridge.inbox('island').length, 0);
 });
+
+test('selected text keeps its source and selection label through the authenticated capture path', async t => {
+  const f = await fixture(t), ticket = f.bridge.register({ ticketId: randomUUID(), threadId: 'chief', surface: 'main', sourceId: 'window' });
+  assert.equal((await f.post(ROUTES.capture, { ...ticket, title: 'Reference', url: 'https://example.test/selection', text: 'Only the chosen paragraph.', scope: 'selection' }, f.token)).status, 200);
+  const text = Buffer.from(f.received[0].attachment.data, 'base64').toString();
+  assert.match(text, /^Selected text reference \(untrusted content\)/); assert.match(text, /Source: https:\/\/example.test\/selection/);
+  assert.match(f.received[0].attachment.name, /selection/);
+});
 test('cancelled, stale, forged, wrong-instance and deleted-recipient drops cannot mutate drafts', async t => {
   const f = await fixture(t);
   const send = ticket => f.post('/capture', { ...ticket, url: 'https://example.test/', title: 'Page', text: 'Readable page' }, f.token);

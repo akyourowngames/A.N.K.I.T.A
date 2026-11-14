@@ -19,6 +19,7 @@ export const CAPTURE_EVENT = 'companion-capture-ready';
 export const CAPTURE_UI_EVENTS = Object.freeze({ island: 'ankita:island-captured', main: 'ankita:open-captured-thread' });
 export const CAPTURE_ACTIONS = Object.freeze({ setup: 'companionCaptureSetup', register: 'companionCaptureRegister', cancel: 'companionCaptureCancel', inbox: 'companionCaptureInbox', ack: 'companionCaptureAck', openHelper: 'companionCaptureOpenHelper' });
 export const HELPER_MESSAGE = Object.freeze({ pair: 'ankita-pair', capture: 'ankita-capture' });
+export const CAPTURE_SCOPES = Object.freeze({ page: 'page', selection: 'selection' }); // Explicit drop context, never background screen collection.
 export function boundedText(value, maxBytes = MAX_TEXT_BYTES) {
   const bytes = new TextEncoder().encode(String(value ?? ''));
   return new TextDecoder().decode(bytes.subarray(0, maxBytes)).replace(/\uFFFD$/, '');

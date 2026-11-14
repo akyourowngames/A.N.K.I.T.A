@@ -3,6 +3,7 @@ import type { Project } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { WindowControls } from './WindowControls';
 import { TeammateAvatar } from './TeammateAvatar';
+import { ASSISTANT_ACTIONS } from '../../../shared/assistant.mjs';
 
 type Draft = { name: string; summary: string; path: string; repo: string; client: string; conventions: string };
 const blank = (): Draft => ({ name: '', summary: '', path: '', repo: '', client: '', conventions: '' });
@@ -36,6 +37,7 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
   const [inputs, setInputs] = useState<Record<string, ProjectInput>>({});
   const [contextFilter, setContextFilter] = useState<'all' | 'note' | 'decision'>('all');
   const [query, setQuery] = useState('');
+  const [recordEdit, setRecordEdit] = useState<{ projectId: string; kind: 'note' | 'decision'; ref: string; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const project = projects.find(item => item.id === id) || null;
@@ -122,7 +124,14 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
               <div className="section-heading"><h2>Team memory</h2><span>{recordCountLabel(context.length)}</span></div><p className="section-muted">Keep decisions and useful details close to the work.</p>
               <form className="project-context-compose" onSubmit={async event => { event.preventDefault(); if (input.record.trim() && await run('addProjectRecord', { id: project.id, kind: input.kind, text: input.record.trim() })) clearSubmitted(project.id, 'record', input.record); }}><div className="project-record-kind" aria-label="Record type">{recordKinds.map(kind => <button type="button" key={kind} aria-pressed={input.kind === kind} onClick={() => setInput(project.id, { kind })}>{kind === 'decision' ? 'Decision' : 'Note'}</button>)}</div><textarea aria-label={`New ${input.kind}`} rows={3} value={input.record} onChange={event => setInput(project.id, { record: event.target.value })} placeholder={input.kind === 'decision' ? 'What did you decide, and why?' : 'What should the team remember?'} /><div className="project-context-compose-foot"><small>Shared with teammates in this project</small><button className="section-primary" type="submit" disabled={!input.record.trim() || busy}>{busy ? 'Saving…' : 'Save context'}</button></div></form>
               <div className="project-context-toolbar"><div>{(['all', ...recordKinds] as const).map(kind => <button key={kind} aria-pressed={contextFilter === kind} onClick={() => setContextFilter(kind)}>{kind === 'all' ? 'All' : kind === 'decision' ? 'Decisions' : 'Notes'}</button>)}</div><label><Icon name="search" size={14} /><input aria-label="Search project context" placeholder="Find in context" value={query} onChange={event => setQuery(event.target.value)} /></label></div>
-              <div className="project-context-records">{shownContext.map(item => <details key={item.key}><summary><span className={`context-record-mark ${item.kind}`}><Icon name={item.kind === 'decision' ? 'check' : 'chat'} size={14} /></span><span className="context-record-copy"><small>{item.kind === 'decision' ? 'Decision' : 'Note'}<time dateTime={item.at}>{recordDate(item.at)}</time></small><span>{item.text}</span></span><Icon name="chevron" size={14} /></summary><div className="context-record-body">{item.text}</div></details>)}</div>
+              {recordEdit?.projectId === project.id && <form className="project-context-compose" onSubmit={async event => { event.preventDefault(); if (await run(ASSISTANT_ACTIONS.projectSave, recordEdit)) setRecordEdit(null); }}>
+                <label>Edit {recordEdit.kind} text<textarea aria-label={`Edit ${recordEdit.kind} text`} required value={recordEdit.text} onChange={event => setRecordEdit({ ...recordEdit, text: event.target.value })} /></label>
+                <div className="project-context-compose-foot"><button type="button" onClick={() => setRecordEdit(null)}>Cancel edit</button><button className="section-primary" disabled={busy || !recordEdit.text.trim()}>Save correction</button></div>
+              </form>}
+              <div className="project-context-records">{shownContext.map(item => <details key={item.ref || item.key}><summary><span className={`context-record-mark ${item.kind}`}><Icon name={item.kind === 'decision' ? 'check' : 'chat'} size={14} /></span><span className="context-record-copy"><small>{item.kind === 'decision' ? 'Decision' : 'Note'}<time dateTime={item.at}>{recordDate(item.at)}</time></small><span>{item.text}</span></span><Icon name="chevron" size={14} /></summary><div className="context-record-body">{item.text}
+                <p className="section-muted">Source: {item.source?.kind === 'manual' ? 'Added or corrected by you' : item.source ? 'Saved conversation' : 'Not recorded'}{item.source?.at ? ` · ${recordDate(item.source.at)}` : ''}</p>
+                {item.ref && <div className="project-context-compose-foot"><button disabled={busy} aria-label={`Edit ${item.kind}`} onClick={() => setRecordEdit({ projectId: project.id, kind: item.kind, ref: item.ref!, text: item.text })}>Edit</button><button disabled={busy} aria-label={`Forget ${item.kind}`} onClick={() => void run(ASSISTANT_ACTIONS.projectForget, { projectId: project.id, kind: item.kind, ref: item.ref })}>Forget</button></div>}
+              </div></details>)}</div>
               {!shownContext.length && <div className="section-empty"><Icon name="chat" size={24} /><h3>{context.length ? 'No matching context' : 'Start the shared memory'}</h3><p>{context.length ? 'Try another search or filter.' : 'Save a note or decision above for the team.'}</p></div>}
             </>}
           </div>

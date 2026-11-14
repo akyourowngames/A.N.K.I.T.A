@@ -1,5 +1,5 @@
 import { fetchWithRetry } from "./net.mjs";
-import { declaredVision, declaredFree } from './model-capabilities.mjs';
+import { declaredVision, declaredFree, declaredContext } from './model-capabilities.mjs';
 
 /**
  * Default picks when the user did not pin a model. Ordered by preference;
@@ -257,11 +257,11 @@ export class CompatibleClient {
         tools: Array.isArray(m.supported_parameters)
           ? m.supported_parameters.includes("tools")
           : (m.capabilities?.supports?.tool_calls ?? null),
-        context: m.context_length ?? m.capabilities?.limits?.max_context_window_tokens ?? null,
+        context: declaredContext(m),
         default: m.default ?? null,
         vision: declaredVision(m),
       }));
-      this.modelCapabilities = new Map(list.map(model => [model.id, { vision: model.vision, tools: model.tools }]));
+      this.modelCapabilities = new Map(list.map(model => [model.id, { vision: model.vision, tools: model.tools, context: model.context }]));
       if (!list.length) throw new Error("Model list is empty.");
       return list;
     } catch (err) {

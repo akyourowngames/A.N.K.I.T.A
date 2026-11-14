@@ -301,7 +301,7 @@ export function Island() {
       {!home ? <button className="island-compact-open" aria-label="Open Ankita island" onClick={() => { openHome(); playSound('open'); }}>
         <strong>Ankita</strong><span>{status}</span>{approvals.length > 0 && <b>{approvals.length}</b>}
       </button> : <div className="island-body" data-home-view={activeView}>
-        {showVoice ? <VoicePanel compact voice={voice.state} error={voice.error} busy={voice.busy} onEnd={voice.end} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onStart={voice.state.threadId ? () => voice.start(voice.state.threadId!) : undefined} onSettings={() => voice.focus(true)} onFocus={() => voice.focus()} /> : <>
+        {showVoice ? <VoicePanel compact voice={voice.state} error={voice.error} busy={voice.busy} onEnd={voice.end} onPause={voice.pause} onResume={voice.resume} onCancel={voice.cancel} onSpeech={voice.speech} onStart={voice.state.threadId ? () => voice.start(voice.state.threadId!) : undefined} onSettings={() => voice.focus(true)} onFocus={() => voice.focus()} /> : <>
         {activeView === 'approval' && <ApprovalView items={approvals} answer={answer} pendingId={pendingApproval} error={approvalError} />}
         {activeView === 'overview' && <Overview activities={activities} selectedId={focusId} onFocus={id => { setFocusId(id); chat.selectTeammate(id); }}
           onCaptureDrag={(event, id) => { setFocusId(id); chat.selectTeammate(id); if (capture.start(event, id)) pose('grab'); }}

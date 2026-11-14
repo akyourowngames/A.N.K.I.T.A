@@ -47,7 +47,7 @@ export class DesktopChannelSurface extends ChannelSurface {
       project: parent.project, projectId: parent.projectId, workspacePath: parent.cwd, autoProject: false,
       skillsEnabled: true, disabledSkills: this.engine.desktopSettings?.data?.disabledSkills || [],
       browserManager: this.engine.browserManager, browserThreadId: target,
-      toolContext: { scheduler: this.engine.schedule?.(), scheduleThreadId: teammateId, projectsFile: this.engine.projectsFile },
+      toolContext: { ...this.engine.assistant?.().context(target, 'channel'), scheduler: this.engine.schedule?.(), scheduleThreadId: teammateId, projectsFile: this.engine.projectsFile },
       confirm: (name, detail, metadata) => this.engine.approvals.request(target, name, detail, metadata),
       journal: turn => recordTurn(turn, { timeZone: config.timeZone, transform: this.engine.secretHistory?.clean }),
       print: () => {}, write: () => {},

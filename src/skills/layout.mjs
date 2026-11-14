@@ -1,5 +1,6 @@
 // Repository skill artifact names; shared by authors, fixtures and CI.
 export const SKILL_FILE = 'SKILL.md';
+export const SKILL_OUTPUT_BYTES = 8000; // UTF-8 bytes per manual skill read; imports must fit without losing instructions.
 export const MANIFEST_FILE = 'plugin.json';
 export const FIXTURE_DIR = 'fixtures';
 export const FIXTURE_FILE = 'skill.json';

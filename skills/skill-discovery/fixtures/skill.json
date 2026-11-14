@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "skill-discovery"
+  },
+  "expectedFile": "expected.md"
+}

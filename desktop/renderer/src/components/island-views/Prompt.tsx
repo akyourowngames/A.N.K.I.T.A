@@ -5,6 +5,7 @@ import { Icon } from './icons';
 import { TurnCard } from './TurnCard';
 import { ToolStep } from './ToolStep';
 import type { IslandChat } from './useIslandChat';
+import { COMPACTION_LABEL } from '../../../../shared/compaction.mjs';
 
 const IslandMarkdown = lazy(() => import('./Markdown').then(module => ({ default: module.IslandMarkdown })));
 const FOLLOW_DISTANCE_PX = 48; // Pixels from the log bottom; history reading must not jump.
@@ -36,6 +37,9 @@ export function Prompt({ chat, onAttach }: { chat: IslandChat; onAttach: () => v
           onScroll={() => { const el = logRef.current; if (el) follow.current = el.scrollHeight - el.scrollTop - el.clientHeight < FOLLOW_DISTANCE_PX; }}>
           {log.map(entry => {
             if (entry.kind === 'tool') return <ToolStep key={entry.id} tool={entry} />;
+            if (entry.compacted) return <div key={entry.id} className="island-quiet" role="status">
+              <strong>{COMPACTION_LABEL}</strong><p>{entry.content}</p>
+            </div>;
             const markdown = <Suspense fallback={<>{entry.content}</>}>
               <IslandMarkdown content={entry.content} streaming={entry.streaming} teammateId={teammateId} />
             </Suspense>;

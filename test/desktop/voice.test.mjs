@@ -73,6 +73,110 @@ function harness(t, { run, synthesize, barge = false, play, transcribe, open } =
   return h;
 }
 
+test('spoken status and pause listening use no planner and keep existing work alive', async t => {
+  const pending = defer(), h = harness(t, { barge: true, run: (observer, entry, { signal }) => {
+    signal.addEventListener('abort', () => pending.resolve({ text: 'Stopped.', error: null }), { once: true });
+    return pending.promise;
+  } });
+  await h.voice.start({ threadId: 'owner' });
+  await h.say('Write a note');
+  await until(() => h.calls.length === 1 && h.voice.jobs.list('owner').length === 1);
+  const running = h.voice.jobs.list('owner')[0];
+  await h.say('what is the status');
+  await until(() => h.played.some(line => /working|running|progress/i.test(line)) || h.calls.length > 1);
+  assert.equal(h.calls.length, 1, 'status must not submit a planner request');
+  assert.equal(h.voice.jobs.list('owner')[0].id, running.id);
+  assert.match(h.voice.snapshot().caption, /working|running|progress/i);
+  await h.say('pause listening');
+  await until(() => h.voice.snapshot().paused || h.calls.length > 1);
+  assert.equal(h.voice.snapshot().paused, true);
+  assert.equal(h.cancelled, 0, 'muting must not cancel work');
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.voice.jobs.list('owner').find(job => job.id === running.id).status, 'running');
+  pending.resolve({ text: 'Note ready.', error: null });
+});
+
+test('mixed local-control wording remains genuine work', async t => {
+  const h = harness(t, { barge: true });
+  await h.voice.start({ threadId: 'owner' });
+  await h.say('pause Spotify');
+  await until(() => h.calls.length === 1);
+  assert.equal(h.calls[0].text, 'pause Spotify');
+  assert.equal(h.voice.snapshot().paused, false);
+});
+
+test('a bare continue without an interrupted report remains a planner request', async t => {
+  const h = harness(t, { barge: true });
+  await h.voice.start({ threadId: 'owner' });
+  await h.say('continue');
+  await until(() => h.calls.length === 1);
+  assert.equal(h.calls[0].text, 'continue');
+});
+
+test('report UI controls stop speech without cancelling work and reject stale ownership', async t => {
+  const h = harness(t, { barge: true, play: async (audio, signal) => {
+    if (audio.toString() === 'Note ready.') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  await h.voice.start({ threadId: 'owner' });
+  await h.say();
+  await until(() => h.played.includes('Note ready.'));
+  assert.equal(typeof h.voice.speechControl, 'function');
+  const before = h.voice.snapshot(), id = h.voice.jobs.list('owner')[0].id;
+  assert.equal(before.bargeIn, true);
+  await h.voice.speechControl({ sessionId: before.sessionId, turn: before.speech.turn, action: 'stop' });
+  await until(() => h.voice.snapshot().speech.reports.some(report => report.id === id && report.state === 'suspended'));
+  assert.equal(h.cancelled, 0);
+  assert.equal(h.voice.jobs.list('owner')[0].status, 'done');
+  const stopped = h.voice.snapshot();
+  await assert.rejects(h.voice.speechControl({ sessionId: 'old-session', turn: stopped.speech.turn, action: 'resume', id }), /session|older/i);
+  await assert.rejects(h.voice.speechControl({ sessionId: stopped.sessionId, turn: before.speech.turn, action: 'repeat', id }), /older|stale/i);
+  await assert.rejects(h.voice.speechControl({ sessionId: stopped.sessionId, turn: stopped.speech.turn, action: 'repeat', id: 'expired' }), /not found|expired/i);
+});
+
+test('spoken pause listening preserves an interrupted report for the microphone resume button', async t => {
+  const h = harness(t, { barge: true, play: async (audio, signal) => {
+    if (audio.toString() === 'Note ready.') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  await h.voice.start({ threadId: 'owner' });
+  await h.say();
+  await until(() => h.played.includes('Note ready.'));
+  await new Promise(resolve => setTimeout(resolve, 420)); // Fixture passes the real playback-onset guard before sending speech.
+  h.transcripts.push('pause listening');
+  const input = h.inputs.at(-1);
+  input.options.onEvent({ type: 'silence_end', at: 1 }); input.options.onEvent({ type: 'silence_start', at: 2 });
+  await until(() => h.voice.snapshot().paused);
+  await h.voice.resume();
+  await until(() => h.played.filter(line => line === 'Note ready.').length === 2);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.cancelled, 0);
+});
+
+test('spoken stop, continue, skip and repeat control the original report without a planner request', async t => {
+  const h = harness(t, { barge: true, play: async (audio, signal) => {
+    if (audio.toString() === 'Note ready.') await new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }));
+  } });
+  const interrupt = async text => {
+    await new Promise(resolve => setTimeout(resolve, 420)); // Fixture waits past playback-onset protection before barge-in.
+    h.transcripts.push(text);
+    const input = h.inputs.at(-1);
+    input.options.onEvent({ type: 'silence_end', at: 1 }); input.options.onEvent({ type: 'silence_start', at: 2 });
+  };
+  await h.voice.start({ threadId: 'owner' });
+  await h.say();
+  await until(() => h.played.includes('Note ready.'));
+  const id = h.voice.jobs.list('owner')[0].id;
+  await interrupt('stop speaking');
+  await until(() => h.voice.snapshot().speech.reports.some(report => report.id === id && report.state === 'suspended'));
+  await h.say('continue the report');
+  await until(() => h.played.filter(line => line === 'Note ready.').length === 2);
+  await interrupt('skip this report');
+  await until(() => h.voice.snapshot().speech.reports.some(report => report.id === id && report.state === 'dismissed'));
+  await h.say('repeat the report');
+  await until(() => h.played.filter(line => line === 'Note ready.').length === 3);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.cancelled, 0);
+});
+
 test('ending voice during device discovery resolves every pending start without an IPC abort error', async t => {
   const pending = defer(), h = harness(t);
   h.voice.io.listMicrophones = () => pending.promise;

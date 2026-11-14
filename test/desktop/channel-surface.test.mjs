@@ -7,6 +7,7 @@ import { DesktopChannelSurface } from '../../desktop/electron/channel-surface.mj
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../../desktop/shared/chatgpt-browser.mjs';
 import { ChannelRuntime } from '../../src/channels/core/runtime.mjs';
+import { AssistantTaskStore } from '../../src/assistant/tasks.mjs';
 
 function fixture(t) {
   const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-channel-surface-'));
@@ -14,14 +15,23 @@ function fixture(t) {
   const parent = { cwd: directory, config: { maxToolCalls: 60 }, model: 'fixture-model', messages: [{ role: 'user', content: 'private desktop history' }] };
   class Agent {
     constructor(options) { this.options = options; this.config = options.config; this.cwd = options.workspacePath; this.messages = []; this.state = {}; }
-    async send(text) { assert.equal(this.browserCredentialAllowed, false); this.messages.push({ role: 'user', content: text }); return 'reply'; }
+    async send(text) {
+      assert.equal(this.browserCredentialAllowed, false); this.messages.push({ role: 'user', content: text });
+      const context = this.options.toolContext || {};
+      if (context.assistantTasks) {
+        const task = context.assistantTasks.create({ ownerId: context.assistantOwnerId, goal: text, surface: context.assistantSurface });
+        context.assistantTasks.start(task.id, { ownerId: context.assistantOwnerId });
+        context.assistantTasks.finish(task.id, { reply: 'reply' });
+      }
+      return 'reply';
+    }
     cancel() {}
   }
   const engine = { AgentClass: Agent, client: {}, config: {}, agents: new Map([['chief', parent]]), sessionsDir: directory,
     agentFor: () => parent, emit: () => {}, approvals: { request: async () => false, cancelThread: () => {} },
     secretHistory: { clean: x => x }, schedule: () => ({}), desktopSettings: { data: {} }, respondApproval: () => {},
   };
-  return { parent, engine, surface: new DesktopChannelSurface({ engine }) };
+  return { parent, engine, directory, surface: new DesktopChannelSurface({ engine }) };
 }
 
 test('Discord and group sessions use independent agents without desktop transcript or saved credential access', async t => {
@@ -38,6 +48,21 @@ test('Discord and group sessions use independent agents without desktop transcri
   assert.equal(surface.agents.get(first).options.toolContext.selectBrowserUpload, undefined);
   assert.deepEqual(parent.messages.map(x => x.content), ['private desktop history']);
   assert.equal(parent.config.maxToolCalls, 60);
+});
+
+test('isolated channel turns receive the durable assistant task store', async t => {
+  const { surface, engine, directory } = fixture(t);
+  const tasks = new AssistantTaskStore({ directory: path.join(directory, 'assistant-tasks') });
+  engine.assistant = () => ({ context: (ownerId, surfaceName) => ({
+    assistantOwnerId: ownerId, assistantSurface: surfaceName, assistantTasks: tasks }) });
+  const ref = { channel: 'discord', chatId: '42', messageId: '1', raw: {} };
+  const target = surface.targetFor('chief', ref);
+  await surface.run(ref, target, 'Channel checkpoint request', {});
+  const [task] = tasks.list({ ownerId: target });
+  assert.ok(task, 'the channel target owns a durable task');
+  assert.equal(task.goal, 'Channel checkpoint request');
+  assert.equal(task.surface, 'channel');
+  assert.equal(task.status, 'completed');
 });
 
 test('Telegram private chat keeps its existing teammate route while groups have separate sessions', t => {

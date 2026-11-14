@@ -1,20 +1,23 @@
 import { PERSONALITY_FILENAME, normalizePersonality } from '../../src/core/personality.mjs';
 import { PersonalityStore } from '../../src/core/personality-store.mjs';
+import { DesktopAssistant } from './assistant.mjs';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { randomUUID } from 'node:crypto';
 import { Agent, COMPACTION_SUMMARY_PREFIX } from '../../src/core/agent.mjs';
+import { SUBAGENT_INBOX_PREFIX } from '../../src/core/subagents/registry.mjs';
 import { loadConfig, ensureDirs, CONFIG_DIR, SESSIONS_DIR, MCP_FILE, COMPOSIO_FILE, DAEMON_LOG, MCP_TIERS_FILE, COMPOSIO_GRANTS_FILE } from '../../src/core/config.mjs';
 import { TierPolicy } from '../../src/integrations/mcp-tiers.mjs';
 import { ComposioGrantStore } from '../../src/integrations/composio-oauth.mjs';
 import { SecretHistory } from './secret-history.mjs';
 import { migrateSecrets, migrationMarker } from '../../src/security/secret-migration.mjs';
 import { createSession } from '../../src/core/bootstrap.mjs';
+import { modelContextWindow } from '../../src/core/model-capabilities.mjs';
 import { McpManager } from '../../src/integrations/mcp-manager.mjs';
 import { McpStore } from '../../src/integrations/mcp-store.mjs';
 import { ComposioStore } from '../../src/integrations/composio-store.mjs';
-import { ProjectStore } from '../../src/memory/projects.mjs';
+import { ProjectStore, projectUserSource } from '../../src/memory/projects.mjs';
 import { PROJECTS_FILE } from '../../src/core/config.mjs';
 import { maintainTurn } from '../../src/memory/project-maintenance.mjs';
 import { MemoryConsolidator } from '../../src/memory/consolidate.mjs';
@@ -66,6 +69,8 @@ import { ToolHost } from '../../src/core/tool-host.mjs';
 import { ATTACHMENT_TEXT_LIMIT, ATTACHMENT_DOC_LIMIT, ATTACHMENT_IMAGE_LIMIT, IMAGE_MIME, TEXT_EXTENSIONS } from '../shared/attachment-limits.mjs';
 import { prepareBrowserUploads } from '../../src/integrations/chatgpt-browser/attachments.mjs';
 import { buildHandoff } from '../../src/integrations/chatgpt-browser/handoff.mjs';
+import { beginAssistantTask } from '../../src/assistant/task-run.mjs';
+import { name as TODO_TOOL_NAME } from '../../tools/project/write-todos.mjs';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 const LOG_DIRECTORY = 'logs'; // Text diagnostics only; native binary dumps are not collected.
@@ -224,6 +229,7 @@ export function threadMessages(messages = []) {
       // A compaction recap is model-facing bookkeeping, not something the user
       // typed: surface it as a labelled note instead of a fake user bubble.
       const compacted = entry.role === 'user' && content.startsWith(COMPACTION_SUMMARY_PREFIX);
+      if (entry.role === 'user' && content.startsWith(SUBAGENT_INBOX_PREFIX)) continue;
       // The marker is stripped here: it is bookkeeping for this mapping only and
       // must not read as text the teammate said.
       const shown = compacted ? content.slice(COMPACTION_SUMMARY_PREFIX.length).trim() : content;
@@ -505,12 +511,16 @@ export class DesktopEngine {
     if (selected.workspacePath !== binding.workspacePath) throw new Error('Native tool workspace no longer owns this browser connection');
     this.browserToolStates ??= new Map();
     const key = binding.leaseId;
-    if (!this.browserToolStates.has(key)) this.browserToolStates.set(key, { ownerThreadId: binding.threadId, activatedTools: new Set(), todos: this._savedThread(binding.threadId).todos }); // Host-only ownership lets Clear reset presentation without discarding running jobs or spent receipts.
+    const taskRun = this.browserTaskRuns?.get(binding.threadId);
+    const resumedTask = taskRun ? this.assistant().tasks.get(taskRun.id, { ownerId: binding.threadId }) : null;
+    if (!this.browserToolStates.has(key)) this.browserToolStates.set(key, { ownerThreadId: binding.threadId, activatedTools: new Set(),
+      todos: resumedTask?.attempt > 1 ? structuredClone(resumedTask.checklist) : this._savedThread(binding.threadId).todos }); // Host-only ownership lets Clear reset presentation without discarding running jobs or spent receipts.
     const context = () => {
       if (this.browserContext(binding.threadId).workspacePath !== binding.workspacePath) throw new Error('Native tool workspace changed');
       return { ...selected, cwd: binding.workspacePath, config: { ...this.config, [COMPUTER_DIRECT_CONFIG]: true },
         autoApprove: this.browserAutomaticThreads?.has(binding.threadId) === true || this.config.autoApprove === true, // A live teammate grant survives tool-host/lease replacement without changing another teammate's policy.
         state: this.browserToolStates.get(key), mcp: this.mcp, browserManager: this.browserManager,
+        assistantTaskRun: this.browserTaskRuns?.get(binding.threadId),
         beforeComputerAction: (record, options) => this.computerUse.preparePointer(record, options),
         browserThreadId: binding.threadId, skillsEnabled: true, disabledSkills: new Set(this.desktopSettings.data.disabledSkills ?? []),
         ...(this.config.tools === false ? { allowedTools: new Set() } : {}) };
@@ -538,6 +548,7 @@ export class DesktopEngine {
         this.emit({ type: 'workspace-changed', threadId: id, open: true });
       }
       messages.push({ role: 'tool', tool_call_id: call.id, name: call.name, content: result });
+      if (call.name === TODO_TOOL_NAME && !event.result.isError) this.browserTaskRuns?.get(id)?.checklist(this.browserToolStates.get(binding.leaseId)?.todos ?? []);
       this.emit({ type: 'tool-result', threadId: id, callId: call.id, text: result, isError: event.result.isError });
     }
     this.browserNativeMessages.set(id, messages);
@@ -613,7 +624,10 @@ export class DesktopEngine {
       this.desktopSettings.save(next);
       this.config.model = selected.id;
       this.model = selected.id;
-      for (const [id, agent] of this.agents) if (!this.teammates.find(id)?.model) agent.model = selected.id;
+      for (const [id, agent] of this.agents) if (!this.teammates.find(id)?.model) {
+        agent.model = selected.id;
+        agent.config.model = selected.id;
+      }
     } else {
       this.desktopSettings.save(next);
     }
@@ -631,7 +645,13 @@ export class DesktopEngine {
       Object.assign(this.config, window);
       for (const agent of this.agents.values()) {
         Object.assign(agent.config, window);
-        agent.contextWindow = nextConfig.contextWindow;
+      }
+    }
+    if (tune || Object.hasOwn(patch, 'model')) {
+      this.config.contextWindow = modelContextWindow({ ...this.config, client: this.client, model: this.model, models: this.models });
+      for (const agent of this.agents.values()) {
+        agent.contextWindow = modelContextWindow({ ...agent.config, client: agent.client || this.client, model: agent.model || this.model, models: this.models });
+        agent.config.contextWindow = agent.contextWindow;
       }
     }
     if (reconnect || tune || Object.hasOwn(patch, 'model')) this.channels?.surface?.invalidate?.();
@@ -792,7 +812,7 @@ export class DesktopEngine {
   addProjectRecord(id, kind, text) {
     if (!['note', 'decision'].includes(kind)) throw new Error('Choose note or decision');
     const store = new ProjectStore(this.projectsFile).load();
-    const project = kind === 'note' ? store.addNote(id, text) : store.addDecision(id, text);
+    const project = kind === 'note' ? store.addNote(id, text, projectUserSource()) : store.addDecision(id, text, projectUserSource());
     if (!project || project.error) throw new Error(project?.error || 'Project not found');
     this.refreshProjectAgents(id);
     this.emit({ type: 'projects-changed' });
@@ -804,6 +824,12 @@ export class DesktopEngine {
     this.refreshProjectAgents(id);
     this.emit({ type: 'projects-changed' });
     return projectSummary(result.project);
+  }
+  editProjectRecord({ projectId, kind, ref, text, forget = false } = {}) {
+    const store = new ProjectStore(this.projectsFile).load();
+    store.editRecord(projectId, kind, ref, { text: this.secretHistory.clean(text), forget });
+    this.refreshProjectAgents(projectId); this.emit({ type: 'projects-changed' });
+    return projectSummary(store.load().find(projectId));
   }
   undoProjectTurn(id, { sessionId = null, turnId = null } = {}) {
     const result = new ProjectStore(this.projectsFile).load().removeAutoEntries(id, { sessionId, turnId });
@@ -843,7 +869,10 @@ export class DesktopEngine {
     if (agent) {
       agent.config.agentName = item.name;
       agent.config.systemExtra = item.persona;
-      if (item.model) agent.model = item.model;
+      agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+      agent.config.model = agent.model;
+      agent.contextWindow = modelContextWindow({ ...agent.config, client: this.client, model: agent.model, models: this.models });
+      agent.config.contextWindow = agent.contextWindow;
       if (Object.hasOwn(patch, 'projectId')) agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
       else agent.refreshPrompt?.();
     }
@@ -938,7 +967,7 @@ export class DesktopEngine {
       try {
         this.emit({ type: 'turn-start', threadId: id, turnId, model: agent.model, text: '', source: 'routine' });
         this.emit({ type: 'message-start', threadId: id, messageId }); started = true;
-        let content = recorded?.messageContent;
+        let content = recorded?.messageContent || (receipt.direct === true ? String(receipt.text || '').trim() : null);
         if (!content) {
           agent.messages = [...original.messages, { role: 'user', content: `${ROUTINE_RESULT_LABEL}\n${observation}` }];
           agent.memoryContext = null;
@@ -1061,7 +1090,9 @@ export class DesktopEngine {
     const item = this.teammates.find(id);
     if (!item) throw new Error('Teammate not found');
     if (this.agents.has(id)) return this.agents.get(id);
-    const config = { ...this.config, desktopBackgroundJobs: true, [COMPUTER_DIRECT_CONFIG]: true, agentName: item.name, systemExtra: item.persona };
+    const model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+    const config = { ...this.config, model, desktopBackgroundJobs: true, [COMPUTER_DIRECT_CONFIG]: true, agentName: item.name, systemExtra: item.persona };
+    config.contextWindow = modelContextWindow({ ...config, client: this.client, models: this.models });
     let project = '', projectId = null, workspacePath = null;
     if (item.projectId) {
       const projects = new ProjectStore(this.projectsFile).load();
@@ -1079,7 +1110,7 @@ export class DesktopEngine {
       autoProject: false,
       onTurnComplete: info => this.projectTurnComplete(id, info),
       browserManager: this.browserManager, browserThreadId: id,
-      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile,
+      toolContext: { ...this.assistant().context(id), scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile,
         selectBrowserUpload: async ({ signal } = {}) => {
           signal?.throwIfAborted();
           if (agent.browserCredentialAllowed !== true || agent.config?.backgroundJob || typeof this.selectBrowserUpload !== 'function') throw new Error('Choose upload files from a foreground desktop conversation.');
@@ -1098,10 +1129,11 @@ export class DesktopEngine {
       // Child prompts, results and summaries reach the renderer and the channel
       // bridge, so scrub them exactly like parent output before emitting.
       onSubagentEvent: event => this.emit(this.secretHistory.clean({ ...event, threadId: id, turnId: this.turnIds?.get(id) || null })),
+      onCompaction: event => this.emit({ ...event, type: 'context-compaction', threadId: id }),
       subagentTransform: value => this.secretHistory?.clean ? this.secretHistory.clean(value) : value,
       print: () => {}, write: () => {},
     });
-    agent.model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
+    agent.model = model;
     agent.state ||= {};
     agent.state.onJobEvent = () => this.emit({ type: 'workspace-changed', threadId: id });
     const saved = this._savedThread(id);
@@ -1156,10 +1188,12 @@ export class DesktopEngine {
     this.emit({ type: 'projects-changed' });
   }
 
-  async send(id, text, attachments = null, { surface = 'desktop', voiceBrain, voiceObserver } = {}) {
+  assistant() { return this._assistant ||= new DesktopAssistant(this); }
+
+  async send(id, text, attachments = null, { surface = 'desktop', voiceBrain, voiceObserver, assistantTaskId, assistantGoal, assistantSourceTaskId, assistantRoutineId } = {}) {
     const prompt = String(text || '').trim();
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
-    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER && this.chatgptBrowser?.kind === CHATGPT_BROWSER_PROVIDER) return this.sendBrowser(id, prompt, attachments, { surface });
+    if (this.config?.provider === CHATGPT_BROWSER_PROVIDER && this.chatgptBrowser?.kind === CHATGPT_BROWSER_PROVIDER) return this.sendBrowser(id, prompt, attachments, { surface, assistantTaskId, assistantGoal, assistantSourceTaskId, assistantRoutineId });
     const agent = this.agentFor(id);
     agent.browserCredentialAllowed = surface === 'desktop';
     // Island turns answer in a compact card: the style flag rides the
@@ -1218,7 +1252,7 @@ export class DesktopEngine {
       const notice = await this.secretHistory.prepare(prompt);
       if (notice.stored.length) this.emit({ type: 'secret-notice', message: `Saved securely: ${notice.stored.join(', ')}.` });
       else if (notice.redacted && !this.secretNoticeSeen && this.secretHistory.enabled) { this.secretNoticeSeen = true; this.emit({ type: 'secret-notice', message: 'Secrets in this conversation are removed from saved history.' }); }
-      const run = () => agent.send(prompt, { ...callbacks, attachments: files });
+      const run = () => agent.send(prompt, { ...callbacks, attachments: files, assistantSurface: surface, assistantTaskId, assistantGoal, assistantSourceTaskId, assistantRoutineId });
       return voiceObserver ? withVoiceBrain(agent, voiceBrain, run) : run();
     }).then(reply => {
       this.browserManager.reportPhase('finished', id);
@@ -1262,7 +1296,7 @@ export class DesktopEngine {
   captureVoiceContext(id) {
     const parent = this.agentFor(id);
     return captureVoiceContext(parent, { messages: this._savedThread(id).messages,
-      toolContext: { scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile } });
+      toolContext: { ...this.assistant().context(id, 'voice'), scheduler: this.schedule(), scheduleThreadId: id, projectsFile: this.projectsFile } });
   }
   async runVoiceJob(entry, { jobs, brain, ...options }) {
     if (this.config?.provider === CHATGPT_BROWSER_PROVIDER) throw new Error(VOICE_API_REQUIRED_MESSAGE);
@@ -1339,14 +1373,25 @@ export class DesktopEngine {
     return () => this.eventListeners.delete(callback);
   }
 
-  async resumeBrowser(id, operationId) {
+  async resumeBrowser(id, operationId, { assistantTaskId } = {}) {
     if (this.turns.has(id)) throw new Error('This teammate is already replying');
     if (this.config.provider !== CHATGPT_BROWSER_PROVIDER) throw new Error('Select ChatGPT Browser to resume its saved reply');
     const operation = await this.chatgptBrowser.operation(operationId);
-    if (this._savedThread(id).messages.some(message => message.role === 'assistant' && message.browserOperationId === operationId)) {
+    if (operation.binding?.threadId && operation.binding.threadId !== id) throw new Error('This browser reply belongs to another conversation');
+    const tasks = this.assistant().tasks;
+    const task = assistantTaskId ? tasks.get(assistantTaskId, { ownerId: id })
+      : tasks.list({ ownerId: id }).find(item => item.browserOperationId === operationId);
+    if (assistantTaskId && (!task || task.browserOperationId !== operationId)) throw new Error('This saved task belongs to a different browser operation');
+    if (task) {
+      const context = this.browserContext(id);
+      if ((task.projectId || null) !== context.projectId || task.workspacePath !== context.workspacePath) throw new Error('Restore the original project and workspace before continuing this browser task');
+    }
+    const imported = this._savedThread(id).messages.find(message => message.role === 'assistant' && message.browserOperationId === operationId);
+    if (imported) {
+      if (task && task.status !== 'completed') tasks.finish(task.id, { reply: messageText(imported.content) });
       await this.chatgptBrowser.consume(operationId); return { imported: true };
     }
-    return this.sendBrowser(id, operation.text, null, { resumeOperationId: operationId });
+    return this.sendBrowser(id, task?.goal ?? operation.text, null, { surface: task?.surface, resumeOperationId: operationId, assistantTaskId: task?.id });
   }
   async browserHandoff({ threadId, objective, corrections } = {}) {
     const context = this.browserContext(threadId), receipts = await this.chatgptBrowser.handoffReceipts(threadId);
@@ -1354,13 +1399,19 @@ export class DesktopEngine {
     return buildHandoff({ objective, corrections, project, ...receipts }, { transform: this.secretHistory.clean });
   }
 
-  async sendBrowser(id, prompt, attachments, { surface, resumeOperationId } = {}) {
+  async sendBrowser(id, prompt, attachments, { surface, resumeOperationId, assistantTaskId, assistantGoal, assistantSourceTaskId, assistantRoutineId } = {}) {
+    if (assistantTaskId && !resumeOperationId) throw new Error('Continue this browser task through its saved native operation');
     const context = this.browserContext(id);
     if (!prompt && !attachments?.length) throw new Error('Write a message or attach a file first');
     await this.secretHistory.prepare(prompt);
     const uploads = prepareBrowserUploads(attachmentPayload(attachments, { contextWindow: this.config.contextWindow }), { transform: this.secretHistory.clean });
     if (!prompt && uploads.length) prompt = BROWSER_ATTACHMENT_PROMPT;
     const saved = this._savedThread(id), turnId = randomUUID(), messageId = randomUUID();
+    const assistant = this.assistant();
+    const task = beginAssistantTask({ toolContext: assistant.context(id, surface), projectId: context.projectId, workspacePath: context.workspacePath }, prompt,
+      { attachments, assistantTaskId, assistantGoal, assistantSourceTaskId, assistantRoutineId, assistantSurface: surface, assistantProvider: CHATGPT_BROWSER_PROVIDER });
+    this.browserTaskRuns ??= new Map(); this.browserTaskRuns.set(id, task.run);
+    if (assistantTaskId) for (const state of this.browserToolStates?.values() ?? []) if (state.ownerThreadId === id) state.todos = structuredClone(task.record.checklist);
     const controller = new AbortController();
     this.browserControllers ??= new Map(); this.browserControllers.set(id, controller);
     this.emit({ type: 'turn-start', threadId: id, turnId, model: this.chatgptBrowser.view().selectedModel ?? '', text: this.secretHistory.clean(prompt), attachments: uploads.map(file => ({ name: file.name, image: file.mimeType.startsWith('image/') })) });
@@ -1370,9 +1421,14 @@ export class DesktopEngine {
     if (!user) { user = { role: 'user', content: uploads.length ? [{ type: 'text', text: this.secretHistory.clean(prompt) },
       ...uploads.map(file => ({ type: 'text', text: `Attached file: ${file.name}` }))] : this.secretHistory.clean(prompt),
       ...(resumeOperationId ? { browserOperationId: resumeOperationId } : {}) }; messages.push(user); }
-    const persist = () => saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: '', provider: CHATGPT_BROWSER_PROVIDER, messages, todos: saved.todos, projectId: context.projectId }, { transform: this.secretHistory.clean });
+    const persist = () => saveSession(this.sessionFile(id), { savedAt: new Date().toISOString(), model: '', provider: CHATGPT_BROWSER_PROVIDER, messages,
+      todos: assistant.tasks.get(task.record.id, { ownerId: id }).checklist, projectId: context.projectId }, { transform: this.secretHistory.clean });
     this.browserNativeMessages ??= new Map(); this.browserNativeMessages.set(id, messages);
-    let displayed = '', nativeMessageId = null;
+    let displayed = '', nativeMessageId = null, operationId = resumeOperationId;
+    const checkpointOperation = operation => {
+      operationId = operation.id; user.browserOperationId = operation.id;
+      assistant.tasks.bindBrowserOperation(task.record.id, operation.id, { ownerId: id, provider: CHATGPT_BROWSER_PROVIDER }); persist();
+    };
     const publish = ({ text, assistantMessageId }) => {
       const next = this.secretHistory.clean(text);
       if ((nativeMessageId && assistantMessageId && nativeMessageId !== assistantMessageId) || !next.startsWith(displayed)) {
@@ -1383,24 +1439,26 @@ export class DesktopEngine {
     };
     const work = Promise.resolve().then(async () => {
       await this.secretHistory.prepare(prompt);
+      if (resumeOperationId) checkpointOperation({ id: resumeOperationId });
       const input = { threadId: id, signal: controller.signal, onProgress: publish };
       const result = resumeOperationId ? await this.chatgptBrowser.resume({ ...input, operationId: resumeOperationId })
         : await this.chatgptBrowser.send({ ...input, text: prompt, attachments: uploads, surface, context, includeTools: this.config.tools !== false,
-          onQueued: operation => { user.browserOperationId = operation.id; persist(); } });
+          onQueued: checkpointOperation });
       if (result?.outcome !== 'completed') throw new Error('The browser reply is not confirmed as complete');
       const reply = this.secretHistory.clean(result.text);
       publish({ text: reply });
-      if (result.operationId) user.browserOperationId = result.operationId;
+      if (result.operationId && operationId !== result.operationId) checkpointOperation({ id: result.operationId });
       messages.push({ role: 'assistant', content: reply, ...(result.operationId ? { browserOperationId: result.operationId } : {}) });
-      persist(); if (result.operationId) await this.chatgptBrowser.consume?.(result.operationId);
+      persist(); task.run.finish({ reply }); if (result.operationId) await this.chatgptBrowser.consume?.(result.operationId);
       this.teammates.touch(id, reply);
       this.emit({ type: 'teammates-changed' }); return reply;
     }).catch(error => {
+      task.run.finish({ status: controller.signal.aborted ? 'cancelled' : operationId ? 'interrupted' : 'failed', error: error.message, reply: displayed });
       if (!controller.signal.aborted) this.emit({ type: 'error', threadId: id, message: this.secretHistory.clean(error.message) });
       throw error;
     }).finally(() => {
       persist();
-      this.turns.delete(id); this.browserControllers.delete(id); this.approvals.cancelThread(id); this.credentialRequests.cancelThread(id);
+      this.turns.delete(id); this.browserControllers.delete(id); this.browserTaskRuns.delete(id); this.approvals.cancelThread(id); this.credentialRequests.cancelThread(id);
       this.emit({ type: 'message-end', threadId: id, messageId }); this.emit({ type: 'turn-end', threadId: id, turnId });
       // Same rule as a typed turn: results held during this turn are released now.
       void this.flushRoutineDeliveries(id).catch(err => this.emit({ type: 'scheduler-error', message: err.message }));

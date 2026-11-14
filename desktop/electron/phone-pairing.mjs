@@ -2,9 +2,12 @@ import https from 'node:https';
 import { randomBytes, randomUUID, createHash, createPrivateKey, timingSafeEqual, X509Certificate } from 'node:crypto';
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { isIP } from 'node:net';
 import { networkInterfaces, hostname as osHostname } from 'node:os';
 import forge from 'node-forge';
 import QRCode from 'qrcode';
+import { RESUMABLE_TASK_STATES } from '../shared/assistant.mjs';
 import {
   PHONE_PAIRING_PROTOCOL_VERSION, PHONE_PAIRING_ROOT,
   INVITATION_TTL_MS, INVITATION_CODE_ALPHABET, INVITATION_CODE_LENGTH,
@@ -16,6 +19,9 @@ import {
   PAIRING_CONFIG_FILE, PAIRING_DEVICES_FILE, PAIRING_CERTIFICATE_FILE, PAIRING_SERVICE_NAME,
   PAIRING_STATUS, PAIRING_STATE,
   normalizePairingCode, formatPairingCode, pairingUri,
+  PHONE_CLIENT_ROOT, PHONE_ROUTES, PHONE_HISTORY_LIMIT, PHONE_HISTORY_CHARS, PHONE_TASK_LIMIT,
+  PHONE_TASK_DETAIL_BYTES, PHONE_TASK_DETAIL_ITEMS,
+  PHONE_CONTEXT_TITLE_CHARS, PHONE_CONTEXT_TEXT_CHARS, PHONE_CONTEXT_BYTES, PHONE_CONTEXT_TTL_MS, PHONE_CONTEXT_LIMIT, phoneBrowserUrl,
 } from '../shared/phone-pairing.mjs';
 
 const CONFIG_VERSION = 1; // On-disk pairing configuration schema.
@@ -36,13 +42,29 @@ const QR_WIDTH_PX = 320;
 const QR_MARGIN_MODULES = 2;
 const QR_DARK = '#13161a';
 const QR_LIGHT = '#ffffff';
-const ROUTE_PAIR = `${PHONE_PAIRING_ROOT}/pair`;
-const ROUTE_REVOKE = `${PHONE_PAIRING_ROOT}/pair/revoke`;
-const ROUTE_CAPABILITIES = `${PHONE_PAIRING_ROOT}/capabilities`;
-const ROUTE_RUNS = `${PHONE_PAIRING_ROOT}/runs`;
-const PAIR_ROUTE = new RegExp(`^${PHONE_PAIRING_ROOT}/pair/([0-9a-f-]{36})$`);
-const RUN_ROUTE = new RegExp(`^${PHONE_PAIRING_ROOT}/runs/([0-9a-f-]{36})$`);
-const APPROVAL_ROUTE = new RegExp(`^${PHONE_PAIRING_ROOT}/runs/([0-9a-f-]{36})/approvals/([0-9a-f-]{36})$`);
+const ROUTE_PAIR = PHONE_ROUTES.pair;
+const ROUTE_REVOKE = PHONE_ROUTES.revoke;
+const ROUTE_CAPABILITIES = PHONE_ROUTES.capabilities;
+const ROUTE_RUNS = PHONE_ROUTES.runs;
+const UUID_SOURCE = '[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'; // Generated task/run/device identities, never paths.
+const UUID_PATTERN = new RegExp(`^${UUID_SOURCE}$`, 'i');
+const PAIR_ROUTE = new RegExp(`^${ROUTE_PAIR}/(${UUID_SOURCE})$`, 'i');
+const RUN_ROUTE = new RegExp(`^${ROUTE_RUNS}/(${UUID_SOURCE})$`, 'i');
+const APPROVAL_ROUTE = new RegExp(`^${ROUTE_RUNS}/(${UUID_SOURCE})/approvals/(${UUID_SOURCE})$`, 'i');
+const TASK_RESUME_ROUTE = new RegExp(`^${PHONE_ROUTES.tasks}/(${UUID_SOURCE})/resume$`, 'i');
+const CONTEXT_ROUTE = new RegExp(`^${PHONE_ROUTES.context}/(${UUID_SOURCE})$`, 'i');
+const CLIENT_DIRECTORY = new URL('../phone-client/', import.meta.url); // Packaged alongside this service.
+const CLIENT_ASSETS = new Map([
+  [PHONE_CLIENT_ROOT, { file: new URL('index.html', CLIENT_DIRECTORY), type: 'text/html; charset=utf-8' }],
+  [`${PHONE_CLIENT_ROOT}/app.mjs`, { file: new URL('app.mjs', CLIENT_DIRECTORY), type: 'text/javascript; charset=utf-8' }],
+  [`${PHONE_CLIENT_ROOT}/style.css`, { file: new URL('style.css', CLIENT_DIRECTORY), type: 'text/css; charset=utf-8' }],
+  [`${PHONE_CLIENT_ROOT}/contract.mjs`, { file: new URL('../shared/phone-pairing.mjs', import.meta.url), type: 'text/javascript; charset=utf-8' }],
+]); // Fixed allowlist only: request paths never become filesystem paths.
+const CLIENT_CSP = "default-src 'none'; script-src 'self'; style-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'";
+const CLIENT_ROOT_MARKER = '{{PHONE_CLIENT_ROOT}}'; // HTML entrypoint uses the shared route instead of duplicating it.
+const RESUMABLE_PHONE_STATES = new Set(RESUMABLE_TASK_STATES);
+const HTTPS_DEFAULT_PORT = 443; // Standard HTTPS port when URL parsing omits the explicit default.
+const ADDRESS_DENIED = 'This desktop address is not allowed.';
 
 function httpError(status, message) { return Object.assign(new Error(message), { status }); }
 function fingerprint(pem) { return new X509Certificate(pem).fingerprint256; }
@@ -153,6 +175,7 @@ export class PhonePairing {
     this.pendingTimers = new Map();
     this.devices = [];
     this.runs = new Map();
+    this.contextPreviews = new Map();
     this.saveTail = Promise.resolve();
     this.lastSeenWrites = new Map();
     this.closed = false;
@@ -302,6 +325,7 @@ export class PhonePairing {
     this.closed = !keepClosed;
     for (const run of this.runs.values()) this.#cancelRun(run);
     this.runs.clear();
+    this.contextPreviews.clear();
     this.#clearInvitation();
     for (const timer of this.pendingTimers.values()) clearTimeout(timer);
     this.pendingTimers.clear(); this.pending.clear();
@@ -355,7 +379,7 @@ export class PhonePairing {
   snapshot() {
     return {
       state: this.state, error: this.error,
-      address: this.address, name: this.hostname, port: this.port || null,
+      address: this.address, browserUrl: this.address ? new URL(PHONE_CLIENT_ROOT, this.address).toString() : null, name: this.hostname, port: this.port || null,
       fingerprint: this.fingerprint(), addresses: [...this.addresses], preferredAddress: this.preferredAddress,
       running: this.state === PAIRING_STATE.READY,
       invitation: this.#invitationView(),
@@ -389,8 +413,10 @@ export class PhonePairing {
     this.invitationTimer.unref?.();
     const uri = pairingUri({ address: this.address, code, fingerprint: this.fingerprint(), name: this.hostname });
     const qr = await QRCode.toDataURL(uri, { errorCorrectionLevel: 'M', margin: QR_MARGIN_MODULES, width: QR_WIDTH_PX, color: { dark: QR_DARK, light: QR_LIGHT } });
+    const browserUrl = phoneBrowserUrl({ address: this.address, code, fingerprint: this.fingerprint() });
+    const browserQr = await QRCode.toDataURL(browserUrl, { errorCorrectionLevel: 'M', margin: QR_MARGIN_MODULES, width: QR_WIDTH_PX, color: { dark: QR_DARK, light: QR_LIGHT } });
     this.emitChanged();
-    return { ...this.#invitationView(), uri, qr };
+    return { ...this.#invitationView(), uri, qr, browserUrl, browserQr };
   }
 
   cancelInvitation() {
@@ -431,7 +457,8 @@ export class PhonePairing {
   async revokeDevice(deviceId) {
     const device = this.devices.find(item => item.id === deviceId);
     if (!device) throw new Error('That phone is not paired.');
-    for (const run of this.runs.values()) if (run.deviceId === device.id) this.#cancelRun(run);
+    for (const [id, run] of this.runs) if (run.deviceId === device.id) { this.#cancelRun(run); this.runs.delete(id); }
+    for (const [id, preview] of this.contextPreviews) if (preview.deviceId === device.id) this.contextPreviews.delete(id);
     this.devices = this.devices.filter(item => item.id !== device.id);
     await this.#saveDevices();
     this.emitChanged();
@@ -442,6 +469,8 @@ export class PhonePairing {
     const device = this.devices.find(item => item.id === deviceId);
     if (!device) throw new Error('That phone is not paired.');
     if (!this.#teammates().some(item => item.id === teammateId)) throw new Error('Choose an existing teammate.');
+    for (const [id, run] of this.runs) if (run.deviceId === device.id) { this.#cancelRun(run); this.runs.delete(id); }
+    for (const [id, preview] of this.contextPreviews) if (preview.deviceId === device.id) this.contextPreviews.delete(id);
     device.teammateId = teammateId;
     await this.#saveDevices();
     this.emitChanged();
@@ -527,6 +556,72 @@ export class PhonePairing {
     return redacted.slice(0, limit);
   }
 
+  #requestOrigin(request) {
+    const host = String(request.headers.host || '');
+    let target;
+    try { target = new URL(`https://${host}`); } catch { throw httpError(403, ADDRESS_DENIED); }
+    const allowed = new Set([LOOPBACK_IPV4, 'localhost', ...this.addresses]);
+    for (const name of [this.hostname, `${this.hostname}.local`]) if (DNS_SAN.test(name || '')) allowed.add(name.toLowerCase());
+    const certificate = new X509Certificate(this.leaf.certPem);
+    const name = target.hostname.toLowerCase();
+    const certified = isIP(name) ? certificate.checkIP(name) : certificate.checkHost(name);
+    if (!allowed.has(name) || !certified || target.username || target.password || target.pathname !== '/' || target.search || target.hash ||
+        target.host !== host.toLowerCase() || Number(target.port || HTTPS_DEFAULT_PORT) !== this.port) throw httpError(403, ADDRESS_DENIED);
+    const origin = request.headers.origin;
+    if ((origin !== undefined && origin !== target.origin) || request.headers['sec-fetch-site'] === 'cross-site') throw httpError(403, 'Open the phone page on this desktop address.');
+    return target.origin;
+  }
+
+  #assignedTeammate(device) {
+    const teammate = this.#teammates().find(item => item.id === device.teammateId);
+    if (!teammate) throw httpError(409, 'Choose an existing teammate for this phone in desktop Settings.');
+    return teammate;
+  }
+
+  #ownedTask(device, id) {
+    // Owner mismatch and nonexistent task have the same response, including corrupt caller identities.
+    if (!UUID_PATTERN.test(id || '')) throw httpError(404, 'Saved request was not found.');
+    this.#assignedTeammate(device);
+    const task = this.engine.assistant().tasks.list({ ownerId: device.teammateId }).find(item => item.id === id);
+    if (!task) throw httpError(404, 'Saved request was not found.');
+    return task;
+  }
+
+  #taskView(task) {
+    let remaining = PHONE_TASK_DETAIL_BYTES, detailsOmitted = false;
+    const excerpt = (value, limit = MAX_EVENT_DETAIL_CHARS) => {
+      const safe = this.#clean(value, limit);
+      let low = 0, high = safe.length;
+      while (low < high) {
+        const middle = Math.ceil((low + high) / 2);
+        if (Buffer.byteLength(JSON.stringify(safe.slice(0, middle))) <= remaining) low = middle;
+        else high = middle - 1;
+      }
+      const result = safe.slice(0, low);
+      remaining = Math.max(0, remaining - Buffer.byteLength(JSON.stringify(result)));
+      detailsOmitted ||= result.length < String(value || '').length;
+      return result;
+    };
+    const items = (values, recent = false) => {
+      detailsOmitted ||= values.length > PHONE_TASK_DETAIL_ITEMS;
+      return recent ? values.slice(-PHONE_TASK_DETAIL_ITEMS) : values.slice(0, PHONE_TASK_DETAIL_ITEMS);
+    };
+    const goal = excerpt(task.goal, MAX_PROMPT_CHARS), reply = excerpt(task.reply);
+    const checklist = items(task.checklist).map(item => ({ content: excerpt(item.content), status: item.status })).filter(item => item.content);
+    const references = items(task.context?.references || []).map(item => ({ name: excerpt(item.name, PHONE_CONTEXT_TITLE_CHARS), excerpt: excerpt(item.excerpt), truncated: Boolean(item.truncated) })).filter(item => item.name);
+    const receipts = items(task.steps, true).map(step => ({ tool: excerpt(step.tool), phase: step.phase, result: excerpt(step.result), failed: Boolean(step.isError) })).filter(item => item.tool);
+    return {
+      id: task.id, goal, status: task.status, updatedAt: task.updatedAt,
+      resumable: RESUMABLE_PHONE_STATES.has(task.status), reply, checklist, receipts, references, detailsOmitted,
+    };
+  }
+
+  #previewFor(device, id, taskId = null) {
+    const preview = this.contextPreviews.get(id);
+    if (!preview || preview.deviceId !== device.id || preview.ownerId !== device.teammateId || preview.expiresAt <= this.now() || preview.taskId !== taskId || preview.claimed) throw httpError(404, 'Review the selected context again before sending.');
+    return preview;
+  }
+
   #pushEvent(run, event) {
     if (run.events.length >= MAX_RUN_EVENTS) run.events.splice(0, run.events.length - MAX_RUN_EVENTS + 1);
     run.events.push({ sequence: ++run.sequence, ...event, ...(typeof event.detail === 'string' ? { detail: event.detail.slice(0, MAX_EVENT_DETAIL_CHARS) } : {}) });
@@ -607,13 +702,11 @@ export class PhonePairing {
     }
   }
 
-  async #startRun(device, prompt) {
-    const teammate = this.#teammates().find(item => item.id === device.teammateId);
-    if (!teammate) throw httpError(409, 'Choose an existing teammate for this phone in desktop Settings.');
+  async #startRun(device, prompt, { taskId, preview } = {}) {
+    this.#assignedTeammate(device);
     if (this.engine.turns?.has(device.teammateId)) throw httpError(409, 'The desktop assistant is busy with another reply on this teammate.');
     if ([...this.runs.values()].some(run => run.deviceId === device.id && !run.finished)) throw httpError(409, 'This phone already has a running request.');
     if (this.runs.size >= MAX_RUNS) for (const [id, run] of this.runs) if (run.finished) this.runs.delete(id);
-    await this.engine.init();
     const run = {
       id: randomUUID(), deviceId: device.id, threadId: device.teammateId, turnId: null,
       status: 'running', sequence: 0, events: [], textBuffer: '', replyText: '', reply: '',
@@ -625,8 +718,19 @@ export class PhonePairing {
     run.timer = setTimeout(() => this.#cancelRun(run), RUN_TIMEOUT_MS);
     run.timer.unref?.();
     let started;
-    try { started = await this.engine.send(device.teammateId, prompt, null, { surface: 'phone' }); }
+    try {
+      if (preview) preview.claimed = true;
+      await this.engine.init();
+      // Recheck after init: revocation/reassignment may happen while initialization awaits.
+      if (!this.devices.includes(device) || device.teammateId !== run.threadId) throw new Error('This phone assignment changed. Connect again.');
+      const attachments = preview ? [{ name: `${preview.context.title}.txt`, data: Buffer.from(preview.context.text, 'utf8').toString('base64') }] : null;
+      started = taskId
+        ? await this.engine.assistant().resume({ id: run.threadId, taskId, surface: 'phone', attachments })
+        : await this.engine.send(run.threadId, prompt, attachments, { surface: 'phone' });
+      if (preview) this.contextPreviews.delete(preview.id);
+    }
     catch (error) {
+      if (preview) preview.claimed = false;
       run.error = this.#clean(error.message || String(error));
       this.#finishRun(run, 'failed');
       throw httpError(409, run.error);
@@ -681,10 +785,21 @@ export class PhonePairing {
       response.end(JSON.stringify(data));
     };
     try {
-      // A browser page must not be able to drive this LAN service (DNS rebinding / CSRF).
-      if (request.headers.origin) throw httpError(403, 'Pair phones from the Ankita app, not a web page.');
+      // Native clients omit Origin. Browsers must use this exact certified listener;
+      // no CORS headers, cookies, arbitrary Host names or origin reflection.
+      this.#requestOrigin(request);
       const url = new URL(request.url || '/', 'https://pairing.invalid');
       const pathname = url.pathname.replace(/\/+$/, '') || '/';
+      if (CLIENT_ASSETS.has(pathname) && request.method === 'GET') {
+        if (url.search) throw httpError(400, 'Unsupported phone page address.');
+        const asset = CLIENT_ASSETS.get(pathname);
+        const source = await fs.readFile(fileURLToPath(asset.file));
+        const bytes = pathname === PHONE_CLIENT_ROOT ? source.toString('utf8').replaceAll(CLIENT_ROOT_MARKER, PHONE_CLIENT_ROOT) : source;
+        response.writeHead(200, { 'content-type': asset.type, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff',
+          'referrer-policy': 'no-referrer', 'content-security-policy': CLIENT_CSP, 'x-frame-options': 'DENY',
+          'permissions-policy': 'camera=(), microphone=(), geolocation=()' });
+        response.end(bytes); return;
+      }
       if (pathname === ROUTE_PAIR && request.method === 'POST') {
         const input = await this.#readBody(request);
         if (!input || typeof input !== 'object' || Object.keys(input).some(key => !['code', 'deviceName', 'platform'].includes(key))) throw httpError(400, 'Unsupported pairing request.');
@@ -719,19 +834,64 @@ export class PhonePairing {
       }
       const device = this.#authenticate(request);
       if (!device) throw httpError(401, 'Pair this phone with the desktop first.');
+      if ([PHONE_ROUTES.history, PHONE_ROUTES.tasks].includes(pathname) && request.method === 'GET') {
+        if (url.search) throw httpError(400, 'The phone can only read its assigned conversation.');
+        const teammate = this.#assignedTeammate(device);
+        if (pathname === PHONE_ROUTES.tasks) {
+          reply(200, { tasks: this.engine.assistant().tasks.list({ ownerId: teammate.id }).slice(0, PHONE_TASK_LIMIT).map(task => this.#taskView(task)) });
+        } else {
+          let remaining = PHONE_HISTORY_CHARS;
+          const messages = this.engine.loadThread(teammate.id).filter(item => ['user', 'assistant'].includes(item.role)).slice(-PHONE_HISTORY_LIMIT).reverse().map(item => {
+            const content = this.#clean(item.content, Math.min(remaining, MAX_PROMPT_CHARS)); remaining -= content.length;
+            return { role: item.role, content };
+          }).filter(item => item.content).reverse();
+          reply(200, { teammate: { id: teammate.id, name: teammate.name }, messages });
+        }
+        return;
+      }
+      if (pathname === PHONE_ROUTES.context && request.method === 'POST') {
+        this.#assignedTeammate(device);
+        const input = await this.#readBody(request);
+        if (!input || Object.keys(input).some(key => !['title', 'text', 'taskId'].includes(key)) || typeof input.title !== 'string' || !input.title.trim() || input.title.length > PHONE_CONTEXT_TITLE_CHARS ||
+            typeof input.text !== 'string' || !input.text.trim() || input.text.length > PHONE_CONTEXT_TEXT_CHARS || Buffer.byteLength(input.text) > PHONE_CONTEXT_BYTES) throw httpError(400, 'Add a short source name and a bounded text excerpt to review.');
+        if (input.taskId !== undefined) this.#ownedTask(device, input.taskId);
+        for (const [id, preview] of this.contextPreviews) if (preview.expiresAt <= this.now()) this.contextPreviews.delete(id);
+        if (this.contextPreviews.size >= PHONE_CONTEXT_LIMIT) throw httpError(409, 'Finish or remove an earlier context preview first.');
+        const preview = { id: randomUUID(), deviceId: device.id, ownerId: device.teammateId, taskId: input.taskId ?? null,
+          context: { title: this.#clean(safeName(input.title, PHONE_CONTEXT_TITLE_CHARS), PHONE_CONTEXT_TITLE_CHARS), text: this.#clean(input.text.trim(), PHONE_CONTEXT_TEXT_CHARS) }, expiresAt: this.now() + PHONE_CONTEXT_TTL_MS };
+        this.contextPreviews.set(preview.id, preview);
+        reply(201, { id: preview.id, context: preview.context, expiresAt: iso(preview.expiresAt) }); return;
+      }
+      const contextMatch = pathname.match(CONTEXT_ROUTE);
+      if (contextMatch && request.method === 'DELETE') {
+        const preview = this.contextPreviews.get(contextMatch[1]);
+        if (preview?.deviceId === device.id) this.contextPreviews.delete(preview.id);
+        reply(200, { removed: true }); return;
+      }
+      const taskMatch = pathname.match(TASK_RESUME_ROUTE);
+      if (taskMatch && request.method === 'POST') {
+        const task = this.#ownedTask(device, taskMatch[1]);
+        const input = await this.#readBody(request);
+        if (!input || input.version !== PHONE_PAIRING_PROTOCOL_VERSION || Object.keys(input).some(key => !['version', 'contextId'].includes(key))) throw httpError(400, 'Unsupported saved request.');
+        if (!RESUMABLE_PHONE_STATES.has(task.status)) throw httpError(409, 'This request cannot be continued now.');
+        const preview = input.contextId === undefined ? null : this.#previewFor(device, input.contextId, task.id);
+        const run = await this.#startRun(device, null, { taskId: task.id, preview });
+        reply(202, { id: run.id }); return;
+      }
       if (pathname === ROUTE_CAPABILITIES && request.method === 'GET') {
         const teammate = this.#teammates().find(item => item.id === device.teammateId);
         reply(200, {
           version: PHONE_PAIRING_PROTOCOL_VERSION, tools: ['desktop_run'], approvals: true,
           device: { id: device.id, name: device.name }, teammate: teammate ? { id: teammate.id, name: teammate.name } : null,
-          app: { name: PAIRING_SERVICE_NAME }, computer: this.hostname, fingerprint: this.fingerprint(),
+          app: { name: PAIRING_SERVICE_NAME }, computer: this.hostname, fingerprint: this.fingerprint(), continuity: true,
         });
         return;
       }
       if (pathname === ROUTE_RUNS && request.method === 'POST') {
         const input = await this.#readBody(request);
-        if (!input || input.version !== PHONE_PAIRING_PROTOCOL_VERSION || typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > MAX_PROMPT_CHARS || Object.keys(input).some(key => !['version', 'prompt'].includes(key))) throw httpError(400, 'Unsupported desktop request.');
-        const run = await this.#startRun(device, input.prompt.trim());
+        if (!input || input.version !== PHONE_PAIRING_PROTOCOL_VERSION || typeof input.prompt !== 'string' || !input.prompt.trim() || input.prompt.length > MAX_PROMPT_CHARS || Object.keys(input).some(key => !['version', 'prompt', 'contextId'].includes(key))) throw httpError(400, 'Unsupported desktop request.');
+        const preview = input.contextId === undefined ? null : this.#previewFor(device, input.contextId);
+        const run = await this.#startRun(device, input.prompt.trim(), { preview });
         reply(202, { id: run.id });
         return;
       }

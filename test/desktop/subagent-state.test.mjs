@@ -52,6 +52,21 @@ test('ignores malformed events and never mutates the previous state', () => {
   assert.equal(state['thread-1']['call-1'].text, '');
 });
 
+test('queued children and two-way messages retain direction, deduplicate and stay bounded', () => {
+  let state = reduceSubagents({}, { ...start, type: 'subagent-queued' });
+  assert.equal(state['thread-1']['call-1'].status, 'queued');
+  const incoming = { ...start, type: 'subagent-message', messageId: 'message-1', from: 'parent', to: 'child-1', message: 'Check the new brief', createdAt: new Date().toISOString() };
+  state = reduceSubagents(state, incoming);
+  assert.equal(state['thread-1']['call-1'].messages[0].from, 'parent');
+  assert.equal(reduceSubagents(state, incoming), state);
+  assert.equal(reduceSubagents(state, { ...incoming, messageId: '' }), state);
+  state = reduceSubagents(state, { ...start, type: 'subagent-start' });
+  assert.equal(state['thread-1']['call-1'].messages.length, 1);
+  assert.equal(state['thread-1']['call-1'].status, 'running');
+  for (let index = 0; index < 100; index++) state = reduceSubagents(state, { ...incoming, messageId: `reply-${index}`, from: 'child-1', to: 'parent' });
+  assert.ok(state['thread-1']['call-1'].messages.length < 100);
+});
+
 test('keeps streamed output and tool rows bounded', () => {
   let state = reduceSubagents({}, start);
   state = reduceSubagents(state, { type: 'subagent-delta', threadId: 'thread-1', subagentId: 'child-1', parentCallId: 'call-1', text: 'x'.repeat(SUBAGENT_TEXT_LIMIT + 100) });

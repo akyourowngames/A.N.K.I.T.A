@@ -4,6 +4,11 @@ import type { CompanionCaptureItem } from '../../../shared/wire';
 import { CAPTURE_ACTIONS, CAPTURE_EVENT, FILE_ACTIVITY_EVENT } from '../../../browser-helper/protocol.mjs';
 
 const stores = { main: new CompanionDrafts(), island: new CompanionDrafts() }; // Per-surface drafts survive panel unmounts in each renderer.
+/** Seed an explicit request before the lazy composer mounts, preserving existing text/files. */
+export function appendCompanionDraft(surface: 'main' | 'island', threadId: string, text: string) {
+  if (!threadId || !text.trim()) return;
+  stores[surface].update(threadId, draft => ({ ...draft, text: draft.text.trim() ? `${draft.text}\n\n${text}` : text }));
+}
 export function useCompanionDrafts(surface: 'main' | 'island', onCapture?: (item: CompanionCaptureItem) => void) {
   const store = stores[surface];
   const drafts = useSyncExternalStore(store.subscribe, store.getSnapshot);

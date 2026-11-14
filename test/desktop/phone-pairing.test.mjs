@@ -83,20 +83,20 @@ async function makePairing(t, { engine, directory }, options = {}) {
   return { service, events };
 }
 
-function call(service, pathname, { method = 'GET', body, token, secret, ca, signal } = {}) {
-  const headers = {};
+function call(service, pathname, { method = 'GET', body, token, secret, ca, signal, headers = {} } = {}) {
+  headers = { ...headers };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (token) headers.authorization = `Bearer ${token}`;
   if (secret) headers['x-pair-secret'] = secret;
   return new Promise((resolve, reject) => {
     const request = https.request(`https://${LOOPBACK}:${service.port}${PHONE_PAIRING_ROOT}${pathname}`, {
-      method, headers, ca: ca === null ? undefined : ca ?? service.certificate().pem, rejectUnauthorized: true, signal,
+      method, headers, ca: ca === null ? undefined : ca ?? service.certificate().pem, rejectUnauthorized: true, servername: 'localhost', signal,
     }, response => {
       const chunks = [];
       response.on('data', chunk => chunks.push(chunk));
       response.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
-        resolve({ status: response.statusCode, text, json: text ? JSON.parse(text) : null });
+        resolve({ status: response.statusCode, text, headers: response.headers, json: response.headers['content-type']?.includes('application/json') && text ? JSON.parse(text) : null });
       });
     });
     request.on('error', reject);
@@ -338,4 +338,102 @@ test('TLS stays strict and browser origins are refused', async t => {
     request.on('error', reject); request.end(JSON.stringify({ code: 'AAAA-AAAA', deviceName: 'x', platform: 'y' }));
   });
   assert.equal(origin.status, 403);
+});
+
+test('the fixed phone client admits only its served HTTPS origin and certificate hosts', async t => {
+  const context = await makeEngine(t);
+  const { service } = await makePairing(t, context);
+  const page = await call(service, '/phone');
+  assert.equal(page.status, 200, 'a phone can open the browser entrypoint');
+  assert.match(page.text, /Pair this phone/);
+  assert.match(page.headers['content-security-policy'], /connect-src 'self'/);
+  assert.equal(page.headers['cache-control'], 'no-store');
+  assert.equal((await call(service, '/phone/app.mjs')).status, 200);
+  assert.equal((await call(service, '/phone/contract.mjs')).status, 200);
+  assert.notEqual((await call(service, '/phone/%2e%2e/%2e%2e/package.json')).status, 200);
+  const invitation = await service.createInvitation();
+  assert.match(invitation.browserUrl, /^https:\/\/192\.0\.2\.10:\d+\/v1\/ankita-companion\/phone#/);
+  assert.ok(invitation.browserQr.startsWith('data:image/png;base64,'));
+  const origin = `https://${LOOPBACK}:${service.port}`;
+  const started = await call(service, '/pair', { method: 'POST', headers: { origin }, body: { code: invitation.code, deviceName: 'Browser phone', platform: 'browser' } });
+  assert.equal(started.status, 202, 'same-origin pairing reaches desktop approval');
+  assert.equal((await call(service, `/pair/${started.json.requestId}`, { secret: started.json.secret, headers: { origin } })).json.status, 'pending');
+  for (const headers of [
+    { origin: 'null' }, { origin: 'https://evil.example' }, { origin: `${origin}0` },
+    { host: `rebinding.example:${service.port}`, origin: `https://rebinding.example:${service.port}` },
+    { host: `${LOOPBACK}:1` }, { 'sec-fetch-site': 'cross-site' },
+  ]) assert.equal((await call(service, '/phone', { headers })).status, 403, JSON.stringify(headers));
+  assert.equal((await call(service, '/history', { headers: { origin } })).status, 401, 'origin never replaces bearer authentication');
+});
+
+test('history and tasks are assigned-owner only and reviewed context is bounded and single-use', async t => {
+  const { engine, directory } = await makeEngine(t);
+  const { service } = await makePairing(t, { engine, directory });
+  const owner = engine.listTeammates()[0].id;
+  const other = engine.createTeammate({ name: 'Private desk' }).id;
+  const phone = await pair(service);
+  const store = engine.assistant().tasks;
+  const mine = store.create({ ownerId: owner, goal: 'Continue the trip plan', surface: 'desktop' });
+  store.finish(mine.id, { status: 'interrupted' });
+  const foreign = store.create({ ownerId: other, goal: 'PRIVATE_OTHER_OWNER', surface: 'channel' });
+  store.finish(foreign.id, { status: 'interrupted' });
+  await engine.send(owner, 'My visible history'); await engine.waitForTurn(owner);
+  await engine.send(other, 'PRIVATE_OTHER_OWNER'); await engine.waitForTurn(other);
+  const history = await call(service, '/history', { token: phone.token });
+  assert.equal(history.status, 200);
+  assert.ok(history.json.messages.some(message => message.content === 'My visible history'));
+  assert.equal(JSON.stringify(history.json).includes('PRIVATE_OTHER_OWNER'), false);
+  assert.equal((await call(service, `/history?threadId=${other}`, { token: phone.token })).status, 400);
+  const tasks = await call(service, '/tasks', { token: phone.token });
+  assert.equal(tasks.status, 200);
+  assert.ok(tasks.json.tasks.some(task => task.id === mine.id));
+  assert.equal(JSON.stringify(tasks.json).includes('PRIVATE_OTHER_OWNER'), false);
+  const deniedResume = await call(service, `/tasks/${foreign.id}/resume`, { method: 'POST', token: phone.token, body: { version: 1 } });
+  assert.equal(deniedResume.status, 404);
+  assert.equal((await call(service, '/context', { method: 'POST', token: phone.token, body: { title: 'Notes', text: 'x'.repeat(7000) } })).status, 400);
+  const preview = await call(service, '/context', { method: 'POST', token: phone.token, body: { title: 'Travel notes', text: 'Take the late train.' } });
+  assert.equal(preview.status, 201);
+  assert.deepEqual(preview.json.context, { title: 'Travel notes', text: 'Take the late train.' });
+  const second = await pair(service, { name: 'Different browser' });
+  assert.equal((await call(service, '/runs', { method: 'POST', token: second.token, body: { version: 1, prompt: 'Explain this', contextId: preview.json.id } })).status, 404);
+  const run = await call(service, '/runs', { method: 'POST', token: phone.token, body: { version: 1, prompt: 'Explain this', contextId: preview.json.id } });
+  assert.equal(run.status, 202);
+  await waitFor(async () => (await call(service, `/runs/${run.json.id}`, { token: phone.token })).json.status === 'completed');
+  assert.equal((await call(service, '/runs', { method: 'POST', token: phone.token, body: { version: 1, prompt: 'Again', contextId: preview.json.id } })).status, 404, 'reviewed context is used for exactly one accepted request');
+  const plain = await call(service, '/runs', { method: 'POST', token: phone.token, body: { version: 1, prompt: 'Without context' } });
+  assert.equal(plain.status, 202, 'the native v1 request remains valid');
+  await waitFor(async () => (await call(service, `/runs/${plain.json.id}`, { token: phone.token })).json.status === 'completed');
+  await service.revokeDevice(phone.deviceId);
+  assert.equal((await call(service, '/history', { token: phone.token })).status, 401);
+  assert.equal((await call(service, '/tasks', { token: phone.token })).status, 401);
+});
+
+test('changing a phone assignment removes access to old run events and pending approvals', async t => {
+  const { engine, directory } = await makeEngine(t);
+  const other = engine.createTeammate({ name: 'New assignment' }).id;
+  const { service } = await makePairing(t, { engine, directory });
+  const phone = await pair(service);
+  const started = await call(service, '/runs', { method: 'POST', token: phone.token, body: { version: 1, prompt: 'approve this action' } });
+  const waiting = await waitFor(async () => { const result = await call(service, `/runs/${started.json.id}`, { token: phone.token }); return result.json.pending ? result.json : null; });
+  await service.assignDevice(phone.deviceId, other);
+  assert.equal((await call(service, `/runs/${started.json.id}`, { token: phone.token })).status, 404);
+  assert.equal((await call(service, `/runs/${started.json.id}/approvals/${waiting.pending.id}`, { method: 'POST', token: phone.token, body: { allow: true } })).status, 404);
+  assert.equal((await call(service, '/capabilities', { token: phone.token })).json.teammate.id, other);
+  assert.equal(engine.listApprovals().length, 0);
+});
+
+test('phone saved-work details have a small total excerpt budget instead of returning every receipt', async t => {
+  const { engine, directory } = await makeEngine(t);
+  const { service } = await makePairing(t, { engine, directory });
+  const phone = await pair(service), ownerId = engine.listTeammates()[0].id, store = engine.assistant().tasks;
+  const task = store.create({ ownerId, goal: 'G'.repeat(8000) }); store.start(task.id, { ownerId });
+  for (let index = 0; index < 16; index++) {
+    const call = { id: `read-${index}`, name: 'read_file', arguments: { path: `file-${index}` } };
+    store.requested(task.id, call, { mutation: false }); store.started(task.id, call); store.settled(task.id, call, { content: [{ type: 'text', text: 'R'.repeat(1200) }] });
+  }
+  store.finish(task.id, { status: 'interrupted' });
+  const response = await call(service, '/tasks', { token: phone.token });
+  assert.equal(response.status, 200);
+  assert.ok(Buffer.byteLength(response.text) < 24000, 'a long task remains a phone-sized preview');
+  assert.equal(response.json.tasks[0].detailsOmitted, true);
 });

@@ -2,6 +2,7 @@ import { memo, useEffect, useState } from 'react';
 import ReactMarkdown, { defaultUrlTransform } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { ChatMessage, Teammate, Routine } from '../../../shared/wire';
+import { COMPACTION_LABEL } from '../../../shared/compaction.mjs';
 import type { SubagentActivity } from '../../../shared/subagent-state.mjs';
 import { activityFromReceipt } from '../../../shared/subagent-state.mjs';
 import { formatAssistantMarkdown } from '../../../shared/assistant-markdown.mjs';
@@ -85,8 +86,8 @@ export function Message({ message, teammate, threadId, streaming, onOpenBrowserP
     return message.hidden ? null : <ToolCallCard message={message} threadId={threadId} onOpenBrowserPlugins={onOpenBrowserPlugins} />;
   }
   if (message.compacted) return <div className="message compacted-message">
-    <div className="compacted-card">
-      <span className="compacted-label"><Icon name="layers" size={13} />Earlier conversation, summarized</span>
+    <div className="compacted-card" role="status" aria-live="polite">
+      <span className="compacted-label"><Icon name="layers" size={13} />{COMPACTION_LABEL}</span>
       <div className="compacted-body">{message.content}</div>
     </div>
   </div>;

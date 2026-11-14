@@ -4,6 +4,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import tls from "node:tls";
 import { spawn, spawnSync } from "node:child_process";
+import { Readable } from 'node:stream';
+import { pipeline } from 'node:stream/promises';
 
 /**
  * Voice I/O for the CLI. Zero npm dependencies:
@@ -27,6 +29,13 @@ export const GROQ_SPEECH_URL = "https://api.groq.com/openai/v1/audio/speech";
 export const SARVAM_API_BASE = "https://api.sarvam.ai";
 export const SARVAM_STT_URL = `${SARVAM_API_BASE}/speech-to-text`;
 export const SARVAM_TTS_URL = `${SARVAM_API_BASE}/text-to-speech`;
+export const SARVAM_TTS_STREAM_URL = `${SARVAM_TTS_URL}/stream`; // Official binary MP3 HTTP stream endpoint.
+export const VOICE_STREAM_UNSUPPORTED = 'VOICE_STREAM_UNSUPPORTED'; // Only pre-audio capability failures permit a buffered retry.
+const SARVAM_STREAM_UNSUPPORTED_STATUSES = new Set([404, 405, 415, 422, 501]); // HTTP capability/model failures, never auth/rate-limit failures.
+const SPEECH_REQUEST_TIMEOUT_MS = 60000; // Milliseconds: bound synthesis, including the streamed response body.
+const STREAM_AUDIO_CONTENT_TYPE = /^(audio\/|application\/octet-stream)/i; // Provider-documented binary audio, not JSON error pages.
+const SARVAM_KEY_REQUIRED = 'set SARVAM_API_KEY in .env (dashboard.sarvam.ai)'; // Shared setup error across the Sarvam speech transports.
+const EMPTY_SPEECH_TEXT = 'nothing speakable in that text'; // Shared synthesis validation, after Markdown cleanup.
 /** Sarvam's auth header name; NOT `Authorization: Bearer`. */
 export const SARVAM_AUTH_HEADER = "api-subscription-key";
 export const DEFAULT_SARVAM_STT_MODEL = "saaras:v4";
@@ -1002,12 +1011,14 @@ function sarvamError(kind, status, body) {
 }
 
 /** One fetch helper: timeout, one retry on 429/5xx, clear errors. */
-async function sarvamFetch(url, init, { kind, timeoutMs }) {
+async function sarvamFetch(url, init, { kind, timeoutMs, signal, unsupportedStatuses }) {
   for (let attempt = 0; ; attempt++) {
     let res;
     try {
-      res = await fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+      signal?.throwIfAborted();
+      res = await fetch(url, { ...init, signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]) : AbortSignal.timeout(timeoutMs) });
     } catch (err) {
+      if (signal?.aborted) throw signal.reason;
       if (err.name === "TimeoutError" || err.name === "AbortError") {
         throw new Error(`Sarvam ${kind} timeout after ${timeoutMs}ms`);
       }
@@ -1015,9 +1026,15 @@ async function sarvamFetch(url, init, { kind, timeoutMs }) {
     }
     if (res.ok) return res;
     const body = await res.text();
+    if (unsupportedStatuses?.has(res.status)) throw Object.assign(sarvamError(kind, res.status, body), { code: VOICE_STREAM_UNSUPPORTED });
     const retryable = SARVAM_RETRY_STATUSES.includes(res.status);
     if (!retryable || attempt > 0) throw sarvamError(kind, res.status, body);
-    await new Promise((resolve) => setTimeout(resolve, SARVAM_RETRY_DELAY_MS));
+    await new Promise((resolve, reject) => {
+      const abort = () => { clearTimeout(timer); reject(signal.reason); };
+      const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, SARVAM_RETRY_DELAY_MS);
+      signal?.addEventListener('abort', abort, { once: true });
+      if (signal?.aborted) abort();
+    });
   }
 }
 
@@ -1035,7 +1052,7 @@ export async function transcribeSarvam({
   keyterms = [],
   timeoutMs = 60000,
 } = {}) {
-  if (!apiKey) throw new Error("set SARVAM_API_KEY in .env (dashboard.sarvam.ai)");
+  if (!apiKey) throw new Error(SARVAM_KEY_REQUIRED);
   const buf = await fs.promises.readFile(wavPath);
   const form = new FormData();
   form.append("file", new Blob([buf], { type: "audio/wav" }), "mic.wav");
@@ -1089,13 +1106,14 @@ export async function synthesizeSarvam({
   languageCode = "hi-IN",
   text,
   sampleRate,
-  timeoutMs = 60000,
+  timeoutMs = SPEECH_REQUEST_TIMEOUT_MS,
+  signal,
 } = {}) {
-  if (!apiKey) throw new Error("set SARVAM_API_KEY in .env (dashboard.sarvam.ai)");
+  if (!apiKey) throw new Error(SARVAM_KEY_REQUIRED);
   // Keep the markdown stripper's char limit above the per-request cap so a long
   // reply is chunked (playable) rather than truncated (lost).
   const clean = stripForSpeech(text, SARVAM_TTS_MAX_CHARS * 4);
-  if (!clean) throw new Error("nothing speakable in that text");
+  if (!clean) throw new Error(EMPTY_SPEECH_TEXT);
 
   const chunks = chunkSentences(clean, SARVAM_TTS_MAX_CHARS);
   const audio = [];
@@ -1115,7 +1133,7 @@ export async function synthesizeSarvam({
         headers: { [SARVAM_AUTH_HEADER]: apiKey, "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       },
-      { kind: "TTS", timeoutMs }
+      { kind: "TTS", timeoutMs, signal }
     );
     const data = await res.json();
     const b64 = Array.isArray(data.audios) ? data.audios[0] : "";
@@ -1123,6 +1141,33 @@ export async function synthesizeSarvam({
     audio.push(Buffer.from(b64, "base64"));
   }
   return Buffer.concat(audio);
+}
+
+/** Yield actual provider bytes; no JSON/base64 buffering or synthetic partials. */
+export async function* synthesizeSarvamStream({ apiKey, model = DEFAULT_SARVAM_TTS_MODEL, speaker,
+  languageCode = DEFAULT_SARVAM_TTS_LANGUAGE, text, sampleRate, timeoutMs = SPEECH_REQUEST_TIMEOUT_MS, signal } = {}) {
+  if (!apiKey) throw new Error(SARVAM_KEY_REQUIRED);
+  const clean = stripForSpeech(text, SARVAM_TTS_MAX_CHARS * 4);
+  if (!clean) throw new Error(EMPTY_SPEECH_TEXT);
+  for (const chunk of chunkSentences(clean, SARVAM_TTS_MAX_CHARS)) {
+    signal?.throwIfAborted();
+    const payload = { text: chunk, model, language_code: languageCode, output_audio_codec: 'mp3' };
+    if (speaker) payload.speaker = speaker;
+    if (sampleRate) payload.speech_sample_rate = sampleRate;
+    const response = await sarvamFetch(SARVAM_TTS_STREAM_URL, { method: 'POST',
+      headers: { [SARVAM_AUTH_HEADER]: apiKey, 'Content-Type': 'application/json' }, body: JSON.stringify(payload) },
+    { kind: 'TTS', timeoutMs, signal, unsupportedStatuses: SARVAM_STREAM_UNSUPPORTED_STATUSES });
+    if (!response.body || !STREAM_AUDIO_CONTENT_TYPE.test(response.headers.get('content-type') || '')) {
+      await response.body?.cancel();
+      throw Object.assign(new Error('Sarvam did not return a supported audio stream.'), { code: VOICE_STREAM_UNSUPPORTED });
+    }
+    let received = false;
+    for await (const bytes of response.body) {
+      signal?.throwIfAborted();
+      if (bytes.length) { received = true; yield Buffer.from(bytes); }
+    }
+    if (!received) throw new Error('Sarvam TTS returned an empty audio stream.');
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -1141,6 +1186,46 @@ export function stopPlayback() {
 }
 
 export const VOICE_PLAYBACK_ERROR = 'Could not play speech. Check your output device and try voice again.'; // Actionable message; native player details stay out of spoken captions.
+
+/** ffplay reads stdin while the provider is still producing MP3 frames. */
+export async function playMp3Stream(source, { signal, rejectOnFailure = false, spawnImpl = spawn } = {}) {
+  stopPlayback();
+  const generation = playbackGeneration;
+  if (signal?.aborted) return;
+  const owner = new AbortController();
+  const combined = signal ? AbortSignal.any([signal, owner.signal]) : owner.signal;
+  let child;
+  try {
+    child = spawnImpl('ffplay', ['-nodisp', '-autoexit', '-loglevel', 'quiet', '-f', 'mp3', '-i', 'pipe:0'], {
+      windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'],
+    });
+    currentPlayer = child;
+    const cancelled = () => { try { child.kill('SIGKILL'); } catch {} };
+    combined.addEventListener('abort', cancelled, { once: true });
+    const closed = new Promise((resolve, reject) => {
+      child.once('error', error => { reject(error); owner.abort(); });
+      child.once('close', code => {
+        // A player that exits before its source finishes must release that request too.
+        if (code !== 0 || !child.stdin.writableFinished) { reject(new Error(VOICE_PLAYBACK_ERROR)); owner.abort(); }
+        else resolve();
+      });
+    });
+    const input = typeof source === 'function' ? source({ signal: combined }) : source;
+    const writing = pipeline(Readable.from(input), child.stdin, { signal: combined });
+    void writing.catch(() => owner.abort());
+    try {
+      const results = await Promise.allSettled([writing, closed]);
+      const failed = results.find(result => result.status === 'rejected');
+      if (failed && !signal?.aborted && generation === playbackGeneration && rejectOnFailure) throw failed.reason;
+    } finally { combined.removeEventListener('abort', cancelled); }
+  } catch (error) {
+    owner.abort();
+    if (!signal?.aborted && generation === playbackGeneration && rejectOnFailure) throw new Error(VOICE_PLAYBACK_ERROR, { cause: error });
+  } finally {
+    owner.abort();
+    if (currentPlayer === child) currentPlayer = null;
+  }
+}
 
 export async function playMp3(mp3, { signal, rejectOnFailure = false, spawnImpl = spawn } = {}) {
   stopPlayback();

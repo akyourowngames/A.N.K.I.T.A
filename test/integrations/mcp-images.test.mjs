@@ -8,6 +8,7 @@ import { COMPUTER_MCP_ID, COMPUTER_DIRECT_CONFIG, COMPUTER_TARGET_LIMIT, COMPUTE
 import { TIER_ALWAYS, TIER_DENY } from '../../src/integrations/mcp-tiers.mjs';
 
 const IMAGE = { type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' };
+const NATIVE_PROOF_BUDGET_BYTES = 8 * 1024; // Fixture headroom for complete native targets, request framing and the latest atomic tool exchange.
 test('real stdio discovery filters maintenance tools and delivers screenshots through Agent', async t => {
   const mcp = new McpManager(); t.after(() => mcp.closeAll());
   const record = await mcp.connect({ id: 'computer', command: process.execPath,
@@ -72,10 +73,15 @@ test('native target metadata is bounded and does not copy unrelated screenshot d
 test('final model reply retains complete native identifiers with multibyte trees and small budgets', async () => {
   const snapshot = 'fixture-fresh-snapshot';
   const controls = Array.from({ length: COMPUTER_TARGET_LIMIT }, (_, index) => ({ index, label: '文'.repeat(100), element_token: `token-${index}-${'x'.repeat(60)}` }));
-  for (const [maxToolChars, contextWindow] of [[65536, 1000000], [2048, 1000000], [65536, 32768]]) {
+  for (const [maxToolChars, contextWindow] of [[65536, 1000000], [2048, 1000000], [65536, null]]) {
     const mcp = { summaries: () => [], alwaysOnIds: () => [], specs: () => [], findTool: () => ({}), needsApproval: () => false,
       callToolResult: async () => ({ text: 'Readable 文 tree\n'.repeat(7000), raw: { structuredContent: { snapshot_id: snapshot, elements: controls } } }) };
     const a = new Agent({ client: {}, mcp, autoProject: false, config: { model: 'fixture', tools: true, autoApprove: true, maxToolChars, contextWindow, maxTokens: 1000, maxToolSteps: 3, memoryConsolidation: false }, print: () => {}, write: () => {} });
+    if (contextWindow === null) {
+      // This case needs a constrained usable reply, independent of catalogue/prompt growth.
+      a.contextWindow = Buffer.byteLength(JSON.stringify(a.messages)) + Buffer.byteLength(JSON.stringify(a.currentSpecs())) + a.outputReserve() + NATIVE_PROOF_BUDGET_BYTES;
+      a.config.contextWindow = a.contextWindow;
+    }
     let round = 0;
     let reply;
     a.streamTurn = async () => {

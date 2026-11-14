@@ -1,0 +1,13 @@
+.context-preview { width: min(800px, calc(100vw - 40px)); max-height: calc(100vh - 60px); padding: 0; border: 1px solid var(--edge-strong); border-radius: 14px; background: var(--sidebar); color: var(--text); box-shadow: 0 20px 80px var(--shadow); }
+.context-preview::backdrop { background: var(--overlay); }
+.context-preview header { display: flex; gap: 20px; justify-content: space-between; align-items: flex-start; padding: 22px; border-bottom: 1px solid var(--edge); }
+.context-preview h2 { margin: 0; font-size: 16px; overflow-wrap: anywhere; }
+.context-preview p { font-size: 12px; line-height: 1.6; color: var(--text-dim); }
+.context-preview-body { padding: 22px; overflow: auto; max-height: 60vh; }
+.context-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; font-size: 13px; line-height: 1.7; margin: 0; }
+.context-preview img { display: block; max-width: 100%; max-height: 55vh; margin: auto; object-fit: contain; }
+.context-preview footer { display: flex; justify-content: space-between; padding: 16px 22px; border-top: 1px solid var(--edge); }
+.context-preview button { flex-shrink: 0; padding: 8px 12px; border: 1px solid var(--edge-strong); border-radius: 7px; background: var(--surface); color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+.context-preview button.button-primary { background: var(--gold); color: var(--canvas); }
+.attachment-chip button.attachment-name { color: inherit; padding: 0; width: auto; height: auto; border: 0; background: none; font: inherit; text-align: left; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+@media (max-width: 500px) { .context-preview header { flex-wrap: wrap; } }

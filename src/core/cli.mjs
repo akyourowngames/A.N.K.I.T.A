@@ -1,6 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
-import { randomUUID } from 'node:crypto';
+import { randomUUID, createHash } from 'node:crypto';
+import { AssistantTaskStore, ASSISTANT_TASK_DIRECTORY } from '../assistant/tasks.mjs';
 import { NotificationDelivery } from '../automation/notify.mjs';
 import { MemoryConsolidator } from '../memory/consolidate.mjs';
 import { extractMemory } from '../memory/memory-extract.mjs';
@@ -15,6 +16,7 @@ import {
   AUTOSAVE_NAME,
   STATE_FILE,
   PROJECTS_FILE,
+  PROFILE_FILE,
   MCP_FILE,
   COMPOSIO_FILE,
   MCP_TIERS_FILE,
@@ -55,7 +57,7 @@ import { configuredSecrets } from './redact.mjs';
 import { createSession } from "./bootstrap.mjs";
 import { sanitizeMessages } from "./history.mjs";
 import { Agent } from "./agent.mjs";
-import { SUBAGENT_EVENT } from './subagents/registry.mjs';
+import { SUBAGENT_EVENT, SUBAGENT_PARENT_TARGET, SUBAGENT_MESSAGE_LABELS } from './subagents/registry.mjs';
 import { loadSkills, reloadSkills } from './skills.mjs';
 import { runLocalCommand } from './local-commands.mjs';
 import { startupProfile } from './startup-profile.mjs';
@@ -67,6 +69,7 @@ import {
 } from "./commands.mjs";
 import { LiveRenderer } from "./markdown.mjs";
 import { names as toolNames, cleanupJobs, displayArgs } from "../../tools/index.mjs";
+import { closeSharedBrowser } from '../../tools/browser/browser.mjs';
 import { JOB_COMMANDS, isJobCommand, runJobCommand, runningJobCount, jobEventText } from '../tooling/job-ui.mjs';
 import * as voiceChannel from '../channels/voice.mjs';
 import { useHandsFreePlayback } from "../channels/audio-device.mjs";
@@ -120,6 +123,7 @@ function parseArgs(argv) {
     listModels: false,
     showConfig: false,
     continueName: null,
+    resumeTask: null,
     yes: false,
     tools: null,
     banner: true,
@@ -159,6 +163,9 @@ function parseArgs(argv) {
       case "-p":
       case "--prompt":
         opts.prompt = takeValue(a, i++);
+        break;
+      case '--resume-task':
+        opts.resumeTask = takeValue(a, i++);
         break;
       case "-m":
       case "--model":
@@ -336,6 +343,7 @@ export async function main({ voiceIO = {} } = {}) {
   try { if (await runLocalCommand(process.argv.slice(2))) return; }
   catch (error) { console.error(error.message); process.exitCode = 2; return; }
   const opts = parseArgs(process.argv.slice(2));
+  if (opts.resumeTask && opts.prompt === null) opts.prompt = 'Continue the unfinished saved request.';
 
   if (opts.help) {
     process.stdout.write(USAGE);
@@ -463,7 +471,7 @@ export async function main({ voiceIO = {} } = {}) {
     return;
   }
 
-  if (config.apiBase && !config.apiKey && !provider.keyless) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
+  if (!opts.json && config.apiBase && !config.apiKey && !provider.keyless) console.log(c.yellow("  note: no API_KEY set - trying without credentials"));
   let session;
   try {
     session = await createSession({ config });
@@ -489,7 +497,7 @@ export async function main({ voiceIO = {} } = {}) {
     console.log("");
     return;
   }
-  if (config.model && !picked.matched) {
+  if (!opts.json && config.model && !picked.matched) {
     console.log(c.yellow(`  unknown model "${config.model}", using ${picked.id} instead`));
   }
 
@@ -515,7 +523,7 @@ export async function main({ voiceIO = {} } = {}) {
   // Process-level, not per-Agent: every freshAgent worker must share these
   // live connections, or a routine would spawn a server for one call.
   const mcp = new McpManager({
-    log: (m) => term.line(c.dim(`  mcp: ${m}`)),
+    log: (m) => { if (!opts.json) term.line(c.dim(`  mcp: ${m}`)); },
     onChange: () => agent?.refreshPrompt?.(),
     // File-backed: tier overrides outlive the process. Heuristics apply either way.
     tiers: new TierPolicy(MCP_TIERS_FILE),
@@ -527,7 +535,7 @@ export async function main({ voiceIO = {} } = {}) {
   let turnConsolidator = null;
   const onTurnComplete = (info) => maintainTurn({ ...info, config, projectsFile: PROJECTS_FILE, consolidator: turnConsolidator,
     log: (message) => term.line(c.dim(`  ${message}`)) });
-  if (detectedProject) term.line(c.dim(`  project ~ ${detectedProject.name} (from cwd)`));
+  if (detectedProject && !opts.json) term.line(c.dim(`  project ~ ${detectedProject.name} (from cwd)`));
 
   // The REPL is one session at a time, so a single slot is enough to attach
   // sub-agent progress to the turn currently streaming.
@@ -567,8 +575,15 @@ export async function main({ voiceIO = {} } = {}) {
     }
   }
 
+  const assistantTasks = new AssistantTaskStore({ directory: path.join(CONFIG_DIR, ASSISTANT_TASK_DIRECTORY) });
+  assistantTasks.recoverInterrupted();
+  const resumedTask = opts.resumeTask ? assistantTasks.get(opts.resumeTask) : null;
+  if (opts.resumeTask && !resumedTask) throw new Error('Saved assistant request was not found. Use ankita work list.');
+  const assistantOwnerId = resumedTask?.ownerId || `cli:${createHash('sha256').update(path.resolve(process.cwd())).digest('hex')}`;
+  let pendingAssistantTaskId = opts.resumeTask;
   const agent = new Agent({
     client,
+    toolContext: { assistantTasks, assistantOwnerId, assistantSurface: 'terminal', profileFile: PROFILE_FILE },
     skillsEnabled: !opts.daemon,
     tool,
     config,
@@ -589,12 +604,14 @@ export async function main({ voiceIO = {} } = {}) {
         term.line(c.magenta(`  ⇢ ${event.subagentType}: ${event.description}`));
       } else if (event.type === SUBAGENT_EVENT.toolCall) {
         term.line(c.dim(`      ${event.call?.function?.name || 'tool'}`));
+      } else if (event.type === SUBAGENT_EVENT.message) {
+        term.line(c.dim(`      ${event.from === SUBAGENT_PARENT_TARGET ? SUBAGENT_MESSAGE_LABELS.toChild : SUBAGENT_MESSAGE_LABELS.toParent}: ${event.message}`));
       } else if (event.type === SUBAGENT_EVENT.end) {
         const secs = (event.durationMs / 1000).toFixed(1);
         term.line(c.dim(`      ${event.status} · ${secs}s${event.transcript ? '' : ' · no transcript'}`));
       }
     },
-    print: (s) => term.line(s),
+    print: (s) => { if (!opts.json) term.line(s); },
     write: (s) => term.write(s),
     confirm: (toolName, detail) => {
       const signal = agent.abort?.signal;
@@ -613,6 +630,11 @@ export async function main({ voiceIO = {} } = {}) {
     },
   });
   agent.model = model;
+  if (resumedTask) {
+    const project = resumedTask.projectId ? new ProjectStore(PROJECTS_FILE).load().find(resumedTask.projectId) : null;
+    if (resumedTask.projectId && !project) throw new Error('The saved task project is no longer available.');
+    agent.setProject(project ? projectBlock(project) : '', resumedTask.projectId, resumedTask.workspacePath);
+  }
 
   // Connect any MCP servers the user has already approved, so their tools are
   // in the very first request. Only approved servers start, so this cannot
@@ -621,9 +643,9 @@ export async function main({ voiceIO = {} } = {}) {
   if (agent.useTools) {
     const mcpStore = new McpStore(MCP_FILE).load();
     if (mcpStore.enabled.some((s) => mcpStore.isApproved(s))) {
-      term.write(c.dim("  connecting MCP servers..."));
+      if (!opts.json) term.write(c.dim("  connecting MCP servers..."));
       await mcp.reconcile(mcpStore).catch(() => {});
-      term.write("\r\x1b[K");
+      if (!opts.json) term.write("\r\x1b[K");
       agent.refreshPrompt();
     }
     if (config.composioApiKey || config.composioBrokerUrl) {
@@ -631,7 +653,7 @@ export async function main({ voiceIO = {} } = {}) {
         await mcp.ensureComposio(config, new ComposioStore(COMPOSIO_FILE).load());
         agent.refreshPrompt();
       } catch (err) {
-        term.line(c.red(`  connected apps: ${err.message}`));
+        if (!opts.json) term.line(c.red(`  connected apps: ${err.message}`));
       }
     }
   }
@@ -699,7 +721,7 @@ export async function main({ voiceIO = {} } = {}) {
     try {
       const data = JSON.parse(fs.readFileSync(file, "utf8"));
       const n = restoreSession(data, opts.continueName);
-      console.log(c.dim(`  resumed ${n} messages from ${opts.continueName}  (model ${agent.model})`));
+      if (!opts.json) console.log(c.dim(`  resumed ${n} messages from ${opts.continueName}  (model ${agent.model})`));
     } catch (err) {
       console.error(c.red(`  cannot resume: ${err.message}`));
       process.exit(1);
@@ -768,7 +790,9 @@ export async function main({ voiceIO = {} } = {}) {
     let spoke = false;
 
     try {
+      const assistantTaskId = pendingAssistantTaskId; pendingAssistantTaskId = null;
       const reply = await agent.send(text, {
+        assistantTaskId,
         onMessageStart: () => {
           if (show && !spoke && !opts.prompt) spin = spinner("thinking");
           if (!plain) {
@@ -1167,7 +1191,7 @@ export async function main({ voiceIO = {} } = {}) {
         const language = speechLanguage, turn = session.captureSpeechTurn;
         session.speech.acceptTurn(turn);
         try {
-          const context = { ...captureVoiceContext(agent), audioSession: session,
+          const context = { ...captureVoiceContext(agent, { toolContext: { assistantTasks, assistantOwnerId, assistantSurface: 'voice', profileFile: PROFILE_FILE, projectsFile: PROJECTS_FILE } }), audioSession: session,
             speech: { queue: session.speech, turn, signal: session.controller.signal } };
           const record = await voiceJobs.submit({ ownerId: voiceOwner, transcript: clean, language, confidence: speechConfidence, context,
             speech: { minIntervalMs: config.voiceJobSpeakMinIntervalMs, gapMs: 0, waitUpdateMs: config.voiceJobWaitUpdateMs },
@@ -1197,10 +1221,20 @@ export async function main({ voiceIO = {} } = {}) {
   };
 
   if (opts.prompt !== null) {
+    const finishPrompt = async code => {
+      await cleanupJobs(agent.state).catch(() => {});
+      term.saveHistory(HISTORY_FILE);
+      await closeSharedBrowser().catch(() => {});
+      await mcp.closeAll().catch(() => {});
+      term.close();
+      // Let Windows finish closing native handles after overlapping model requests.
+      process.exitCode = code;
+    };
     if (!opts.prompt.trim()) {
       if (opts.json) console.log(JSON.stringify({ ok: false, error: "empty prompt" }));
       else console.error("empty prompt");
-      process.exit(2);
+      await finishPrompt(2);
+      return;
     }
     if (opts.json) {
       const started = Date.now();
@@ -1218,15 +1252,13 @@ export async function main({ voiceIO = {} } = {}) {
           ...(outcome.error ? { error: outcome.error } : {}),
         })
       );
-      await cleanupJobs(agent.state).catch(() => {});
-      term.saveHistory(HISTORY_FILE);
-      process.exit(outcome.error ? 1 : 0);
+      await finishPrompt(outcome.error ? 1 : 0);
+      return;
     }
     const outcome = await runTurn(opts.prompt);
     if (opts.speak && outcome.text) await speakText(outcome.text);
-    await cleanupJobs(agent.state).catch(() => {});
-    term.saveHistory(HISTORY_FILE);
-    process.exit(0);
+    await finishPrompt(0);
+    return;
   }
 
   /* ---------------------- proactive: schedule/watch/inbox ---------------------- */

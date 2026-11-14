@@ -5,13 +5,14 @@ import * as channel from '../../src/channels/voice.mjs';
 import { DesktopAudioDevices } from './audio-devices.mjs';
 import { isPrivateAudioOutput } from '../../src/channels/audio-device.mjs';
 import { createVoiceBrain, createAcknowledgements, createVoiceReportSpeech } from '../../src/core/voice-session.mjs';
+import { prepareVoiceStreamClip, isVoiceStreamClip } from '../../src/channels/voice-stream-clip.mjs';
 import { createVoiceNarrator } from '../../src/core/voice-narrator.mjs';
 import { configuredSecrets, redactText } from '../../src/core/redact.mjs';
 import { VoiceTaskStore, voiceTaskReport } from '../../src/automation/voice-task.mjs';
 import { VoiceJobs } from '../../src/automation/voice-jobs.mjs';
-import { VOICE_FINAL_STATES } from '../../src/automation/voice-task-policy.mjs';
+import { VOICE_FINAL_STATES, VOICE_REPORT_ERRORS } from '../../src/automation/voice-task-policy.mjs';
 import { VoiceSpeechQueue } from '../../src/automation/voice-speech-queue.mjs';
-import { emptyVoiceState, voiceStatePatch, voiceCommand, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE, VOICE_PUBLIC_STEPS } from '../shared/voice.mjs';
+import { emptyVoiceState, voiceStatePatch, voiceCommand, voiceLocalControl, VOICE_SPEECH_ACTIONS, VOICE_LOCAL_ACTIONS, VOICE_SPEECH_ERRORS, VOICE_EVENT, VOICE_METER_INTERVAL_MS, VOICE_BARGE_GUARD_MS, VOICE_POLL_MS, VOICE_CAPTION_CHARS, VOICE_ERROR_CHARS, VOICE_UPDATE_CHARS, VOICE_API_REQUIRED_MESSAGE, VOICE_PUBLIC_STEPS } from '../shared/voice.mjs';
 import { CHATGPT_BROWSER_PROVIDER } from '../shared/chatgpt-browser.mjs';
 
 const DESKTOP_VOICE_PROVIDER = 'baseten'; // Desktop voice uses the Meta planner without changing typed-chat settings.
@@ -25,6 +26,14 @@ const PLAYBACK_TEST_ACTIVE = 'End voice before testing your speakers.';
 const SPEAKER_ECHO_SETTLE_MS = 300; // Milliseconds: let output buffers/room echo fade before reopening a speaker microphone.
 const STANDBY_CUE_MS = 1400; // Milliseconds: a one-shot wake ring, longer than the CSS animation to be seen once.
 const STOPPED_LINE = 'Stopped.'; // Spoken confirmation after a stop word cancels work.
+const SPEECH_STOPPED_LINE = 'Speech stopped. Your work keeps running.'; // Stopping audio must never imply cancelling its work.
+const MICROPHONE_PAUSED_LINE = 'Microphone paused. Use Resume microphone to listen again.';
+const NO_REPORT_LINE = 'No unfinished spoken report is available.';
+const STATUS_EMPTY_LINE = 'There are no voice requests in this conversation yet.';
+const STATUS_COMMAND_RUNNING_LINE = 'Command still running'; // A completed request can still own a live process.
+const STATUS_ACTIVE_LABELS = Object.freeze({ queued: 'Waiting to start', running: 'Working', waiting_for_approval: 'Waiting for your permission',
+  waiting_for_resource: 'Waiting for access', cancelling: 'Stopping' }); // These phrases describe observed task states only.
+const STATUS_REPORT_LIMIT = 2; // Jobs/status: keep a local spoken answer short.
 // Panel copy for the window just after a reply, and for speech dropped in standby.
 const FOLLOW_UP_HINT = 'Go ahead — I am still listening.';
 const WAKE_HINT = 'Say "Ankita" first.';
@@ -74,6 +83,10 @@ export class DesktopVoice {
         const found = await this.devices.inspect();
         return isPrivateAudioOutput(found.devices.find(item => item.id === (outputDevice || found.defaultRenderId)));
       }, watchPlayback: listener => this.devices.watch(listener), ...io };
+    // Legacy injected audio hosts only implement buffered IO. Never silently call the cloud around them.
+    this.streaming = typeof this.io.synthesizeSarvamStream === 'function' && typeof this.io.playMp3Stream === 'function'
+      && (!Object.hasOwn(io, 'synthesizeSarvam') || Object.hasOwn(io, 'synthesizeSarvamStream'))
+      && (!Object.hasOwn(io, 'playMp3') || Object.hasOwn(io, 'playMp3Stream'));
     this.state = emptyVoiceState();
     this.current = null;
     const config = getConfig();
@@ -103,6 +116,9 @@ export class DesktopVoice {
   publish(session, patch) {
     if (this.current !== session) return;
     const safe = { ...patch };
+    safe.bargeIn = Boolean(this.owns(session) && session.bargeIn);
+    if (session.speech) safe.speech = { turn: session.speech.turn, speaking: Boolean(session.speech.active),
+      reports: session.speech.reportState().map(({ id, label, state }) => ({ id, label: this.clean(label, session.config), state })) };
     for (const key of ['caption', 'update', 'error', 'microphone']) if (safe[key] != null) safe[key] = this.clean(safe[key], session.config);
     this.state = voiceStatePatch(this.state, safe);
     try { this.emit({ type: VOICE_EVENT, state: this.snapshot() }); } catch { /* A closed window does not own the job. */ }
@@ -187,7 +203,7 @@ export class DesktopVoice {
         this.publish(session, item.kind === 'progress' ? { phase, update: line } :
           { phase, caption: line, captionRole: 'assistant', update: '' });
       },
-      onFinish: () => { session.playingAt = 0; if (this.owns(session) && !session.paused) this.publish(session, { phase: this.restingPhase(session) }); },
+      onFinish: () => { session.playingAt = 0; queueMicrotask(() => { if (this.owns(session) && !session.paused) this.publish(session, { phase: this.restingPhase(session) }); }); },
       onError: error => this.fail(session, error),
     });
     session.routingReady = this.routeOutput(session.config, session.microphone.name);
@@ -237,21 +253,42 @@ export class DesktopVoice {
     }
   }
 
-  async synthesize(session, text, detected = session.language) {
+  async synthesize(session, text, detected = session.language, { signal = session.audio.signal } = {}) {
     const languageCode = this.io.chooseSarvamLanguage({ text, detected });
     return this.io.synthesizeSarvam({ apiKey: session.config.sarvamApiKey, model: session.config.sarvamTtsModel,
-      speaker: this.io.resolveSarvamSpeaker(session.config, languageCode), languageCode, text });
+      speaker: this.io.resolveSarvamSpeaker(session.config, languageCode), languageCode, text, signal });
+  }
+
+  /** Prefetch one real chunk; the queue can start playback while the rest is arriving. */
+  async prepareSpeech(session, text, detected = session.language, { signal = session.audio.signal } = {}) {
+    const combined = AbortSignal.any([signal, session.audio.signal]);
+    combined.throwIfAborted();
+    if (!this.streaming) {
+      const audio = await this.synthesize(session, text, detected, { signal: combined });
+      combined.throwIfAborted();
+      if (this.owns(session)) this.publish(session, { delivery: { mode: 'buffered', fallback: 'runtime', firstChunkMs: null } });
+      return audio;
+    }
+    const languageCode = this.io.chooseSarvamLanguage({ text, detected });
+    return prepareVoiceStreamClip({ signal: combined,
+      stream: ({ signal }) => this.io.synthesizeSarvamStream({ apiKey: session.config.sarvamApiKey, model: session.config.sarvamTtsModel,
+        speaker: this.io.resolveSarvamSpeaker(session.config, languageCode), languageCode, text, signal }),
+      buffer: ({ signal }) => this.synthesize(session, text, detected, { signal }) });
   }
 
   async play(session, audio, { signal }) {
-    if (session.bargeIn) return this.io.playMp3(audio, { signal, rejectOnFailure: true });
+    const playback = () => isVoiceStreamClip(audio) ? this.io.playMp3Stream(({ signal: playerSignal }) => audio.open({ signal: playerSignal,
+      onDelivery: delivery => { if (!signal.aborted && this.owns(session)) this.publish(session, { delivery }); } }), { signal, rejectOnFailure: true })
+      : this.io.playMp3(audio, { signal, rejectOnFailure: true });
+    if (signal.aborted || !this.owns(session)) return;
+    if (session.bargeIn) return playback();
     let release;
     const quiet = new Promise(resolve => { release = resolve; });
     session.outputQuiet = quiet;
     try {
       await this.stopInput(session); // Close capture before any speaker audio can be recorded.
       if (signal.aborted || !this.owns(session)) return;
-      await this.io.playMp3(audio, { signal, rejectOnFailure: true });
+      await playback();
       if (this.owns(session)) await abortable(wait(SPEAKER_ECHO_SETTLE_MS), session.audio.signal);
     } finally {
       if (session.outputQuiet === quiet) session.outputQuiet = null;
@@ -580,6 +617,23 @@ export class DesktopVoice {
       }
       const text = command.text;
       session.language = heard.languageCode || '';
+      // A bare continuation can mean continuing work; without a speech target,
+      // leave that decision to the planner rather than swallowing the request.
+      const parsedControl = voiceLocalControl(text);
+      const localControl = [VOICE_SPEECH_ACTIONS.resume, VOICE_SPEECH_ACTIONS.repeat, VOICE_SPEECH_ACTIONS.dismiss].includes(parsedControl)
+        && !session.speech.reportState().length ? null : parsedControl;
+      if (localControl) {
+        // A microphone pause is temporary, so Resume must retain its tentative
+        // interruption instead of treating it as a new conversational request.
+        if (localControl !== VOICE_LOCAL_ACTIONS.pause) session.speech.acceptTurn(heard.speechTurn);
+        try { await this.localControl(session, localControl, heard.speechTurn); }
+        catch (error) { if (this.owns(session)) this.publish(session, { error: error.message }); }
+        heard = null;
+        if (!this.owns(session)) return;
+        session.userSpeaking = false;
+        if (!session.paused) { session.speech.resume(); this.settle(session); }
+        continue;
+      }
       this.publish(session, { caption: text, captionRole: 'user', phase: 'working', error: null });
       session.speech.acceptTurn(heard.speechTurn);
       try { await this.delegate(session, { ...heard, text }); }
@@ -624,15 +678,64 @@ export class DesktopVoice {
     return session.speech.offer({ jobId: event.taskId, kind: 'progress', turn, signal: combined, line,
       prepare: async queueSignal => {
         line.text = await session.narrate(event, { signal: queueSignal });
-        return line.text && this.owns(session) ? this.synthesize(session, line.text) : null;
+        return line.text && this.owns(session) ? this.prepareSpeech(session, line.text, session.language, { signal: queueSignal }) : null;
       }, beginPlayback: () => this.owns(session) && beginPlayback(line.text) });
   }
 
   report(session, task, turn) {
     const item = createVoiceReportSpeech({ jobId: task.id, label: task.label, text: voiceTaskReport(task),
       maxChars: session.config.voiceSpeakMaxChars, signal: session.audio.signal, turn,
-      synthesize: text => this.synthesize(session, text, task.language) });
-    if (item) void session.speech.offer(item);
+      synthesize: (text, options) => this.prepareSpeech(session, text, task.language, options) });
+    if (item) {
+      void session.speech.offer(item).finally(() => { if (this.owns(session)) this.publish(session, {}); });
+      this.publish(session, {});
+    }
+  }
+
+  /** Speak observed state directly: a status question must not become another task. */
+  async localControl(session, action, turn) {
+    if (!this.owns(session) || turn !== session.speech.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+    if (action === VOICE_LOCAL_ACTIONS.pause) {
+      this.publish(session, { caption: MICROPHONE_PAUSED_LINE, captionRole: 'assistant', update: '' });
+      return this.pause();
+    }
+    if (action === VOICE_LOCAL_ACTIONS.status) {
+      const jobs = this.jobs.list(session.threadId), active = jobs.filter(job => !VOICE_FINAL_STATES.includes(job.status) || job.resourcesHeld);
+      const line = (active.length ? active : jobs.slice(0, STATUS_REPORT_LIMIT)).slice(0, STATUS_REPORT_LIMIT).map(job => {
+        const state = job.resourcesHeld ? STATUS_COMMAND_RUNNING_LINE : STATUS_ACTIVE_LABELS[job.status];
+        return state ? `${state}: ${job.label || job.transcript}.` : `${job.label || job.transcript}: ${voiceTaskReport(job)}`;
+      }).join(' ') || STATUS_EMPTY_LINE;
+      this.publish(session, { caption: line, captionRole: 'assistant', update: '' });
+      void session.speech.offer({ jobId: session.id, kind: 'reply', turn, line: { text: line }, signal: session.audio.signal,
+        prepare: signal => this.prepareSpeech(session, line, session.language, { signal }) }).finally(() => { if (this.owns(session)) this.publish(session, {}); });
+      session.speech.finishTurn(turn);
+      return this.snapshot();
+    }
+    return this.speechControl({ sessionId: session.id, turn, action });
+  }
+
+  /** Local UI and voice share the same session/turn checks and report queue. */
+  async speechControl({ sessionId, turn, action, id } = {}) {
+    const session = this.current;
+    if (!session || !this.owns(session) || session.id !== sessionId) throw new Error(VOICE_REPORT_ERRORS.ended);
+    const queue = session.speech;
+    if (!queue || turn !== queue.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+    if (!Object.values(VOICE_SPEECH_ACTIONS).includes(action)) throw new Error(VOICE_SPEECH_ERRORS.invalid);
+    if (id && !queue.reportState().some(report => report.id === id)) throw new Error(VOICE_SPEECH_ERRORS.missing);
+    // A button can arrive during playback, before microphone capture has interrupted it.
+    if (queue.active && !queue.active.controller.signal.aborted) turn = queue.interrupt();
+    queue.acceptTurn(turn);
+    if (action === VOICE_SPEECH_ACTIONS.stop) {
+      await queue.interruption?.stopped;
+      if (!this.owns(session) || turn !== queue.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+      this.publish(session, { caption: SPEECH_STOPPED_LINE, captionRole: 'assistant', update: '', phase: session.paused ? 'paused' : this.restingPhase(session) });
+    } else {
+      const result = await queue.controlReport(action, { id, turn, signal: session.audio.signal });
+      if (!this.owns(session) || turn !== queue.turn) throw new Error(VOICE_REPORT_ERRORS.stale);
+      this.publish(session, { ...(result.available ? {} : { update: NO_REPORT_LINE }) });
+    }
+    if (!session.paused) queue.resume();
+    return this.snapshot();
   }
 
   async pause() {

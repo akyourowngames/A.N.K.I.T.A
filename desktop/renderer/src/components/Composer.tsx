@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useId, useRef } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { ContextPreview } from './ContextPreview';
 import type { ChatMessage, Model, Project } from '../../../shared/wire';
 import { Icon } from './Icons';
 import { ModelPicker } from './ModelPicker';
@@ -213,6 +214,9 @@ export function Composer({ threadId, name, messages, running, sendDisabled = fal
   const { text, files: attachments, error: notice, reading } = drafts[threadId] || EMPTY_COMPANION_DRAFT;
   const setText = (value: string) => store.update(threadId, draft => ({ ...draft, text: value }));
   const input = useRef<HTMLTextAreaElement>(null);
+  const [preview, setPreview] = useState<Attachment | null>(null);
+  useEffect(() => { setPreview(null); }, [threadId]);
+  useEffect(() => { if (preview && !attachments.includes(preview)) setPreview(null); }, [preview, attachments]);
   const fileInput = useRef<HTMLInputElement>(null);
   const slashId = useId();
   const slash = useSlashCommands({ text, setText, threadId, revision: commandsRevision, models, model, provider, projects, projectId, onModel, onProject, onCommand, focus: () => input.current?.focus() });
@@ -276,12 +280,13 @@ export function Composer({ threadId, name, messages, running, sendDisabled = fal
     {(attachments.length > 0 || notice || reading) && <div className="composer-attachments">
       {attachments.map((file, index) => <span className="attachment-chip" key={`${file.name}-${index}`}>
         {file.preview ? <img src={file.preview} alt="" /> : <Icon name="file" size={14} />}
-        <span className="attachment-name" title={file.name}>{file.name}</span>
+        <button type="button" className="attachment-name" title={file.name} aria-label={`Review ${file.name}`} onClick={() => setPreview(file)}>{file.name}</button>
         <button type="button" onClick={() => removeAttachment(index)} aria-label={`Remove ${file.name}`}><Icon name="close" size={12} /></button>
       </span>)}
       {reading && <span className="attachment-notice dim" role="status">Reading files…</span>}
       {notice && <span className="attachment-notice" role="status">{notice}</span>}
     </div>}
+    {preview && <ContextPreview attachment={preview} onClose={() => setPreview(null)} onRemove={() => { store.update(threadId, draft => ({ ...draft, files: draft.files.filter(file => file !== preview) })); setPreview(null); }} />}
     <div className="composer-bottom">
       <div className="composer-tools">
         <input ref={fileInput} type="file" multiple hidden accept={ACCEPT}

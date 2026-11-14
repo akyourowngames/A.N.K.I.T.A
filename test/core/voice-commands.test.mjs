@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { voiceCommand, VOICE_WAKE_PHRASE, VOICE_PHASE_LABELS } from '../../desktop/shared/voice.mjs';
+import * as voiceProtocol from '../../desktop/shared/voice.mjs';
 
 const awake = { listening: true };
 const asleep = { listening: false };
@@ -80,5 +81,17 @@ test('the wake word can be switched off, which makes standby unnecessary', () =>
 test('blank or whitespace transcripts are ignored in every mode', () => {
   for (const value of ['', '   ', '\n\t', null, undefined]) {
     assert.deepEqual(voiceCommand(value, awake), { kind: 'ignored', text: '' });
+  }
+});
+
+test('local voice controls match whole requests and leave mixed work for the planner', () => {
+  assert.equal(typeof voiceProtocol.voiceLocalControl, 'function');
+  for (const [phrase, action] of [['What is the status?', 'status'], ['continue', 'resume'], ['Continue the report.', 'resume'],
+    ['Repeat that', 'repeat'], ['Skip this report', 'dismiss'], ['Stop speaking!', 'stop'], ['Pause listening', 'pause']]) {
+    assert.equal(voiceProtocol.voiceLocalControl(phrase), action, phrase);
+  }
+  for (const phrase of ['pause Spotify', 'continue the download', 'repeat the search', 'status of my flight',
+    'stop speaking and save a note', 'skip to the next song', 'continue, then open my notes']) {
+    assert.equal(voiceProtocol.voiceLocalControl(phrase), null, phrase);
   }
 });

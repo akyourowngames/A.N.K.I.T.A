@@ -8,6 +8,7 @@ import { spawn } from 'node:child_process';
 import { PassThrough } from 'node:stream';
 import { Terminal } from '../../src/core/ui.mjs';
 import { JOB_COMMANDS, isJobCommand, jobEventText } from '../../src/tooling/job-ui.mjs';
+import { removeFixtureDirectory } from '../helpers/fixture-cleanup.mjs';
 
 test('terminal job controls can bypass an active chat wait without consuming its answer', async t => {
   const input = new PassThrough(), output = new PassThrough();
@@ -39,14 +40,17 @@ test('actual CLI starts a background job, lists it, sends stdin, reads output an
   fs.writeFileSync(childFile, "process.stdin.setEncoding('utf8'); process.stdin.on('data', s=>{ console.log('ACK:'+s.trim()); if(s.includes('quit')) process.exit(0); }); console.log('READY');");
   fs.writeFileSync(path.join(cwd, '.env'), `API_BASE=http://127.0.0.1:${server.address().port}/v1\nAPI_KEY=dummy\nMODEL=mock\nTOOLS=on\nAUTO_APPROVE=on\nMEMORY_CONSOLIDATION=off\nEMBEDDINGS=off\n`);
   const child = spawn(process.execPath, [path.resolve('chat.mjs'), '--plain', '--no-banner'], { cwd, env: { ...process.env, CONFIG_DIR: cwd, NO_COLOR: '1' }, windowsHide: true });
+  const childClosed = new Promise(resolve => child.once('close', resolve));
   let output = '', error = '';
   child.stdout.on('data', d => { output += d; });
   child.stderr.on('data', d => { error += d; });
   t.after(async () => {
-    child.stdin.end('/exit\n');
-    if (child.exitCode === null) child.kill();
-    server.closeAllConnections(); server.close();
-    fs.rmSync(cwd, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (child.stdin.writable) child.stdin.end('/exit\n');
+    if (child.exitCode === null && child.signalCode === null) child.kill();
+    await childClosed;
+    server.closeAllConnections();
+    await new Promise(resolve => server.close(resolve));
+    await removeFixtureDirectory(cwd);
   });
   const until = async pattern => {
     const deadline = Date.now() + 12000;
@@ -64,6 +68,6 @@ test('actual CLI starts a background job, lists it, sends stdin, reads output an
   assert.match(output, /1 running \| \/jobs/);
   assert.match(output, /next_offset=/);
   child.stdin.write('/exit\n');
-  await new Promise(resolve => child.once('exit', resolve));
+  await childClosed;
   assert.equal(child.exitCode, 0, error);
 });

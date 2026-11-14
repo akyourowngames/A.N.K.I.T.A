@@ -95,7 +95,9 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
     retryEmptyResponse: true }, // Retry one unexecuted model decision, never restart a partially completed task.
     project: captured.project, projectId: captured.projectId, workspacePath: captured.workspacePath,
     mcp: captured.mcp, browserManager, browserThreadId: entry.ownerId,
-    memoryEnabled: false, autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
+    // Only a foreground host's explicitly supplied profile enables bounded, fresh recall.
+    memoryEnabled: !entry.controlOnly && typeof captured.toolContext?.profileFile === 'string',
+    autoProject: false, skillsEnabled: captured.skillsEnabled, disabledSkills: captured.disabledSkills,
     allowedTools: entry.controlOnly ? new Set(runtimeTools.keys()) : null, confirm: approve, print: () => {}, write: () => {},
     systemSuffix: [CONTROL_GUIDANCE, reports?.context, entry.controlOnly && CAPACITY_GUIDANCE].filter(Boolean).join('\n'),
     toolContext: { ...captured.toolContext, ...toolContext, runtimeTools, responsePolicy: completion.policy,
@@ -129,7 +131,7 @@ export async function runVoiceWorker(entry, { observer, task, signal, controlToo
         observer.onToolResult?.(call, result, verdict); callbacks.onToolResult?.(call, result, verdict);
       },
     };
-    const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions));
+    const text = await withVoiceBrain(worker, brain, () => worker.send(entry.transcript, sendOptions), { signal });
     return { text, error: completion.outcome()?.error || null, model: worker.replyModel || brain?.model || worker.model, speechHandled: Boolean(reports?.handled() && !otherTools && !completion.outcome()?.error) };
   } finally {
     signal?.removeEventListener('abort', abort);

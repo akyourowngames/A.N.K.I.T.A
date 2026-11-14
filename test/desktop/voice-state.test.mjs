@@ -52,3 +52,15 @@ test('older running jobs and command holders remain visible before recent result
   assert.ok(view.jobs.some(job => job.id === 'older-running'));
   assert.ok(view.jobs.some(job => job.id === 'older-command'));
 });
+
+test('public speech state retains control targets without private report content or mutable references', () => {
+  const reports = [{ id: 'report', label: 'Saved note', state: 'suspended', text: 'private spoken text', audio: 'private clip' }];
+  const view = voice.voiceStatePatch(voice.emptyVoiceState(), { bargeIn: true, speech: { turn: 7, speaking: false, reports } });
+  assert.equal(view.bargeIn, true);
+  assert.deepEqual(view.speech, { turn: 7, speaking: false, reports: [{ id: 'report', label: 'Saved note', state: 'suspended' }] });
+  reports[0].label = 'Changed after publication';
+  assert.equal(view.speech.reports[0].label, 'Saved note');
+  assert.ok(!JSON.stringify(view).includes('private'));
+  assert.deepEqual(voice.voiceStatePatch(view, { speech: { turn: -1, reports: [null, { id: 'bad', state: 'invented' }] } }).speech,
+    { turn: 0, speaking: false, reports: [] });
+});

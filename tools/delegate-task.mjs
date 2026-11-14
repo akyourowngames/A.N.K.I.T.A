@@ -12,11 +12,12 @@ export const name = SUBAGENT_TOOL;
 // longer than the call itself is context spent on every turn.
 export const description =
   'Delegate a self-contained task to a sub-agent that cannot see this conversation. ' +
-  'explore/reviewer are read-only and parallel; worker edits the workspace alone. Verify the report before claiming done.';
+  'Set background=true to get an ID immediately, then use subagent_control to send, list, wait or cancel. Workers share a serialized workspace. Verify reports.';
 
 export const parameters = {
   type: 'object',
   properties: {
+    background: { type: 'boolean', description: 'Return immediately while the child works. Default false preserves blocking delegation.' },
     subagent_type: {
       type: 'string',
       enum: [...SUBAGENT_TYPES],

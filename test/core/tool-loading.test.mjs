@@ -158,13 +158,15 @@ test('tools off means no specs at all, activated or not', () => {
 
 test('a one-shot agent carries every tool available outside the chat REPL', () => {
   const worker = new Agent({ client: {}, config: { tools: true }, deferTools: false });
-  assert.equal(worker.currentSpecs().length, index.tools.length - 1, 'no discovery round trip for routines');
+  const chatOnly = 2; // skill and skill_manage stay behind an interactive chat.
+  assert.equal(worker.currentSpecs().length, index.tools.length - chatOnly, 'no discovery round trip for routines');
   assert.ok(!worker.currentSpecs().some((s) => s.function.name === 'skill'));
+  assert.ok(!worker.currentSpecs().some((s) => s.function.name === 'skill_manage'));
   assert.ok(worker.currentSpecs().some((s) => s.function.name === 'github_notifications'));
   assert.ok(worker.currentSpecs().some((s) => s.function.name === 'watch'));
   // Loading more changes nothing for it.
   findTools.run({ query: 'search the web' }, worker);
-  assert.equal(worker.currentSpecs().length, index.tools.length - 1);
+  assert.equal(worker.currentSpecs().length, index.tools.length - chatOnly);
 });
 
 /* ------------------------- the budget, measured -------------------------- */

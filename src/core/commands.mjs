@@ -13,6 +13,8 @@ export const VOICE_TASK_COMMAND = '/task'; // Saved voice delegation records; di
 
 /** Offline entry points; shared by terminal help and the generated cheat sheet. */
 export const LOCAL_COMMANDS = [
+  { name: 'work', args: 'list|show [task-id]', desc: 'inspect saved assistant requests without a provider; --resume-task continues one with normal permissions' },
+  { name: 'skills', args: 'list|search|preview|install [source] [name] [options]', desc: 'find, review and install workflow skills; skills --help shows exact options' },
   { name: 'new skill', args: '[name] [--permissions domains] [--example input] [--directory path]', desc: 'create a documented skill with an offline fixture' },
   { name: 'commands', args: '[search]', desc: 'print a generated terminal and desktop cheat sheet' },
   { name: 'jobs templates', desc: 'list ready-made scheduled tasks without changing anything' },
@@ -21,6 +23,7 @@ export const LOCAL_COMMANDS = [
 ];
 
 export const FLAGS = [
+  { long: '--resume-task', value: '<task-id>', desc: 'continue the unfinished part of a saved assistant request' },
   { short: "-p", long: "--prompt", value: "<text>", desc: "send one message and exit (non-interactive)" },
   { short: "-m", long: "--model", value: "<id>", desc: "model to use" },
   { long: "--max-tokens", value: "<n>", desc: "cap generated tokens per reply" },

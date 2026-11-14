@@ -1,0 +1,6 @@
+{
+  "input": {
+    "name": "workspace-batch"
+  },
+  "expectedFile": "expected.md"
+}

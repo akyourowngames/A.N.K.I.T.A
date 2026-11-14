@@ -1,0 +1,33 @@
+:root { color-scheme: light dark; font-family: system-ui, sans-serif; background: #f4f2ec; color: #202a27; --panel: #fffef9; --muted: #566660; --line: #d1d9d2; --accent: #245c49; }
+* { box-sizing: border-box; }
+body { margin: 0; }
+main { width: min(100%, 46rem); margin: auto; padding: 1.5rem 1rem 3rem; }
+h1 { font-size: clamp(1.8rem, 7vw, 2.6rem); line-height: 1.1; letter-spacing: -.035em; max-width: 15ch; }
+h2 { font-size: 1.25rem; margin: 0 0 .75rem; }
+h3 { font-size: 1rem; }
+p { color: var(--muted); line-height: 1.5; }
+section { background: var(--panel); border: 1px solid var(--line); border-radius: 1rem; padding: 1.1rem; margin-block: 1rem; }
+label { display: block; font-weight: 600; margin-block: 1rem; }
+input, textarea, button { font: inherit; border-radius: .6rem; }
+input, textarea { display: block; width: 100%; padding: .8rem; background: var(--panel); color: inherit; border: 1px solid var(--line); margin-top: .4rem; }
+textarea { resize: vertical; }
+button { padding: .8rem 1rem; min-height: 2.75rem; border: 1px solid var(--accent); background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+button.secondary { background: transparent; color: inherit; border-color: var(--line); }
+button:disabled { opacity: .55; cursor: wait; }
+:focus-visible { outline: 3px solid #ba8b35; outline-offset: 3px; }
+.eyebrow { letter-spacing: .12em; font-size: .75rem; font-weight: 750; }
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; }
+.fingerprint, pre, article { overflow-wrap: anywhere; white-space: pre-wrap; word-break: break-word; }
+pre { font: inherit; line-height: 1.5; }
+.fingerprint { font-size: .8rem; }
+article { border-top: 1px solid var(--line); padding-block: .9rem; }
+article strong { display: block; margin-bottom: .4rem; }
+article p { margin-block: .35rem; }
+summary { cursor: pointer; padding-block: 1rem; font-weight: 600; }
+.check { display: flex; align-items: center; gap: .6rem; }
+.check input { width: auto; margin: 0; }
+#notice:not(:empty) { border-left: 3px solid var(--accent); padding: .8rem; }
+#context-preview { border: 1px solid var(--line); padding: .8rem; margin-block: 1rem; }
+footer { font-size: .85rem; margin-top: 1.5rem; }
+[hidden] { display: none !important; }
+@media (prefers-color-scheme: dark) { :root { background: #111b18; color: #e7eee7; --panel: #1b2822; --muted: #b1c1b7; --line: #405047; --accent: #32785d; } }

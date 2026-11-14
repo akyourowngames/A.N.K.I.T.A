@@ -41,6 +41,7 @@ export function PhonePairingSettings() {
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [now, setNow] = useState(() => Date.now());
+  const [client, setClient] = useState<'browser' | 'app'>('browser');
   const link = useCopy();
 
   const apply = useCallback((next: PhonePairingSnapshot | null) => {
@@ -107,7 +108,8 @@ export function PhonePairingSettings() {
 
   const copyLink = async () => {
     if (!invite) return;
-    if (!await link.copy(invite.uri)) setError('Could not copy the pairing link.');
+    const url = client === 'browser' ? invite.browserUrl : invite.uri;
+    if (!await link.copy(url)) setError('Could not copy the pairing link.');
   };
 
   const teammates = snapshot?.teammates || [];
@@ -183,16 +185,18 @@ export function PhonePairingSettings() {
       <h2 className="settings-section-title">Pair a new phone</h2>
       <section className="settings-panel phone-invite">
         {activeInvite ? <div className="phone-invite-layout">
-          <div className="phone-qr"><img src={activeInvite.qr} width={220} height={220} alt="Pairing QR code for the Ankita app" /></div>
+          <div className="phone-qr"><img src={client === 'browser' ? activeInvite.browserQr : activeInvite.qr} width={220} height={220} alt={client === 'browser' ? 'Pairing QR code for the phone browser' : 'Pairing QR code for the Ankita app'} /></div>
           <div className="phone-invite-copy">
-            <span className="phone-eyebrow">Scan with the Ankita app, or enter the code</span>
+            <label className="phone-field"><span>Open on your phone</span><select aria-label="Open on your phone" className="settings-select" value={client} onChange={event => setClient(event.target.value as 'browser' | 'app')}><option value="browser">Phone browser</option><option value="app">Ankita phone app</option></select></label>
+            <span className="phone-eyebrow">{client === 'browser' ? 'Scan with your phone camera after installing the certificate' : 'Scan with the Ankita app, or enter the code'}</span>
             <strong className="phone-code">{activeInvite.code}</strong>
             <small className={`phone-expiry ${secondsLeft(activeInvite.expiresAt, now) === 0 ? 'expired' : ''}`}>
               {secondsLeft(activeInvite.expiresAt, now) === 0 ? 'This code expired. Create a new one.' : `Expires in ${clockLabel(secondsLeft(activeInvite.expiresAt, now))} · ${activeInvite.attemptsLeft} attempts left`}
             </small>
             <code className="phone-invite-address">{activeInvite.address}</code>
+            {client === 'browser' && <p>Read the assigned conversation, continue saved work, or send selected text for review. Your desktop must approve this phone first.</p>}
             <div className="phone-actions">
-              <button type="button" className="settings-primary" onClick={() => void copyLink()}>{link.copied ? 'Link copied' : 'Copy pairing link'}</button>
+              <button type="button" className="settings-primary" onClick={() => void copyLink()}>{link.copied ? 'Link copied' : client === 'browser' ? 'Copy browser link' : 'Copy pairing link'}</button>
               <button type="button" className="settings-secondary" onClick={() => void cancelInvitation()} disabled={busy === 'cancel'}>Cancel</button>
             </div>
             <p>The code is single-use, opens this computer only, and never contains the phone’s permanent key.</p>
@@ -205,7 +209,7 @@ export function PhonePairingSettings() {
           <button type="button" className="settings-primary" onClick={() => void createInvitation()} disabled={busy === 'invite'}>{busy === 'invite' ? 'Preparing…' : 'Create pairing code'}</button>
           <ol className="phone-steps">
             <li><span>1</span>Install the Ankita certificate on the phone.</li>
-            <li><span>2</span>Open Settings → Connections → Desktop in the phone app.</li>
+            <li><span>2</span>Scan the browser QR with the phone camera, or choose the Ankita phone app.</li>
             <li><span>3</span>Scan the code, then approve the phone here.</li>
           </ol>
         </div>}
