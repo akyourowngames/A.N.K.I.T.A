@@ -70,6 +70,13 @@ test('Today controls continue a saved request and edit/forget the real memory pr
   });
   await page.goto(`http://127.0.0.1:${server.address().port}${ROUTE}`);
   await page.getByText(task.goal, { exact: true }).waitFor();
+  await page.getByRole('article', { name: 'A shared project', exact: true }).waitFor();
+  const memory = page.getByText('I prefer short answers.', { exact: true });
+  await memory.waitFor();
+  await page.getByRole('button', { name: 'Goal', exact: true }).click();
+  await memory.waitFor({ state: 'hidden' });
+  await page.getByRole('button', { name: 'All', exact: true }).click();
+  await memory.waitFor();
   await page.getByRole('button', { name: 'Continue request', exact: true }).click();
   assert.equal(requests[0][3].assistantTaskId, task.id);
   await page.getByRole('button', { name: 'Edit memory', exact: true }).click();
@@ -77,6 +84,7 @@ test('Today controls continue a saved request and edit/forget the real memory pr
   await page.getByRole('button', { name: 'Save memory', exact: true }).click();
   await page.getByText('I prefer clear examples.', { exact: true }).waitFor();
   assert.equal(service.memoryList()[0].text, 'I prefer clear examples.');
+  if (process.env.ANKITA_UI_CAPTURE_DIR) { fs.mkdirSync(process.env.ANKITA_UI_CAPTURE_DIR, { recursive: true }); await page.screenshot({ path: path.join(process.env.ANKITA_UI_CAPTURE_DIR, 'assistant-memory.png'), fullPage: true }); }
   await page.getByRole('button', { name: 'Forget memory', exact: true }).click();
   await page.getByText('I prefer clear examples.', { exact: true }).waitFor({ state: 'hidden' });
   assert.equal(service.memoryList().length, 0);

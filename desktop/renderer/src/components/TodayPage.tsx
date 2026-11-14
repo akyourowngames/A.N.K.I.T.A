@@ -1,15 +1,15 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from 'react';
 import type { AssistantTask, AssistantToday, PersonalMemory, Routine, Teammate } from '../../../shared/wire';
 import { ASSISTANT_ACTIONS, ASSISTANT_CHANGED, ASSISTANT_ROUTINES_CHANGED, KNOWLEDGE_CHANGED, MEMORY_TEXT_LIMIT, RESUMABLE_TASK_STATES } from '../../../shared/assistant.mjs';
 import { describeCron, parseCron } from '../../../../src/automation/cron.mjs';
 import { RoutineLibrary } from './RoutineLibrary';
 import { Icon } from './Icons';
-import { WindowControls } from './WindowControls';
 import './today.css';
 
 const REFRESH_DELAY_MS = 200; // Coalesce action receipts without repeatedly querying IPC for one step.
 const TODAY_UNAVAILABLE = 'Today is unavailable from this app session. Restart Ankita to load matching app components.';
 const MEMORY_KINDS = ['fact', 'preference', 'goal', 'commitment'] as const;
+const MEMORY_KIND_LABELS: Record<string, string> = { fact: 'Fact', preference: 'Preference', goal: 'Goal', commitment: 'Commitment' };
 const EMPTY_MEMORY = { text: '', kind: 'fact', always: false };
 const CHECK_APPS_REQUEST = 'Check my connected calendar and inbox for today. Give a short briefing with sources. Say which sources were unavailable. Do not send, change or delete anything.';
 const TASK_LABELS: Record<string, string> = { queued: 'Starting', running: 'Working', interrupted: 'Interrupted', failed: 'Needs attention', cancelled: 'Stopped', needs_review: 'Check outcome', completed: 'Finished' };
@@ -41,8 +41,8 @@ function TaskCard({ task, owner, busy, run, onOpen, onTeach }: { task: Assistant
   </article>;
 }
 
-export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onOpenThread, onOpenJob, onAsk, onVoice }: {
-  teammates: Pick<Teammate, 'id' | 'name'>[]; chrome: string; sidebarOpen: boolean; onToggleSidebar: () => void;
+export function TodayPage({ teammates, sidebarOpen, onToggleSidebar, onOpenThread, onOpenJob, onAsk, onVoice }: {
+  teammates: Pick<Teammate, 'id' | 'name'>[]; sidebarOpen: boolean; onToggleSidebar: () => void;
   onOpenThread: (id: string) => void; onOpenJob: (job: Routine) => void; onAsk: (text: string) => void; onVoice: (id: string) => void;
 }) {
   const [today, setToday] = useState<AssistantToday | null>(null), [facts, setFacts] = useState<PersonalMemory[]>([]);
@@ -50,6 +50,7 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
   const [draft, setDraft] = useState<{ id?: string; text: string; kind: string; always: boolean; expectedUpdatedAt?: string } | null>(null);
   const [briefOpen, setBriefOpen] = useState(false), [briefCron, setBriefCron] = useState('daily 09:00');
   const [briefOwner, setBriefOwner] = useState(''), [briefError, setBriefError] = useState('');
+  const [memoryFilter, setMemoryFilter] = useState('all');
   const [teachTask, setTeachTask] = useState<AssistantTask | null>(null);
   const alive = useRef(true), revision = useRef(0);
   const refresh = useCallback(async () => {
@@ -87,15 +88,34 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
     finally { setBusy(false); }
   };
   const name = (id: string) => teammates.find(item => item.id === id)?.name || 'Conversation';
-  const shown = facts.filter(fact => `${fact.text} ${fact.kind}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
+  const commitmentGroups = useMemo(() => {
+    const groups = new Map<string, { id: string; name: string; items: AssistantToday['commitments'] }>();
+    for (const item of today?.commitments || []) {
+      const group = groups.get(item.projectId) || { id: item.projectId, name: item.projectName, items: [] };
+      group.items.push(item); groups.set(item.projectId, group);
+    }
+    return [...groups.values()];
+  }, [today?.commitments]);
+  const sourceLabel = (source: unknown) => {
+    if (!source) return 'Source not recorded';
+    if (typeof source === 'string') return source;
+    const type = typeof (source as { type?: unknown }).type === 'string' ? String((source as { type: string }).type) : '';
+    if (!type) return 'Source recorded';
+    return type === 'desktop-memory-editor' ? 'Edited on desktop' : type.replaceAll(/[-_]/g, ' ');
+  };
+  const shown = facts.filter(fact => (memoryFilter === 'all' || fact.kind === memoryFilter)
+    && `${fact.text} ${fact.kind}`.toLocaleLowerCase().includes(query.toLocaleLowerCase()));
   return <main className="today-page">
-    <header className="today-header drag-region"><div className="no-drag">{!sidebarOpen && <button className="icon-button" aria-label="Show sidebar" onClick={onToggleSidebar}><Icon name="panelLeft" /></button>}<strong>Today</strong></div><div className="no-drag"><button className="icon-button" aria-label="Refresh today" onClick={() => void refresh()}><Icon name="refresh" /></button>{chrome === 'custom' && <WindowControls />}</div></header>
+    <header className="today-header drag-region"><div className="no-drag">{!sidebarOpen && <button className="icon-button" aria-label="Show sidebar" onClick={onToggleSidebar}><Icon name="panelLeft" /></button>}<strong>Today</strong></div><div className="no-drag"><button className="icon-button" aria-label="Refresh today" onClick={() => void refresh()}><Icon name="refresh" /></button></div></header>
     <div className="today-scroll"><div className="today-intro"><span className="today-eyebrow">Your day with Ankita</span><h1>What needs your attention?</h1><p>Your requests, saved progress, and what comes next.</p>
       <div className="today-quick-actions"><button className="button-primary" disabled={!teammates.length} onClick={() => onAsk('')}><Icon name="chat" />Ask in chat</button><button disabled={!teammates.length} onClick={() => onVoice(teammates[0].id)}><Icon name="mic" />Talk to Ankita</button></div>
     </div>
     {error && <p role="alert" className="today-error">{error}</p>}
     {!today && !error && <p role="status">Loading your day…</p>}
-    {today && <><section className="today-brief" aria-label="Daily briefing"><h2>At a glance</h2><p>{today.briefing}</p><div className="today-brief-actions"><button disabled={!teammates.length} onClick={() => onAsk(CHECK_APPS_REQUEST)}>Check connected apps in chat <Icon name="external" size={14} /></button><button disabled={!teammates.length || busy} onClick={() => { setBriefError(''); setBriefOpen(open => !open); }}>Schedule daily briefing</button></div>
+    {today && <><section className="today-brief" aria-label="Daily briefing"><div className="today-brief-head"><h2>At a glance</h2><span className={`today-source ${today.externalSources.status}`}>{today.externalSources.status === 'not_checked' ? 'External apps not checked' : today.externalSources.status}</span></div>
+      <div className="today-stats"><div className="today-stat"><strong>{today.unfinished.length}</strong><span>Unfinished</span></div><div className="today-stat"><strong>{today.recent.length}</strong><span>Completed today</span></div><div className="today-stat"><strong>{today.upcoming.length}</strong><span>Upcoming</span></div><div className="today-stat"><strong>{today.pending.length}</strong><span>Results waiting</span></div></div>
+      <p className="today-brief-note">{today.externalSources.notice}</p>
+      <div className="today-brief-actions"><button disabled={!teammates.length} onClick={() => onAsk(CHECK_APPS_REQUEST)}>Check connected apps in chat <Icon name="external" size={14} /></button><button disabled={!teammates.length || busy} onClick={() => { setBriefError(''); setBriefOpen(open => !open); }}>Schedule daily briefing</button></div>
       {briefOpen && <form className="today-brief-schedule" onSubmit={event => void scheduleBriefing(event)}>
         <label>Schedule<input aria-label="Briefing schedule" required maxLength={80} value={briefCron} onChange={event => setBriefCron(event.target.value)} placeholder="daily 09:00" /><small>{parseCron(briefCron) ? describeCron(briefCron) : 'Use daily 08:00, weekdays 09:30, or every 30m.'}</small></label>
         {teammates.length > 1 && <label>Conversation<select aria-label="Briefing conversation" value={briefOwner || teammates[0].id} onChange={event => setBriefOwner(event.target.value)}>{teammates.map(item => <option key={item.id} value={item.id}>{item.name}</option>)}</select></label>}
@@ -111,18 +131,28 @@ export function TodayPage({ teammates, chrome, sidebarOpen, onToggleSidebar, onO
         {today.upcoming.map(job => <button className="today-upcoming" key={job.id} onClick={() => onOpenJob(job)}><Icon name="clock" /><span><strong>{job.name}</strong><small>{job.nextRunAt ? new Date(job.nextRunAt).toLocaleString(undefined, { timeZone: today.timeZone }) : job.cronLabel}</small></span><Icon name="chevron" /></button>)}
         <h2>Finished today <span>{today.recent.length}</span></h2>{today.recent.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}
       </section></div>
-      {today.commitments?.length > 0 && <section className="today-knowledge" aria-label="Project commitments"><h2>Open project commitments</h2>{today.commitments.map(item => <div className="today-task" key={`${item.projectId}:${item.id}`}><small>{item.projectName}</small><p>{item.text}</p><button disabled={busy} onClick={() => void run(ASSISTANT_ACTIONS.commitmentComplete, { id: item.projectId, ref: item.id })}>Mark completed</button></div>)}</section>}
+      {today.commitments?.length > 0 && <section className="today-knowledge today-commitments" aria-label="Project commitments"><div className="today-section-heading"><div><h2>Open project commitments <span>{today.commitments.length}</span></h2><p>Promises and next steps you asked to keep visible.</p></div></div>
+        <div className="today-commitment-grid">{commitmentGroups.map(group => <article className="today-commitment-card" key={group.id} aria-label={group.name}>
+          <header><div><span className="today-project-mark"><Icon name="folder" size={14} /></span><h3>{group.name}</h3></div><span>{group.items.length}</span></header>
+          <ul>{group.items.map(item => <li key={item.id}><details className="today-commitment-item"><summary title={item.text}><span>{item.text}</span><Icon name="chevron" size={12} /></summary></details><button className="today-inline-button" disabled={busy} onClick={() => void run(ASSISTANT_ACTIONS.commitmentComplete, { id: item.projectId, ref: item.id })}>Mark completed</button></li>)}</ul>
+        </article>)}</div>
+      </section>}
       <RoutineLibrary routines={today.routines} teammates={teammates} source={teachTask} onClearSource={() => setTeachTask(null)} onRefresh={() => void refresh()} onOpenThread={onOpenThread} onOpenJob={onOpenJob} />
     </>}
-    <section className="today-knowledge" aria-label="Personal memory"><div className="today-section-heading"><div><h2>What Ankita remembers</h2><p>Keep preferences, goals and commitments current.</p></div><button onClick={() => setDraft({ ...EMPTY_MEMORY })}>Add memory</button></div>
-      <label className="today-search"><Icon name="search" /><input aria-label="Search memory" placeholder="Search your memory" value={query} onChange={event => setQuery(event.target.value)} /></label>
+    <section className="today-knowledge" aria-label="Personal memory"><div className="today-section-heading"><div><h2>What Ankita remembers <span>{facts.length}</span></h2><p>Preferences, goals and commitments Ankita should keep in mind.</p></div><button onClick={() => setDraft({ ...EMPTY_MEMORY })}>Add memory</button></div>
+      <div className="today-memory-toolbar"><label className="today-search"><Icon name="search" /><input aria-label="Search memory" placeholder="Search your memory" value={query} onChange={event => setQuery(event.target.value)} /></label>
+        <div className="today-memory-filters" aria-label="Memory type">{['all', ...MEMORY_KINDS].map(kind => <button key={kind} type="button" aria-pressed={memoryFilter === kind} onClick={() => setMemoryFilter(kind)}>{kind === 'all' ? 'All' : MEMORY_KIND_LABELS[kind] || kind}</button>)}</div></div>
       {draft && <form className="today-memory-editor" onSubmit={saveMemory}><label>Memory text<textarea aria-label="Memory text" required maxLength={MEMORY_TEXT_LIMIT} value={draft.text} onChange={event => setDraft({ ...draft, text: event.target.value })} /></label>
-        <label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{MEMORY_KINDS.map(kind => <option key={kind} value={kind}>{kind}</option>)}</select></label>
+        <label>Type<select value={draft.kind} onChange={event => setDraft({ ...draft, kind: event.target.value })}>{MEMORY_KINDS.map(kind => <option key={kind} value={kind}>{MEMORY_KIND_LABELS[kind] || kind}</option>)}</select></label>
         <label className="today-checkbox"><input type="checkbox" checked={draft.always} onChange={event => setDraft({ ...draft, always: event.target.checked })} />Keep this preference in mind</label>
         <div><button className="button-primary" disabled={busy || !draft.text.trim()}>Save memory</button><button type="button" onClick={() => setDraft(null)}>Cancel</button></div>
       </form>}
-      {!shown.length && <p className="today-empty">{query ? 'No matching memories.' : 'No personal memories saved yet.'}</p>}
-      <div className="today-memories">{shown.map(fact => <article key={fact.id}><div><small>{fact.kind}{fact.always ? ' · kept in mind' : ''}{fact.conflictsWith?.length ? ' · conflicting information' : ''}</small><p>{fact.text}</p><details><summary>Source and date</summary><p>{fact.source ? JSON.stringify(fact.source) : 'Source not recorded'} · {new Date(fact.updatedAt).toLocaleString()}</p></details></div><div className="today-memory-actions"><button className="icon-button" aria-label="Edit memory" title="Edit memory" onClick={() => setDraft({ id: fact.id, text: fact.text, kind: fact.kind, always: fact.always, expectedUpdatedAt: fact.updatedAt })}><Icon name="edit" /></button><button className="icon-button" aria-label="Forget memory" title="Forget memory" disabled={busy} onClick={() => void run(ASSISTANT_ACTIONS.memoryForget, { id: fact.id })}><Icon name="trash" /></button></div></article>)}</div>
+      {!shown.length && <p className="today-empty">{query || memoryFilter !== 'all' ? 'No matching memories.' : 'No personal memories saved yet.'}</p>}
+      <div className="today-memories">{shown.map(fact => <article className="today-memory-card" key={fact.id}>
+        <div className="today-memory-card-head"><span className={`today-kind today-kind-${fact.kind}`}>{MEMORY_KIND_LABELS[fact.kind] || fact.kind}</span>{fact.always && <span className="today-kept">Kept in mind</span>}{fact.conflictsWith?.length ? <span className="today-conflict">Conflicting information</span> : null}</div>
+        <details className="today-memory-text"><summary title={fact.text}>{fact.text}</summary></details>
+        <div className="today-memory-card-foot"><small>{sourceLabel(fact.source)} · {new Date(fact.updatedAt).toLocaleDateString()}</small><div className="today-memory-actions"><button className="icon-button" aria-label="Edit memory" title="Edit memory" onClick={() => setDraft({ id: fact.id, text: fact.text, kind: fact.kind, always: fact.always, expectedUpdatedAt: fact.updatedAt })}><Icon name="edit" /></button><button className="icon-button" aria-label="Forget memory" title="Forget memory" disabled={busy} onClick={() => void run(ASSISTANT_ACTIONS.memoryForget, { id: fact.id })}><Icon name="trash" /></button></div></div>
+      </article>)}</div>
     </section></div>
   </main>;
 }

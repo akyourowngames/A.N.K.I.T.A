@@ -420,7 +420,7 @@ export default function App() {
       chrome={state.chrome} unread={state.unread} toolsCount={state.settings?.tools.length || 0}
       width={sidebarWidth} collapsed={!sidebarOpen} onCollapse={() => setSidebarOpen(false)} onResize={setSidebarWidth}
     />
-    {view === 'today' ? <TodayPage teammates={state.teammates} chrome={state.chrome} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)}
+    {view === 'today' ? <TodayPage teammates={state.teammates} sidebarOpen={sidebarOpen} onToggleSidebar={() => setSidebarOpen(open => !open)}
       onOpenThread={id => { dispatch({ type: 'select', id }); setView('chat'); }}
       onOpenJob={job => { const id = job.deliveryThreadId || job.threadId; if (!id) return; dispatch({ type: 'select', id }); setView('chat'); editJob(job.id); }}
       onAsk={text => { const id = state.selectedId || state.teammates[0]?.id; if (!id) return; appendCompanionDraft('main', id, text); dispatch({ type: 'select', id }); setView('chat'); }}
