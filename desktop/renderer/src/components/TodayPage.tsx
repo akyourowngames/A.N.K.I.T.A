@@ -18,8 +18,8 @@ function TaskCard({ task, owner, busy, run, onOpen, onTeach }: { task: Assistant
   run: (action: string, payload: unknown) => Promise<boolean>; onOpen: (id: string) => void; onTeach: (task: AssistantTask) => void }) {
   const [evidence, setEvidence] = useState<Record<string, string>>({});
   const [outcome, setOutcome] = useState<Record<string, string>>({});
-  return <article className="today-task">
-    <div className="today-task-meta"><span>{owner}</span><span>{TASK_LABELS[task.status] || task.status}</span></div>
+  return <article className="today-task today-task-card">
+    <div className="today-task-meta"><span className="today-task-owner">{owner}</span><span className={`today-task-status status-${task.status}`}>{TASK_LABELS[task.status] || task.status}</span></div>
     <h3>{task.goal}</h3>
     {task.error && <p className="today-error">{task.error}</p>}
     <div className="today-task-actions"><button onClick={() => onOpen(task.ownerId)}>Open conversation</button>
@@ -126,10 +126,10 @@ export function TodayPage({ teammates, sidebarOpen, onToggleSidebar, onOpenThrea
     </section>
       <div className="today-columns"><section aria-label="Unfinished requests"><h2>Pick up where you left off <span>{today.unfinished.length}</span></h2>
         {!today.unfinished.length && <p className="today-empty">No unfinished requests. Start with whatever you need today.</p>}
-        {today.unfinished.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}
+        <div className="today-task-stack">{today.unfinished.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}</div>
       </section><section aria-label="Upcoming tasks"><h2>Coming up</h2>{!today.upcoming.length && <p className="today-empty">No scheduled tasks are turned on.</p>}
         {today.upcoming.map(job => <button className="today-upcoming" key={job.id} onClick={() => onOpenJob(job)}><Icon name="clock" /><span><strong>{job.name}</strong><small>{job.nextRunAt ? new Date(job.nextRunAt).toLocaleString(undefined, { timeZone: today.timeZone }) : job.cronLabel}</small></span><Icon name="chevron" /></button>)}
-        <h2>Finished today <span>{today.recent.length}</span></h2>{today.recent.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}
+        <h2>Finished today <span>{today.recent.length}</span></h2><div className="today-task-stack">{today.recent.map(task => <TaskCard key={task.id} task={task} owner={name(task.ownerId)} busy={busy} run={run} onOpen={onOpenThread} onTeach={setTeachTask} />)}</div>
       </section></div>
       {today.commitments?.length > 0 && <section className="today-knowledge today-commitments" aria-label="Project commitments"><div className="today-section-heading"><div><h2>Open project commitments <span>{today.commitments.length}</span></h2><p>Promises and next steps you asked to keep visible.</p></div></div>
         <div className="today-commitment-grid">{commitmentGroups.map(group => <article className="today-commitment-card" key={group.id} aria-label={group.name}>

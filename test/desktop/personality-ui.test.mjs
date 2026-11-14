@@ -44,6 +44,10 @@ test('personality editor edits structured fields, saves, handles errors, resets 
   await page.getByLabel('Teasing', {exact:true}).selectOption('off');
   await page.locator('summary').click();
   await page.getByLabel('Example reply 1', {exact:true}).fill('A changed example, not a fixed response.');
+  if(process.env.ANKITA_UI_CAPTURE_DIR) {
+    fs.mkdirSync(process.env.ANKITA_UI_CAPTURE_DIR,{recursive:true});
+    await page.screenshot({path:path.join(process.env.ANKITA_UI_CAPTURE_DIR,'personality-examples.png')});
+  }
   await page.getByRole('button', {name:'Save personality',exact:true}).click();
   await page.getByRole('status').filter({hasText:'Personality saved'}).waitFor();
   const saved=await page.evaluate(()=>window.saved);

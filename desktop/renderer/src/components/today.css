@@ -34,6 +34,15 @@
 .today-brief-schedule > div { display: flex; gap: 10px; flex-wrap: wrap; }
 .today-columns { display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 32px; margin-top: 34px; }
 .today-task { padding: 19px 0; border-top: 1px solid var(--edge); overflow-wrap: anywhere; }
+.today-task-stack { display: grid; gap: 12px; }
+.today-task-card { padding: 18px; border: 1px solid var(--edge-strong); border-radius: 12px; background: var(--sidebar); }
+.today-task-owner { color: var(--text-dim); font-size: 11px; }
+.today-task-status { padding: 3px 7px; border: 1px solid var(--edge); border-radius: 999px; color: var(--text-dim); font-size: 10px; white-space: nowrap; }
+.today-task-status.status-running, .today-task-status.status-queued { color: var(--gold); border-color: color-mix(in srgb, var(--gold) 45%, var(--edge)); }
+.today-task-status.status-interrupted, .today-task-status.status-needs_review { color: #d9b78a; border-color: #d9b78a66; }
+.today-task-status.status-failed, .today-task-status.status-cancelled { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 50%, var(--edge)); }
+.today-task-card h3 { margin: 10px 0 14px; }
+.today-task-card .today-task-actions { margin-bottom: 0; }
 .today-task-meta { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; color: var(--text-dim); }
 .today-task h3 { margin: 10px 0 16px; font-size: 14px; font-weight: 500; line-height: 1.55; white-space: pre-wrap; }
 .today-task-actions { flex-wrap: wrap; margin-bottom: 12px; }
