@@ -10,6 +10,8 @@
 
 > How it was built: [How I built a 4-tier approval gate for my AI companion: a heuristic that can never say no](https://dev.to/krish_verma_77e28d3fd63ca/how-i-built-a-4-tier-approval-gate-for-my-ai-companion-a-heuristic-that-can-never-say-no-2k7o) — the write-up behind Ankita's safety model.
 
+> Featured on [AI Business](https://aibusiness.vc/startups/ankita-free-open-source-desktop-ai-companion-windows): "Ankita: A Free, Open-Source AI Companion for Windows That Asks Before It Acts and Can Undo What It Did"
+
 ## Desktop, companion and terminal
 
 | Surface | Use it for |
@@ -419,3 +421,4 @@ Third-party companion attribution ships in
 
 Read [AGENTS.md](AGENTS.md), preserve existing work and include execution evidence
 with changes. Contributions target the `ankita` branch.
+
