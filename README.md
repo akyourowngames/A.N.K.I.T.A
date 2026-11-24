@@ -12,6 +12,16 @@
 
 > Featured on [AI Business](https://aibusiness.vc/startups/ankita-free-open-source-desktop-ai-companion-windows): "Ankita: A Free, Open-Source AI Companion for Windows That Asks Before It Acts and Can Undo What It Did"
 
+## App overview
+
+![Keep every project in context](docs/images/keep-every-project-in-context.png)
+
+*Projects workspace — app preview with demo data.*
+
+![Put subagents to work](docs/images/put-subagents-to-work.jpg)
+
+*Subagent preview — app preview with demo data.*
+
 ## Desktop, companion and terminal
 
 | Surface | Use it for |
@@ -421,4 +431,5 @@ Third-party companion attribution ships in
 
 Read [AGENTS.md](AGENTS.md), preserve existing work and include execution evidence
 with changes. Contributions target the `ankita` branch.
+
 
