@@ -4,6 +4,7 @@
 [![Latest release](https://img.shields.io/github/v/release/akyourowngames/A.N.K.I.T.A)](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
 [![License: MIT](https://img.shields.io/github/license/akyourowngames/A.N.K.I.T.A)](LICENSE)
 [![Platform: Windows](https://img.shields.io/badge/platform-Windows-0078D6)](https://github.com/akyourowngames/A.N.K.I.T.A/releases/latest)
+[![Emerging in Awesome AI Agents](https://img.shields.io/badge/Emerging_in-Awesome_AI_Agents-0969da)](https://github.com/NipunaRanasinghe/awesome-ai-agents/blob/main/EMERGING.md)
 
 **Ankita AI is a personal AI companion for your desktop, built by Krish Verma** — open-source (MIT), local-first, your models. A little companion, a lot more possible: chat, files, terminal and browser tools together, with a floating companion that shows what your assistant is doing.
 
