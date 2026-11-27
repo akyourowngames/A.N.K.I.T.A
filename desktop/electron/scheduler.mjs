@@ -12,6 +12,7 @@ import { MemoryConsolidator } from '../../src/memory/consolidate.mjs';
 import { isLogOnlyTemplate } from '../../src/automation/templates.mjs';
 import { cronFire, describeCron } from '../../src/automation/cron.mjs';
 import { CONFIG_DIR, STATE_FILE, SESSIONS_DIR } from '../../src/core/config.mjs';
+import { BACKGROUND_PERSONALITY_CONFIG } from '../../src/core/personality.mjs';
 import { SchedulerOwnership } from '../../src/automation/scheduler-ownership.mjs';
 import { writeTextFile } from '../../tools/shared/_shared.mjs';
 import { approval as browserDescription } from '../../tools/browser/browser.mjs';
@@ -300,10 +301,10 @@ export class DesktopScheduler {
     const owner = this.owner(routine).owner;
     const heartbeat = routine.kind === 'heartbeat';
     const briefing = routine.assistantBriefing === true;
-    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(heartbeat ? [this.engine.config.briefingPrompt || '', HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext(routine, this.heartbeatOptions())] : []), briefing ? this.briefingContext() : ''].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
+    const config = { ...this.engine.config, agentName: owner?.name || this.engine.config.agentName, backgroundJob: true, [BACKGROUND_PERSONALITY_CONFIG]: true, backgroundExecutionPolicy: routine.executionPolicy, subagentsEnabled: false, systemExtra: [owner?.persona || '', ...(heartbeat ? [this.engine.config.briefingPrompt || '', HEARTBEAT_CARD_INSTRUCTIONS, heartbeatContext(routine, this.heartbeatOptions())] : []), briefing ? this.briefingContext() : ''].filter(Boolean).join('\n'), autoApprove: true, memoryConsolidation: false };
     const worker = new this.engine.AgentClass({ client: this.engine.client, tool: this.engine.tool, mcp: this.engine.mcp, config,
       ...this.engine.contextForJob?.(routine),
-      browserManager: scope, browserThreadId: run.scope, skillsEnabled: false, deferTools: false,
+      browserManager: scope, browserThreadId: run.scope, skillsEnabled: true, deferTools: false,
       // Read-only scheduler access: the background schedule tool is already
       // restricted to list, but without this context the list is a status-free
       // description set, so a heartbeat cannot see a failed job.

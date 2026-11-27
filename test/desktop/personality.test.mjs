@@ -59,3 +59,31 @@ test('a personality saved during provider connection remains current after recon
   assert.equal(engine.baseConfig.personality.description, saved.profile.description);
   assert.deepEqual(engine.getPersonality().profile, saved.profile);
 });
+
+test('a saved personality remains active after the desktop engine restarts', async t => {
+  const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-personality-restart-'));
+  t.after(() => fs.rmSync(directory, { recursive: true, force: true }));
+  const options = {
+    teammateFile: path.join(directory, 'teammates.json'), settingsFile: path.join(directory, 'settings.json'),
+    channelsFile: path.join(directory, 'channels.json'), sessionsDir: path.join(directory, 'sessions'),
+    config: { provider: 'custom', model: 'fixture', tools: false },
+    bootstrap: async () => ({ client: {}, models: [{ id: 'fixture' }], model: 'fixture', provider: { name: 'custom' } }),
+    mcp: { reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {}, summaries: () => [], connectedIds: [] },
+  };
+  const first = new DesktopEngine(options);
+  await first.init();
+  first.savePersonality({ description: 'Persistent character across new work' });
+  await first.close();
+
+  const restarted = new DesktopEngine(options);
+  await restarted.init(); t.after(() => restarted.close());
+  assert.equal(restarted.config.personality.description, 'Persistent character across new work');
+  const agent = restarted.agentFor(restarted.listTeammates()[0].id);
+  let promptUsed = false;
+  agent.streamTurn = async () => {
+    promptUsed = agent.messages[0].content.includes('Persistent character across new work');
+    return { content: 'Done.', toolCalls: [] };
+  };
+  assert.equal(await agent.send('Continue with the saved style'), 'Done.');
+  assert.equal(promptUsed, true, 'the reloaded user-facing turn receives the saved style');
+});

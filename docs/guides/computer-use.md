@@ -22,7 +22,7 @@ Successful input delivery alone does not prove the task succeeded: ANKITA must r
 
 The driver supplies fresh targeting identifiers separately from its readable control list. ANKITA reserves a UTF-8 byte budget for complete snapshot and control-token metadata beside the text, including when normal model-context trimming shrinks a reply. A bare control index is insufficient; omitted targets require a smaller fresh observation before acting.
 
-MCP screenshots now reach the existing image message wire, bounded to six images per turn and 8 MiB per decoded image. Failed tools do not attach images. Every receiving model's capability is checked, including tool-model handoffs and fallback requests. Known text-only models receive a clear visual limitation while retaining text observations; original history remains available to a later vision model. Select a model that supports tools and images for visual tasks. Unknown capability metadata follows the existing permissive image convention and can still be rejected by a provider.
+Native MCP screenshot results return their own image blocks, bounded to six images per tool result and 8 MiB per decoded image. A later screenshot used to verify a change is a separate result and does not consume an earlier result's allowance. API-model turns retain their separate six-image generation cap and check the selected model's vision support before attaching images. Failed tools do not attach images. Select a model that supports tools and images for visual tasks; unknown capability metadata follows the existing permissive API image convention and can still be rejected by a provider.
 
 ## Verification — 2026-10-11
 
@@ -98,3 +98,23 @@ npm run desktop:pack
 Uncovered: installing desktop with a clean user profile; elevated apps, secure desktop, mixed-DPI/multiple monitors, future driver helper-process behavior and broad app compatibility. The hosted model check covers the requested Notepad task, not arbitrary desktop tasks. Browser adapter code was not changed; the existing browser guide's real Playwright path and existing Chrome contracts remain covered by their suites. There is no worldwide computer-use quality benchmark claim.
 
 Literal review: runtime identifiers and product name share one Electron contract; provider tool names, platform, manifest arguments, installer-relative probe, limits, timeout units and guidance live in named constants. Pointer configuration/session fields and cursor tools are shared constants; the local cleanup timeout has a millisecond unit and shutdown rationale. Layout lengths and feedback motion use scoped CSS tokens; structural percentages, border widths, opacity, type weight and responsive breakpoints are design rules. The default tool reply byte budget is shared with configuration. Protocol discriminator/encoding constants are shared within image handling. Native Win32 values are ABI constants; source revision/version live in the vendor configuration. Build cache and host protocol/suffix are named constants with their purpose; compiler jobs are bounded. Git porcelain output retains its leading status column, and unified diff assets retain LF/context spaces through scoped attributes. UI copy and fixture-only target labels remain local display/test text. Actual paths, pid/window tokens, ports and native architecture come from runtime discovery or temporary fixtures.
+
+## Native ChatGPT screenshot follow-up — 27 November 2026
+
+The native MCP host counted images across all screenshots in one provider
+generation. After that allowance was exhausted, a final screenshot could not
+verify a computer-use task. Native MCP responses now cap images per tool result,
+so each later observation has its own bounded allowance. API model requests keep
+their existing generation-wide image cap. This matches the linked
+[Chat On Steroids tool contract](https://github.com/totec448-spec/chat-on-steroids/blob/main/docs/tool-surface.md),
+which returns the screenshot as an MCP image plus text metadata.
+
+- `node --test test/core/tool-host.test.mjs`: **15/15** passed, including more
+  than six sequential screenshot results and a later managed-browser check.
+- `node --test test/integrations/mcp-images.test.mjs`: **13/13** passed; API
+  image caps and vision handoffs remain covered.
+- `node --test test/integrations/chatgpt-tool-gateway.test.mjs`: **7/7** passed;
+  the native ChatGPT MCP transport remains green.
+- `node --test test/core/browser-workflow.test.mjs`: **6/6** passed; browser
+  screenshots still attach to the next API model round.
+- `npm run desktop:build`: TypeScript and Vite passed (**422 modules**).

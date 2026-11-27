@@ -13,7 +13,7 @@ import { isBrowserMcpTool, MANAGED_BROWSER_REQUIRED } from '../integrations/brow
 import { parseToolName } from '../integrations/mcp-manager.mjs';
 import { TIER_DENY } from '../integrations/mcp-tiers.mjs';
 import { COMPUTER_MCP_ID, COMPUTER_DIRECT_CONFIG, COMPUTER_POINTER_SESSION, COMPUTER_TOOLS, computerObservationTargets, formatComputerTargets } from '../integrations/computer-use.mjs';
-import { validMcpImage, MAX_MCP_IMAGES_PER_TURN } from '../integrations/mcp-images.mjs';
+import { validMcpImage, MAX_MCP_IMAGES_PER_TOOL_RESULT } from '../integrations/mcp-images.mjs';
 import { JOB_EXECUTION_COMPLETE } from '../automation/job-policy.mjs';
 import { killTree } from '../../tools/shared/_job-tree.mjs';
 import { waitForExit } from '../../tools/shared/_jobs.mjs';
@@ -42,19 +42,18 @@ const MCP_PREFIX = 'mcp__'; // Existing namespaced registry contract.
 const MCP_MODE = TOOL_RESULT_MODE.mcp;
 const READ_ONLY_DENIAL = 'Error: this host is read-only.';
 const JOB_STOP_WAIT_MS = 5000; // Milliseconds/owned job termination before native Stop acknowledges completion.
-const NATIVE_IMAGE_LIMIT_NOTICE = 'Omitted visual state is unavailable: the image limit for this generation was reached. Do not infer the undelivered image contents.';
+const NATIVE_IMAGE_LIMIT_NOTICE = 'Omitted visual state is unavailable: the image limit for this tool result was reached. Do not infer the undelivered image contents.';
 const NATIVE_IMAGE_INVALID_NOTICE = 'Omitted visual state is unavailable: image data failed format or size validation. Do not infer the undelivered image contents.';
 const stoppingJobs = new WeakMap(); // Shared workflow hosts terminate each owned child only once concurrently.
 const automaticApproval = ctx => ctx.autoApprove === undefined ? ctx.config.autoApprove === true : ctx.autoApprove === true; // Current host policy wins over an older config snapshot.
 const textResult = text => ({ content: [{ type: 'text', text: String(text) }], isError: isToolFailure(String(text)) || text === CANCELLED || text === DENIED });
-function nativeProjection(result, state, budget, targets = null) {
+function nativeProjection(result, budget, targets = null) {
   const images = [], omissions = new Set();
   for (const part of result.content) {
     if (result.isError || part?.type !== 'image') continue;
     if (!validMcpImage(part)) { omissions.add(NATIVE_IMAGE_INVALID_NOTICE); continue; }
-    if ((state.nativeImagesThisTurn || 0) >= MAX_MCP_IMAGES_PER_TURN) { omissions.add(NATIVE_IMAGE_LIMIT_NOTICE); continue; }
+    if (images.length >= MAX_MCP_IMAGES_PER_TOOL_RESULT) { omissions.add(NATIVE_IMAGE_LIMIT_NOTICE); continue; }
     images.push({ type: 'image', mimeType: part.mimeType, data: part.data });
-    state.nativeImagesThisTurn = (state.nativeImagesThisTurn || 0) + 1;
   }
   const notice = omissions.size ? capOutput([...omissions].join('\n') + '\n', budget) : '';
   const targetText = formatComputerTargets(targets, Math.max(0, budget - Buffer.byteLength(notice)));
@@ -217,7 +216,7 @@ export class ToolHost {
       isError: Boolean(result?.isError || raw?.isError) };
     if (resultMode !== MCP_MODE) return nativeResult;
     const targets = native?.serverId === COMPUTER_MCP_ID ? computerObservationTargets(nativeResult) : null;
-    return nativeProjection(nativeResult, state, budget, targets);
+    return nativeProjection(nativeResult, budget, targets);
   }
 
   async executeLocal(call, args, ctx, state, resultMode, budget) {
@@ -278,12 +277,12 @@ export class ToolHost {
       const image = capture || phoneCapture;
       if (!image) {
         if (phoneCapped) return result; // The receipt stays readable; only the attachment is capped.
-        return nativeProjection({ content: [{ type: 'text', text: NATIVE_IMAGE_INVALID_NOTICE }], isError: true }, state, budget);
+        return nativeProjection({ content: [{ type: 'text', text: NATIVE_IMAGE_INVALID_NOTICE }], isError: true }, budget);
       }
       const [mimeType, data] = image.dataUrl.slice('data:'.length).split(';base64,');
       result.content.push({ type: 'image', mimeType, data });
       if (phoneCapture) state.phoneScreenshotsThisTurn = (state.phoneScreenshotsThisTurn || 0) + 1;
-      return nativeProjection(result, state, budget);
+      return nativeProjection(result, budget);
     }
     return result;
   }

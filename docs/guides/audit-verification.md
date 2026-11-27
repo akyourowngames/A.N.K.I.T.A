@@ -42,6 +42,6 @@ The review's claim that auto-approval skipped preview preparation did not match 
 
 ## Scope
 
-File-tool containment is not an OS sandbox for approved shell commands or third-party MCP servers. Interior symlinks are deliberately unsupported; a junction at the workspace root is supported. Main-thread file inspection callers use the worker watchdog; direct synchronous imports of inspection tool modules must not run untrusted regexes on an application event loop.
+Desktop shell commands now start in the selected project folder, or in the app's dedicated workspace when no project folder is selected. This working-directory choice is not an OS sandbox: approved shell commands and third-party MCP servers can still access paths outside the workspace. Interior symlinks are deliberately unsupported; a junction at the workspace root is supported. Main-thread file inspection callers use the worker watchdog; direct synchronous imports of inspection tool modules must not run untrusted regexes on an application event loop.
 
 Shutdown retains the existing bounded drain timeout. Alert retry batches remain in memory until successful enqueue, and persistent notification delivery uses the existing outbox.

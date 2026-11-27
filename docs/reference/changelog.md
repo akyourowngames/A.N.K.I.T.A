@@ -7,6 +7,8 @@ the tree but not yet packaged.
 
 ## Unreleased
 
+## 2.7.6 — 2026-11-27
+
 ### Model-aware recaps and parallel-agent messages
 
 Long chats now summarize before their selected model's available space runs out,

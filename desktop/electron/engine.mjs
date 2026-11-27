@@ -302,6 +302,7 @@ export class DesktopEngine {
     emit = () => {},
   } = {}) {
     this.teammates = new TeammateStore(teammateFile);
+    this.defaultWorkspacePath = path.join(path.dirname(teammateFile), CHATGPT_WORKSPACE_DIRECTORY);
     this.scheduleFile = scheduleFile;
     this.scheduler = null;
     this.routineDeliveries = new Map();
@@ -791,16 +792,28 @@ export class DesktopEngine {
     fs.watchFile(this.projectsFile, { interval: 750, persistent: false }, this.projectFileWatcher);
   }
   createProject(input) {
-    const project = new ProjectStore(this.projectsFile).load().add(input);
+    const project = new ProjectStore(this.projectsFile).load().add({ ...input, path: this.validateProjectPath(input?.path) });
     this.emit({ type: 'projects-changed' });
     return projectSummary(project);
   }
   updateProject(id, patch) {
-    const project = new ProjectStore(this.projectsFile).load().update(id, patch);
+    const normalized = Object.hasOwn(patch || {}, 'path') ? { ...patch, path: this.validateProjectPath(patch.path) } : patch;
+    const project = new ProjectStore(this.projectsFile).load().update(id, normalized);
     if (!project) throw new Error('Project not found');
     this.refreshProjectAgents(id);
     this.emit({ type: 'projects-changed' });
     return projectSummary(project);
+  }
+  validateProjectPath(value) {
+    const candidate = String(value || '').trim();
+    if (!candidate) return '';
+    try {
+      const resolved = fs.realpathSync(candidate);
+      if (!fs.statSync(resolved).isDirectory()) throw new Error();
+      return resolved;
+    } catch {
+      throw new Error('Choose an existing folder for this project.');
+    }
   }
   addProjectTodo(id, text) {
     const project = new ProjectStore(this.projectsFile).load().addTodo(id, text);
@@ -842,15 +855,20 @@ export class DesktopEngine {
     const project = new ProjectStore(this.projectsFile).load().find(id);
     for (const [threadId, agent] of this.agents) {
       if (this.teammates.find(threadId)?.projectId !== id) continue;
-      agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+      agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project) || this.ensureDefaultWorkspace());
     }
+  }
+  ensureDefaultWorkspace() {
+    if (!this.defaultWorkspacePath) return null;
+    fs.mkdirSync(this.defaultWorkspacePath, { recursive: true });
+    return this.defaultWorkspacePath;
   }
   assignProject(threadId, projectId) {
     if (this.turns.has(threadId)) throw new Error('Wait for this reply to finish before switching projects');
     const project = projectId ? new ProjectStore(this.projectsFile).load().find(projectId) : null;
     if (projectId && (!project || project.archived)) throw new Error('Choose an available project');
     const teammate = this.teammates.update(threadId, { projectId: project?.id || null });
-    this.agents.get(threadId)?.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+    this.agents.get(threadId)?.setProject(projectContext(project), project?.id || null, projectWorkspace(project) || this.ensureDefaultWorkspace());
     this.emit({ type: 'teammates-changed' });
     return teammate;
   }
@@ -873,7 +891,7 @@ export class DesktopEngine {
       agent.config.model = agent.model;
       agent.contextWindow = modelContextWindow({ ...agent.config, client: this.client, model: agent.model, models: this.models });
       agent.config.contextWindow = agent.contextWindow;
-      if (Object.hasOwn(patch, 'projectId')) agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project));
+      if (Object.hasOwn(patch, 'projectId')) agent.setProject(projectContext(project), project?.id || null, projectWorkspace(project) || this.ensureDefaultWorkspace());
       else agent.refreshPrompt?.();
     }
     this.emit({ type: 'teammates-changed' });
@@ -1093,14 +1111,14 @@ export class DesktopEngine {
     const model = item.model && this.models.some(model => model.id === item.model) ? item.model : this.model;
     const config = { ...this.config, model, desktopBackgroundJobs: true, [COMPUTER_DIRECT_CONFIG]: true, agentName: item.name, systemExtra: item.persona };
     config.contextWindow = modelContextWindow({ ...config, client: this.client, models: this.models });
-    let project = '', projectId = null, workspacePath = null;
+    let project = '', projectId = null, workspacePath = this.ensureDefaultWorkspace?.() || null;
     if (item.projectId) {
       const projects = new ProjectStore(this.projectsFile).load();
       const selected = projects.find(item.projectId);
       if (selected) {
         project = projectContext(selected);
         projectId = selected.id;
-        workspacePath = projectWorkspace(selected);
+        workspacePath = projectWorkspace(selected) || this.ensureDefaultWorkspace?.() || null;
       }
     }
     const agent = new this.AgentClass({

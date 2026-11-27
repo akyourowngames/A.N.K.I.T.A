@@ -561,6 +561,10 @@ ipcMain.handle('engine:invoke', async (event, action, payload) => {
     case 'listTeammates': return current.listTeammates();
     case 'islandSnapshot': return current.islandSnapshot();
     case 'listProjects': return current.listProjects();
+    case 'selectProjectFolder': {
+      const result = await dialog.showOpenDialog(window, { properties: ['openDirectory'] });
+      return result.canceled ? null : result.filePaths[0] || null;
+    }
     case 'createProject': return current.createProject(payload);
     case 'updateProject': return current.updateProject(payload.id, payload.patch);
     case 'assignProject': return current.assignProject(payload.id, payload.projectId);

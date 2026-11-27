@@ -108,3 +108,32 @@ Final desktop build after the heading change: **411 modules**, **6.80 seconds**,
 exit 0. The final native dev and built runs both printed the editor and startup
 OK traces, with no renderer errors. Final whitespace/literal/credential review
 is recorded with the commit; no added production endpoint, model, port or timeout.
+
+## Scheduled-work persistence follow-up — 27 November 2026
+
+The desktop scheduler constructed workers with `backgroundJob: true`, which
+intentionally removed the saved personality, and also disabled skills. Scheduled
+workers now opt into a compact personality card and enable automatic skills;
+internal delegated workers remain task-focused and tool permissions still limit
+which skill triggers can match.
+
+The normal agent also used to remove personality completely when compacting the
+prompt still left too little room for core tool schemas. It now keeps a minimal
+opening style cue for that rare case, preserving tool availability. The full
+card remains saved and is restored in later prompts when the budget allows.
+
+- `node --test test/desktop/scheduler.test.mjs`: **46/46** passed, including a
+  real Agent loop check that the compact card and browser-use guide are present
+  before the model decision.
+- `node --test test/desktop/personality.test.mjs`: **3/3** passed, including
+  save → engine restart → next model prompt.
+- `node --test test/core/personality.test.mjs`: **9/9** passed.
+- The same core personality test covers constrained prompt sizing: the saved
+  description cue and discovered delegate tool both remain available.
+- `node --test test/core/browser-skill.test.mjs`: **12/12** passed, with the
+  existing local HTTP trace `BROWSER_SKILL_LIVE_OK ... extraSkillCalls=0`.
+- `npm run desktop:build`: TypeScript and Vite passed (**422 modules**).
+
+The scheduler check uses a local model stub and does not establish how every
+provider will follow a personality on every task. The full suite and packaged
+installer were not run.

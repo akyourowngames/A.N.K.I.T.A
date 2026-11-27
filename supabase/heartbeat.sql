@@ -5,7 +5,7 @@
 
 create table if not exists public.heartbeats (
   install_id_hash text not null, -- SHA-256 of a random install UUID; the raw ID never leaves the device.
-  app_version text not null,     -- e.g. '2.7.5'
+  app_version text not null,     -- e.g. '2.7.6'
   platform text not null,        -- 'win32', 'darwin' or 'linux'
   day date not null,             -- UTC calendar day of the ping
   created_at timestamptz not null default now(),

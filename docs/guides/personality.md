@@ -42,15 +42,22 @@ default with a Settings notice and remain unchanged until explicitly saved.
 
 ## Scope and honest limits
 
-The card shapes API-backed user-facing chat, voice workers and channel agents.
-A linked ChatGPT Browser conversation keeps its own instructions; this change
-does not inject native API system prompts into that separate conversation.
-Scheduled/internal and delegated workers retain task-focused prompts.
+The card shapes API-backed user-facing chat, voice workers, channel agents and
+scheduled task updates. Scheduled workers use a compact version so the saved
+voice stays present without adding example exchanges. Internal and delegated
+workers stay task-focused. A linked ChatGPT Browser conversation keeps its own
+instructions; this change does not inject native API system prompts into that
+separate conversation.
+
+Desktop scheduled workers also load installed skills whose tool triggers match
+the tools available to that task. For example, the browser-use guide loads only
+when the task can use the browser; unrelated skills do not enter its prompt.
 
 Tool evidence, permissions and required output contracts take precedence. Under
-context pressure, the runtime removes examples first, then omits optional style
-if necessary to preserve callable tool schemas. It does not reduce the tool
-catalog just to keep personality text.
+context pressure, the runtime removes examples first and shortens the style
+card. In a very tight prompt it keeps only the start of the saved character
+description so the tool instructions still fit. The full card stays saved and
+returns in later prompts when there is room.
 
 Tone is probabilistic. The live planner sometimes writes longer raw drafts;
 the existing voice report queue limits spoken playback to two sentences.

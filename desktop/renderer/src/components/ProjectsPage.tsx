@@ -78,6 +78,13 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
     } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
     finally { setBusy(false); }
   };
+  const chooseProjectFolder = async () => {
+    setError('');
+    try {
+      const selected = await window.ankita.invoke<string | null>('selectProjectFolder');
+      if (selected) setDraft(current => ({ ...current, path: selected }));
+    } catch (err) { setError(err instanceof Error ? err.message : String(err)); }
+  };
   const startNew = () => { setCreating(true); setEditing(true); setDraft(blank()); setError(''); };
   const openProject = (next: Project) => { setId(next.id); setCreating(false); setEditing(false); setDraft(draftOf(next)); setError(''); setQuery(''); };
   const tabKey = (event: KeyboardEvent<HTMLButtonElement>, active: Section) => {
@@ -98,7 +105,7 @@ export function ProjectsPage({ projects, selectedThread, chrome, sidebarOpen, on
           <div className="project-heading"><span className="project-symbol"><Icon name="folder" size={21} /></span><h1>{creating ? 'New project' : 'Project details'}</h1><p>Keep the path, context, and decisions together for every teammate assigned here.</p></div>
           <label>Project name<input autoFocus required maxLength={80} value={draft.name} onChange={event => setDraft({ ...draft, name: event.target.value })} placeholder="Name this work" /></label>
           <label>What is it?<textarea rows={3} maxLength={400} value={draft.summary} onChange={event => setDraft({ ...draft, summary: event.target.value })} placeholder="A sentence teammates can carry into each conversation" /></label>
-          <label>Working folder<input value={draft.path} onChange={event => setDraft({ ...draft, path: event.target.value })} placeholder="Path to your workspace" /><small>Commands and file tools run from this folder when the path exists.</small></label>
+          <label>Working folder<div className="project-folder-picker"><input value={draft.path} onChange={event => setDraft({ ...draft, path: event.target.value })} placeholder="Choose a workspace folder" /><button type="button" disabled={busy} onClick={() => void chooseProjectFolder()}><Icon name="folder" size={14} /> Browse</button></div><small>Commands start in this folder. Without one, they start in your private Ankita workspace.</small></label>
           <div className="project-form-pair"><label>Repository<input value={draft.repo} onChange={event => setDraft({ ...draft, repo: event.target.value })} placeholder="Optional repository URL" /></label><label>Client<input value={draft.client} onChange={event => setDraft({ ...draft, client: event.target.value })} placeholder="Optional" /></label></div>
           <label>Conventions<textarea rows={4} value={draft.conventions} onChange={event => setDraft({ ...draft, conventions: event.target.value })} placeholder="One working rule per line" /><small>Up to five rules appear in the teammate’s project brief.</small></label>
           <div className="project-form-actions"><button type="button" onClick={() => { setCreating(false); setEditing(false); setError(''); }}>Cancel</button><button className="button-primary" disabled={busy || !draft.name.trim()} type="submit">{busy ? 'Saving…' : creating ? 'Create project' : 'Save changes'}</button></div>

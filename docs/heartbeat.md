@@ -19,7 +19,7 @@ Settings → Privacy.
   | Field | Example | Why |
   |---|---|---|
   | `install_id_hash` | `9f2c…` (64 hex chars) | SHA-256 of a random UUID made once on the device. The raw ID never leaves the device. Its stable hash recognizes the same install across days; it does not identify the person using it. |
-  | `app_version` | `2.7.5` | Which release people actually run. |
+  | `app_version` | `2.7.6` | Which release people actually run. |
   | `platform` | `win32` | Windows / macOS / Linux split. |
   | `day` | `2026-11-27` | UTC calendar day. Daily actives = distinct hashes per day. |
 
@@ -73,9 +73,10 @@ aggregate are applied in `A.N.K.I.T.A` under `akyourowngames`. A live test
 insert succeeded and its temporary row was removed. The owner page is
 deployed at [ankita-owner-dashboard.vercel.app](https://ankita-owner-dashboard.vercel.app)
 with its Supabase secret and owner key stored as encrypted Vercel production
-settings. Its protected API returned the live zero-user metrics. This work
-does not publish a new desktop release, so existing installs do not send
-heartbeats until a future release includes the wired endpoint.
+settings. Its protected API returned the live zero-user metrics. This wiring
+ships in release 2.7.6. Updated desktop installs report once daily; older
+installs begin reporting only after they update. A zero count means no install
+has reported yet, not that nobody uses the app.
 
 1. **Create the database objects.** Run the whole contents of
    `supabase/heartbeat.sql` in the A.N.K.I.T.A. project’s SQL Editor. It
@@ -88,7 +89,7 @@ heartbeats until a future release includes the wired endpoint.
    app. Open the deployed page and enter the dashboard token when prompted.
 3. The desktop app’s publishable Supabase key is safe to ship because users
    can only insert a daily row using the public key. Existing installs receive this
-   wiring after a future desktop release; this PR creates no release.
+   wiring in 2.7.6.
 
 ## How the owner checks the numbers
 
@@ -118,11 +119,10 @@ These numbers are **internal only** — never published, never cited outward,
 same rule as download counts. The count is directional because public client
 inserts can be faked; it is not an audited list of people.
 
-## What this PR does not do
+## What this does not measure
 
 - No opt-out toggle in this build. The required-reporting notice is visible in
   Settings → Privacy.
 - No tracking of the terminal (`chat.mjs`) runs. The desktop app is the
   distributed artifact; terminal runs are the same installs in practice.
-- Existing installs do not send reports until a future desktop release ships
-  this code. This PR does not publish a desktop release.
+- Older installs do not report until they update to 2.7.6 or later.

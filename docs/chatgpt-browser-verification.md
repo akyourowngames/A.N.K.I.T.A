@@ -680,9 +680,10 @@ Each has a regression that failed before the correction:
   behavior and structured workspace/project tools remain available.
 - Always allow persists for the browser teammate's live session across host
   replacement, without granting another teammate or changing global defaults.
-- Missing/malformed/over-quota native images return an explicit unavailable
-  visual-state error. External images and managed browser captures share the
-  existing generation quota; normal API image behavior is preserved.
+- Missing/malformed/over-quota images within one native tool result return an
+  explicit unavailable visual-state error. Each later native screenshot result
+  has its own allowance; API image attachments keep the separate per-generation
+  quota and normal API behavior.
 - Clear removes cached local browser messages and its checklist while keeping
   running jobs, file changes and spent native receipts intact.
 

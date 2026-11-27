@@ -14,16 +14,19 @@ test('desktop projects assign real workspace paths and carry decisions and tasks
   const engine = new DesktopEngine({
     teammateFile: path.join(dir, 'teammates.json'), projectsFile: path.join(dir, 'projects.json'),
     settingsFile: path.join(dir, 'settings.json'), channelsFile: path.join(dir, 'channels.json'), sessionsDir: dir,
-    config: { provider: 'test', tools: false, agentName: 'Ankita', username: 'User' },
+    config: { provider: 'test', tools: true, autoApprove: true, agentName: 'Ankita', username: 'User' },
     bootstrap: async () => ({ client: {}, tool: null, models: [], model: '', provider: { name: 'test' } }),
     mcp: { reconcile: async () => {}, ensureComposio: async () => {}, closeAll: async () => {}, summaries: () => [], connectedIds: [] },
   });
   await engine.init();
   const project = engine.createProject({ name: 'Widget', summary: 'Build the widget', path: workspace, conventions: ['Keep changes small'] });
+  assert.throws(() => engine.createProject({ name: 'Broken path', path: path.join(dir, 'missing') }), /existing folder/);
   const teammate = engine.listTeammates()[0];
   engine.assignProject(teammate.id, project.id);
   const agent = engine.agentFor(teammate.id);
   assert.equal(agent.cwd, workspace);
+  const commandResult = await agent.executionHost().execute({ id: 'project-cwd', name: 'run_command', arguments: { command: 'node -p "process.cwd()"', yield_ms: 10000 } });
+  assert.match(commandResult.content[0].text, new RegExp(workspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   assert.match(agent.project, /Keep changes small/);
   engine.addProjectTodo(project.id, 'Finish the desktop');
   assert.match(agent.project, /Finish the desktop/);
@@ -34,7 +37,9 @@ test('desktop projects assign real workspace paths and carry decisions and tasks
   assert.doesNotMatch(agent.project, /Finish the desktop/);
   engine.assignProject(teammate.id, null);
   assert.equal(agent.projectId, null);
-  assert.equal(agent.cwd, process.cwd());
+  assert.equal(agent.cwd, engine.defaultWorkspacePath);
+  const defaultCommandResult = await agent.executionHost().execute({ id: 'default-cwd', name: 'run_command', arguments: { command: 'node -p "process.cwd()"', yield_ms: 10000 } });
+  assert.match(defaultCommandResult.content[0].text, new RegExp(engine.defaultWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   await engine.close();
 });
 

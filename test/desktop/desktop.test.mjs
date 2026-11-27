@@ -120,7 +120,7 @@ test('desktop engine streams a turn, persists the thread, and restores it', asyn
     cancel() { return true; }
   }
   const engine = new DesktopEngine({
-    teammateFile: file, sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: FakeAgent,
+    teammateFile: file, settingsFile: path.join(directory, 'settings.json'), sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: FakeAgent,
     bootstrap: async () => ({ client: {}, tool: null, models: [{ id: 'fast', tools: true }], model: 'fast', provider: { name: 'test' } }),
     emit: event => events.push(event),
     config: { provider: 'test', tools: true, model: '', memoryConsolidation: false },
@@ -134,7 +134,7 @@ test('desktop engine streams a turn, persists the thread, and restores it', asyn
   assert.equal(events.filter(e => e.type === 'assistant-delta').map(e => e.text).join(''), 'Hello there');
   assert.deepEqual(engine.loadThread(threadId).map(m => m.role), ['user', 'assistant']);
   const restored = new DesktopEngine({
-    teammateFile: file, sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: FakeAgent,
+    teammateFile: file, settingsFile: path.join(directory, 'settings.json'), sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: FakeAgent,
     bootstrap: async () => ({ client: {}, tool: null, models: [{ id: 'fast', tools: true }], model: 'fast', provider: { name: 'test' } }),
     config: { provider: 'test', tools: true, model: '', memoryConsolidation: false },
     mcp: { reconcile: async () => {}, ensureComposio: async () => {}, summaries: () => [], closeAll: async () => {} },
@@ -168,7 +168,7 @@ test('desktop restores a trimmed checklist for display and later status updates'
     clear() { this.messages = [{ role: 'system', content: 'system' }]; }
   }
   const options = {
-    teammateFile: file, sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: TodoAgent,
+    teammateFile: file, settingsFile: path.join(directory, 'settings.json'), sessionsDir: directory, channelsFile: path.join(directory, 'channels.json'), AgentClass: TodoAgent,
     bootstrap: async () => ({ client: {}, tool: null, models: [{ id: 'fast', tools: true }], model: 'fast', provider: { name: 'test' } }),
     config: { provider: 'test', tools: true, model: '', memoryConsolidation: false },
     mcp: { reconcile: async () => {}, ensureComposio: async () => {}, summaries: () => [], closeAll: async () => {} },

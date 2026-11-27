@@ -1,6 +1,7 @@
 import { formatToolResult, toolResultText } from './mcp-client.mjs';
 
 export const MAX_MCP_IMAGES_PER_TURN = 6; // Images/request; keeps repeated desktop captures inside the existing context budget.
+export const MAX_MCP_IMAGES_PER_TOOL_RESULT = 6; // Images/one native MCP result; later screenshots are separate verification observations.
 export const MAX_MCP_IMAGE_BYTES = 8 * 1024 * 1024; // Decoded bytes/image; permits a desktop PNG while bounding untrusted MCP data.
 const MCP_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']); // OpenAI-compatible vision wire formats.
 const BASE64_IMAGE_DATA = /^[A-Za-z0-9+/]+={0,2}$/; // MCP image blocks carry base64, never executable or remote content.

@@ -7,6 +7,7 @@ import { ToolHost } from '../../src/core/tool-host.mjs';
 import { TIER_DENY } from '../../src/integrations/mcp-tiers.mjs';
 import { COMPUTER_MCP_ID } from '../../src/integrations/computer-use.mjs';
 import { CHROME_MCP_ID } from '../../src/integrations/browser-plugins.mjs';
+import { MAX_MCP_IMAGES_PER_TOOL_RESULT } from '../../src/integrations/mcp-images.mjs';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-tool-host-'));
 test.after(() => fs.rmSync(directory, { recursive: true, force: true }));
@@ -172,28 +173,29 @@ test('native Core neither advertises nor executes global connection management w
   assert.ok(published.includes('run_command'));
 });
 
-test('native image limits and malformed images return an explicit visual omission instead of a successful screenshot', async () => {
+test('native image limits apply per tool result, not across later screenshot checks', async () => {
   const image = { type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' };
-  let returnedImage = image;
+  let returnedImages = [image];
   const mcp = { findTool: () => ({ tool: { annotations: { readOnlyHint: true } } }), needsApproval: () => false,
-    callToolResult: async () => ({ content: [{ type: 'text', text: 'fresh screenshot' }, returnedImage], isError: false }) };
+    callToolResult: async () => ({ content: [{ type: 'text', text: 'fresh screenshot' }, ...returnedImages], isError: false }) };
   const host = new ToolHost({ context, mcp });
-  for (let index = 0; index < 6; index++) {
+  for (let index = 0; index < MAX_MCP_IMAGES_PER_TOOL_RESULT + 2; index++) {
     const result = await host.execute(call('mcp__proof__read'));
     assert.equal(result.isError, false); assert.equal(result.content.filter(part => part.type === 'image').length, 1);
   }
+  returnedImages = Array(MAX_MCP_IMAGES_PER_TOOL_RESULT + 1).fill(image);
   const limited = await host.execute(call('mcp__proof__read'));
-  assert.equal(limited.content.filter(part => part.type === 'image').length, 0);
-  assert.equal(limited.isError, true, 'an undelivered screenshot cannot be reported as complete');
+  assert.equal(limited.content.filter(part => part.type === 'image').length, MAX_MCP_IMAGES_PER_TOOL_RESULT);
+  assert.equal(limited.isError, true, 'omitted images in one oversized result are reported');
   assert.match(text(limited), /visual.*unavailable/i); assert.match(text(limited), /image.*limit/i);
-  returnedImage = { ...image, data: '<invalid>' };
+  returnedImages = [{ ...image, data: '<invalid>' }];
   const malformed = await new ToolHost({ context: { ...context, config: { maxToolChars: 256 } }, mcp }).execute(call('mcp__proof__read'));
   assert.equal(malformed.isError, true); assert.match(text(malformed), /visual.*unavailable/i);
   assert.equal(malformed.content.filter(part => part.type === 'image').length, 0);
   assert.ok(Buffer.byteLength(text(malformed)) <= 256);
 });
 
-test('managed browser captures share the native generation image limit with external MCP images', async () => {
+test('managed browser verification screenshots remain available after earlier MCP screenshots', async () => {
   const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aGXYAAAAASUVORK5CYII=', 'base64');
   const relative = 'downloaded-images/browser-1-11111111-1111-1111-1111-111111111111.png';
   fs.mkdirSync(path.dirname(path.join(directory, relative)), { recursive: true }); fs.writeFileSync(path.join(directory, relative), png);
@@ -201,8 +203,8 @@ test('managed browser captures share the native generation image limit with exte
     callToolResult: async () => ({ content: [{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }], isError: false }) };
   const browserManager = { run: async () => JSON.stringify({ type: 'browser_screenshot', path: relative, bytes: png.length }) };
   const host = new ToolHost({ context: { ...context, browserManager }, mcp });
-  for (let index = 0; index < 6; index++) assert.equal((await host.execute(call('mcp__proof__read'))).isError, false);
+  for (let index = 0; index < MAX_MCP_IMAGES_PER_TOOL_RESULT + 2; index++) assert.equal((await host.execute(call('mcp__proof__read'))).isError, false);
   const screenshot = await host.execute(call('browser', { action: 'screenshot' }));
-  assert.equal(screenshot.content.filter(part => part.type === 'image').length, 0, 'the managed adapter cannot bypass the native image quota');
-  assert.equal(screenshot.isError, true); assert.match(text(screenshot), /visual.*unavailable/i);
+  assert.equal(screenshot.content.filter(part => part.type === 'image').length, 1, 'the later verification call still returns its screenshot image');
+  assert.equal(screenshot.isError, false);
 });

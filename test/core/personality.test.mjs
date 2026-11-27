@@ -36,6 +36,9 @@ test('personality reaches real agent prompts without changing tool rules, and st
   assert.match(prompt, /examples.*style|style.*examples/is);
   assert.ok(!buildSystemPrompt({ ...config, personality: { ...config.personality, enabled: false } }, os.tmpdir()).includes(config.personality.description));
   assert.ok(!buildSystemPrompt({ ...config, backgroundJob: true }, os.tmpdir()).includes(config.personality.description));
+  const scheduled = buildSystemPrompt({ ...config, backgroundJob: true, [card.BACKGROUND_PERSONALITY_CONFIG]: true }, os.tmpdir());
+  assert.ok(scheduled.includes(config.personality.description), 'user-facing scheduled work retains the saved character');
+  assert.ok(!scheduled.includes('Example exchanges'), 'scheduled prompts use the compact card, without examples');
   const child = new Agent({ client: {}, config, depth: 1, memoryEnabled: false, autoProject: false });
   assert.ok(!child.systemText().includes(config.personality.description), 'Internal delegated workers stay task-focused');
 });
@@ -112,5 +115,10 @@ test('personality never displaces a discovered tool in a constrained context', a
     const agent = new Agent({ client: {}, config: { tools: true, contextWindow: 32768, subagentsEnabled: true, personality }, memoryEnabled: false, autoProject: false, workspacePath: temp(t), print: () => {}, write: () => {} });
     await agent.runToolCall({ id: 'discover', type: 'function', function: { name: 'find_tools', arguments: JSON.stringify({ query: 'delegate' }) } });
     assert.ok(agent.currentSpecs().some(spec => spec.function.name === 'delegate_task'), 'Optional style cannot evict a discovered work tool');
+    if (personality === large) {
+      assert.ok(agent.messages[0].content.includes('d'.repeat(23)), 'a tight prompt keeps a short part of the user’s saved voice');
+      assert.match(agent.messages[0].content, /Conversation style:/, 'the fallback still identifies the saved text as style guidance');
+      assert.ok(!agent.messages[0].content.includes('Example exchanges'), 'the budget fallback removes examples before the voice');
+    }
   }
 });

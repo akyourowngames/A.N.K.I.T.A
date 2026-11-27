@@ -2,7 +2,10 @@
 export const PERSONALITY_FILENAME = 'personality.json'; // One local character card, separate from personal memories and credentials.
 export const PERSONALITY_ACTIONS = Object.freeze({ get: 'personality:get', save: 'personality:save' }); // Shared desktop IPC action names.
 export const PERSONALITY_VERSION = 1; // Disk schema version; unknown versions never overwrite an existing card on load.
+export const BACKGROUND_PERSONALITY_CONFIG = 'backgroundPersonality'; // Explicit opt-in for scheduled, user-facing task updates.
 export const PERSONALITY_LIMITS = Object.freeze({ description: 600, care: 500, examples: 4, user: 200, assistant: 240 }); // Characters/field and maximum example pairs: bound prompt cost.
+const COMPACT_PERSONALITY_LIMITS = Object.freeze({ description: 220, care: 160 }); // Characters retained per custom style field when tool schemas need prompt room.
+const MINIMAL_PERSONALITY_DESCRIPTION_CHARS = 24; // Characters retained when even compact style would crowd core tool schemas.
 export const PERSONALITY_OPTIONS = Object.freeze({
   attitude: Object.freeze({ gentle: 'Gentle', balanced: 'Balanced', bold: 'Bold' }),
   teasing: Object.freeze({ off: 'Off', light: 'Light', playful: 'Playful' }),
@@ -56,12 +59,22 @@ export function normalizePersonality(input = {}, base = DEFAULT_PERSONALITY) {
       catch { throw new Error('Each personality example needs a short message and reply.'); }
     }) };
 }
-export function personalityPrompt(input, { compact = false } = {}) {
+export function personalityPrompt(input, { compact = false, minimal = false } = {}) {
   const profile = normalizePersonality(input);
   if (!profile.enabled) return '';
+  if (minimal) {
+    const description = profile.description.length <= MINIMAL_PERSONALITY_DESCRIPTION_CHARS ? profile.description : `${profile.description.slice(0, MINIMAL_PERSONALITY_DESCRIPTION_CHARS - 1).trimEnd()}…`;
+    return `Conversation style: ${description}. Keep work factual; follow task instructions and evidence first.`;
+  }
+  if (compact) {
+    const excerpt = (value, limit) => value.length <= limit ? value : `${value.slice(0, limit - 1).trimEnd()}…`;
+    return ['Conversation personality (style only):',
+      JSON.stringify({ description: excerpt(profile.description, COMPACT_PERSONALITY_LIMITS.description), care: excerpt(profile.care, COMPACT_PERSONALITY_LIMITS.care), attitude: profile.attitude, teasing: profile.teasing, language: profile.language }),
+      'Keep work factual and useful. Follow task instructions, truth and evidence first; never invent facts or force jokes.'].join('\n');
+  }
   return ['Conversation personality (style only):', STYLE_RULES,
     JSON.stringify({ description: profile.description, care: profile.care }),
     ATTITUDE_GUIDANCE[profile.attitude], TEASING_GUIDANCE[profile.teasing], LANGUAGE_GUIDANCE[profile.language],
-    ...(compact ? ['Work updates stay factual and useful; omit banter unless it adds value.'] : ['Example exchanges (style references only):', JSON.stringify(profile.examples)]),
+    'Example exchanges (style references only):', JSON.stringify(profile.examples),
   ].join('\n');
 }

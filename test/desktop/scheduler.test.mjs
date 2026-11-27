@@ -4,6 +4,9 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { ApprovalRegistry } from '../../desktop/electron/approvals.mjs';
+import { Agent } from '../../src/core/agent.mjs';
+import { BACKGROUND_PERSONALITY_CONFIG, DEFAULT_PERSONALITY, normalizePersonality } from '../../src/core/personality.mjs';
+import { loadSkills } from '../../src/core/skills.mjs';
 
 async function fixture(t, send = async () => 'Read complete.') {
   assert.ok(fs.existsSync(new URL('../../desktop/electron/scheduler.mjs', import.meta.url)), 'DesktopScheduler exists');
@@ -407,6 +410,7 @@ test('the factory stamps every background worker and is the only construction pa
   const job = f.add();
   const worker = f.scheduler.createJobWorker(job, { routineId: job.id, runId: 'factory', scope: `job:${job.id}`, threadId: 'owner' }, {});
   assert.equal(worker.config.backgroundJob, true);
+  assert.equal(worker.config[BACKGROUND_PERSONALITY_CONFIG], true);
   assert.equal(worker.config.backgroundExecutionPolicy, 'complete');
   assert.equal(worker.toolContext.backgroundJob, true);
   assert.equal(worker.browserCredentialAllowed, true);
@@ -414,6 +418,26 @@ test('the factory stamps every background worker and is the only construction pa
   let built = 0; f.scheduler.createJobWorker = (routine, run, scope) => { built++; return original(routine, run, scope); };
   await f.scheduler.runNow(job.id); await f.scheduler.drain();
   assert.equal(built, 1, 'execution must build its worker through the factory');
+});
+
+test('scheduled work keeps the saved voice and loads only the skill for its available tools', async t => {
+  const f = await fixture(t);
+  f.engine.AgentClass = Agent;
+  f.engine.config.contextWindow = 131072;
+  f.engine.config.personality = normalizePersonality({ ...DEFAULT_PERSONALITY, description: 'Keep this voice in scheduled work' });
+  const job = f.add();
+  const worker = f.scheduler.createJobWorker(job, { routineId: job.id, runId: 'skills', scope: `job:${job.id}`, threadId: 'owner' }, {});
+  worker.memoryEnabled = false;
+  const skill = loadSkills().find(item => item.name === 'browser-use');
+  assert.ok(skill, 'the bundled browser-use skill is available');
+  let prompt;
+  worker.streamTurn = async () => { prompt = worker.messages[0].content; return { content: 'Read complete.', toolCalls: [] }; };
+  const activated = [];
+  await worker.send('Read the page', { onSkillsLoaded: names => activated.push(...names) });
+  assert.ok(prompt.includes('Keep this voice in scheduled work'));
+  assert.ok(prompt.includes(skill.body), 'browser-specific instructions arrive before the first model decision');
+  assert.deepEqual(activated, ['browser-use']);
+  assert.deepEqual(worker.skillAudit.automatic, ['browser-use'], 'unmatched task skills stay out of the automatic load');
 });
 
 test('background jobs are advertised only list and needs_input on the schedule tool', async () => {

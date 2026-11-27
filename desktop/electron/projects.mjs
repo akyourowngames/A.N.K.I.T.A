@@ -23,7 +23,10 @@ export function projectContext(project) {
 
 export function projectWorkspace(project) {
   if (!project?.path) return null;
-  try { return fs.statSync(project.path).isDirectory() ? project.path : null; }
+  try {
+    const realPath = fs.realpathSync(project.path);
+    return fs.statSync(realPath).isDirectory() ? realPath : null;
+  }
   catch { return null; }
 }
 

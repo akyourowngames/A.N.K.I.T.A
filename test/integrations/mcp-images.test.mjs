@@ -7,6 +7,7 @@ import { MAX_MCP_IMAGES_PER_TURN, MAX_MCP_IMAGE_BYTES, messagesForModel } from '
 import { COMPUTER_MCP_ID, COMPUTER_DIRECT_CONFIG, COMPUTER_TARGET_LIMIT, COMPUTER_TARGET_MAX_BYTES, computerObservationMetadata } from '../../src/integrations/computer-use.mjs';
 import { TIER_ALWAYS, TIER_DENY } from '../../src/integrations/mcp-tiers.mjs';
 
+const NATIVE_READ_TEST_CONTEXT_TOKENS = 100_000; // Tokens: keep this tool-loop policy test independent of unrelated system-prompt growth.
 const IMAGE = { type: 'image', mimeType: 'image/png', data: 'aGVsbG8=' };
 const NATIVE_PROOF_BUDGET_BYTES = 8 * 1024; // Fixture headroom for complete native targets, request framing and the latest atomic tool exchange.
 test('real stdio discovery filters maintenance tools and delivers screenshots through Agent', async t => {
@@ -164,7 +165,7 @@ test('native reads may repeat after successful actions while unchanged read loop
   const mcp = { summaries: () => [], alwaysOnIds: () => [], specs: () => [], findTool: name => ({ tool: { annotations: { readOnlyHint: name === snapshot } } }),
     needsApproval: () => false, callToolResult: async () => ({ text: 'Observed updated state' }) };
   for (const [names, shouldStop] of [[[snapshot, action, snapshot, action, snapshot], false], [[snapshot, snapshot, snapshot], true]]) {
-    const a = new Agent({ client: {}, mcp, config: { model: 'fixture', tools: true, autoApprove: true, maxToolSteps: 8, memoryConsolidation: false }, print: () => {}, write: () => {} });
+    const a = new Agent({ client: {}, mcp, config: { model: 'fixture', tools: true, autoApprove: true, contextWindow: NATIVE_READ_TEST_CONTEXT_TOKENS, maxToolSteps: 8, memoryConsolidation: false }, print: () => {}, write: () => {} });
     let round = 0;
     a.streamTurn = async () => ({ content: round < names.length ? '' : 'Done', model: 'fixture', toolCalls: round < names.length ? [{ id: `native-${round}`, function: { name: names[round++], arguments: '{"pid":1,"window_id":2}' } }] : [] });
     await a.send('Use the test desktop');
