@@ -117,6 +117,7 @@ Use `/help` for the current command list and `/commands` for the full grouped ch
 - **Four approval tiers, on every click** — destructive actions can be undone.
 - **Memory that flags contradictions** instead of silently overwriting them.
 - **Secret scrubbing is on by default** for supported key/token shapes, labeled passwords and private-key blocks in saved history, logs and exports. A live model request can still receive pasted content.
+- **Usage heartbeat is opt-in only** — off unless you turn it on in Settings → Privacy. When on, Ankita sends at most one anonymous ping a day (a hashed random install ID, the app version, your operating system) so Krish can see how many people use Ankita daily. No prompts, no file paths, no content. See [`docs/heartbeat.md`](docs/heartbeat.md).
 - **Workspace boundaries** on file tools; web tools guard private hosts and redirects.
 - **Credentials live in the device-encrypted vault**, never as plaintext. Approved shell commands and MCP processes run with your OS permissions — review requested actions before approving them.
 
