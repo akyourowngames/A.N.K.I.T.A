@@ -24,7 +24,7 @@ export type AssistantToday = { at: number; timeZone: string; unfinished: Assista
 export type PersonalMemory = { id: string; text: string; kind: string; always: boolean; updatedAt: string; confidence: number; source: unknown; conflictsWith: string[] };
 export type DesktopPreferences = {
   hasSarvamKey?: boolean; hasBasetenKey?: boolean; micDevice?: string; voiceOutputDevice?: string;
-  secretScrubbing?: boolean; secretWarningSeen?: boolean;
+  secretScrubbing?: boolean; secretWarningSeen?: boolean; usageHeartbeat?: boolean;
   providerNotice?: string | null;
   provider: string; model: string; customApiBase: string; appearance: 'graphite' | 'mono' | 'slate';
   contextWindow: number; maxTokens: number;
@@ -36,7 +36,7 @@ export type DesktopPreferences = {
   hasImageApiKey: boolean; hasUnsplashAccessKey: boolean; hasPixabayApiKey: boolean;
 };
 export type DesktopSettingsUpdate = Partial<Pick<DesktopPreferences, 'provider' | 'model' | 'customApiBase' | 'appearance' | 'contextWindow' | 'maxTokens' | 'contextCompaction' | 'imageApiBase' | 'imageModel' | 'username' | 'timeZone' | 'profileSetupDone' | 'voiceWakeWord' | 'voiceStopWord' | 'voiceIdleMs' | 'voiceStandbyMs' | 'voiceFollowUpMs'>> & {
-  secretScrubbing?: boolean; secretWarningSeen?: boolean;
+  secretScrubbing?: boolean; secretWarningSeen?: boolean; usageHeartbeat?: boolean;
   customApiKey?: string; groqApiKey?: string; kiloApiKey?: string; composioApiKey?: string;
   sarvamApiKey?: string; basetenApiKey?: string; micDevice?: string; voiceOutputDevice?: string;
   imageApiKey?: string; unsplashAccessKey?: string; pixabayApiKey?: string;
