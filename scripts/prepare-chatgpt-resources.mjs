@@ -13,11 +13,28 @@ const MAX_ARCHIVE_BYTES = 256 * 1024 * 1024; // Bytes/publisher archive; reject 
 const DOWNLOAD_TIMEOUT_MS = 120 * 1000; // Milliseconds/build-only download; never a runtime dependency download.
 const ARCHIVE_NAME = 'native-tunnel.zip'; const SCRATCH_PREFIX = 'ankita-native-bundle-';
 const EXTRACT_DIRECTORY = 'extracted';
+const EXTRACTION_SHELL_CANDIDATES = Object.freeze(['pwsh.exe', 'powershell.exe']); // Prefer the current PowerShell runtime, then Windows PowerShell 5.1.
 const BUILDER_CONFIG = 'desktop/packaging/electron-builder.yml'; // Checked-in generated signing projection; publisher metadata stays the single source of member names.
 const SIGNING_BEGIN = '  # BEGIN publisher signing exclusions (generated from vendor/openai-tunnel/source.json)';
 const SIGNING_END = '  # END publisher signing exclusions';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const option = name => { const index = process.argv.indexOf(name); return index < 0 ? null : process.argv[index + 1]; };
+async function extractArchive(archiveFile, destination) {
+  const script = fileURLToPath(new URL('./extract-native-tunnel.ps1', import.meta.url));
+  const failures = [];
+  for (const executable of EXTRACTION_SHELL_CANDIDATES) {
+    const result = await new Promise(resolve => {
+      const child = spawn(executable, ['-NoProfile', '-File', script, '-Archive', archiveFile, '-Destination', destination], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      let errorText = '';
+      child.stderr.setEncoding('utf8'); child.stderr.on('data', chunk => { errorText += chunk; });
+      child.once('error', error => resolve({ code: null, error: error.message }));
+      child.once('exit', code => resolve({ code, error: errorText.trim() }));
+    });
+    if (result.code === 0) return;
+    failures.push(`${executable}: ${result.error || `exit ${result.code ?? 'unknown'}`}`);
+  }
+  throw new Error(`Native publisher archive extraction failed (${failures.join('; ')})`);
+}
 const target = option('--target') ?? `${process.platform}-${process.arch}`;
 const artifact = publisher.targets[target];
 const nativeOutput = path.join(ROOT, 'desktop', NATIVE_TUNNEL_RESOURCE_DIRECTORY, target); // Target-specific build resources, never profile data.
@@ -50,10 +67,7 @@ if (!artifact) {
     }
     if (archive.length > MAX_ARCHIVE_BYTES || hash(archive) !== artifact.archiveSha256) throw new Error('Native publisher archive checksum mismatch');
     const archiveFile = path.join(scratch, ARCHIVE_NAME); fs.writeFileSync(archiveFile, archive); fs.mkdirSync(extract);
-    await new Promise((resolve, reject) => {
-      const child = spawn('powershell.exe', ['-NoProfile', '-File', fileURLToPath(new URL('./extract-native-tunnel.ps1', import.meta.url)), '-Archive', archiveFile, '-Destination', extract], { windowsHide: true, stdio: 'ignore' });
-      child.once('error', reject); child.once('exit', code => code === 0 ? resolve() : reject(new Error('Native publisher archive extraction failed')));
-    });
+    await extractArchive(archiveFile, extract);
     if (hash(fs.readFileSync(path.join(extract, artifact.filename))) !== artifact.sha256 ||
         hash(fs.readFileSync(path.join(extract, artifact.companionFilename))) !== artifact.companionSha256) throw new Error('Native publisher member checksum mismatch');
     const output = path.join(ROOT, 'desktop', NATIVE_TUNNEL_RESOURCE_DIRECTORY, target); fs.mkdirSync(output, { recursive: true });
