@@ -8,7 +8,10 @@ import { ProjectStore } from '../../src/memory/projects.mjs';
 
 function assertCommandDirectory(result, expectedPath) {
   const reportedPath = result.content[0].text.trim().split(/\r?\n/).at(-1);
-  assert.equal(fs.realpathSync(reportedPath), fs.realpathSync(expectedPath));
+  const reported = fs.statSync(reportedPath, { bigint: true });
+  const expected = fs.statSync(expectedPath, { bigint: true });
+  assert.equal(reported.dev, expected.dev);
+  assert.equal(reported.ino, expected.ino);
 }
 
 test('desktop projects assign real workspace paths and carry decisions and tasks into the teammate brief', async t => {
