@@ -15,9 +15,9 @@ function tempFile(t, label) {
   return path.join(dir, 'heartbeat.json');
 }
 
-function capturingFetch({ ok = true } = {}) {
+function capturingFetch({ ok = true, status = ok ? 200 : 503 } = {}) {
   const calls = [];
-  const fetchImpl = async (url, options) => { calls.push({ url, options }); return { ok }; };
+  const fetchImpl = async (url, options) => { calls.push({ url, options }); return { ok, status }; };
   return { calls, fetchImpl };
 }
 
@@ -28,13 +28,19 @@ test('the heartbeat is inert when the user has not opted in', async t => {
   assert.equal(calls.length, 0);
 });
 
-test('the heartbeat is inert until the endpoint is wired up', async t => {
+test('the default heartbeat endpoint is wired and still requires opt-in', async t => {
   const { calls, fetchImpl } = capturingFetch();
-  assert.equal(HEARTBEAT_ENDPOINT, '');
-  assert.equal(HEARTBEAT_ANON_KEY, '');
-  const sent = await sendHeartbeat({ file: tempFile(t, 'no-endpoint'), version: '2.7.5', enabled: true, fetchImpl });
-  assert.equal(sent, false);
+  assert.match(HEARTBEAT_ENDPOINT, /^https:\/\//);
+  assert.match(HEARTBEAT_ANON_KEY, /^sb_publishable_/);
+  const file = tempFile(t, 'wired-defaults');
+  const optedOut = await sendHeartbeat({ file, version: '2.7.5', enabled: false, fetchImpl });
+  assert.equal(optedOut, false);
   assert.equal(calls.length, 0);
+  const optedIn = await sendHeartbeat({ file, version: '2.7.5', enabled: true, fetchImpl });
+  assert.equal(optedIn, true);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, `${HEARTBEAT_ENDPOINT}/rest/v1/heartbeats`);
+  assert.equal(calls[0].options.headers.apikey, HEARTBEAT_ANON_KEY);
 });
 
 test('an opted-in install sends one anonymous ping a day, then stays quiet', async t => {
@@ -44,10 +50,11 @@ test('an opted-in install sends one anonymous ping a day, then stays quiet', asy
   assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', enabled: true, fetchImpl, now: dayOne }), true);
   assert.equal(calls.length, 1);
   const call = calls[0];
-  assert.equal(call.url, `${ENDPOINT}/rest/v1/heartbeats?on_conflict=install_id_hash,day`);
+  assert.equal(call.url, `${ENDPOINT}/rest/v1/heartbeats`);
   assert.equal(call.options.method, 'POST');
   assert.equal(call.options.headers.apikey, ANON_KEY);
   assert.equal(call.options.headers.Authorization, `Bearer ${ANON_KEY}`);
+  assert.equal(call.options.headers.Prefer, 'return=minimal');
   const body = JSON.parse(call.options.body);
   assert.equal(body.app_version, '2.7.5');
   assert.equal(body.platform, 'win32');
@@ -82,6 +89,22 @@ test('a failed ping is silent and does not mark the day as counted', async t => 
   assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', enabled: true, fetchImpl, now: day }), false);
   assert.equal(calls.length, 1);
   assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).lastPingDay, '');
+});
+
+test('a duplicate-day conflict is treated as already counted without table reads or updates', async t => {
+  const file = tempFile(t, 'duplicate');
+  const day = new Date('2026-11-27T10:00:00Z');
+  const first = capturingFetch();
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', enabled: true, fetchImpl: first.fetchImpl, now: day }), true);
+
+  const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+  fs.writeFileSync(file, JSON.stringify({ ...saved, lastPingDay: '' })); // Simulate a close before state was saved.
+  const duplicate = capturingFetch({ ok: false, status: 409 });
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', enabled: true, fetchImpl: duplicate.fetchImpl, now: day }), false);
+  assert.equal(duplicate.calls.length, 1);
+  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).lastPingDay, '2026-11-27');
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', enabled: true, fetchImpl: duplicate.fetchImpl, now: day }), false);
+  assert.equal(duplicate.calls.length, 1);
 });
 
 test('a corrupt state file starts fresh instead of crashing', async t => {

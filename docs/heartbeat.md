@@ -42,7 +42,17 @@ The heartbeat fixes that without turning Ankita into spyware.
   default `false`), exposed through `publicView()` and toggled in the Privacy
   tab of `desktop/renderer/src/components/SettingsDialog.tsx`.
 - Endpoint: a Supabase table, written to with a plain PostgREST insert —
-  no server code to deploy. `supabase/heartbeat.sql` creates it.
+  no server code is needed for the app ping. `supabase/heartbeat.sql`
+  creates the table and a private aggregate function for the owner dashboard.
+- Owner dashboard: `admin/` is a one-page Vercel site. Its server function
+  checks a private dashboard key, then calls the aggregate function with a
+  server-only Supabase service key. Neither the service key nor raw install
+  hashes are sent to the browser. The page shows total, daily, weekly,
+  monthly, new, and returning opted-in installs, platform and version counts,
+  a 30-day chart, and the 12 most recently active anonymous install aliases.
+- **This is not a count of every person who uses Ankita.** It measures only
+  installs that enabled the heartbeat. The short aliases in the owner view
+  are still pseudonymous identifiers, not names or accounts.
 - Abuse surface, stated plainly: the anon key is public by design (it ships
   inside the app) and row-level security allows inserts from anyone, so a
   motivated attacker *could* inflate the count by inventing install IDs.
@@ -53,33 +63,40 @@ The heartbeat fixes that without turning Ankita into spyware.
   shows up, the fix is a tiny server-side check (e.g. a Vercel function
   in front of the table), not more data collection.
 
-## Setup (Krish's clicks — the code ships inert until these are done)
+## Setup
 
-The PR is deliberately inert on its own: `HEARTBEAT_ENDPOINT` and
-`HEARTBEAT_ANON_KEY` in `desktop/electron/heartbeat.mjs` are empty strings,
-so no ping is ever sent until the project exists and the two constants are
-filled in. No new paid service; Supabase free tier covers this table.
+The app is wired to the existing A.N.K.I.T.A. Supabase project. Heartbeats
+remain off by default; a user must turn on **Share anonymous daily usage**
+in Settings → Privacy before any ping is sent. No new paid service is needed.
 
-1. **Create the project.** Open https://supabase.com/dashboard → your org
-   ("Krishs Org") → **New project**. Name: `ankita-heartbeat`. Pick any
-   database password (save it somewhere safe — it is not used by the app).
-   Region: closest to India (Mumbai / Singapore). Wait for provisioning.
-2. **Create the table.** In the new project, open **SQL Editor** → **New
-   query** → paste the whole contents of `supabase/heartbeat.sql` → **Run**.
-   It creates the `heartbeats` table, enables row-level security, adds the
-   insert-only policy, and grants insert to `anon`.
-3. **Copy the URL and anon key.** In the project, open **Project Settings**
-   (gear icon, bottom left) → **API**. Copy **Project URL** (looks like
-   `https://abcdefghijklm.supabase.co`) and the **`anon` `public` key**
-   (a long JWT starting with `eyJ`).
-4. **Wire the app.** In `desktop/electron/heartbeat.mjs`, set
-   `HEARTBEAT_ENDPOINT` to the Project URL and `HEARTBEAT_ANON_KEY` to the
-   anon key (the two constants at the top of the file). Commit that edit.
-   The heartbeat activates in the next release; users still have to opt in.
+**Current setup:** the heartbeat table, insert-only anon policy, and owner
+aggregate are applied in `A.N.K.I.T.A` under `akyourowngames`. A live opt-in
+test insert succeeded and its temporary row was removed. The owner page is
+deployed at [ankita-owner-dashboard.vercel.app](https://ankita-owner-dashboard.vercel.app)
+with its Supabase secret and owner key stored as encrypted Vercel production
+settings. Its protected API returned the live zero-user metrics. This work
+does not publish a new desktop release, so existing installs do not send
+heartbeats until a future release includes the wired endpoint.
 
-## How Krish checks the number each morning
+1. **Create the database objects.** Run the whole contents of
+   `supabase/heartbeat.sql` in the A.N.K.I.T.A. project’s SQL Editor. It
+   enables row-level security, permits anonymous inserts only, and adds an
+   aggregate function callable only by the Supabase service role.
+2. **Set up the owner page.** Deploy `admin/` as its own Vercel project.
+   Add `SUPABASE_URL`, `SUPABASE_SECRET_KEY`, and a long random
+   `ADMIN_ACCESS_TOKEN` as server-side environment variables. A Supabase
+   secret key maps to the service role; never send it to a browser or desktop
+   app. Open the deployed page and enter the dashboard token when prompted.
+3. The desktop app’s publishable Supabase key is safe to ship because users
+   can only insert an anonymous daily row. Existing installs receive this
+   wiring after a future desktop release; this PR creates no release.
 
-Supabase dashboard → project `ankita-heartbeat` → **SQL Editor** → **New
+## How the owner checks the numbers
+
+The Vercel owner page shows the headline totals and recent anonymous installs.
+For a direct database check, open the project’s SQL Editor and use:
+
+Supabase dashboard → project `A.N.K.I.T.A` → **SQL Editor** → **New
 query** → paste → **Run**:
 
 ```sql
@@ -99,7 +116,8 @@ select app_version, count(*) as users
 ```
 
 These numbers are **internal only** — never published, never cited outward,
-same rule as download counts.
+same rule as download counts. The count is directional because public client
+inserts can be faked; it is not an audited list of people.
 
 ## What this PR does not do
 

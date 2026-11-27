@@ -13,20 +13,18 @@ import path from 'node:path';
  *
  * The endpoint is a Supabase table (PostgREST insert, no server code):
  * see docs/heartbeat.md for the project setup and supabase/heartbeat.sql
- * for the table. Until the endpoint is wired up the constants below stay
- * empty and the heartbeat is inert — the app behaves exactly as before.
+ * for the table. The public project endpoint is wired below; heartbeats
+ * remain inert unless a user explicitly enables them in Privacy settings.
  *
  * Failure behaviour: a failed ping is silent. Offline, endpoint down, or a
  * read-only profile all mean "no ping today" — never a blocked launch,
  * never an aggressive retry.
  */
 
-// Supabase project URL, e.g. 'https://abcdefghijklm.supabase.co'.
-// Fill these in after creating the project (docs/heartbeat.md, step 2).
-// The anon key is public by design: row-level security allows inserts only,
-// and the table has no select policy for anon, so counts stay dashboard-only.
-export const HEARTBEAT_ENDPOINT = '';
-export const HEARTBEAT_ANON_KEY = '';
+// Public endpoint and publishable key for A.N.K.I.T.A's heartbeat table.
+// RLS makes this key safe to ship: anon can insert, but cannot read or update.
+export const HEARTBEAT_ENDPOINT = 'https://jfmsgssfeuluyvezxzic.supabase.co';
+export const HEARTBEAT_ANON_KEY = 'sb_publishable_Rg_VmiUvO9BHwm2IBl6Dmw_av68hycO';
 
 const HEARTBEAT_TIMEOUT_MS = 5000;
 
@@ -95,21 +93,24 @@ export async function sendHeartbeat({
   });
   let response = null;
   try {
-    response = await fetchImpl(`${String(endpoint).replace(/\/+$/, '')}/rest/v1/heartbeats?on_conflict=install_id_hash,day`, {
+    response = await fetchImpl(`${String(endpoint).replace(/\/+$/, '')}/rest/v1/heartbeats`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         apikey: anonKey,
         Authorization: `Bearer ${anonKey}`,
-        Prefer: 'resolution=merge-duplicates',
+        Prefer: 'return=minimal',
       },
       body,
       signal: AbortSignal.timeout(HEARTBEAT_TIMEOUT_MS),
     });
   } catch { return false; } // Offline or endpoint down: the app works exactly as before.
-  if (!response?.ok) return false;
+  // A duplicate means this install/day already landed (for example, the app
+  // closed after the insert but before its local state file was updated).
+  // Treat it as counted without granting anon any read or update access.
+  if (!response?.ok && response?.status !== 409) return false;
   try { writeState(file, { ...state, lastPingDay: day }); } catch { /* The ping landed; tomorrow just sends again. */ }
-  return true;
+  return response.ok;
 }
 
 /** Fire-and-forget wrapper for startup: never throws, never blocks launch. */
