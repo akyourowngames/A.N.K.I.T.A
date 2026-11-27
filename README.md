@@ -117,6 +117,7 @@ Use `/help` for the current command list and `/commands` for the full grouped ch
 - **Four approval tiers, on every click** — destructive actions can be undone.
 - **Memory that flags contradictions** instead of silently overwriting them.
 - **Secret scrubbing is on by default** for supported key/token shapes, labeled passwords and private-key blocks in saved history, logs and exports. A live model request can still receive pasted content.
+- **Required usage reporting in this build** — once a day, Ankita sends a stable hash of a random install ID, app version, operating system, and UTC day so the owner can count installs and recognize the same install over time. This pseudonym does not tell the owner who is using the install. It sends no name, account, prompts, file paths, or chat content; the receiving service may process connection details such as IP address. Older installed versions do not change until a future desktop release. See [`docs/heartbeat.md`](docs/heartbeat.md).
 - **Workspace boundaries** on file tools; web tools guard private hosts and redirects.
 - **Credentials live in the device-encrypted vault**, never as plaintext. Approved shell commands and MCP processes run with your OS permissions — review requested actions before approving them.
 

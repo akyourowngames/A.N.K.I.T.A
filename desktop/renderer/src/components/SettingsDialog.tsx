@@ -352,6 +352,10 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
                 <div className="settings-confirm-actions"><button type="button" className="settings-secondary" onClick={() => setScrubConfirm(false)}>Keep scrubbing</button><button type="button" className="settings-danger" onClick={() => void applySecretScrubbing(false)}>Turn off scrubbing</button></div>
               </div>}
             </section>
+            <section className="settings-panel">
+              <div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="pulse" size={18} /></span><div><h2>Required usage reporting</h2><p>Daily install counts help the app owner understand usage.</p></div></div>
+              <div className="settings-note"><Icon name="info" size={15} /><span>Once per day, Ankita sends a stable hash of a random install ID, the app version, operating system, and UTC day. This pseudonymous ID lets the owner recognize one install across days; it does not tell the owner who is using it. Reports contain no name, email, account, prompts, file paths, or chat content. The receiving service may process connection details such as your IP address. Reporting is on in this build.</span></div>
+            </section>
           </div>}
           {tab === 'appearance' && <div className="settings-content">
             <div className="settings-heading"><span className="settings-heading-icon"><Icon name="palette" size={20} /></span><h1 id="settings-title">Appearance</h1><p>Set the tone of your workspace.</p></div>
