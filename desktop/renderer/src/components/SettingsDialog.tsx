@@ -189,14 +189,6 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
     if (!enabled && !preferences.secretWarningSeen) { setScrubConfirm(true); return; }
     void applySecretScrubbing(enabled);
   };
-  const applyUsageHeartbeat = async (enabled: boolean) => {
-    setBusy(true); setNotice(null);
-    try {
-      onSaved(await window.ankita.invoke<DesktopSettingsResult>('saveDesktopSettings', { usageHeartbeat: enabled }));
-      setNotice({ tone: 'ok', text: enabled ? 'Anonymous usage sharing is on. One ping a day, nothing personal.' : 'Anonymous usage sharing is off.' });
-    } catch (error) { setNotice({ tone: 'error', text: cleanErrorMessage(error) }); }
-    finally { setBusy(false); }
-  };
   const model = models.find(item => item.id === draft.model);
   const activeJobs = jobs.filter(job => job.enabled).length;
   const runningJobs = jobs.filter(job => job.running).length;
@@ -361,9 +353,8 @@ export function SettingsDialog({ tab, onTab, onClose, preferences, models, teamm
               </div>}
             </section>
             <section className="settings-panel">
-              <div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="pulse" size={18} /></span><div><h2>Usage heartbeat</h2><p>Help Krish know how many people use Ankita each day — anonymously.</p></div></div>
-              <label className="settings-switch-row"><span><strong>Share anonymous daily usage</strong><small>One ping a day: a random install ID, the app version and your operating system. No prompts, no file paths, no content. Off unless you turn it on.</small></span><input type="checkbox" role="switch" checked={preferences.usageHeartbeat === true} disabled={busy} onChange={event => void applyUsageHeartbeat(event.target.checked)} /></label>
-              <p className="settings-help">The install ID is random, stored only on this device, and sent as a one-way hash. Turn it off any time to stop future pings.</p>
+              <div className="settings-section-lead"><span className="settings-section-symbol"><Icon name="pulse" size={18} /></span><div><h2>Required usage reporting</h2><p>Daily install counts help the app owner understand usage.</p></div></div>
+              <div className="settings-note"><Icon name="info" size={15} /><span>Once per day, Ankita sends a stable hash of a random install ID, the app version, operating system, and UTC day. This pseudonymous ID lets the owner recognize one install across days; it does not tell the owner who is using it. Reports contain no name, email, account, prompts, file paths, or chat content. The receiving service may process connection details such as your IP address. Reporting is on in this build.</span></div>
             </section>
           </div>}
           {tab === 'appearance' && <div className="settings-content">

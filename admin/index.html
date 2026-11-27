@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="color-scheme" content="light" />
     <meta name="theme-color" content="#f3f0e9" />
-    <meta name="description" content="Private, anonymous usage insights for Ankita." />
+    <meta name="description" content="Private, pseudonymous install usage insights for Ankita." />
     <title>Ankita · Fieldnotes</title>
     <link rel="stylesheet" href="/styles.css" />
     <script type="module" src="/src/admin.mjs"></script>
@@ -19,29 +19,29 @@
       </header>
 
       <section class="intro" aria-labelledby="page-title">
-        <div class="eyebrow"><span>OWNER’S DESK</span><span class="eyebrow-line"></span><span>ANONYMOUS USAGE</span></div>
-        <div class="intro-row"><div><h1 id="page-title">A little closer<br /><em>to the people.</em></h1><p class="intro-copy">A quiet view of how Ankita is finding its way into the world.</p></div><div class="intro-note"><span class="note-star">✳</span><p>Counts include only installs<br />that chose to share.</p></div></div>
+        <div class="eyebrow"><span>OWNER’S DESK</span><span class="eyebrow-line"></span><span>INSTALL ANALYTICS</span></div>
+        <div class="intro-row"><div><h1 id="page-title">A little closer<br /><em>to the people.</em></h1><p class="intro-copy">A quiet view of how Ankita is finding its way into the world.</p></div><div class="intro-note"><span class="note-star">✳</span><p>Daily install counts.<br />IDs stay pseudonymous.</p></div></div>
       </section>
 
       <section id="access-panel" class="access-panel" aria-labelledby="access-title">
-        <div class="access-copy"><span class="mini-label">PRIVATE ACCESS</span><h2 id="access-title">This page is just for you.</h2><p>Enter the dashboard key to see anonymous usage totals. Your key stays in this browser tab.</p></div>
+        <div class="access-copy"><span class="mini-label">PRIVATE ACCESS</span><h2 id="access-title">This page is just for you.</h2><p>Enter the dashboard key to see pseudonymous install totals. Your key stays in this browser tab.</p></div>
         <form id="access-form" class="access-form"><label class="sr-only" for="access-key">Dashboard access key</label><input id="access-key" type="password" autocomplete="current-password" placeholder="Dashboard key" required /><button type="submit">Open dashboard <span aria-hidden="true">↗</span></button><p id="access-error" class="form-error" role="status"></p></form>
       </section>
 
-      <section id="dashboard" hidden aria-label="Anonymous usage dashboard">
+      <section id="dashboard" hidden aria-label="Pseudonymous install dashboard">
         <div class="section-heading"><div><span class="mini-label">THE PULSE</span><h2>Usage, at a glance</h2></div><div class="header-actions"><button id="lock-button" class="refresh-button lock-button" type="button">Lock view</button><button id="refresh-button" class="refresh-button" type="button"><span aria-hidden="true">↻</span> Refresh</button></div></div>
         <div id="error-banner" class="error-banner" role="status" hidden></div>
         <div class="metric-grid" id="metric-grid"></div>
 
         <div class="content-grid">
-          <section class="sheet chart-sheet" aria-labelledby="chart-title"><div class="sheet-heading"><div><span class="mini-label">LAST 30 DAYS</span><h3 id="chart-title">Daily active installs</h3></div><span class="chart-unit">PEOPLE / DAY</span></div><div id="chart" class="chart" role="img" aria-label="Daily active installs over the last 30 days"></div><div class="chart-foot"><span>30 days ago</span><span>Today · UTC</span></div></section>
+          <section class="sheet chart-sheet" aria-labelledby="chart-title"><div class="sheet-heading"><div><span class="mini-label">LAST 30 DAYS</span><h3 id="chart-title">Daily active installs</h3></div><span class="chart-unit">INSTALLS / DAY</span></div><div id="chart" class="chart" role="img" aria-label="Daily active installs over the last 30 days"></div><div class="chart-foot"><span>30 days ago</span><span>Today · UTC</span></div></section>
           <section class="sheet mix-sheet" aria-labelledby="mix-title"><div class="sheet-heading"><div><span class="mini-label">LAST 30 DAYS</span><h3 id="mix-title">Where they’re running</h3></div></div><div id="platform-list" class="mix-list"></div><div class="mix-divider"></div><div class="sheet-heading version-heading"><div><span class="mini-label">RELEASES</span><h3>Versions in use</h3></div></div><div id="version-list" class="mix-list"></div></section>
         </div>
 
-        <section class="sheet people-sheet" aria-labelledby="people-title"><div class="sheet-heading people-heading"><div><span class="mini-label">RECENTLY SEEN</span><h3 id="people-title">Your community</h3><p>Anonymous install IDs · 12 most recent · no names or content</p></div><span id="community-count" class="community-count"></span></div><div class="table-wrap"><table><thead><tr><th>INSTALL</th><th>PLATFORM</th><th>VERSION</th><th>FIRST SEEN</th><th>LAST ACTIVE</th></tr></thead><tbody id="people-table"></tbody></table></div><div id="empty-state" class="empty-state" hidden>No opted-in installs yet. When people choose to share, they’ll appear here.</div></section>
+        <section class="sheet people-sheet" aria-labelledby="people-title"><div class="sheet-heading people-heading"><div><span class="mini-label">RECENTLY SEEN</span><h3 id="people-title">Recent installs</h3><p>Pseudonymous IDs · 12 most recent · no names or content</p></div><span id="community-count" class="community-count"></span></div><div class="table-wrap"><table><thead><tr><th>INSTALL</th><th>PLATFORM</th><th>VERSION</th><th>FIRST SEEN</th><th>LAST ACTIVE</th></tr></thead><tbody id="people-table"></tbody></table></div><div id="empty-state" class="empty-state" hidden>No installs have reported yet.</div></section>
       </section>
 
-      <footer class="footer"><div class="footer-rule"></div><div class="footer-row"><span>Made with care, for Ankita.</span><span>Anonymous by design <span class="footer-flower">✳</span></span></div></footer>
+      <footer class="footer"><div class="footer-rule"></div><div class="footer-row"><span>Made with care, for Ankita.</span><span>Pseudonymous by design <span class="footer-flower">✳</span></span></div></footer>
     </main>
   </body>
 </html>

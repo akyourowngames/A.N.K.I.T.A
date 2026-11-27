@@ -11,8 +11,9 @@ const PROVIDER_SETUP_NOTICE = 'Your saved provider is newer than this build. Ope
 const COMPATIBLE_PROVIDERS = new Set([COMPATIBLE_PROVIDER, MODAL_PROVIDER]);
 const providers = new Set(['copilot', 'groq', 'kilo', COMPATIBLE_PROVIDER, MODAL_PROVIDER, CHATGPT_BROWSER_PROVIDER]);
 const appearances = new Set(['graphite', 'mono', 'slate']);
+const RETIRED_SETTINGS_KEYS = new Set(['usageHeartbeat']); // Remove the old opt-in switch when settings are next saved.
 const keys = new Set(['provider', 'model', 'customApiBase', 'customApiKey', 'groqApiKey', 'kiloApiKey', 'composioApiKey', 'appearance', 'contextWindow', 'maxTokens', 'contextCompaction', 'imageApiBase', 'imageApiKey', 'imageModel', 'unsplashAccessKey', 'pixabayApiKey', 'username', 'timeZone', 'profileSetupDone', 'disabledSkills', 'startAtLogin', 'trayNoticeSeen',
-  'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs', 'usageHeartbeat']);
+  'voiceWakeWord', 'voiceStopWord', 'voiceIdleMs', 'voiceStandbyMs', 'voiceFollowUpMs']);
 const own = (value, key) => Object.prototype.hasOwnProperty.call(value, key);
 export const VOICE_SETTINGS_KEYS = Object.freeze(['sarvamApiKey', 'basetenApiKey', 'micDevice', 'voiceOutputDevice']); // Private API keys and discovered audio-device preferences.
 for (const key of VOICE_SETTINGS_KEYS) keys.add(key);
@@ -92,7 +93,7 @@ function validatePatch(patch) {
       const n = Number(value);
       if (!Number.isFinite(n) || n < limits.min || n > limits.max) throw new Error(`Enter a valid ${key === 'voiceIdleMs' ? 'standby delay' : key === 'voiceFollowUpMs' ? 'follow-up window' : 'microphone timeout'} in milliseconds`);
       clean[key] = Math.floor(n);
-    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen', 'contextCompaction', 'voiceWakeWord', 'voiceStopWord', 'usageHeartbeat'].includes(key)) {
+    } else if (['profileSetupDone', 'startAtLogin', 'trayNoticeSeen', 'secretScrubbing', 'secretWarningSeen', 'contextCompaction', 'voiceWakeWord', 'voiceStopWord'].includes(key)) {
       clean[key] = value === true || value === 'true';
     } else if (key === 'disabledSkills') {
       if (!Array.isArray(value) || value.length > 100 || value.some(name => typeof name !== 'string' || !/^[a-z0-9-]{1,64}$/.test(name))) {
@@ -180,7 +181,7 @@ export class DesktopSettingsStore {
       // credentials so an absent endpoint cannot silently choose another service.
       const compatible = typeof saved.provider === 'string' && !providers.has(saved.provider);
       this.data = validatePatch(compatible ? { ...saved, provider: COMPATIBLE_PROVIDER } : saved);
-      this.preserved = Object.fromEntries(Object.entries(saved).filter(([key]) => !keys.has(key)));
+      this.preserved = Object.fromEntries(Object.entries(saved).filter(([key]) => !keys.has(key) && !RETIRED_SETTINGS_KEYS.has(key)));
       if (compatible) this.providerNotice = this.data.customApiBase ? PROVIDER_COMPATIBILITY_NOTICE : PROVIDER_SETUP_NOTICE;
     } catch (error) {
       if (error.code !== 'ENOENT') throw error;
@@ -218,7 +219,6 @@ export class DesktopSettingsStore {
       profileSetupDone: Boolean(this.data.profileSetupDone),
       secretScrubbing: this.data.secretScrubbing !== false,
       secretWarningSeen: this.data.secretWarningSeen === true,
-      usageHeartbeat: this.data.usageHeartbeat === true,
       customApiBase: this.data.customApiBase || (provider === COMPATIBLE_PROVIDER ? config.apiBase || '' : ''),
       appearance: this.data.appearance || 'graphite',
       contextWindow: this.data.contextWindow || 0,

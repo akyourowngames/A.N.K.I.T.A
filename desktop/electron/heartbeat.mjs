@@ -3,18 +3,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 /**
- * Anonymous usage heartbeat: opt-in only, default off.
+ * Required pseudonymous usage heartbeat: one install ping per UTC day.
  *
- * When the user turns it on in Settings → Privacy, Ankita sends at most one
- * small ping per install per day: a one-way hash of a random install ID, the
- * app version, and the operating system. That is the whole payload — no
- * prompts, no file paths, no conversation content, no IP address stored.
- * Daily active users = distinct install hashes per day.
+ * Ankita sends a one-way hash of a random install ID, the app version, the
+ * operating system, and the UTC day. The stable hash lets the owner recognize
+ * the same install across days, but does not identify a person. The payload
+ * contains no name, account, prompts, file paths, or conversation content.
+ * Daily active installs = distinct install hashes per day.
  *
  * The endpoint is a Supabase table (PostgREST insert, no server code):
  * see docs/heartbeat.md for the project setup and supabase/heartbeat.sql
  * for the table. The public project endpoint is wired below; heartbeats
- * remain inert unless a user explicitly enables them in Privacy settings.
+ * are sent automatically; Settings → Privacy explains what is collected.
  *
  * Failure behaviour: a failed ping is silent. Offline, endpoint down, or a
  * read-only profile all mean "no ping today" — never a blocked launch,
@@ -70,11 +70,10 @@ export async function sendHeartbeat({
   anonKey = HEARTBEAT_ANON_KEY,
   version = '',
   platform = process.platform,
-  enabled = false,
   fetchImpl = fetch,
   now = new Date(),
 } = {}) {
-  if (!enabled || !endpoint || !anonKey || !version) return false;
+  if (!endpoint || !anonKey || !version) return false;
   const day = heartbeatDay(now);
   let state = readState(file);
   if (state.lastPingDay === day) return false; // Already counted today.

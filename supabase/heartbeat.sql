@@ -1,4 +1,4 @@
--- Ankita anonymous usage heartbeat (opt-in only).
+-- Ankita required pseudonymous daily installation usage heartbeat.
 -- Run once in the Supabase SQL Editor of the A.N.K.I.T.A project.
 -- Full setup: docs/heartbeat.md. The app only ever inserts rows; it never
 -- reads this table, and there is no public page showing the counts.

@@ -21,33 +21,30 @@ function capturingFetch({ ok = true, status = ok ? 200 : 503 } = {}) {
   return { calls, fetchImpl };
 }
 
-test('the heartbeat is inert when the user has not opted in', async t => {
+test('the heartbeat sends automatically without an opt-in flag', async t => {
   const { calls, fetchImpl } = capturingFetch();
-  const sent = await sendHeartbeat({ file: tempFile(t, 'off'), endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', enabled: false, fetchImpl });
-  assert.equal(sent, false);
-  assert.equal(calls.length, 0);
+  const sent = await sendHeartbeat({ file: tempFile(t, 'required'), endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', fetchImpl });
+  assert.equal(sent, true);
+  assert.equal(calls.length, 1);
 });
 
-test('the default heartbeat endpoint is wired and still requires opt-in', async t => {
+test('the default heartbeat endpoint sends automatically', async t => {
   const { calls, fetchImpl } = capturingFetch();
   assert.match(HEARTBEAT_ENDPOINT, /^https:\/\//);
   assert.match(HEARTBEAT_ANON_KEY, /^sb_publishable_/);
   const file = tempFile(t, 'wired-defaults');
-  const optedOut = await sendHeartbeat({ file, version: '2.7.5', enabled: false, fetchImpl });
-  assert.equal(optedOut, false);
-  assert.equal(calls.length, 0);
-  const optedIn = await sendHeartbeat({ file, version: '2.7.5', enabled: true, fetchImpl });
-  assert.equal(optedIn, true);
+  const sent = await sendHeartbeat({ file, version: '2.7.5', fetchImpl });
+  assert.equal(sent, true);
   assert.equal(calls.length, 1);
   assert.equal(calls[0].url, `${HEARTBEAT_ENDPOINT}/rest/v1/heartbeats`);
   assert.equal(calls[0].options.headers.apikey, HEARTBEAT_ANON_KEY);
 });
 
-test('an opted-in install sends one anonymous ping a day, then stays quiet', async t => {
+test('an install sends one pseudonymous ping a day, then stays quiet', async t => {
   const file = tempFile(t, 'daily');
   const { calls, fetchImpl } = capturingFetch();
   const dayOne = new Date('2026-11-27T10:00:00Z');
-  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', enabled: true, fetchImpl, now: dayOne }), true);
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', fetchImpl, now: dayOne }), true);
   assert.equal(calls.length, 1);
   const call = calls[0];
   assert.equal(call.url, `${ENDPOINT}/rest/v1/heartbeats`);
@@ -66,11 +63,11 @@ test('an opted-in install sends one anonymous ping a day, then stays quiet', asy
   assert.equal(hashInstallId(saved.installId), body.install_id_hash);
 
   // Same day again: no second ping.
-  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', enabled: true, fetchImpl, now: dayOne }), false);
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', fetchImpl, now: dayOne }), false);
   assert.equal(calls.length, 1);
 
   // Next day: one ping again, same install ID.
-  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', enabled: true, fetchImpl, now: new Date('2026-11-28T10:00:00Z') }), true);
+  assert.equal(await sendHeartbeat({ file, endpoint: ENDPOINT, anonKey: ANON_KEY, version: '2.7.5', platform: 'win32', fetchImpl, now: new Date('2026-11-28T10:00:00Z') }), true);
   assert.equal(calls.length, 2);
   assert.equal(JSON.parse(calls[1].options.body).install_id_hash, body.install_id_hash);
   assert.equal(JSON.parse(calls[1].options.body).day, '2026-11-28');
@@ -126,15 +123,13 @@ test('heartbeatDay uses the UTC calendar day', () => {
   assert.equal(heartbeatDay(new Date('2026-11-28T00:30:00Z')), '2026-11-28');
 });
 
-test('the usageHeartbeat setting is off unless the user turns it on', t => {
+test('the retired opt-in setting is removed when settings are next saved', t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-heartbeat-settings-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const file = path.join(dir, 'desktop-settings.json');
+  fs.writeFileSync(file, JSON.stringify({ version: 1, settings: { usageHeartbeat: false } }));
   const store = new DesktopSettingsStore(file).load();
-  assert.equal(store.publicView({}).usageHeartbeat, false);
-  store.update({ usageHeartbeat: true });
-  assert.equal(store.publicView({}).usageHeartbeat, true);
-  assert.equal(JSON.parse(fs.readFileSync(file, 'utf8')).settings.usageHeartbeat, true);
-  store.update({ usageHeartbeat: 'yes' }); // Not a real opt-in: anything but true stays off.
-  assert.equal(store.publicView({}).usageHeartbeat, false);
+  assert.equal(Object.hasOwn(store.publicView({}), 'usageHeartbeat'), false);
+  store.update({ username: 'Test owner' });
+  assert.equal(Object.hasOwn(JSON.parse(fs.readFileSync(file, 'utf8')).settings, 'usageHeartbeat'), false);
 });

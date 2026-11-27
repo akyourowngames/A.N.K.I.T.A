@@ -462,14 +462,13 @@ function createWindow() {
   // Quiet startup check, after the app has settled, so it never competes with
   // provider sign-in or a first message.
   setTimeout(() => { if (updater?.usable) void updater.check(); }, 6000);
-  // Anonymous usage heartbeat: opt-in only (Settings → Privacy), at most one
-  // ping per install per day. It never blocks launch and fails silently.
+  // Required pseudonymous usage report: one install ping per day. The Privacy
+  // panel explains the stable install hash; network failure never blocks launch.
   setTimeout(() => {
     void maybeSendHeartbeat({
       file: path.join(app.getPath('userData'), 'heartbeat.json'),
       version: app.getVersion(),
       platform: process.platform,
-      enabled: engine?.desktopSettings.data.usageHeartbeat === true,
     });
   }, 6000);
 }

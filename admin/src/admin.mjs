@@ -8,7 +8,7 @@ const UTC_DATETIME_FORMAT = new Intl.DateTimeFormat('en', { month: 'short', day:
 const SVG_NAMESPACE = 'http://www.w3.org/2000/svg';
 
 const METRIC_CARDS = [
-  { key: 'totalUsers', label: 'Total opted-in', detail: 'All-time installs', primary: true },
+  { key: 'totalUsers', label: 'Total installs', detail: 'All-time reported installs', primary: true },
   { key: 'activeToday', label: 'Active today', detail: 'Daily active · UTC' },
   { key: 'active7Days', label: 'Active this week', detail: 'Rolling 7 days' },
   { key: 'active30Days', label: 'Active this month', detail: `Rolling ${ANALYTICS_WINDOW_DAYS} days` },
@@ -22,8 +22,8 @@ const COPY = Object.freeze({
   loadFailed: 'Could not reach the usage data. Try again in a moment.',
   setupMissing: 'The dashboard is not connected yet. Check its private server settings.',
   unknownError: 'The dashboard could not load. Try refreshing.',
-  empty: 'No opted-in installs yet. When people choose to share, they’ll appear here.',
-  peopleCount: 'recent anonymous installs · active in the past 30 days',
+  empty: 'No installs have reported yet.',
+  peopleCount: 'recent pseudonymous install IDs · active in the past 30 days',
   updated: 'Updated',
 });
 
