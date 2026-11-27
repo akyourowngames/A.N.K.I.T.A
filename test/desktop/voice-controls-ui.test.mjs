@@ -51,7 +51,7 @@ async function openPreview(t, compact) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const browser = await chromium.launch({ headless: true });
   t.after(async () => { page = null; await voice.close(); await browser.close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); await vite.close(); fs.rmSync(directory, { recursive: true, force: true }); });
-  page = await browser.newPage({ viewport: compact ? { width: 480, height: 650 } : { width: 1000, height: 900 } });
+  page = await browser.newPage({ viewport: compact ? { width: 480, height: 650 } : { width: 1000, height: 835 } });
   page.setDefaultTimeout(UI_WAIT_MS);
   page.on('pageerror', error => errors.push(error.message));
   await page.exposeFunction('invokeVoice', async (action, payload) => { actions.push({ action, payload }); return runVoiceAction({ engine, action, payload }); });

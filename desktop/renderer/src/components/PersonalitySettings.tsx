@@ -36,22 +36,30 @@ export function PersonalitySettings() {
     {!draft ? <p role="status">Loading personality...</p> : <>
       <section className="settings-panel">
         <label className="personality-enabled"><input type="checkbox" checked={draft.enabled} onChange={event => set('enabled', event.target.checked)} /><span>Use this personality<small>Turn it off for a plain, task-focused style.</small></span></label>
-        <div className="settings-field"><label htmlFor="personality-character">Character</label>
-          <textarea id="personality-character" rows={3} maxLength={PERSONALITY_LIMITS.description} value={draft.description} onChange={event => set('description', event.target.value)} />
-          <small>Describe her in your words. This guides fresh replies; it is not a script.</small></div>
-        <div className="settings-form-pair">{(['attitude', 'teasing'] as const).map(key => <div className="settings-field" key={key}><label htmlFor={`personality-${key}`}>{key === 'attitude' ? 'Attitude' : 'Teasing'}</label>
-          <select className="settings-select" id={`personality-${key}`} value={draft[key]} onChange={event => set(key, event.target.value as PersonalityProfile[typeof key])}>{Object.entries(PERSONALITY_OPTIONS[key]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>)}</div>
-        <div className="settings-field"><label htmlFor="personality-language">Speaking language</label><select className="settings-select" id="personality-language" value={draft.language} onChange={event => set('language', event.target.value as PersonalityProfile['language'])}>{Object.entries(PERSONALITY_OPTIONS.language).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></div>
-        <div className="settings-field"><label htmlFor="personality-care">Care and respect</label><textarea id="personality-care" rows={3} maxLength={PERSONALITY_LIMITS.care} value={draft.care} onChange={event => set('care', event.target.value)} /><small>When should she soften her tone, listen or keep things serious?</small></div>
+        <div className="personality-text-grid">
+          <div className="settings-field"><label htmlFor="personality-character">Character</label>
+            <textarea id="personality-character" rows={3} maxLength={PERSONALITY_LIMITS.description} value={draft.description} onChange={event => set('description', event.target.value)} />
+            <small>Describe her in your words. This guides fresh replies; it is not a script.</small></div>
+          <div className="settings-field"><label htmlFor="personality-care">Care and respect</label><textarea id="personality-care" rows={3} maxLength={PERSONALITY_LIMITS.care} value={draft.care} onChange={event => set('care', event.target.value)} /><small>When should she soften her tone, listen or keep things serious?</small></div>
+        </div>
+        <div className="personality-select-grid">
+          {(['attitude', 'teasing'] as const).map(key => <div className="settings-field" key={key}><label htmlFor={`personality-${key}`}>{key === 'attitude' ? 'Attitude' : 'Teasing'}</label>
+            <select className="settings-select" id={`personality-${key}`} value={draft[key]} onChange={event => set(key, event.target.value as PersonalityProfile[typeof key])}>{Object.entries(PERSONALITY_OPTIONS[key]).map(([value, label]) => <option key={value} value={value}>{label}</option>)}</select></div>)}
+          <div className="settings-field"><label htmlFor="personality-language">Speaking language</label><select className="settings-select" id="personality-language" value={draft.language} onChange={event => set('language', event.target.value as PersonalityProfile['language'])}>{Object.entries(PERSONALITY_OPTIONS.language).map(([value,label]) => <option key={value} value={value}>{label}</option>)}</select></div>
+        </div>
       </section>
-      <details className="personality-examples"><summary>Example exchanges <span>{draft.examples.length}</span></summary>
+      <details className="personality-examples"><summary><span>Example exchanges <b>{draft.examples.length}</b></span><Icon name="chevron" size={14} /></summary>
         <p className="settings-help">A few examples teach rhythm and attitude. She writes her own replies each time.</p>
-        {draft.examples.map((item,index) => <div className="personality-example" key={index}>
-          <div className="settings-field"><label htmlFor={`personality-message-${index}`}>Example message {index+1}</label><textarea id={`personality-message-${index}`} rows={2} maxLength={PERSONALITY_LIMITS.user} value={item.user} onChange={event => example(index,'user',event.target.value)} /></div>
-          <div className="settings-field"><label htmlFor={`personality-reply-${index}`}>Example reply {index+1}</label><textarea id={`personality-reply-${index}`} rows={2} maxLength={PERSONALITY_LIMITS.assistant} value={item.assistant} onChange={event => example(index,'assistant',event.target.value)} /></div>
-          <button type="button" className="settings-secondary" aria-label={`Remove example ${index+1}`} onClick={() => set('examples',draft.examples.filter((_,at)=>at!==index))}>Remove example</button>
-        </div>)}
-        <button type="button" className="settings-secondary" disabled={draft.examples.length >= PERSONALITY_LIMITS.examples} onClick={() => set('examples',[...draft.examples,{user:'',assistant:''}])}>Add example</button>
+        <div className="personality-example-list">
+          {draft.examples.map((item,index) => <article className="personality-example" key={index}>
+            <header><span>Example {index + 1}</span><button type="button" className="personality-remove" aria-label={`Remove example ${index+1}`} onClick={() => set('examples',draft.examples.filter((_,at)=>at!==index))}><Icon name="trash" size={13} /> Remove</button></header>
+            <div className="personality-example-grid">
+              <div className="settings-field"><label htmlFor={`personality-message-${index}`}>Example message {index+1}</label><textarea id={`personality-message-${index}`} rows={2} maxLength={PERSONALITY_LIMITS.user} value={item.user} onChange={event => example(index,'user',event.target.value)} /></div>
+              <div className="settings-field"><label htmlFor={`personality-reply-${index}`}>Example reply {index+1}</label><textarea id={`personality-reply-${index}`} rows={2} maxLength={PERSONALITY_LIMITS.assistant} value={item.assistant} onChange={event => example(index,'assistant',event.target.value)} /></div>
+            </div>
+          </article>)}
+        </div>
+        <button type="button" className="personality-add" disabled={draft.examples.length >= PERSONALITY_LIMITS.examples} onClick={() => set('examples',[...draft.examples,{user:'',assistant:''}])}>Add example</button>
       </details>
       <p className="settings-help">Voice and connected model chats use this style. A linked ChatGPT conversation keeps its own instructions. Facts, work results and permissions always come first.</p>
       <div className="settings-savebar"><button type="button" className="settings-secondary" disabled={busy} onClick={() => { setDraft(normalizePersonality(DEFAULT_PERSONALITY)); setNotice(null); }}>Restore default</button><button type="button" className="settings-primary" disabled={busy} onClick={save}>{busy ? 'Saving...' : 'Save personality'}</button></div>

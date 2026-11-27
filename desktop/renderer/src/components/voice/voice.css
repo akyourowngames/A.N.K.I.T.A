@@ -60,3 +60,18 @@
 @keyframes voice-orb-done{0%{opacity:0;transform:scale(.98)}25%{opacity:.7}100%{opacity:0;transform:scale(1.2)}}
 @media(prefers-reduced-motion:reduce){.voice-orb canvas,.voice-orb .voice-orb-glass,.voice-orb .voice-orb-process,.voice-orb .voice-orb-complete{animation:none!important}.voice-orb-complete{opacity:.4}.voice-orb{transform:none}}
 @media(prefers-reduced-motion:reduce){.voice-orb .voice-orb-aura,.voice-orb-wake{animation:none!important}.voice-orb-wake{display:none}}
+/* Shorter desktop windows: keep the complete orb and controls visible instead of clipping the stage. */
+@media (max-height: 880px) and (min-width: 651px) {
+  .voice-panel-top { padding: 16px 26px; }
+  .voice-stage { justify-content: flex-start; padding-top: 8px; }
+  .voice-orb { width: clamp(150px, 23vh, 230px); margin-bottom: 6px; }
+  .voice-phase { margin: 0 0 10px; }
+  .voice-caption-wrap { height: 72px; }
+  .voice-caption { font-size: clamp(19px, 2.2vw, 24px); line-height: 1.4; }
+  .voice-work-line { min-height: 30px; margin-bottom: 8px; }
+  .voice-listening-hint { margin: 2px 20px 5px; }
+  .voice-report-controls { margin-bottom: 2px; }
+  .voice-jobs { max-height: 130px; min-height: 55px; margin: 8px auto 10px; }
+  .voice-controls { margin: 2px 22px 8px; min-height: 48px; }
+  .voice-panel-foot { min-height: 44px; }
+}
