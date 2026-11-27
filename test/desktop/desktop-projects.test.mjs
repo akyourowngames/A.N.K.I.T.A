@@ -6,6 +6,11 @@ import path from 'node:path';
 import { DesktopEngine } from '../../desktop/electron/engine.mjs';
 import { ProjectStore } from '../../src/memory/projects.mjs';
 
+function assertCommandDirectory(result, expectedPath) {
+  const reportedPath = result.content[0].text.trim().split(/\r?\n/).at(-1);
+  assert.equal(fs.realpathSync(reportedPath), fs.realpathSync(expectedPath));
+}
+
 test('desktop projects assign real workspace paths and carry decisions and tasks into the teammate brief', async t => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ankita-projects-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -26,7 +31,7 @@ test('desktop projects assign real workspace paths and carry decisions and tasks
   const agent = engine.agentFor(teammate.id);
   assert.equal(agent.cwd, workspace);
   const commandResult = await agent.executionHost().execute({ id: 'project-cwd', name: 'run_command', arguments: { command: 'node -p "process.cwd()"', yield_ms: 10000 } });
-  assert.match(commandResult.content[0].text, new RegExp(workspace.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assertCommandDirectory(commandResult, workspace);
   assert.match(agent.project, /Keep changes small/);
   engine.addProjectTodo(project.id, 'Finish the desktop');
   assert.match(agent.project, /Finish the desktop/);
@@ -39,7 +44,7 @@ test('desktop projects assign real workspace paths and carry decisions and tasks
   assert.equal(agent.projectId, null);
   assert.equal(agent.cwd, engine.defaultWorkspacePath);
   const defaultCommandResult = await agent.executionHost().execute({ id: 'default-cwd', name: 'run_command', arguments: { command: 'node -p "process.cwd()"', yield_ms: 10000 } });
-  assert.match(defaultCommandResult.content[0].text, new RegExp(engine.defaultWorkspacePath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
+  assertCommandDirectory(defaultCommandResult, engine.defaultWorkspacePath);
   await engine.close();
 });
 
